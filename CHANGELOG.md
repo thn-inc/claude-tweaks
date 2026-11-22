@@ -53,6 +53,30 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
+
+
+### Features
+
+* specify: the Risk flags multiSelect question has no way… ([#5954](https://github.com/thn-inc/claude-tweaks/issues/5954)) ([e2c39d5](https://github.com/thn-inc/claude-tweaks/commit/e2c39d576d69b8cae5c0eff09ce1f5874ef675a5))
+* Stop the driver worker running the whole test suite ([#5915](https://github.com/thn-inc/claude-tweaks/issues/5915)) ([d5346c1](https://github.com/thn-inc/claude-tweaks/commit/d5346c1c99056b72f56bd2172d720bd6a609fa5b)), closes [#5917](https://github.com/thn-inc/claude-tweaks/issues/5917)
+
+
+### Bug Fixes
+
+* Keep the station-event log from dirtying a project's main… ([#5957](https://github.com/thn-inc/claude-tweaks/issues/5957)) ([3ff22a3](https://github.com/thn-inc/claude-tweaks/commit/3ff22a37e0514aa9b0ddf1b2111e336bba5ba2ba))
+* Refresh the test-impact map when drift makes it stop… ([#5947](https://github.com/thn-inc/claude-tweaks/issues/5947)) ([2257937](https://github.com/thn-inc/claude-tweaks/commit/225793727bec167daa70a876f9e4483401e7705d))
+
+### Highlights
+* Added a maintainer report of what the pipeline costs per session type, model and merged pull request, and how much follow-up work it files.
+* Added three quality measures to the maintainer cost report so a cheaper pipeline can be checked against the quality of its output.
+* Added a maintainer report of what each kind of pipeline review found, by model tier and by review lens.
+* Station events no longer leave an untracked file in a project's main checkout, so archiving no longer stalls in a project that has not re-run /claude-tweaks:init.
+* Shortened pipeline driver runs by having the worker run only the tests for the files it changed.
+* Made every pipeline driver worker launch on a model set by policy instead of the account's default.
+* Specify's risk-flag question now gives a recommendation and a one-line reason for every flag, including when it asks about several flags in one question.
+* Scoped test runs refresh the test-impact map as soon as it stops paying for itself, so a typical change re-runs far fewer test files.
+
 ## [6.174.0](https://github.com/thn-inc/claude-tweaks/compare/v6.173.1...v6.174.0) (2026-11-19)
 
 

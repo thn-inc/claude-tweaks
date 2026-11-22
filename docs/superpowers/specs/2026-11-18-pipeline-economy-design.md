@@ -104,6 +104,29 @@ Confounds: each lens has one fixed tier, so no Haiku-against-Sonnet comparison e
 - 317 of the 586 carry a `Defer-reason:`; 267 of those are open.
 - Reasons named: pre-existing-outside-diff 135, tangential 80, needs-human-decision 71, genuinely-larger 56, tiebreak-cant-tell 35, blocked-dependency 23, blocked-external 10.
 
+### Effort
+
+Measured on 2026-11-19 over 8 to 19 November, from the effort each transcript turn records.
+
+- Every profile but Fast names effort `high` (`plugin/bin/lib/model-profiles/profiles.js`). The value reaches an agent only as a sentence in its prompt.
+- 60% of subagent turns on Sonnet, Opus and Fable ran at `medium`. Over 7,159 subagents the effort followed the session, not the profile: an agent on the session's own model ran at the session's effort, and an agent on any other model ran at `medium`. Under Opus sessions at `high`, 1,573 of 1,606 Opus agents ran at `high` and all 1,215 Sonnet agents at `medium`. Under Fable sessions, 454 of 1,915 Opus agents ran at `high`, which this rule does not explain.
+- Two probes on Claude Code 2.1.325, a Sonnet agent launched from a Fable session at `high`: with the launch's effort set to `low` the transcript records `low`; with no effort set and the prompt sentence asking for `high` it records `medium`.
+- 132 of 7,978 agent launches set an effort. 18 turns in the window ran at `low`. No driver launch sets one.
+- Output is 18% of spend and thinking is 32% of output tokens. An Opus subagent turn cost $0.077 at `medium` and $0.074 at `high`, and took 6.3 and 7.6 seconds.
+
+By role, 14 to 18 November:
+
+| Role | Effort | Tasks | Needed a fix round | Median minutes | Median output tokens |
+|---|---|---|---|---|---|
+| Opus task reviewer | high | 83 | 53% | 2.8 | 14.3k |
+| Opus task reviewer | medium | 74 | 58% | 1.6 | 8.4k |
+| Sonnet implementer | high | 32 | 44% | 9.6 | 19.9k |
+| Sonnet implementer | medium | 184 | 50% | 10.6 | 23.9k |
+| Opus implementer | high | 33 | 39% | 22.4 | 65.8k |
+| Opus implementer | medium | 27 | 59% | 20.0 | 50.3k |
+
+Confounds: nothing assigned the effort. It tracks whether the agent's model matched its session's, so each pair of rows also compares two kinds of session. A fix round means the reviewer asked for one, not that the reviewer was right.
+
 ### Quality guards
 
 Every phase that changes a model, a lane or a review is checked against these three, over the 20 runs before and the 20 runs after:
@@ -152,6 +175,7 @@ Records #5914 (spend, funnel and records sections), #5916 (the three quality gua
 - **Builds:** `tools/pipeline-cost-report.js`, maintainer-side. It reproduces every table in `## Evidence` from transcripts, run directories and the forge: spend by session type, model, main session or subagent and prompt size; cache re-writes by cause; the driver admission funnel with each refusal reason; review results by role and tier; records created, closed and deferred by reason; and guard 3.
 - **Done when:** one command prints the tables for a given window, and its output for 2026-11-08 to 2026-11-18 is committed beside this document as the baseline.
 - **Expected effect:** none on cost. Every later phase names its measure from this report.
+- **Not yet specified:** the report's spend and review tables split by the effort each turn recorded. It follows #5914 and #5925.
 
 ## Phase 2 — The driver worker stops running the suite
 
@@ -204,14 +228,45 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 - **Done when:** over 20 runs, records filed per merged pull request are 0.5 or fewer.
 - **Expected effect:** the two largest deferral reasons, 215 of the reasons named, stop producing records.
 
+## Phase 15 — A launched agent runs at the effort its profile names
+
+## Phase 15: Specified
+
+Records #5941 (the policy value and the launch setting for agents launched in a session) and #5942 (the same value on driver workers, blocked by #5941), under parent #5940.
+
+Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no other phase is renumbered.
+
+- **Builds:**
+  - A policy value with two settings. `inherit`, the default, sets no effort on a launch, as today. `profile` sets the effort the resolver returns on the launch itself: the Agent tool's `effort` for an agent launched in a session, and `--effort` for a driver worker.
+  - This repository sets `profile`, and sets Standard and Capable to `medium` through `model-profiles`. Frontier stays `high`. For Standard that is the effort its agents already run at. For Capable it lowers Opus agents launched from an Opus session, 1,573 of 1,606 of which ran at `high`; the maintainer chose it on 2026-11-19, to be judged over the 20 runs below.
+  - The log line dispatch writes for each first call names the effort beside the model, so a bypass can be tied to the effort it ran at.
+  - `plugin/skills/_shared/subagent-dispatch-core.md` stops saying the Agent tool has no effort setting.
+- **Not built here:** a lower effort for any role, and a retry at a higher one. Those are Phases 9 and 14.
+- **Not covered:** agents started by the opt-in review workflow (`plugin/workflows/review-lens-fanout.js`). They run at the harness default, measured `medium`, and whether a workflow script can set an effort is not known.
+- **Waits for:** Phase 3 for the driver half, since a driver role has no profile until then.
+- **Done when:** over 20 runs with `profile` set, every subagent transcript on Sonnet, Opus or Fable records the effort the resolver returned, the guards are no worse, and no first dispatch call bypasses `/claude-tweaks:flow`. That call drops from `high` to `medium` in an Opus session, and on Standard it bypassed in 6 of 10 firings (#3212).
+- **Expected effect:** in this repository, agents on the session's own model move from `high` to `medium`. For task reviewers that was 1.6 minutes against 2.8. Opus implementers needed a fix round more often at `medium`, 59% against 39% on about 30 tasks each, which the second guard watches. Cost per turn does not move. Effort becomes a setting a later phase can change and measure.
+
 ## Tier 2 — Fast follows
 
 ## Phase 7 — Driver admission by risk and path
 
+## Phase 7: Specified
+
+Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review` stop for a widened admission), #6019 (the protected-path mode), #6020 (the protected-path list as an editable policy value) and #6021 (the 20-record trial), under parent #6017.
+
 - **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Decided while specifying:**
+  - The risk ceiling takes `low`, `medium` or `high`. `high` is allowed, unlike `express-driver-max-size`, because every record admitted this way waits for a human merge.
+  - Ceremony relaxes only when `express-driver-review` is set to `on`, so the default `beyond-express` reproduces today without a third key.
+  - The merge stop recomputes the widenings from the record's live labels and stops when the driver's own list is missing, so it fails closed.
+  - Under `reviewer`, the protected paths that act at push or build time keep refusing: CI config, git hooks, `package.json` and agent settings. Only merge-time paths (hook code, shared contracts, `CODEOWNERS`, the policy and verify-scope files) pass behind the reviewer.
+  - The list is fully editable, removals included, and a removal reaches the express lane too. It resolves from the main checkout, so a record cannot widen its own run by editing `policy.yml`.
+  - The trial runs `/claude-tweaks:review` on each driven PR. Guard 1 compares its Critical-or-Important share with the 70% baseline, guard 3 is read 14 days after the last merge, and guard 2 does not apply.
+- **Not covered:** the factory floor for the list, and the stricter-of rule for the risk ceiling. Both wait for Phase 11's factory layer.
 - **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
-- **Waits for:** Phases 2 and 3.
-- **Expected effect:** admission rises from 11% to about 61%.
+- **Waits for:** Phases 2 and 3, both merged.
+- **Expected effect:** admission rises from 11% to about 61%. Keeping the build-time paths refused may land it lower.
 
 ## Phase 8 — Admissible records reach the driver
 
@@ -220,11 +275,30 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 
 ## Phase 9 — Implementer tier from the record
 
+## Phase 9: Specified
+
+Records #5996 (the rule, the step-up, the `implementer-tier` policy value and its CLI), #5997 (the driver launches the record's profile and relaunches once one profile up), #5999 (the standard lane takes its profile from the CLI and escalates once) and #6002 (the effort ladder), under parent #5995. #5997 and #5999 are blocked by #5996; #6002 is blocked by #5941, #5942, #5997 and #5999.
+
+- **Decided while specifying:**
+  - One policy value, `implementer-tier`: `lane`, the default, keeps each lane's current rule; `record` applies this phase's rule in both lanes. This repository opts in. A `size:high` record gets Standard, not Capable.
+  - One Key File counter for both lanes: distinct paths in the record's `### Key Files`; a directory entry rules out Fast.
+  - Driver: only a worker that cannot complete, or red tests, triggers the relaunch; it works on top of what the first attempt left, then commits and re-tests. Ceilings stay per launch, so the worst case is three implementer launches per record.
+  - Standard lane: a `BLOCKED` report, or a failed re-review of a task's first fix round, sends that task to a fresh implementer one profile up, once; `decisions.md` holds the once-per-task count.
+  - Effort ladder: the starting effort follows `risk:` (`low` → `low`, `medium` → `medium`, higher → the profile's own, never above `high`). Red tests or a failed fix round raise the effort one step first; `BLOCKED` or a worker that cannot complete step the profile directly. At most two escalations.
+  - Per-task `**Role:**` markers and the `profile=` token keep overriding the record rule.
+- **Done-when caveat:** tasks started at `low` are `risk:low`, so the `low`-versus-`medium` comparison is made within a size band, adds a fix-rounds-per-task guard, and reads as cost per risk class rather than a pure effort effect.
+
 - **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
-- **Done when:** 20 tasks on Fast show a fix-round rate no higher than Standard's.
+  - Once Phase 15 has landed, a step up may be an effort before it is a model: the first attempt runs at the lowest effort the record's labels allow, and a failed verify raises the effort, then the profile. Only an implementer gets this, because a test or a review shows its failure.
+- **Waits for:** Phase 15 for the effort half.
+- **Done when:** 20 tasks on Fast show a fix-round rate no higher than Standard's, and 20 tasks started at `low` show total minutes per task, retries included, no higher than tasks started at `medium`.
 - **Expected effect:** Opus implementers, about $3 per run, fall to near zero; mechanical tasks cost at most $0.34.
 
 ## Phase 10 — Lenses chosen per run
+
+## Phase 10: Specified
+
+Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a per-run record of which lenses ran), #6001 (the selection function, its CLI and the `review-lens-selection` key), #6000 (a read-only `lens-reviewer` driver worker role and a launcher) and #6003 (`review-lens-dispatch: worker`), under parent #6005. #6001 is blocked by #5998; #6003 is blocked by #6000 and #6001; all four wait on #5825, and #6000 also on #5942.
 
 - **Builds:**
   - A selection function, in code, from the diff's facts and each lens's confirmed-finding rate in this repository over its last 20 runs. No model chooses.
@@ -235,7 +309,7 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 
 ## Phase 11 — Factory layer and run facts
 
-- **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
+- **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model and effort per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
 - **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.
 
 ## Tier 3 — Longer term
@@ -254,8 +328,21 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 
 ## Phase 14 — Review replay
 
-- **Builds:** `tools/review-replay.js` arms that answer two questions on archived runs: what task reviews catch that the whole-branch review would not, and how each lens performs on Haiku, Sonnet and Opus.
-- **Expected effect:** none by itself. It decides whether task reviews stay and which tier each review needs.
+## Phase 14: Specified
+
+Records #5990 (an effort key on a replay arm, and a refusal to score an agent that ran at another effort), #5991 (the lens reviewers, replayed across tiers and efforts) and #5992 (the task and whole-branch reviewers, and the task-versus-branch counterfactual), under parent #5989. #5991 is blocked by #5990 and #5992 by #5991.
+
+- **Decided while specifying:**
+  - A replay sends the archived reviewer's own prompt, rewritten to a clean two-commit repository, not a prompt rebuilt from today's templates, so an arm differs from the archive only in model and effort.
+  - Findings are matched by location (same path, lines within 5), not by a model judge; a finding with no location is reported as unlocated.
+  - The effort an arm asks for is checked against the effort the agent's transcript recorded, and a slot at another effort counts as not judged.
+  - The live replay run is not a record: it runs from an interactive session after #5992, as #5630 does for the tiebreak replay.
+- **Not covered:** choosing each review's tier and effort, which is that live run.
+- **Open:** #5991 and #5992 each carry a staged question, a control arm that shows how far a replay at the archived tier reproduces the archive, and their `ready` label is cleared until it is answered.
+
+- **Builds:** `tools/review-replay.js` arms that answer three questions on archived runs: what task reviews catch that the whole-branch review would not, how each lens performs on Haiku, Sonnet and Opus, and what each review finds at `low`, `medium` and `high` effort.
+- **Why reviews get no retry:** a review that misses a finding looks like a clean review, so nothing would trigger a second attempt. A review gets one fixed effort, chosen from the replay.
+- **Expected effect:** none by itself. It decides whether task reviews stay and which tier and effort each review needs.
 
 ## Calls made in this document that were not discussed
 
@@ -265,3 +352,5 @@ The deferral gate (`plugin/skills/_shared/deferral-gate.md`) already makes fix-n
 - The driver's reviewer defaults to Capable and its judgment workers to Standard.
 - A record admitted under Phase 7 never merges by itself.
 - The baseline report is a maintained tool, not the scratch scripts that produced these numbers.
+- Phase 15 ships with `inherit` as the default, and this repository opts in with Standard and Capable at `medium`. Setting the launch's effort from today's table would raise most agents from `medium` to `high`.
+- Retrying at a higher effort is for implementers only. Reviews get one fixed effort.

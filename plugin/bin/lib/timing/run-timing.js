@@ -104,6 +104,30 @@ function runWindow(runDir, events, runState) {
   };
 }
 
+const MAX_SCOPE_HOPS = 10;
+function realPathFrom(resolveFrom, p) {
+  const abs = path.resolve(resolveFrom, p);
+  return canonicalRealpath(abs) || abs;
+}
+
+// One subagents directory's items under scopeDispatchesTo (collectDispatches's comment below
+// states the rule): ownSlug true drops only the scoped agents; false keeps only their descendants.
+function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
+  const flagged = items.map((d) => ({ d, scoped: typeof d.transcriptPath === 'string' && scoped.has(realPathFrom(resolveFrom, d.transcriptPath)) }));
+  if (ownSlug) return flagged.filter((f) => !f.scoped).map((f) => f.d);
+  const byId = new Map(flagged.filter((f) => typeof f.d.agentId === 'string').map((f) => [f.d.agentId, f]));
+  return flagged.filter((f) => {
+    if (f.scoped) return false;
+    let cur = f;
+    for (let hop = 0; hop < MAX_SCOPE_HOPS; hop++) {
+      cur = typeof cur.d.parentAgentId === 'string' ? byId.get(cur.d.parentAgentId) : undefined;
+      if (!cur) return false;
+      if (cur.scoped) return true;
+    }
+    return false;
+  }).map((f) => f.d);
+}
+
 // paths: the resolved transcript paths; events: parsed events.jsonl rows. The
 // window is eventWindow's (no event with a ts -> the whole session), or the given
 // { window } (deriveTiming's run window when it clips). Subagents dirs are deduped by fs.realpathSync (path.resolve when
@@ -113,7 +137,15 @@ function runWindow(runDir, events, runState) {
 // `dispatches` value, before stripInternalFields.
 // { deadlineAt, signal } (both optional): past the deadline, or once the signal
 // aborts, reading stops and the result is null (not a dispatches value).
-async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null } = {}) {
+// scopeDispatchesTo (optional, #5647): an array of agent transcript paths (a dispatched run's
+// attributed Task calls; their rows are in totals.tokens, so they are never `dispatches` items).
+// The scope is chosen per subagents directory by how it was reached: a directory reached through
+// a path in `paths` that is not a scoped agent (the run's own-slug transcript) keeps its window
+// view minus the scoped agents; a directory reached only through scoped paths keeps only the items
+// whose parentAgentId chain (through that directory's items, at most MAX_SCOPE_HOPS hops) reaches
+// a scoped agent. Where one directory is both (a dispatcher session in its own worktree slug) the
+// own-slug rule wins. Absent or empty: nothing is filtered.
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo } = {}) {
   const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
@@ -122,6 +154,9 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     try { return fs.lstatSync(dir).isSymbolicLink() ? dir : fs.realpathSync(dir); } catch { return dir; }
   };
   const dirs = [...new Set(paths.map(canonical))];
+  const scoped = Array.isArray(scopeDispatchesTo) && scopeDispatchesTo.length ? new Set(scopeDispatchesTo.map((p) => realPathFrom(cwd, p))) : null;
+  // Own-slug directories: reached through a path that is not a scoped Task call.
+  const ownDirs = scoped ? new Set(paths.filter((p) => !scoped.has(realPathFrom(cwd, p))).map(canonical)) : null;
   const items = [];
   const reasons = [];
   let excludedOutsideWindow = 0;
@@ -132,7 +167,7 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     reasons.push(...r.value.dirNotes);
     if (r.value.notFound) { reasons.push(r.value.notFound); continue; }
     found += 1;
-    items.push(...r.value.items);
+    items.push(...(scoped ? scopeDirItems(r.value.items, scoped, cwd, ownDirs.has(dir)) : r.value.items));
     excludedOutsideWindow += r.value.excludedOutsideWindow;
   }
   if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
@@ -205,7 +240,9 @@ function derivePhaseTiming(runDir) {
 // bounding the run means no clipping. phase-timing.js never passes it.
 // worktree (default: the run-state's, see below) is the root the transcripts'
 // procedure reads key against; phase-timing.js's buildTiming passes its caller's.
-async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false, worktree: givenWorktree } = {}) {
+// scopeDispatchesTo (default: none; the at-close writer passes a dispatched run's
+// attributed Task-call paths, #5647): see collectDispatches.
+async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, deadlineAt = null, readUsageImpl, wantTokens, base: given, clipToRunWindow = false, worktree: givenWorktree, scopeDispatchesTo } = {}) {
   const base = given || derivePhaseTiming(runDir);
   if (!base.ok) return base;
   const { timing, out, events, runState } = base;
@@ -244,7 +281,7 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     rows = rows.concat(kept);
   }
   // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
-  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree } : { deadlineAt, worktree });
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree, scopeDispatchesTo } : { deadlineAt, worktree, scopeDispatchesTo });
   if (dispatches === null) return hit();
   const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
   const tokens = joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, transcriptPaths, at) });

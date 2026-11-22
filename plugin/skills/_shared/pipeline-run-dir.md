@@ -234,7 +234,8 @@ argument still holds there.
   resolved path inside any git checkout must be anchored under the main checkout resolved from
   cwd; a path outside any checkout is accepted as-is, no flag needed. Rejection exits 1, these
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
-  exit 2.
+  exit 2. `bin/implementer-tier.js` (#5996) delegates its `--run` to `resolvePolicy`'s same guard
+  and existence check but keeps the family's exit 2 on a refusal.
 
 - **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
   (`--run`, refs #1376), `bin/set-verify-expectations.js` (`--run`, refs #2764), and `bin/write-run-artifact.js` (`--run`, refs #3044) — the run-dir writers a worktree-isolated session invokes when tool-level
@@ -249,7 +250,7 @@ argument still holds there.
   directory that is anchored but elsewhere in the checkout (`plugin/`, `docs/`) is refused with
   the third message (`not-a-run-dir`) before any `config.yml` in it is read or anything is written.
   A further writer imports that `resolveTarget`
-  rather than re-deriving the predicate, as the third, fourth and fifth did.
+  rather than re-deriving the predicate, as the third, fourth and fifth did. `bin/deferral-route.js` (`--run`, #5933), which writes only its own `deferral-route-tally.log` and only with `run-filed-record-cap` set, imports the same `resolveTarget` but refuses with exit **1** — its run-dir and policy failure code, since it has no exit 3 and no caller branches on a distinct run-dir code.
 
 - **The composer CLI** — `bin/compose-context.js` (`--run`, #1988) — writes
   `{run}/context/{step}.md` yet takes the resolver family's anchored-or-outside rule

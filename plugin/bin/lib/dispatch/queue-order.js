@@ -30,8 +30,11 @@ const GROUPING_MODE = 'per-record';
 
 // #4025: with the express lane on, express-eligible records stay out of
 // fast-lane bundles, so those groups are stamped apart from GROUPING_MODE's.
-function groupingMode(expressEnabled) {
-  return expressEnabled ? 'per-record+express' : GROUPING_MODE;
+// #6011: with the driver half on, driver-routable records also stay out of
+// fast-lane bundles; each lane combination stamps its own value, and an
+// existing value never changes meaning.
+function groupingMode(expressEnabled, driverEnabled = false) {
+  return GROUPING_MODE + (expressEnabled ? '+express' : '') + (driverEnabled ? '+driver' : '');
 }
 
 function fileSpecs() {

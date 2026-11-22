@@ -24,6 +24,11 @@ test('realDeps wires the real git-CAS runner and the real claim-store ghApi', ()
   assert.equal(typeof realDeps.gh, 'function', 'the generic throwing gh runner is wired too');
 });
 
+test('#5902: realDeps wires a stationEvent emitter beside gitRunner', () => {
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  assert.equal(realDeps.gitRunner, claimsGitCas.defaultRunner, 'gitRunner is still carried');
+});
+
 test('the CLI re-exports the library `run`, so realDeps is what the entry point actually passes', () => {
   assert.equal(run, lib.run);
 });

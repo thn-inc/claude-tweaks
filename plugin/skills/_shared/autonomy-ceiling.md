@@ -305,7 +305,7 @@ resolves to the default rather than to the tier it resembles.
 
 **Carry route.** Every item the console would leave `pending`, `keep-staged` or `refused` resolves `carried` and becomes a `decision` fact in `{run-dir}/packet-facts/decisions.json` (`_shared/acceptance-packet.md`'s Decision facts). Can't-tell items still file.
 
-**Residue terminal states.** Each leftover ends in one of four. `resolved`. `filed`: a spec-shaped record with a valid `Defer-reason:`, authorized by `queueWriteAutoFile`. `digested`: below the floor in `_shared/materiality-floor.md`, so the ledger row is `accepted` and names the digest. `carried`: the row is `deferred` and names the fact id, written only after `console-resolve.js --converge` has written that fact. A failed carry exits 6 and is a failure card naming the item.
+**Residue terminal states.** Each leftover ends in one of four. `resolved`. `filed`: a spec-shaped record with a valid `Defer-reason:`, authorized by `queueWriteAutoFile`. `digested`: a digest verdict (any rule in `_shared/materiality-floor.md`'s digest-label table), so the ledger row is `accepted` and names the digest. `carried`: the row is `deferred` and names the fact id, written only after `console-resolve.js --converge` has written that fact. A failed carry exits 6 and is a failure card naming the item.
 
 **Memory writes.** They go through `console-resolve.js --memory-write` with a logged path, the prior sha256 and a reversible whole-file diff.
 

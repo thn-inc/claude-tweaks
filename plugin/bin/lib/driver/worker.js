@@ -7,7 +7,7 @@
 //
 // The envelope. Every launch resolves to one object with these fields, in this order
 // (ENVELOPE_FIELDS): status, reason, result, usage, turns, denials, spendOverrun,
-// costUsd, detail. Fields may be added, never renamed. `status` is `ok`, `fail` or
+// costUsd, detail, sessionId. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
 // structured output when status is `ok` and null otherwise. `ok` means only that a
@@ -40,7 +40,8 @@
 // the schema, or stdout that is not a result object after a zero exit: `schema`.
 // Anything else is `ok`. A "result object" is stdout that parses, after trimming, to
 // an object with `type: "result"`; whenever one exists, `usage`, `turns`, `denials`
-// and `costUsd` are read from it, and `spendOverrun` is true exactly when a spend
+// and `costUsd` are read from it, `sessionId` is its `session_id` when that is a
+// non-empty string (else null), and `spendOverrun` is true exactly when a spend
 // ceiling was given and the reported cost is above it. The free-text `result` string
 // is never parsed.
 //
@@ -82,6 +83,35 @@
 // - Smoke test. The opt-in live smoke test passed once on the same CLI, date and
 //   platform, launched from a process with no TTY. A run started by a person from a
 //   terminal passed too, on 2026-11-12 with the same CLI (2.1.322) on macOS (darwin).
+//   Both 2026-11-12 runs used the model alias `haiku`.
+// - Default models (#5917). Re-probed on 2026-11-19 with Claude Code CLI 2.1.325 on
+//   macOS (darwin), under a subscription login, launched from a process with no TTY:
+//   the opt-in live probe (`AC8.1`) launched every role in ROLES on each distinct
+//   default model the roles resolve to with no policy (`sonnet`, `opus`), each asked
+//   for its own schema's structured output. All 10 launches (5 roles × 2 models)
+//   returned `ok`, and each result's `modelUsage` named one model id: `claude-sonnet-5-5`
+//   for `sonnet`, `claude-opus-5-5` for `opus`. The `AC7` smoke test passed in the same
+//   run on the implementer's default (`sonnet`); `AC7` prints no `modelUsage`, so its model
+//   is the alias it requested, not one the CLI reported.
+// - Launch effort (#5942). Re-probed on 2026-11-21 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), under a subscription login, launched from a process with no TTY, every
+//   launch under `--safe-mode --restricted`:
+//   - sonnet with `--effort medium` recorded `medium`; with no flag recorded `medium`;
+//     with `--effort low` recorded `low`; with `--effort high` recorded `high`.
+//   - opus with no flag recorded `medium`; with `--effort high` recorded `high`.
+//   - haiku with `--effort high` was accepted and recorded `high` (the driver never
+//     passes one to a Fast resolution).
+//   - `--effort extreme` was not rejected: the CLI printed `Warning: Unknown --effort
+//     value 'extreme' — ignoring it and using the default effort. Valid values: low,
+//     medium, high, xhigh, max.` and the transcript recorded `medium`. That is why
+//     `composeArgs` refuses a level outside `EFFORT_SCALE` before any process starts.
+//   - An unknown flag (`--effort-bogus`) exited 1 with empty stdout: `launch-error` with
+//     the CLI's first stderr line, no retry.
+//   - So on this CLI a worker launched with no `--effort` (an event line's `effort: null`)
+//     runs at `medium` on sonnet and opus, and `--effort` takes effect under
+//     `--safe-mode --restricted`. `medium` against no flag does not discriminate; `low`
+//     and `high` do. Re-run: the opt-in `AC7.1 (#5942)` live probe in
+//     `tests/bin-lib/driver/worker.test.js`.
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
@@ -132,11 +162,11 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
-const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail'.split(' '));
+const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId'.split(' '));
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
 const ENV_ALLOW_WIN32 = Object.freeze([...ENV_ALLOW, 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 
@@ -259,6 +289,7 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     spendOverrun: obj !== null && typeof spendCeiling === 'number' && cost !== null && cost > spendCeiling,
     costUsd: cost,
     detail,
+    sessionId: obj && typeof obj.session_id === 'string' && obj.session_id !== '' ? obj.session_id : null,
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 
@@ -487,12 +518,13 @@ function realToolchainDeps(env, { userHome = passwdHome() } = {}) {
 async function launchWorker(opts, deps = defaultDeps()) {
   const {
     role, cwd, prompt, ceilings = {}, testCommand, claudeMdText, settingsDir,
-    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, bin = 'claude',
+    platform = process.platform, env = process.env, schema = RESULT_SCHEMA, model, effort, bin = 'claude',
   } = opts;
   const runner = deps && deps.runner;
   if (typeof runner !== 'function') throw new TypeError('deps.runner is required');
   const spendCeiling = ceilings.spendCeiling;
   assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
   const wallClockMs = ceilings.wallClockMs;
   if (!(typeof wallClockMs === 'number' && Number.isFinite(wallClockMs) && wallClockMs > 0 && wallClockMs <= MAX_TIMER_MS)) {
     throw new RangeError('ceilings.wallClockMs must be a finite number above zero and at most ' + MAX_TIMER_MS + ', got ' + String(wallClockMs));
@@ -543,7 +575,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       appendPromptFile = stem + '.append.md';
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform });
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
     const childEnv = buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;

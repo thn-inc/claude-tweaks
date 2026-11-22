@@ -149,6 +149,15 @@ environment, so it runs as a fresh top-level session rather than a child that co
 parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
 `--plugin-dir` route against the real `plugin/` directory.
 
+**One exception: a typed event that copies a payload field verbatim.** `session-end.js` writes the
+payload's `reason` into every `session-end` event, so the run directories already hold a real
+sample of that one field. Tally it from the main checkout before branching on it:
+`grep -rh '"type":"session-end"' .claude-tweaks/pipelines --include=events.jsonl | grep -oE '"reason":"[a-z_]+"' | sort | uniq -c`.
+#4960's `/clear` carve-out in `session-end.js` branches on `reason === 'clear'`; the tally confirms
+that value occurs, and also shows a `resume` value the carve-out does not name. The sample covers
+only sessions that owned a run and only the fields an event copies; for any other input field the
+throwaway hook above is still the route.
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,
@@ -228,10 +237,27 @@ fact. `readUsage` (`plugin/bin/lib/timing/transcript.js`, #1929) kept the first 
 same usage, and #3375 pointed it at subagent transcripts. Those
 (`{sessionId}/subagents/agent-{id}.jsonl`) open each turn with a streaming snapshot (`stop_reason`
 null, a small `output_tokens`) and close it with the settled count, so first-line dedupe
-undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. When code reads more than one
+undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. That rule has one implementation, `mergeUsage`
+in `plugin/bin/lib/timing/transcript.js` (#5967): `readUsage`, `context-gauge.js`, the cost report
+and review replay all fold through it, so a new reader calls it rather than re-deriving the max. When code reads more than one
 producer's transcripts, run step 2 against a real sample of each kind (the main transcript, a
 subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
 date beside the rule, the way `transcript.js`'s header does for the subagent layout.
+
+**Not every assistant line is a model call (#5914).** Claude Code records an API error, such as
+a usage or rate limit, as an `assistant` line with `message.model: "<synthetic>"`,
+`isApiErrorMessage: true` and every usage field at zero (observed on 2.1.302 with
+`error: "rate_limit"`). Zero usage leaves token sums unchanged, so a reader that only adds tokens
+never notices the line. A reader that compares each call with the previous one does: with
+`<synthetic>` lines kept in the previous-call chain as a model of their own, the pipeline-economy
+baseline's main-session model-switch cut came to 170 requests and $621.72, against 17 requests and
+$50.92 with them left out. `tools/pipeline-cost-report/spend.js` (`SYNTHETIC_MODEL`) keeps such a
+line in its request list at zero cost, never lets it act as the previous call for the model-switch
+or idle-gap check, and never lets it use up a pending compaction marker;
+`tests/pipeline-cost-report/spend.test.js` pins each case. `transcriptModelOf` in
+`plugin/bin/lib/timing/transcript.js` skips the same line when naming a transcript's model. Before
+chaining on "the previous call", or counting calls, grep a real store for `"model":"<synthetic>"`
+and decide which tallies such a line belongs in.
 
 ## One Claude Code version does not speak for another
 

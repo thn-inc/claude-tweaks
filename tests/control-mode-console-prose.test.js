@@ -50,6 +50,8 @@ const LEDGER_FORMAT = readText(path.join(__dirname, '..', 'plugin', 'skills', '_
 const NARROWING = '#### Ledger narrowing';
 const TABLE_INTRO = '\nAfter Phase 1 (and, when the capability';
 
+const RESOLUTION_CITE_LITERAL = "the Ledger Resolution `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
+
 function narrowingSlice(text) {
   const start = text.indexOf(NARROWING);
   assert.notStrictEqual(start, -1, `heading not found: ${NARROWING}`);
@@ -67,6 +69,12 @@ const LEDGER_CLAIMS = [
   ['- `carried`:', 'the narrowing section does not handle the carried state'],
   ['Generic gate failure', 'the narrowing section does not stop a failed convergence with the Generic gate failure card'],
   ['Exit 2, 3 or 6', 'the narrowing section does not route exits 2 and 3 to the failure card'],
+  ['prints `digest` (`false` on `file`, `refused` or any other outcome', 'the control-mode paragraph does not set belowFloor from the deferral-route.js verdict'],
+  ['no `deferReason`: no call, `false`', 'the control-mode paragraph does not skip the command for an item with no deferReason'],
+  ['it means the route printed `digest`, whichever `rule`', 'the control-mode paragraph does not say belowFloor means the route printed digest, whichever rule'],
+  [RESOLUTION_CITE_LITERAL, 'the digested state does not take its Resolution from the digest-label table'],
+  ["`{severity}` the row's `severity={severity}` token", "the control-mode paragraph does not read a row's severity token"],
+  ['else `high` for a `review`-phase row', 'the control-mode paragraph does not pass --severity high for a review row with no severity'],
 ];
 
 function convergeProblems(text) {
@@ -100,7 +108,9 @@ const STEP_10_CLAIMS = [
   ["id: 'insight-{row}'", "step 10 does not give an insight item the id insight-{row}"],
   ["status: 'open'", "step 10 does not give an insight item status 'open'"],
   ["Recommended-cell reason", "step 10 does not source an insight's deferReason from its Recommended cell"],
-  ['`belowFloor` judged per `_shared/materiality-floor.md`', 'step 10 does not judge an insight item belowFloor per the materiality floor'],
+  ["`belowFloor` from that paragraph's `deferral-route.js` call", 'step 10 does not set an insight item belowFloor from the deferral-route.js verdict'],
+  ['`false` on `refused` or any other outcome', 'step 10 does not set belowFloor false on a refused or unreadable verdict'],
+  ['no `deferReason`: no call, `false`', 'step 10 does not skip the command for an insight with no deferReason'],
   ['writes no ledger row', 'step 10 does not say an insight writes no ledger row'],
   ['as step 7 creates a `Q#`', 'step 10 does not create a filed insight the way step 7 creates a Q#'],
   ['`carried` → nothing more', 'step 10 does not settle a carried insight with nothing more'],
@@ -131,28 +141,51 @@ for (const [needle, message] of STEP_10_CLAIMS) {
 const { checkLedgerStatus } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'stage-item', 'ledger'));
 const { parseLedger } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack'));
 const DIGEST_ALTERNATIVES = '{digest comment URL | specs/digest.md}';
+// The Ledger Resolution column of `_shared/materiality-floor.md`'s digest-label table (a template per digest rule).
+const DIGEST_LABEL_TABLE_RESOLUTIONS = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'materiality-floor.md'))
+  .split('\n').filter((l) => /^\| `(floor|policy-reason|no-evidence|run-cap)` \|/.test(l))
+  .map((l) => ({ rule: l.split('|')[1].trim().replace(/`/g, ''), template: l.split('|')[3].trim().replace(/^`|`$/g, '') }));
 const BACKEND_LOCATIONS = ['https://github.com/o/r/issues/9#issuecomment-123', 'specs/digest.md'];
 
 function digestedRowProblems(text) {
   const bullet = narrowingSlice(text).split('\n').find((l) => l.startsWith('- `digested`:'));
   if (!bullet) return ['no digested bullet'];
-  const m = /write the row `(\w+)`(?: \(`([^`]+)`\)| with Resolution `([^`]+)`)/.exec(bullet);
+  const m = /write the row `(\w+)`(?: \(`([^`]+)`\)| with Resolution `([^`]+)`| with the Ledger Resolution `_shared\/materiality-floor\.md`'s digest-label table)/.exec(bullet);
   if (!m) return ['the digested bullet prescribes no row status and Resolution'];
   const status = m[1];
-  const template = m[3] || m[2];
+  // A literal Resolution in the bullet is checked as written; a cited one is every Ledger Resolution of the
+  // digest-label table, since the printed `rule` picks the row.
+  const templates = m[3] || m[2] ? [{ rule: null, template: m[3] || m[2] }] : DIGEST_LABEL_TABLE_RESOLUTIONS;
   const problems = [];
-  for (const location of BACKEND_LOCATIONS) {
-    const resolution = template.split(DIGEST_ALTERNATIVES).join(location);
-    const check = checkLedgerStatus(status, resolution, {});
-    if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}`);
-    const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
-    if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location} as blocking`);
+  for (const { rule, template } of templates) {
+    for (const location of BACKEND_LOCATIONS) {
+      const via = rule === null ? '' : ` (rule ${rule})`;
+      const resolution = template.split(DIGEST_ALTERNATIVES).join(location).split('{where}').join(location);
+      const check = checkLedgerStatus(status, resolution, {});
+      if (check.refusal !== null || check.incompleteDeferral) problems.push(`the ledger writer does not accept the digested row for ${location}${via}`);
+      const parsed = parseLedger(`| # | Phase | Item | Status | Resolution |\n|---|---|---|---|---|\n| 1 | build | a typo | ${status} | ${resolution} |\n`);
+      if (parsed.open + parsed.deferredUnstaged + parsed.missingDeferReason + parsed.unrecognized !== 0) problems.push(`parseLedger counts the digested row for ${location}${via} as blocking`);
+    }
   }
   return problems;
 }
 
 test('AC4.7: the digested ledger row is complete for the real writer and reader on both backends', () => {
+  assert.strictEqual(DIGEST_LABEL_TABLE_RESOLUTIONS.length, 4, 'the digest-label table rows were not read');
   assert.deepStrictEqual(digestedRowProblems(LEDGER_FORMAT), []);
+});
+
+test('AC4.7 go-red: the cited digested bullet writing `open` is counted as blocking for every digest rule on both backends', () => {
+  const bullet = narrowingSlice(LEDGER_FORMAT).split('\n').find((l) => l.startsWith('- `digested`:'));
+  const mutated = LEDGER_FORMAT.replace(bullet, bullet.replace('write the row `accepted`', 'write the row `open`'));
+  assert.notStrictEqual(mutated, LEDGER_FORMAT, 'the cited bullet carries no `accepted` row to mutate');
+  const problems = digestedRowProblems(mutated);
+  for (const { rule } of DIGEST_LABEL_TABLE_RESOLUTIONS) {
+    // An `open` row is a blocking ledger row wherever the digest entry lives, so both backends report it.
+    for (const location of BACKEND_LOCATIONS) {
+      assert.ok(problems.includes(`parseLedger counts the digested row for ${location} (rule ${rule}) as blocking`), `${rule} ${location}: ${problems.join('; ')}`);
+    }
+  }
 });
 
 test('AC4.7 go-red: the old `deferred` (`→ digest`) row is refused by the ledger writer', () => {

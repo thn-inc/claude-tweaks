@@ -763,16 +763,16 @@ function ownErrorText(err, fallback) {
   return OWN_ERROR_RES.some((re) => re.test(message)) ? message : fallback;
 }
 
-// Launches the reviewer (see the header). Returns { envelope } or { stop: detail }.
+// Launches the reviewer (see the header). Returns { envelope, model, minutes, dollars } or { stop: detail }.
 async function launchReviewer(ctx, deps, diff) {
   const ceilings = readCeilings(ctx.shared.policy);
   if (ceilings.bad) return { stop: `reviewer ceiling not a positive number: ${ceilings.bad}` };
   const { minutes, dollars } = ceilings;
   const settingsDir = path.join(ctx.runDir, 'reviewer');
   deps.mkdirSync(settingsDir, { recursive: true });
-  let envelope;
+  let launched;
   try {
-    envelope = await launchTracked(ctx.shared, deps, { minutes, dollars }, {
+    launched = await launchTracked(ctx.shared, deps, { minutes, dollars }, {
       role: 'reviewer',
       cwd: ctx.wt,
       prompt: buildReviewerPrompt(ctx, { diff, changedFiles: ctx.changedFiles }),
@@ -781,9 +781,10 @@ async function launchReviewer(ctx, deps, diff) {
     });
   } catch (err) {
     // The launcher's or the runner's own message can name a path: fixed text and at most the code.
-    return { stop: `reviewer launch failed${codeSuffix(err)}` };
+    // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
+    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model, effort: err.effort ?? null } : {}) };
   }
-  return { envelope, minutes, dollars };
+  return { envelope: launched.envelope, model: launched.model, effort: launched.effort ?? null, minutes, dollars };
 }
 
 // The reviewer launch and the review pass (see the header). `result` is a StepResult only for a
@@ -798,7 +799,11 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
   let denials = [];
   let costUsd = null;
   let turns = null;
-  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns });
+  // The reviewer's model, named once its launch returned (#5917); a line from before that keeps its keys.
+  // `effort` (#5942) rides with it: a level, or null when no flag was passed.
+  let model = null;
+  let effort = null;
+  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model, effort } : {}) });
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
@@ -831,6 +836,10 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
       return stop(`git diff failed${codeSuffix(err)}`);
     }
     const launch = await launchReviewer(ctx, deps, diff);
+    if (launch.model) {
+      model = launch.model;
+      effort = launch.effort ?? null;
+    }
     if (shared.interrupted) return interrupted();
     if (launch.stop) return stop(launch.stop);
     const { envelope, minutes, dollars } = launch;
@@ -1038,14 +1047,18 @@ const codeSuffix = (err) => (err && typeof err.code === 'string' && /^[A-Z0-9_]+
 async function fixRound(ctx, deps, wiring, pass) {
   const { commit, test, check, launchImplementer, testCommand, isRunArtifact, indexFlagCheck } = wiring;
   const { shared, wt, runDir } = ctx;
-  const { confirmed, extra } = pass;
+  const { confirmed } = pass;
+  // The fix worker's own session (a separate launch from the first worker's), once its launch has
+  // returned one: a new object over the pass's extra, never the pass's own, and only when known.
+  let fixSessionId = null;
+  const withFix = () => (fixSessionId ? { ...pass.extra, fixSessionId } : pass.extra);
   const named = (c) => `${normalizeEventText(c.path)}:${c.line} ${normalizeEventText(c.claim)}`;
   const end = (status, cause, { c, reason, stopClass } = {}) => ({
     status,
     stopClass: stopClass || STOP_CLASSES.PRE_PUSH,
     reason: reason || status,
     detail: `${cause}: ${c ? named(c) : confirmed.map(named).join('; ')}`,
-    extra,
+    extra: withFix(),
   });
   // A propagated step result keeps its status, reason and class.
   const propagate = (label, r) => end(r.status, `fix round ${label}: ${r.detail}`, { reason: r.reason, stopClass: r.stopClass });
@@ -1061,12 +1074,16 @@ async function fixRound(ctx, deps, wiring, pass) {
 
     const first = { worker: ctx.worker, changedFiles: ctx.changedFiles };
     const launched = await launchImplementer(ctx, deps, buildFixPrompt(confirmed));
+    // runImplementer's extra carries the session on every path an envelope came back, whatever its status.
+    const sid = launched?.extra?.sessionId;
+    if (typeof sid === 'string' && sid !== '') fixSessionId = sid;
     // runImplementer sets ctx.worker once an envelope came back, whatever its status.
     if (ctx.worker !== first.worker) ctx.worker = mergeWorker(first.worker, ctx.worker);
     if (shared.interrupted) return interrupted();
     if (!launched || launched.status !== 'ok') {
       const status = launched && launched.status === 'stop' ? 'stop' : 'fail';
-      return end(status, `fix round launch: ${launched ? launched.detail : 'returned nothing'}`);
+      // A model refusal names its code (#5917); codeSuffix reads only an uppercase code, never worker text.
+      return end(status, `fix round launch: ${launched ? `${launched.detail}${codeSuffix(launched)}` : 'returned nothing'}`);
     }
 
     const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
@@ -1143,7 +1160,7 @@ async function fixRound(ctx, deps, wiring, pass) {
     const checked = await check.run(ctx, deps);
     if (shared.interrupted) return interrupted();
     if (checked.status !== 'ok') return propagate('check', checked);
-    return { status: 'ok', detail: `${pass.detail}; fixed in one round`, extra };
+    return { status: 'ok', detail: `${pass.detail}; fixed in one round`, extra: withFix() };
   } catch (err) {
     return end('fail', `the fix round failed unexpectedly${codeSuffix(err)}`);
   }

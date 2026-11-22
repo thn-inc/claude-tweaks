@@ -12,7 +12,7 @@ The route decision has exactly these states:
 | `split` or `on`, record is a singleton group | `drive.js --check` runs, whatever `express-lane` resolves (the driver lane does not need `express-lane` on) |
 | `--check` exits non-zero, prints no line, prints a line that is not one JSON object, or the object's `admitted` field is missing or not `true` | today's path (the express gate when `express-lane` resolves `true`, else the normal path); one `SKIP` line goes to `decisions.md` naming the condition and, when printed, the reasons (Logging a decline) |
 | `--check` admits | `drive.js {n} --run "{minted-run-dir}" --no-settle --in-flight-prs "{drain-prs}"` runs as one background Bash call (The call); no express gate call is made for this record |
-| a bundle group | today's path; the route is never consulted |
+| a bundle group | today's path; the route is never consulted. The queue pull keeps a record the driver would take out of bundles (`bin/lib/express/queue.js`'s `keepSingleton`), so a bundle has no member the driver would take |
 
 A state not listed here is refused with one line naming the state, and the record takes today's path.
 

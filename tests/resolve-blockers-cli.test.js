@@ -148,3 +148,106 @@ test('a thrown GraphQL failure (missing data.repository) surfaces as exit 3, not
   assert.match(deps.calls.stderr.join(''), /missing repository/);
   assert.equal(deps.calls.stdout.length, 0);
 });
+
+// --- blocker snapshot (#5902) ---------------------------------------------
+
+const { makeBlockerSnapshotSink } = require('../plugin/bin/lib/station-events/blockers');
+const { buildLine } = require('../plugin/bin/lib/station-events/emit');
+
+// #12 has a same-repository blocker plus one in another repository; #13 has none.
+const twelveThirteen = () => JSON.stringify({
+  data: {
+    repository: {
+      i12: { number: 12, repository: { nameWithOwner: 'acme/widgets' }, blockedBy: { nodes: [
+        { number: 5, state: 'OPEN', repository: { nameWithOwner: 'other/repo' } },
+        { number: 6, state: 'CLOSED', repository: { nameWithOwner: 'acme/widgets' } },
+      ] } },
+      i13: { number: 13, repository: { nameWithOwner: 'acme/widgets' }, blockedBy: { nodes: [] } },
+    },
+  },
+});
+
+function snapshotRecorder() {
+  const seen = [];
+  return { seen, onSnapshot: (n, entry, meta) => seen.push({ n, entry, meta }) };
+}
+
+test('#5902: onSnapshot sees 12 then 13, and stdout and exit code match the call without it', () => {
+  const plain = fakeDeps({ runner: twelveThirteen });
+  const plainCode = run(['12,13'], plain);
+  const { seen, onSnapshot } = snapshotRecorder();
+  const withSink = fakeDeps({ runner: twelveThirteen, onSnapshot });
+  const code = run(['12,13'], withSink);
+  assert.deepEqual(seen.map((s) => s.n), [12, 13]);
+  assert.equal(seen[0].meta.owner, 'acme');
+  assert.equal(seen[0].meta.repo, 'widgets');
+  assert.equal(code, plainCode);
+  assert.equal(code, 0);
+  assert.deepEqual(withSink.calls.stdout, plain.calls.stdout);
+  assert.deepEqual(withSink.calls.stderr, plain.calls.stderr);
+});
+
+test('#5902: a blocker in another repository reaches the snapshot entry\'s crossRepoBlockers', () => {
+  const { seen, onSnapshot } = snapshotRecorder();
+  run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot }));
+  assert.deepEqual(seen[0].entry.crossRepoBlockers, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]);
+  assert.equal('crossRepoBlockers' in seen[1].entry, false);
+});
+
+test('#5902: a throwing onSnapshot leaves stdout and exit code unchanged', () => {
+  const plain = fakeDeps({ runner: twelveThirteen });
+  const plainCode = run(['12,13'], plain);
+  let thrown = 0;
+  const throwing = fakeDeps({ runner: twelveThirteen, onSnapshot: () => { thrown += 1; throw new Error('sink boom'); } });
+  const code = run(['12,13'], throwing);
+  assert.equal(code, plainCode);
+  assert.deepEqual(throwing.calls.stdout, plain.calls.stdout);
+  assert.deepEqual(throwing.calls.stderr, plain.calls.stderr);
+  assert.equal(thrown, 2, 'the sink was reached for both numbers');
+});
+
+test('#5902: a GraphQL failure (exit 3) records no snapshot, even for a number that did come back', () => {
+  const { seen, onSnapshot } = snapshotRecorder();
+  const partial = () => JSON.stringify({
+    data: { repository: { i12: { number: 12, blockedBy: { nodes: [] } } } },
+  });
+  const deps = fakeDeps({ runner: partial, onSnapshot });
+  assert.equal(run(['12,13'], deps), 3);
+  assert.deepEqual(seen, []);
+});
+
+test('#5902: makeBlockerSnapshotSink wired as onSnapshot yields two valid blockers events, 12 and 13', () => {
+  const events = [];
+  const onSnapshot = makeBlockerSnapshotSink({ stationEvent: (e) => events.push(e), sessionId: 's-1', runId: null });
+  assert.equal(run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot })), 0);
+  assert.deepEqual(events.map((e) => [e.kind, e.recordNumber]), [['blockers', 12], ['blockers', 13]]);
+  for (const e of events) {
+    const line = buildLine(e);
+    assert.notEqual(line, null);
+    assert.equal(line.kind, 'blockers');
+    assert.equal(line.repoName, 'acme/widgets');
+  }
+});
+
+test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
+  const { realDeps } = require('../plugin/bin/resolve-blockers');
+  assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  assert.equal(typeof realDeps.runner, 'function', 'the number-list scaffold deps are still carried');
+});
+
+test('#5902: run builds the blocker sink from deps.stationEvent when no onSnapshot is passed', () => {
+  const events = [];
+  const deps = fakeDeps({ runner: twelveThirteen, stationEvent: (e) => events.push(e) });
+  assert.equal(run(['12,13'], deps), 0);
+  assert.deepEqual(events.map((e) => [e.kind, e.recordNumber, e.repoName]), [
+    ['blockers', 12, 'acme/widgets'], ['blockers', 13, 'acme/widgets'],
+  ]);
+});
+
+test('#5902: an explicit onSnapshot wins over deps.stationEvent', () => {
+  const events = [];
+  const { seen, onSnapshot } = snapshotRecorder();
+  assert.equal(run(['12,13'], fakeDeps({ runner: twelveThirteen, onSnapshot, stationEvent: (e) => events.push(e) })), 0);
+  assert.deepEqual(seen.map((s) => s.n), [12, 13]);
+  assert.deepEqual(events, []);
+});

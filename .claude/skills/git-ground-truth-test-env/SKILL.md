@@ -16,7 +16,7 @@ The first and last hit #5266's status line tests. Under the runner, 10 of 210 te
 ## Rules
 
 1. **A reader call in a test passes an explicit env.** Build it from `process.env` minus the variables the reader keys on. `READER_ENV` in `tests/statusline.test.js` drops every `GIT_CONFIG*` name; a test of the deferral then passes exactly the variable it is about (`assertFallbackOrigin(dir, { GIT_CONFIG_GLOBAL: '/dev/null' })`).
-2. **A git child that supplies ground truth about refusal or trust runs hermetic.** Set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to the null device, as `DIFFERENT_OWNER_ENV` in `tests/statusline.test.js` does, so a host `safe.directory` entry cannot change the answer.
+2. **A git child that supplies ground truth about refusal or trust runs hermetic.** Set `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL` to the literal string `'/dev/null'` — never `os.devNull`, which is `\\.\nul` on Windows and fails there (`tests/git-config-null-device-conformance.test.js`, #5666) — as `DIFFERENT_OWNER_ENV` in `tests/statusline.test.js` does, so a host `safe.directory` entry cannot change the answer. When a hermetic child also needs its own config pairs (for example `core.excludesFile=/dev/null`, since `GIT_CONFIG_GLOBAL` does not stop git reading `$XDG_CONFIG_HOME/git/ignore`), add them with `appendGitConfigEnv` from `tools/run-tests.js`; a hand-written `GIT_CONFIG_COUNT` overwrites the runner's own pairs (#5768).
 3. **Prove both under the runner.** Run `node tools/run-tests.js --files-from <list>`, never only a bare `node --test`: the runner's env is part of the test's input. Reproduce the CI case locally with a `GIT_CONFIG_SYSTEM` file that trusts every directory.
 4. **Prove a fallback test with a mutation.** Remove the check its trigger depends on and see the test go red under the runner. A fallback test that stays green without its check was passing on the env.
 
@@ -40,6 +40,8 @@ A reader that answers a git question from files, or a cache that reuses git's an
 Any file whose content you read must be a regular file, checked on the open descriptor: a named pipe at `commondir` blocks the process for ever.
 
 A second implementation on the same branch is the checklist. Diff the new list against it. #5294's `repoInfo` signature (`plugin/bin/lib/hooks/repo-info-cache.js`) was written from its spec's inputs. It reached the list above only through four review fix waves (`733c576fa`, `a3dcd82bd`, `23a20aab3`, `222881f65`), each with its own verify and Windows run. Meanwhile #5266's `commonDirFromFs` in `plugin/bin/claude-tweaks-statusline.js` already modelled the gitfile, `commondir`, the layout and ownership. The pipe hang, the ignored enclosing index, and stale answers after `HEAD` loss were all gaps in the list, not code bugs. The worked list is `docs/hooks.md`'s "repoInfo cache (#5294)" section, including its accepted divergences.
+
+A memo that invalidates by classifying each git call (cached read, pass-through, or state change) rather than by a filesystem signature is a runner decorator: see `gh-api-module-pattern`'s `caching-and-locks.md` (`withReadCache`, #5790). Its key and its discards still start from what git reads: every per-call input that changes the answer (encoding, cwd, stdin, env) and every write to the file git reports on.
 
 ## Anti-patterns
 

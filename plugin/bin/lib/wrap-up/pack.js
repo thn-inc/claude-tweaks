@@ -110,7 +110,7 @@ function defaultResolvePolicy(keys, cwd, env) {
   const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, ...(env ? { env } : {}) });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   try {
-    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd });
+    const { result } = resolvePolicyConfig({ git, readFile, keys, cwd, ...(env ? { env } : {}) });
     for (const key of keys) {
       const entry = result[key];
       out[key] = !entry || entry.error !== undefined || entry.value === null || entry.value === undefined ? '' : String(entry.value);
@@ -122,9 +122,11 @@ function defaultResolvePolicy(keys, cwd, env) {
 }
 
 // `{ env }` is the caller's injected environment (#5379): it reaches `git`, `ghSync` and `resolvePolicy`'s
-// own git, each of which merges it into the options its caller passes. Absent, behavior is unchanged.
+// own git, each of which merges it into the options its caller passes, and the factory-layer read of both
+// policy reads (`resolvePolicy` and `computeBlastRadius`, #6006). Absent, behavior is unchanged.
 // `{ stderr }` is the sink for `ghSync`'s repo-resolution note; absent, the note goes to the real stderr.
 function defaultDeps(cwd, { env, stderr } = {}) {
+  const { computeBlastRadius } = require('../blast-radius-cli');
   return {
     now: () => Date.now(),
     git: env ? (args, opts) => defaultGit(args, { ...opts, env }) : defaultGit,
@@ -133,7 +135,7 @@ function defaultDeps(cwd, { env, stderr } = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     resolvePolicy: (keys, policyCwd) => defaultResolvePolicy(keys, policyCwd || cwd, env),
-    computeBlastRadius: require('../blast-radius-cli').computeBlastRadius,
+    computeBlastRadius: env ? (opts, d) => computeBlastRadius(opts, { ...d, env }) : computeBlastRadius,
     readClaimBlob: require('../issues/claim-store').readClaimBlob,
     classifyClaimBlob: require('../issues/claims').classifyClaimBlob,
     gitRunner: require('../issues/claims-git-cas').defaultRunner,
