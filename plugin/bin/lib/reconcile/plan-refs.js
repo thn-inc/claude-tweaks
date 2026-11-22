@@ -24,6 +24,7 @@ const { PLAN_REF_PREFIX, DEFAULT_REMOTE, parsePlanRefName } = require('../plan-s
 
 const PLAN_REFS_BATCH_CHUNK = 50; // aliases per query — one rate-limit point
 
+const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/; // a non-hex sha is never leased on or pushed
 const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
 const toRecord = (n) => (typeof n === 'number' && Number.isSafeInteger(n) && POSITIVE_INTEGER_RE.test(String(n)) ? n : null);
 
@@ -38,7 +39,7 @@ function listPlanRefs(lsRemoteStdout) {
     const sha = line.slice(0, tab).trim();
     const ref = line.slice(tab + 1).trim();
     const record = parsePlanRefName(ref);
-    if (record === null || !sha || byRecord.has(record)) continue;
+    if (record === null || !SHA_RE.test(sha) || byRecord.has(record)) continue;
     byRecord.set(record, { ref, record, sha });
   }
   return [...byRecord.values()].sort((a, b) => a.record - b.record);
@@ -105,9 +106,12 @@ function defaultGh(root) {
   }));
 }
 
+// The rejection reason from git push stderr: its first `!`/`error:`/`fatal:` line (the leading
+// `To <remote-url>` line is not the reason), else the first non-empty line.
 function firstLine(err) {
   const text = (err && err.stderr != null ? String(err.stderr) : '') || (err && err.message) || 'push failed';
-  return text.split('\n').map((l) => l.trim()).find(Boolean) || 'push failed';
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /^(?:!|error:|fatal:)/.test(l)) || lines[0] || 'push failed';
 }
 
 function planRefs({ cwd, dryRun, git, gh, readBackend } = {}) {

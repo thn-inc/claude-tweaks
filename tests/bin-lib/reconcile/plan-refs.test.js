@@ -6,15 +6,16 @@ const {
 } = require('../../../plugin/bin/lib/reconcile/plan-refs');
 
 const P = 'refs/claude-tweaks/plans/';
+const sha = (n) => String(n).padStart(40, '0');
 
 test('listPlanRefs: keeps exact-integer refs only', () => {
   const out = [
-    `aaa\t${P}12`, `bbb\t${P}0`, `ccc\t${P}007`, `ddd\t${P}12abc`, `eee\t${P}5/x`,
-    `fff\t${P}3^{}`, 'ggg\trefs/heads/main', `hhh\t${P}4\r`, '', '',
+    `${'a'.repeat(40)}\t${P}12`, `${'b'.repeat(40)}\t${P}0`, `${'c'.repeat(40)}\t${P}007`, `${'d'.repeat(40)}\t${P}12abc`, `${'e'.repeat(40)}\t${P}5/x`,
+    `${'f'.repeat(40)}\t${P}3^{}`, `${'1'.repeat(40)}\trefs/heads/main`, `${'2'.repeat(64)}\t${P}4\r`, `nothex\t${P}9`, `abc\t${P}8`, '', '',
   ].join('\n');
   assert.deepEqual(listPlanRefs(out), [
-    { ref: `${P}4`, record: 4, sha: 'hhh' },
-    { ref: `${P}12`, record: 12, sha: 'aaa' },
+    { ref: `${P}4`, record: 4, sha: '2'.repeat(64) },
+    { ref: `${P}12`, record: 12, sha: 'a'.repeat(40) },
   ]);
 });
 
@@ -57,7 +58,7 @@ function makeFakes({ refs, states = {}, ghThrowAt = {}, pushThrow = {} }) {
   const calls = { git: [], gh: [], pushes: [] };
   const git = (args) => {
     calls.git.push(args);
-    if (args[0] === 'ls-remote') return refs.map((n) => `sha${n}\t${P}${n}`).join('\n');
+    if (args[0] === 'ls-remote') return refs.map((n) => `${sha(n)}\t${P}${n}`).join('\n');
     if (args[0] === 'remote') return URL;
     if (args[0] === 'push') {
       calls.pushes.push(args);
@@ -90,15 +91,17 @@ test('planRefs: closed deleted, open kept, unreadable kept', () => {
   assert.deepEqual(r.entries.map((e) => [e.record, e.action, e.reason]), [
     [1, 'delete', 'record-closed'], [2, 'skip', 'record-open'], [3, 'skip', 'state-unreadable'],
   ]);
-  assert.deepEqual(f.calls.pushes, [['push', `--force-with-lease=${P}1:sha1`, 'origin', `:${P}1`]]);
+  assert.deepEqual(f.calls.pushes, [['push', `--force-with-lease=${P}1:${sha(1)}`, 'origin', `:${P}1`]]);
 });
 
 test('planRefs: a rejected lease push reports delete-failed and keeps going', () => {
-  const f = makeFakes({ refs: [1, 4], states: { 1: 'CLOSED', 4: 'CLOSED' }, pushThrow: { 1: '! [rejected] (stale info)\nmore' } });
+  const f = makeFakes({ refs: [1, 4], states: { 1: 'CLOSED', 4: 'CLOSED' }, pushThrow: { 1: `To /x/remote.git\n ! [rejected]        (delete) -> ${P}1 (stale info)\nerror: failed to push some refs to '/x/remote.git'\n` } });
   const r = planRefs({ cwd: '/x', git: f.git, gh: f.gh, readBackend: noLocal });
   assert.equal(r.entries[0].action, 'skip');
   assert.equal(r.entries[0].reason, 'delete-failed');
   assert.match(r.entries[0].detail, /stale info/);
+  assert.doesNotMatch(r.entries[0].detail, /^To /);
+  assert.deepEqual(f.calls.pushes[1], ['push', `--force-with-lease=${P}4:${sha(4)}`, 'origin', `:${P}4`]);
   assert.equal(r.entries[1].action, 'delete');
   assert.equal(r.entries[1].reason, 'record-closed');
 });
@@ -158,13 +161,15 @@ test('planRefs: no plan refs makes no gh call', () => {
 test('planRefs: an origin that does not parse is a reported failure', () => {
   const pushes = [];
   const git = (args) => {
-    if (args[0] === 'ls-remote') return `sha1\t${P}1`;
+    if (args[0] === 'ls-remote') return `${sha(1)}\t${P}1`;
     if (args[0] === 'remote') return 'not a url';
     pushes.push(args);
     return '';
   };
-  const r = planRefs({ cwd: '/x', readBackend: noLocal, git, gh: () => '' });
+  let ghCalls = 0;
+  const r = planRefs({ cwd: '/x', readBackend: noLocal, git, gh: () => { ghCalls++; return ''; } });
   assert.deepEqual(r, { entries: [], failure: 'origin-unresolvable' });
+  assert.equal(ghCalls, 0);
   assert.equal(pushes.length, 0);
 });
 
