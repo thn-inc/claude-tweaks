@@ -146,9 +146,9 @@ test('computeLevers runs only the auto FYI path: confirm, hybrid and interactive
   }
 });
 
-test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy and the run pin', () => {
+test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy, the run pin and auto-mode', () => {
   const policyLevers = LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization');
-  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model']);
+  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model', 'auto-mode']);
 });
 
 test('computeLevers refuses an unresolved policy lever rather than guessing', () => {
@@ -340,6 +340,30 @@ test('writeManifesto: a degraded-sourced merge-verification lever writes wait an
   const clean = fixture();
   write(clean, { res: resolved({ 'merge-verification': { value: 'off', source: 'default' } }) });
   assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
+});
+
+test('manifesto-write: a factory lever renders Source factory', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fromFactory = resolvePolicyKeys(['tidy-aggressiveness', 'review-auto-apply-ceiling', 'autonomy'], {
+    factoryRaw: 'tidy-aggressiveness: conservative\nreview-auto-apply-ceiling: low\nautonomy: unattended\n',
+  });
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved(fromFactory) });
+  assert.deepStrictEqual(lever(levers, 'tidy-aggressiveness'), { key: 'tidy-aggressiveness', value: 'conservative', source: 'factory' });
+  // A factory ceiling is set, not the default, so the unattended-default lift to medium does not apply.
+  assert.deepStrictEqual(lever(levers, 'review-auto-apply-ceiling'), { key: 'review-auto-apply-ceiling', value: 'low', source: 'factory' });
+  assert.match(renderFyi(levers), /\| Tidy aggressiveness \| conservative \| factory \|/i);
+});
+
+test('manifesto-write: a factory-only auto-mode renders the Mode row with Source factory (#6006)', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const modeRow = (raws, modeSource = 'policy') => {
+    const levers = computeLevers({ mode: 'auto', modeSource, records: ONE_STANDARD, resolved: resolved(resolvePolicyKeys(['auto-mode'], raws)) });
+    return renderFyi(levers).split('\n').find((line) => line.startsWith('| Mode |'));
+  };
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }), '| Mode | auto | factory |');
+  assert.strictEqual(modeRow({ policyRaw: 'auto-mode: default-on\n', factoryRaw: 'auto-mode: default-off\n' }), '| Mode | auto | policy |');
+  // Only rung 3 reads the layer: an arg-sourced mode stays arg whatever auto-mode resolved.
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }, 'arg'), '| Mode | auto | arg |');
 });
 
 test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {

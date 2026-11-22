@@ -60,4 +60,18 @@ function removeScratchDir(dir) {
   made.delete(dir);
 }
 
-module.exports = { scratchDir, removeScratchDir, isolateTmpdir };
+// #6006: the factory policy layer reads ~/.claude-tweaks/factory-policy.yml. tools/run-tests.js points
+// CT_FACTORY_POLICY_FILE at a file inside its run root that never exists; a bare `node --test` has no runner, so a
+// suite that loads this helper gets such a path here (children inherit it), the same fallback git-template.js
+// gives CT_HOOKS_REPO_INFO_STORE. Nothing is created: the path only has to be absent. A value already set wins.
+// tmp-dir.js is the helper chosen because most suites that resolve policy load it (98 of 120 policy-touching
+// suites reach it, against 24 for git-template.js); the rest are the unit suites that inject their own env.
+function applyFactoryFileFallback(env = process.env) {
+  if (!env.CT_FACTORY_POLICY_FILE) {
+    env.CT_FACTORY_POLICY_FILE = path.join(os.tmpdir(), `ct-no-factory-policy-${process.pid}`, 'factory-policy.yml');
+  }
+  return env;
+}
+applyFactoryFileFallback();
+
+module.exports = { scratchDir, removeScratchDir, isolateTmpdir, applyFactoryFileFallback };

@@ -329,7 +329,7 @@ function injectedGhDeps({ env, stderr, homeDir } = {}) {
   return deps;
 }
 
-// The injected-environment keys of a `deps` object (#5374): `env`, `homeDir` and `stderr`, each
+// The injected-environment keys of a `deps` object (#5374): `env`, `homeDir`, `stderr` and `factoryReadFile`, each
 // only when truthy, so a key absent from deps is absent from the result. The one list a caller
 // handing them on to another lookup reads, so a future injected key is added here.
 function pickInjected(deps = {}) {
@@ -337,6 +337,7 @@ function pickInjected(deps = {}) {
     ...(deps.env ? { env: deps.env } : {}),
     ...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
     ...(deps.stderr ? { stderr: deps.stderr } : {}),
+    ...(deps.factoryReadFile ? { factoryReadFile: deps.factoryReadFile } : {}),
   };
 }
 

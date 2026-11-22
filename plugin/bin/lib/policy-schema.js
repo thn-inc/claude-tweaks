@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
-const { stripComment } = require('./model-profiles/policy-fragment');
+const { stripComment, mergeBlockRows } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 const { locatePolicyFile } = require('./policy-file');
 const { DEFER_REASONS } = require('./issues/record-payload');
@@ -609,14 +609,23 @@ function hasOwn(obj, key) {
 // in raw file contents as strings; no fs, no process state. Returns a plain
 // object keyed by each requested key name (never an array — IL-121), each
 // entry one of:
-//   { value, source }                      source: "run-config" | "policy" | "default"
+//   { value, source }                      source: "run-config" | "policy" | "factory" | "default"
 //   { value, source, "renamed-from": k }   value arrived via a RENAMED_KEYS migration
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
 //                                          the winning source (never cascades;
 //                                          risk-path-globs: null, not its default)
+//   { value, source: "factory", repoInvalid: true }   a block key whose policy.yml
+//                                          block is malformed, resolved from the
+//                                          factory's rows (#6006)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
+// onInvalid(key, raw, sourceName) receives each rejected raw value; sourceName is
+// "run-config", "policy" or "factory" (the factory for a refused key, too).
 // Precedence per key: run-config (only when runConfigRaw is a string, and never
-// for a policyOnly row) -> policy -> schema default. Alias normalization
+// for a policyOnly row) -> policy -> factory (factoryRaw, the merged user-wide
+// factory policy text — policy-factory.js reads it, this function never does;
+// an explicit value like policy, so integration-model's source !== "default"
+// guard counts it) -> schema default. A key in FACTORY_REFUSED_KEYS is skipped
+// in the factory source and reported through onInvalid. Alias normalization
 // happens per source, BEFORE precedence: old key alone -> migrate() contributes
 // under the new name with a renamed-from tag (a null migration contributes
 // nothing, but still tags renamed-from when the final resolution falls to the
@@ -709,10 +718,42 @@ function parseDriverModels(policyRaw) {
   return ok ? { present: true, ok: true, value: rows } : { present: true, ok: false, raw: rawLines.join('\n') };
 }
 
-function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid } = {}) {
+// A block key across the two block-bearing sources (#6006): each side is a parser reply ({ present: false } |
+// { present, ok: true, value } | { present, ok: false, raw }). The row merge and source rule are mergeBlockRows'. A
+// malformed side is reported through onInvalid and never hides a valid one; only when no side resolves does the key
+// come back invalid. Returns { rows, source, repoInvalid } | { invalid } | null (unset); repoInvalid is true when a
+// malformed repo block yielded to the factory's rows.
+function mergeBlockSides(key, repo, factory, onInvalid) {
+  const repoOk = repo.present && repo.ok;
+  const factoryOk = factory.present && factory.ok;
+  if (repo.present && !repo.ok && onInvalid) onInvalid(key, repo.raw, 'policy');
+  if (factory.present && !factory.ok && onInvalid) onInvalid(key, factory.raw, 'factory');
+  if (!repoOk && !factoryOk) return repo.present || factory.present ? { invalid: true } : null;
+  const merged = mergeBlockRows({ ok: repoOk, value: repo.value }, { ok: factoryOk, value: factory.value });
+  return { ...merged, repoInvalid: repo.present && !repo.ok };
+}
+
+// A merged block's entry. repoInvalid is additive and appears only beside factory rows, so an entry with no
+// factory side keeps exactly { value, source }.
+function blockEntry(value, merged) {
+  return { value, source: merged.source, ...(merged.repoInvalid ? { repoInvalid: true } : {}) };
+}
+
+// The text whose risk-categories widens risk-path-globs' allowed slugs: any non-empty risk-categories line in policy.yml decides
+// alone (an invalid one leaves the built-ins, as it always did), and the factory's applies only when policy.yml has
+// none. A typo in policy.yml never activates a different value configured elsewhere (no cascade).
+function riskSlugsFor(policyRaw, factoryRaw) {
+  const policyHasLine = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'] !== undefined;
+  return riskAllowedSlugs(policyHasLine ? policyRaw : factoryRaw);
+}
+
+function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw, onInvalid } = {}) {
+  // Lazy: policy-factory.js requires this module at top level (require cycle).
+  const { FACTORY_REFUSED_KEYS } = require('./policy-factory');
   const sources = [
     { name: 'run-config', raw: typeof runConfigRaw === 'string' ? runConfigRaw : null },
     { name: 'policy', raw: typeof policyRaw === 'string' ? policyRaw : null },
+    { name: 'factory', raw: typeof factoryRaw === 'string' ? factoryRaw : null },
   ].map(({ name, raw }) => {
     const entries = parseFlatLines(raw);
     const values = { ...entries }; // canonical-name -> raw string value
@@ -747,34 +788,29 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
       continue;
     }
     // risk-path-globs is the other block-style key, resolved here from the
-    // policy source only (run configs hold flat lever lines, never blocks) by
-    // its own parser. A rejected block resolves to null, flagged invalid, never
-    // to a partial map or the {} that means unset — the absent shape model-profiles
-    // uses too, unlike the flat keys' schema default.
+    // policy and factory sources (run configs hold flat lever lines, never blocks)
+    // by its own parser. A rejected block never hides the other source's valid
+    // rows; only when neither source resolves does the key come back null, flagged
+    // invalid — never a partial map or the {} that means unset (the absent shape
+    // model-profiles uses too, unlike the flat keys' schema default).
     if (requested === 'risk-path-globs') {
-      const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
-      if (!parsed.present) {
-        result[requested] = { value: {}, source: 'default' };
-      } else if (parsed.ok) {
-        result[requested] = { value: parsed.value, source: 'policy' };
-      } else {
-        result[requested] = { value: null, source: 'default', invalid: true };
-        if (onInvalid) onInvalid(requested, parsed.raw);
-      }
+      // #6006: rows merge per category, repo over factory (mergeBlockSides).
+      const slugs = riskSlugsFor(policyRaw, factoryRaw);
+      const merged = mergeBlockSides(requested, parseRiskPathGlobs(policyRaw, slugs), parseRiskPathGlobs(factoryRaw, slugs), onInvalid);
+      if (merged === null) result[requested] = { value: {}, source: 'default' };
+      else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
+      else result[requested] = blockEntry(merged.rows, merged);
       continue;
     }
-    // express-driver-models (#5917): a policyOnly block, read from policy.yml alone. Unset and rejected differ from
-    // risk-path-globs: unset resolves the four role defaults, a rejected block resolves null with invalid: true.
+    // express-driver-models (#5917): a policyOnly block, read from policy.yml and the factory text, never a run config. Unset and rejected differ from
+    // risk-path-globs: unset resolves the four role defaults, and null with invalid: true comes back only when neither
+    // source's block resolves (a rejected block on one side leaves the other side's rows).
     if (requested === 'express-driver-models') {
-      const parsed = parseDriverModels(policyRaw);
-      if (!parsed.present) {
-        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
-      } else if (parsed.ok) {
-        result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS, ...parsed.value }, source: 'policy' };
-      } else {
-        result[requested] = { value: null, source: 'default', invalid: true };
-        if (onInvalid) onInvalid(requested, parsed.raw);
-      }
+      // #6006: rows merge per role over the defaults, repo over factory (mergeBlockSides).
+      const merged = mergeBlockSides(requested, parseDriverModels(policyRaw), parseDriverModels(factoryRaw), onInvalid);
+      if (merged === null) result[requested] = { value: { ...POLICY_DRIVER_DEFAULTS }, source: 'default' };
+      else if (merged.invalid) result[requested] = { value: null, source: 'default', invalid: true };
+      else result[requested] = blockEntry({ ...POLICY_DRIVER_DEFAULTS, ...merged.rows }, merged);
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A
@@ -794,8 +830,14 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     // No schema default is itself null, so `?? null` only fires on absent.
     const defaultValue = schemaEntry.default ?? null;
     let resolved = null;
+    // A key a factory layer may not set: report it and leave that source out, so the
+    // entry resolves exactly as with no factory layer.
+    const factorySource = sources.find((source) => source.name === 'factory');
+    const factoryHoldsRefused = FACTORY_REFUSED_KEYS.includes(canonical) && hasOwn(factorySource.values, canonical);
+    if (factoryHoldsRefused && onInvalid) onInvalid(requested, factorySource.values[canonical], 'factory');
     for (const source of sources) {
       if (schemaEntry.policyOnly && source.name === 'run-config') continue;
+      if (factoryHoldsRefused && source.name === 'factory') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
       if (isValidValue(schemaEntry, raw)) {
@@ -806,7 +848,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
         resolved = { value: defaultValue, source: 'default', invalid: true };
         // Side channel for a caller that reports the rejected raw value (#4141);
         // the entry shape above is unchanged.
-        if (onInvalid) onInvalid(requested, raw);
+        if (onInvalid) onInvalid(requested, raw, source.name);
       }
       if (hasOwn(source.renamedFrom, canonical)) resolved['renamed-from'] = source.renamedFrom[canonical];
       break;
@@ -833,14 +875,16 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     // policy.yml — a standing project default would silently make a
     // this-run-only decision into a permanent one, defeating whatever
     // per-run property the key exists to protect (for merge-authorization,
-    // "a human decided, live, for this run"). Only a source other than
-    // policy.yml (today, only run-config — the `pre-authorize-merge` /flow
-    // token or a live Manifesto confirm/hybrid override answer) may set it; a
-    // policy.yml value is discarded, falling back to the schema default
-    // exactly as if nothing had set it at all.
+    // "a human decided, live, for this run"). The factory layer (#6006) is a
+    // standing default too, so it is excluded the same way. Only run-config
+    // (the `pre-authorize-merge` /flow token or a live Manifesto
+    // confirm/hybrid override answer) may set it; a policy.yml or factory
+    // value is discarded, falling back to the schema default exactly as if
+    // nothing had set it at all. (merge-authorization is also in
+    // FACTORY_REFUSED_KEYS, which skips its factory value before this guard.)
     // Registering a second such lever needs only this flag on its POLICY_KEYS
     // entry — no change here or in auditPolicy()'s matching category below.
-    if (schemaEntry.policySourceExcluded && resolved.source === 'policy') {
+    if (schemaEntry.policySourceExcluded && (resolved.source === 'policy' || resolved.source === 'factory')) {
       resolved = { value: defaultValue, source: 'default' };
     }
     result[requested] = resolved;
@@ -1033,20 +1077,27 @@ function detectIntegrationModel(repoRoot, opts = {}) {
 }
 
 // Full integration-model resolution for a caller that just wants the answer
-// — explicit policy.yml value (ordinary validation, wins outright) else the
-// computed forge-detection default, in one call. The shared entry point for
+// — an explicit policy.yml value, else a factory-layer pin (#6006; both by
+// ordinary validation, either wins outright), else the computed
+// forge-detection default, in one call. The shared entry point for
 // both bin/resolve-policy.js's CLI and bin/lib/reconcile/index.js (#407),
 // which needs the identical resolution in-process rather than shelling out
 // to the CLI. Never returns null: falls through to detection whenever the
 // key isn't cleanly set (absent, or set-but-invalid — a typo'd value still
 // gets a usable default here, unlike the raw resolvePolicyKeys/CLI path,
 // which surfaces `invalid: true` for a caller that wants to report it).
-// `opts` (optional) forwards unchanged to detectIntegrationModel — see that
-// function's own comment for the mcpReachable override contract.
+// `opts` (optional): `opts.env` (default the inherited environment),
+// `opts.homeDir` and `opts.factoryReadFile` (a throwing reader, test seam)
+// drive the factory read; `opts` then forwards unchanged to
+// detectIntegrationModel — see that function's own comment for the
+// mcpReachable override contract.
 function resolveIntegrationModel(repoRoot, opts = {}) {
   // A non-string repoRoot locates no policy file and falls through to detection — deliberate.
   const policyRaw = readLocatedPolicy(repoRoot);
-  const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null });
+  // factoryRaw: a factory pin is explicit, so the source !== 'default' return below honours it without detection.
+  const { readFactoryPolicy } = require('./policy-factory'); // lazy: require cycle
+  const factoryRaw = readFactoryPolicy({ env: opts.env || process.env, homeDir: opts.homeDir, ...(opts.factoryReadFile ? { readFile: opts.factoryReadFile } : {}) }).raw;
+  const resolved = resolvePolicyKeys(['integration-model'], { policyRaw, runConfigRaw: null, factoryRaw });
   const entry = resolved['integration-model'];
   if (entry && entry.source !== 'default') return entry.value;
   return detectIntegrationModel(repoRoot, opts);
@@ -1071,7 +1122,14 @@ function resolveIntegrationModel(repoRoot, opts = {}) {
 // without its own copy the main checkout's is read; `policyPath` is the file
 // read (null only for a non-string root) and `policySource` is `checkout` or
 // `main-checkout`.
-function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd }) {
+//
+// The factory layer (#6006) is read here too, below policy.yml: `env` (default the
+// inherited environment — hook rule 2) and `homeDir` locate CLAUDE_TWEAKS_FACTORY_POLICY and
+// ~/.claude-tweaks/factory-policy.yml. The factory read never goes through the caller's
+// `readFile` (the CLIs' swallows every error, so an unreadable factory file would read as
+// absent and warn nothing); `factoryReadFile` is a throwing reader (test seam). The return
+// adds `factoryRaw`, `factoryOrigin` and `factoryWarnings` (newline-terminated stderr lines).
+function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cwd, env = process.env, homeDir, factoryReadFile }) {
   let root;
   try {
     root = git(['rev-parse', '--show-toplevel']).trim();
@@ -1081,8 +1139,12 @@ function resolvePolicyConfig({ git, readFile, runDir = null, keys, onInvalid, cw
   const { path: policyPath, source: policySource } = locatePolicyFile(root);
   const policyRaw = policyPath === null ? null : readFile(policyPath);
   const runConfigRaw = runDir ? readFile(path.join(runDir, 'config.yml')) : null;
-  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, onInvalid });
-  return { root, policyRaw, runConfigRaw, result, policyPath, policySource };
+  const { readFactoryPolicy } = require('./policy-factory'); // lazy: require cycle
+  const { raw: factoryRaw, origin: factoryOrigin, warnings: factoryWarnings } = readFactoryPolicy({
+    env, homeDir, ...(factoryReadFile ? { readFile: factoryReadFile } : {}),
+  });
+  const result = resolvePolicyKeys(keys, { policyRaw, runConfigRaw, factoryRaw, onInvalid });
+  return { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings };
 }
 
 function auditPolicy(repoRoot) {
@@ -1176,7 +1238,7 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, EMPTY_LIST_RE, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys, parseDriverModels,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS, EMPTY_LIST_RE, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys, parseDriverModels, riskAllowedSlugs,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,

@@ -558,6 +558,13 @@ test('AC8.1: merge-when-green and wait are taken as given, and no lever line is 
   }
 });
 
+test('a factory-sourced merge-verification passes through to the merge-entry event as (factory) (#6006)', async () => {
+  const entry = resolvePolicyKeys(['merge-verification'], { factoryRaw: 'merge-verification: wait\n' })['merge-verification'];
+  const h = mergeHarness({ verification: leverReply(entry) });
+  await merge(CTX, h.deps);
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(factory\)/);
+});
+
 test('AC8.1: a failed merge-verification read never stops entry; a failed integration-model read is not-pr-first', async () => {
   const lever = mergeHarness({ verification: { code: 1, message: 'x' } });
   const r = await merge(CTX, lever.deps);
