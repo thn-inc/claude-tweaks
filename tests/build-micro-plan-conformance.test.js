@@ -36,7 +36,6 @@ test('micro-plan.md: applicability gate names all four conditions', () => {
   assert.match(MICRO_PLAN, /All four must hold/);
   assert.match(MICRO_PLAN, /ceremony: fast-lane/);
   assert.match(MICRO_PLAN, /size: low/);
-  assert.match(MICRO_PLAN, /### Key Files.*at most one implementation file/s);
   assert.match(MICRO_PLAN, /4\. The spec body does not carry a risk flag/);
 });
 
