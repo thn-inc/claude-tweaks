@@ -19,6 +19,13 @@ test('listPlanRefs: keeps exact-integer refs only', () => {
   ]);
 });
 
+test('listPlanRefs: a non-hex line does not claim a record, and the first valid sha per record wins', () => {
+  const out = [
+    `nothex\t${P}12`, `${'a'.repeat(40)}\t${P}12`, `${'b'.repeat(40)}\t${P}12`,
+  ].join('\n');
+  assert.deepEqual(listPlanRefs(out), [{ ref: `${P}12`, record: 12, sha: 'a'.repeat(40) }]);
+});
+
 test('buildIssueStateQuery: aliases each record, omits invalid ones', () => {
   const q = buildIssueStateQuery([7, 0, 'x', 9]);
   assert.match(q, /i0: issue\(number:7\)\{ number state \}/);
