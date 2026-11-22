@@ -6,6 +6,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { makeWriteRepo } = require('../../tools/review-replay');
 const { scratchDir } = require('../helpers/tmp-dir');
+const { cleanEnv } = require('./reviews-fixture');
 
 // The real writeRepo against a real throwaway source repo: base and head become two reproducible commits in a clean
 // repository, the archived runs' own records are left out, and the ambient git identity never leaks in.
@@ -51,8 +52,6 @@ test('writeRepo builds a reproducible base/head repository without .claude-tweak
     else process.env.GIT_AUTHOR_NAME = prior;
   }
 });
-
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
 
 // A source repo with commits built from { rel: text | null } maps (null deletes); returns the repo path and each sha.
 function sourceRepo(root, commits) {

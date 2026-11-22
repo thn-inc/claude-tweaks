@@ -57,7 +57,7 @@ test('the shared constants carry the contract values', () => {
   assert.deepStrictEqual(schema.REVIEWS_MANIFEST_KEYS, ['schemaVersion', 'kind', 'arms']);
   assert.deepStrictEqual(schema.REVIEWS_ARM_KEYS, ['name', 'profile', 'model', 'effort', 'repeat', 'prompts']);
   assert.deepStrictEqual(schema.REVIEWS_PROMPT_KEYS, ['file', 'name', 'run', 'lens', 'side', 'repo']);
-  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 12);
+  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 14);
 });
 
 test('the reused names are exported', () => {

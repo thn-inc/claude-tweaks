@@ -7,10 +7,9 @@ const { execFileSync } = require('child_process');
 const { run, makeWriteRepo } = require('../../tools/review-replay');
 const { armLabel, toPosix, REVIEWS_MANIFEST_FILE } = require('../../tools/review-replay/schema');
 const { scratchDir } = require('../helpers/tmp-dir');
-const { buildReviewsFixture } = require('./reviews-fixture');
+const { buildReviewsFixture, cleanEnv } = require('./reviews-fixture');
 
 const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
 const NOTES = [
   'Confirmed recall rewards an arm that behaves like the archive: the confirmed set comes from the archived tier\'s own output.',
   'A new row is neither noise nor signal until sampled.',
@@ -212,7 +211,7 @@ test('AC6.2: No findings is a scored review with zero rows', async () => {
   assert.deepEqual(r.json.arms.near.lenses['3a'].rowsBySeverity, { critical: 0, high: 2, medium: 0, low: 0, info: 0, overflow: 0 });
 });
 
-test('effort-mismatch', async () => {
+test('a reviewer recorded at the wrong effort is not judged, is counted at its recorded effort, and leaves the control arm judged', async () => {
   const x = await extracted('plain', ONE_3A, [...ARMS, '--arm', 'name=low,profile=fast,effort=low']);
   const r = await scoreReviews(x, workflow(x, noFindings, { effortFor: (arm) => (arm.name === 'low' ? 'medium' : arm.effort) }));
   assert.equal(r.code, 3);

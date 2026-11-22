@@ -9,13 +9,13 @@ const schema = require('../../tools/review-replay/schema');
 const { toPosix } = schema;
 const { scratchDir } = require('../helpers/tmp-dir');
 const { runWorkflow } = require('./helpers');
-const { buildReviewsFixture, RUN, RUN_GONE } = require('./reviews-fixture');
+const { buildReviewsFixture, RUN, RUN_GONE, cleanEnv } = require('./reviews-fixture');
 const { unrewrittenPaths } = require('../../tools/review-replay/reviews-rewrite');
+const { existsOnDisk } = require('../../tools/review-replay/reviews-extract');
 
 const REMOVED = '[run-directory path removed]';
 
 const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
-const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
 const gitIn = (cwd) => (...args) => execFileSync('git', args, { cwd, env: cleanEnv(), encoding: 'utf8', windowsHide: true }).trim();
 
 let fx;
@@ -25,11 +25,12 @@ before(() => {
   fx = buildReviewsFixture(root, { decisions: true, gone: true, repeat: true });
 });
 
-function makeDeps() {
+// The deps for a run whose archived checkout is `mainRoot` (the shared fixture's, unless a test built its own).
+function makeDeps(mainRoot = fx.mainRoot) {
   const logs = [];
   const errs = [];
-  const git = (args) => execFileSync('git', args, { cwd: fx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  return { fs, git, writeRepo: makeWriteRepo(fx.mainRoot), pluginRoot: PLUGIN_ROOT, log: (s) => logs.push(s), err: (s) => errs.push(s), logs, errs };
+  const git = (args) => execFileSync('git', args, { cwd: mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return { fs, git, writeRepo: makeWriteRepo(mainRoot), pluginRoot: PLUGIN_ROOT, log: (s) => logs.push(s), err: (s) => errs.push(s), logs, errs };
 }
 
 let outN = 0;
@@ -180,8 +181,7 @@ test('a written text that fails the leak check after its shas are mapped is a ru
   const real = makeWriteRepo(sx.mainRoot);
   const out = path.join(sRoot, 'out');
   const deps = {
-    ...makeDeps(),
-    git: (args) => execFileSync('git', args, { cwd: sx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
+    ...makeDeps(sx.mainRoot),
     writeRepo: (...args) => ({ ...real(...args), head: tail }),
   };
   const code = await run({ argv: ['extract-reviews', '--runs', sx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', sx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
@@ -254,7 +254,7 @@ test('a slot ordinal counts within its unit: a member\'s first review of a lens 
   const tRoot = scratchDir('rr-reviews-twin-');
   const tx = buildReviewsFixture(tRoot, { edges: true, twin: true });
   const out = path.join(tRoot, 'out');
-  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: tx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(tx.mainRoot) };
+  const deps = makeDeps(tx.mainRoot);
   const code = await run({ argv: ['extract-reviews', '--runs', tx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', tx.transcripts, '--arm', 'name=haiku,profile=fast', '--lens', '3g'], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   const { slots } = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
@@ -295,7 +295,7 @@ test('a dead fixture-style checkout path in diff text does not exclude a slot', 
   const line = "+  root: '/p/.claude-tweaks/pipelines/r1'";
   fs.appendFileSync(path.join(dx.runsRoot, RUN, 'review-ctx', 'context.md'), `${line}\n`);
   const out = path.join(dRoot, 'out');
-  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: dx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(dx.mainRoot) };
+  const deps = makeDeps(dx.mainRoot);
   const code = await run({ argv: ['extract-reviews', '--runs', dx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', dx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
@@ -308,7 +308,7 @@ test('a slot ordinal counts every labelled dispatch, excluded ones included', as
   const lRoot = scratchDir('rr-reviews-lead-');
   const lx = buildReviewsFixture(lRoot, { lead: true });
   const out = path.join(lRoot, 'out');
-  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: lx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(lx.mainRoot) };
+  const deps = makeDeps(lx.mainRoot);
   const code = await run({ argv: ['extract-reviews', '--runs', lx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', lx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
@@ -323,7 +323,7 @@ test('an excluded dispatch counts in the unit its prompt names, else the member 
   const mRoot = scratchDir('rr-reviews-mlead-');
   const mx = buildReviewsFixture(mRoot, { edges: true, memberLead: true });
   const out = path.join(mRoot, 'out');
-  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: mx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(mx.mainRoot) };
+  const deps = makeDeps(mx.mainRoot);
   const code = await run({ argv: ['extract-reviews', '--runs', mx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', mx.transcripts, '--arm', 'name=haiku,profile=fast', '--lens', '3g,3i'], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
@@ -400,7 +400,7 @@ test('the other exclusion reasons, a control arm per archived tier and effort, o
   const eRoot = scratchDir('rr-reviews-edges-');
   const ex = buildReviewsFixture(eRoot, { edges: true });
   const out = path.join(eRoot, 'out');
-  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: ex.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(ex.mainRoot) };
+  const deps = makeDeps(ex.mainRoot);
   const code = await run({ argv: ['extract-reviews', '--runs', ex.runsRoot, '--out', out, '--role', 'lens', '--transcripts', ex.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
   assert.equal(code, 0, deps.errs.join('\n'));
   const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
@@ -431,6 +431,45 @@ test('the other exclusion reasons, a control arm per archived tier and effort, o
   assert.ok(m2Prompt.includes(toPosix(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md'))), m2Prompt);
   assert.equal(read(path.join(out, 'repos', `${RUN}--r1`, '3g-a--context.md')), `Member bundle at ${repo.replayHead}\n`);
   for (const p of manifest.arms.flatMap((a) => a.prompts)) assert.ok(!read(p.file).includes(ex.mainRoot), p.file);
+});
+
+// Extracts from a fresh plain fixture whose root timing.json `tweak` changes; returns the fixture's excluded list
+// (a run left with no slot exits 3 and reports it on stderr).
+async function excludedAfter(prefix, tweak) {
+  const tRoot = scratchDir(prefix);
+  const tx = buildReviewsFixture(tRoot);
+  tweak(path.join(tx.runsRoot, RUN, 'timing.json'));
+  const out = path.join(tRoot, 'out');
+  const deps = makeDeps(tx.mainRoot);
+  const code = await run({ argv: ['extract-reviews', '--runs', tx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', tx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  return code === 0 ? JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE))).excluded : JSON.parse(deps.errs.join('\n')).excluded;
+}
+
+test('a run whose root timing.json cannot be parsed is excluded as timing-unreadable, not dropped', async () => {
+  const excluded = await excludedAfter('rr-reviews-badtiming-', (f) => fs.writeFileSync(f, '{ not json'));
+  assert.deepEqual(excluded, [{ run: RUN, reason: 'timing-unreadable' }]);
+});
+
+test('a run with no root timing.json is excluded as no-timing, not dropped', async () => {
+  const excluded = await excludedAfter('rr-reviews-notiming-', (f) => fs.rmSync(f));
+  assert.deepEqual(excluded, [{ run: RUN, reason: 'no-timing' }]);
+});
+
+test('a dispatch item that is not an object is excluded as timing-unreadable with its index', async () => {
+  const excluded = await excludedAfter('rr-reviews-baditem-', (f) => {
+    const timing = JSON.parse(read(f));
+    timing.dispatches.items.splice(1, 0, 'not an object');
+    fs.writeFileSync(f, JSON.stringify(timing));
+  });
+  assert.deepEqual(excluded.filter((e) => e.reason === 'timing-unreadable'), [{ run: RUN, index: 1, reason: 'timing-unreadable' }]);
+});
+
+test('the leak barrier treats a path it cannot stat as present and only ENOENT or ENOTDIR as absent', () => {
+  const failing = (code) => existsOnDisk({ statSync: () => { throw Object.assign(new Error('x'), { code }); } });
+  assert.equal(failing('EACCES')('/p/.claude/worktrees'), true);
+  assert.equal(failing('EIO')('/p/.claude/worktrees'), true);
+  assert.equal(failing('ENOENT')('/p/.claude/worktrees'), false);
+  assert.equal(failing('ENOTDIR')('/p/.claude/worktrees'), false);
 });
 
 test('an unknown --role exits 2', async () => {

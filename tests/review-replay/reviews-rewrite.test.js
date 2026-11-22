@@ -311,6 +311,20 @@ test('with an exists predicate, a foreign path is flagged only when its checkout
   assert.deepStrictEqual(rw.unrewrittenPaths("root: '/p/.claude-tweaks/pipelines/r1'", { ...o, exists: undefined }), ['/p/.claude-tweaks/pipelines/r1']);
 });
 
+test('the exists predicate is never handed a checkout prefix longer than the path cap', () => {
+  const lengths = [];
+  const exists = (p) => {
+    lengths.push(p.length);
+    return true;
+  };
+  const o = { mainRoot: '/Volumes/backup/repo', runName: 'R', outDir: '/out', exists };
+  rw.unrewrittenPaths('/' + 'a'.repeat(5000) + '/.claude/worktrees/w', o);
+  rw.unrewrittenPaths('/' + 'b'.repeat(5000) + '/.claude-tweaks/pipelines/r1', o);
+  rw.unrewrittenPaths('/p/.claude/worktrees/w', o);
+  assert.ok(lengths.length > 0, 'the control path reaches the predicate');
+  assert.ok(lengths.every((n) => n <= 4096), `lengths: ${lengths.join(', ')}`);
+});
+
 test('a rewritten path with brackets, @, ~, = or non-ASCII stays inside the outDir span', () => {
   const o = { mainRoot, runName: 'R', outDir: main + '/out' };
   for (const tail of ['app/[slug]/page.tsx', 'node_modules/@types/x.d.ts', 'src/~tmp', 'src/a=b.js', 'docs/café.md']) {

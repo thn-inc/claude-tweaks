@@ -172,4 +172,4 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   return { mainRoot, runsRoot, transcripts, runName: RUN, B, H, worktree };
 }
 
-module.exports = { buildReviewsFixture, RUN, RUN_GONE };
+module.exports = { buildReviewsFixture, RUN, RUN_GONE, cleanEnv };

@@ -126,6 +126,8 @@ const REVIEW_EXCLUSION_REASONS = [
   'unknown-run-input',
   'unrewritten-path',
   'report-unparsed',
+  'timing-unreadable',
+  'no-timing',
 ];
 
 // The problems with a reviews manifest object, as strings; an empty list is a valid manifest.

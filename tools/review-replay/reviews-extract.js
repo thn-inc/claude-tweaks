@@ -20,6 +20,7 @@ const { parseLensReport, lensIdOf } = require('../pipeline-cost-report/reviews.j
 const { bump } = require('./util.js');
 const {
   SCHEMA_VERSION, REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE, REVIEWS_KIND, CONTROL_ARM, isControlArm, toPosix,
+  REVIEW_EXCLUSION_REASONS,
 } = require('./schema.js');
 
 const EXIT_SHORTFALL = 3;
@@ -81,8 +82,9 @@ function existsOnDisk(fs) {
       let found = true;
       try {
         fs.statSync(p);
-      } catch {
-        found = false;
+      } catch (e) {
+        // Only a path that is absent is absent: an unreadable one (EACCES, EIO) may exist, so the barrier flags it.
+        found = !(e && isAbsent(e));
       }
       seen.set(prefix, found);
     }
@@ -90,40 +92,52 @@ function existsOnDisk(fs) {
   };
 }
 
-function readJsonOrNull(fs, file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
-}
+// A file or directory that is simply not there, as opposed to one that could not be read.
+const isAbsent = (e) => e.code === 'ENOENT' || e.code === 'ENOTDIR';
 
-// The run's dispatches as { item, member }: its own timing.json items (member null), then each spec-* member's,
-// deduplicated by agentId in file order.
+// The run's dispatches as { dispatches: [{ item, member }], problems }: its own timing.json items (member null), then
+// each spec-* member's, deduplicated by agentId in file order. `problems` lists what dropped dispatches without a
+// reader seeing them, each { member, reason } (with `index` for an item that is not an object): a listing or a
+// timing.json that cannot be read or parsed, one with no `dispatches.items` array, and a run's own absent timing.json.
 function dispatchesOf(dir, fs) {
+  const problems = [];
   let members = [];
   try {
     // spec-2 before spec-10: by member number, not by name.
     members = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^spec-\d+$/.test(e.name)).map((e) => e.name)
       .sort((a, b) => Number(a.slice(5)) - Number(b.slice(5)));
-  } catch {
+  } catch (e) {
     members = [];
+    if (!isAbsent(e)) problems.push({ member: null, reason: 'timing-unreadable' });
   }
   const seen = new Set();
-  const out = [];
+  const dispatches = [];
   for (const member of [null, ...members]) {
-    const timing = readJsonOrNull(fs, path.join(dir, member || '', 'timing.json'));
-    const items = timing && timing.dispatches && Array.isArray(timing.dispatches.items) ? timing.dispatches.items : [];
-    for (const item of items) {
-      if (item === null || typeof item !== 'object') continue;
+    let timing;
+    try {
+      timing = JSON.parse(fs.readFileSync(path.join(dir, member || '', 'timing.json'), 'utf8'));
+    } catch (e) {
+      if (!isAbsent(e)) problems.push({ member, reason: 'timing-unreadable' });
+      else if (member === null) problems.push({ member, reason: 'no-timing' });
+      continue;
+    }
+    if (!(timing && timing.dispatches && Array.isArray(timing.dispatches.items))) {
+      problems.push({ member, reason: 'timing-unreadable' });
+      continue;
+    }
+    timing.dispatches.items.forEach((item, index) => {
+      if (item === null || typeof item !== 'object') {
+        problems.push({ member, index, reason: 'timing-unreadable' });
+        return;
+      }
       if (item.agentId != null) {
-        if (seen.has(item.agentId)) continue;
+        if (seen.has(item.agentId)) return;
         seen.add(item.agentId);
       }
-      out.push({ item, member });
-    }
+      dispatches.push({ item, member });
+    });
   }
-  return out;
+  return { dispatches, problems };
 }
 
 // The first user message's text, or null when the transcript has none.
@@ -306,6 +320,11 @@ function extractReviews(opts, deps) {
     exists: existsOnDisk(fs),
   };
   const excluded = [];
+  // Every exclusion row goes through here, so a reason the schema does not list fails loudly instead of shipping.
+  const exclude = (row) => {
+    if (!REVIEW_EXCLUSION_REASONS.includes(row.reason)) throw new Error(`unknown exclusion reason: ${row.reason}`);
+    excluded.push(row);
+  };
   const runRows = {};
   const passed = [];
   // Per (unit, lens, side), how many labelled dispatches so far, excluded ones included: a dispatch after the first
@@ -321,11 +340,15 @@ function extractReviews(opts, deps) {
   for (const dir of byNewest) {
     const r = readRun(dir, deps);
     if (r.excluded) {
-      excluded.push({ run: r.run, reason: r.excluded });
+      exclude({ run: r.run, reason: r.excluded });
       continue;
     }
     const names = new Map();
-    for (const { item, member } of dispatchesOf(dir, fs).filter((d) => role.isDispatch(d.item))) {
+    const found = dispatchesOf(dir, fs);
+    for (const { member, index, reason } of found.problems) {
+      exclude({ run: r.run, ...(member ? { member } : {}), ...(index != null ? { index } : {}), reason });
+    }
+    for (const { item, member } of found.dispatches.filter((d) => role.isDispatch(d.item))) {
       const x = examineDispatch(r, item, c, deps, member);
       if (x.rows) (runRows[r.run] || (runRows[r.run] = [])).push(...x.rows.map((row) => ({ lens: x.slot.lens, path: row.path, line: row.line })));
       let ordinal = null;
@@ -351,7 +374,7 @@ function extractReviews(opts, deps) {
         }
       }
       if (reason) {
-        excluded.push({
+        exclude({
           run: r.run, ...(item.agentId != null ? { agentId: item.agentId } : {}),
           ...(x.slot ? { lens: x.slot.lens, side: x.slot.side } : {}), reason,
         });
@@ -468,4 +491,4 @@ function writeOutputs(w, deps) {
   return 0;
 }
 
-module.exports = { extractReviews, ROLES };
+module.exports = { extractReviews, ROLES, existsOnDisk };
