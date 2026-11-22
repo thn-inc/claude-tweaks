@@ -303,7 +303,7 @@ test('#6018: a risk-widened record is not driver-routable with express-driver-re
   assert.equal(p.keepSingleton(ELIGIBLE), true);
 });
 
-test('#6018: with express-driver-max-risk unset the driver half keeps today\'s answer for risk:medium', () => {
+test('#6018: with express-driver-max-risk at its default (low) the driver half keeps today\'s answer for risk:medium', () => {
   const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-max-risk': 'low' }).resolvePolicy });
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
   assert.equal(p.keepSingleton(ELIGIBLE), true);
