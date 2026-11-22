@@ -82,6 +82,8 @@ Never assume a `labels` array read earlier in the same call chain is still fresh
 read-immediately-before-write is required, since a concurrent label change between the earlier
 read and this write would otherwise be silently reverted by the stale array.
 
+**A write sequence with an unmapped step refuses before its first write.** When an ordered sequence of writes (a plan, then a body, then a comment edit, then a label) includes any operation this file maps to no MCP call, a `gh`-absent run checks for `gh` before the sequence's first write and, when it is absent, refuses before writing anything, never part-way: a sequence that wrote its mapped steps and then stopped at the unmapped one leaves the record half-changed. `specify/planning-answer.md`'s Write step is the standing example (#6059).
+
 **Pull requests are not covered by this mapping.** Every row above is an issue operation — there
 is no `list_pull_requests`/`pr_read`/`pr_write` row, and none is planned here: PR review-thread
 reads (`gh api graphql`) and CI-check reads (`gh pr checks`) have no MCP equivalent today; PR
