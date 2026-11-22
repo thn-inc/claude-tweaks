@@ -89,7 +89,7 @@ test('#5932 AC6.1 auditPolicy and resolvePolicyConfig report the invalid list, w
       cwd: dir,
     });
     assert.deepStrictEqual(out.result[KEY], { value: [], source: 'default', invalid: true });
-    assert.deepStrictEqual(Object.keys(out).sort(), ['policyPath', 'policyRaw', 'policySource', 'result', 'root', 'runConfigRaw']);
+    assert.deepStrictEqual(Object.keys(out).sort(), ['factoryOrigin', 'factoryRaw', 'factoryWarnings', 'policyPath', 'policyRaw', 'policySource', 'result', 'root', 'runConfigRaw']);
   }
 });
 

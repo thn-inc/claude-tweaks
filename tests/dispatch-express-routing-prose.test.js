@@ -351,7 +351,7 @@ const CLOSED_ROWS = [
   ['| `--check` admits |',
     /\| `drive\.js \{n\} --run "\{minted-run-dir\}" --no-settle --in-flight-prs "\{drain-prs\}"` runs as one background Bash call [^|]*; no express gate call is made for this record \|/, 'AC5.1: admits → drive.js --run as one background call, no express gate'],
   ['| a bundle group |',
-    /\| today's path; the route is never consulted \|/, 'a bundle group → today\'s path, never consulted'],
+    /\| today's path; the route is never consulted\. The queue pull keeps a record the driver would take out of bundles \(`bin\/lib\/express\/queue\.js`'s `keepSingleton`\), so a bundle has no member the driver would take \|/, 'a bundle group → today\'s path, never consulted'],
 ];
 const missingRowsOf = (rows) => (text) => rows.filter(([prefix, pattern]) => !pattern.test(lineStartingWith(text, prefix))).map(([, , fact]) => fact);
 

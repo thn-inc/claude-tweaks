@@ -57,12 +57,24 @@
 // succeeded; it forwards into detectIntegrationModel's mcpReachable override
 // for the integration-model key, and (via resolveIntegrationModel) for
 // merge-verification too whenever that key is derived in the same call.
+// The factory layer (#6006) — CLAUDE_TWEAKS_FACTORY_POLICY over ~/.claude-tweaks/factory-policy.yml,
+// resolving below policy.yml — writes stderr lines in every output mode (stdout and the exit
+// code unchanged; a factory-supplied entry only carries `source: 'factory'`), in this order after
+// the main-checkout note: the factory reader's warnings (an unreadable file, a variable block that
+// did not parse); one `resolve-policy: warning: {key} is not settable from the factory layer —
+// ignored` per requested refused key the resolver skipped; one `resolve-policy: warning: {key} has a
+// malformed block in the factory layer — ignored, using the repository's rows` per requested block key
+// whose factory block did not parse beside a usable repository block; and, when at least one requested key
+// resolved from it, `resolve-policy: note — factory layer ({origin}) supplied {keys}`. The origin
+// never appears on stdout. Under --values, an invalid value from the factory layer gets the
+// invalid-value warning with ` in the factory layer` after the quoted value.
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
+const { FACTORY_REFUSED_KEYS } = require('./lib/policy-factory');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { pickInjected } = require('./lib/repo-resolve');
 const { modelProfilesEntry } = require('./lib/model-profiles/policy-fragment');
@@ -98,7 +110,8 @@ function readFileSafe(filePath) {
 // detection, and returns { code: 0, result, invalidRaw, degrades } or
 // { code: 1, message } (message is the text after `resolve-policy: `). It prints
 // nothing. deps: cwd(), env, git(args, { cwd, env }), readFile(path), and optional
-// stderr(text) and homeDir() that the library lookups receive.
+// stderr(text), homeDir() and factoryReadFile(path) (a throwing reader) that the library
+// lookups receive. The factory file is read through factoryReadFile, never readFile.
 function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   const cwd = deps.cwd();
   // #1065: anchored-or-outside guard — runs before the existence check and any
@@ -125,14 +138,26 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // have written one yet; readFileSafe's null simply means no overlay.
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
+  // invalidFrom names the source each rejected raw came from (#6006), so the warning can name the factory layer.
   const invalidRaw = new Map();
-  const { root, policyRaw, runConfigRaw, result, policyPath, policySource } = resolvePolicyConfig({
+  const invalidFrom = new Map();
+  // The resolver decides which keys the factory layer may not set; the CLI only reports that decision.
+  const refusedReported = new Set();
+  const onInvalid = (key, raw, sourceName) => {
+    invalidRaw.set(key, raw);
+    invalidFrom.set(key, sourceName);
+    if (sourceName === 'factory' && FACTORY_REFUSED_KEYS.includes(key)) refusedReported.add(key);
+  };
+  const { root, policyRaw, runConfigRaw, result, policyPath, policySource, factoryRaw, factoryOrigin, factoryWarnings } = resolvePolicyConfig({
     git: (args) => deps.git(args, { cwd, env: deps.env }),
     readFile: deps.readFile,
     runDir: runDirPath,
     keys,
-    onInvalid: (key, raw) => invalidRaw.set(key, raw),
+    onInvalid,
     cwd,
+    env: deps.env,
+    homeDir: deps.homeDir,
+    ...(deps.factoryReadFile ? { factoryReadFile: deps.factoryReadFile } : {}),
   });
 
   // integration-model / merge-verification have no static schema default
@@ -163,10 +188,13 @@ function resolvePolicy({ keys, runDir = null, mcpReachable = false }, deps) {
   // resolver's placeholder entry via the dedicated fragment reader: only the
   // block is parsed (#5917), so a malformed sibling key never marks it invalid.
   if (keys.includes('model-profiles')) {
-    result['model-profiles'] = modelProfilesEntry(policyRaw);
+    result['model-profiles'] = modelProfilesEntry(policyRaw, factoryRaw, onInvalid);
   }
 
-  return { code: EXIT_OK, result, invalidRaw, degrades, root, policySource, policyPath };
+  // Requested keys the resolver ignored because a factory may not set them: say so once each.
+  const factoryRefused = FACTORY_REFUSED_KEYS.filter((key) => refusedReported.has(key));
+
+  return { code: EXIT_OK, result, invalidRaw, invalidFrom, degrades, root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused };
 }
 
 // The --values rule: an {error} entry and a null/undefined value (no-default key
@@ -178,15 +206,28 @@ function scalarValue(entry) {
 }
 
 // The stderr lines run writes for a successful core call, newline-terminated:
-// the degraded-forge lines in every mode, then (values only) one invalid-value
-// warning per requested key. out is { keys, result, invalidRaw, degrades, root,
-// policySource, policyPath }. When the policy was read from the main checkout
-// (#4492), the note line comes first, in every mode.
-function warningLines({ keys, result, invalidRaw, degrades, root, policySource, policyPath }, { values }) {
+// the factory lines and the degraded-forge lines in every mode, then (values only) one
+// invalid-value warning per requested key. out is { keys, result, invalidRaw, invalidFrom, degrades,
+// root, policySource, policyPath, factoryOrigin, factoryWarnings, factoryRefused }. When the
+// policy was read from the main checkout (#4492), the note line comes first, in every mode;
+// then the factory reader's warnings, the refused-key warnings and the factory note (#6006).
+// An invalid value the factory layer supplied says so (` in the factory layer` after the value);
+// every other source's line is unchanged.
+function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degrades, root, policySource, policyPath, factoryOrigin = null, factoryWarnings = [], factoryRefused = [] }, { values }) {
   const lines = [];
   if (policySource === 'main-checkout') {
     lines.push(`resolve-policy: note — ${root} has no .claude-tweaks/policy.yml; read the main checkout's ${policyPath}\n`);
   }
+  lines.push(...factoryWarnings);
+  for (const key of factoryRefused) lines.push(`resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`);
+  // A malformed factory block beside a usable repository block changes nothing in the entry, so the entry carries no
+  // `invalid`; the key still gets one line.
+  for (const key of new Set(keys)) {
+    if (!BLOCK_KEYS.includes(key) || invalidFrom.get(key) !== 'factory' || (result[key] && result[key].invalid)) continue;
+    lines.push(`resolve-policy: warning: ${key} has a malformed block in the factory layer — ignored, using the repository's rows\n`);
+  }
+  const supplied = [...new Set(keys)].filter((key) => result[key] && result[key].source === 'factory');
+  if (supplied.length > 0) lines.push(`resolve-policy: note — factory layer (${factoryOrigin}) supplied ${supplied.join(', ')}\n`);
   // One stderr line per degraded key, in every output mode; stdout is unchanged.
   for (const key of ['integration-model', 'merge-verification']) {
     if (!degrades.has(key)) continue;
@@ -202,7 +243,8 @@ function warningLines({ keys, result, invalidRaw, degrades, root, policySource, 
       const entry = result[key];
       if (!entry || !entry.invalid) continue;
       const shownDefault = entry.value ?? '(none)';
-      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}" — using default "${shownDefault}"\n`);
+      const where = invalidFrom.get(key) === 'factory' ? ' in the factory layer' : '';
+      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}"${where} — using default "${shownDefault}"\n`);
     }
   }
   return lines;

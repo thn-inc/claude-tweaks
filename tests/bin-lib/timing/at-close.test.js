@@ -12,9 +12,10 @@ const ctxLib = require('../../../plugin/bin/lib/hooks/context');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const atClose = require('../../../plugin/bin/lib/timing/at-close');
 const { runCli } = require('../../helpers/run-cli');
-const { gitRepo } = require('../../helpers/git-fixtures');
+const { gitRepo, cleanGitEnv } = require('../../helpers/git-fixtures');
 const { SID, A, B, writeEvents, writeTranscript, sum, pickTokens, readTiming, skipLines, assertPhaseRows, withStub } = require('../../helpers/close-timing');
 const TIMING_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'timing-at-close.js');
+const HOOKS_JS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
 
 const { TIMING_BOUND_MS, ownTranscripts, writeTimingAtClose, writePhaseTimingSync, logTimingSkip, spawnTokenPass } = atClose;
 
@@ -761,7 +762,7 @@ test('ownTranscripts: worktree wins over worktreeAtClose; homeDir is read only w
     writeTranscript(cfg, wtB, [A, B]);
     const throwingHome = () => { throw new Error('homeDir read'); };
     const r = ownTranscripts({ sessionId: SID, worktree: wtA, worktreeAtClose: wtB }, { env: { CLAUDE_CONFIG_DIR: cfg }, homeDir: throwingHome });
-    assert.deepStrictEqual(r, { paths: [fs.realpathSync(fileA)], reason: null });
+    assert.deepStrictEqual(r, { paths: [fs.realpathSync(fileA)], taskCalls: [], reason: null });
     assert.equal(ownTranscripts({ worktree: wtA }, { env: { CLAUDE_CONFIG_DIR: cfg } }).reason, 'no sessionId in run-state.json');
     assert.equal(ownTranscripts(null, { env: { CLAUDE_CONFIG_DIR: cfg } }).reason, 'no worktree or worktreeAtClose in run-state.json');
     // No CLAUDE_CONFIG_DIR: {homeDir()}/.claude is the config dir.
@@ -1247,6 +1248,356 @@ test('vanishedDir: the dir moves to the twin between the derive and the write �
     assert.equal(r.status, 'written');
     assert.equal(fs.existsSync(runDir), false);
     assert.ok(readYield(twin).steps.length > 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---- #5647: a dispatched run counts the Task-call transcripts naming it ----
+const RUN_1 = '2026-11-16T100000-record-1';
+const RUN_2 = '2026-11-16T100000-record-2';
+
+// {cfg}/projects/{slug of dir}/{sid}.jsonl (one non-usage row, so it never feeds totals) plus its
+// subagents: each agent has meta {spawnDepth, parentAgentId}, a first-line user prompt, and two
+// assistant rows (10:01, 10:09) both carrying `usage`, with message ids unique per file.
+// agents: [{ id, depth, parent?, prompt?, usage?, stamps? }] -> the subagents dir.
+function agentSession(cfg, dir, sid, agents) {
+  const slugDir = path.join(cfg, 'projects', transcript.slugForCwd(dir));
+  const subDir = path.join(slugDir, sid, 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.writeFileSync(path.join(slugDir, `${sid}.jsonl`), JSON.stringify({ type: 'user', timestamp: '2026-11-16T10:00:00.000Z', message: { role: 'user', content: 'main' } }) + '\n');
+  for (const a of agents) {
+    fs.writeFileSync(path.join(subDir, `agent-${a.id}.meta.json`), JSON.stringify({ spawnDepth: a.depth, description: a.id, ...(a.parent ? { parentAgentId: a.parent } : {}) }));
+    const [s1, s2] = a.stamps || ['2026-11-16T10:01:00.000Z', '2026-11-16T10:09:00.000Z'];
+    const u = a.usage || A;
+    const row = (n, ts) => JSON.stringify({ timestamp: ts, message: { role: 'assistant', id: `m-${a.id}-${n}`, model: 'claude-test', content: [], usage: { input_tokens: u[0], output_tokens: u[1], cache_read_input_tokens: u[2], cache_creation_input_tokens: u[3] } } });
+    const first = JSON.stringify({ type: 'user', message: { role: 'user', content: a.prompt || 'no run named' } });
+    fs.writeFileSync(path.join(subDir, `agent-${a.id}.jsonl`), [first, row(1, s1), row(2, s2)].join('\n') + '\n');
+  }
+  return subDir;
+}
+const names = (root, id) => `Run the next phase in ${path.join(root, '.claude-tweaks', 'pipelines', id)}`;
+const twice = (u) => sum(u, u);
+const plus = (a, b) => ({ input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheCreate: a.cacheCreate + b.cacheCreate });
+
+// A run dir stamped by the real writer (record-worktree, --dispatch unless dispatch:false) from `sid`,
+// then closed. resumeSid adds a plain re-stamp from that session (a human resume). -> { runDir, wt }.
+async function dispatchedRun(root, id, { sid = 'sess-d1', resumeSid, dispatch = true } = {}) {
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', id);
+  fs.mkdirSync(runDir, { recursive: true });
+  writeEvents(runDir);
+  const wt = path.join(root, `wt-${id}`);
+  const stamp = async (session, flags) => {
+    const res = await runCli(HOOKS_JS, ['record-worktree', '--run', runDir, wt, ...flags], {
+      cwd: root, env: { ...cleanGitEnv(), CLAUDE_CODE_SESSION_ID: session, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+    });
+    assert.equal(res.code, 0, res.stderr);
+  };
+  await stamp(sid, dispatch ? ['--dispatch'] : []);
+  if (resumeSid) await stamp(resumeSid, []);
+  assert.equal(closeRunState(runDir, { explicit: true }).status, 'closed');
+  return { runDir, wt };
+}
+
+test('AC1.1: a dispatched run whose session transcript sits only under the main checkout slug gets token totals from the Task-call transcript that names its run id', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [
+      { id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A },
+      { id: 't2', depth: 1, prompt: names(root, RUN_2), usage: B },
+      { id: 'c1', depth: 2, parent: 't1', usage: OTHER },
+      { id: 'c2', depth: 2, parent: 't2', usage: OTHER },
+    ]);
+    const r1 = await dispatchedRun(root, RUN_1);
+    const r2 = await dispatchedRun(root, RUN_2);
+    const env = { CLAUDE_CONFIG_DIR: cfg };
+    assert.equal((await writeTimingAtClose(r1.runDir, { env })).status, 'written');
+    assert.equal((await writeTimingAtClose(r2.runDir, { env })).status, 'written');
+    const t1 = readTiming(r1.runDir);
+    const t2 = readTiming(r2.runDir);
+    assert.deepStrictEqual(pickTokens(t1.totals.tokens), twice(A));
+    assert.deepStrictEqual(pickTokens(t2.totals.tokens), twice(B));
+    assert.deepStrictEqual(t1.dispatches.items.map((d) => d.agentId), ['c1']);
+    assert.deepStrictEqual(t2.dispatches.items.map((d) => d.agentId), ['c2']);
+    assert.deepStrictEqual(skipLines(r1.runDir), []);
+    assert.deepStrictEqual(skipLines(r2.runDir), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1: a dispatched run whose Task-call transcripts name a different run id gets none', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [{ id: 't2', depth: 1, prompt: names(root, RUN_2), usage: B }]);
+    const { runDir } = await dispatchedRun(root, RUN_1);
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const timing = readTiming(runDir);
+    assertPhaseRows(timing);
+    assert.equal(Object.hasOwn(timing.totals, 'tokens'), false);
+    const skips = timingSkips(runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`and no Task-call transcript of session(s) sess-d1 names run ${RUN_1}`), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 gate: a non-dispatched run with a Task-call transcript naming it still gets none', async () => {
+  // Guard `rs.dispatched === true` in ownTranscripts: deleting it turns this red (the run would get totals).
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    // The session sits under neither the worktree's nor the run root's slug, so only a Task-call lookup could reach it.
+    agentSession(cfg, path.join(root, 'elsewhere'), 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    const { runDir, wt } = await dispatchedRun(root, RUN_1, { dispatch: false });
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const timing = readTiming(runDir);
+    assertPhaseRows(timing);
+    assert.equal(Object.hasOwn(timing.totals, 'tokens'), false);
+    const skips = timingSkips(runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`condition: no sess-d1.jsonl under the slug of ${wt} or of its run root ${root} → fallback:`), skips[0]);
+    assert.ok(!skips[0].includes('Task-call'), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 runId guard: a dispatched run state with no string runId asks for no Task calls', async () => {
+  // Guard `typeof runId === 'string'` in ownTranscripts: deleting it turns this red (the stub's path would be returned).
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const rs = { sessionId: SID, dispatchSessionId: SID, dispatched: true, worktree: path.join(root, 'wt') };
+    let asked = 0;
+    await withStub(transcript, 'locateTaskTranscripts', () => { asked += 1; return { paths: ['/stubbed/agent-x.jsonl'], notes: [] }; }, () => {
+      const r = ownTranscripts(rs, { env: { CLAUDE_CONFIG_DIR: cfg } });
+      assert.deepStrictEqual(r.paths, []);
+      assert.deepStrictEqual(r.taskCalls, []);
+      assert.equal(r.reason, `no ${SID}.jsonl under the slug of ${rs.worktree}`);
+      assert.equal(asked, 0);
+      const withId = ownTranscripts(rs, { env: { CLAUDE_CONFIG_DIR: cfg }, runId: RUN_1 });
+      assert.deepStrictEqual(withId.taskCalls, ['/stubbed/agent-x.jsonl']);
+      assert.equal(withId.reason, null);
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 union: a dispatched run with an own-slug transcript counts it plus its Task calls', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: OTHER }]);
+    const { runDir, wt } = await dispatchedRun(root, RUN_1);
+    writeTranscript(cfg, wt, [A, B], 'sess-d1');
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const timing = readTiming(runDir);
+    assert.deepStrictEqual(pickTokens(timing.totals.tokens), plus(sum(A, B), twice(OTHER)));
+    assert.deepStrictEqual(skipLines(runDir), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 resume: a resumed dispatched run counts the resumer\'s own-slug transcript and the dispatching session\'s Task calls', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'S1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    const { runDir, wt } = await dispatchedRun(root, RUN_1, { sid: 'S1', resumeSid: 'S2' });
+    const rs = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+    assert.equal(rs.dispatchSessionId, 'S1');
+    assert.equal(rs.sessionId, 'S2');
+    writeTranscript(cfg, wt, [B, B], 'S2');
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(runDir).totals.tokens), plus(twice(A), twice(B)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 resume: the resumer\'s own Task calls count in place of an own-slug transcript', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'S1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    agentSession(cfg, path.join(root, 'elsewhere'), 'S2', [{ id: 't9', depth: 1, prompt: names(root, RUN_1), usage: B }]);
+    const { runDir } = await dispatchedRun(root, RUN_1, { sid: 'S1', resumeSid: 'S2' });
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(runDir).totals.tokens), plus(twice(A), twice(B)));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 no rows in window: the SKIP names the Task-call transcripts', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const old = ['2026-11-15T10:01:00.000Z', '2026-11-15T10:09:00.000Z'];
+    agentSession(cfg, root, 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A, stamps: old }]);
+    const { runDir } = await dispatchedRun(root, RUN_1);
+    const r = await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } });
+    assert.equal(r.status, 'written');
+    assert.equal(r.tokens, false);
+    assertPhaseRows(readTiming(runDir));
+    const skips = timingSkips(runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes('own and Task-call transcripts yielded no token totals'), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 no worktree: a dispatched run whose run-state has worktree nulled and no worktreeAtClose still gets its totals', async () => {
+  // Red without it: ownTranscripts' worktree/sessionId early returns running before the dispatched lookup (that run never reaches
+  // locateTaskTranscripts). The real writer (record-worktree --dispatch, via dispatchedRun) stamps the dispatch ids; the worktree is then
+  // blanked with ctxLib.writeRunState, the shape a pre-#3023 close left (no worktreeAtClose existed then; null is its absent value).
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    const { runDir } = await dispatchedRun(root, RUN_1);
+    ctxLib.writeRunState(runDir, { worktree: null, worktreeAtClose: null });
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(runDir).totals.tokens), twice(A));
+    assert.deepStrictEqual(skipLines(runDir), []);
+    // And a miss names the no-worktree reason first, then the Task-call lookup.
+    const other = await dispatchedRun(root, RUN_2);
+    ctxLib.writeRunState(other.runDir, { worktree: null, worktreeAtClose: null });
+    assert.equal((await writeTimingAtClose(other.runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const skips = timingSkips(other.runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`no worktree or worktreeAtClose in run-state.json, and no Task-call transcript of session(s) sess-d1 names run ${RUN_2}`), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 gate: a non-dispatched run with no worktree returns its reason without reading homeDir', () => {
+  // Red without it: deleting ownTranscripts' `missing && !dispatched` early return -- homeDir() then runs (env has no
+  // CLAUDE_CONFIG_DIR) and its throw turns the reason into "transcript lookup failed".
+  const r = ownTranscripts({ sessionId: SID, dispatched: false }, { env: {}, homeDir: () => { throw new Error('homeDir read'); }, runId: RUN_1 });
+  assert.deepStrictEqual(r, { paths: [], taskCalls: [], reason: 'no worktree or worktreeAtClose in run-state.json' });
+});
+
+test('run root: a non-dispatched run whose transcript sits only under its run root\'s slug gets totals from it; another worktree\'s slug still gives none', async () => {
+  // Red without ownTranscripts' run-root fallback (or without at-close passing runRoot): the first run gets no totals.
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const { runDir, wt } = await dispatchedRun(root, RUN_1, { sid: 'S-root', dispatch: false });
+    writeTranscript(cfg, root, [A, B], 'S-root');
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(runDir).totals.tokens), sum(A, B));
+    assert.deepStrictEqual(skipLines(runDir), []);
+    // The own slug still wins over the run root's.
+    writeTranscript(cfg, wt, [OTHER, OTHER], 'S-root');
+    assert.deepStrictEqual(ownTranscripts({ sessionId: 'S-root', worktree: wt }, { env: { CLAUDE_CONFIG_DIR: cfg }, runRoot: root }).paths,
+      [fs.realpathSync(path.join(cfg, 'projects', transcript.slugForCwd(wt), 'S-root.jsonl'))]);
+    // AC9.2 holds: a transcript under a sibling worktree's slug is not the run's.
+    const other = await dispatchedRun(root, RUN_2, { sid: 'S-sib', dispatch: false });
+    writeTranscript(cfg, path.join(root, 'wt-sibling'), [A, B], 'S-sib');
+    assert.equal((await writeTimingAtClose(other.runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.equal(Object.hasOwn(readTiming(other.runDir).totals, 'tokens'), false);
+    const skips = timingSkips(other.runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`no S-sib.jsonl under the slug of ${other.wt} or of its run root ${root}`), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('run root: a dispatched run never falls back to the run root\'s slug', () => {
+  // Red without the `!dispatched` term: the dispatcher's own transcript under the run root would be counted.
+  const root = tmpRoot();
+  try {
+    const cfg = path.join(root, 'cfg');
+    const wt = path.join(root, 'wt');
+    writeTranscript(cfg, root, [A, B], SID);
+    const rs = { sessionId: SID, dispatchSessionId: SID, dispatched: true, worktree: wt };
+    const r = ownTranscripts(rs, { env: { CLAUDE_CONFIG_DIR: cfg }, runId: RUN_1, runRoot: root });
+    assert.deepStrictEqual(r.paths, []);
+    assert.ok(r.reason.startsWith(`no ${SID}.jsonl under the slug of ${wt}, and no Task-call transcript`), r.reason);
+    // A run dir outside a .claude-tweaks/pipelines tree has no run root, so the reason is unchanged.
+    assert.equal(ownTranscripts({ sessionId: SID, worktree: wt }, { env: { CLAUDE_CONFIG_DIR: cfg } }).reason, `no ${SID}.jsonl under the slug of ${wt}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 notes: an empty result carries the lookup notes', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'projects'), { recursive: true });
+    const { runDir } = await dispatchedRun(root, RUN_1, { sid: 'sess-none' });
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const skips = timingSkips(runDir);
+    assert.equal(skips.length, 1);
+    assert.ok(skips[0].includes(`names run ${RUN_1} (session sess-none: no sess-none.jsonl found)`), skips[0]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 no session ids: the SKIP says no session id was recorded, not an empty session list', () => {
+  // Red without the `!sessionIds.length` branch: the reason reads "of session(s)  names run …".
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    fs.mkdirSync(path.join(cfg, 'projects'), { recursive: true });
+    const r = ownTranscripts({ dispatched: true, dispatchSessionId: null }, { env: { CLAUDE_CONFIG_DIR: cfg }, runId: RUN_1 });
+    assert.deepEqual(r.paths, []);
+    assert.equal(r.reason, `no worktree or worktreeAtClose in run-state.json, and no dispatchSessionId or sessionId in run-state.json to look up Task-call transcripts of run ${RUN_1}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 archive twin: attribution keys on the basename', async () => {
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'sess-d1', [{ id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A }]);
+    const { runDir } = await dispatchedRun(root, RUN_1);
+    const twin = path.join(root, '.claude-tweaks', 'pipelines', 'archive', RUN_1);
+    fs.mkdirSync(path.dirname(twin), { recursive: true });
+    fs.renameSync(runDir, twin);
+    assert.equal((await writeTimingAtClose(twin, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    assert.deepStrictEqual(pickTokens(readTiming(twin).totals.tokens), twice(A));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC1.1 dispatches scope is per directory: the own-slug directory keeps its window view minus the attributed agents, the Task-call-only directory keeps descendants', async () => {
+  // Red without it: a provenance-blind scope (collectDispatches' ownDirs / scopeDirItems' ownSlug) -- treating S2's own-slug
+  // directory like a Task-call-only one drops r2 (no parent chain); treating S1's like an own-slug one keeps x1; and an
+  // attributed r1 left in `dispatches` double-counts its rows (they are in totals.tokens).
+  const root = gitRepo();
+  try {
+    const cfg = path.join(root, 'cfg');
+    agentSession(cfg, root, 'S1', [
+      { id: 't1', depth: 1, prompt: names(root, RUN_1), usage: A },
+      { id: 'c1', depth: 2, parent: 't1', usage: OTHER },
+      { id: 'x1', depth: 1, usage: OTHER },
+    ]);
+    const { runDir, wt } = await dispatchedRun(root, RUN_1, { sid: 'S1', resumeSid: 'S2' });
+    agentSession(cfg, wt, 'S2', [
+      { id: 'r1', depth: 1, prompt: names(root, RUN_1), usage: B },
+      { id: 'r2', depth: 1, usage: OTHER },
+    ]);
+    writeTranscript(cfg, wt, [B, B], 'S2');
+    assert.equal((await writeTimingAtClose(runDir, { env: { CLAUDE_CONFIG_DIR: cfg } })).status, 'written');
+    const timing = readTiming(runDir);
+    assert.deepStrictEqual(timing.dispatches.items.map((d) => d.agentId).sort(), ['c1', 'r2']);
+    assert.deepStrictEqual(pickTokens(timing.totals.tokens), plus(twice(A), plus(twice(B), twice(B))));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

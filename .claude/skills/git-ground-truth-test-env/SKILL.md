@@ -41,6 +41,8 @@ Any file whose content you read must be a regular file, checked on the open desc
 
 A second implementation on the same branch is the checklist. Diff the new list against it. #5294's `repoInfo` signature (`plugin/bin/lib/hooks/repo-info-cache.js`) was written from its spec's inputs. It reached the list above only through four review fix waves (`733c576fa`, `a3dcd82bd`, `23a20aab3`, `222881f65`), each with its own verify and Windows run. Meanwhile #5266's `commonDirFromFs` in `plugin/bin/claude-tweaks-statusline.js` already modelled the gitfile, `commondir`, the layout and ownership. The pipe hang, the ignored enclosing index, and stale answers after `HEAD` loss were all gaps in the list, not code bugs. The worked list is `docs/hooks.md`'s "repoInfo cache (#5294)" section, including its accepted divergences.
 
+A memo that invalidates by classifying each git call (cached read, pass-through, or state change) rather than by a filesystem signature is a runner decorator: see `gh-api-module-pattern`'s `caching-and-locks.md` (`withReadCache`, #5790). Its key and its discards still start from what git reads: every per-call input that changes the answer (encoding, cwd, stdin, env) and every write to the file git reports on.
+
 ## Anti-patterns
 
 | Pattern | Why it fails |

@@ -76,6 +76,7 @@ Set only through `setConfigLever` when the key is `ceremony-profile`, so it trac
 A fingerprint for "same policy or not", not a copy: the values are not written.
 
 - It is `sha256:` plus the hex digest of the canonical JSON (keys sorted at every depth, no whitespace, arrays in order) of `{key: resolved value}` for every `POLICY_KEYS` entry **except `integration-model` and `merge-verification`**. Those two run forge detection, which can call `gh`; `FORGE_DERIVED_POLICY_KEYS` in `facts.js` is the one constant to edit if another key's resolution gains a network probe. The mint is deliberately free of network calls.
+- The factory policy layer (#6006) is part of the resolved policy, so a value it supplies is hashed like a `policy.yml` value. The driver's mint resolves it with the parent's variable.
 - No per-run `config.yml` overlay is applied (none exists at mint). Two policies that resolve to the same values hash equal; changing a hashed value changes the hash; changing only `integration-model` does not.
 - It is taken at mint, the policy the run started under. A mid-run edit to `.claude-tweaks/policy.yml` is not reflected.
 - It is `null` when the policy cannot be read (an unreadable `policy.yml`, any read error other than the file being absent, or a resolver failure). An absent `policy.yml` is a valid policy and hashes the defaults.

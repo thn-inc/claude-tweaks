@@ -195,6 +195,7 @@
 
 const path = require('node:path');
 const { isAncestorOrSelf } = require('../path-guard');
+const { EFFORT_SCALE } = require('../model-profiles/profiles');
 
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -465,6 +466,14 @@ function assertSpendCeiling(value) {
   }
 }
 
+// The one effort rule, shared by composeArgs and the launcher: absent (undefined or null)
+// passes; anything else must be a level of the model-profiles scale.
+function assertEffort(value) {
+  if (value !== undefined && value !== null && !EFFORT_SCALE.includes(value)) {
+    throw new RangeError('effort must be one of ' + EFFORT_SCALE.join(', ') + ', got ' + String(value));
+  }
+}
+
 // The tools a role launches with on a platform: Bash is dropped for a role that carries
 // generated settings when the platform is not sandbox-probed. A fresh array each call.
 function toolsFor(role, platform) {
@@ -473,7 +482,7 @@ function toolsFor(role, platform) {
   return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
 }
 
-function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, platform } = {}) {
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
   const spec = specFor(role);
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
     throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
@@ -482,6 +491,7 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
     throw new Error('schema is required and must be an object');
   }
   assertSpendCeiling(spendCeiling);
+  assertEffort(effort);
   if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
   const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
   if (spec.settings) args.push('--settings', settingsFile);
@@ -489,7 +499,8 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   if (appendPromptFile) args.push('--append-system-prompt-file', appendPromptFile);
   if (spendCeiling !== undefined) args.push('--max-budget-usd', String(spendCeiling));
   if (model) args.push('--model', model);
+  if (effort !== undefined && effort !== null) args.push('--effort', effort);
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
