@@ -25,13 +25,13 @@ const crypto = require('node:crypto');
 const { PLAN_REF_PREFIX, planRefName, parsePlanRefName } = require('../plan-store/ref');
 const { fencedLineMask } = require('../markdown-blocks');
 const { FP_RE_WORK, FP_RE_WORK_PLAIN } = require('./record-fingerprint');
+const { RISK_FLAG_LINE_KEYS } = require('./record-risk-flags');
 
-// The ten prefixes. The three Risk-flags keys are named without their colon and joined
-// after, so this module holds no `Risk-flags:` literal: record-risk-flags.js is the one
-// writer of that line (risk-flags-writer-conformance scans plugin/bin for the literal).
+// The ten prefixes. The three Risk-flags keys come from record-risk-flags.js, the one
+// writer of that line, so a key change there moves the hash exclusions with it.
 const SPEC_HASH_EXCLUDED_PREFIXES = [
   'Surface:', 'Design-intent:', 'Ui-stack:', 'Visual-reference:', 'Parent:',
-  ...['Risk-flags', 'Risk-flags-unconfirmed', 'Risk-flags-added-by-tripwire'].map((k) => `${k}:`),
+  ...RISK_FLAG_LINE_KEYS,
   'Acceptance-target:', '**Related:**',
 ];
 

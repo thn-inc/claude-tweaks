@@ -75,10 +75,16 @@ test('sections after Planning Decisions are not covered', () => {
 
 test('specHash ignores fenced headings', () => {
   const base = specHash(SPEC);
-  const unfenced = SPEC.replace(`${FENCE}\n## Planning Decisions\n`, `${FENCE}\n`);
-  assert.notStrictEqual(specHash(unfenced), base);
-  // the real heading still ends coverage
-  assert.strictEqual(specHash(sub(SPEC, 'The user typed this.', 'Edited.')), base);
+  // the fenced `## Planning Decisions` must not end coverage: text after it, still in the same section, is hashed
+  assert.notStrictEqual(specHash(sub(SPEC, 'After the fence.', 'After the fence, edited.')), base);
+  // removing the fenced heading line is itself a covered edit
+  assert.notStrictEqual(specHash(SPEC.replace(`${FENCE}\n## Planning Decisions\n`, `${FENCE}\n`)), base);
+});
+
+test('a metadata-prefix line inside a fence is still hashed', () => {
+  const withFenced = sub(SPEC, 'After the fence.', `${FENCE}\nRisk-flags: auth\n${FENCE}\nAfter the fence.`);
+  const base = specHash(withFenced);
+  assert.notStrictEqual(specHash(sub(withFenced, 'Risk-flags: auth', 'Risk-flags: migrations')), base);
 });
 
 test('normalization', () => {
