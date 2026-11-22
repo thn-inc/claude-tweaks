@@ -10,6 +10,7 @@ files:
   - tools/review-replay/replay.workflow.js
   - plugin/skills/review/step3-tiebreak.md
   - plugin/bin/lib/tiebreak.js
+  - plugin/bin/lib/timing/transcript.js
 ---
 
 # Replay Archived Reviews to Measure a Tiebreak Change
@@ -58,7 +59,7 @@ files:
 - **Action:** settle every reply through `plugin/bin/lib/tiebreak.js`, the same settle a review runs. The output gives:
   - agreement with the archived verdicts, in total, per archived class and per severity;
   - each arm's agreement with the reference arm;
-  - agents and tokens per arm, read from `message.usage` in each `agent-{id}.jsonl` and deduplicated by `message.id`.
+  - agents and tokens per arm, read from `message.usage` in each `agent-{id}.jsonl`, with each `message.id` counted once at the maximum of each usage field across its lines.
 - **Should feel:** trustworthy. Exit 0 means every finding was judged by every arm. Exit 3 means some were not, and those are listed in `notJudged` by reason: `no-reply`, `chunk-split`, `unidentified-agent`, `file-absent-in-tree`, `effort-mismatch`, or a settle reason such as `status:BLOCKED`.
 - **Should understand:**
   - Only `verdict:cant-tell` and `evidence-unverified` settle as `cant-tell`. Every other non-verdict reason is notJudged.

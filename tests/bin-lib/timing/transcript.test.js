@@ -5,7 +5,7 @@ const fs = require('fs');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { slugForCwd, locateTranscripts, readUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
+const { slugForCwd, locateTranscripts, readUsage, mergeUsage, readPromptRows, isProcedurePath, subagentsDirFor, readDispatches, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP, TRANSCRIPT_SLUG_RULE } = require('../../../plugin/bin/lib/timing/transcript');
 const { aggregateDispatches } = require('../../../plugin/bin/lib/timing/derive');
 
 // The developer's own CLAUDE_CONFIG_DIR would redirect every homeDir-only
@@ -1223,6 +1223,51 @@ test('#5556: an AskUserQuestion block with no input.questions gives questions []
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('#5967: mergeUsage keeps the max of each field across lines of one message.id', () => {
+  let m = mergeUsage(null, { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 });
+  m = mergeUsage(m, { output_tokens: 40 });
+  m = mergeUsage(m, { output_tokens: 900, input_tokens: 1 });
+  assert.deepEqual(m, { input: 3, output: 900, cacheRead: 1000, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 });
+});
+test('#5967 RF1: the largest write with no cache_creation object is all 5-minute', () => {
+  assert.deepEqual(mergeUsage(null, { cache_creation_input_tokens: 500 }), { input: 0, output: 0, cacheRead: 0, cacheCreate: 500, cacheWrite1h: 0, cacheWrite5m: 500 });
+});
+test('#5967 RF2: the 1-hour split is read from the largest-write line only', () => {
+  let m = mergeUsage(null, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 300 } });
+  m = mergeUsage(m, { cache_creation_input_tokens: 100, cache_creation: { ephemeral_1h_input_tokens: 100 } });
+  assert.equal(m.cacheWrite1h, 300);
+  assert.equal(m.cacheWrite5m, 500);
+});
+test('#5967 RF3: a 1-hour figure above the write is clamped to the write', () => {
+  const m = mergeUsage(null, { cache_creation_input_tokens: 50, cache_creation: { ephemeral_1h_input_tokens: 90 } });
+  assert.equal(m.cacheWrite1h, 50);
+  assert.equal(m.cacheWrite5m, 0);
+});
+test('#5967 RF5: absent or non-number usage is all zeros and prev is not mutated', () => {
+  const zero = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0 };
+  assert.deepEqual(mergeUsage(null, undefined), zero);
+  assert.deepEqual(mergeUsage(null, { output_tokens: null }), zero);
+  const prev = { ...zero, output: 7 };
+  mergeUsage(prev, { output_tokens: 9 });
+  assert.equal(prev.output, 7);
+});
+test('#5967: readUsage lands the max of every field on the first row of an id when later lines grow them', async () => {
+  const dir = tmpSubagents();
+  const f = path.join(dir, 'agent-5967.jsonl');
+  fs.writeFileSync(f, [
+    snapLine('2026-10-17T10:00:05.000Z', 'mg1', null, [1, 2, 3, 4], 'thinking'),
+    snapLine('2026-10-17T10:00:09.000Z', 'mg1', 'end_turn', [10, 20, 30, 40], 'text'),
+  ].join('\n') + '\n');
+  const rows = await readUsage(f);
+  assert.deepEqual(rows.map((r) => [r.inputTokens, r.outputTokens, r.cacheRead, r.cacheCreate]), [[10, 20, 30, 40], [0, 0, 0, 0]]);
+});
+test('#5967: mergeUsage keeps the first largest-write line\'s 1-hour split when a later write ties it', () => {
+  let m = mergeUsage(null, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 300 } });
+  m = mergeUsage(m, { cache_creation_input_tokens: 800, cache_creation: { ephemeral_1h_input_tokens: 700 } });
+  assert.equal(m.cacheWrite1h, 300);
+  assert.equal(m.cacheWrite5m, 500);
 });
 
 // ---- #5647: locateTaskTranscripts — a session's depth-1 Task-call agents naming one run ----

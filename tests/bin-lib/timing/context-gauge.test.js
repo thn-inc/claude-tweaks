@@ -1053,6 +1053,26 @@ test('gauge: per message.id the tail takes each usage field\'s max — a streami
   assert.deepStrictEqual(await gauge({ transcript: p, tailBytes: 1 }), { contextTokens: 124002 });
 });
 
+test('#5967: gauge: the tail keeps a larger earlier line over a smaller later one of the same message.id, and id-less lines stay their own turns', async () => {
+  const dir = tmp('ct-gauge-t-');
+  const p = path.join(dir, 'shrink.jsonl');
+  const line = (id, usage) => JSON.stringify({ type: 'assistant', timestamp: '2026-10-25T17:01:00.000Z', message: { ...(id ? { id } : {}), role: 'assistant', content: [], usage } });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m9', { input_tokens: 2, cache_read_input_tokens: 120000, cache_creation_input_tokens: 4000, output_tokens: 400 }),
+    line('m9', { input_tokens: 1, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0, output_tokens: 8 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 124002 });
+  fs.writeFileSync(p, transcriptText([
+    userLine('x'),
+    line('m1', { input_tokens: 9, cache_read_input_tokens: 500, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 5, cache_read_input_tokens: 70000, cache_creation_input_tokens: 0 }),
+    line(null, { input_tokens: 1, cache_read_input_tokens: 10, cache_creation_input_tokens: 0 }),
+    line('m1', { input_tokens: 2, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 }),
+  ]));
+  assert.deepStrictEqual(await gauge({ transcript: p }), { contextTokens: 11 }, 'the last first-line is the second id-less line; the m1 straggler does not become the last turn');
+});
+
 test('gauge: a tail window with no assistant message falls back to the whole file', async () => {
   const dir = tmp('ct-gauge-t-');
   const p = path.join(dir, 'huge-last.jsonl');
