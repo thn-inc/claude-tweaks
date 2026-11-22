@@ -1,0 +1,51 @@
+// plugin/bin/lib/plan-store/check.js — is a stored plan still valid for the current spec and base? (#6052)
+// Four checks run in CHECK_ORDER and the first failure wins; each verdict depends only on its own
+// input. Anything undeterminable (a fetch error, an unresolvable base, a throw) reads invalid, never
+// valid. checkPlan never throws and returns exactly `{valid, failed}`.
+'use strict';
+
+const { extractFileEntries } = require('../plan-audit/parser');
+const { DEFAULT_REMOTE } = require('./ref');
+const { fetchRef, localRef, planCommitFile, resolveCommit, changedPaths } = require('./git');
+
+const CHECK_ORDER = ['ref', 'hash', 'base', 'files'];
+
+// The Modify and Test paths of the plan's Files sections (Check A's parse), de-duplicated in
+// first-seen order. Create and Delete entries are not named: they cannot go stale under the plan.
+function namedPaths(planText) {
+  const seen = new Set();
+  for (const { type, path } of extractFileEntries(planText)) {
+    if (type === 'Modify' || type === 'Test') seen.add(path);
+  }
+  return [...seen];
+}
+
+function checkPlan({ g, remote = DEFAULT_REMOTE, fetch, line, currentSpecHash, base }) {
+  let running = CHECK_ORDER[0];
+  try {
+    // ref: the plan is fetchable, the ref names the line's commit, and the commit is a well-formed plan commit.
+    if (fetch && !fetchRef(g, remote, line.ref).ok) return { valid: false, failed: 'ref' };
+    if (localRef(g, line.ref) !== line.commit) return { valid: false, failed: 'ref' };
+    const file = planCommitFile(g, line.commit);
+    if (!file.ok) return { valid: false, failed: 'ref' };
+
+    running = 'hash';
+    if (currentSpecHash === null || currentSpecHash !== line.specHash) return { valid: false, failed: 'hash' };
+
+    running = 'base';
+    const baseSha = resolveCommit(g, base);
+    if (!baseSha) return { valid: false, failed: 'base' };
+
+    running = 'files';
+    const named = namedPaths(file.bytes.toString('utf8'));
+    if (named.length === 0) return { valid: false, failed: 'files' };
+    const changed = changedPaths(g, file.parent, baseSha);
+    if (!changed.ok || named.some((p) => changed.paths.has(p))) return { valid: false, failed: 'files' };
+
+    return { valid: true, failed: null };
+  } catch {
+    return { valid: false, failed: running };
+  }
+}
+
+module.exports = { CHECK_ORDER, namedPaths, checkPlan };
