@@ -173,7 +173,9 @@ const AUTH_POLICY = 'risk-path-globs:\n  auth: [src/auth/**]\n';
 function authWorld(policy) {
   const w = world({ policy });
   seedHistory(w, '3b');
-  commitFile(w, 'src/auth/a.js', 'const x = 1;\n');
+  // A config file under the glob: a source file would call for 3b by itself (CALLED_FOR, #6001 build replay), so only
+  // the risk-path fact can select 3b here.
+  commitFile(w, 'src/auth/a.json', '{"x": 1}\n');
   return w;
 }
 

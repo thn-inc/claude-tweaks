@@ -71,9 +71,9 @@ test('AC1.1: TIER_LENSES reproduces the tier table', () => {
   assert.deepStrictEqual(Object.keys(CALLED_FOR).sort(), [...LENS_IDS]);
 });
 
-test('initial constants', () => {
-  assert.strictEqual(SHARE_FLOOR, 0.3);
-  assert.strictEqual(FORCE_EVERY, 5);
+test('tuned constants (#6001 build replay)', () => {
+  assert.strictEqual(SHARE_FLOOR, 0.4);
+  assert.strictEqual(FORCE_EVERY, 3);
 });
 
 test('AC2.1: docs-only diff at high with 3d below the floor selects no 3d', () => {
@@ -83,9 +83,9 @@ test('AC2.1: docs-only diff at high with 3d below the floor selects no 3d', () =
   const reason = reasonOf(r, '3d');
   assert.ok(reason, 'skipped names 3d');
   assert.match(reason, /share 0\.1/);
-  assert.match(reason, /below floor 0\.3/);
+  assert.match(reason, /below floor 0\.4/);
   assert.match(reason, /no diff fact calls for it/);
-  assert.strictEqual(reason, '3d: share 0.1 over its last 20 runs is below floor 0.3; no diff fact calls for it (0 of 5 reviews since it last ran)');
+  assert.strictEqual(reason, '3d: share 0.1 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)');
 });
 
 test('AC2.2: the same diff adding a git call inside a per-file loop selects 3d', () => {
@@ -221,7 +221,7 @@ test('above-floor lens runs on every diff it applies to', () => {
   assert.ok(r.selected.includes('3a'), '3a applies to any non-empty diff');
   const d = sel({ history: historyOf({ '3d': { share: 0.9 } }) });
   assert.ok(!d.selected.includes('3d'));
-  assert.strictEqual(reasonOf(d, '3d'), '3d: share 0.9 ≥ floor 0.3, but the diff has no source change it applies to');
+  assert.strictEqual(reasonOf(d, '3d'), '3d: share 0.9 ≥ floor 0.4, but the diff has no source change it applies to');
   const s = sel({ facts: sourceDiff(), history: historyOf({ '3d': { share: 0.9 } }) });
   assert.ok(s.selected.includes('3d'));
   // At exactly the floor the lens is above it.
@@ -231,7 +231,7 @@ test('above-floor lens runs on every diff it applies to', () => {
   assert.match(reasonOf(atProse, '3d'), /≥ floor/);
   // An empty diff: nothing applies to 3a, so it is skipped with the applies reason.
   const empty = sel({ facts: factsOf() });
-  assert.match(reasonOf(empty, '3a'), /^3a: share 0\.9 ≥ floor 0\.3, but the diff has no changed path it applies to$/);
+  assert.match(reasonOf(empty, '3a'), /^3a: share 0\.9 ≥ floor 0\.4, but the diff has no changed path it applies to$/);
 });
 
 test('forced run every FORCE_EVERY reviews', () => {
@@ -240,7 +240,7 @@ test('forced run every FORCE_EVERY reviews', () => {
   assert.ok(sel({ history, streaks: streaksOf({ '3d': FORCE_EVERY + 3 }) }).selected.includes('3d'));
   const below = sel({ history, streaks: streaksOf({ '3d': FORCE_EVERY - 2 }) });
   assert.ok(!below.selected.includes('3d'));
-  assert.match(reasonOf(below, '3d'), /\(3 of 5 reviews since it last ran\)$/);
+  assert.match(reasonOf(below, '3d'), /\(1 of 3 reviews since it last ran\)$/);
   assert.ok(sel({ history, streaks: { ok: false } }).selected.includes('3d'));
   assert.ok(sel({ history, streaks: { ok: false, reason: 'x' } }).selected.includes('3d'));
   assert.ok(sel({ history, streaks: null }).selected.includes('3d'));
@@ -314,12 +314,12 @@ test('AC9.1: a bookkeeping-only diff gets the rules as written', () => {
     tier: 'high',
     selected: ['3a', '3h'],
     skipped: [
-      { lens: '3b', reason: '3b: share 0.1 over its last 20 runs is below floor 0.3; no diff fact calls for it (0 of 5 reviews since it last ran)' },
-      { lens: '3c', reason: '3c: share 0.9 ≥ floor 0.3, but the diff has no executable content it applies to' },
-      { lens: '3f', reason: '3f: share 0.9 ≥ floor 0.3, but the diff has no source or test change it applies to' },
-      { lens: '3d', reason: '3d: share 0.1 over its last 20 runs is below floor 0.3; no diff fact calls for it (0 of 5 reviews since it last ran)' },
-      { lens: '3e', reason: '3e: share 0.9 ≥ floor 0.3, but the diff has no source change or new file it applies to' },
-      { lens: '3g', reason: '3g: share 0.9 ≥ floor 0.3, but the diff has no source, test or executable content it applies to' },
+      { lens: '3b', reason: '3b: share 0.1 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)' },
+      { lens: '3c', reason: '3c: share 0.9 ≥ floor 0.4, but the diff has no executable content it applies to' },
+      { lens: '3f', reason: '3f: share 0.9 ≥ floor 0.4, but the diff has no source or test change it applies to' },
+      { lens: '3d', reason: '3d: share 0.1 over its last 20 runs is below floor 0.4; no diff fact calls for it (0 of 3 reviews since it last ran)' },
+      { lens: '3e', reason: '3e: share 0.9 ≥ floor 0.4, but the diff has no source change or new file it applies to' },
+      { lens: '3g', reason: '3g: share 0.9 ≥ floor 0.4, but the diff has no source, test or executable content it applies to' },
     ],
     fallback: null,
   });

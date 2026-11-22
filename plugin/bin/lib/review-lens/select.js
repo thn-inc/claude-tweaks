@@ -35,10 +35,13 @@
 //
 // Constants and their sources:
 //   TIERS, TIER_LENSES — `plugin/skills/review/step3-lens-dispatch.md`'s tier table, verbatim and in its order.
-//   SHARE_FLOOR = 0.3 — initial; replaced by Task 5's replay.
-//   FORCE_EVERY = 5 — initial; replaced by Task 5's replay.
-//   APPLIES, CALLED_FOR — initial; replaced by Task 5's replay. (3h is always applicable and always called for: it
-//     keeps its own QA-data gate in Step 3.)
+//   SHARE_FLOOR = 0.4 — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
+//   FORCE_EVERY = 3 — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
+//   APPLIES = Task 2's lists, unchanged — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
+//   CALLED_FOR = Task 2's lists, 3b and 3c also called for by any source or test change — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
+//   The held-out loss (one medium 3d finding, a lens whose history never reached 20 runs in the tuning slice) misses
+//   the zero-loss bar: this repository's opt-in waits for a retune. (3h is always applicable and always called for:
+//   it keeps its own QA-data gate in Step 3.)
 
 const { FACT_NAMES } = require('./facts');
 const { LENS_IDS } = require('./dispatch-record');
@@ -53,8 +56,8 @@ const TIER_LENSES = Object.freeze({
   max: FULL_SET,
 });
 
-const SHARE_FLOOR = 0.3;
-const FORCE_EVERY = 5;
+const SHARE_FLOOR = 0.4;
+const FORCE_EVERY = 3;
 
 const APPLIES = Object.freeze({
   '3a': (f) => f.paths.length > 0,
@@ -81,8 +84,8 @@ const APPLIES_WHAT = Object.freeze({
 
 const CALLED_FOR = Object.freeze({
   '3a': (f) => f.kinds.source || f.kinds.test,
-  '3b': (f) => f.riskPathTouched || f.riskFlags.length > 0 || (f.executableContent && (f.shellInvocationAdded || f.inputHandlingAdded)),
-  '3c': (f) => f.shellInvocationAdded || f.inputHandlingAdded || f.errorHandlingTouched,
+  '3b': (f) => f.kinds.source || f.kinds.test || f.riskPathTouched || f.riskFlags.length > 0 || (f.executableContent && (f.shellInvocationAdded || f.inputHandlingAdded)),
+  '3c': (f) => f.kinds.source || f.kinds.test || f.riskPathTouched || f.riskFlags.length > 0 || f.shellInvocationAdded || f.inputHandlingAdded || f.errorHandlingTouched,
   '3d': (f) => f.perCallPath || f.loopSpawn,
   '3e': (f) => f.newModules || f.riskPathTouched,
   '3f': (f) => f.kinds.test || f.newModules,
