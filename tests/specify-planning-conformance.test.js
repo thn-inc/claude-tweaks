@@ -750,6 +750,7 @@ test('Deliverable 6: the decomposition entry takes N sub-issues, never a parent,
 test('Task 1 fix 2: a failed body write is skipped, and a failed label call or comment post takes ## Hold\'s failed row', () => {
   pinned(decomposition(), [
     f('A failed body write is `skipped`, Detail `write failed: {reason}`'),
+    f('that sub-issue is neither planned nor written, and is `skipped`, Detail `fetch failed: {reason}`'),
     f('a held sub-issue whose comment post fails takes `## Hold`\'s `failed — hold comment not posted ({reason}); re-run /claude-tweaks:specify #{n}` row'),
     f('A failed label call takes the same row'),
   ], 'decomposition write failures');
@@ -832,7 +833,8 @@ test('AC4.1 + Deliverable 8: the handoff never plans — the dispatcher says so 
   pinned(blockOf(rel), [
     f('add these two lines as the last lines of the prompt\'s Task scope'),
     f('Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.'),
-    f('After your summary, add one line `Resumed: #a, #b` naming every sub-issue Step 3 resumed rather than created, or `Resumed: none`.'),
+    f('After your summary and before your status line, add one line `Resumed: #a, #b` naming every sub-issue Step 3 resumed rather than created, or `Resumed: none`.'),
+    f('this rule comes before the status rule that follows'),
     f('over the Work Units Created refs minus the refs on that `Resumed:` line'),
     f('`Not planned: the handoff reply carried no Resumed: line.`'),
     f('`Not planned: the handoff returned {status} with no Work Units Created table.`'),
