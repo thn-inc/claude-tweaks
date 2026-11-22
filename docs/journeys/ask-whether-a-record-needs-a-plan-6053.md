@@ -31,7 +31,7 @@ files:
 - **URL:** `plugin/bin/express-lane.js plan-lane --record-json {file}`
 - **Action:** The **agent** in a `gh`-absent sandbox (or a caller holding the record already) writes `{number, body, labels}` to a file and passes it. The verb reads it in place of the fetch.
 - **Should feel:** Identical to step 1's answer for the same record and policy.
-- **Should understand:** A file that is not one `{number, body, labels}` object is exit 2, never a guessed record. A body that is not a string reads `body-unreadable`.
+- **Should understand:** A file that is not one `{number, body, labels}` object is exit 2, never a guessed record. A `null` or absent body reads `body-unreadable`; any other non-string body is a malformed record, exit 2.
 - **Red flags:** A malformed file that prints a lane.
 
 ### 3. Read the verdict

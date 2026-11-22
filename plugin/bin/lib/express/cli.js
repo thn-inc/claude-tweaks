@@ -49,11 +49,9 @@ const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-c
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
+const { expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-// plan-lane.js reads the driver bounds from the leaf lane-bounds.js, never driver/steps.js (which loads this file).
-const { needsNoPlan, POLICY_KEYS: PLAN_LANE_POLICY_KEYS } = require('../driver/plan-lane');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -300,8 +298,8 @@ function runGate(deps, flags) {
     deps.stderr(`express-lane.js: could not read policy or decisions.md: ${err && err.message}\n`);
     return 1;
   }
-  const enabled = policy['express-lane'].value === true;
-  const opts = { enabled, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+  const opts = expressGateOptions(policy);
+  const { enabled } = opts;
   const verdicts = issues.map((issue) => evaluateRecordEligibility(issue, { ...opts, escalated: decisionsFile !== null && hasEscalation(decisionsText, issue.number) }));
   // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
   // fill changes nothing below.
@@ -486,6 +484,9 @@ function runSamples(deps, flags) {
 
 // The plan-lane verdict (#6053) for one record: advisory, exit 0 whatever the lane.
 function runPlanLane(deps, flags) {
+  // Required here, not at the top: plan-lane.js loads the driver's review/worker/launch graph, which
+  // the other verbs never need, and driver/settle.js loads this file (express/queue.js's lazy-require rule).
+  const { needsNoPlan, POLICY_KEYS: PLAN_LANE_POLICY_KEYS } = require('../driver/plan-lane');
   let rec;
   if (flags['--record-json'] !== undefined) {
     rec = readJsonFile(deps, '--record-json', flags['--record-json']);

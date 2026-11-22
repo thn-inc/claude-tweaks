@@ -10,7 +10,13 @@ const { readText } = require('./helpers/read-skill');
 const { MICRO_PLAN_CONDITIONS } = require('../plugin/bin/lib/issues/micro-plan-gate');
 
 const MICRO_PLAN = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'micro-plan.md'));
-const BANNED = [/at most one implementation file/i, /two or more implementation files/i, /<=\s*1 implementation/i];
+// A restated count in any of its usual spellings: one / 1 / a single, at most / no more than, two / 2 or more.
+const BANNED = [
+  /\b(?:at most|no more than|up to)\s+(?:one|1|a single)\s+implementation files?\b/i,
+  /\b(?:two|2)\s+or\s+more\s+implementation files?\b/i,
+  /\ba single implementation file\b/i,
+  /<=\s*1 implementation/i,
+];
 
 function gateSection(text) {
   const start = text.indexOf('## Applicability gate');
@@ -51,6 +57,9 @@ test('AC4.1: micro-plan.md cites micro-plan-gate.js and restates no count', () =
 test('AC4.1 go-red: a restated count, a dropped id, a dropped citation and a dropped item each fail', () => {
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace('## Composing', 'names at most one implementation file.\n\n## Composing')));
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace('than condition 3 allows', 'than two or more implementation\nfiles allow')));
+  for (const restated of ['names at most 1 implementation file.', 'names a single implementation file.', 'names no more than one implementation file.']) {
+    assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace('## Composing', `${restated}\n\n## Composing`)), restated);
+  }
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace('(`implementation-file-limit`)', '')));
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replaceAll('countImplementationFiles', 'countFiles')));
   assert.throws(() => assertMicroPlanCitesCode(MICRO_PLAN.replace(/\n4\. The spec body[\s\S]*?(?=\n\*\*Any other)/, '')));

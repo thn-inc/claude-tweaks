@@ -54,7 +54,7 @@ function countImplementationFiles(entries) {
 // -> {passes, failed, unreadable}. `failed` lists every evaluable failing condition id in
 // MICRO_PLAN_CONDITIONS order; `unreadable` is null, 'key-files' or 'risk-flags'.
 function evaluateMicroPlanGate({ ceremony, size, keyFileEntries, body } = {}) {
-  const keyFilesReadable = !!keyFileEntries && keyFileEntries.unparsed === 0;
+  const keyFilesReadable = !!keyFileEntries && Array.isArray(keyFileEntries.entries) && keyFileEntries.unparsed === 0;
   const risk = parseRiskFlags(body);
   const riskReadable = typeof body === 'string' && risk.status !== 'unknown';
 

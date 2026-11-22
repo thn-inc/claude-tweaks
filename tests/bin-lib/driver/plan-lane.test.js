@@ -94,6 +94,12 @@ test('AC2.1: two implementation Key Files fail the micro-plan gate', () => {
   assert.deepStrictEqual(v, { lane: null, reason: 'outside-every-lane' });
 });
 
+test('AC2.1: a kept risk flag keeps a record that passes every other micro-plan condition out of the micro-plan lane', () => {
+  const pol = policy({ 'express-lane': false, 'express-driver': 'off' });
+  const v = verdictFor({ labels: EXPRESS_LABELS, keyFiles: MICRO_FILES, opts: { riskFlags: 'Risk-flags: auth' }, pol });
+  assert.deepStrictEqual(v, { lane: null, reason: 'outside-every-lane' });
+});
+
 test('AC3.1: a risk:high record reads outside every lane', () => {
   const v = verdictFor({ labels: ['risk:high', 'size:medium', 'type:feature'], keyFiles: DRIVER_FILES });
   assert.deepStrictEqual(v, { lane: null, reason: 'outside-every-lane' });
@@ -233,6 +239,8 @@ const PARITY_RECORDS = [
   { name: 'frontend surface', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { surface: 'web' } },
   { name: 'no type label', labels: ['risk:low', 'size:low', 'ceremony:fast-lane'], files: backendFiles(1) },
   { name: 'kept risk flag', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { riskFlags: 'Risk-flags: schema' } },
+  // `schema` above is not a built-in category, so that row reads as unreadable; this one is a readable kept flag.
+  { name: 'kept built-in risk flag', labels: ['risk:low', 'size:low', 'type:task'], files: backendFiles(1), opts: { riskFlags: 'Risk-flags: migrations' } },
   { name: 'medium no-ceremony 4 KF with noise', labels: ['risk:low', 'size:medium', 'type:feature', ...NOISE], files: backendFiles(4) },
 ];
 

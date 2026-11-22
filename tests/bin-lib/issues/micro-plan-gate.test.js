@@ -113,6 +113,12 @@ test('an absent or unparsed Key Files section is unreadable, not a pass', () => 
   assert.deepStrictEqual(evaluateMicroPlanGate({ ...PASSING(), keyFileEntries: partial }), { passes: false, failed: [], unreadable: 'key-files' });
 });
 
+test('a Key Files value whose entries is not a list is unreadable, never a throw', () => {
+  for (const entries of ['plugin/bin/x.js', { path: 'plugin/bin/x.js' }, undefined]) {
+    assert.deepStrictEqual(evaluateMicroPlanGate({ ...PASSING(), keyFileEntries: { entries, unparsed: 0 } }), { passes: false, failed: [], unreadable: 'key-files' });
+  }
+});
+
 test('a malformed Risk-flags line is unreadable', () => {
   const body = 'Risk_flags: auth\n';
   assert.strictEqual(parseRiskFlags(body).status, 'unknown');

@@ -17,8 +17,9 @@
 //                                not a bound; `off` means the driver lane never matches
 //
 // The driver bounds are read through the helpers the driver's own eligibility and admission steps
-// use (lane-bounds.js's eligibilityOptions, evaluateRecordEligibility, reviewRequired,
-// evaluateAdmission), never re-derived, so a change to admission's bounds is followed here.
+// use (lane-bounds.js's eligibilityOptions and laneBounds, evaluateRecordEligibility, reviewRequired,
+// evaluateAdmission), never re-derived, so a change to admission's bounds is followed here; the
+// express bounds likewise through the express gate's expressGateOptions.
 // reviewRequired and admission get the eligibility verdict's own Key File paths, as steps.js's
 // eligibility step does. lane-bounds.js is a leaf module, so this file never loads steps.js.
 //
@@ -32,10 +33,10 @@ const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/re
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { evaluateMicroPlanGate } = require('../issues/micro-plan-gate');
 const { evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit } = require('../express/eligibility');
-const { sensitivePathsOf } = require('../express/policy');
+const { expressGateOptions } = require('../express/policy');
 const { evaluateAdmission } = require('./admission');
 const { reviewRequired } = require('./review');
-const { eligibilityOptions } = require('./lane-bounds');
+const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review',
@@ -111,19 +112,16 @@ function insideDriverBounds(issue, policy) {
     routing: 'on',
     driverEscalated: false,
     keyFiles: eligibility.keyFiles,
-    bounds: { sizeCeiling: opts.sizeCeiling, maxKeyFiles: opts.maxKeyFiles },
+    bounds: laneBounds(policy),
     reviewerOn: reviewer.on,
     buildAuthority: 'typed',
   }).admitted;
 }
 
+// The express gate's own options (express/policy.js's expressGateOptions, as runGate reads them);
+// needsNoPlan calls this only when express-lane is true, so `enabled` is true here.
 function insideExpressBounds(issue, policy) {
-  return evaluateRecordEligibility(issue, {
-    enabled: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    escalated: false,
-  }).eligible;
+  return evaluateRecordEligibility(issue, { ...expressGateOptions(policy), escalated: false }).eligible;
 }
 
 // { labels, keyFiles, body, policy } -> { lane: 'driver'|'express'|'micro-plan'|null, reason }.

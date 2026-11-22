@@ -85,6 +85,17 @@ test('plan-lane --record-json with no Key Files section prints key-files-missing
   assert.deepStrictEqual(h.json(), { number: 9, lane: null, reason: 'key-files-missing' });
 });
 
+test('plan-lane --record-json with a null or absent body prints body-unreadable; any other non-string body exits 2', () => {
+  for (const rec of [{ ...record(10), body: null }, (({ body: _b, ...rest }) => rest)(record(10))]) {
+    const h = harness();
+    assert.strictEqual(run(['plan-lane', '--record-json', recordFile(rec)], h.deps), 0);
+    assert.deepStrictEqual(h.json(), { number: 10, lane: null, reason: 'body-unreadable' });
+  }
+  const h = harness();
+  assert.strictEqual(run(['plan-lane', '--record-json', recordFile({ ...record(10), body: 42 })], h.deps), 2);
+  assert.strictEqual(h.out.join(''), '');
+});
+
 test('plan-lane --issue fetches the record live and passes --repo', () => {
   const h = harness();
   h.deps.gh = (args) => { h.calls.gh.push(args); return JSON.stringify(record(7)); };
