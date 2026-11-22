@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-22T10:19:56.688Z",
+  "computedAt": "2026-11-22T10:44:09.269Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,12 +20,12 @@
       },
       {
         "number": 6018,
-        "updatedAt": "2026-11-21T18:53:18Z",
+        "updatedAt": "2026-11-22T10:43:59Z",
         "state": "OPEN"
       },
       {
         "number": 6011,
-        "updatedAt": "2026-11-22T10:18:29Z",
+        "updatedAt": "2026-11-22T10:43:17Z",
         "state": "OPEN"
       },
       {
@@ -55,7 +55,7 @@
       },
       {
         "number": 5996,
-        "updatedAt": "2026-11-22T10:01:18Z",
+        "updatedAt": "2026-11-22T10:43:14Z",
         "state": "OPEN"
       },
       {
@@ -842,7 +842,7 @@
         "number": 6018,
         "state": "OPEN",
         "title": "Admit driver records by risk and ceremony with the reviewer on, ending at pending-review",
-        "updatedAt": "2026-11-21T18:53:18Z",
+        "updatedAt": "2026-11-22T10:43:59Z",
         "facets": {
           "origin": null,
           "risk": "medium",
