@@ -21,9 +21,16 @@ const PATH_END_LOOKAHEAD = `(?![${SEG}]|\\.[${SEG}])`;
 // The bare root is that whole-path mention with no `/` after it: `{mainRoot}/…` is never
 // rewritten, so a main-checkout path that is not a worktree or a run input stays flagged.
 const BARE_END = `(?![/${SEG}]|\\.[${SEG}])`;
-// An outDir span runs only over path characters, so it stops at a separator (`,` `:` `;` `|`,
-// whitespace, a quote or a bracket) instead of swallowing the next path in a list.
-const OUT_TAIL = `(?:/[/.${SEG}]*|${PATH_END_LOOKAHEAD})`;
+// An outDir span stops at a separator (`,` `:` `;` `|`, whitespace, a quote, a backtick or `)`)
+// instead of swallowing the next path in a list; any other character (`[` `@` `~` `=`, non-ASCII)
+// is part of the path.
+const OUT_TAIL = `(?:/[^\\s"'\`),:;|]*|${PATH_END_LOOKAHEAD})`;
+// Path fragments that name a worktree or a run directory under some checkout root.
+const ROOT_MARKERS = ['/.claude/worktrees/', '/.claude-tweaks/pipelines/'];
+// What ends an absolute path for the root-independent scan: a separator. A space does not, since a
+// checkout root may contain one (`Code Workspaces`).
+const HARD_SEP = '\n\r"\'`(),;|=<>:';
+const isSpace = (ch) => ch === ' ' || ch === '\t' || ch === '\f' || ch === '\v';
 const SHA_TOKEN = '(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])';
 // Forward slashes, no trailing slash: `M/` would build `M//` and blind every scan.
 const normRoot = (p) => toPosix(p).replace(/\/+$/, '');
@@ -157,16 +164,51 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
   });
 }
 
+// Every absolute path (starting `/`, `~/` or `X:/`) naming a worktree or a run directory that does
+// not start at `root` and does not lie in a `skip` span, so the barrier holds when mainRoot is not the
+// archived checkout's (a moved --runs). One forward walk: the absolute path a marker belongs to is the
+// last one started since a separator.
+function foreignRootPaths(t, root, skip) {
+  const found = [];
+  let absAt = -1; // where the current absolute path starts, -1 for none since the last separator
+  let j = 0;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (HARD_SEP.includes(ch)) {
+      absAt = -1;
+      continue;
+    }
+    const atStart = i === 0 || isSpace(t[i - 1]) || HARD_SEP.includes(t[i - 1]);
+    if (atStart && /[A-Za-z]/.test(ch) && t[i + 1] === ':' && t[i + 2] === '/') {
+      absAt = i;
+      i += 1; // the drive colon belongs to the path it starts
+      continue;
+    }
+    const driveSlash = absAt === i - 2 && t[i - 1] === ':';
+    if (atStart && !driveSlash && (ch === '/' || (ch === '~' && t[i + 1] === '/'))) absAt = i;
+    if (ch !== '/' || absAt < 0 || !ROOT_MARKERS.some((mk) => t.startsWith(mk, i))) continue;
+    let end = i + 1;
+    while (end < t.length && !isSpace(t[end]) && !HARD_SEP.includes(t[end])) end++;
+    while (j < skip.length && skip[j][1] <= i) j++;
+    const exempt = t.startsWith(root + '/', absAt) || (j < skip.length && skip[j][0] <= i);
+    if (!exempt) found.push(trimPunct(t.slice(absAt, end)));
+    i = end - 1; // nothing up to `end` is a separator or a path start
+  }
+  return found;
+}
+
 function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
   const t = String(text);
   const root = requireRoot(mainRoot);
   const out = outDir ? normRoot(outDir) : '';
-  // The output directory is exempt only when it lies strictly under the main checkout; an
-  // outDir equal to or containing mainRoot would hide every leak, so it fails closed.
+  // An outDir equal to or containing mainRoot would hide every leak, so it fails closed. A span
+  // with a `..` segment can climb out of the output directory, so it exempts nothing.
   const skip = [];
-  if (out && out.startsWith(root + '/')) {
+  if (out && out !== root && !root.startsWith(out + '/')) {
     const spans = new RegExp(`${escapeRe(out)}${OUT_TAIL}`, 'g');
-    for (const m of t.matchAll(spans)) skip.push([m.index, m.index + m[0].length]);
+    for (const m of t.matchAll(spans)) {
+      if (!m[0].slice(out.length).split('/').includes('..')) skip.push([m.index, m.index + m[0].length]);
+    }
   }
   const tail = `(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`;
   const re = new RegExp(`(?:${escapeRe(root)}|${escapeRe(PIPELINES + runName)})${tail}`, 'g');
@@ -186,7 +228,7 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
     }
     found.push(m[0]);
   }
-  return found;
+  return [...found, ...foreignRootPaths(t, root, skip)];
 }
 
 module.exports = { rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };

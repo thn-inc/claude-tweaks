@@ -51,7 +51,8 @@ function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [], 
 //              covers), a fast/low slot naming origin/main and only the head (e-fast), a standard slot with no
 //              recorded effort (e-high), a spec-2 member whose own timing.json holds one slot (e-m2), and a spec-10
 //              member with no decisions.md of its own (e-m10)
-function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false } = {}) {
+//   twin:      with edges, e-m10 reviews lens 3g side A as e-m2 does, in its own unit
+function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false, twin = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -143,7 +144,8 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
     put(path.join(member10, 'review-ctx', 'context.md'), `Member 10 bundle at ${H}\n`);
     put(path.join(member10, 'work', '9-spec.md'), '# 9: the member-10 spec\n');
     const member10Items = [];
-    dispatch(member10Items, { agentId: 'e-m10', description: 'Review lens 3i ux A', lens: '3i', scratch: '3i-a', member: 'spec-10', reply: 'No findings.' });
+    const m10 = twin ? { description: 'Review lens 3g ownability A', lens: '3g', scratch: '3g-a' } : { description: 'Review lens 3i ux A', lens: '3i', scratch: '3i-a' };
+    dispatch(member10Items, { agentId: 'e-m10', ...m10, member: 'spec-10', reply: 'No findings.' });
     put(path.join(member10, 'timing.json'), `${JSON.stringify({ dispatches: { items: member10Items } }, null, 2)}\n`);
   }
   put(path.join(runDir, 'timing.json'), `${JSON.stringify({ dispatches: { items } }, null, 2)}\n`);

@@ -125,8 +125,57 @@ test('per-slot recall sums the sides', async () => {
   assert.deepEqual(near.prompts.filter((p) => p.lens === '3a').map(slotOf).sort(), ['3a-a', '3a-a.2', '3a-b']);
   const r = await scoreReviews(x, workflow(x, ({ arm, prompt }) => (arm.name === 'near' && prompt.lens === '3a' ? table(rowAt('src/a.js', 13)) : 'No findings.')));
   assert.equal(r.code, 0, r.deps.errs.join('\n'));
-  assert.deepEqual(r.json.arms.near.lenses['3a'].confirmed, { caught: 3, of: 3, unlocated: 0 });
-  assert.deepEqual(r.json.arms.far.lenses['3a'].confirmed, { caught: 0, of: 3, unlocated: 0 });
+  // 3a-a.2 re-reviews a later head, after the confirmed findings were fixed: it scores apart from first passes.
+  assert.deepEqual(r.json.arms.near.lenses['3a'].confirmed, { caught: 2, of: 2, unlocated: 0 });
+  assert.deepEqual(r.json.arms.near.lenses['3a'].confirmedRereview, { caught: 1, of: 1, unlocated: 0 });
+  assert.deepEqual(r.json.arms.far.lenses['3a'].confirmed, { caught: 0, of: 2, unlocated: 0 });
+  assert.deepEqual(r.json.arms.far.lenses['3a'].confirmedRereview, { caught: 0, of: 1, unlocated: 0 });
+  // A re-review still counts everywhere else.
+  assert.equal(r.json.arms.near.lenses['3a'].reviews, 3);
+  assert.deepEqual(r.json.arms.near.lenses['3a'].archived, { caught: 1, of: 1 });
+});
+
+test('byRepeat counts first passes only', async () => {
+  const x = await extracted('repeat', [], ['--arm', 'name=near,profile=fast,repeat=2', '--arm', 'name=far,profile=fast']);
+  const r = await scoreReviews(x, workflow(x, ({ arm, prompt }) => (arm.name === 'near' && prompt.lens === '3a' ? table(rowAt('src/a.js', 13)) : 'No findings.')));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  const L = r.json.arms.near.lenses['3a'];
+  assert.deepEqual(L.byRepeat, { 1: { caught: 2, of: 2 }, 2: { caught: 2, of: 2 } });
+  assert.deepEqual(L.confirmedRereview, { caught: 2, of: 2, unlocated: 0 });
+});
+
+test('rows with no :line are counted in rowsUnlocated, not read as found-nothing', async () => {
+  const x = await extracted('plain', ONE_3A);
+  const unlocated = '| high | src/a.js | x | e |';
+  const r = await scoreReviews(x, workflow(x, byArm({ near: table(unlocated), far: table(rowAt('src/a.js', 10), unlocated, unlocated) })));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  assert.equal(r.json.arms.near.lenses['3a'].rowsUnlocated, 1);
+  assert.deepEqual(r.json.arms.near.lenses['3a'].confirmed, { caught: 0, of: 1, unlocated: 0 });
+  assert.equal(r.json.arms.far.lenses['3a'].rowsUnlocated, 2);
+  assert.deepEqual(r.json.arms.far.lenses['3a'].confirmed, { caught: 1, of: 1, unlocated: 0 });
+  assert.equal(r.json.arms.control.lenses['3a'].rowsUnlocated, 0);
+});
+
+test('a reviewer with no reply is no-reply, one with no identity is unidentified-agent, and both exit 3', async () => {
+  const x = await extracted('plain', ONE_3A);
+  // Agents are numbered in manifest order: ag-1 near, ag-2 far, ag-3 control.
+  const dir = workflow(x, ({ arm }) => (arm.name === 'near' ? undefined : 'No findings.'));
+  fs.rmSync(path.join(dir, 'agent-ag-2.jsonl'));
+  const r = await scoreReviews(x, dir);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.near.notJudgedByReason, { 'no-reply': 1 });
+  assert.deepEqual(r.json.arms.far.notJudgedByReason, { 'unidentified-agent': 1 });
+  assert.equal(r.json.unidentifiedAgents, 1);
+  assert.equal(r.json.arms.near.lenses['3a'].reviews, 0);
+  assert.equal(r.json.arms.far.lenses['3a'].reviews, 0);
+  assert.equal(r.json.arms.control.notJudged, 0);
+});
+
+test('an effort-mismatched reviewer whose reply does not parse is effort-mismatch', async () => {
+  const x = await extracted('plain', ONE_3A, [...ARMS, '--arm', 'name=low,profile=fast,effort=low']);
+  const r = await scoreReviews(x, workflow(x, ({ arm }) => (arm.name === 'low' ? 'I looked around.' : 'No findings.'), { effortFor: (arm) => (arm.name === 'low' ? 'medium' : arm.effort) }));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.low.notJudgedByReason, { 'effort-mismatch': 1 });
 });
 
 test('fixture counts per lens', async () => {

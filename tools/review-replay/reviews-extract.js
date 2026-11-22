@@ -279,7 +279,15 @@ function extractReviews(opts, deps) {
   const excluded = [];
   const runRows = {};
   const passed = [];
-  for (const dir of [...selected.dirs].reverse()) {
+  // Per (unit, lens, side), how many slots passed so far: a slot after the first is a re-review of a later head.
+  const ordinals = new Map();
+  // Newest run first, by name in code-unit order, whatever order --select named them in.
+  const byNewest = [...selected.dirs].sort((a, b) => {
+    const x = path.basename(a);
+    const y = path.basename(b);
+    return x < y ? 1 : x > y ? -1 : 0;
+  });
+  for (const dir of byNewest) {
     const r = readRun(dir, deps);
     if (r.excluded) {
       excluded.push({ run: r.run, reason: r.excluded });
@@ -301,6 +309,9 @@ function extractReviews(opts, deps) {
         if (all.some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: out }).length > 0)) reason = 'unrewritten-path';
         else {
           names.set(key, k);
+          const unitSide = `${unitOf(r, s.inputs).key}\0${key}`;
+          s.ordinal = (ordinals.get(unitSide) || 0) + 1;
+          ordinals.set(unitSide, s.ordinal);
           passed.push(s);
         }
       }
@@ -404,7 +415,7 @@ function writeOutputs(w, deps) {
     const byUnit = confirmed[unit.key] || (confirmed[unit.key] = {});
     if (!byUnit[s.lens]) byUnit[s.lens] = confirmedOf(unit.dir, s.lens, fs);
     fixtureSlots.push({
-      name, run: s.run.run, unit: unit.key, lens: s.lens, side: s.side, agentId: s.agentId, repoKey: s.repo.key,
+      name, run: s.run.run, unit: unit.key, lens: s.lens, side: s.side, ordinal: s.ordinal, agentId: s.agentId, repoKey: s.repo.key,
       archivedTier: s.archivedTier, archivedEffort: s.archivedEffort, controlArm: s.controlArm,
     });
   }

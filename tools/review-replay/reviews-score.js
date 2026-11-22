@@ -1,6 +1,6 @@
 'use strict';
 // tools/review-replay/reviews-score.js — scores every replayed lens reviewer's reply, per arm and lens: the run's
-// confirmed findings it raised (recall, per slot and summed), the archived reviewer's own rows it raised, the rows no
+// confirmed findings it raised (recall, per slot and summed, first passes apart from re-reviews), the archived reviewer's own rows it raised, the rows no
 // archived reviewer of that run raised (`new`), and the reference arm's rows it also raised; the control arms' recall of
 // the archived rows is each lens's `fidelity`. Agents are identified and costed as score.js does. A reply that is
 // missing, recorded at another effort than its arm's, or not a lens report is notJudged, never a found-nothing review.
@@ -40,7 +40,12 @@ function lensEntry(arm, reference) {
   const entry = {
     reviews: 0,
     rowsBySeverity: Object.fromEntries(COUNT_KEYS.map((k) => [k, 0])),
+    // Severity rows with no `path:line`: they cannot raise a finding, so a recall of 0 beside them is not found-nothing.
+    rowsUnlocated: 0,
+    // First passes only (slot ordinal 1 for its unit, lens and side); a later slot re-reviews a later head, where the
+    // confirmed findings may already be fixed, so it is tallied apart in confirmedRereview.
     confirmed: { caught: 0, of: 0, unlocated: 0 },
+    confirmedRereview: { caught: 0, of: 0, unlocated: 0 },
     // Slots whose unit had no readable decisions.md: no confirmed set to score against, so they add nothing above.
     confirmedMissingSource: 0,
     archived: { caught: 0, of: 0 },
@@ -65,6 +70,7 @@ function scoreReviews(opts, deps) {
     return 1;
   }
   const fixture = readJson(fsImpl, path.join(opts.out, REVIEWS_FIXTURE_FILE));
+  const ordinals = new Map(fixture.slots.map((s) => [s.name, s.ordinal]));
   const { reports, confirmed, runRows } = readJson(fsImpl, path.join(opts.out, REPORTS_FILE));
   const firstUserArm = manifest.arms.find((a) => !isControlArm(a.name)) || manifest.arms[0];
   const reference = opts.reference !== undefined ? opts.reference : firstUserArm && firstUserArm.name;
@@ -109,20 +115,24 @@ function scoreReviews(opts, deps) {
     if (!report) throw new Error(`${REPORTS_FILE}: no archived report for ${prompt.name}`);
     const set = confirmed[report.unitKey] && confirmed[report.unitKey][prompt.lens];
     if (!set) throw new Error(`${REPORTS_FILE}: no confirmed set for ${report.unitKey} lens ${prompt.lens}`);
+    const ordinal = ordinals.get(prompt.name);
+    if (!Number.isInteger(ordinal)) throw new Error(`${REVIEWS_FIXTURE_FILE}: no slot ordinal for ${prompt.name}`);
     const parsed = parseFindings(text);
     const rows = parsed ? parsed.rows : [];
     const L = a.lenses[prompt.lens];
     a.scored += 1;
     L.reviews += 1;
     for (const k of COUNT_KEYS) L.rowsBySeverity[k] += counts[k];
+    L.rowsUnlocated += parsed ? parsed.skipped : SEVERITIES.reduce((n, k) => n + counts[k], 0);
     if (set.confirmedSource === 'missing') {
       L.confirmedMissingSource += 1;
     } else {
       const caught = caughtBy(set.findings, rows);
-      L.confirmed.caught += caught;
-      L.confirmed.of += set.findings.length;
-      L.confirmed.unlocated += set.unlocated;
-      if (L.byRepeat) {
+      const tally = ordinal === 1 ? L.confirmed : L.confirmedRereview;
+      tally.caught += caught;
+      tally.of += set.findings.length;
+      tally.unlocated += set.unlocated;
+      if (L.byRepeat && ordinal === 1) {
         L.byRepeat[slot.repeat].caught += caught;
         L.byRepeat[slot.repeat].of += set.findings.length;
       }

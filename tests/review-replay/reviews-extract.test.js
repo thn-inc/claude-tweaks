@@ -247,6 +247,46 @@ test('a repeated lens/side dispatch gets its own slot', async () => {
   assert.ok(names.includes(`${RUN}/3a-a`) && names.includes(`${RUN}/3a-a.2`), names.join(', '));
   const slots = x.json(schema.REVIEWS_FIXTURE_FILE).slots;
   assert.deepEqual(slots.filter((s) => s.lens === '3a' && s.side === 'a').map((s) => s.agentId), ['l3a-a', 'l3a-a2']);
+  assert.deepEqual(slots.map((s) => [s.name, s.ordinal]), [[`${RUN}/3a-a`, 1], [`${RUN}/3a-b`, 1], [`${RUN}/3b-a`, 1], [`${RUN}/3a-a.2`, 2]]);
+});
+
+test('a slot ordinal counts within its unit: a member\'s first review of a lens side is ordinal 1', async () => {
+  const tRoot = scratchDir('rr-reviews-twin-');
+  const tx = buildReviewsFixture(tRoot, { edges: true, twin: true });
+  const out = path.join(tRoot, 'out');
+  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: tx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(tx.mainRoot) };
+  const code = await run({ argv: ['extract-reviews', '--runs', tx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', tx.transcripts, '--arm', 'name=haiku,profile=fast', '--lens', '3g'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const { slots } = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
+  assert.deepEqual(slots.map((s) => [s.name, s.unit, s.ordinal]), [[`${RUN}/3g-a`, `${RUN}/spec-2`, 1], [`${RUN}/3g-a.2`, `${RUN}/spec-10`, 1]]);
+});
+
+test('--select in any order still reads runs newest first', async () => {
+  const y = await oneArm();
+  for (const select of [`${RUN},${RUN_GONE}`, `${RUN_GONE},${RUN}`]) {
+    const x = await extractReviews({ extra: ['--select', select] });
+    ok(x);
+    const { excluded } = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.equal(excluded[0].run, RUN_GONE, select);
+    assert.deepEqual(excluded, y.json(schema.REVIEWS_FIXTURE_FILE).excluded, select);
+  }
+});
+
+test('with --runs moved away from the archived checkout, every slot is excluded as unrewritten-path', async () => {
+  // A copy of the runs root under another main checkout: mainRoot is derived from --runs, so it no longer matches the
+  // archived prompts' paths and nothing in them is rewritten. The barrier must still see the original worktree.
+  const moved = path.join(root, 'moved', 'repo', '.claude-tweaks', 'pipelines');
+  fs.cpSync(fx.runsRoot, moved, { recursive: true });
+  const out = path.join(root, 'out-moved');
+  const deps = makeDeps();
+  const code = await run({ argv: ['extract-reviews', '--runs', moved, '--out', out, '--role', 'lens', '--transcripts', fx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 3, deps.errs.join('\n'));
+  const { excluded } = JSON.parse(deps.errs.join('\n'));
+  assert.deepEqual(Object.fromEntries(excluded.map((e) => [e.agentId, e.reason])), {
+    'l3a-a': 'unrewritten-path', 'l3a-b': 'unrewritten-path', 'l3b-a': 'unrewritten-path', 'l3a-a2': 'unrewritten-path',
+    'l3b-b': 'report-unparsed', 'l3c-a': 'unknown-run-input', 'l3d-a': 'run-input-gone',
+  });
+  assert.ok(!fs.existsSync(out), 'no prompt is written');
 });
 
 test('AC7.1: the workflow launches one agent per arm × repeat × prompt', async () => {

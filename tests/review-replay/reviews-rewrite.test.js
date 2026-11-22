@@ -266,6 +266,54 @@ test('rewriteText replaces an unknown run-directory path the caller names, workt
   assert.strictEqual(rw.rewriteText(own, full), own);
 });
 
+test('an absolute worktree or run-directory path under another root is flagged when mainRoot is wrong', () => {
+  const o = { mainRoot: '/Volumes/backup/repo', runName: 'R', outDir: '/out' };
+  const wt = '/Users/x/Code Workspaces/repo/.claude/worktrees/flow-spec-9';
+  assert.deepStrictEqual(rw.unrewrittenPaths('WORKTREE: ' + wt, o), [wt]);
+  assert.deepStrictEqual(rw.unrewrittenPaths('git -C "' + wt + '" diff', o), [wt]);
+  const other = '/Users/x/Code Workspaces/repo/.claude-tweaks/pipelines/OTHER/review-ctx/context.md';
+  assert.deepStrictEqual(rw.unrewrittenPaths('Earlier run: ' + other + '.', o), [other]);
+  assert.deepStrictEqual(rw.unrewrittenPaths('at C:/w/repo/.claude/worktrees/w now', o), ['C:/w/repo/.claude/worktrees/w']);
+  assert.deepStrictEqual(rw.unrewrittenPaths('at ~/repo/.claude/worktrees/w now', o), ['~/repo/.claude/worktrees/w']);
+  // A relative mention is no leak: none of these starts at an absolute path.
+  for (const rel of ['+see .claude-tweaks/pipelines/OTHER/decisions.md', '`$RUN_ROOT/.claude-tweaks/pipelines/{run}/`', 'diff a/.claude/worktrees/b', '{main}/.claude/worktrees/{name}']) {
+    assert.deepStrictEqual(rw.unrewrittenPaths(rel, o), [], rel);
+  }
+  // A separator ends the absolute path, so a later relative mention is not tied to it.
+  assert.deepStrictEqual(rw.unrewrittenPaths('cd /tmp; see a/.claude/worktrees/b', o), []);
+  // Inside the output directory it is exempt, wherever that directory sits.
+  const out = '/tmp/w/.claude/worktrees/x/out';
+  assert.deepStrictEqual(rw.unrewrittenPaths(out + '/repos/k/repo and ' + out + '/s', { ...o, outDir: out }), []);
+  assert.deepStrictEqual(rw.unrewrittenPaths('/tmp/w/.claude/worktrees/x/src', { ...o, outDir: out }), ['/tmp/w/.claude/worktrees/x/src']);
+  // Under the right mainRoot the existing check reports it, once.
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/.claude/worktrees/w', { mainRoot, runName: 'R', outDir: '/out' }), [main + '/.claude/worktrees/w']);
+});
+
+test('a rewritten path with brackets, @, ~, = or non-ASCII stays inside the outDir span', () => {
+  const o = { mainRoot, runName: 'R', outDir: main + '/out' };
+  for (const tail of ['app/[slug]/page.tsx', 'node_modules/@types/x.d.ts', 'src/~tmp', 'src/a=b.js', 'docs/café.md']) {
+    assert.deepStrictEqual(rw.unrewrittenPaths('read ' + main + '/out/repos/k/repo/' + tail + ' now', o), [], tail);
+  }
+});
+
+test('a .. segment in an outDir span loses the exemption', () => {
+  const o = { mainRoot, runName: 'R', outDir: main + '/out' };
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/x/../../src/a.js', o), [main + '/out/x/../../src/a.js']);
+  assert.deepStrictEqual(rw.unrewrittenPaths('see ' + main + '/out/.. ok', o), [main + '/out/..']);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/x/...y', o), []);
+});
+
+test('rewriteText: worktree-prefixed run input, longest literal, and no undefined', () => {
+  const spec = main + '/.claude/worktrees/w/.claude-tweaks/pipelines/R/work/9-spec.md';
+  assert.strictEqual(rw.rewriteText('read ' + spec, { ...full, replacements: { [spec]: '/S/spec.md' } }), 'read /S/spec.md');
+  const s = main + '/.claude-tweaks/pipelines/R/review-ctx/agent-scratch/3a';
+  const out = rw.rewriteText(s + ' and ' + s + '/f.md', { ...full, replacements: { [s]: '/S', [s + '/f.md']: '/T/f.md' } });
+  assert.strictEqual(out, '/S and /T/f.md');
+  const ctx = main + '/.claude-tweaks/pipelines/R/review-ctx/context.md';
+  const left = rw.rewriteText('read ' + ctx + ' and ' + s, { ...full, replacements: { [s]: '/S' } });
+  assert.strictEqual(left, 'read ' + ctx + ' and /S');
+});
+
 test('an own-run mention inside the output directory is still flagged', () => {
   const o = { mainRoot, runName: 'R', outDir: main + '/out' };
   assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/repos/k/repo/.claude-tweaks/pipelines/R/decisions.md', o), ['.claude-tweaks/pipelines/R/decisions.md']);

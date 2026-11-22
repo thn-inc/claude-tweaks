@@ -29,14 +29,19 @@
 // and archived-reports.json (tools/review-replay/reviews-extract.js). The archived shas and the worktree and main-checkout
 // paths in a prompt are rewritten to the replay's; a path to another run's directory in a prompt or a copy is replaced
 // with [run-directory path removed] (a relative mention of another run in diff text stays), and an archived worktree,
-// main-checkout or own-run path left after rewriting excludes the slot as `unrewritten-path`. No archived reply text or
+// main-checkout or own-run path left after rewriting excludes the slot as `unrewritten-path`, as does any absolute path
+// naming a `.claude/worktrees/` or `.claude-tweaks/pipelines/` directory outside --out, so a --runs moved away from the
+// archived checkout (the main checkout is taken as --runs/../..) excludes every slot rather than leaking. No archived reply text or
 // decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
 // slots at the tier and effort they were archived at: `control` when every selected slot shares one (tier, effort),
 // otherwise `control.{tier}.{effort|none}` per group. A user arm named `control` or `control.*` exits 2.
 //
 // score-reviews: reads the Workflow's replies from --transcripts and, per arm and lens, prints the confirmed findings the
-// replay reviewers raised (recall, per slot and summed; a slot whose unit has no decisions.md adds to
-// `confirmedMissingSource`, not to the recall), the archived reviewers' rows they raised, the rows no archived reviewer
+// replay reviewers raised (recall, per slot and summed, over first passes only: a slot after the first for its unit,
+// lens and side, its `ordinal` in reviews-fixture.json above 1 (name suffix `.k`), re-reviews a later head where the
+// confirmed findings may already be fixed, and is tallied apart in `confirmedRereview`; a slot whose
+// unit has no decisions.md adds to `confirmedMissingSource`, not to the recall; `rowsUnlocated` counts severity rows with
+// no path:line, which cannot raise a finding), the archived reviewers' rows they raised, the rows no archived reviewer
 // raised (`new`) and the reference arm's rows they also raised. `fidelity` per lens aggregates every control arm's recall of
 // the archived rows, the figure an arm's numbers are read against; `fixture.byLens` repeats what the extraction selected
 // and excluded per lens (tools/review-replay/reviews-score.js). A reply that is missing, recorded at another effort than its
