@@ -1,8 +1,9 @@
 'use strict';
 // #6056 AC8: a record body carrying a `Plan:` line (written by plan-store.js through
 // composePlanLine) gets the same verdict from every existing body parser as the same body without
-// it, so a parser that is not plan-aware reads such a record unchanged; build/plan-reuse.md is the build-side reader (#6060). Also pins why
-// specify/planning.md inserts `## Overview`: specHash refuses a body without one.
+// it, so a parser that is not plan-aware reads such a record unchanged; build/plan-reuse.md is
+// the build-side reader (#6060). Also pins why specify/planning.md inserts `## Overview`: specHash
+// refuses a body without one.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {

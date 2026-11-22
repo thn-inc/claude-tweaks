@@ -43,4 +43,4 @@ Log `--status SKIP --step "Spec Step 2 (plan reuse)" --text "condition: plan-reu
 
 ## Resumed build
 
-A resumed build finds the committed plan in Spec Step 2's plan search and takes the existing-plan branch; this file never runs again for it, and that branch re-decides Common Step 1.6 under its own rule (a reuse SKIP is not a completed review, so the review runs), unchanged.
+A resumed build finds the committed plan in Spec Step 2's plan search and takes the existing-plan branch; this file never runs again for it, and that branch re-decides Common Step 1.6 under its own rule (a reuse SKIP is not a completed review, so the review runs), unchanged. A stale plan this check committed (an `Add the plan reviewed at specify` commit) goes to Spec Step 3 as written, and this file logs no reuse verdict for it.

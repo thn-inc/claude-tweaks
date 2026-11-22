@@ -218,7 +218,8 @@ test('AC2.1/AC5.1: SKILL.md points at plan-reuse.md only on the routes to Spec S
     [/prints `on`/, 'on only'],
     [/Spec Step 3 and Common Step 1\.6/, 'what reuse skips'],
     [/logs nothing/, 'AC1.1 silence'],
-    [/existing-plan branch/, 'resume never reaches it'],
+    [/existing-plan branch/, 'resume takes the existing-plan branch'],
+    [/not added by an `Add the plan reviewed at specify` commit/, 'stale reused plan is excluded'],
   ];
   const missing = missingFactsOf(POINTER_FACTS);
   const pointer = pointerOf(skill);
