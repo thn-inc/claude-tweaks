@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/plan-store/store.js
   - plugin/bin/lib/plan-store/check.js
   - plugin/bin/lib/issues/plan-line.js
+  - plugin/bin/lib/reconcile/plan-refs.js
   - plugin/skills/_shared/work-record.md
 ---
 
@@ -57,6 +58,21 @@ files:
   - Anything `check` cannot determine reads `valid: false`, never valid. A malformed `--line` exits 2 and still prints a `valid: false` verdict.
 - **Red flags:** `valid: true` after a covered section changed; `valid: true` for a plan that names no files; a verdict object with keys other than `valid` and `failed`.
 
+### 5. Watch a closed record's ref go away — terminal
+- **URL:** `node plugin/bin/hooks.js reconcile --checks plan-refs --dry-run`, then the same command without `--dry-run` (or wait for the next SessionStart's background pass)
+- **Action:** Close the record, then preview and run the `plan-refs` reconcile check.
+- **Should feel:** Safe and legible. The dry run prints `to delete (dry run): 1 plan ref` and pushes nothing. The real run prints `deleted: 1 plan ref`. A background pass reports `1 closed record plan ref(s) deleted on origin` at the next session start.
+- **Should understand:**
+  - Only an exact-integer `refs/claude-tweaks/plans/{n}` whose issue state reads `CLOSED` in one aliased GraphQL batch is deleted. An open record, a missing or transferred issue, a PR number, or a partial or poisoned response keeps the ref, and so does a ref whose state could not be read.
+  - Each delete is `git push --no-verify -q --force-with-lease={ref}:{sha} origin :{ref}`, leased on the sha the listing saw. A plan re-written in between survives as `delete-failed`.
+  - The check skips with a reported reason for `work-backend: local-files`, no `origin`, or an absent `gh`. It also runs under `integration-model: local-merge`.
+  - A record reopened after its ref was deleted is re-planned by the next specify or build. That is accepted by design.
+- **Red flags:**
+  - A ref deleted for an open record, or on an unreadable state.
+  - A dry run that pushed.
+  - A stack trace instead of a reported row.
+  - A deletion that keeps failing silently: it must show as `N plan ref deletion(s) failed on origin` at SessionStart.
+
 ## Origin
 
-Built for record #6052 (the plan store). The specify writer and the build reader that call it are later records; #6055 deletes refs of closed records and imports `PLAN_REF_PREFIX` and `parsePlanRefName` from `plan-store.js`.
+Built for record #6052 (the plan store). The specify writer and the build reader that call it are later records. Step 5 was added during build of #6055 (run 2026-11-22T163748-spec-6055), whose `plugin/bin/lib/reconcile/plan-refs.js` deletes closed records' refs and imports `PLAN_REF_PREFIX` and `parsePlanRefName` from `plan-store/ref.js`.
