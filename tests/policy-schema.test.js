@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 119 -> 120, #6051
-  assert.strictEqual(POLICY_KEYS.length, 120);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 120);
+  // Last bump: 120 -> 121, #6056
+  assert.strictEqual(POLICY_KEYS.length, 121);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 121);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -1157,6 +1157,12 @@ test('express-driver-models: the pre-change flat reader sees nothing of the bloc
 test('AC11.4 (#5917): the policyOnly bullet names express-driver-models', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   assert.ok(line.includes('`express-driver-models`'));
+});
+
+test('#6056: the policyOnly bullet names plan-at-specify', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line, 'the policyOnly bullet is missing');
+  assert.ok(line.includes('`plan-at-specify` (#6056)'), 'the policyOnly bullet does not name plan-at-specify');
 });
 
 test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {

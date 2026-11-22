@@ -50,13 +50,13 @@ files:
 
 ### 4. Ask whether the plan is still valid — terminal
 - **URL:** `node plugin/bin/plan-store.js check --line '{Plan: line}' --spec-file {spec} --base {sha} [--repo-root {dir}]`
-- **Action:** Run `check` with the record's current spec and the commit the build would start from.
+- **Action:** Run `check` with the record's current spec and the commit the build would start from. A caller holding the line from a record body passes `--line-file {file}` instead, so the line never reaches a command line.
 - **Should feel:** Like a yes/no with a reason. Exit 0 with `{"valid":true,"failed":null}`, or exit 1 with `failed` naming the first failing check in order: `ref`, `hash`, `base`, `files`.
 - **Should understand:**
   - The spec hash covers the `##` sections from `## Overview` through `## Planning Decisions`. Editing `Risk-flags:`, `**Related:**`, `Blocked by` or the fingerprint lines does not invalidate the plan; editing a covered section does.
   - `files` fails when the base changed any Modify or Test path the plan names since the plan commit's parent, and also when the plan names none.
   - Anything `check` cannot determine reads `valid: false`, never valid. A malformed `--line` exits 2 and still prints a `valid: false` verdict.
-- **Red flags:** `valid: true` after a covered section changed; `valid: true` for a plan that names no files; a verdict object with keys other than `valid` and `failed`.
+- **Red flags:** `valid: true` after a covered section changed; `valid: true` for a plan that names no files; a verdict object with keys other than `valid` and `failed`; `--line` and `--line-file` both accepted in one call, or neither, or an unreadable `--line-file` exiting anything but 2.
 
 ### 5. Watch a closed record's ref go away — terminal
 - **URL:** `node plugin/bin/hooks.js reconcile --checks plan-refs --dry-run`, then the same command without `--dry-run` (or wait for the next SessionStart's background pass)
@@ -76,3 +76,5 @@ files:
 ## Origin
 
 Built for record #6052 (the plan store). The specify writer and the build reader that call it are later records. Step 5 was added during build of #6055 (run 2026-11-22T163748-spec-6055), whose `plugin/bin/lib/reconcile/plan-refs.js` deletes closed records' refs and imports `PLAN_REF_PREFIX` and `parsePlanRefName` from `plan-store/ref.js`.
+
+Step 4 updated for #6056 (the specify writer, `plan-a-record-while-shaping-it-6056.md`): `check` takes `--line-file` as the exclusive alternative to `--line`, so a `Plan:` line copied from an editable record body never reaches a command line.
