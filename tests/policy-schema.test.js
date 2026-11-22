@@ -988,8 +988,9 @@ test('AC8.1, AC8.2 (#6018): express-driver-max-risk resolves low unset, each enu
   for (const v of ['Medium', 'critical', '2']) {
     assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: 'low', source: 'default', invalid: true }, v);
   }
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets.js');
   const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
-  assert.ok(fs.statSync(path.join(shared, 'policy-schema.md')).size < 52500);
+  assert.ok(fs.statSync(path.join(shared, 'policy-schema.md')).size < RAIL_BYTES);
   assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-max-risk` \| /m);
 });
 
