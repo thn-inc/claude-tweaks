@@ -616,10 +616,14 @@ function readLowConfidence(runDir, deps, notes, { record, spec }) {
   }
   const readStaged = (id) => readTextOrNull(deps, path.join(runDir, 'staged', id));
   const readSpec = (n) => {
-    const materialized = runDir === null ? null
-      : headerFileCandidates([runDir], n).reduce((text, file) => text ?? readTextOrNull(deps, file), null);
-    if (materialized === null && n === record && spec !== undefined) return readTextOrNull(deps, spec);
-    return materialized;
+    if (runDir !== null) {
+      for (const file of headerFileCandidates([runDir], n)) {
+        const text = readTextOrNull(deps, file);
+        if (text !== null) return text;
+      }
+    }
+    if (n === record && spec !== undefined) return readTextOrNull(deps, spec);
+    return null;
   };
   let entries;
   try {
