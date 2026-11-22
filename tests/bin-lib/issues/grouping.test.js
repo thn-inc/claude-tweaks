@@ -281,15 +281,26 @@ test('never merges across priority bands', () => {
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
 });
 
-test('never merges records with different auto:merge state', () => {
+test('never merges records with different merge-grant state', () => {
   const groups = [
-    [fastLaneIssue(1, { labels: ['auto:merge'] })],
-    [fastLaneIssue(2)],
-    [fastLaneIssue(3, { labels: ['auto:merge'] })],
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:build'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
   ];
   const { bundles } = bundleFastLaneSingletons(groups);
   assert.strictEqual(bundles.length, 1);
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
+});
+
+test('#5734: a leftover auto:merge without auto:build buckets with the ungranted records, never with a granted bundle', () => {
+  const groups = [
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:merge'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(4)],
+  ];
+  const { bundles } = bundleFastLaneSingletons(groups);
+  assert.deepStrictEqual(bundles.map((b) => b.records).sort((a, b) => a[0] - b[0]), [[1, 3], [2, 4]]);
 });
 
 test('bundles oldest-first within a bucket', () => {
@@ -533,7 +544,7 @@ test('accepts label objects ({name}) as well as plain strings', () => {
 
 // ── extractKeyFiles: the `### Key Files` fallthrough (#154) ──────────────────
 // /specify-produced sub-issues and /capture records carry no by:* origin label, so
-// they reach the fallthrough below the four health-sweep branches. Before #154
+// they reach the fallthrough below the five health-sweep branches. Before #154
 // that fallthrough was a bare `return []`, and every such record reported zero
 // key files — making groupByFileOverlap emit singletons regardless of real
 // overlap, which is exactly the collision guard /dispatch relies on.
@@ -732,6 +743,12 @@ test('expectsKeyFilesSection is false for a by:journey-health-origin issue', () 
 
 test('expectsKeyFilesSection is false for a by:docs-health-origin issue', () => {
   assert.strictEqual(expectsKeyFilesSection({ labels: ['by:docs-health'] }), false);
+});
+
+test('a by:ci-health record: expectsKeyFilesSection false, and its Check header id is never read as a file', () => {
+  const issue = { labels: ['by:ci-health', 'ready'], body: '**Check:** `repeated-work` | **Workflow:** `ci` | **Step:** `npm ci`\n\n## Current State\n' };
+  assert.strictEqual(expectsKeyFilesSection(issue), false);
+  assert.deepStrictEqual(extractKeyFiles(issue), []);
 });
 
 test('expectsKeyFilesSection is true for an issue with no labels at all', () => {

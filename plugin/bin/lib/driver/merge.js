@@ -1,9 +1,9 @@
 'use strict';
 // The pipeline driver's merge step (#5226): takes a record whose live labels carry `auto:merge`
-// from a green draft PR to a merged one, in program code, with no model call. The one judgment
-// the lane needs (the merge-check verdict and the acceptance state) arrives only through the
-// `deps.judgments` supplier (production builds it from `deps.createJudgments`, #5228); a deps
-// object with no supplier changes nothing.
+// together with `auto:build` from a green draft PR to a merged one, in program code, with no
+// model call. The one judgment the lane needs (the merge-check verdict and the acceptance state)
+// arrives only through the `deps.judgments` supplier (production builds it from
+// `deps.createJudgments`, #5228); a deps object with no supplier changes nothing.
 //
 // Ported procedure, by section: `_shared/pr-first-merge.md` Steps 2 to 3 (Step 2.9 included),
 // `_shared/pr-first-merge-post-merge.md` Steps 4 and 5, and `_shared/express-lane.md` step 9.
@@ -93,8 +93,9 @@ function logDecision(s, step, text, status = 'AUTO', reversibility = null, lever
   }
 }
 
-// Ports pr-first-merge.md Step 2 (the live label read): `auto:merge` is the authorization,
-// read from GitHub now, not from a cached copy. `auto:merge-pending` does not count.
+// Ports pr-first-merge.md Step 2 (the live label read): `auto:merge` together with `auto:build`
+// is the authorization, read from GitHub now, not from a cached copy. `auto:merge-pending` does
+// not count.
 function readLabels(s) {
   const { ctx, deps } = s;
   let raw;
@@ -171,7 +172,7 @@ function readLever(s) {
     const entry = out.result['merge-verification'];
     if (entry && typeof entry === 'object' && !entry.error && typeof entry.value === 'string') {
       raw = entry.value;
-      source = entry.source || 'unresolved';
+      source = entry.source || 'unresolved'; // passes through to the event and log lines only (`factory` included, #6006)
     }
   }
   s.valueRaw = raw;
@@ -242,6 +243,7 @@ async function entry(s) {
   const labels = readLabels(s);
   if (labels.unreadable) return stop(s, 'merge-entry', 'labels-unreadable', labels.unreadable);
   if (!labels.names.includes(AUTHORIZING_LABEL)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${AUTHORIZING_LABEL}`);
+  if (!labels.names.includes(LABELS.AUTO_BUILD)) return stop(s, 'merge-entry', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD}`);
   if (ctx.summaryLogged !== true) return stop(s, 'merge-entry', 'summary-entry-missing', 'the summary decision entry was not logged');
   const notPrFirst = readIntegrationModel(s);
   if (notPrFirst) return stop(s, 'merge-entry', 'not-pr-first', notPrFirst);
@@ -1037,7 +1039,7 @@ function acceptPark(s) {
       `record #${record} park state unreadable (accept-park.js parked exit 6); no park this run; not merged`);
   }
   if (parked.code !== 5) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js parked ${exitWords(parked)}; not merged`);
-  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, ...repo]);
+  const decided = acceptParkCli(s, ['decide', '--run', s.runDir, '--record', record, '--head', ctx.head, ...repo], decideTimeoutMs(s.deps));
   if (decided.code !== 0) return stop(s, 'merge-accept-park', 'supplier-failed', `accept-park.js decide ${exitWords(decided)}; not merged`);
   // decide prints exactly one decision per --record: anything else is unusable, never a no-park.
   const d = parseJson(String(decided.stdout).trim());
@@ -1089,6 +1091,9 @@ async function mergeCall(s, mode) {
   if (labels.unreadable) return stop(s, 'merge-call', 'labels-unreadable', `pre-merge ${labels.unreadable}`);
   if (!labels.names.includes(AUTHORIZING_LABEL)) {
     return stop(s, 'merge-call', 'not-authorized', `record lacks ${AUTHORIZING_LABEL} at the pre-merge read`);
+  }
+  if (!labels.names.includes(LABELS.AUTO_BUILD)) {
+    return stop(s, 'merge-call', 'not-authorized', `record lacks ${LABELS.AUTO_BUILD} at the pre-merge read`);
   }
   const auto = mode === 'auto';
   try {
@@ -1206,15 +1211,24 @@ const RECONCILE_TIMEOUT_MS = 150000;
 // park's own git calls run under, through `deps.gitTimeoutMs`; 30 s, git's default, when the deps
 // carry none or it is unusable). At the defaults: 5 x 120 s + 150 s + 2 x 30 s = 810 s.
 const PARK_GIT_DEFAULT_MS = 30000;
-function parkTimeoutMs(deps) {
-  let git = PARK_GIT_DEFAULT_MS;
+function gitBoundMs(deps) {
   try {
     const v = typeof deps.gitTimeoutMs === 'function' ? deps.gitTimeoutMs() : undefined;
-    if (Number.isSafeInteger(v) && v > 0) git = v;
+    if (Number.isSafeInteger(v) && v > 0) return v;
   } catch {
     // an unreadable bound keeps the default: the budget is never shorter than git's own default
   }
-  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * git;
+  return PARK_GIT_DEFAULT_MS;
+}
+function parkTimeoutMs(deps) {
+  return 5 * CLI_TIMEOUT_MS + RECONCILE_TIMEOUT_MS + 2 * gitBoundMs(deps);
+}
+// decide's budget (#4619): the one CLI_TIMEOUT_MS its record reads and body edit already had, plus
+// the tripwire's git calls, at most nine (two fetches with a lock retry each, rev-parse, merge-base,
+// diff, and the head and origin/HEAD reads), each under the live GIT_TIMEOUT_MS.
+const DECIDE_GIT_CALLS = 9;
+function decideTimeoutMs(deps) {
+  return CLI_TIMEOUT_MS + DECIDE_GIT_CALLS * gitBoundMs(deps);
 }
 const NOT_LOCKED = /not locked/i;
 
@@ -1589,5 +1603,5 @@ function isReason(reason) {
 
 module.exports = {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs, decideTimeoutMs,
 };

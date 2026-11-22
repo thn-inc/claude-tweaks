@@ -67,8 +67,9 @@ function agentIdentity(transcriptText) {
   return m ? m[1] : null;
 }
 
-// Messages deduplicated by id at their largest usage; seconds from the first to the last timestamp.
-function transcriptCost(transcriptText) {
+// Messages deduplicated by id at their largest usage (mergeUsage's per-id max); seconds from the first to the last
+// timestamp.
+function transcriptCost(transcriptText, mergeUsage) {
   const messages = new Map();
   let first = null;
   let last = null;
@@ -79,12 +80,7 @@ function transcriptCost(transcriptText) {
       if (last === null || t > last) last = t;
     }
     if (e && e.type === 'assistant' && e.message && e.message.id && e.message.usage) {
-      const u = e.message.usage;
-      const p = messages.get(e.message.id) || { output: 0, cacheRead: 0, cacheCreate: 0 };
-      p.output = Math.max(p.output, u.output_tokens || 0);
-      p.cacheRead = Math.max(p.cacheRead, u.cache_read_input_tokens || 0);
-      p.cacheCreate = Math.max(p.cacheCreate, u.cache_creation_input_tokens || 0);
-      messages.set(e.message.id, p);
+      messages.set(e.message.id, mergeUsage(messages.get(e.message.id) || null, e.message.usage));
     }
   }
   const sum = { requests: messages.size, output: 0, cacheRead: 0, cacheCreate: 0, seconds: first === null ? 0 : Math.round((last - first) / 1000) };
@@ -94,6 +90,19 @@ function transcriptCost(transcriptText) {
     sum.cacheCreate += p.cacheCreate;
   }
   return sum;
+}
+
+// The effort an agent's turns recorded: the one value every assistant entry carries in its top-level `effort` field, 'mixed'
+// when they carry more than one, 'unrecorded' when there is no assistant entry or any lacks it. `fieldsDiffer` is true when
+// an entry's `perTurnEffort` differs from its `effort`; classification reads `effort` alone. Claude Code's own error entries
+// (model `<synthetic>`, `isApiErrorMessage`) never carry `effort` and are not a turn of the judge, so they are left out.
+function transcriptEffort(transcriptText) {
+  const isJudgeTurn = (e) => e && e.type === 'assistant' && !(e.message && e.message.model === '<synthetic>') && e.isApiErrorMessage !== true;
+  const turns = parseLines(transcriptText).filter(isJudgeTurn);
+  const fieldsDiffer = turns.some((e) => typeof e.perTurnEffort === 'string' && e.perTurnEffort !== e.effort);
+  if (turns.length === 0 || turns.some((e) => typeof e.effort !== 'string')) return { effort: 'unrecorded', fieldsDiffer };
+  const distinct = new Set(turns.map((e) => e.effort));
+  return { effort: distinct.size > 1 ? 'mixed' : [...distinct][0], fieldsDiffer };
 }
 
 function readJson(fsImpl, file) {
@@ -123,9 +132,10 @@ function readJournal(fsImpl, file) {
 }
 
 // Which replay slot (arm, repeat, prompt) each started agent judged, read from its own transcript.
-function identifyAgents(fsImpl, dir, started, slots) {
+function identifyAgents(fsImpl, dir, started, slots, mergeUsage) {
   let unidentified = 0;
   const costs = [];
+  const efforts = [];
   const unidentifiedCost = emptyCost();
   for (const agentId of started) {
     const file = path.join(dir, `agent-${agentId}.jsonl`);
@@ -139,13 +149,16 @@ function identifyAgents(fsImpl, dir, started, slots) {
     const slot = parsed ? slots.get(armLabel(parsed.arm, parsed.repeat, parsed.name)) : undefined;
     if (!slot) {
       unidentified += 1;
-      addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text));
+      addCost(unidentifiedCost, text === null ? emptyCost() : transcriptCost(text, mergeUsage));
       continue;
     }
+    const recorded = transcriptEffort(text);
     slot.agents.push(agentId);
-    costs.push({ arm: slot.arm.name, cost: transcriptCost(text) });
+    slot.efforts.push(recorded.effort);
+    costs.push({ arm: slot.arm.name, cost: transcriptCost(text, mergeUsage) });
+    efforts.push({ arm: slot.arm.name, ...recorded });
   }
-  return { unidentified, costs, unidentifiedCost };
+  return { unidentified, costs, efforts, unidentifiedCost };
 }
 
 // The tree root's prefix removed from every path a reply cites: the forward-slash spelling the prompt's Location line
@@ -157,6 +170,7 @@ function stripTree(text, treeRoot) {
 function score(opts, deps) {
   const fsImpl = deps.fs;
   const { resolveTiebreak, splitChunkReply } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'tiebreak.js'));
+  const { mergeUsage } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'timing', 'transcript.js'));
   const io = { fs: fsImpl, resolveTiebreak };
   const manifest = readJson(fsImpl, path.join(opts.out, MANIFEST_FILE));
   const problems = validateManifest(manifest);
@@ -189,11 +203,11 @@ function score(opts, deps) {
   const slots = new Map();
   for (const arm of manifest.arms) {
     for (let repeat = 1; repeat <= arm.repeat; repeat += 1) {
-      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], reply: null });
+      for (const prompt of arm.prompts) slots.set(armLabel(arm.name, repeat, prompt.name), { arm, repeat, prompt, agents: [], efforts: [], reply: null });
     }
   }
   const { started, results } = readJournal(fsImpl, path.join(opts.transcripts, JOURNAL_FILE));
-  const { unidentified, costs, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots);
+  const { unidentified, costs, efforts, unidentifiedCost } = identifyAgents(fsImpl, opts.transcripts, started, slots, mergeUsage);
   // An unidentified agent cannot be tied to a prompt, so the reason `unidentified-agent` goes to the first N prompts (in
   // manifest order) that have no identified agent, N being the number of unidentified agents; any other prompt without
   // an identified agent was never started, or started with no reply, and is `no-reply`.
@@ -222,10 +236,16 @@ function score(opts, deps) {
       bySeverity: {},
       vsReference: arm.name === reference ? null : tally(),
       cost: emptyCost(),
+      recordedEffort: {},
+      effortFieldsDiffer: 0,
     };
     verdictsByArm[arm.name] = new Map();
   }
   for (const { arm, cost } of costs) addCost(arms[arm].cost, cost);
+  for (const { arm, effort, fieldsDiffer } of efforts) {
+    bump(arms[arm].recordedEffort, effort);
+    if (fieldsDiffer) arms[arm].effortFieldsDiffer += 1;
+  }
 
   for (const slot of slots.values()) {
     const a = arms[slot.arm.name];
@@ -240,6 +260,8 @@ function score(opts, deps) {
       // The tree guard above checks the directory; a cited file missing inside it would otherwise settle as cant-tell.
       if (!fsImpl.existsSync(path.join(run.tree, finding.path))) settled = { verdict: null, reason: 'file-absent-in-tree' };
       else if (text === null) settled = { verdict: null, reason: slot.noReply };
+      // An arm that sets an effort is only scored from judges whose every turn recorded exactly that effort.
+      else if (slot.arm.effort !== null && slot.efforts.some((e) => e !== slot.arm.effort)) settled = { verdict: null, reason: 'effort-mismatch' };
       else if (sections && sections.get(id).state !== 'ok') settled = { verdict: null, reason: 'chunk-split' };
       else settled = settleReply(finding, sections ? sections.get(id).text : text, run.tree, io);
       if (settled.verdict === null) {
@@ -284,4 +306,4 @@ function score(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { score, settleReply, agentIdentity, stripTree };
+module.exports = { score, settleReply, agentIdentity, stripTree, transcriptEffort };

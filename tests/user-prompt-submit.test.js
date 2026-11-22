@@ -4,33 +4,28 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
+const { hookEnv, runHookCli } = require('./helpers/hook-event');
 
-const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const { parseTypedSkill, skillExists } = require('../plugin/bin/lib/hooks/user-prompt-submit');
 
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
 // own process.cwd() — see tests/skill-invocation.test.js for the incident.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-ups-sandbox-');
 
-function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
-  try {
-    // PIPELINE_RUN_DIR defaults to '' (unset) so an ambient value in the
-    // invoking shell can't redirect fixture writes into a real run's
-    // events.jsonl — resolveRun checks this env var before the cwd scan.
-    const stdout = execFileSync('node', [HOOKS, ...args], {
-      input, cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...env },
-    });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+// #5377: runs hooks.js in-process through runHookCli. hookEnv blanks PIPELINE_RUN_DIR so an ambient
+// value in the invoking shell can't redirect fixture writes into a real run's events.jsonl —
+// resolveRun checks this env var before the cwd scan.
+async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
+  const { code, stdout } = await runHookCli(args, { input, cwd, env: hookEnv(env) });
+  return { code, stdout };
 }
 
 // Project with one active run; sessionId optional (absent = unowned run).
 function projectWithRun({ sessionId } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-'));
+  const dir = scratchDir('ct-ups-');
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = { status: 'active' };
@@ -52,15 +47,15 @@ function readEvents(run) {
   return fs.readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
-function submit(dir, prompt, sessionId = 'owner') {
+async function submit(dir, prompt, sessionId = 'owner') {
   return runHook(['user-prompt-submit'], {
     input: promptPayload(prompt, { cwd: dir, session_id: sessionId }), cwd: dir,
   });
 }
 
-test('owned run: a typed /claude-tweaks:help appends one skill_invoked with source user', () => {
+test('owned run: a typed /claude-tweaks:help appends one skill_invoked with source user', async () => {
   const { dir, run } = projectWithRun({ sessionId: 'owner' });
-  const r = submit(dir, '/claude-tweaks:help');
+  const r = await submit(dir, '/claude-tweaks:help');
   assert.strictEqual(r.code, 0);
   assert.strictEqual(r.stdout, '');
   const events = readEvents(run);
@@ -72,7 +67,7 @@ test('owned run: a typed /claude-tweaks:help appends one skill_invoked with sour
   assert.ok(!('attribution' in events[0]), 'owned run must not be tagged fallback');
 });
 
-test('arguments and later lines are ignored; the first line decides', () => {
+test('arguments and later lines are ignored; the first line decides', async () => {
   const cases = [
     ['/claude-tweaks:build #123 --mode auto', 'claude-tweaks:build'],
     ['/claude-tweaks:capture\nan idea\n/claude-tweaks:build', 'claude-tweaks:capture'],
@@ -80,7 +75,7 @@ test('arguments and later lines are ignored; the first line decides', () => {
   ];
   for (const [prompt, skill] of cases) {
     const { dir, run } = projectWithRun({ sessionId: 'owner' });
-    const r = submit(dir, prompt);
+    const r = await submit(dir, prompt);
     assert.strictEqual(r.code, 0);
     const events = readEvents(run);
     assert.strictEqual(events.length, 1, `${JSON.stringify(prompt)} must append exactly one event`);
@@ -88,29 +83,29 @@ test('arguments and later lines are ignored; the first line decides', () => {
   }
   for (const prompt of ['please run /claude-tweaks:build', 'notes\n/claude-tweaks:build']) {
     const { dir, run } = projectWithRun({ sessionId: 'owner' });
-    const r = submit(dir, prompt);
+    const r = await submit(dir, prompt);
     assert.strictEqual(r.code, 0);
     assert.strictEqual(readEvents(run).length, 0, `${JSON.stringify(prompt)} must append nothing`);
   }
 });
 
-test('bare, foreign and malformed forms leave nothing', () => {
+test('bare, foreign and malformed forms leave nothing', async () => {
   const prompts = [
     '/build', '/help', '/superpowers:brainstorming', '/claude-tweaks:', '/Claude-Tweaks:help',
     ' /claude-tweaks:help', '/claude-tweaks:help/extra',
   ];
   for (const prompt of prompts) {
     const { dir, run } = projectWithRun({ sessionId: 'owner' });
-    const r = submit(dir, prompt);
+    const r = await submit(dir, prompt);
     assert.strictEqual(r.code, 0);
     assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false,
       `${JSON.stringify(prompt)} must not write events.jsonl`);
   }
 });
 
-test('an unknown skill name leaves nothing', () => {
+test('an unknown skill name leaves nothing', async () => {
   const { dir, run } = projectWithRun({ sessionId: 'owner' });
-  const r = submit(dir, '/claude-tweaks:buil');
+  const r = await submit(dir, '/claude-tweaks:buil');
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.existsSync(path.join(run, 'events.jsonl')), false);
 
@@ -121,9 +116,9 @@ test('an unknown skill name leaves nothing', () => {
   assert.strictEqual(parseTypedSkill('/claude-tweaks:../help'), null);
 });
 
-test('unowned run: appends one event tagged attribution fallback', () => {
+test('unowned run: appends one event tagged attribution fallback', async () => {
   const { dir, run } = projectWithRun();
-  const r = submit(dir, '/claude-tweaks:help', 'some-session');
+  const r = await submit(dir, '/claude-tweaks:help', 'some-session');
   assert.strictEqual(r.code, 0);
   const events = readEvents(run);
   assert.strictEqual(events.length, 1);
@@ -131,32 +126,58 @@ test('unowned run: appends one event tagged attribution fallback', () => {
   assert.strictEqual(events[0].source, 'user');
 });
 
-test('no resolvable run: exits 0, writes nothing, pipelines dir absent', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-bare-'));
-  const r = submit(bare, '/claude-tweaks:help');
+test('no resolvable run: exits 0, writes nothing, pipelines dir absent', async () => {
+  const bare = scratchDir('ct-ups-bare-');
+  const r = await submit(bare, '/claude-tweaks:help');
   assert.strictEqual(r.code, 0);
   assert.strictEqual(fs.existsSync(path.join(bare, '.claude-tweaks')), false,
     'no .claude-tweaks tree may be created');
 });
 
-test('foreign-owned run: exits 0, appends nothing', () => {
+test('foreign-owned run: exits 0, appends nothing', async () => {
   const { dir, run } = projectWithRun({ sessionId: 'other' });
-  const r = submit(dir, '/claude-tweaks:help', 'me');
+  const r = await submit(dir, '/claude-tweaks:help', 'me');
   assert.strictEqual(r.code, 0);
   assert.strictEqual(readEvents(run).length, 0);
 });
 
-test('missing or non-string prompt, and garbage stdin, exit 0 with empty stdout', () => {
+test('missing or non-string prompt, and garbage stdin, exit 0 with empty stdout', async () => {
   const { dir } = projectWithRun({ sessionId: 'owner' });
   for (const input of [
     promptPayload(undefined, { cwd: dir, session_id: 'owner' }),
     promptPayload(42, { cwd: dir, session_id: 'owner' }),
     '%%%not json%%%',
   ]) {
-    const r = runHook(['user-prompt-submit'], { input, cwd: dir });
+    const r = await runHook(['user-prompt-submit'], { input, cwd: dir });
     assert.strictEqual(r.code, 0);
     assert.strictEqual(r.stdout, '');
   }
+});
+
+// #5377: AC9.1 — an event call takes its cwd and env from the injected values, not from the runner's
+// own process. No payload carries a `cwd`. The injected cwd is a fixture project that is not
+// process.cwd(): only it lets the cwd scan find the project's run. PIPELINE_RUN_DIR in the injected
+// env names the OLDER of two runs: only the injected env can pick it (a cwd scan picks the newer).
+test('AC9.1: user-prompt-submit — an event call uses the injected cwd or env', async () => {
+  const { dir, run } = projectWithRun({ sessionId: 'owner' });
+  assert.notStrictEqual(fs.realpathSync(dir), fs.realpathSync(process.cwd()), 'precondition: the fixture project is not the runner cwd');
+  const scanned = await runHook(['user-prompt-submit'], {
+    input: promptPayload('/claude-tweaks:help', { session_id: 'owner' }), cwd: dir,
+  });
+  assert.strictEqual(scanned.code, 0);
+  assert.strictEqual(readEvents(run).length, 1, 'the injected cwd found the project run');
+
+  const pinnedProject = projectWithRun();
+  const newer = path.join(pinnedProject.dir, '.claude-tweaks', 'pipelines', '2026-07-02T090000-spec-2');
+  fs.mkdirSync(newer, { recursive: true });
+  fs.writeFileSync(path.join(newer, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  const pinned = await runHook(['user-prompt-submit'], {
+    input: promptPayload('/claude-tweaks:help', { session_id: 'some-session' }), cwd: pinnedProject.dir,
+    env: { PIPELINE_RUN_DIR: pinnedProject.run },
+  });
+  assert.strictEqual(pinned.code, 0);
+  assert.strictEqual(readEvents(pinnedProject.run).length, 1, 'the injected env picked the older run');
+  assert.strictEqual(fs.existsSync(path.join(newer, 'events.jsonl')), false, 'the newer run, which a cwd scan would pick, got no event');
 });
 
 // ---- #5584: the second writer — typed dispatch prompts into the pointer file ----
@@ -168,7 +189,7 @@ const NOW = new Date('2026-11-16T03:00:00.000Z');
 const FIXTURES = path.join(__dirname, 'fixtures', 'typed-command');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-tmp-'));
+  return scratchDir('ct-ups-tmp-');
 }
 
 function pointerFile(tmpdir, sessionId = SID) {
@@ -189,9 +210,11 @@ function entries(numbers, promptId, at = NOW.toISOString()) {
   return Object.fromEntries(numbers.map((n) => [String(n), { promptId, at }]));
 }
 
-// The real dispatcher, TMPDIR pointed at a temp dir; asserts the never-break contract.
-function submitDispatch(tmpdir, payload, cwd = HOOK_SANDBOX) {
-  const r = runHook(['user-prompt-submit'], {
+// The real dispatcher, in-process (#5377), with the passed env's temp dir pointed at a fixture dir:
+// the pointer lands there only when the writer takes its temp dir from the context's env. Asserts
+// the never-break contract.
+async function submitDispatch(tmpdir, payload, cwd = HOOK_SANDBOX) {
+  const r = await runHook(['user-prompt-submit'], {
     // win32's os.tmpdir() reads TEMP, then TMP; POSIX reads TMPDIR first.
     input: JSON.stringify({ cwd, ...payload }), cwd, env: { TMPDIR: tmpdir, TEMP: tmpdir, TMP: tmpdir },
   });
@@ -213,7 +236,7 @@ test('AC2.1: the three writing lines record the named numbers with the payload p
   }
 });
 
-test('AC2.1: the real dispatcher writes the three lines with empty stdout and exit 0', () => {
+test('AC2.1: the real dispatcher writes the three lines with empty stdout and exit 0', async () => {
   const cases = [
     ['/claude-tweaks:dispatch #12', ['12']],
     ['/claude-tweaks:dispatch #12,#13', ['12', '13']],
@@ -221,7 +244,7 @@ test('AC2.1: the real dispatcher writes the three lines with empty stdout and ex
   ];
   for (const [prompt, keys] of cases) {
     const tmpdir = tmpRoot();
-    submitDispatch(tmpdir, dispatchInput(prompt, { prompt_id: 'p-hook' }));
+    await submitDispatch(tmpdir, dispatchInput(prompt, { prompt_id: 'p-hook' }));
     const ptr = readPointerJson(tmpdir);
     assert.ok(ptr, `${prompt} must write the pointer`);
     assert.strictEqual(ptr.sessionId, SID);
@@ -233,7 +256,7 @@ test('AC2.1: the real dispatcher writes the three lines with empty stdout and ex
   }
 });
 
-test('AC2.2: the eleven non-writing prompts and payloads write nothing', () => {
+test('AC2.2: the eleven non-writing prompts and payloads write nothing', async () => {
   const without = (key) => {
     const i = dispatchInput('/claude-tweaks:dispatch #12');
     delete i[key];
@@ -257,37 +280,37 @@ test('AC2.2: the eleven non-writing prompts and payloads write nothing', () => {
     const tmpdir = tmpRoot();
     assert.strictEqual(upsModule.recordTypedDispatch(input, { now: NOW, tmpdir }), false, label);
     assert.deepStrictEqual(fs.readdirSync(tmpdir), [], `${label} must write nothing`);
-    submitDispatch(tmpdir, input);
+    await submitDispatch(tmpdir, input);
     assert.deepStrictEqual(fs.readdirSync(tmpdir).filter((n) => n.startsWith('ct-session-')), [],
       `${label} must write nothing through the dispatcher`);
   }
 });
 
-test('AC2.3: a project with no run directory still writes the pointer', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ups-bare-'));
+test('AC2.3: a project with no run directory still writes the pointer', async () => {
+  const bare = scratchDir('ct-ups-bare-');
   const tmpdir = tmpRoot();
-  submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), bare);
+  await submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), bare);
   assert.strictEqual(readPointerJson(tmpdir).records['12'].promptId, 'p-1');
   assert.strictEqual(fs.existsSync(path.join(bare, '.claude-tweaks')), false);
 });
 
-test('AC2.3: an owned run gets both the skill_invoked event and the pointer', () => {
+test('AC2.3: an owned run gets both the skill_invoked event and the pointer', async () => {
   const { dir, run } = projectWithRun({ sessionId: SID });
   const tmpdir = tmpRoot();
-  submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), dir);
+  await submitDispatch(tmpdir, dispatchInput('/claude-tweaks:dispatch #12'), dir);
   assert.strictEqual(readPointerJson(tmpdir).records['12'].promptId, 'p-1');
   const events = readEvents(run);
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].skill, 'claude-tweaks:dispatch');
 });
 
-test('AC2.4: an unwritable temp directory throws nothing and the dispatcher exits 0 silently', () => {
+test('AC2.4: an unwritable temp directory throws nothing and the dispatcher exits 0 silently', async () => {
   const tmpdir = tmpRoot();
   // A file where the session root directory should be.
   fs.writeFileSync(sessionTmpRoot(SID, { tmpdir }), 'not a directory');
   const input = dispatchInput('/claude-tweaks:dispatch #12');
   assert.strictEqual(upsModule.recordTypedDispatch(input, { now: NOW, tmpdir }), false);
-  submitDispatch(tmpdir, input);
+  await submitDispatch(tmpdir, input);
   assert.strictEqual(fs.readFileSync(sessionTmpRoot(SID, { tmpdir }), 'utf8'), 'not a directory');
 });
 
@@ -297,7 +320,10 @@ test('AC2.4: a throwing writer never stops run or the skill_invoked writer', () 
     prompt: '/claude-tweaks:dispatch #12',
     get session_id() { throw new Error('boom'); },
   };
-  assert.deepStrictEqual(upsModule.run({ input, ownedRun: { dir: run } }), {});
+  const tmpdir = tmpRoot();
+  // #5377: a hand-built context carries env, or requireEnv throws.
+  assert.deepStrictEqual(upsModule.run({ input, ownedRun: { dir: run }, env: { TMPDIR: tmpdir, TEMP: tmpdir, TMP: tmpdir } }), {});
+  assert.deepStrictEqual(fs.readdirSync(tmpdir), []);
   const events = readEvents(run);
   assert.strictEqual(events.length, 1);
   assert.strictEqual(events[0].skill, 'claude-tweaks:dispatch');
@@ -332,12 +358,13 @@ test('AC2.7: only a dispatch first line loads build-authority.js, typed-command.
     const path = require('path');
     const ups = require(${JSON.stringify(hookPath)});
     const prompt = require('fs').readFileSync(0, 'utf8');
-    const out = ups.run({ input: { prompt, session_id: 'probe-session', prompt_id: 'p-1' } });
+    const out = ups.run({ input: { prompt, session_id: 'probe-session', prompt_id: 'p-1' }, env: process.env });
     const keys = Object.keys(require.cache);
     const has = (file) => keys.some((k) => k.endsWith(path.join('issues', file)));
     process.stdout.write(JSON.stringify({ out,
       ba: has('build-authority.js'), tc: has('typed-command.js'), gr: has('grouping.js') }));
   `;
+  // real process: the subject is which modules a fresh process's require.cache holds after one run call.
   const probe = (prompt) => JSON.parse(execFileSync('node', ['-e', script], {
     input: prompt, encoding: 'utf8', env: { ...process.env, TMPDIR: tmpdir, TEMP: tmpdir, TMP: tmpdir }, windowsHide: true,
   }));

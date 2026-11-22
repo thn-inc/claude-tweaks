@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
@@ -65,7 +66,7 @@ test('reconcile: origin configured but unreachable degrades to no-remote with a 
 
 test('repairOriginHead: a thrown failure is remembered the same as a classified one (#3132)', () => {
   const { repairOriginHead } = require('../plugin/bin/lib/reconcile/origin-head');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-oh-throw-'));
+  const root = scratchDir('ct-recon-oh-throw-');
   let setHeadCalls = 0;
   const runGit = (args) => {
     if (args[1] === 'get-url') return { stdout: 'https://example.invalid/r.git', failure: null, stderr: null };
@@ -131,7 +132,7 @@ test('reconcile: a concurrent-winner origin/HEAD still resolves even under a rec
 });
 
 test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-noorigin-'));
+  const dir = scratchDir('ct-recon-noorigin-');
   git(['init', '-q'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
@@ -633,7 +634,7 @@ test('reconcile(): mirror and remote-prune share one fetch, not two (D2)', { ski
   // Counting at the process-spawn boundary instead — a `git` executable
   // placed first on PATH — needs no assumption about any module's import
   // style and observes every real `git fetch` invocation.
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-gitwrap-'));
+  const logDir = scratchDir('ct-recon-gitwrap-');
   const logFile = path.join(logDir, 'fetch-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();

@@ -5,19 +5,33 @@ const assert = require('node:assert');
 const {
   readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE, groupingMode,
 } = require('../../../plugin/bin/lib/dispatch/queue-order.js');
+const { isCatFileBatch, answerCatFileBatch } = require('../../helpers/fake-cat-file-batch');
 
 // Same minimal fake git runner shape as merge-lane-breaker.test.js's own
 // (kept independent rather than importing it — this suite only needs
 // read/write wiring proof, not the full CAS-loop coverage
-// durable-state.test.js already owns).
+// durable-state.test.js already owns). A `git cat-file --batch` read no rule
+// matches is answered from the same rules, one synthetic `git show` per object.
 function fakeRunner(script) {
-  function run(cmd, args) {
+  function applyRules(cmd, args) {
     for (const rule of script) {
       if (rule.match(cmd, args)) {
         const throwsVal = typeof rule.throws === 'function' ? rule.throws(cmd, args) : rule.throws;
         if (throwsVal) throw new Error(throwsVal);
-        return typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns;
+        return { matched: true, value: typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns };
       }
+    }
+    return { matched: false };
+  }
+  function run(cmd, args, opts) {
+    const hit = applyRules(cmd, args);
+    if (hit.matched) return hit.value;
+    if (isCatFileBatch(cmd, args)) {
+      return answerCatFileBatch(args, opts, (showArgs) => {
+        const shown = applyRules('git', showArgs);
+        if (!shown.matched) throw new Error(`fakeRunner: no rule matched git ${JSON.stringify(showArgs)}`);
+        return shown.value;
+      });
     }
     throw new Error(`fakeRunner: no rule matched ${cmd} ${JSON.stringify(args)}`);
   }
@@ -164,6 +178,20 @@ test('groupingMode names the express variant only when express is enabled; GROUP
   assert.equal(groupingMode(true), 'per-record+express');
   assert.equal(groupingMode(false), 'per-record');
   assert.equal(GROUPING_MODE, 'per-record');
+});
+
+test('AC12.1, AC6.1: groupingMode maps the four lane combinations to four distinct stamps; cacheUsable accepts a blob only under its exact stamp', () => {
+  assert.equal(groupingMode(false, false), 'per-record');
+  assert.equal(groupingMode(true, false), 'per-record+express');
+  assert.equal(groupingMode(false, true), 'per-record+driver');
+  assert.equal(groupingMode(true, true), 'per-record+express+driver');
+  assert.equal(groupingMode(false), 'per-record');
+  assert.equal(groupingMode(true), 'per-record+express');
+  const stamps = ['per-record', 'per-record+express', 'per-record+driver', 'per-record+express+driver'];
+  for (const stamped of stamps) {
+    const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: stamped });
+    for (const mode of stamps) assert.equal(cacheUsable(blob, SIGNAL, mode), stamped === mode, `${stamped} blob under ${mode}`);
+  }
 });
 
 test('composeOrderBlob stamps a passed grouping, and the stamp gates cacheUsable (#4025)', () => {

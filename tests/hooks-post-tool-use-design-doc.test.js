@@ -6,6 +6,7 @@ const post = require('../plugin/bin/lib/hooks/post-tool-use');
 
 function runWrite(filePath) {
   return post.run({
+    env: process.env,
     input: { tool_name: 'Write', tool_input: { file_path: filePath, content: '# Design\n' } },
     runDir: null,
     runState: null,
@@ -41,6 +42,7 @@ test('does not warn for a Write to an unrelated file', () => {
 
 test('does not warn when the tool is not Write (e.g. Edit to the same path)', () => {
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Edit', tool_input: { file_path: '/repo/docs/superpowers/specs/2026-07-16-example-design.md' } },
     runDir: null,
     runState: null,
@@ -51,6 +53,7 @@ test('does not warn when the tool is not Write (e.g. Edit to the same path)', ()
 
 test('fires even when a runDir and runState are set (independent of pipeline-run state)', () => {
   const out = post.run({
+    env: process.env,
     input: { tool_name: 'Write', tool_input: { file_path: '/repo/docs/superpowers/specs/2026-07-16-example-design.md' } },
     runDir: '/tmp/some-run-dir',
     runState: { status: 'active' },

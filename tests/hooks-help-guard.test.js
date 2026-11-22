@@ -16,6 +16,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
@@ -27,7 +28,7 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // Mirrors tests/hooks-dispatcher.test.js's own sandbox/runHook convention
 // (#1130: never let an omitted cwd fall through to the test runner's real
 // cwd — a real checkout's .claude-tweaks/pipelines/ must never be touched).
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-help-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-help-sandbox-');
 
 // In-process (#5375): the call goes through hooks.js's run(argv, deps); the env below is the
 // complete environment the verb sees. Real-process coverage is the spawnCli smoke tests further down.
@@ -50,7 +51,7 @@ const NO_SUCH_VERB_STDERR = "claude-tweaks: unrecognized hooks.js subcommand 'no
 // so a regression that starts writing again shows up as a byte diff, not
 // just a missing stdout line.
 function projectWithRun() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-help-proj-'));
+  const dir = scratchDir('ct-help-proj-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   const run = path.join(dir, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });

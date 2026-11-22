@@ -9,7 +9,7 @@ Each group is dispatched as **two sequential `Task()` calls**, not one (per `_sh
 A dispatched Task agent inherits no shell environment (`_shared/subagent-output-contract.md`'s
 Input Discipline), so an env-var reference such as `${CLAUDE_PLUGIN_ROOT}` embedded in a template
 resolves to nothing in its shell. `dispatch-prompt.js` resolves these facts as literals for both
-calls — plus one standing instruction (item 7) that needs no resolution, only inclusion:
+calls — plus one standing instruction (item 7) whose only dispatcher placeholder is `{plugin-root}`:
 
 1. **`{plugin-root}`** — this session's own already-resolved `$CLAUDE_PLUGIN_ROOT` value,
    substituted as a literal absolute path everywhere this file used to embed the env-var
@@ -40,56 +40,63 @@ calls — plus one standing instruction (item 7) that needs no resolution, only 
    run the project's test command and every other long-running command in the foreground, as a
    normal call with a large explicit timeout and its output redirected to a file if it's long —
    never with `run_in_background` — and never end the turn waiting on a background run you
-   started (#1965). A nested `Agent` call launches async, and its completion notification reaches you only
-   while your turn is alive (when the call instead returns the child's own reply, that child has
-   reported and needs no wait): keep your turn alive with bounded foreground waits — repeated
-   `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children (the set launched
-   together), each wait logged as one line (what you wait on, the iteration against the bound, how
-   many children are still pending), stopping as soon as every child's `<task-notification>` has
-   arrived, never reading or tailing a running child's `output_file` — until every child you
-   launched has reported, and never end your turn with one outstanding. With no `Agent` tool
-   (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-   expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-   child is abandoned and no longer counts as outstanding, so your final reply still ends with
-   `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-   coverage line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died
-   paragraph. Ignore a late result; if a late notification re-wakes you after your final
-   reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
-   a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`
-   notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not
-   outstanding: handle it per the dispatching skill's own status handling where one exists
+   started (#1965). A nested `Agent` call launches async, and its completion notification reaches
+   you only while your turn is alive (when the call instead returns the child's own reply, that
+   child has reported and needs no wait): keep your turn alive with bounded foreground waits —
+   `node "{plugin-root}/bin/wait-for.js" agents --ids {ids} --max-seconds 150`, 20 minutes per wave
+   of children (the set launched together), stopping as soon as every child's `<task-notification>`
+   has arrived, never reading or tailing a running child's `output_file` — until every child you
+   launched has reported, and never end your turn with one outstanding. `{ids}` are the agent ids of
+   the children whose notification has not arrived and that no call has reported, comma-separated
+   (the last call's `pending` list; empty means the wait is over). Make each call a foreground Bash call with no `timeout` parameter: the command returns within 150
+   seconds, under the 180-second ceiling a dispatched agent's foreground call has (#5602). Exit 0
+   means a listed child stopped: its notification is in hand or arrives next; call again while any
+   child is outstanding. Exit 3 with `"bound":"call"` means call again. Exit 3 with
+   `"bound":"deadline"` means the 20-minute window is over: the bound has expired, and when the rule
+   below grants another window, the next call is that window. Any other exit is a failed wait call. The
+   command's output line is the wait's log line, so write no separate one. With no `Agent` tool
+   (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound expires,
+   judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that child is
+   abandoned and no longer counts as outstanding, so your final reply still ends with `STATUS:
+   {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read coverage
+   line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died paragraph. Ignore
+   a late result; if a late notification re-wakes you after your final reply, repeat your whole
+   final reply unchanged — the dispatcher keeps only your latest reply, so a bare `STATUS:` line
+   would replace the report. A child that reports a failure (a `failed` notification, an API error,
+   a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so it is not outstanding: handle it per the
+   dispatching skill's own status handling where one exists
    (`superpowers:subagent-driven-development`'s BLOCKED handling), otherwise judge that unit
-   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
-   write-capable child (one that edits files) still silent at the bound is never redone in-session,
-   because an abandoned child keeps running and may still write — stop, and end with
-   `STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-   names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
-   --no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff
-   HEAD` piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the
-   wave, then at each bound; lacking one, the first bound's probe sets it and grants a window). Per
-   wave, while any child shows a change, log one wait line and grant one more 60-wait window; stop
-   when a whole window passes with no change, or at a ceiling of 3 windows (60 minutes) per wave,
-   naming which fired (`no progress for one window` or `ceiling reached while progressing`) and
-   every unchanged child. Children sharing a worktree progress together; a child whose prompt names
-   no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the probe runs as at any
-   bound; a failed probe command counts as no change, never retried in another form. Read-only units
-   keep the first-bound self-judge.
-   Exception: a rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory
-   changes; stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is not a wait and never
-   counts toward the bound; never retry it in another form (a longer, wrapped or backgrounded
-   sleep): treat every child still outstanding as silent at the bound. The full rule is in
-   `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
-   dispatch this same instruction, whether it is a nested Task/Agent call or a
-   `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
-   (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
-   outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
-   `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
-   genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
-   `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final
-   reply missing its status line and logged as a false-positive `contract-violation`, unless your
-   own async `Agent` launches are still pending in your transcript (#3015) — the marker stays
-   required, since that exemption covers only pending launches. Forward this marker rule, with the
-   rest of this item, to any nested dispatch that itself dispatches.
+   yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a write-capable
+   child (one that edits files) still silent at the bound is never redone in-session, because an
+   abandoned child keeps running and may still write — stop, and end with `STATUS: BLOCKED`
+   naming that child and its unit. Before that stop, probe the worktree its prompt names, read-only:
+   `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}" --no-optional-locks status
+   --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD` piped to `git
+   hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right
+   after launching the wave, then at each bound; lacking one, the first bound's probe sets it and
+   grants a window). Per wave, while any child shows a change, log one wait line and grant one more
+   20-minute window; stop when a whole window passes with no change, or at a ceiling of 3 windows
+   (60 minutes) per wave, naming which fired (`no progress for one window` or `ceiling reached while
+   progressing`) and every unchanged child. Children sharing a worktree progress together; a child
+   whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends
+   its window, and the probe runs as at any bound; a failed probe command counts as no change, never
+   retried in another form. Read-only units keep the first-bound self-judge. Exception: a
+   rendered-UI unit (review Step 6/6.5) gets more windows while its artifact directory changes;
+   stage its late result (`_shared/rendered-ui-units.md`). A wait call that is blocked or fails is
+   not a wait and does not move the window's deadline; never retry it in another form (a `sleep` of
+   any length, or a longer, wrapped or backgrounded call): treat every child still outstanding as
+   silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+   Discipline section. Give any agent you dispatch this same instruction, whether it is a nested
+   Task/Agent call or a `superpowers:subagent-driven-development` or review-lens fan-out. **Mark
+   every interim reply (#2714):** if a turn ends anyway while a keep-alive wait is still in
+   progress, with a child outstanding — the keep-alive rule's failure path — make that reply's last
+   non-empty line `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is
+   reserved for your genuine final reply (an abandoned child is not outstanding; that reply is final
+   and ends with `STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook
+   as a final reply missing its status line and logged as a false-positive `contract-violation`,
+   unless your own async `Agent` launches are still pending in your transcript (#3015) — the marker
+   stays required, since that exemption covers only pending launches. Forward this marker rule, with
+   the rest of this item, to any nested dispatch that itself dispatches.
 8. **Selected at** (#3131) — one literal line, `Selected at: {ISO}`: the modification time of
    this firing's session-scoped `dispatch-groups.json` (`queue-pull-script.md`'s output, resolved
    via `sessionTmpPath` as `next-ranking.md` does). That pull already dropped every
@@ -119,13 +126,13 @@ composed-bytes scanner expands each `--phase` line into the phase's registered b
 two lines are measured call sites; if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
-part of `{context-pack}`. Keep the `model` and `source` of the first call's `dispatch-prompt.js`
+part of `{context-pack}`. Keep the `model`, `launchEffort` and `source` of the first call's `dispatch-prompt.js`
 envelope `profile`; after the first call returns — never before it is dispatched — write one
 line per group to that group's `{minted-run-dir}/decisions.md` by running
-`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} at effort {launchEffort} (source: {source})" --reversibility n/a`,
 which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
-`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
-where `{model}` and `{source}` are that `profile`'s fields, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} at effort {launchEffort} (source: {source}). Reversibility: n/a.`
+where `{model}`, `{launchEffort}` and `{source}` are that `profile`'s fields (a `null` `launchEffort` is written as `inherit`), and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
 `[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
 hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
 directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
@@ -260,6 +267,8 @@ DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 pipeline's own steps still select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
+
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
 
 **The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus: a project
 `model-ceiling: standard` policy value clamps `capable` back to `sonnet`
@@ -466,6 +475,8 @@ how long the PR has already existed.
 pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
+
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
 
 Same mechanical status-line check applies to this call. The Auto-merge gate's `merge-check`
 clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own

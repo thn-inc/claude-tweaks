@@ -13,6 +13,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readManifest } = require('../plugin/bin/lib/flow/manifest');
@@ -66,7 +67,7 @@ test('multispec-failure-handling.md documents the not-run call site with the cor
 });
 
 function runDirWithManifest(specs) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-notrun-callsite-'));
+  const project = scratchDir('ct-notrun-callsite-');
   execFileSync('git', ['-C', project, 'init', '-q']);
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-08-22T011331-spec-157-159-160');
   fs.mkdirSync(run, { recursive: true });
@@ -116,7 +117,7 @@ test('multispec-review-console.md\'s claim-release step already documents the no
 
 test('CRLF control (#3670): multispec-not-run-callsite extracts the same result after a CRLF round-trip through readText()', (t) => {
   const DOC_PATH = path.join(ROOT, 'plugin/skills/flow/multispec-failure-handling.md');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'multispec-not-run-crlf-'));
+  const tmp = scratchDir('multispec-not-run-crlf-');
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const lf = readText(DOC_PATH);
   const crlf = lf.replace(/\n/g, '\r\n');

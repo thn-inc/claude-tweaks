@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-cli-');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -9,6 +11,7 @@ const { execFileSync } = require('child_process');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'release-preflight.js');
 const { run, parseArgs } = require(CLI);
 const { pathWithOnly } = require('../../helpers/path-stub');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 // `gh` has to be genuinely unfindable for the real-binary test below, and a
 // PATH assembled naively from git's and node's own directories does not
@@ -20,9 +23,9 @@ const { pathWithOnly } = require('../../helpers/path-stub');
 const BIN_PATH = pathWithOnly(['git', 'node'], { exclude: ['gh'] });
 
 function mainCheckoutWithRun() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-cli-')));
+  const root = fs.realpathSync(scratchDir('release-preflight-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't'); git('commit', '-q', '--allow-empty', '-m', 'init'); git('branch', '-M', 'main');
+  initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init'); git('branch', '-M', 'main');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-12T000000-record-2255');
@@ -77,10 +80,10 @@ test('AC 4c: no run dir at all → a fresh scratch dir under the temp dir, its p
 test('exit 3: --run not anchored under the main checkout, or a cwd outside any git checkout', async () => {
   const fx = mainCheckoutWithRun();
   const { d, err } = baseDeps(fx);
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-outside-'));
+  const outside = scratchDir('release-preflight-outside-');
   assert.strictEqual(await run(['--run', outside], d), 3);
   assert.match(err(), /refused/);
-  const nogit = fs.mkdtempSync(path.join(os.tmpdir(), 'release-preflight-nogit-'));
+  const nogit = scratchDir('release-preflight-nogit-');
   const { d: d2, err: err2 } = baseDeps({ root: nogit });
   d2.mainRoot = undefined;
   assert.strictEqual(await run([], d2), 3);

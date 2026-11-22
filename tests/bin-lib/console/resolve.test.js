@@ -1,8 +1,9 @@
 'use strict';
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -21,7 +22,7 @@ const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, R
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {}, config = null,
 } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const runDir = scratchDir('console-resolve-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
@@ -46,7 +47,7 @@ function deps(overrides = {}) {
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
     sensitivePaths: [],
     ...overrides,
@@ -126,7 +127,7 @@ test('resolveAll resolves one item per section per the short-circuit stances and
   assert.strictEqual(by['wrap-up-reflect-insights.md'].reason, SECTION_STANCES['Reflection insights'].reason);
   assert.deepStrictEqual({ resolution: by['mystery-9.md'].resolution, reason: by['mystery-9.md'].reason }, { resolution: 'pending', reason: 'unmapped-prefix' });
   assert.strictEqual(r.sections.cleanup.resolution, 'approve');
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
   assert.strictEqual(r.items.length, Object.keys(EVERY_SECTION).length);
   assert.strictEqual(r.ceiling, 'unattended');
 });
@@ -729,7 +730,7 @@ test('a needs-human merge-check verdict in decisions.md resolves the merge half 
 });
 
 test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolves the merge half to leave-open (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-06T11:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.match(r.merge.reason, /#8/);
@@ -738,7 +739,7 @@ test('an ungranted member (no auto:merge, no matured auto:merge-pending) resolve
 
 test('an unmatured grant names the untrusted marker comments ghReadGrants passed over in the merge reason (#3358)', () => {
   const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'leave-open');
   assert.ok(r.merge.reason.endsWith(` — ${note}`), r.merge.reason);
@@ -746,15 +747,38 @@ test('an unmatured grant names the untrusted marker comments ghReadGrants passed
 });
 
 test('an unmatured grant with no passed-over comment keeps the merge reason unchanged (#3358 characterization)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [] } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.ok(r.merge.reason.endsWith('treated as not yet matured)'), r.merge.reason);
 });
 
 test('a matured auto:merge-pending counts as granted (#1932 AC3)', () => {
-  const grants = { 7: { labels: ['auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
+  const grants = { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: new Date('2026-09-01T00:00:00Z') } };
   const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
   assert.strictEqual(r.merge.resolution, 'merge');
+});
+
+const NO_BUILD_REASON = 'no auto:build label present — a merge grant counts only together with a live auto:build';
+
+test('AC5.1, AC5.3: a member carrying auto:merge without auto:build resolves the merge half to leave-open naming the member', () => {
+  const grants = { 7: { labels: ['auto:build', 'auto:merge'], pendingSince: null }, 8: { labels: ['auto:merge'], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [7, 8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON}`);
+});
+
+test('AC5.1: a no-build member with passed-over untrusted notes carries the passedOver suffix in the no-build-grant reason', () => {
+  const note = 'skipped marker comment https://x/issues/8#c1 by eve (NONE) — not an owner, member, or collaborator';
+  const grants = { 8: { labels: ['auto:merge'], pendingSince: null, skippedUntrusted: [note] } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.reason, `#8: ${NO_BUILD_REASON} — ${note}`);
+});
+
+test('AC5.1: a member with no grant labels at all keeps the lacks auto:merge reason, not the build one', () => {
+  const grants = { 8: { labels: [], pendingSince: null } };
+  const r = resolveAll({ runDir: fixture({ staged: { 'reflect-1.md': 'x' }, headers: [8] }), policy: 'console-auto', deps: deps({ readGrants: () => grants }) });
+  assert.strictEqual(r.merge.resolution, 'leave-open');
+  assert.strictEqual(r.merge.reason, '#8 lacks auto:merge and a matured auto:merge-pending (no auto:merge or auto:merge-pending label present)');
 });
 
 test('readGrants throwing resolves the merge half to leave-open with reason grants-unreadable (#1932 AC3)', () => {
@@ -783,7 +807,7 @@ test('a drain-overlap hold whose PR has since merged self-heals: falls through t
     policy: 'console-auto',
     deps: deps({ checkPrState: () => 'MERGED' }),
   });
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('a drain-overlap hold whose PR has since closed self-heals the same as merged (#2299)', () => {
@@ -872,7 +896,7 @@ test('a group held by two distinct overlapping drain PRs falls through to merge 
     deps: deps({ checkPrState: (n) => { calls.push(n); return states[n]; } }),
   });
   assert.deepStrictEqual(calls, [4001, 4002]);
-  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:merge or a matured auto:merge-pending; no needs-human verdict' });
+  assert.deepStrictEqual(r.merge, { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' });
 });
 
 test('the regex matches PR number extraction from drain-pr-overlap.md\'s own Step 6 log-line template, instantiated with concrete values (final review Minor #4 — producer/consumer coupling)', () => {
@@ -940,7 +964,7 @@ test('a wrap-up-pack.json whose records came from the config rung yields no memb
 test('members come from wrap-up-pack.json inputs.records when present (#1932 decision 2)', () => {
   const calls = [];
   const runDir = fixture({ staged: { 'reflect-1.md': 'x' }, pack: { inputs: { records: [41, 42] } }, headers: [7] });
-  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
 });
 
@@ -963,7 +987,7 @@ test('a multi-spec parent run dir with no wrap-up-pack.json resolves members via
     manifest,
     specHeaders: { 41: [41], 42: [42] },
   });
-  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])); } }) });
+  const r = resolveAll({ runDir, policy: 'console-auto', deps: deps({ readGrants: (n) => { calls.push(n); return Object.fromEntries(n.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])); } }) });
   assert.deepStrictEqual(calls, [[41, 42]]);
   assert.notDeepStrictEqual(r.merge, { resolution: 'leave-open', reason: 'members-unresolved' });
 });
@@ -1089,7 +1113,7 @@ test('AC2.1: a console.json written with the old 58-character id shape still rea
 });
 
 test('AC2.1: old-shape and new-shape decision ids coexist in one console.json — residue counts both and points both at decisions.md (#3816)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const dir = scratchDir('console-resolve-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), SAME_PREFIX);
   const line = SUPERSEDED.split('\n')[1];
   const oldId = `decision:${line.slice(2, 60)}`;
@@ -2392,4 +2416,41 @@ test('#4636: review-console-appendix.md names every reference-repair pending rea
   assert.ok(reasons.length >= 4);
   const text = APPENDIX.replace(/\s+/g, ' ');
   for (const reason of reasons) assert.ok(text.includes('pending — ' + reason), reason);
+});
+
+// #5050: console-resolve.js's default runner bounds each spawn by command — `gh` follows
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS (floored at 30000 by the batched bound), `git` follows
+// CLAUDE_TWEAKS_GIT_TIMEOUT_MS. `run` reaches a `gh` spawn only past a full resolve fixture, so the
+// probe calls the exported default runner directly: it is the very function `deps.execFile || defaultExecFile` picks.
+describe('default exec bound (#5050)', () => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  const CONSOLE_RESOLVE = require.resolve('../../../plugin/bin/console-resolve');
+  const probe = (cmd, env) => captureExecTimeouts({
+    env,
+    modulePaths: [CONSOLE_RESOLVE],
+    exercise: (setEnv) => {
+      setEnv();
+      require(CONSOLE_RESOLVE).defaultExecFile(cmd, ['--version']);
+    },
+  });
+
+  test('console-resolve gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }).gh[0], 45000);
+  });
+
+  test('console-resolve gh spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined }).gh[0], 30000);
+  });
+
+  test('console-resolve gh spawn is floored at 30000 when the env is 10000', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' }).gh[0], 30000);
+  });
+
+  test('console-resolve git spawn follows CLAUDE_TWEAKS_GIT_TIMEOUT_MS', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' }).git[0], 90000);
+  });
+
+  test('console-resolve git spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined }).git[0], 30000);
+  });
 });

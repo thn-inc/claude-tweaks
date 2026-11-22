@@ -146,9 +146,9 @@ test('computeLevers runs only the auto FYI path: confirm, hybrid and interactive
   }
 });
 
-test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy and the run pin', () => {
+test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy, the run pin and auto-mode', () => {
   const policyLevers = LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization');
-  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model']);
+  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model', 'auto-mode']);
 });
 
 test('computeLevers refuses an unresolved policy lever rather than guessing', () => {
@@ -193,6 +193,72 @@ test('config.yml holds the 13 levers in canonical order, then the run pin, then 
   const expected = [...levers.map((l) => `${l.key}: ${l.value}`), 'integration-model: pr-first', 'spec: 4027', 'created: 2026-10-25T172400', ''].join('\n');
   assert.strictEqual(fs.readFileSync(configPath, 'utf8'), expected);
   assert.ok(fs.statSync(path.join(fx.runDir, 'staged')).isDirectory(), 'staged/ created');
+});
+
+// --- run manifest fill (#5903) -----------------------------------------------
+
+const { initRunManifest, MANIFEST_FILE } = require('../../../plugin/bin/lib/run-manifest/write');
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, MANIFEST_FILE), 'utf8'));
+const seedManifest = (runDir, lane) => initRunManifest(runDir, { lane, cwd: runDir }, {
+  gatherFacts: () => ({ pluginVersion: '6.200.0', policyHash: 'abc123', baseCommit: 'deadbeef', modelProfile: 'standard' }),
+  stderr: () => {},
+});
+
+test('writeManifesto fills the seeded manifest: ceremonyProfile is the ceremony-profile lever, lane is standard, the facts stay', () => {
+  for (const [ceremony, expected] of [['fast-lane', 'fast-lane'], ['standard', 'standard']]) {
+    const fx = fixture();
+    seedManifest(fx.runDir);
+    const { levers } = write(fx, { records: [{ n: 4027, ceremony, ceremonySource: 'label' }] });
+    assert.strictEqual(lever(levers, 'ceremony-profile').value, expected);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.ceremonyProfile, expected);
+    assert.strictEqual(m.lane, 'standard');
+    assert.strictEqual(m.pluginVersion, '6.200.0');
+    assert.strictEqual(m.baseCommit, 'deadbeef');
+  }
+});
+
+test('writeManifesto with no manifest creates one carrying only ceremonyProfile and lane; every other field stays null', () => {
+  const fx = fixture();
+  write(fx);
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.lane, 'standard');
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  for (const key of ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']) assert.strictEqual(m[key], null, key);
+});
+
+test('writeManifesto does not overwrite a known lane: an express or driver run keeps it', () => {
+  for (const lane of ['express', 'driver']) {
+    const fx = fixture();
+    seedManifest(fx.runDir, lane);
+    write(fx);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.lane, lane);
+    assert.strictEqual(m.ceremonyProfile, 'standard');
+  }
+});
+
+test('writeManifesto fills no lane when the config.yml write fails mid-batch', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  let n = 0;
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (++n === 5) throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.strictEqual(readManifest(fx.runDir).lane, 'unknown');
+});
+
+test('a writeManifesto failure after the ceremony-profile lever keeps the filled ceremonyProfile while config.yml is removed', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'merge-authorization') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('config.yml'), 'partial config.yml rolled back');
+  // The fill rides setConfigLever, so it already landed; a re-run rewrites the same value.
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  assert.strictEqual(m.lane, 'unknown', 'the lane fill is after the whole batch, so it did not run');
 });
 
 test('an existing config.yml -> AdoptedRunError and nothing in the run dir changes', () => {
@@ -274,6 +340,30 @@ test('writeManifesto: a degraded-sourced merge-verification lever writes wait an
   const clean = fixture();
   write(clean, { res: resolved({ 'merge-verification': { value: 'off', source: 'default' } }) });
   assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
+});
+
+test('manifesto-write: a factory lever renders Source factory', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fromFactory = resolvePolicyKeys(['tidy-aggressiveness', 'review-auto-apply-ceiling', 'autonomy'], {
+    factoryRaw: 'tidy-aggressiveness: conservative\nreview-auto-apply-ceiling: low\nautonomy: unattended\n',
+  });
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved(fromFactory) });
+  assert.deepStrictEqual(lever(levers, 'tidy-aggressiveness'), { key: 'tidy-aggressiveness', value: 'conservative', source: 'factory' });
+  // A factory ceiling is set, not the default, so the unattended-default lift to medium does not apply.
+  assert.deepStrictEqual(lever(levers, 'review-auto-apply-ceiling'), { key: 'review-auto-apply-ceiling', value: 'low', source: 'factory' });
+  assert.match(renderFyi(levers), /\| Tidy aggressiveness \| conservative \| factory \|/i);
+});
+
+test('manifesto-write: a factory-only auto-mode renders the Mode row with Source factory (#6006)', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const modeRow = (raws, modeSource = 'policy') => {
+    const levers = computeLevers({ mode: 'auto', modeSource, records: ONE_STANDARD, resolved: resolved(resolvePolicyKeys(['auto-mode'], raws)) });
+    return renderFyi(levers).split('\n').find((line) => line.startsWith('| Mode |'));
+  };
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }), '| Mode | auto | factory |');
+  assert.strictEqual(modeRow({ policyRaw: 'auto-mode: default-on\n', factoryRaw: 'auto-mode: default-off\n' }), '| Mode | auto | policy |');
+  // Only rung 3 reads the layer: an arg-sourced mode stays arg whatever auto-mode resolved.
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }, 'arg'), '| Mode | auto | arg |');
 });
 
 test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {

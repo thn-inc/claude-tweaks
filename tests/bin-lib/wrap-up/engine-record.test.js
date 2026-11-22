@@ -7,6 +7,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -25,7 +26,7 @@ const FACTS = {
 const FIXED_NOW = '2026-08-08T12:00:00.000Z';
 
 function makeRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-engine-record-'));
+  return scratchDir('wrap-up-engine-record-');
 }
 
 function makeWorklist() {

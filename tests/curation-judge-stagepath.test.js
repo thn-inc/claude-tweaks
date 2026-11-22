@@ -15,7 +15,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { chmodDenialSkip } = require('./helpers/root');
 const { runCli, spawnCli } = require('./helpers/run-cli');
-const { hookEnv } = require('./helpers/git-fixtures');
+const { hookEnv, writeIdentity } = require('./helpers/git-fixtures');
 const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -136,8 +136,7 @@ function buildFixture(t, { realpath = true } = {}) {
   const main = path.join(root, 'main');
   fs.mkdirSync(main);
   git(main, 'init', '-q');
-  git(main, 'config', 'user.email', 'probe@example.invalid');
-  git(main, 'config', 'user.name', 'probe');
+  writeIdentity(main, { name: 'probe', email: 'probe@example.invalid' });
   fs.writeFileSync(path.join(main, 'a.txt'), 'a\n');
   git(main, 'add', 'a.txt');
   git(main, 'commit', '-q', '-m', 'base');

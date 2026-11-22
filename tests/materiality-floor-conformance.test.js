@@ -13,7 +13,10 @@ const { spawnSync } = require('child_process');
 
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
+const { scratchDir } = require('./helpers/tmp-dir');
 const { readText } = require('./helpers/read-skill');
+const { sectionOf, lineStartingWith } = require('./helpers/conformance-asserts');
+const { run: routeCli } = require('../plugin/bin/deferral-route');
 
 const REPO_ROOT = path.join(__dirname, '..');
 const read = (rel) => readText(path.join(REPO_ROOT, rel));
@@ -68,8 +71,8 @@ test('materiality-floor.md states both overrides', () => {
   assert.ok(FLOOR.toLowerCase().includes('out of this contract') || FLOOR.toLowerCase().includes('/capture'));
 });
 
-test('materiality-floor.md states the severity override: a high or critical finding always clears the floor', () => {
-  assert.ok(FLOOR.includes('A finding carrying severity `high` or `critical` always clears the floor'));
+test('materiality-floor.md states the severity override: a high or critical finding files as an ordinary issue', () => {
+  assert.ok(FLOOR.includes('A finding carrying severity `high` or `critical` files as an ordinary issue'));
 });
 
 test('materiality-floor.md states the entry format line', () => {
@@ -175,11 +178,13 @@ const ADOPTERS = [
   'plugin/skills/wrap-up/leftover-routing.md',
   'plugin/skills/reflect/full-mode.md',
   'plugin/skills/reflect/hindsight-mode.md',
+  'plugin/skills/reflect/SKILL.md',
   'plugin/skills/visual-review/browser-review.md',
   'plugin/skills/code-health/filing.md',
   'plugin/skills/docs-health/SKILL.md',
   'plugin/skills/harness-health/filing.md',
   'plugin/skills/journey-health/SKILL.md',
+  'plugin/skills/ci-health/SKILL.md',
 ];
 
 for (const rel of ADOPTERS) {
@@ -200,12 +205,330 @@ test('no adopter file restates the floor\'s three-axis definition', () => {
   }
 });
 
-test('the four health sweeps state materiality-floor-before-cap-digest ordering', () => {
+// --- #5931: every deferral routing site applies the floor through bin/deferral-route.js ---
+// Live corpus on purpose (skill-prose-conformance-tests' "documented convention ... against every future
+// addition" row): the claim is that each site's own prose carries the command, which no fixture can stand in for.
+const ROUTE_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason}';
+const ROUTE_FORM = `${ROUTE_COMMAND} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] (--agent-raised | --human)`;
+const DEFERRAL_SITES = [
+  'plugin/skills/review/step3-routing.md',
+  'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/reflect/SKILL.md',
+  'plugin/skills/wrap-up/residue-sweep.md',
+  'plugin/skills/wrap-up/leftover-routing.md',
+  'plugin/skills/visual-review/browser-review.md',
+  'plugin/skills/_shared/ledger-format.md',
+];
+const OVERRIDE_RESTATEMENT = /always clears|override clears|other than `tangential`|non-`tangential`|is not `tangential`/;
+// A needle as a regex whose spaces match any whitespace run, so a hard-wrapped copy is found (and stripped) too.
+const flexible = (needle) => new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+
+// The paragraph(s) holding the command must carry its value placeholders, the origin flag, the three
+// verdicts and the any-other-outcome branch; the whole file must not restate an override.
+function deferralSiteProblems(text) {
+  const problems = [];
+  const paragraphs = text.split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, ' '));
+  const holding = paragraphs.filter((p) => p.includes(ROUTE_COMMAND));
+  if (holding.length === 0) problems.push('no paragraph holds the deferral-route.js command form');
+  else {
+    for (const flag of ['--size {size}', '--priority {priority}', '--risk {risk}', "[--evidence '{evidence}']", '[--run "$PIPELINE_RUN_DIR"]', '--agent-raised']) {
+      if (!holding.some((p) => p.includes(flag))) problems.push(`the command paragraph lacks ${flag}`);
+    }
+    if (holding.some((p) => p.includes('--human'))) problems.push('the command paragraph passes --human');
+    if (!holding.some((p) => p.includes('any other outcome'))) problems.push('the command paragraph does not handle any other outcome');
+    for (const word of ['`file`', '`digest`', '`refused`']) {
+      if (!holding.some((p) => p.includes(word))) problems.push(`the command paragraph does not name the ${word} verdict`);
+    }
+  }
+  if (OVERRIDE_RESTATEMENT.test(text.replace(/\s+/g, ' '))) problems.push('restates a floor override');
+  return problems;
+}
+function assertDeferralSite(text, rel) {
+  assert.deepStrictEqual(deferralSiteProblems(text), [], `${rel} must apply the floor through bin/deferral-route.js`);
+}
+
+for (const rel of DEFERRAL_SITES) {
+  test(`#5931 deferral site ${rel} carries the deferral-route.js command form, its flags and every verdict word`, () => {
+    assertDeferralSite(read(rel), rel);
+  });
+}
+
+const SAMPLE_SITE = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`: \`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+const SITE_MUTATIONS = [
+  [ROUTE_COMMAND, 'no paragraph holds the deferral-route.js command form'],
+  ['--size {size}', 'the command paragraph lacks --size {size}'],
+  ['{priority}', 'the command paragraph lacks --priority {priority}'],
+  ['--risk {risk}', 'the command paragraph lacks --risk {risk}'],
+  ["[--evidence '{evidence}']", "the command paragraph lacks [--evidence '{evidence}']"],
+  ['[--run "$PIPELINE_RUN_DIR"]', 'the command paragraph lacks [--run "$PIPELINE_RUN_DIR"]'],
+  ['--agent-raised', 'the command paragraph lacks --agent-raised'],
+  ['any other outcome', 'the command paragraph does not handle any other outcome'],
+  ['`file`', 'the command paragraph does not name the `file` verdict'],
+  ['`digest`', 'the command paragraph does not name the `digest` verdict'],
+  ['`refused`', 'the command paragraph does not name the `refused` verdict'],
+];
+test('#5931 go-red: the sample site passes the deferral-site check', () => assertDeferralSite(SAMPLE_SITE, 'sample'));
+for (const [cut, expected] of SITE_MUTATIONS) {
+  test(`#5931 go-red: removing ${cut} fails the deferral-site check`, () => {
+    const mutated = SAMPLE_SITE.split(cut).join('');
+    assert.notEqual(mutated, SAMPLE_SITE, `anchor ${cut} not in the sample`);
+    assert.deepStrictEqual(deferralSiteProblems(mutated), [expected]);
+    assert.throws(() => assertDeferralSite(mutated, 'sample'));
+  });
+}
+test('#5931 go-red: the verdicts in another paragraph than the command fail the deferral-site check', () => {
+  const split = `Apply the floor with \`${ROUTE_COMMAND} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised\`.\n\n\`digest\` digests, \`file\` files, \`refused\` or any other outcome stays open.`;
+  assert.deepStrictEqual(deferralSiteProblems(split), [
+    'the command paragraph does not handle any other outcome',
+    'the command paragraph does not name the `file` verdict',
+    'the command paragraph does not name the `digest` verdict',
+    'the command paragraph does not name the `refused` verdict',
+  ]);
+});
+test('#5931 go-red: a command paragraph passing --human fails the deferral-site check', () => {
+  const human = `${SAMPLE_SITE} | --human`;
+  assert.deepStrictEqual(deferralSiteProblems(human), ['the command paragraph passes --human']);
+  assert.throws(() => assertDeferralSite(human, 'sample'));
+});
+test('#5931 go-red: an override restated across a line wrap fails the deferral-site check', () => {
+  const restated = `${SAMPLE_SITE}\nA \`tangential\` reason always\nclears the floor.`;
+  assert.deepStrictEqual(deferralSiteProblems(restated), ['restates a floor override']);
+  assert.throws(() => assertDeferralSite(restated, 'sample'));
+});
+
+// Every documented command form, filled in, must parse and route through the real CLI: the prose pins
+// above compare text to text, so a renamed CLI flag would leave them green while every call refuses.
+// A cwd with no policy.yml, so the CLI's policy read resolves the empty default.
+const NO_POLICY_DIR = scratchDir('ct-materiality-nopolicy-');
+const ROUTE_SPAN = /`(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/deferral-route\.js"[^`]*)`/g;
+// `strip` removes the documented `--run` first: it is a site placeholder (`"$PIPELINE_RUN_DIR"`) that a
+// policy-free probe cannot resolve. `--evidence '{evidence}'` stays in, so a CLI rename of it is caught; its
+// shell quotes are dropped, since a shell would strip them before the value reached argv.
+function fillRoute(span, severity, strip = /\[--run [^\]]*\]\s*/g) {
+  return span
+    .replace('(--agent-raised | --human)', '--agent-raised')
+    .replace(strip, '')
+    .replace("'{evidence}'", '{evidence}')
+    .replace(/\[([^\]]*)\]/g, '$1')
+    .replace('{reason}', 'pre-existing-outside-diff')
+    .replace('{severity}', severity)
+    .replace(/\{(size|priority|risk)\}/g, 'low');
+}
+const routeArgv = (filled) => filled.split(/\s+/).slice(2);
+function runRoute(filled) {
+  let out = '';
+  const code = routeCli(Array.isArray(filled) ? filled : routeArgv(filled), { stdout: (s) => { out += s; }, stderr: () => {}, cwd: () => NO_POLICY_DIR, env: {} });
+  return { code, out };
+}
+function routeVerdict(span, severity) {
+  const { code, out } = runRoute(fillRoute(span, severity));
+  return { code, verdict: JSON.parse(out).verdict };
+}
+for (const rel of ['plugin/skills/_shared/materiality-floor.md', ...DEFERRAL_SITES]) {
+  test(`#5931 every deferral-route.js form ${rel} documents routes through the real CLI`, () => {
+    const spans = [...read(rel).matchAll(ROUTE_SPAN)].map((m) => m[1]);
+    assert.ok(spans.length > 0, `${rel} documents no deferral-route.js command form`);
+    for (const span of spans) {
+      assert.deepStrictEqual(routeVerdict(span, 'low'), { code: 0, verdict: 'digest' }, span);
+      if (span.includes('{severity}')) assert.deepStrictEqual(routeVerdict(span, 'high'), { code: 0, verdict: 'file' }, span);
+    }
+  });
+}
+// The documented `--run` reaches the CLI's run-dir check: a path that does not exist exits 1 with nothing on
+// stdout; a renamed flag would be refused (exit 2) instead.
+test('#5933 the documented --run flag reaches the CLI run-dir check', () => {
+  const span = [...read('plugin/skills/_shared/materiality-floor.md').matchAll(ROUTE_SPAN)].map((m) => m[1]).find((s) => s.includes('--run'));
+  assert.ok(span, 'materiality-floor.md documents no command form with --run');
+  // The never-matching strip keeps the `--run` placeholder. Split first, then put the path into its own argv
+  // element: a temp dir containing a space must not split into two arguments.
+  const runDir = `${NO_POLICY_DIR}/no-such-run-dir`;
+  const argv = routeArgv(fillRoute(span, 'low', /(?!)/g)).map((a) => (a === '"$PIPELINE_RUN_DIR"' ? runDir : a));
+  assert.strictEqual(argv[argv.indexOf('--run') + 1], runDir, argv.join(' '));
+  assert.ok(!argv.some((a) => a.includes('PIPELINE_RUN_DIR')), argv.join(' '));
+  assert.deepStrictEqual(runRoute(argv), { code: 1, out: '' });
+});
+test('#5931 go-red: a documented form with a flag the CLI does not accept is refused', () => {
+  assert.deepStrictEqual(routeVerdict(ROUTE_FORM.replace('--size', '--scale'), 'low'), { code: 2, verdict: 'refused' });
+});
+
+// #5933 Decision 2: one digest-label table names the label and ledger Resolution for every digest rule.
+const DIGEST_LABEL_ROWS = [
+  '| `floor` | "Digest — below floor" | `below the materiality floor — digested at {where}` |',
+  '| `policy-reason` | "Digest — policy (`deferral-digest-reasons`)" | `digested by policy (deferral-digest-reasons) at {where}` |',
+  '| `no-evidence` | "Digest — no evidence (`filed-record-evidence`)" | `digested without evidence (filed-record-evidence) at {where}` |',
+  '| `run-cap` | "Digest — run cap (`run-filed-record-cap`)" | `digested over the run cap (run-filed-record-cap) at {where}` |',
+];
+const FLOOR_NEEDLES = [
+  ROUTE_FORM,
+  'its test pins the two sections above byte-equal',
+  'Every site routing an item that carries a gate `Defer-reason:` runs it',
+  'five health sweeps (no gate reason) apply this prose directly',
+  'the tiebreak can\'t-tell digest, the console-backfill values and ledger narrowing follow their own rules',
+  'lowercase (`critical`, `high`, `medium`, `low`, `info`)',
+  'Every routing site passes `--agent-raised`',
+  '`verdict` (`file`, `digest` or `refused`) and `rule`',
+  '`--evidence` only when the item carries an `Evidence: test:…` or `Evidence: ref:…` line',
+  'a finding\'s file-and-line `Evidence:` pointer is not one',
+  'single-quoted and reaches the command line only when it matches, exactly and in full, `test:` followed by one or more characters from `A-Z a-z 0-9 . _ / -`, or `ref:#` followed by digits, or `ref:IL-` followed by digits; any other value is never put on the command line: omit the flag',
+  'in a multi-spec run each member\'s `spec-{N}/` directory keeps its own tally',
+  '`--run` only when a run directory resolves',
+  'since the command refuses a blank `--run`',
+  '**Two frictions after the floor (#5933).**',
+  'goes to the digest, rule `no-evidence`',
+  'goes to the digest, rule `run-cap`',
+  'a `high` or `critical` severity still files, and counts',
+  'The cap is first come, first served within a run',
+  'never hold items back or rank them to choose which ones file',
+  ...DIGEST_LABEL_ROWS,
+  '`{where}` is the digest comment URL on `work-backend: github-issues`, or `specs/digest.md` on `local-files`.',
+];
+const AUDIT_RULE = /^AUTO \{time\} — materiality-floor: \{item\} routed below floor \(\{defer-reason\}, rule=\{rule\}\) → digest\./m;
+function floorCommandProblems(text) {
+  const section = sectionOf(text, '## Applying the floor').replace(/\s+/g, ' ');
+  const problems = FLOOR_NEEDLES.filter((needle) => !section.includes(needle)).map((needle) => `Applying the floor lacks ${needle}`);
+  if (!AUDIT_RULE.test(text)) problems.push('the Audit line does not carry rule={rule}');
+  return problems;
+}
+test('#5931 materiality-floor.md names deferral-route.js as the code home and gives the one command form', () => {
+  assert.deepStrictEqual(floorCommandProblems(FLOOR), []);
+});
+for (const needle of FLOOR_NEEDLES) {
+  test(`#5931 go-red: dropping ${needle} fails the floor check`, () => {
+    const mutated = FLOOR.replace(flexible(needle), '');
+    assert.notEqual(mutated, FLOOR, `anchor ${needle} not in materiality-floor.md`);
+    assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${needle}`]);
+  });
+}
+test('#5931 go-red: the command form moved out of Applying the floor fails the floor check', () => {
+  const mutated = `${FLOOR.replace(flexible(ROUTE_FORM), '')}\n\`${ROUTE_FORM}\`\n`;
+  assert.ok(mutated.includes(ROUTE_FORM));
+  assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${ROUTE_FORM}`]);
+});
+test('#5933 go-red: the label table moved out of Applying the floor fails the floor check', () => {
+  let mutated = FLOOR;
+  for (const row of DIGEST_LABEL_ROWS) mutated = mutated.replace(flexible(row), '');
+  assert.notEqual(mutated, FLOOR);
+  mutated = mutated.replace('## Entry format\n', `## Entry format\n\n${DIGEST_LABEL_ROWS.join('\n')}\n`);
+  assert.ok(DIGEST_LABEL_ROWS.every((row) => mutated.includes(row)));
+  assert.deepStrictEqual(floorCommandProblems(mutated), DIGEST_LABEL_ROWS.map((row) => `Applying the floor lacks ${row}`));
+});
+test('#5931 go-red: dropping the axis placeholders from the command form fails the floor check', () => {
+  const mutated = FLOOR.split('--size {size} --priority {priority}').join('--size --priority');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(floorCommandProblems(mutated), [`Applying the floor lacks ${ROUTE_FORM}`]);
+});
+test('#5931 go-red: dropping rule={rule} from the Audit line fails the floor check', () => {
+  const mutated = FLOOR.split(', rule={rule}').join('');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(floorCommandProblems(mutated), ['the Audit line does not carry rule={rule}']);
+});
+
+// #5932 AC9: Overrides lists the precedence in order, names the digest lifecycle the policy relies on,
+// and no longer says a tangential reason "always clears the floor".
+const OVERRIDE_ORDER = [
+  '1. Human-typed `/capture` input files',
+  '2. A finding carrying severity `high` or `critical` files',
+  '3. An agent-raised item whose `Defer-reason:` is listed in policy key `deferral-digest-reasons`',
+  '4. `Defer-reason: tangential` files',
+];
+const OVERRIDE_LIFECYCLE = ['`tidy/digest-sweep.md`', 'a promotion proposal, filed on approval, once three entries share an area', 'expiry after 90 days', "Changing either changes this policy's effect"];
+function overridesProblems(text) {
+  const section = sectionOf(text, '## Overrides').replace(/\s+/g, ' ');
+  const problems = [...OVERRIDE_ORDER, ...OVERRIDE_LIFECYCLE].filter((n) => !section.includes(n)).map((n) => `Overrides lacks ${n}`);
+  if (problems.length === 0) {
+    const at = OVERRIDE_ORDER.map((n) => section.indexOf(n));
+    if (at.some((i, k) => k > 0 && i < at[k - 1])) problems.push('Overrides lists the precedence out of order');
+  }
+  if (section.includes('always clears the floor')) problems.push('Overrides still says "always clears the floor"');
+  return problems;
+}
+const OVERRIDES = () => sectionOf(FLOOR, '## Overrides');
+test('#5932 AC9.1 Overrides lists the precedence in order and no longer says always clears the floor', () => {
+  assert.deepStrictEqual(overridesProblems(FLOOR), []);
+});
+for (const needle of [...OVERRIDE_ORDER, ...OVERRIDE_LIFECYCLE]) {
+  test(`#5932 go-red: ${needle} moved out of Overrides fails the check`, () => {
+    const sec = OVERRIDES();
+    const cut = sec.replace(flexible(needle), '');
+    assert.notEqual(cut, sec, `anchor ${needle} not in Overrides`);
+    const moved = `${FLOOR.replace(sec, () => cut)}\n${needle}\n`;
+    assert.deepStrictEqual(overridesProblems(moved), [`Overrides lacks ${needle}`]);
+  });
+}
+test('#5932 go-red: the policy item after the tangential item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i3 = sec.indexOf('3. An agent-raised');
+  const i4 = sec.indexOf('4. `Defer-reason: tangential`');
+  assert.ok(i3 > 0 && i4 > i3);
+  const swapped = `${sec.slice(0, i3)}${sec.slice(i4)}\n${sec.slice(i3, i4)}`;
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: the severity item after the policy item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i2 = sec.indexOf('2. A finding carrying');
+  const i3 = sec.indexOf('3. An agent-raised');
+  assert.ok(i2 > 0 && i3 > i2);
+  const i4 = sec.indexOf('4. `Defer-reason: tangential`');
+  const swapped = `${sec.slice(0, i2)}${sec.slice(i3, i4)}${sec.slice(i2, i3)}${sec.slice(i4)}`;
+  assert.notEqual(swapped, sec);
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: the human item after the severity item fails the order check', () => {
+  const sec = OVERRIDES();
+  const i1 = sec.indexOf('1. Human-typed');
+  const i2 = sec.indexOf('2. A finding carrying');
+  assert.ok(i1 > 0 && i2 > i1);
+  const i3 = sec.indexOf('3. An agent-raised');
+  const swapped = `${sec.slice(0, i1)}${sec.slice(i2, i3)}${sec.slice(i1, i2)}${sec.slice(i3)}`;
+  assert.notEqual(swapped, sec);
+  assert.deepStrictEqual(overridesProblems(FLOOR.replace(sec, () => swapped)), ['Overrides lists the precedence out of order']);
+});
+test('#5932 go-red: "always clears the floor" back in Overrides fails the check', () => {
+  const mutated = FLOOR.replace('files as an ordinary issue — a tangential', 'files as an ordinary issue and always clears the floor — a tangential');
+  assert.notEqual(mutated, FLOOR);
+  assert.deepStrictEqual(overridesProblems(mutated), ['Overrides still says "always clears the floor"']);
+});
+
+// #5932 Decision 1: reflect's auto-mode tangential staging runs the route command; digest stages nothing.
+const REFLECT = read('plugin/skills/reflect/SKILL.md');
+const REFLECT_ROUTE_NEEDLES = [
+  '`{reason}` being `tangential`',
+  'runs the integration-branch probe below first; a finding main already closed is neither digested nor staged, and gets that paragraph\'s `not filed` line',
+  'stage nothing: no `staged/reflect-{n}.md`',
+  "never reaches the Review Console's Queue writes section",
+  'A digest write that fails is staged as on `file` instead',
+  'On `file`, stage it as the next paragraph describes',
+  'On `refused` or any other outcome, stage it the same way',
+  '"Digest URL and count surfacing"',
+];
+const REFLECT_ROW_NEEDLES = ['Routed first by `bin/deferral-route.js`', 'On `digest`: a digest entry, nothing staged', 'Otherwise STAGED'];
+function reflectRouteProblems(text) {
+  const para = text.split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, ' ')).find((p) => p.includes(ROUTE_COMMAND)) || '';
+  const row = text.split('\n').find((l) => l.startsWith('| Tangential idea')) || '';
+  return [
+    ...REFLECT_ROUTE_NEEDLES.filter((n) => !para.includes(n)).map((n) => `the routing paragraph lacks ${n}`),
+    ...REFLECT_ROW_NEEDLES.filter((n) => !row.includes(n)).map((n) => `the tangential row lacks ${n}`),
+  ];
+}
+test('#5932 reflect routes a tangential idea before staging it, and a digest verdict stages nothing', () => {
+  assert.deepStrictEqual(reflectRouteProblems(REFLECT), []);
+});
+for (const needle of [...REFLECT_ROUTE_NEEDLES, ...REFLECT_ROW_NEEDLES]) {
+  test(`#5932 go-red: ${needle} moved out of its paragraph or row fails the reflect check`, () => {
+    const cut = REFLECT.replace(flexible(needle), '');
+    assert.notEqual(cut, REFLECT, `anchor ${needle} not in reflect/SKILL.md`);
+    const where = REFLECT_ROW_NEEDLES.includes(needle) ? 'the tangential row' : 'the routing paragraph';
+    assert.deepStrictEqual(reflectRouteProblems(`${cut}\n\n${needle}\n`), [`${where} lacks ${needle}`]);
+  });
+}
+
+test('the five health sweeps state materiality-floor-before-cap-digest ordering', () => {
   const HEALTH_FILES = [
     'plugin/skills/code-health/filing.md',
     'plugin/skills/docs-health/SKILL.md',
     'plugin/skills/harness-health/filing.md',
     'plugin/skills/journey-health/SKILL.md',
+    'plugin/skills/ci-health/SKILL.md',
   ];
   for (const rel of HEALTH_FILES) {
     assert.match(
@@ -247,7 +570,7 @@ test('multi-branch adopter files cite materiality-floor.md at each of their fili
 
 // --- #1279: Defer-reason vocabulary for direct-filing producers ---
 
-test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the four health sweeps)', () => {
+test('materiality-floor.md documents a Defer-reason value for direct-filing producers (the five health sweeps)', () => {
   assert.ok(FLOOR.includes('direct-filing-sweep'));
   assert.match(FLOOR, /### Direct-filing producers' `Defer-reason:` value/);
 });
@@ -349,6 +672,7 @@ const SUMMARY_SURFACING_ADOPTERS = [
   'plugin/skills/wrap-up/residue-sweep.md',
   'plugin/skills/wrap-up/leftover-routing.md',
   'plugin/skills/reflect/full-mode.md',
+  'plugin/skills/reflect/SKILL.md',
   'plugin/skills/visual-review/browser-review.md',
 ];
 
@@ -371,13 +695,14 @@ test('reflect/hindsight-mode.md inherits digest URL/count surfacing from full-mo
   assert.match(HINDSIGHT, /this mode's own end-of-run summary states the same digest comment URL and count/);
 });
 
-test('the four health sweeps report a materiality-digest count distinct from the cap-digest count in the throttle line', () => {
+test('the five health sweeps report a materiality-digest count distinct from the cap-digest count in the throttle line', () => {
   assert.match(HEALTH_DIGEST, /filed: N, digested: M, cap: \{CAP\}, materiality: K/);
   const HEALTH_SKILLS = [
     'plugin/skills/code-health/SKILL.md',
     'plugin/skills/docs-health/SKILL.md',
     'plugin/skills/harness-health/SKILL.md',
     'plugin/skills/journey-health/SKILL.md',
+    'plugin/skills/ci-health/SKILL.md',
   ];
   for (const rel of HEALTH_SKILLS) {
     assert.match(
@@ -742,3 +1067,173 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   assert.notStrictEqual(failed.status, 0, 'a failed gh read must fail the fence');
   assert.strictEqual(failed.stdout, '');
 });
+
+// --- #5931 Task 4: visual-review's Issue severities onto the command's (plan-review Decision 2) ---
+const VISUAL_SEVERITY_MAP = ['Critical `critical`', 'Major `medium`', 'Minor `low`', 'Cosmetic `info`', 'an agent row\'s lowercase word as-is;', 'none for an Idea'];
+function visualSeverityProblems(text) {
+  const defer = lineStartingWith(text, '- **Defer** (new work record — born-ready');
+  if (!defer) return ['the Issues Defer bullet is missing'];
+  return VISUAL_SEVERITY_MAP.filter((m) => !defer.includes(m)).map((m) => `the Issues Defer bullet does not map ${m}`);
+}
+test('#5931 visual-review maps its Issue severities onto the route command\'s', () => {
+  assert.deepStrictEqual(visualSeverityProblems(read('plugin/skills/visual-review/browser-review.md')), []);
+});
+for (const m of VISUAL_SEVERITY_MAP) {
+  test(`#5931 go-red: dropping ${m} fails the visual-review severity map`, () => {
+    const text = read('plugin/skills/visual-review/browser-review.md');
+    const mutated = text.split(m).join('');
+    assert.notEqual(mutated, text, `anchor ${m} not in browser-review.md`);
+    assert.deepStrictEqual(visualSeverityProblems(mutated), [`the Issues Defer bullet does not map ${m}`]);
+  });
+}
+
+// every one of the four filing branches runs the command, not just the Issues Defer bullet
+const VISUAL_BRANCHES = [
+  ['Issues Defer', '- **Defer** (new work record — born-ready'],
+  ['Issues Capture', '- **Capture** — the issue is'],
+  ['Ideas Defer', '- **Defer** (new work record, `parked`)'],
+  ['Ideas Capture', '- **Capture** — the idea is'],
+];
+function visualBranchProblems(text) {
+  return VISUAL_BRANCHES.flatMap(([name, prefix]) => routeBulletProblems(name, prefix, text));
+}
+test('#5931 every visual-review filing branch runs deferral-route.js', () => {
+  assert.deepStrictEqual(visualBranchProblems(read('plugin/skills/visual-review/browser-review.md')), []);
+});
+for (const [name, prefix] of VISUAL_BRANCHES) {
+  test(`#5931 go-red: the ${name} bullet without deferral-route.js fails the branch pin`, () => {
+    const text = read('plugin/skills/visual-review/browser-review.md');
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
+    assert.deepStrictEqual(visualBranchProblems(mutated), [`the ${name} bullet does not run deferral-route.js`]);
+  });
+}
+
+// an agent row's `high` keeps its word: the floor's Overrides clear `high`/`critical` rows, so a remap to `medium` would digest one
+function highRemapProblems(text) {
+  const defer = lineStartingWith(text, '- **Defer** (new work record — born-ready');
+  if (!defer) return ['the Issues Defer bullet is missing'];
+  return defer.includes('`high` as `medium`') ? ['the Issues Defer bullet remaps `high` as `medium`'] : [];
+}
+test('#5931 visual-review passes an agent row\'s `high` as-is, never remapped to `medium`', () => {
+  assert.deepStrictEqual(highRemapProblems(read('plugin/skills/visual-review/browser-review.md')), []);
+});
+test('#5931 go-red: a `high` as `medium` remap in the Issues Defer bullet fails the pin', () => {
+  const text = read('plugin/skills/visual-review/browser-review.md');
+  const mutated = text.replace('lowercase word as-is;', 'lowercase word as-is, `high` as `medium`;');
+  assert.notEqual(mutated, text);
+  assert.deepStrictEqual(highRemapProblems(mutated), ['the Issues Defer bullet remaps `high` as `medium`']);
+  assert.deepStrictEqual(highRemapProblems(text), []);
+});
+
+// review's Defer and Capture bullets and reflect's Capture bullet each run the command (the visual-review branch pin's pattern)
+const ROUTE_BULLETS = [
+  ['review Defer', 'plugin/skills/review/step3-routing.md', '- **Defer** (new work record — born-ready'],
+  ['review Capture', 'plugin/skills/review/step3-routing.md', '- **Capture** — the finding is'],
+  ['reflect Capture', 'plugin/skills/reflect/full-mode.md', '- **Capture** — the insight is'],
+];
+// A bullet must also act on the verdict: name the `refused` branch itself, or follow the cited bullet's verdict.
+function routeBulletProblems(name, prefix, text) {
+  const line = lineStartingWith(text, prefix);
+  if (!line) return [`the ${name} bullet is missing`];
+  if (!line.includes('deferral-route.js')) return [`the ${name} bullet does not run deferral-route.js`];
+  return line.includes('`refused`') || line.includes('follow its verdict') ? [] : [`the ${name} bullet does not act on the verdict`];
+}
+for (const [name, file, prefix] of ROUTE_BULLETS) {
+  test(`#5931 the ${name} bullet runs deferral-route.js`, () => {
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, read(file)), []);
+  });
+  test(`#5931 go-red: the ${name} bullet without deferral-route.js fails the bullet pin`, () => {
+    const text = read(file);
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('deferral-route.js').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet has no deferral-route.js`);
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not run deferral-route.js`]);
+  });
+  test(`#5931 go-red: the ${name} bullet naming the command but not acting on its verdict fails the bullet pin`, () => {
+    const text = read(file);
+    const mutated = text.split('\n').map((l) => (l.startsWith(prefix) ? l.split('`refused`').join('').split('follow its verdict').join('') : l)).join('\n');
+    assert.notEqual(mutated, text, `${name} bullet acts on no verdict`);
+    assert.deepStrictEqual(routeBulletProblems(name, prefix, mutated), [`the ${name} bullet does not act on the verdict`]);
+  });
+}
+
+// #5932 final review: a `digest` the policy-reason rule prints is not "below the floor", so every label a human
+// approves and every ledger Resolution follows the printed `rule`. Each claim is pinned to its own line or
+// paragraph, with a deletion control and a move-out control per claim (a file-wide `includes` would stay green
+// after the clause left its site).
+const LABEL_CITE = "the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
+const RESOLUTION_CITE = "the Ledger Resolution `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`";
+const LABEL_SITES = [
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '- **Defer** (new work record', needle: `${LABEL_CITE} instead of` },
+  { rel: 'plugin/skills/review/step3-routing.md', kind: 'line', start: '**A digest verdict — the digest instead.**', needle: `stating why it was digested — ${RESOLUTION_CITE} — and that it was` },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Defer** (new work record, `parked`)', needle: `${LABEL_CITE} instead of "Defer — {reason}"` },
+  { rel: 'plugin/skills/reflect/full-mode.md', kind: 'line', start: '- **Capture** — the insight is complex', needle: `the same rule-matched label (${LABEL_CITE})` },
+  { rel: 'plugin/skills/visual-review/browser-review.md', kind: 'line', start: '- **Defer** (new work record — born-ready', needle: `${LABEL_CITE} in the Recommended column` },
+  { rel: 'plugin/skills/wrap-up/residue-sweep.md', kind: 'para', start: 'A finding the CLI marked `remedy: record`', needle: `${LABEL_CITE} instead of` },
+  { rel: 'plugin/skills/release/disposition.md', kind: 'line', start: '| A `confirmed` file, any severity', needle: `${LABEL_CITE}, appended only` },
+  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '- `digested`:', needle: `with ${RESOLUTION_CITE}.` },
+  { rel: 'plugin/skills/_shared/ledger-format.md', kind: 'line', start: '**Control mode — every remaining item converges', needle: 'it means the route printed `digest`, whichever `rule`' },
+];
+function labelScope(text, { kind, start }) {
+  const units = kind === 'line' ? text.split('\n') : text.split(/\n[ \t]*\n/);
+  const found = units.map((u) => u.replace(/\s+/g, ' ')).filter((u) => u.startsWith(start));
+  return found.length === 1 ? found[0] : null;
+}
+function labelProblems(text, site) {
+  const scope = labelScope(text, site);
+  if (scope === null) return [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`];
+  return scope.includes(site.needle) ? [] : [`${site.rel}: ${site.start} lacks ${site.needle}`];
+}
+// #5933 Decision 2: a site cites the table and never restates a label, so a fifth rule is one table row.
+const DIGEST_LABELS = ['Digest — below floor', 'Digest — policy', 'Digest — no evidence', 'Digest — run cap'];
+// Every deferral routing site's whole file, plus release's disposition table, carries no label either (the
+// label table's own file is the one home).
+const RESTATEMENT_FILES = [...DEFERRAL_SITES, 'plugin/skills/release/disposition.md'];
+const restatedInFile = (text, rel) => DIGEST_LABELS.filter((l) => text.replace(/\s+/g, ' ').includes(l)).map((l) => `${rel} restates ${l}`);
+for (const rel of RESTATEMENT_FILES) {
+  test(`#5933 no routing site file restates a digest label: ${rel}`, () => {
+    assert.deepStrictEqual(restatedInFile(read(rel), rel), []);
+  });
+  test(`#5933 go-red: a label pasted (and wrapped) into ${rel} fails the file-wide restatement check`, () => {
+    const text = read(rel);
+    const mutated = `${text}\nA hand-written Digest —\nrun cap label.\n`;
+    assert.deepStrictEqual(restatedInFile(mutated, rel), [`${rel} restates Digest — run cap`]);
+  });
+}
+function restatedLabels(text, site) {
+  const scope = labelScope(text, site);
+  return scope === null ? [`${site.rel}: scope ${site.start} is not exactly one ${site.kind}`] : DIGEST_LABELS.filter((l) => scope.includes(l)).map((l) => `${site.rel}: ${site.start} restates ${l}`);
+}
+// Appends `add` to the scope's own unit, never to an earlier unit that happens to share its first words.
+function appendToScope(text, { kind, start }, add) {
+  const sep = kind === 'line' ? /(\n)/ : /(\n[ \t]*\n)/;
+  const parts = text.split(sep);
+  const at = parts.findIndex((u, i) => i % 2 === 0 && u.replace(/\s+/g, ' ').startsWith(start));
+  assert.notStrictEqual(at, -1, `scope ${start} not found`);
+  parts[at] += add;
+  return parts.join('');
+}
+for (const site of LABEL_SITES) {
+  const text = read(site.rel);
+  test(`#5933 no label site restates a digest label: ${site.rel} ${site.start}`, () => {
+    assert.deepStrictEqual(restatedLabels(text, site), []);
+  });
+  test(`#5933 go-red: pasting "Digest — below floor" into ${site.rel} ${site.start} fails the restatement check`, () => {
+    const mutated = appendToScope(text, site, ' "Digest — below floor"');
+    assert.notEqual(mutated, text);
+    assert.deepStrictEqual(restatedLabels(mutated, site), [`${site.rel}: ${site.start} restates Digest — below floor`]);
+  });
+  test(`#5932 the digest label follows the printed rule: ${site.rel} ${site.start}`, () => {
+    assert.deepStrictEqual(labelProblems(text, site), []);
+  });
+  test(`#5932 go-red: dropping the rule-matched clause from ${site.rel} ${site.start} fails the label check`, () => {
+    const cut = text.replace(flexible(site.needle), '');
+    assert.notEqual(cut, text, `anchor ${site.needle} not in ${site.rel}`);
+    assert.deepStrictEqual(labelProblems(cut, site), [`${site.rel}: ${site.start} lacks ${site.needle}`]);
+  });
+  test(`#5932 go-red: the rule-matched clause moved out of ${site.rel} ${site.start} fails the label check`, () => {
+    const cut = text.replace(flexible(site.needle), '');
+    assert.notEqual(cut, text);
+    assert.deepStrictEqual(labelProblems(`${cut}\n\n${site.needle}\n`, site), [`${site.rel}: ${site.start} lacks ${site.needle}`]);
+  });
+}

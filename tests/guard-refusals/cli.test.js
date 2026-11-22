@@ -287,3 +287,126 @@ test('readClass is other-checkout for a read refused for reaching another checko
   assert.equal(byId.t_cd.readClass, 'other-checkout');
   assert.deepEqual(out.byReadClass, { 'other-checkout': 1, shape: 1 });
 });
+
+// ---- #5590: --replay and --shape-patterns. Hand-written fixtures. ----
+
+const PATTERNS_FILE = path.join(__dirname, '..', '..', 'tools', 'guard-refusals', 'caller-shape-patterns.json');
+const REPLAY_ENTRIES = [
+  use('t_a', 'Bash', { command: 'ls /a\\ b/c' }), result('t_a', HARNESS_BASH),
+  use('t_c', 'Bash', { command: 'ls /a/b' }), result('t_c', HARNESS_BASH),
+];
+
+function scratchFile(name, text) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guard-refusals-patterns-'));
+  SCRATCH_DIRS.push(dir);
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, text);
+  return file;
+}
+
+function replayRun(extra, entries = REPLAY_ENTRIES) {
+  const c = capture();
+  const code = run({ argv: ['--projects-dir', writeStore(entries), '--until', UNTIL, '--skills-root', skillsRootFor('echo x'), ...extra], deps: c.deps });
+  return { code, c };
+}
+
+test('--replay --json adds a final replay key and leaves the default keys alone', () => {
+  const { code, c } = replayRun(['--replay', '--json']);
+  assert.equal(code, 0);
+  const out = JSON.parse(c.out[0]);
+  const keys = Object.keys(out);
+  assert.equal(keys[keys.length - 1], 'replay');
+  const plain = scanJson(REPLAY_ENTRIES);
+  assert.deepEqual(keys.slice(0, -1), Object.keys(plain));
+  assert.deepEqual(Object.keys(out.rows[0]), Object.keys(plain.rows[0]), 'row keys are unchanged');
+  for (const k of ['dispositions', 'writeTargetsMoved', 'writeTargetsRespelled', 'writeTargetsLost', 'writeTargetsChecked', 'writeTargetsSkipped', 'notReplayed', 'ruleNotApplied', 'byClass', 'byPattern']) assert.ok(k in out.replay, k);
+  assert.equal(out.replay.byPattern, null);
+  assert.deepEqual(Object.keys(out.replay.byClass).sort(), ['collision-fence', 'exit-status', 'git-C-own']);
+  assert.equal(out.replay.dispositions.harness.rewritten, 1, 'the escaped-space row has a rule that fixes it');
+  assert.equal(out.replay.writeTargetsChecked, 1);
+});
+
+test('without --replay the output has no replay key', () => {
+  assert.equal('replay' in scanJson(REPLAY_ENTRIES), false);
+});
+
+test('AC11: a one-entry --shape-patterns file prints byPattern.{id}.count', () => {
+  const file = scratchFile('p.json', JSON.stringify([{ id: 'ls-abc', pattern: '^ls /a' }]));
+  const { code, c } = replayRun(['--replay', '--shape-patterns', file, '--json']);
+  assert.equal(code, 0);
+  assert.equal(JSON.parse(c.out[0]).replay.byPattern['ls-abc'].count, 2);
+});
+
+test('--shape-patterns without --replay, a missing file, bad JSON, a non-array and a bad regex exit 2', () => {
+  const good = scratchFile('good.json', '[]');
+  const cases = [
+    [['--shape-patterns', good], /--shape-patterns requires --replay/],
+    [['--replay', '--shape-patterns', path.join(os.tmpdir(), 'guard-refusals-no-such-patterns.json')], /--shape-patterns .* cannot be read/],
+    [['--replay', '--shape-patterns', scratchFile('bad.json', '{nope')], /not valid JSON/],
+    [['--replay', '--shape-patterns', scratchFile('obj.json', '{"id":"x"}')], /must be a JSON array/],
+    [['--replay', '--shape-patterns', scratchFile('re.json', JSON.stringify([{ id: 'x', pattern: '(' }]))], /pattern for "x" is not a valid regular expression/],
+    [['--replay', '--shape-patterns', scratchFile('shape.json', JSON.stringify([{ id: 'x' }]))], /needs a string id and pattern/],
+    [['--replay', '--shape-patterns', scratchFile('dup.json', JSON.stringify([{ id: 'dup-id', pattern: 'a' }, { id: 'dup-id', pattern: 'b' }]))], /duplicate id "dup-id"/],
+  ];
+  for (const [extra, message] of cases) {
+    const { code, c } = replayRun(extra);
+    assert.equal(code, 2, extra.join(' '));
+    assert.match(c.err.join('\n'), message);
+    assert.equal(c.out.length, 0);
+  }
+});
+
+test('the text output has a replay section', () => {
+  const { code, c } = replayRun(['--replay', '--shape-patterns', PATTERNS_FILE]);
+  assert.equal(code, 0);
+  const table = c.out.join('\n');
+  assert.match(table, /^replay$/m);
+  assert.match(table, /rule-not-applied/);
+  assert.match(table, /writeTargetsMoved 0 of 1 \(respelled 0, lost 0, skipped 0\)/);
+  assert.match(table, /by class/);
+  for (const id of ['git-C-own', 'exit-status', 'collision-fence']) assert.match(table, new RegExp(`^ {4}${id} {2}total 0 {2}unknown-version 0$`, 'm'));
+  assert.match(table, /by pattern/);
+  assert.match(table, /^ {4}\S+ {2}count 0 {2}rewritten 0$/m);
+});
+
+test('the text output prints lost targets, unexplained reasons and a per-rule total', () => {
+  const late = (e) => ({ ...e, timestamp: '2026-11-05T00:00:00.000Z' });
+  const entries = [late(use('t_a', 'Bash', { command: 'ls /a\\ b/c' })), result('t_a', HARNESS_BASH),
+    use('t_c', 'Bash', { command: 'ls /a/b' }), result('t_c', HARNESS_BASH)];
+  const { code, c } = replayRun(['--replay'], entries);
+  assert.equal(code, 0);
+  const table = c.out.join('\n');
+  assert.match(table, /writeTargetsMoved 0 of 1 \(respelled 0, lost 0, skipped 0\)/);
+  assert.match(table, /unexplained by reason/);
+  assert.match(table, /^ {4}quote-escaped-space {2}total 1$/m);
+  assert.match(table, /^ {4}quote-escaped-space {2}\S+ {2}main 1 {2}subagent 0$/m);
+});
+
+test('caller-shape-patterns.json: every pattern compiles and matches one hand-written positive', () => {
+  const positives = {
+    'mkdir-chain-playwright': 'mkdir -p out && playwright-cli open x',
+    'cd-worktree-prefix': 'cd "/tmp/wt" && ls',
+    'heredoc-python-node': 'python3 - <<EOF\nprint(1)\nEOF',
+    'shell-function-wrapper': 'f() { ls; }; f',
+    'playwright-var-filename': 'playwright-cli screenshot --filename=$OUT',
+    'playwright-pwd-filename': 'playwright-cli screenshot --filename "$PWD/a.png"',
+    'playwright-for-loop': 'for u in a b; do playwright-cli open $u; done',
+    'playwright-pipe-head': 'playwright-cli snapshot | head -5',
+  };
+  const list = JSON.parse(fs.readFileSync(PATTERNS_FILE, 'utf8'));
+  assert.deepEqual(list.map((e) => e.id).sort(), Object.keys(positives).sort());
+  const records = {
+    'mkdir-chain-playwright': [4990, 4931], 'cd-worktree-prefix': [4990, 4931], 'shell-function-wrapper': [4990, 4931],
+    'heredoc-python-node': 4990,
+    'playwright-var-filename': 4931, 'playwright-pwd-filename': 4931, 'playwright-for-loop': 4931, 'playwright-pipe-head': 4931,
+  };
+  const negatives = {
+    'cd-worktree-prefix': ['cd "/abs/dir"'],
+    'shell-function-wrapper': ['ls -la', 'echo "a()"'],
+  };
+  for (const { id, issue, pattern } of list) {
+    assert.deepEqual(issue, records[id], `${id} cites its records`);
+    assert.match(positives[id], new RegExp(pattern), id);
+    for (const neg of negatives[id] || []) assert.doesNotMatch(neg, new RegExp(pattern), `${id} must not match ${neg}`);
+  }
+});

@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { acquireLock, releaseLock, withLock, isAlive } = require('../../plugin/bin/lib/file-lock');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-file-lock-'));
+  return scratchDir('ct-file-lock-');
 }
 
 test('acquireLock: creates the lock directory and returns a { lockPath, token } handle', () => {

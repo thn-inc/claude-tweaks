@@ -2,11 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { createCache } = require('../../../plugin/bin/lib/health-core/cache');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-cache-')); }
+function tmp() { return scratchDir('health-core-cache-'); }
 
 test('cachePath is namespaced under .claude-tweaks/<skillName>/cache.json', () => {
   const core = createCache('some-skill');

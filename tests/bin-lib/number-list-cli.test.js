@@ -105,7 +105,7 @@ test('no --repo and no resolvable origin remote — exit 2', () => {
   const deps = fakeDeps({ remoteUrl: () => { throw new Error('no remote'); } });
   const code = run(['720'], deps);
   assert.equal(code, 2);
-  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo/);
+  assert.match(deps.calls.stderr.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('#5552 AC5.1: non-positive <n> — exit 1', () => {

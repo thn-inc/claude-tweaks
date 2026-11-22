@@ -9,6 +9,9 @@ files:
   - plugin/bin/lib/dispatch/resume-eligibility.js
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/run.js
+  - plugin/bin/lib/driver/merge.js
+  - plugin/bin/lib/issues/grant-maturation.js
+  - plugin/bin/lib/console/resolve.js
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/dispatch/queue-pull-notes.md
   - tools/typed-command-probe.js
@@ -19,7 +22,7 @@ files:
 **Persona:** a maintainer at their own terminal who has just shaped a record to `ready`, has not granted it `auto:build`, and wants it built now without a trip through `/claude-tweaks:backlog refine`.
 **Goal:** type `/claude-tweaks:dispatch #N` and have that one firing build the record, with no label written, while a scheduled prompt, a message from another session or a headless run naming the same record still cannot.
 **Entry point:** `/claude-tweaks:dispatch #N` typed into an attended, interactive Claude Code session, for an open `ready` record with no `auto:build` and no hold label.
-**Success state:** the queue pull prints `#N has no auto:build label — built on the typed /claude-tweaks:dispatch command`, the run's `decisions.md` gains one `AUTO` line `#N admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`, the record builds like a granted one, and its labels are unchanged afterwards (no `auto:merge`, so the run stops at `pending-review`).
+**Success state:** the queue pull prints `#N has no auto:build label — built on the typed /claude-tweaks:dispatch command`, the run's `decisions.md` gains one `AUTO` line `#N admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`, the record builds like a granted one, and its labels are unchanged afterwards. The run stops at `pending-review` even when the record carries a leftover `auto:merge`, because a merge grant counts only together with a live `auto:build` (#5734).
 
 ## Steps
 
@@ -58,6 +61,14 @@ files:
 - **Should understand:** A model-run `drive.js` takes the session path by default; clearing the session variables under a pty is not prevented, which is the same residual as a session adding the label by hand.
 - **Red flags:** Resume or the driver disagreeing with the queue pull about the same record; `--check #N` refusing a record `drive.js #N` would admit.
 
+### 6. A leftover merge grant does not merge the typed run
+- **URL:** `plugin/bin/lib/driver/merge.js` merge step (entry and pre-merge label reads); `plugin/bin/lib/issues/grant-maturation.js` `evaluateMaturation` (`no-build-grant`); `plugin/bin/lib/console/resolve.js` merge resolution; `plugin/skills/_shared/work-record.md` (the rule, stated once)
+- **Action:** The typed run reaches its merge decision on a record that still carries `auto:merge`, or a matured `auto:merge-pending`, from an earlier grant, but no `auto:build`. The driver stops `not-authorized` with detail `record lacks auto:build` (or `record lacks auto:build at the pre-merge read`, when the label was removed mid-run). It makes no label, comment, ready or merge call. On the skill path, Authorization fails with state `no-build-grant`. The Review Console resolves `leave-open` with a reason naming the member and the missing build grant. The PR stays at `pending-review`.
+- **Should feel:** Predictable — the typed command authorized a build, and a build is all that happens.
+- **Should understand:** To merge, type the merge yourself (`/claude-tweaks:wrap-up #N merge`), or grant `auto:build` together with `auto:merge`. A `no-build-grant` result is never promoted from `auto:merge-pending` to `auto:merge`.
+- **Red flags:** A typed run that merges on `auto:merge` alone; a stop detail that does not name `auto:build`; a console reason that points at the merge label when the merge label is present and only the build grant is missing.
+
 ## Origin
+- Updated during `/claude-tweaks:build` of record #5734 (2026-11-16): step 6, where a merge grant authorizes a merge only together with a live `auto:build`.
 - Created during `/claude-tweaks:build` of record #5584 (2026-11-16): a typed `/claude-tweaks:dispatch #N` stands in for `auto:build` for one firing through one build-authority rule shared by the queue pull, resume and the driver.
 - Related: #5232 (driver route; its `--check` names its record since this build), #5714, #5715 (follow-ups for consumers that assume a grant label), #5716 (parked re-measurement once the `CC_LAUNCHED_BY` launcher release is installed).

@@ -9,7 +9,7 @@ files:
 
 # Block on a Child Agent, a PR's CI, or a Process Instead of Polling With Sleep
 
-**Persona:** An orchestrating agent: a dispatched subagent, or a context-handoff child, running a claude-tweaks pipeline step. It has launched async `Agent` children, pushed a pull request, or started a background process, and must keep its turn alive until one of them changes state. Today the keep-alive rule tells it to call `sleep 20` up to 60 times per wave. A Bash call longer than 180 s is moved to the background in this seat (`docs/reference/blocking-wait-probe.md`). The plugin maintainer reads the same output when debugging a stalled wait.
+**Persona:** An orchestrating agent: a dispatched subagent, or a context-handoff child, running a claude-tweaks pipeline step. It has launched async `Agent` children, pushed a pull request, or started a background process, and must keep its turn alive until one of them changes state. A Bash call longer than 180 s is moved to the background in this seat (`docs/reference/blocking-wait-probe.md`). The plugin maintainer reads the same output when debugging a stalled wait.
 **Goal:** Wait for exactly the thing it is waiting on, a child's final stop, the PR's checks or a process exiting, with one bounded foreground call per wait, and learn which thing changed.
 **Entry point:** `node "<plugin root>/bin/wait-for.js" agents --ids <a,b>` (or `ci --pr <n>`, `ci --run <id>`, `pid --pid <n>`) as a plain Bash call with no `timeout`.
 **Success state:** Exit 0 with one JSON line naming what changed: `reported` ids, the classifier `state`, or `state: "gone"`. Or exit 3 with `bound: "call"` (call again, joining the same window) or `bound: "deadline"` (the wave's window ran out: judge it per the wait rule).
@@ -39,6 +39,6 @@ files:
 
 ## Outcome
 
-A keep-alive wait that took up to 60 `sleep 20` calls per wave becomes a handful of bounded `wait-for.js` calls. The agent notices a finished child within a second instead of 20, and each call stays under the 180-second foreground ceiling the probe measured. The skill prose that tells agents to call it lands separately (#5604).
+A keep-alive wait that took up to 60 twenty-second sleep calls per wave becomes a handful of bounded `wait-for.js` calls. The agent notices a finished child within a second instead of 20, and each call stays under the 180-second foreground ceiling the probe measured. The keep-alive rule in `_shared/subagent-dispatch-core.md` names it since #5604.
 
 _Origin: record #5602 (Deliverables 3-6: the `SubagentStop` stop marker, `plugin/bin/lib/wait-for/marker.js`, `plugin/bin/wait-for.js`, docs), built 2026-11-16 after the probe-result Decision. Related: `measure-sleep-poll-waits-5602.md`, which measured the sleeps this command replaces. Updated by record #5706 (2026-11-16): the stop marker's own pending count, beside the unchanged #3015 gate count._

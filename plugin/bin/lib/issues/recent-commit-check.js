@@ -4,7 +4,7 @@
 // Why: #1068 was filed describing exactly the symptom commit 73478c8b (refs
 // #959) had already fixed the day before — nothing caught the near-duplicate
 // before it reached `ready` and got materialized into a worktree/draft PR.
-// This module is the shared heuristic screen the four health-sweep skills'
+// This module is the shared heuristic screen the five health-sweep skills'
 // filing steps and /claude-tweaks:capture's filing step run against a new
 // finding's own title (and, optionally, touched files) before/around
 // `gh issue create`, per spec #1316's Technical Approach (a): commit-message

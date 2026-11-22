@@ -1,11 +1,12 @@
 // bin/lib/timing/pair-lines.js — reader for the review reproduction-pair lines (#5556).
 //
-// The eight pair-line templates are typed by the agent from two producer files:
-// plugin/skills/review/step3-lens-dispatch.md (seven forms) and
-// plugin/skills/review/step3-tier-variants.md (the single-read-coverage notice).
-// The tiebreak forms are written by tiebreak.js and owned by console/resolve.js's
-// parseTiebreakLine. This module is their code twin: one pattern set per
-// template, pinned to the prose by tests/bin-lib/timing/pair-lines.test.js.
+// Eight pair-line templates: seven forms composed by plugin/bin/lib/reproduction-log.js
+// (#5595, written by review-coordination.js categorise-reproduction --run and
+// log-reproduction-judgment), and the single-read-coverage notice the agent types from
+// plugin/skills/review/step3-tier-variants.md. The tiebreak forms are written by
+// tiebreak.js and owned by console/resolve.js's parseTiebreakLine. This module reads
+// them: one pattern set per template, each PAIR_FORMS template pinned to the composer
+// (or, for the notice, to the prose) by tests/bin-lib/timing/pair-lines.test.js.
 //
 // Pair-line patterns are additive: a reworded template adds a pattern to its
 // form, never replaces one, so archived runs keep parsing. Two kinds of legacy
@@ -19,9 +20,9 @@
 //     direct-verification override, a "no findings" notice, a Review Console
 //     disposition of an already-staged finding). They are not pinned to prose.
 //
-// Phase 6 of docs/superpowers/specs/2026-11-15-process-efficiency-design.md
-// moves the pair-line write into `categorise-reproduction`; this reader and its
-// test then follow that writer.
+// Phase 6 of docs/superpowers/specs/2026-11-15-process-efficiency-design.md moved
+// the pair-line write into code (#5595): reproduction-log.js composes the seven forms
+// and this reader's test pins each PAIR_FORMS template to that composer.
 //
 // Counters per form (the "Pair lines" section of docs/reference/step-yield.md):
 // `both` = findings both reviewers reported, `one` = findings one reviewer
@@ -50,6 +51,11 @@ const HEAD = `(?:- (?:${DECISION_STATUSES.join('|')}) \\d{2}:\\d{2}:\\d{2} — $
 const LENS = 'lens "([^"]*)"';
 // A path may hold spaces, but never the start of a verdict: `a.js:1 not reproduced; … b.js:2` is two findings.
 const PATH_STRICT = '((?:(?!\\s(?:not )?reproduced\\b)[^\\n])+)';
+// The path of a finding with no line (`finding {path} not reproduced.`): never a `:{digits}` (that is a located
+// finding, read by its own pattern) and never a trailing note (` (…)`, ` — …`), which only a located line carries.
+// So an unlocated path holding ` (` (`docs/a (b).md`) is not read: it cannot be told from a note, and reading it
+// would move archive verdicts (a located line is unaffected, its path is read by the located patterns).
+const PATH_UNLOCATED = '((?:(?!\\s(?:not )?reproduced\\b|:\\d| \\(| — )[^\\n])+)';
 const TAIL = ' Reversibility: [a-z/]+\\.$';
 
 // Loose wording (see the header): the label before the body, the tail after it.
@@ -119,7 +125,9 @@ const PAIR_FORMS = Object.freeze([
     [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} reproduced, severity contested${NOTE_FREE}[.,] Confirmed${AFTER_VERDICT}`]),
   form('not-reproduced', { both: 0, one: 1, relabel: 0 },
     'Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.',
-    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
+    [`Reproduction: ${LENS} finding ${PATH_STRICT}:(\\d+) not reproduced\\. Staged to Review Console as low-confidence\\.`,
+      // A finding with no line (reproduction-log.js writes `finding {path} not reproduced.`, #5595): line null.
+      `Reproduction: ${LENS} finding ${PATH_UNLOCATED} not reproduced\\. Staged to Review Console as low-confidence\\.`], { lens: 1, path: 2, line: 3 },
     [`Reproduction:${TAG} ${LENS_LOOSE} finding ${LOC}${NOTE_OPT} not reproduced\\. Staged to Review Console as low-confidence\\.`],
     [`Reproduction:${TAG} ${LENS_FREE} finding ${LOC}${NOTE_OPT} not reproduced(?:;|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,
       `Reproduction:${TAG} ${LENS_FREE} finding ${LOC} not reproduced\\. Staged to Review Console as low-confidence(?:;|,|${NOTE_FREE})${SOME_CONTENT}${TEMPER}$`,

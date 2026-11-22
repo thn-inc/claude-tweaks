@@ -11,7 +11,8 @@
 // detail? }) on stdout, held in memory until a step first sets ctx.runDir and from then
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
 // result halts ends the record; an ok result with skip: true (a step that did not apply)
-// emits no line. Every record ends with a final line carrying the outcome word, the totals
+// emits no line, and neither does a non-ok result with noLine: true (a step that started nothing,
+// a launch-time model refusal), which still halts and becomes the record's stop. Every record ends with a final line carrying the outcome word, the totals
 // with and without the CI wait, the PR, the CI word, the worker's cost, turns and denial
 // count, and the structured stop. The outcome word is the merge result's own
 // (ctx.merge.outcome: `merged`, `armed` or `pending-review`) when the merge step ran and
@@ -32,7 +33,8 @@
 // Every side effect goes through `deps` (gh-api-module-pattern's CLI wrapper contract);
 // realDeps below is the real set. #5216's admission module and eligibility option are
 // required lazily inside realDeps, so --help, a malformed invocation and the tests never
-// load them.
+// load them; station-events/emit.js and driver-mirror.js (#5902) load eagerly, since every
+// sink emit mirrors through them.
 //
 // ASSUMPTION (spec #5218, Gotchas) — answered at build: a fresh unlocked worktree IS reap-eligible: bin/lib/hooks/worktree-reap.js reaps a `free` (unlocked) worktree under .claude/worktrees/ whose branch is merged into, or content-identical with, the integration branch and that holds no local-only content, which a new one cut from the integration branch is until the worker's first write. The driver therefore creates its worktree locked, with its own pid in the lock reason (steps.js, the worktree step), so the lock reads `in-use` while the driver lives. The reaper's 24h grace applies only to an `orphaned` verdict (the driver's pid is dead and the lock is still present). A cleared lock reads `free`, with no grace: a tree still content-identical with the integration branch and holding no local-only content is reaped at the next SessionStart. Unchanged: reconcile/archive-merged.js only counts ownerless runs (countOwnerlessNonClean); tidy/scan-procedures.md keeps unmerged worktrees and acts only after its Step 6 approval.
 //
@@ -72,6 +74,8 @@ const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
 const { lstatType, canonicalRealpath } = require('../path-guard');
 const { resolveAgainst } = require('../health-core/io');
 const { defaultResolvePolicy } = require('../express/policy');
+const { appendStationEvent, toRepoName } = require('../station-events/emit');
+const { stationEventsFor } = require('../station-events/driver-mirror');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -86,7 +90,7 @@ const USAGE = [
   'Takes each named record, one at a time and in order, from admission to a draft PR with',
   'CI read. Prints one JSON event line per step on stdout (and, once the run directory',
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
-  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and the merge-check and acceptance judgment workers both clear it.',
+  'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and auto:build and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
   '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
@@ -212,6 +216,7 @@ function newCtx(record, shared, { named = false } = {}) {
     record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
+    workerTestCommand: undefined, workerTestMode: undefined,
     eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
     summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
     shared,
@@ -374,10 +379,35 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   };
 }
 
+// The sink with every emitted line also mirrored into station events (#5902) through the optional
+// deps.stationEvent (absent = no emission). The mirror runs after the real emit and inside its own
+// try/catch, so it never throws into a caller, never changes stdout or the jsonl, and never skips
+// the final line or reportInterrupt's terminate.
+function mirroredSink(sink, shared, deps) {
+  if (typeof deps.stationEvent !== 'function') return sink;
+  const emit = (event) => {
+    sink.emit(event);
+    let mirrored = [];
+    try {
+      mirrored = stationEventsFor(event, { repoName: toRepoName(shared.ghRepo), runId: event.run });
+    } catch {
+      // a station event is a report about the step, never part of it
+    }
+    for (const e of mirrored) {
+      try {
+        deps.stationEvent(e);
+      } catch {
+        // one failed station event drops only itself
+      }
+    }
+  };
+  return { ...sink, emit };
+}
+
 // One record through the table; resolves to `{ final, ctx }` — the final event (null when an
 // interrupt landed before its first step) and the record's context. `steps` is a test seam.
 async function driveWithCtx(record, shared, deps, steps, { named = false } = {}) {
-  const sink = createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile });
+  const sink = mirroredSink(createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile }), shared, deps);
   const ctx = newCtx(record, shared, { named });
   // The writer a step uses to emit sub-step lines (before its own result line) and to follow the
   // run directory when it moves; rebind(null) goes stdout-only.
@@ -428,7 +458,7 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
         sink.bindRunDir(ctx.runDir);
         bound = true;
       }
-      if (result.skip !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
+      if (result.skip !== true && result.noLine !== true) sink.emit(eventFor(ctx, step.name, result, ms, deps));
       if (result.halt) {
         stop = { name: step.name, result };
         break;
@@ -713,6 +743,8 @@ const realDeps = {
   },
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the driver's step lines mirrored into {main checkout}/.claude-tweaks/station-events.jsonl.
+  stationEvent: (e) => appendStationEvent(e),
   ghAvailable: () => ghAvailable(),
   gitAvailable: () => {
     try {

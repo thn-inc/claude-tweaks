@@ -37,6 +37,7 @@ const ALLOWLIST = Object.freeze({
   'harness-health': 'cited only as the consumer of the shared _shared/harness-health-*.md helper files and in wrap-up\'s skill-curation.md judge-file prose reusing its criteria inline — never Skill-tool-invoked from within a phase',
   'journey-health': 'cited only as the consumer of the shared _shared/journey-*.md helper files and in wrap-up\'s journey-curation.md judge-file prose reusing its criteria inline — never Skill-tool-invoked from within a phase',
   'docs-health': 'cited only as the consumer whose rotation/criteria wrap-up\'s docs-health-integration.md judge file reuses inline ("that\'s /claude-tweaks:docs-health\'s own rotation\'s job, not this sub-issue\'s") — never Skill-tool-invoked from within a phase',
+  'ci-health': 'cited only in _shared/policy-schema.md documenting the ci-health-thresholds key\'s consumer — never Skill-tool-invoked from within a phase',
   visualize: 'cited only in review\'s doc-freshness-lens.md as a suggested follow-up command, and in _shared/visual-html-output.md describing its own output convention — never Skill-tool-invoked from a phase',
 });
 

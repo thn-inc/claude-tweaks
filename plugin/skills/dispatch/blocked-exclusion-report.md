@@ -14,7 +14,10 @@ one line before the rest of this step's own output:
 
 A `blockedBy` entry that is a string — `owner/name#N`, a blocker linked natively or declared by a
 `Blocked by owner/name#N` line, optionally suffixed ` (state unreadable)` when its state could not be read (#4793) —
-renders verbatim, never with a `#` prefix; a number renders as `#N`.
+renders verbatim, never with a `#` prefix; a number renders as `#N`. The string
+`native blockers (state unreadable)` (#5309) is not a dependency: it marks a record excluded
+because the `work-links: native` blockers query failed and the pull failed closed. It renders
+verbatim too, so the line names the failed query rather than an open dependency for that record.
 
 Then read the same file's `reason: 'target-missing'` entries (`records: [number], detail: {path}`
 each, #1983 — `queue-pull-script.md` names this report as their reader) and render one line per
@@ -29,7 +32,9 @@ render one line per record, under the same exception and empty-array rules below
 `#{number} excluded — blocker not landed: #{blocker} (closing commit {commit}), … — eligible again once it reaches the integration branch`
 
 Then its `reason: 'malformed-blocker'` entries (`records: [number], detail: {cause}` each, #4792 —
-the same pass), one line per record, under the same rules:
+the same pass, or the eligibility step for non-array labels, #5315), one line per record, under the same rules. An entry
+whose cause is `its labels are not an array` names its labels instead, since no blocker declaration is at fault:
+`#{number} excluded — its labels are not an array — eligible again once its labels are an array`. Every other entry:
 
 `#{number} excluded — malformed blocker declaration: {cause} — eligible again once its blocker declaration can be checked`
 

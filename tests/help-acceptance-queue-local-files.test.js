@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
@@ -83,7 +84,7 @@ test('Stage 4.7: every embedded node -e script is syntactically valid', () => {
   const scripts = extractNodeScripts(STAGE_4_7);
   assert.ok(scripts.length > 0, 'expected at least one node -e script in Stage 4.7');
   for (const [i, script] of scripts.entries()) {
-    const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-help-acceptance-syntax-')), `script-${i}.js`);
+    const tmp = path.join(scratchDir('ct-help-acceptance-syntax-'), `script-${i}.js`);
     fs.writeFileSync(tmp, script);
     assert.doesNotThrow(
       () => execFileSync('node', ['--check', tmp], { stdio: 'pipe' }),

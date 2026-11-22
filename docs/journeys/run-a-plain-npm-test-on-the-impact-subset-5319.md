@@ -45,7 +45,7 @@ files:
 ### 3. Hit the whole-suite fallback
 - **URL:** the terminal.
 - **Action:** Run `npm test` with no usable test-impact map in the checkout, or after changing `tools/run-tests.js`, or after changing a path that no impact rule covers.
-- **Should feel:** Safe, not mysterious. The run says plainly that it is running everything and why: `run-tests.js: running the whole suite — impact selection could not narrow it: {reason}`. When it first has to download a map, it prints `run-tests.js: fetching the test-impact map (up to 120 s)` before that.
+- **Should feel:** Safe, not mysterious. The run says plainly that it is running everything and why: `run-tests.js: running the whole suite — impact selection could not narrow it: {reason}`. When it has to download a map (none usable, or more than 50 drift tests left by an old one, #5947), it prints `run-tests.js: fetching the test-impact map (up to 120 s)` before that.
 - **Should understand:**
   - The reasons are the ones the scoped verify names: no map, a stale map, a changed path no impact rule covers, a whole-suite rule such as a change to `tools/run-tests.js`, no merge-base, or any error while selecting.
   - An error while selecting only widens the run. It never throws and never produces a smaller run than the map justified.

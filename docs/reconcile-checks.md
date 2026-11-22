@@ -383,7 +383,7 @@ A `runVerdict` that throws, returns no evidence array, or returns any other verd
 
 `ownerlessNonCleanZeroSince` is an ISO date in the same cache, set by `applyOwnerlessNonClean`: the first pass that counts `0` stamps it, later passes that count `0` keep that stamp, and a count above `0` drops the key — so it always dates the current unbroken run of zero readings. `readCache` keeps either key only when valid (an integer of at least 0; a parseable date string), and the cache writes them only when present.
 
-**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision (but `teardown-run --merged` (#5293) reads that route for an owner-less legacy run, so removing it leaves such a run `unknown` there and refused until the reconciler reaps it; #4436's executor must account for that). It does not drain them on its own: archival still needs the `shipped-unclosed` gate, and owner-less runs in any other status have no drain (tracked in the legacy-route removal record).
+**Removal condition for the 72-hour legacy route** (`run-liveness/index.js`'s `legacy` witness): remove it when `ownerlessNonCleanZeroSince` is at least 7 days old in this repository's `reconcile-cache.json`, on a plugin build newer than v6.153.0. After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision (but `teardown-run --merged` (#5293) reads that route for an owner-less legacy run, so removing it leaves such a run `unknown` there and refused until the reconciler reaps it; #4436's executor must account for that; `review-lens/history.js` (#5998) reads `unknown` and `dead` alike as closed, so removing the route changes no history outcome). It does not drain them on its own: archival still needs the `shipped-unclosed` gate, and owner-less runs in any other status have no drain (tracked in the legacy-route removal record).
 
 ## No-run-state.json terminal path and consolidated escalation (#1811)
 
@@ -606,7 +606,10 @@ that merge, so no session ran the steps, and a below-floor parent whose last sub
 way used to wait for a human to approve a tidy row. Step 4.0b's gate is
 `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js` (#4603). The
 module only decides when the steps run and records that they did. Tidy's `parent-gate` backstop is
-unchanged, and every fail-open path below leaves the parent open for it.
+unchanged, and every fail-open path below leaves the parent open for it. The late Step 4.0 also
+reopens a kept-open record the merge closed (a fixes-span `Refs` record, or one only a
+Development-sidebar link names), within the 10-minute reopen window after `mergedAt`
+(`CLOSE_WINDOW_MS`, below), so an armed merge leaves no kept-open record closed by either of those two channels (#4251).
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
   included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a

@@ -24,16 +24,15 @@ When `onAllowlist` is `true` — the allowlist is being used to launder a failur
 
 Phase 1 guarantees a run directory (see `_shared/run-dir-resolution.md` for the resolution order and bash snippet); read `leftover-default` from its `config.yml` when one is present, and fall back to the Manifesto default (`defer`) on a standalone run, which has none. Each residue section becomes a staged **work-record proposal** — never created directly. `_shared/auto-mode-card.md` lists work-record creation among what `auto` does NOT silence: every record filed on the user's tracker needs explicit approval — at `supervised`/`trusted`, folded into the Review Console's batch "Approve all"; at `unattended`, auto-resolved with zero `AskUserQuestion` calls under `consoleAutoResolve` — so the record queue stays the user's, not the model's.
 
-**Materiality floor, before composing.** Apply `_shared/materiality-floor.md`'s floor test to each
-section that reached this staging step: a section that fails to clear the materiality floor, with a
-`Defer-reason:` (from the fix-exhaust gate above) other than `tangential`, routes to the digest
-container instead — log the contract's `AUTO` line when a run directory resolves, and skip the
-compose/build/stage steps below for that section. A section whose `Defer-reason:` is `tangential`,
-or that clears the materiality floor, proceeds to the ordinary staging steps below unchanged.
+**Materiality floor, before composing.** Run `_shared/materiality-floor.md`'s floor test on each
+section reaching here, `{reason}` from the fix-exhaust gate above:
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised`.
+`digest` routes it to the digest container instead (log the contract's `AUTO` line when a run
+directory resolves; skip the steps below); `file` stages it as below; `refused` or any other
+outcome makes it an `open` item for Phase 3's ledger gate (written by `hooks.js ledger-row`, per
+`_shared/ledger-format.md`'s Writer section), naming the command's output.
 This is not an exception to the never-created-directly rule above: a digest entry is an append to a
-shared container, not a work record (`_shared/materiality-floor.md`'s "The digest issue is a
-container, not a work record"), so nothing is filed on the user's record queue and that contract is
-explicit that there is no Review Console row per entry. This step's own summary states the digest
+shared container, not a work record, so no record is filed and there is no Review Console row per entry. This step's own summary states the digest
 comment URL and the count routed this run, per `_shared/materiality-floor.md`'s "Digest URL and
 count surfacing" section.
 

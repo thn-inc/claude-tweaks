@@ -6,20 +6,31 @@
 // decisions live in bin/lib/accept/ (target.js, park.js); this file reads the inputs, runs the
 // steps and picks the exit code.
 //
-//   decide --record <n>[,<m>…] [--run <dir>] [--repo owner/name]
+//   decide --record <n>[,<m>…] [--run <dir>] [--repo [host/]owner/name]
+//          [--head <sha>] [--base <ref>] [--classification <file>]
 //     One JSON line, decideSeries' result. Control mode off (isControlModeOn over
-//     resolvePolicyKeys, the run's config.yml over policy.yml as resolve-policy.js --run reads
-//     them; without --run, the main checkout's policy.yml alone, as parked reads it) prints
+//     resolvePolicyKeys; control-mode is policyOnly (#5830), so the main checkout's policy.yml
+//     alone decides it, with or without --run, which still anchors the AUTO lines) prints
 //     `consulted: false` for every record and reads no record. On, each record's
 //     body gives its kept risk flags (parseRiskFlags: ok -> flags, unclassified -> [], unknown
 //     -> the widened flags, so it parks) and its Acceptance-target override; an invalid
 //     acceptance-target value is passed as invalid (-> invalid-input, local).
+//     The diff tripwire (#4619) runs here, control mode on only: the branch's diff (--head, 40 or
+//     64 hex, fetched by oid when absent; --base, else integration-branch, else origin/HEAD's
+//     branch, fetched first) read once through ctx.git, then each record's declared flags checked
+//     against risk-path-globs and the agent's --classification (lib/accept/tripwire.js). A crossed
+//     category nobody flagged is appended to the record body, read again right before the edit
+//     (addTripwireRiskFlags, one `gh issue edit --body-file`; a failed write is a stderr line and the decision stays local through the
+//     newFlags); a tripwire that could not run parks with reason `tripwire`. Each consulted
+//     record's decision gains `tripwire: { …, appendFailed, lines }`; with --run, `lines` is also
+//     written to {run}/packet-facts/tripwire-{n}.json, and a failed write exits 1 (decision printed).
 //     Exit 0 printed; 1 policy.yml or config.yml unreadable (nothing printed), or a record body
 //     that will not read (gh absent included) — its decision is still printed, failing closed
-//     to local by invalid-input, and the caller must not merge; 2 malformed invocation; 3 --run
-//     refused (missing, or not anchored under the main checkout: a worktree-local shadow).
+//     to local by invalid-input, and the caller must not merge — or a packet-facts write that
+//     failed (decision printed too); 2 malformed invocation; 3 --run
+//     refused (missing, or not anchored under the main checkout's .claude-tweaks/pipelines: a worktree-local shadow).
 //   park --run <dir> --record <n>[,<m>…] --pr <n> --head <sha> --worktree <path>
-//        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo owner/name]
+//        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo [host/]owner/name]
 //     --record names the records whose decision parks; --claimed every record the run claimed
 //     (default: --record). Runs runPark's five steps: (1) per parked record, ensure the packet
 //     and accept:pending — a found packet gets the label when no pending spelling is on it, no
@@ -36,15 +47,15 @@
 //     failed (hand-log it). Exit 0 parked (a step 3-5 failure included, reported in `steps`);
 //     1 park-failed (step 1 or 2, nothing archived); 2 malformed invocation or an unresolvable
 //     repository; 3 --run refused; 4 gh absent, before any write.
-//   parked --record <n> [--run <dir>] [--repo owner/name]
+//   parked --record <n> [--run <dir>] [--repo [host/]owner/name]
 //     Prints parked / not-parked / unknown. control-mode resolves as decide resolves it (the
-//     run's config.yml over policy.yml with --run; the main checkout's policy.yml without): off
+//     main checkout's policy.yml alone, #5830; a run's config.yml never overrides it): off
 //     prints not-parked with no gh call, so a record parked under control mode is mergeable
 //     once control mode is off (the accepted tradeoff, spec AC2a). On: isParkedForLocalAcceptance
 //     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
 //     record or policy read failure, or gh absent), 2 malformed invocation, 3 --run refused (as
 //     decide). A caller treats 0 and 6 alike: do not merge, close or reap.
-//   reenter --record <n> --pr <n> [--repo owner/name]
+//   reenter --record <n> --pr <n> [--repo [host/]owner/name]
 //     /accept's re-entry: bin/lib/accept/reentry.js adds `.claude/worktrees/accept-<n>` under the
 //     main checkout from the PR branch's tip (never an existing directory). One JSON line:
 //     { worktree, headRefName, prHead, prBase, parkHead, parkBase, moved, head } — parkHead and
@@ -67,16 +78,19 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { transitionsForLabel, releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = [
-  'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo owner/name]',
+  'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo [host/]owner/name]',
+  '         [--head <sha>] [--base <ref>] [--classification <file>]',
   '       accept-park.js park --run <dir> --record <n>[,<m>...] --pr <n> --head <sha> --worktree <path>',
-  '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo owner/name]',
-  '       accept-park.js parked --record <n> [--run <dir>] [--repo owner/name]',
-  '  decide: exit 0 printed; 1 policy or record read failure; 2 malformed; 3 --run refused',
+  '         [--claimed <n>[,<m>...]] [--worktree-mode remove|caller] [--repo [host/]owner/name]',
+  '       accept-park.js parked --record <n> [--run <dir>] [--repo [host/]owner/name]',
+  '  decide: exit 0 printed; 1 policy or record read failure or a failed packet-facts write; 2 malformed; 3 --run refused',
   '  park:   exit 0 parked; 1 park-failed; 2 malformed or unresolvable repo; 3 --run refused; 4 gh absent',
   '  parked: exit 0 parked; 5 not-parked (control mode off included); 6 unknown; 2 malformed; 3 --run refused',
-  '       accept-park.js reenter --record <n> --pr <n> [--repo owner/name]',
+  '       accept-park.js reenter --record <n> --pr <n> [--repo [host/]owner/name]',
   '       accept-park.js reenter-check --worktree <path> --expect-head <sha>',
   '       accept-park.js reenter-remove --worktree <path>',
   '  reenter: exit 0 entered; 1 git or gh failure; 2 malformed; 4 gh absent; 7 stale directory',
@@ -86,7 +100,7 @@ const USAGE = [
 ].join('\n');
 
 const VERBS = Object.freeze({
-  decide: { required: ['--record'], optional: ['--run', '--repo'] },
+  decide: { required: ['--record'], optional: ['--run', '--repo', '--head', '--base', '--classification'] },
   park: { required: ['--run', '--record', '--pr', '--head', '--worktree'], optional: ['--claimed', '--worktree-mode', '--repo'] },
   parked: { required: ['--record'], optional: ['--run', '--repo'] },
   reenter: { required: ['--record', '--pr'], optional: ['--repo'] },
@@ -95,6 +109,9 @@ const VERBS = Object.freeze({
 });
 const RECORD_LIST_RE = /^[1-9][0-9]*(?:,[1-9][0-9]*)*$/;
 const POSITIVE_RE = /^[1-9][0-9]*$/;
+// decide's --head is fetched by oid, which needs the full object name.
+const FULL_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const REF_NAME_RE = /^[A-Za-z0-9._/-]+$/;
 const WORKTREE_MODES = Object.freeze(['remove', 'caller']);
 const PARKED_EXIT = Object.freeze({ parked: 0, 'not-parked': 5, unknown: 6 });
 const ARCHIVED = 'claude-tweaks: archived';
@@ -103,7 +120,7 @@ const LOG_STEP = 'accept-park.js park';
 const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 const isAbsentError = (err) => err?.code === 'ENOENT' || err?.code === 'ENOTDIR';
-const firstLine = (text) => String(text || '').trim().split('\n', 1)[0];
+const firstLine = (text) => String(text || '').trim().split(/\r?\n/, 1)[0];
 
 function recordList(flag, value) {
   if (!RECORD_LIST_RE.test(value)) return { error: `${flag} must be positive integers separated by commas, got: ${value}` };
@@ -136,6 +153,12 @@ function parseArgs(argv) {
     } else if (flag === '--pr') {
       if (!POSITIVE_RE.test(value)) return { error: `--pr must be a positive integer, got: ${value}` };
       opts.pr = Number(value);
+    } else if (flag === '--head' && verb === 'decide') {
+      if (!FULL_OID_RE.test(value)) return { error: `--head must be 40 or 64 lowercase hex, got: ${value}` };
+      opts.head = value;
+    } else if (flag === '--base') {
+      if (!REF_NAME_RE.test(value)) return { error: `--base must match ${REF_NAME_RE}, got: ${value}` };
+      opts.base = value;
     } else if (flag === '--head' || flag === '--expect-head') {
       if (!require('./lib/accept/park').HEAD_SHA_RE.test(value)) return { error: `${flag} must be 7-64 lowercase hex, got: ${value}` };
       opts[key] = value;
@@ -161,6 +184,7 @@ const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, s) => fs.writeFileSync(p, s),
   removeFile: (p) => fs.unlinkSync(p),
+  mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
   realpath: (p) => require('./lib/hooks/worktree-detect').safeReal(p),
   now: () => Date.now(),
   tmpPath: (name, env) => {
@@ -172,6 +196,8 @@ const realDeps = {
   },
   ghAvailable: ({ env, cwd } = {}) => require('./lib/repo-resolve').ghAvailable({ env, cwd }),
   pinGhHost: (repoSpec, { env, cwd } = {}) => pinExplicitRepoHost(repoSpec, { env, cwd }),
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   // `{ cwd, env, stderr, homeDir }` is the injected process context.
   gh: (args, { cwd, env, stderr, homeDir } = {}) => {
     const { ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
@@ -183,8 +209,14 @@ const realDeps = {
     }, injectedGhDeps({ env, stderr, homeDir })));
   },
   git: (args, { cwd, env } = {}) => {
-    const { GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
-    return execFileSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS });
+    const { GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+    return execFileSync('git', args, {
+      cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
+    });
+  },
+  // A synchronous pause (the git-retry.js trick), injectable so a test never waits.
+  sleep: (ms) => {
+    try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch { /* best-effort */ }
   },
   remoteUrl: ({ cwd, env } = {}) => execFileSync('git', ['remote', 'get-url', 'origin'], {
     cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
@@ -235,7 +267,8 @@ function anchoredRun(runDir, deps) {
   }
   if (target.ok) return true;
   if (target.reason === 'missing') deps.stderr(`accept-park.js: run dir does not exist: ${runDir}\n`);
-  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
+  else if (target.reason === 'not-a-run-dir') deps.stderr(`accept-park.js: run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
+  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
   return false;
 }
 
@@ -283,9 +316,169 @@ function keptRiskFlags(parsed) {
   return null;
 }
 
+// An absolute path (the main checkout's, a lock file's) never reaches a packet line: a quoted
+// one goes whole, spaces included, then a bare one, which must follow a non-word character so
+// refs/remotes/origin/main stays readable.
+function redactPaths(text) {
+  return text
+    .replace(/(['"])(?:[A-Za-z]:)?[\\/][^'"]*\1/g, '<path>')
+    .replace(/(?<![\w.-])(?:[A-Za-z]:)?[\\/][^\s'"`]*/g, '<path>');
+}
+
+// A failed call's first line: git's and gh's own stderr when they carry it, else its exit status,
+// signal or code, else the first line of a plain Error's message (no argv rides on an error that
+// carries none of those), every line with absolute paths redacted. execFileSync's own message
+// holds the whole argv, the main checkout's path included, so it is never used when status, signal
+// or code is present.
+function failureText(err) {
+  const said = firstLine(err?.stderr);
+  if (said) return redactPaths(said);
+  if (Number.isInteger(err?.status)) return `exit ${err.status}`;
+  if (typeof err?.signal === 'string') return `signal ${err.signal}`;
+  if (typeof err?.code === 'string') return err.code;
+  const message = firstLine(err?.message);
+  return message ? redactPaths(message) : 'unknown error';
+}
+
+// A sibling session's fetch in the shared main checkout can hold the ref's lock. One retry,
+// after a pause, before the failure stands.
+const REF_LOCK_RE = /cannot lock ref|unable to create '[^']*\.lock'/i;
+const REF_LOCK_RETRY_MS = 1000;
+function fetchRef({ ctx, deps }, ref) {
+  const argv = ['fetch', '--no-tags', 'origin', ref];
+  try {
+    return ctx.git(argv);
+  } catch (err) {
+    if (!REF_LOCK_RE.test(String(err?.stderr ?? ''))) throw err;
+    deps.sleep(REF_LOCK_RETRY_MS);
+    return ctx.git(argv);
+  }
+}
+
+// The branch's changed paths, read once per decide call: { changedPaths, diffError }, the paths
+// null with the failed step named when any step fails (the tripwire then could not run).
+function readBranchDiff({ opts, ctx, deps, integrationBranch }) {
+  const { parseNameStatus } = require('./lib/accept/tripwire');
+  const fail = (diffError) => ({ changedPaths: null, diffError });
+  if (opts.head === undefined) return fail('no --head given');
+  const hasHead = () => {
+    try {
+      ctx.git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${opts.head}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!hasHead()) {
+    // GitHub serves a reachable commit by oid: how a sweep run from the main checkout reaches a PR head it never fetched.
+    try {
+      fetchRef({ ctx, deps }, opts.head);
+    } catch {
+      // the second check below decides
+    }
+    if (!hasHead()) return fail(`head commit ${opts.head} not available locally`);
+  }
+  let base = opts.base;
+  if (base === undefined) {
+    let name = integrationBranch;
+    if (name === null) {
+      try {
+        name = firstLine(ctx.git(['rev-parse', '--abbrev-ref', 'origin/HEAD']));
+      } catch (err) {
+        return fail(`git rev-parse of origin/HEAD failed: ${failureText(err)}`);
+      }
+      if (!name.startsWith('origin/')) return fail(`origin/HEAD resolved to ${name}`);
+      name = name.slice('origin/'.length);
+    }
+    if (!REF_NAME_RE.test(name) || name.startsWith('-')) return fail(`integration branch name unusable: ${name}`);
+    // A stale origin/{name} would widen the diff with paths already merged.
+    try {
+      fetchRef({ ctx, deps }, name);
+    } catch (err) {
+      return fail(`git fetch of ${name} failed: ${failureText(err)}`);
+    }
+    base = `origin/${name}`;
+  }
+  let mergeBase;
+  try {
+    mergeBase = firstLine(ctx.git(['merge-base', '--end-of-options', base, opts.head]));
+  } catch (err) {
+    // merge-base exits 1 and says nothing when the two commits share no history.
+    const reason = err?.status === 1 && !firstLine(err?.stderr) ? 'no merge base' : failureText(err);
+    return fail(`git merge-base failed: ${reason}`);
+  }
+  if (!FULL_OID_RE.test(mergeBase)) return fail('git merge-base failed: it printed no commit');
+  let raw;
+  try {
+    raw = ctx.git(['diff', '--name-status', '-z', '-M', '--no-color', '--no-ext-diff', '--end-of-options', `${mergeBase}..${opts.head}`]);
+  } catch (err) {
+    return fail(`git diff failed: ${failureText(err)}`);
+  }
+  const changedPaths = parseNameStatus(raw);
+  return changedPaths === null ? fail('git diff output unparseable') : { changedPaths, diffError: undefined };
+}
+
+// --classification: undefined when not given, the parsed JSON, or 'unreadable' (which
+// evaluateTripwire reports as a malformed classification) when the file will not read or parse.
+function readClassification(opts, deps, ctx) {
+  if (opts.classification === undefined) return undefined;
+  try {
+    const parsed = JSON.parse(deps.readFile(ctx.absolute(opts.classification)));
+    return parsed === null ? 'unreadable' : parsed;
+  } catch {
+    return 'unreadable';
+  }
+}
+
+// Writes the crossed flags into the record body, read again right before the edit so a body edit
+// (a flag included) made since the first read is kept; returns the failure's first line, or undefined.
+function appendTripwireFlags({ record, newFlags, extraCategories, deps, ctx }) {
+  const { addTripwireRiskFlags } = require('./lib/issues/record');
+  const file = deps.tmpPath(`accept-park-${record}-${process.pid}-tripwire.md`, deps.env);
+  try {
+    // A re-read that gives no usable body names its own reason, never err.message (it can carry a path).
+    let body;
+    try {
+      body = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body']))?.body;
+    } catch (err) {
+      if (err instanceof SyntaxError) throw Object.assign(new Error(), { stderr: 'issue view output unparseable' });
+      throw err;
+    }
+    if (typeof body !== 'string') throw Object.assign(new Error(), { stderr: 'issue view returned no body' });
+    const next = addTripwireRiskFlags(body, newFlags, { extraCategories });
+    if (next === body) return undefined;
+    deps.writeFile(file, next);
+    ctx.ghIssue(['issue', 'edit', String(record), '--body-file', file]);
+    return undefined;
+  } catch (err) {
+    const text = failureText(err);
+    deps.stderr(`accept-park.js: could not write the tripwire flags to #${record} (${text}) — this run is local\n`);
+    return text;
+  } finally {
+    removeQuietly(deps, file);
+  }
+}
+
+// The tripwire lines for the packet, one file per consulted record whose body read; false when a write failed.
+function writeTripwireFacts({ runDir, tripwires, deps }) {
+  const dir = path.join(runDir, 'packet-facts');
+  let ok = true;
+  for (const [record, tripwire] of tripwires) {
+    const file = path.join(dir, `tripwire-${record}.json`);
+    try {
+      deps.mkdir(dir);
+      deps.writeFile(file, `${JSON.stringify({ record, lines: tripwire.lines })}\n`);
+    } catch (err) {
+      ok = false;
+      deps.stderr(`accept-park.js: could not write ${file} (${messageOf(err)}) — the packet would lose the tripwire's reason\n`);
+    }
+  }
+  return ok;
+}
+
 function runDecide(opts, deps, ctx) {
-  const { resolvePolicyKeys } = require('./lib/policy-schema');
-  const { isControlModeOn, readRiskPolicy } = require('./lib/policy');
+  const { resolvePolicyKeys, BUILTIN_RISK_CATEGORIES } = require('./lib/policy-schema');
+  const { isControlModeOn, extraCategoriesOf } = require('./lib/policy');
   const { decideSeries } = require('./lib/accept/park');
   // Without --run the repo-root policy.yml is the authority, as parked reads it.
   let runDir = null;
@@ -303,39 +496,83 @@ function runDecide(opts, deps, ctx) {
     return 0;
   }
 
-  const { parseRiskFlags, parseAcceptanceTarget, itemOverrideOf } = require('./lib/issues/record');
+  const { parseRiskFlags, parseAcceptanceTarget, itemOverrideOf, parseTripwireFlags } = require('./lib/issues/record');
+  const { evaluateTripwire, removalLogSlugs, tripwireLines } = require('./lib/accept/tripwire');
+  const { isTrustedComment } = require('./lib/issues/comment-trust');
   const target = resolved['acceptance-target'];
   // Unset is the resolver's `default`; a set but invalid value is invalid, never the schema default.
+  // No factoryRaw reaches the acceptance-target and risk-path-globs reads yet (#6007); a factory value, once
+  // passed, is set like policy.yml's.
   let policyDefault = target.value;
   if (target.invalid) policyDefault = null;
   else if (target.source === 'default') policyDefault = undefined;
-  const { extraCategories } = readRiskPolicy(ctx.mainRoot(), { readFile: () => policyRaw });
+  // Gated by the control-mode result above (policy.yml alone, as readRiskPolicy gates, #5830). The two
+  // risk keys resolve from policy.yml only; integration-branch takes the run's config.yml over policy.yml.
+  const tripwirePolicy = resolvePolicyKeys(['risk-categories', 'risk-path-globs', 'integration-branch'], { policyRaw, runConfigRaw });
+  const extraCategories = extraCategoriesOf(tripwirePolicy['risk-categories'].value);
+  const categories = [...BUILTIN_RISK_CATEGORIES, ...extraCategories];
+  const globsEntry = tripwirePolicy['risk-path-globs'];
+  let globs = globsEntry.value;
+  if (globsEntry.invalid) globs = null;
+  else if (globsEntry.source === 'default') globs = undefined;
+  const branchValue = tripwirePolicy['integration-branch'].value;
+  const integrationBranch = typeof branchValue === 'string' && branchValue.trim() !== '' ? branchValue.trim() : null;
+  const agentClassification = readClassification(opts, deps, ctx);
+
+  // Read once, before any record body: the window from a body's read to its edit holds no git call.
+  const { changedPaths, diffError } = readBranchDiff({ opts, ctx, deps, integrationBranch });
 
   const available = ctx.ghAvailable();
   const unread = [];
+  const tripwires = new Map();
   const records = opts.record.map((record) => {
     let body;
+    let comments;
     try {
       if (!available) throw new Error('gh is absent');
-      body = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body'])).body;
+      const view = JSON.parse(ctx.ghIssue(['issue', 'view', String(record), '--json', 'body,comments']));
+      body = view.body;
+      comments = view.comments;
       if (typeof body !== 'string') throw new Error('the issue view has no body');
     } catch (err) {
       unread.push(record);
       deps.stderr(`accept-park.js: could not read #${record}'s body (${messageOf(err)}) — it resolves local by invalid-input\n`);
       return { record, input: { controlMode: true, keptRiskFlags: null, policyDefault } };
     }
+    const declaredFlags = keptRiskFlags(parseRiskFlags(body, { extraCategories }));
+    const result = evaluateTripwire({
+      changedPaths,
+      diffError,
+      declaredFlags,
+      tripwireFlags: parseTripwireFlags(body).flags,
+      removedFlags: Array.isArray(comments) ? removalLogSlugs(comments.filter(isTrustedComment).map((comment) => comment.body)) : null,
+      globs,
+      agentClassification,
+      categories,
+    });
+    const appendFailure = result.newFlags.length > 0
+      ? appendTripwireFlags({ record, newFlags: result.newFlags, extraCategories, deps, ctx })
+      : undefined;
+    tripwires.set(record, {
+      ...result,
+      appendFailed: appendFailure !== undefined,
+      lines: tripwireLines(result, appendFailure === undefined ? {} : { appendFailure }),
+    });
     return {
       record,
       input: {
         controlMode: true,
-        keptRiskFlags: keptRiskFlags(parseRiskFlags(body, { extraCategories })),
+        keptRiskFlags: declaredFlags,
         itemOverride: itemOverrideOf(parseAcceptanceTarget(body)),
         policyDefault,
+        tripwire: { status: result.status, newFlags: result.newFlags },
       },
     };
   });
-  printJson(deps, decideSeries(records));
-  return unread.length > 0 ? 1 : 0;
+  const series = decideSeries(records);
+  printJson(deps, { ...series, decisions: series.decisions.map((decision) => (tripwires.has(decision.record) ? { ...decision, tripwire: tripwires.get(decision.record) } : decision)) });
+  const factsWritten = runDir === null || writeTripwireFacts({ runDir, tripwires, deps });
+  return unread.length > 0 || !factsWritten ? 1 : 0;
 }
 
 // ---- parked ----
@@ -462,24 +699,63 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
     return baseOid;
   };
 
+  // The tripwire lines `decide` wrote for this record (packet-facts/tripwire-{n}.json): absent is no
+  // lines; anything unreadable fails step 2, so a stated reason is never silently lost.
+  const tripwireNotes = (n) => {
+    let text;
+    try {
+      text = deps.readFile(path.join(runDir, 'packet-facts', `tripwire-${n}.json`));
+    } catch (err) {
+      if (isAbsentError(err)) return [];
+      throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
+    }
+    let facts;
+    try {
+      facts = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`tripwire lines unreadable: ${messageOf(err)}`);
+    }
+    if (facts?.record !== n) throw new Error(`tripwire lines unreadable: the file is for record ${JSON.stringify(facts?.record ?? null)}, not #${n}`);
+    const lines = facts.lines;
+    if (!Array.isArray(lines) || !lines.every((line) => typeof line === 'string')) throw new Error('tripwire lines unreadable: lines is not a list of strings');
+    return lines;
+  };
+
   const claimed = opts.claimed ?? opts.record;
   const prUrl = `https://${repoSpec.host || 'github.com'}/${repoSpec.owner}/${repoSpec.repo}/pull/${opts.pr}`;
   const worktree = ctx.absolute(opts.worktree);
+  const runId = path.basename(runDir) || null;
+  const repoName = toRepoName(`${repoSpec.owner}/${repoSpec.repo}`);
+  const sessionId = deps.env?.CLAUDE_CODE_SESSION_ID || null;
+  // #5902: optional dep (absent = none), each emission wrapped so a throwing
+  // emitter never changes a step's detail, stdout or the exit code.
+  const emit = (event) => {
+    if (typeof deps.stationEvent !== 'function' || !repoName) return;
+    try {
+      deps.stationEvent({ repoName, sessionId, lane: 'unknown', ...event });
+    } catch { /* best-effort: the park stands */ }
+  };
 
   return {
     postPacket: () => perRecord(opts.record, (n) => {
+      const added = (said) => {
+        for (const t of transitionsForLabel(LABELS.ACCEPT_PENDING, 'added')) {
+          emit({ ...t, recordNumber: n, runId, payload: { label: LABELS.ACCEPT_PENDING }, discriminator: `accept-pending:${n}:${runId || ''}` });
+        }
+        return said;
+      };
       const packet = readFoundPacket(n);
-      if (packet.status !== 'found') return postFreshPacket(n);
+      if (packet.status !== 'found') return added(postFreshPacket(n));
       const { labels } = JSON.parse(ctx.ghIssue(['issue', 'view', String(n), '--json', 'labels']));
       if (!Array.isArray(labels)) throw new Error('labels is not a list');
       if (acceptanceOf(normalizeLabelNames(labels)) === 'pending') return 'pending label present';
       ctx.ghIssue(['issue', 'edit', String(n), '--add-label', LABELS.ACCEPT_PENDING]);
-      return `${LABELS.ACCEPT_PENDING} added`;
+      return added(`${LABELS.ACCEPT_PENDING} added`);
     }),
     writeDeployStatus: () => perRecord(opts.record, (n) => {
       const packet = readFoundPacket(n);
       if (packet.status !== 'found') throw new Error('no packet comment to write the park state into');
-      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head, baseSha: prBase() });
+      const { body, changed } = writeParkDeployStatus(packet.comment.body, { headSha: opts.head, baseSha: prBase(), notes: tripwireNotes(n) });
       if (!changed) return 'park state already written';
       const file = tmp(n, 'parked.md');
       try {
@@ -506,6 +782,15 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
           owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: n, runId: path.basename(runDir),
           reason: PARK_REASON, link: prUrl, runner: ctx.gh, gitRunner: ctx.gitRunner, now: deps.now(),
         });
+        // Only a real release ends the build visit; `already-released` is a repeat.
+        // lane stays 'unknown' (the emit default): park cannot know the lane, and lane is no eventKey input.
+        const transition = releaseTransition(PARK_REASON);
+        if (r.outcome === 'released' && transition) {
+          emit({
+            ...transition, recordNumber: n,
+            runId, payload: { reason: PARK_REASON }, discriminator: `release:${runId || ''}:${r.claimedAt || ''}`,
+          });
+        }
         const released = r.outcome === 'released' || r.outcome === 'already-released';
         if (!released) ok = false;
         details.push(`#${n}: ${r.outcome}${r.error ? ` (${r.error})` : ''}${r.holder ? ` (held by ${r.holder})` : ''}`);
@@ -536,7 +821,7 @@ async function runParkVerb(opts, deps, ctx) {
   }
   const { spec: repoSpec, refusal } = resolveRepoSpec(opts, deps, ctx);
   if (!repoSpec) {
-    deps.stderr(`accept-park.js: ${refusal || 'could not resolve owner/repo — pass --repo owner/name'}\n`);
+    deps.stderr(`accept-park.js: ${refusal || 'could not resolve owner/repo — pass --repo [host/]owner/name'}\n`);
     return 2;
   }
   if (opts.repo !== undefined) deps.pinGhHost(repoSpec, { env: deps.env, cwd: ctx.mainRoot() });
@@ -677,4 +962,4 @@ async function run(argv, overrides = {}) {
 
 module.exports = { run, parseArgs, realDeps };
 
-if (require.main === module) run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; });
+if (require.main === module) run(process.argv.slice(2)).then((code) => { process.exitCode = code; });

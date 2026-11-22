@@ -53,6 +53,142 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
+
+
+### Features
+
+* specify: the Risk flags multiSelect question has no way… ([#5954](https://github.com/thn-inc/claude-tweaks/issues/5954)) ([e2c39d5](https://github.com/thn-inc/claude-tweaks/commit/e2c39d576d69b8cae5c0eff09ce1f5874ef675a5))
+* Stop the driver worker running the whole test suite ([#5915](https://github.com/thn-inc/claude-tweaks/issues/5915)) ([d5346c1](https://github.com/thn-inc/claude-tweaks/commit/d5346c1c99056b72f56bd2172d720bd6a609fa5b)), closes [#5917](https://github.com/thn-inc/claude-tweaks/issues/5917)
+
+
+### Bug Fixes
+
+* Keep the station-event log from dirtying a project's main… ([#5957](https://github.com/thn-inc/claude-tweaks/issues/5957)) ([3ff22a3](https://github.com/thn-inc/claude-tweaks/commit/3ff22a37e0514aa9b0ddf1b2111e336bba5ba2ba))
+* Refresh the test-impact map when drift makes it stop… ([#5947](https://github.com/thn-inc/claude-tweaks/issues/5947)) ([2257937](https://github.com/thn-inc/claude-tweaks/commit/225793727bec167daa70a876f9e4483401e7705d))
+
+### Highlights
+* Added a maintainer report of what the pipeline costs per session type, model and merged pull request, and how much follow-up work it files.
+* Added three quality measures to the maintainer cost report so a cheaper pipeline can be checked against the quality of its output.
+* Added a maintainer report of what each kind of pipeline review found, by model tier and by review lens.
+* Station events no longer leave an untracked file in a project's main checkout, so archiving no longer stalls in a project that has not re-run /claude-tweaks:init.
+* Shortened pipeline driver runs by having the worker run only the tests for the files it changed.
+* Made every pipeline driver worker launch on a model set by policy instead of the account's default.
+* Specify's risk-flag question now gives a recommendation and a one-line reason for every flag, including when it asks about several flags in one question.
+* Scoped test runs refresh the test-impact map as soon as it stops paying for itself, so a typical change re-runs far fewer test files.
+
+## [6.174.0](https://github.com/thn-inc/claude-tweaks/compare/v6.173.1...v6.174.0) (2026-11-19)
+
+
+### Features
+
+* Run the full suite on GitHub's macOS runner and add a… ([#5881](https://github.com/thn-inc/claude-tweaks/issues/5881)) ([d64ba3c](https://github.com/thn-inc/claude-tweaks/commit/d64ba3cc1501b147eab76250ee8e36d9fd24909f)), closes [#5882](https://github.com/thn-inc/claude-tweaks/issues/5882) [#5883](https://github.com/thn-inc/claude-tweaks/issues/5883)
+
+
+### Bug Fixes
+
+* A per-run config or an arbitrary --run directory can… ([#5830](https://github.com/thn-inc/claude-tweaks/issues/5830)) ([f45a030](https://github.com/thn-inc/claude-tweaks/commit/f45a03067f5e158c6466ee3b0e451a7057b3ee30)), closes [#5863](https://github.com/thn-inc/claude-tweaks/issues/5863) [#5865](https://github.com/thn-inc/claude-tweaks/issues/5865) [#5879](https://github.com/thn-inc/claude-tweaks/issues/5879)
+
+### Highlights
+* Releases now stop while any open record carries the `release-block` label, naming each blocking record; closing the record or removing the label lifts the block.
+* A per-run config can no longer switch off the human-acceptance park gate, and the park and queue-pull commands now refuse a --run directory that is not a pipeline run directory.
+* `/claude-tweaks:dispatch` no longer excludes every record that names a file when the remote's default branch cannot be determined.
+* A gh-absent `/claude-tweaks:dispatch` queue pull no longer caches a queue order computed without a dependency it could not read.
+
+## [6.173.1](https://github.com/thn-inc/claude-tweaks/compare/v6.173.0...v6.173.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* Fail closed when the MCP verified-open-deps file omits an… ([#5408](https://github.com/thn-inc/claude-tweaks/issues/5408)) ([e97c8ab](https://github.com/thn-inc/claude-tweaks/commit/e97c8ab6390db6dff021ae0937dffa4a7201603d)), closes [#5722](https://github.com/thn-inc/claude-tweaks/issues/5722)
+
+### Highlights
+* Dispatch no longer treats a dependency as closed on a gh-absent firing just because the agent left it out of the verified-open list.
+* Dispatch no longer excludes a record as already shipped when it was shaped or granted after the mentioning PR merged.
+
+## [6.173.0](https://github.com/thn-inc/claude-tweaks/compare/v6.172.0...v6.173.0) (2026-11-17)
+
+
+### Features
+
+* Add a ci-health skill that audits where CI time goes and… ([#5757](https://github.com/thn-inc/claude-tweaks/issues/5757)) ([a17143a](https://github.com/thn-inc/claude-tweaks/commit/a17143a39050065eef2900773b8abb6a225df3fc))
+
+
+### Bug Fixes
+
+* Queue pull prints one fetch failure twice (claim fetch… ([#5304](https://github.com/thn-inc/claude-tweaks/issues/5304)) ([63a4fb1](https://github.com/thn-inc/claude-tweaks/commit/63a4fb1ea63440bde010a1341c0d3655a2169364)), closes [#5305](https://github.com/thn-inc/claude-tweaks/issues/5305) [#5306](https://github.com/thn-inc/claude-tweaks/issues/5306) [#5307](https://github.com/thn-inc/claude-tweaks/issues/5307) [#5309](https://github.com/thn-inc/claude-tweaks/issues/5309) [#5310](https://github.com/thn-inc/claude-tweaks/issues/5310) [#5311](https://github.com/thn-inc/claude-tweaks/issues/5311) [#5312](https://github.com/thn-inc/claude-tweaks/issues/5312) [#5313](https://github.com/thn-inc/claude-tweaks/issues/5313) [#5314](https://github.com/thn-inc/claude-tweaks/issues/5314) [#5315](https://github.com/thn-inc/claude-tweaks/issues/5315) [#5316](https://github.com/thn-inc/claude-tweaks/issues/5316) [#5317](https://github.com/thn-inc/claude-tweaks/issues/5317) [#5409](https://github.com/thn-inc/claude-tweaks/issues/5409)
+* Route every gh call's timeout through GH_TIMEOUT_MS ([#4856](https://github.com/thn-inc/claude-tweaks/issues/4856)) ([4b43e18](https://github.com/thn-inc/claude-tweaks/commit/4b43e182edd28a4f544a3588ec4b0bc8ef03faa2)), closes [#5050](https://github.com/thn-inc/claude-tweaks/issues/5050)
+
+### Highlights
+* The gh-timeout-ms setting now applies to the wrap-up engine, the residue sweep and the integration-model probe, and the residue sweep can no longer hang on a stalled gh call.
+* A raised `gh-timeout-ms` or `git-timeout-ms` now also reaches the flow preflight, release preflight, wrap-up pack and console-resolve reads, so they no longer give up after 30 s on a slow host.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: prints one fetch failure twice (claim fetch AUTO line, foreign-states Warning).
+* Fixed a /claude-tweaks:dispatch queue pull failure case: with no integration-branch key and a failing git remote show, target-missing excludes every named-target candidate.
+* /claude-tweaks:dispatch queue pull: when the linked-PR GraphQL call fails, the Warning now says the shipped-candidate exclusion was skipped too, not only the open-PR exclusion.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: silently reads a non-array MCP queue or dep-freshness file as empty.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: one failed native-blockers GraphQL call disables both the blocked and unlanded-blocker passes.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed dep-freshness search fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed per-dependency issue view drops the blocked exclusion silently, making a blocked record dispatchable.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed cross-PR open-PR list fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed shipped-PR view fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: reuses a prior pull's session files when a later fetch returns empty, and writes the stale groups back.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: one queue record with string labels crashes eligibility and blocks every other candidate.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: stages the target-missing Close proposal under a random extensionless name instead of .md.
+* `/claude-tweaks:dispatch` keeps a target-missing Close proposal's command intact when the target path contains a quote or shell syntax.
+* Dispatch no longer reuses a previous queue pull's data when a step of the current pull fails.
+* Add `/claude-tweaks:ci-health`, a report-only sweep that splits recent CI jobs into waiting, setup and running time, judges them against a stack-neutral checklist, and files deduplicated findings.
+
+## [6.172.0](https://github.com/thn-inc/claude-tweaks/compare/v6.171.0...v6.172.0) (2026-11-17)
+
+
+### Features
+
+* Acceptance target resolution and the local pre-merge park ([#4615](https://github.com/thn-inc/claude-tweaks/issues/4615)) ([#5710](https://github.com/thn-inc/claude-tweaks/issues/5710)) ([c8a37ab](https://github.com/thn-inc/claude-tweaks/commit/c8a37ab9b4e000493eac22aac12232a64ab3840d))
+* Archive the spec header on the run branch before merge… ([#3976](https://github.com/thn-inc/claude-tweaks/issues/3976)) ([413ad43](https://github.com/thn-inc/claude-tweaks/commit/413ad43455f6c254423da7d3eaf5a08518f42bca))
+* Build a record named in a typed dispatch command without… ([#5584](https://github.com/thn-inc/claude-tweaks/issues/5584)) ([#5625](https://github.com/thn-inc/claude-tweaks/issues/5625)) ([3930b3a](https://github.com/thn-inc/claude-tweaks/commit/3930b3a7389bf459e057579782601ed0748e1bdd))
+* Diff tripwire ([#4619](https://github.com/thn-inc/claude-tweaks/issues/4619)) ([e989bb9](https://github.com/thn-inc/claude-tweaks/commit/e989bb910aa2c6f732d11442491b35bd7d6d77b9))
+* Guard direct multi-file node --test runs and steer them… ([#5547](https://github.com/thn-inc/claude-tweaks/issues/5547)) ([6cb97fc](https://github.com/thn-inc/claude-tweaks/commit/6cb97fc99a8927a6d2c088662c54047e2d8dd52b))
+* Run the review lens fan-out as a plugin workflow, behind… ([#5599](https://github.com/thn-inc/claude-tweaks/issues/5599)) ([#5819](https://github.com/thn-inc/claude-tweaks/issues/5819)) ([ecd6469](https://github.com/thn-inc/claude-tweaks/commit/ecd6469c0e1ac73461c570195f1452df95d95d03))
+* Upstream filing: automatic into owned repos, held for… ([#4621](https://github.com/thn-inc/claude-tweaks/issues/4621)) ([d368735](https://github.com/thn-inc/claude-tweaks/commit/d3687351e773322776964466804c4d7203516e52))
+
+
+### Bug Fixes
+
+* A typed dispatch command builds a record that carries… ([#5734](https://github.com/thn-inc/claude-tweaks/issues/5734)) ([#5788](https://github.com/thn-inc/claude-tweaks/issues/5788)) ([29f84ab](https://github.com/thn-inc/claude-tweaks/commit/29f84ab8b2723ff27e13da718275e53b573ab034))
+* console-resolve: design-decision items auto-resolve as… ([#4038](https://github.com/thn-inc/claude-tweaks/issues/4038)) ([b34ec52](https://github.com/thn-inc/claude-tweaks/commit/b34ec5264bc2fcdbafc8089519a4c8d6395e8ff4))
+* dispatch: a merged group's worktree can be deleted while… ([#4960](https://github.com/thn-inc/claude-tweaks/issues/4960)) ([1b5af3c](https://github.com/thn-inc/claude-tweaks/commit/1b5af3c18be39a1f4f61e7facd2efe2112f9ab07))
+* policy resolution in worktrees: gitignored policy.yml is… ([#4492](https://github.com/thn-inc/claude-tweaks/issues/4492)) ([12a781f](https://github.com/thn-inc/claude-tweaks/commit/12a781ff0715cd276759a232757e630809d183fc)), closes [#4494](https://github.com/thn-inc/claude-tweaks/issues/4494) [#4499](https://github.com/thn-inc/claude-tweaks/issues/4499)
+* pr-first: an armed merge never runs the closing-links… ([#4251](https://github.com/thn-inc/claude-tweaks/issues/4251)) ([36a4495](https://github.com/thn-inc/claude-tweaks/commit/36a449523405a48e2afa62d47a2bd56c519d9167))
+* verify.js baseline adjudication calls a SIGTERM-killed… ([#4424](https://github.com/thn-inc/claude-tweaks/issues/4424)) ([3f9d5d0](https://github.com/thn-inc/claude-tweaks/commit/3f9d5d0fa2125c54e3ba50716655f46e2f66d4b7))
+* wait-for.js never reports a child whose transcript quotes… ([#5706](https://github.com/thn-inc/claude-tweaks/issues/5706)) ([b284e82](https://github.com/thn-inc/claude-tweaks/commit/b284e8298052e09a369d864f1ac1009977c1b396))
+* Windows regression: 1 test file(s) newly failing after… ([#5689](https://github.com/thn-inc/claude-tweaks/issues/5689)) ([717e699](https://github.com/thn-inc/claude-tweaks/commit/717e699fd8d0238cbaee76cf8c56972de7d4f132))
+* Windows regression: six test files failing on main with… ([#5694](https://github.com/thn-inc/claude-tweaks/issues/5694)) ([e3f9474](https://github.com/thn-inc/claude-tweaks/commit/e3f947486de2816a618c7b08f70efa4678eff318))
+* Windows regression: tests failing after 4fb2fad30 (not… ([#5490](https://github.com/thn-inc/claude-tweaks/issues/5490)) ([40f6a34](https://github.com/thn-inc/claude-tweaks/commit/40f6a344bb5d46fd0d52ab2601f997d6a945e482))
+
+### Highlights
+* Added a diff tripwire that switches a run to local acceptance when the code touches migrations, auth, public contracts or irreversible actions nobody flagged.
+* verify.js starts fewer git processes on each run.
+* Even out the PR test gate's four shards so one slow shard no longer sets a roughly 3-minute wait.
+* Removed unused commands, flags and legacy code paths from the health sweep tools.
+* Added an optional way for `/claude-tweaks:review` to run its lens reviewers through one workflow script; it is off by default and falls back to the present dispatch where the Workflow tool is not available.
+* A dispatch run across several records no longer loses its working directory when one record's PR merges.
+* No behavior change: reopening a record that an auto-merged pr-first run left open already shipped. This adds tests for it and removes an outdated caveat from the merge procedure.
+* The unresolved-origin hint of the gated CLIs now says `--repo [host/]owner/name`, so a GitHub Enterprise user is told the host-qualified form.
+* Added a command that reads review lens replies, pairs them and logs the result in one call; nothing uses it until the workflow review path ships.
+* Fixed a leftover merge grant letting a record built from a typed dispatch command merge without review.
+* Dispatched agents now wait on child agents, CI checks and background processes with one blocking command instead of repeated sleep calls.
+* Documented more of the shell commands a worktree session's guard refuses, with the form that works for each, and added a maintainer replay that checks no harmless command is refused by the plugin's own gates.
+* `/claude-tweaks:review` now has its pairing command write the per-finding reproduction lines to the decision log itself, in one fixed form, instead of the reviewing session typing them.
+* Pipelines running in a worktree now read the main checkout's `.claude-tweaks/policy.yml` when the project keeps that file out of git, so draft PRs target the configured integration branch instead of the GitHub default.
+* Covered by #4492: worktree pipelines now read the main checkout's gitignored policy file.
+* Design-decision findings at the unattended Review Console now wait for a person instead of being marked as an applied patch.
+* A test file that was killed under load and then passes on its own no longer fails the run's verification gate.
+* Maintainer-side: the post-merge Windows check stops reporting failures in six test files. If a fix lands in shipped code under `plugin/`, the PR states its user-visible effect.
+* Typing a dispatch command that names a record, in a session a person launched, now builds it even without a build grant; runs started by a routine, a hub, a schedule or a message from another session still need the grant, and nothing merges without a merge grant.
+* Added acceptance-target resolution so work flagged as risky, or marked for local trial, stops before merge with its pull request open until you accept it locally.
+* Removed an unused review-coordination command and two unused entry shims.
+* Removed an unused claim-listing helper and stopped carrying an unread legacy key in multi-spec run manifests.
+
 ## [6.171.0](https://github.com/thn-inc/claude-tweaks/compare/v6.170.0...v6.171.0) (2026-11-16)
 
 

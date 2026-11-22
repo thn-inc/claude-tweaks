@@ -22,7 +22,7 @@ node -e "const m=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issue-branch-tracking.js
   derived file loses nothing.
 - `modified` — differs from every version the plugin generated, so it was edited by hand.
   Call `AskUserQuestion`:
-  - `question`: `"track-issue-fixes.yml differs from every version claude-tweaks generated, so it was edited by hand. The current generator adds a job-level prefilter (no runner on pushes that reference no issue) and skips the claims-registry and health-state bookkeeping branches. Regenerate it?"`, `header`: `"Tracking wf"`, `multiSelect`: `false`
+  - `question`: `"track-issue-fixes.yml differs from every version claude-tweaks generated, so it was edited by hand. The current generator adds a job-level prefilter (no runner on pushes that reference no issue) and skips the claims-registry, health-state and release-state bookkeeping branches. Regenerate it?"`, `header`: `"Tracking wf"`, `multiSelect`: `false`
   - Option 1 — `label`: `"Keep my file (Recommended)"`, `description`: `"Leave the edited file as is."`
   - Option 2 — `label`: `"Regenerate (discards local edits)"`, `description`: `"Overwrite with the current generator output — local edits are lost."`
 
@@ -54,8 +54,8 @@ node -e "const y=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issue-branch-tracking.js
 ```
 
 The generated workflow ships two jobs, both triggered on `push` (excluding the plugin's
-`claims-registry` and `health-state` bookkeeping branches). Each job's job-level `if`
-also requires the pushed commit messages to contain `#` and a closing-keyword stem, so a
+`claims-registry`, `health-state` and `release-state` bookkeeping branches). Each job's
+job-level `if` also requires the pushed commit messages to contain `#` and a closing-keyword stem, so a
 push that references no issue starts no runner:
 
 - **`label-fix-branch`** (runs on any branch that is NOT the repo's default branch) —

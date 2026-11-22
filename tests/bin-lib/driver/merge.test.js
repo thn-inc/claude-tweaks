@@ -11,7 +11,7 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
   merge, parkComment, conflictComment, refusedComment, classifyMergeFailure, REASONS, PREFIXED_REASONS, isReason,
-  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs,
+  MERGE_WATCH_BOUND_MS, MERGE_WATCH_POLL_MS, RECONCILE_TIMEOUT_MS, parkTimeoutMs, decideTimeoutMs,
 } = require(path.join(LIB, 'driver', 'merge'));
 const { MERGE_STEP_NAMES } = require(path.join(LIB, 'driver', 'events'));
 const { createJudgments } = require(path.join(LIB, 'driver', 'judgments'));
@@ -23,6 +23,10 @@ const { readText } = require('../../helpers/read-skill');
 const { BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -119,7 +123,7 @@ function defaultMergeScript(over, files, logs, applied) {
   return [
     [isGh('issue', 'view'), () => {
       // Read per call, so seq() can script the entry read and the pre-merge read apart.
-      const labels = over.labels === undefined ? [{ name: 'auto:merge' }] : knob(over.labels);
+      const labels = over.labels === undefined ? [{ name: 'auto:build' }, { name: 'auto:merge' }] : knob(over.labels);
       if (labels instanceof Error) throw labels;
       if (typeof labels === 'string') return labels;
       return JSON.stringify({ labels: [...labels, ...applied.map((name) => ({ name }))] });
@@ -431,7 +435,7 @@ test('AC1.2, AC1.3: labels without auto:merge, empty, auto:merge-pending only â†
     assert.ok(!kindsOf(h).includes('judgments'));
     assert.ok(!kindsOf(h).includes('policyCore'), 'labels are read before any policy read');
   }
-  const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:merge' }] });
+  const ok = mergeHarness({ labels: [{ name: 'bug' }, { name: 'auto:build' }, { name: 'auto:merge' }] });
   assert.equal((await merge(CTX, ok.deps)).outcome, 'merged');
 });
 
@@ -552,6 +556,13 @@ test('AC8.1: merge-when-green and wait are taken as given, and no lever line is 
     assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), [], value);
     assert.match(h.events[0].detail, new RegExp(`lever ${expected} \\(run-config\\)`));
   }
+});
+
+test('a factory-sourced merge-verification passes through to the merge-entry event as (factory) (#6006)', async () => {
+  const entry = resolvePolicyKeys(['merge-verification'], { factoryRaw: 'merge-verification: wait\n' })['merge-verification'];
+  const h = mergeHarness({ verification: leverReply(entry) });
+  await merge(CTX, h.deps);
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(factory\)/);
 });
 
 test('AC8.1: a failed merge-verification read never stops entry; a failed integration-model read is not-pr-first', async () => {
@@ -1603,7 +1614,7 @@ const ghErr = (stderr) => Object.assign(new Error(`Command failed: gh pr merge 9
 const argAfter = (c, flags) => flags.map((f) => (c.args.includes(f) ? c.args[c.args.indexOf(f) + 1] : undefined));
 const isConfirmRead = (c) => isGh('pr', 'view')(c) && c.args.includes(CONFIRM_FIELDS);
 const isLabelRead = isGh('issue', 'view');
-const AUTO_MERGE = [{ name: 'auto:merge' }];
+const AUTO_MERGE = [{ name: 'auto:build' }, { name: 'auto:merge' }];
 const ARMED = { state: 'OPEN', mergedAt: null, autoMergeRequest: { enabledAt: '2026-11-13T09:30:00Z', mergeMethod: 'SQUASH' }, mergeCommit: null };
 const BLOCKED_PENDING = { ...PENDING, mergeStateStatus: 'BLOCKED' };
 const BODY_FILE = path.join(CTX.runDir, 'merge-subject', 'body.md');
@@ -2892,7 +2903,10 @@ test('AC13.1â€“AC13.3: express-lane.js verify exits 0 for fixture runs driven to
 
 // ---- AC10: the real judgment supplier (judgments.js, acceptance.js) behind merge() ----
 
-const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } };
+const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('merge-check', POLICY_CEILINGS), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
+});
 const TRY_IT_GROUP = { name: 'Run the thing', precondition: 'none', access: 'none', entryPoint: 'node bin/x.js', steps: ['Run it', 'Read the output'], expected: 'It prints ok' };
 
 // The replies the supplier's own reads and writes need, tried before the merge harness's defaults: the
@@ -3365,13 +3379,13 @@ test('AC3.7: a local control-mode target parks instead of merging', async () => 
   const r = await merge(CTX, h.deps);
   assert.deepEqual([r.outcome, r.reason], ['pending-review', 'awaiting-local-acceptance']);
   assert.equal(h.calls.filter(isMergeCall).length, 0, 'no pr merge call');
-  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--repo', 'o/r']);
+  assert.deepEqual(parkCalls(h, 'decide')[0].args.slice(1), ['decide', '--run', CTX.runDir, '--record', '7', '--head', CTX.head, '--repo', 'o/r']);
   const [p] = parkCalls(h, 'park');
   assert.equal(flagOf(p, '--head'), CTX.head, 'the head the gate read');
   // The park's own bound: the sum of its steps' bounds (5 CLI calls, the archive's reconcile bound, two git calls).
   // The harness carries no gitTimeoutMs, so the budget uses git's 30 s default.
   assert.equal(p.timeout, 5 * 120000 + RECONCILE_TIMEOUT_MS + 2 * 30000);
-  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000, 'decide keeps the ordinary CLI bound');
+  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000 + 9 * 30000, 'decide: one CLI bound plus nine git calls at the 30 s default');
   assert.deepEqual(['--run', '--record', '--claimed', '--pr', '--repo'].map((f) => flagOf(p, f)), [CTX.runDir, '7', '7', '9', 'o/r']);
   // Step 2.9 sits after the gate (Step 2.5) and before Step 3's pre-merge label read.
   const at = (pred) => h.calls.findIndex(pred);
@@ -3491,6 +3505,11 @@ test('the park budget follows the live git bound through deps.gitTimeoutMs', asy
   const h = mergeHarness({ decide: decideReply([LOCAL]), park: parkReply(), deps: { gitTimeoutMs: () => 90000 } });
   await merge(CTX, h.deps);
   assert.equal(parkCalls(h, 'park')[0].timeout, BASE + 2 * 90000);
+  // decide's budget follows the same bound: one CLI call plus nine git calls (#4619).
+  assert.equal(decideTimeoutMs({}), 120000 + 9 * 30000);
+  assert.equal(decideTimeoutMs({ gitTimeoutMs: () => 90000 }), 120000 + 9 * 90000);
+  assert.equal(decideTimeoutMs({ gitTimeoutMs: () => 0 }), 120000 + 9 * 30000);
+  assert.equal(parkCalls(h, 'decide')[0].timeout, 120000 + 9 * 90000);
   // realDeps carries the live bound (shared-primitives' GIT_TIMEOUT_MS getter), not a constant: a
   // child process with the env override set reads a non-default value through it.
   const { spawnSync } = require('node:child_process');
@@ -3508,4 +3527,23 @@ test('the park check runs once when an --auto refusal degrades to the wait row',
   assert.equal(h.calls.filter(isMergeCall).length, 2);
   assert.equal(parkCalls(h, 'parked').length, 1);
   assert.equal(parkCalls(h, 'decide').length, 1);
+});
+
+test('AC1.1, AC1.2: auto:merge without auto:build stops not-authorized at merge-entry with no label, comment, ready or merge call', async () => {
+  const h = mergeHarness({ labels: [{ name: 'auto:merge' }] });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'record lacks auto:build');
+  assertNoReadyNoMerge(h);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-entry', 'stop']);
+  assert.ok(!h.calls.some((c) => c.kind === 'gh' && ((c.args[0] === 'issue' && ['edit', 'comment'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment'))), 'no label edit or comment');
+});
+
+test('AC2.1, AC2.2: auto:build removed before the pre-merge read stops not-authorized at merge-call with no merge call', async () => {
+  const h = mergeHarness({ labels: seq(AUTO_MERGE, [{ name: 'auto:merge' }]) });
+  const r = await merge(CTX, h.deps);
+  assert.deepEqual(pick(r), { outcome: 'pending-review', reason: 'not-authorized', mergeCommit: null, postMerge: null });
+  assert.equal(r.detail, 'record lacks auto:build at the pre-merge read');
+  noMerge(h);
+  assert.deepEqual([lastEvent(h).step, lastEvent(h).status], ['merge-call', 'stop']);
 });
