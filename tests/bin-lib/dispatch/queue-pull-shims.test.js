@@ -14,7 +14,7 @@ const {
   appendShimRecord, readShimLog, SHIM_LOGS, createSandbox, writeShims, REPO,
 } = require('./queue-pull-oracle');
 const {
-  S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
+  S0, S1, S2, SEmpty, SMalformed, SPortable, D1Second, D1Third, EmptyAfterS1, S1LiveDep, FAULTS, QUEUE_ARGV, ghAnswer, shimTable,
 } = require('./queue-pull-fixtures');
 
 // The shims are #!/bin/sh scripts and need no bash, so unlike the parity suite's oracleSkip these
@@ -350,103 +350,11 @@ test('setScenario regenerates the git fail prefixes', { skip: shimSkip() }, (t) 
   assert.equal(after.stderr, 'git-shim: injected failure: status\n');
 });
 
-// --- the mktemp shim and bin/node ------------------------------------------------
-
-// A sandbox, its tmpdir (created) and `mktemp(args, { extra })`: its bin/mktemp run with the
-// sandbox's run env, `extra` merged over it. `counter` is the file the shim and deps.tmpName share.
-const mktempSandbox = (t) => {
-  const sb = createSandbox(S0());
-  t.after(() => sb.cleanup());
-  const tmpdir = path.join(sb.root, 'tmp', 'mk');
-  fs.mkdirSync(tmpdir, { recursive: true });
-  const env = sb.runEnv({ tmpdir, sessionId: 'qp-mktemp-shim' });
-  const mktemp = (args = [], { extra = {} } = {}) => spawnSync(path.join(sb.bin, 'mktemp'), args, { cwd: sb.proj, env: { ...env, ...extra }, encoding: 'utf8' });
-  return { sb, tmpdir, counter: env.QP_TMPNAME_COUNTER_FILE, mktemp };
-};
-
-test('the mktemp shim is a sh script and counts', { skip: shimSkip() }, (t) => {
-  const { sb, tmpdir, counter, mktemp } = mktempSandbox(t);
-  assert.equal(fs.readFileSync(path.join(sb.bin, 'mktemp'), 'utf8').split('\n')[0], '#!/bin/sh');
-  for (const k of [1, 2]) {
-    const file = path.join(tmpdir, `tmp.qp0000000${k}`);
-    const r = mktemp();
-    assert.equal(r.status, 0, r.stderr);
-    assert.equal(r.stdout, `${file}\n`);
-    assert.equal(r.stderr, '');
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-  }
-  assert.equal(fs.readFileSync(counter, 'utf8'), '2');
-});
-
-test('the mktemp shim reads a leading-zero counter as decimal', { skip: shimSkip() }, (t) => {
-  const { tmpdir, counter, mktemp } = mktempSandbox(t);
-  fs.writeFileSync(counter, '08');
-  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000009')}\n`);
-  assert.equal(fs.readFileSync(counter, 'utf8'), '9');
-  fs.writeFileSync(counter, '');
-  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000001')}\n`);
-  fs.rmSync(counter);
-  fs.rmSync(path.join(tmpdir, 'tmp.qp00000001'));
-  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000001')}\n`, 'an absent counter is 0');
-});
-
-test('the mktemp shim refuses', { skip: shimSkip() }, (t) => {
-  const { tmpdir, counter, mktemp } = mktempSandbox(t);
-  const arg = mktemp(['-d']);
-  assert.equal(arg.status, 97);
-  assert.equal(arg.stderr, 'mktemp-shim: refused (arguments are not supported): -d\n');
-  fs.writeFileSync(counter, 'abc');
-  const bad = mktemp();
-  assert.equal(bad.status, 97);
-  assert.equal(bad.stderr, 'mktemp-shim: refused (counter file holds "abc"): \n');
-  fs.writeFileSync(counter, '4');
-  fs.writeFileSync(path.join(tmpdir, 'tmp.qp00000005'), 'taken');
-  const taken = mktemp();
-  assert.equal(taken.status, 97);
-  assert.equal(taken.stderr, `mktemp-shim: refused (file exists: ${path.join(tmpdir, 'tmp.qp00000005')}): \n`);
-  assert.equal(fs.readFileSync(path.join(tmpdir, 'tmp.qp00000005'), 'utf8'), 'taken', 'an existing file is left alone');
-  assert.equal(fs.readFileSync(counter, 'utf8'), '4', 'a refusal leaves the counter');
-  for (const extra of [{ TMPDIR: '' }, { QP_TMPNAME_COUNTER_FILE: '' }]) {
-    const r = mktemp([], { extra });
-    assert.equal(r.status, 97);
-    assert.equal(r.stderr, 'mktemp-shim: refused (TMPDIR and QP_TMPNAME_COUNTER_FILE are required): \n');
-  }
-});
-
-test('the mktemp shim refuses a TMPDIR it cannot create in', { skip: shimSkip() }, (t) => {
-  const { tmpdir, counter, mktemp } = mktempSandbox(t);
-  fs.writeFileSync(counter, '4');
-  const missing = path.join(tmpdir, 'absent');
-  const r = mktemp([], { extra: { TMPDIR: missing } });
-  assert.equal(r.status, 97);
-  assert.equal(r.stderr, `mktemp-shim: refused (cannot create: ${path.join(missing, 'tmp.qp00000005')}): \n`);
-  assert.equal(fs.readFileSync(counter, 'utf8'), '4');
-});
-
-test('the mktemp shim refuses a counter it cannot write, leaving the created file', { skip: shimSkip() }, (t) => {
-  const { tmpdir, mktemp } = mktempSandbox(t);
-  const counter = path.join(tmpdir, 'no-such-dir', 'counter');
-  const r = mktemp([], { extra: { QP_TMPNAME_COUNTER_FILE: counter } });
-  assert.equal(r.status, 97);
-  assert.equal(r.stdout, '');
-  assert.equal(r.stderr, `mktemp-shim: refused (cannot write counter: ${counter}): \n`);
-  assert.equal(fs.existsSync(path.join(tmpdir, 'tmp.qp00000001')), true, 'the created file stays');
-});
-
-test('the mktemp shim refuses a counter past 15 digits', { skip: shimSkip() }, (t) => {
-  const { tmpdir, counter, mktemp } = mktempSandbox(t);
-  fs.writeFileSync(counter, '1234567890123456');
-  const r = mktemp();
-  assert.equal(r.status, 97);
-  assert.equal(r.stderr, 'mktemp-shim: refused (counter file holds "1234567890123456"): \n');
-  fs.writeFileSync(counter, '0000000000000000007');
-  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp00000008')}\n`, 'zeros do not count toward the 15');
-  fs.writeFileSync(counter, '100000000000000');
-  assert.equal(mktemp().stdout, `${path.join(tmpdir, 'tmp.qp100000000000001')}\n`, '15 digits are accepted');
-});
+// --- bin/node --------------------------------------------------------------------
 
 test('bin/node is a sh script', { skip: shimSkip() }, (t) => {
-  const { sb } = mktempSandbox(t);
+  const sb = createSandbox(S0());
+  t.after(() => sb.cleanup());
   assert.equal(fs.readFileSync(path.join(sb.bin, 'node'), 'utf8').split('\n')[0], '#!/bin/sh');
 });
 
@@ -482,7 +390,7 @@ test('the gh shim is a sh script', { skip: shimSkip() }, (t) => {
 
 test('the sh gh shim agrees with ghAnswer on every exact entry', { skip: shimSkip() }, (t) => {
   const scenarios = [S0(), S1(), S1({ full: true }), S1({ parity: true }), S2(), SEmpty(), SMalformed(), SMalformed('labels'), SMalformed('body'),
-    SMalformed('blocker'), SPortable(), D1Second(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
+    SMalformed('blocker'), SPortable(), D1Second(), D1Third(), EmptyAfterS1(), S1LiveDep(), ...FAULTS.map((f) => f.scenario())];
   const checked = new Set();
   let longest = 0;
   scenarios.forEach((scenario, n) => {

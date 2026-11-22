@@ -8,6 +8,7 @@ const cp = require('child_process');
 // compound-failure test's `t.mock.method(cp, 'execFileSync', ...)`.
 const { execFileSync } = cp;
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -18,6 +19,7 @@ const { PROBE_ORDER } = require('../../../plugin/bin/lib/run-liveness');
 const { serializeManifestYaml } = require('../../../plugin/bin/lib/flow/manifest');
 const { archiveRunHeader } = require('../../../plugin/bin/lib/run-header-archive');
 const { fromTemplate, fromTemplateSet, disableReceiveAutoGc } = require('../../helpers/git-template');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -33,8 +35,7 @@ function initRepo(dir) {
   // Loose refs whatever the global init.defaultRefFormat: renameLooseBranch moves ref files.
   // Not `init --ref-format=files`, which git < 2.45 (Apple Git 2.39) rejects.
   git(dir, '-c', 'init.defaultRefFormat=files', 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@t');
-  git(dir, 'config', 'user.name', 't');
+  writeIdentity(dir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', 'a.txt');
   git(dir, 'commit', '-m', 'init');
@@ -83,7 +84,7 @@ function ghJsonHeredoc(value) {
 // any unmapped number exits 1. Without it, `gh issue view` keeps the catch-all
 // body this wrapper has always printed.
 function installGhWrapper(prsJson, issueStates = null) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ghwrap-'));
+  const wrapperDir = scratchDir('archive-merged-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   const issueBlock = issueStates ? [
     'if [ "$1" = "issue" ] && [ "$2" = "view" ]; then',
@@ -126,7 +127,7 @@ function installGhWrapper(prsJson, issueStates = null) {
 // into main, then the worktree removed (the branch ref stays). Returns the
 // feature tip sha. `commitEnv` overrides the feature commit's environment.
 function mergeFeatureBranch(root, branch, wtPrefix, commitEnv) {
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), wtPrefix));
+  const wt = scratchDir(wtPrefix);
   try {
     git(root, 'worktree', 'add', '-q', wt, '-b', branch);
     fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
@@ -307,7 +308,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId, extraEventLines = [
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\n');
 
   // The stamped worktree path: unique per call and absent, as a torn-down worktree's is.
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-wt-'));
+  const wt = scratchDir('archive-merged-wt-');
   fs.rmSync(wt, { recursive: true, force: true });
 
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
@@ -327,7 +328,7 @@ const verdictOf = (verdict, over = {}) => () => ({
 });
 const DEAD = verdictOf('dead');
 function mkDirWithMtime(ageMs) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-stuck-'));
+  const dir = scratchDir('archive-merged-stuck-');
   if (ageMs) {
     const backdated = new Date(Date.now() - ageMs);
     fs.utimesSync(dir, backdated, backdated);
@@ -432,13 +433,11 @@ function buildSeededOrigin({ origin, seed: s, clone: c }) {
   git(origin, 'init', '--bare', '-b', 'main');
   disableReceiveAutoGc(origin);
   git(s, 'clone', '-q', origin, '.');
-  git(s, 'config', 'user.email', 't@t');
-  git(s, 'config', 'user.name', 't');
+  writeIdentity(s, { name: 't', email: 't@t' });
   commitPath(s, 'a.txt', 'a\n');
   git(s, 'push', '-q', 'origin', 'main');
   git(c, 'clone', '-q', origin, '.');
-  git(c, 'config', 'user.email', 't@t');
-  git(c, 'config', 'user.name', 't');
+  writeIdentity(c, { name: 't', email: 't@t' });
 }
 
 function cloneOfSeededOrigin() {

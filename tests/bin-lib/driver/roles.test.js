@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES, EFFORT_SCALE } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
 const ALLOW_EDIT_ONLY = ['Read', 'Edit', 'Write'];
@@ -154,6 +155,28 @@ test('Minor: composeArgs refuses a missing settings file or schema', () => {
   assert.throws(() => composeArgs({ role: 'reviewer', schema: [] }), /schema/);
 });
 
+test('#5942 composeArgs: effort appends --effort {level} after --model', () => {
+  for (const lvl of EFFORT_SCALE) {
+    const args = composeArgs({ role: 'reviewer', schema: REVIEW_RESULT_SCHEMA, model: 'sonnet', effort: lvl, platform: 'darwin' });
+    assert.deepStrictEqual(args.slice(-4), ['--model', 'sonnet', '--effort', lvl]);
+    assert.strictEqual(args.filter((a) => a === '--effort').length, 1);
+  }
+});
+
+test('#5942 AC1.1 (argv): no effort, or effort null, composes no --effort', () => {
+  for (const role of Object.keys(ROLES)) {
+    const common = { role, settingsFile: '/s/x.json', schema: RESULT_SCHEMA, model: 'sonnet', platform: 'darwin' };
+    assert.ok(!composeArgs(common).includes('--effort'), role + ' omitted');
+    assert.ok(!composeArgs({ ...common, effort: null }).includes('--effort'), role + ' null');
+  }
+});
+
+test('#5942 AC5.1: composeArgs refuses an unknown effort', () => {
+  for (const bad of ['extreme', 'HIGH', '', 1]) {
+    assert.throws(() => composeArgs({ role: 'reviewer', schema: REVIEW_RESULT_SCHEMA, model: 'sonnet', effort: bad, platform: 'darwin' }), RangeError, String(bad));
+  }
+});
+
 test('Minor: a given spendCeiling must be a finite number above zero', () => {
   for (const bad of [0, -1, NaN, Infinity, '2']) {
     assert.throws(() => composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, spendCeiling: bad }), RangeError, String(bad));
@@ -164,6 +187,13 @@ test('Minor: assertSpendCeiling is the one rule: undefined and positive finite n
   assert.doesNotThrow(() => assertSpendCeiling(undefined));
   assert.doesNotThrow(() => assertSpendCeiling(0.0001));
   for (const bad of [0, -1, NaN, Infinity, '2', null]) assert.throws(() => assertSpendCeiling(bad), RangeError, String(bad));
+});
+
+test('#5942: assertEffort accepts undefined, null and every EFFORT_SCALE level; anything else throws RangeError', () => {
+  assert.doesNotThrow(() => assertEffort(undefined));
+  assert.doesNotThrow(() => assertEffort(null));
+  for (const lvl of EFFORT_SCALE) assert.doesNotThrow(() => assertEffort(lvl), lvl);
+  for (const bad of ['extreme', 'HIGH', '', 1]) assert.throws(() => assertEffort(bad), RangeError, String(bad));
 });
 
 test('Minor: the exported tables are frozen, and the builders return fresh objects', () => {
@@ -178,7 +208,7 @@ test('Minor: the exported tables are frozen, and the builders return fresh objec
 });
 
 test('Review focus: a testCommand that would corrupt the rule is refused', () => {
-  for (const bad of ['node --test)', 'node\n--test', '', 'a*b', undefined]) {
+  for (const bad of ['node --test)', 'node\n--test', '', 'a*b']) {
     assert.throws(() => implementerSettings({ testCommand: bad, platform: 'darwin' }), /testCommand/);
   }
 });
@@ -384,9 +414,10 @@ test('toolchainRoot returns null when lookup throws', () => {
   assert.strictEqual(toolchainRoot('node', fakeDeps({ lookupThrows: true })), null);
 });
 
-test('toolchainReadPaths refuses a bad testCommand before any seam runs', () => {
+test('toolchainReadPaths: an absent testCommand derives no read path, and a bad one is refused before any seam runs', () => {
   const d = fakeDeps({ lookup: { node: '/x/bin/node' } });
-  assert.throws(() => toolchainReadPaths(undefined, d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
+  assert.deepStrictEqual(toolchainReadPaths(undefined, d), []);
+  assert.throws(() => toolchainReadPaths(null, d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
   assert.throws(() => toolchainReadPaths('node -e', d), (e) => e instanceof TypeError && /testCommand/.test(e.message));
   assert.deepStrictEqual(d.calls, []);
 });
@@ -566,4 +597,45 @@ test('reopensHome is true for the root, a home, an ancestor of a home or of its 
   // One home as a string, and a realpath that throws, still guard the home as given.
   assert.strictEqual(reopensHome('/h', { home: '/h', realpath: () => { throw new Error('no'); } }), true);
   assert.strictEqual(reopensHome('/opt', { home: [] }), false);
+});
+
+test('implementerSettings: an absent testCommand adds no test rule and keeps the git rules', () => {
+  const absent = implementerSettings({ platform: 'darwin' });
+  const given = implementerSettings({ testCommand: 'node --test', platform: 'darwin' });
+  assert.deepStrictEqual(absent.permissions.allow, ['Read', 'Edit', 'Write', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)']);
+  assert.deepStrictEqual(absent.permissions.deny, given.permissions.deny);
+  assert.deepStrictEqual(absent.sandbox, given.sandbox);
+});
+
+test('implementerSettings: null, \'\' and a non-string testCommand are still refused', () => {
+  for (const bad of [null, '', 5, {}, ['node']]) {
+    assert.throws(() => implementerSettings({ testCommand: bad, platform: 'darwin' }), /testCommand/, JSON.stringify(bad));
+  }
+});
+
+test('implementerSettings: the targeted runner form composes its rule', () => {
+  const allow = implementerSettings({ testCommand: 'node tools/run-tests.js --files-from', platform: 'darwin' }).permissions.allow;
+  assert.ok(allow.includes('Bash(node tools/run-tests.js --files-from *)'));
+  assert.ok(!allow.some((r) => r.startsWith('Bash(npm')));
+});
+
+// One assertion function, shared by the pin and its go-red control.
+function assertEveryRoleHasProfile(roles, profiles) {
+  assert.deepStrictEqual(Object.keys(profiles).sort(), Object.keys(roles).sort());
+  for (const [role, profile] of Object.entries(profiles)) assert.ok(Object.hasOwn(PROFILES, profile), `${role}: ${profile}`);
+}
+test('AC6.1: every ROLES entry has a default profile', () => {
+  assertEveryRoleHasProfile(ROLES, DRIVER_ROLE_PROFILES);
+  assert.deepStrictEqual({ ...DRIVER_ROLE_PROFILES }, { implementer: 'standard', reviewer: 'capable', explorer: 'standard', 'merge-check': 'standard', acceptance: 'standard' });
+  assert.ok(Object.isFrozen(DRIVER_ROLE_PROFILES));
+});
+test('AC6.1 (go-red control): a role added to ROLES without a default fails the check', () => {
+  assert.throws(() => assertEveryRoleHasProfile({ ...ROLES, scout: { tools: ['Read'], settings: false } }, DRIVER_ROLE_PROFILES));
+  assert.throws(() => assertEveryRoleHasProfile(ROLES, { ...DRIVER_ROLE_PROFILES, reviewer: 'turbo' }));
+});
+test('POLICY_DRIVER_ROLES: exactly the four spec roles, each in ROLES', () => {
+  assert.deepStrictEqual([...POLICY_DRIVER_ROLES], ['implementer', 'reviewer', 'merge-check', 'acceptance']);
+  for (const r of POLICY_DRIVER_ROLES) assert.ok(Object.hasOwn(ROLES, r), r);
+  assert.ok(!POLICY_DRIVER_ROLES.includes('explorer'));
+  assert.ok(Object.isFrozen(POLICY_DRIVER_ROLES));
 });

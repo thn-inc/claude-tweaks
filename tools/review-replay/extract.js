@@ -15,7 +15,7 @@ const {
 
 const POSITIVE_INT = /^[1-9]\d*$/;
 const ARM_NAME = /^[A-Za-z0-9._-]+$/;
-const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'repeat']);
+const ARM_KEYS_ACCEPTED = new Set(['name', 'chunk', 'profile', 'effort', 'repeat']);
 const HEAD_REASONS = ['no-fix-commit', 'fix-commit-not-in-clone'];
 const EXIT_SHORTFALL = 3;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info', 'unknown'];
@@ -25,7 +25,8 @@ function positiveInt(flag, value) {
   return { value: Number(value) };
 }
 
-function parseArm(text, profiles) {
+// efforts: the model-profiles EFFORT_SCALE, the one list of effort levels the plugin accepts.
+function parseArm(text, profiles, efforts) {
   const arm = { chunk: 1, repeat: 1 };
   for (const part of String(text).split(',')) {
     const eq = part.indexOf('=');
@@ -34,6 +35,9 @@ function parseArm(text, profiles) {
     if (!ARM_KEYS_ACCEPTED.has(key)) return { error: `--arm: unknown key "${key}" in "${text}"` };
     if (key === 'name' || key === 'profile') {
       arm[key] = value;
+    } else if (key === 'effort') {
+      if (!efforts.includes(value)) return { error: `--arm: effort must be one of ${efforts.join('|')}: "${value}" in "${text}"` };
+      arm.effort = value;
     } else {
       const n = positiveInt(`--arm ${key}`, value);
       if (n.error) return n;
@@ -62,12 +66,12 @@ function parseQuota(text) {
 }
 
 // The options parseArgs collected -> the validated extract request, or { error } for a malformed invocation.
-function parseExtractOptions(opts, profiles) {
+function parseExtractOptions(opts, profiles, efforts) {
   if (!opts.out) return { error: 'extract requires --out' };
   if (!opts.arms || opts.arms.length === 0) return { error: 'extract requires at least one --arm' };
   const arms = [];
   for (const text of opts.arms) {
-    const parsed = parseArm(text, profiles);
+    const parsed = parseArm(text, profiles, efforts);
     if (parsed.error) return parsed;
     if (arms.some((a) => a.name === parsed.arm.name)) return { error: `--arm: duplicate arm name "${parsed.arm.name}"` };
     arms.push(parsed.arm);
@@ -154,8 +158,8 @@ function writeJson(fs, file, value) {
 
 function extract(opts, deps) {
   const fs = deps.fs;
-  const { PROFILES } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'model-profiles', 'profiles.js'));
-  const request = parseExtractOptions(opts, PROFILES);
+  const { PROFILES, EFFORT_SCALE } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'model-profiles', 'profiles.js'));
+  const request = parseExtractOptions(opts, PROFILES, EFFORT_SCALE);
   if (request.error) {
     deps.err(`review-replay.js: ${request.error}`);
     return 2;
@@ -227,7 +231,7 @@ function writeOutputs(c, deps) {
   const verdicts = {};
   const fixtureRuns = [];
   const manifestArms = arms.map((a) => ({
-    name: a.name, chunk: a.chunk, profile: a.profile, model: PROFILES[a.profile].model, effort: PROFILES[a.profile].effort, repeat: a.repeat, prompts: [],
+    name: a.name, chunk: a.chunk, profile: a.profile, model: PROFILES[a.profile].model, effort: a.effort !== undefined ? a.effort : PROFILES[a.profile].effort, repeat: a.repeat, prompts: [],
   }));
 
   for (const p of picked) {

@@ -303,11 +303,12 @@ async function judge(env, ctx, route, extra, endToEnd = false, preRead = null) {
     role: 'acceptance', dir: 'acceptance-worker', label: 'acceptance worker', prompt, schema: ACCEPTANCE_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
-  if (isInterrupted(env.deps)) return { stop: 'interrupted' };
-  const { envelope } = launched;
-  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result' };
+  // Every return from here on follows a launch that returned, so each carries its model (#5917) and effort (#5942).
+  const { envelope, model, effort } = launched;
+  if (isInterrupted(env.deps)) return { stop: 'interrupted', model, effort };
+  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model, effort };
   const invalid = validateResult(route, envelope.result, endToEnd);
-  return invalid || { result: envelope.result, body: inputs.body };
+  return invalid ? { ...invalid, model, effort } : { result: envelope.result, body: inputs.body, model, effort };
 }
 
 // The verdict's parent: { read } with its title, body and comments, or { stop }.
@@ -390,10 +391,19 @@ function ensureLabels(env, ctx, names) {
   return null;
 }
 
+// Records the launch's model and effort on the lane's state once a judge call resolved a model (#5917, #5942).
+function noteLaunch(state, judged) {
+  if (judged.model) {
+    state.model = judged.model;
+    state.effort = judged.effort ?? null;
+  }
+}
+
 // try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
 async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   if (verdict.state !== 'due') {
     const judged = await judge(env, ctx, decision.route, {});
+    noteLaunch(state, judged);
     if (judged.stop) return judged;
     const screened = screenWorkerText(judged.result, decision.route, null);
     if (screened) return screened;
@@ -402,6 +412,7 @@ async function tryItOnly(env, ctx, state, decision, verdict, tmp) {
   const parent = readParent(env, ctx, verdict);
   if (parent.stop) return parent;
   const judged = await judge(env, ctx, decision.route, parentInputs(parent.read, verdict), true);
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -414,6 +425,7 @@ async function dueExceeds(env, ctx, state, decision, verdict, tmp) {
   if (found.stop) return found;
   const { parent, read } = found;
   const judged = await judge(env, ctx, decision.route, parentInputs(read, verdict), true);
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const screened = screenWorkerText(judged.result, decision.route, judged.result.parentBrief.tryItEndToEnd);
   if (screened) return screened;
@@ -454,7 +466,7 @@ function testGuideClaims(groups) {
   })));
 }
 
-async function noParent(env, ctx, decision, tmp) {
+async function noParent(env, ctx, state, decision, tmp) {
   const files = Object.fromEntries(['facts.json', 'links.json', 'narrative.json', 'plan.md', 'packet.md', 'spec.md'].map((f) => [f.split('.')[0], path.join(tmp, f)]));
   // The record body is the spec on this lane (verification-brief.md's `--spec`): without it the packet's
   // acceptance criteria are not derived. It is read once, before the first gather, so the worker's facts
@@ -478,6 +490,7 @@ async function noParent(env, ctx, decision, tmp) {
     return { stop: 'gather output unreadable' };
   }
   const judged = await judge(env, ctx, decision.route, { facts }, false, inputs);
+  noteLaunch(state, judged);
   if (judged.stop) return judged;
   const { tryIt, observationPlan, claims } = judged.result;
   const links = tryIt.map((g, n) => ({ id: `entry-point-${n + 1}`, label: g.name, command: g.entryPoint }));
@@ -542,7 +555,7 @@ async function execute(env, ctx, state) {
   let out;
   if (decision.route === 'try-it-only') out = await tryItOnly(env, ctx, state, decision, gate.verdict, tmp);
   else if (decision.route === 'due-exceeds') out = await dueExceeds(env, ctx, state, decision, gate.verdict, tmp);
-  else out = await noParent(env, ctx, decision, tmp);
+  else out = await noParent(env, ctx, state, decision, tmp);
   return out.stop ? { stop: `${out.stop}${note}` } : { detail: `route ${decision.route} complete${note}` };
 }
 
@@ -563,7 +576,7 @@ async function runAcceptance(env, ctx) {
   // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
   const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';
   const raw = `${completed ? out.detail : out.stop}${skipped}`;
-  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route });
+  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model, effort: state.effort ?? null } : {}) });
   return { completed, route: state.route, detail: cleanDetail(raw) };
 }
 

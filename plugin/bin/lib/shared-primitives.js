@@ -135,8 +135,8 @@ let resolvedGitPushTimeoutMs;
 // not silently hang every `gh` call for minutes.
 // `boundsOf()` returns the {min, max} to clamp against, or nothing; it runs only once a
 // positive integer is set, so an unset variable never loads policy-schema.
-function timeoutFromEnv(envVar, boundsOf) {
-  const raw = process.env[envVar];
+function timeoutFromEnv(envVar, boundsOf, env = process.env) {
+  const raw = env[envVar];
   if (raw === undefined || raw === '') return undefined;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
@@ -158,8 +158,8 @@ function policyKeyBounds(key) {
   }
 }
 
-function ghTimeoutFromEnv() {
-  return timeoutFromEnv(GH_TIMEOUT_ENV_VAR, () => policyKeyBounds('gh-timeout-ms'));
+function ghTimeoutFromEnv(env) {
+  return timeoutFromEnv(GH_TIMEOUT_ENV_VAR, () => policyKeyBounds('gh-timeout-ms'), env);
 }
 
 // Policy read is required lazily, inside the function body — never hoisted
@@ -169,20 +169,43 @@ function ghTimeoutFromEnv() {
 // the header), and a top-level require here would pull policy.js's own
 // require graph into every consumer whether or not it ever reads
 // GH_TIMEOUT_MS.
-function ghTimeoutFromPolicy() {
+function ghTimeoutFromPolicy(repoRoot) {
   try {
     // eslint-disable-next-line global-require
     const { readGhTimeoutMs } = require('./policy');
-    return readGhTimeoutMs(process.cwd());
+    return typeof repoRoot === 'string' && repoRoot !== '' ? readGhTimeoutMs(repoRoot) : undefined;
   } catch {
-    // No repo root resolvable at cwd, a malformed policy.yml, or any other
-    // read failure — fall through to the hard-coded default below.
+    // policy.js failed to load, or readGhTimeoutMs threw (a malformed
+    // policy.yml, any other read failure) — fall through to the default.
     return undefined;
   }
 }
 
+// #4856: the one ladder every gh call's timeout routes through — env var (within
+// gh-timeout-ms's bounds) > `gh-timeout-ms` in the root's policy.yml > 5000.
+// The policy rung reads through policy.js's readGhTimeoutMs, which finds the file
+// via policy-file.js's locatePolicyFile (#4492): a linked worktree with no
+// policy.yml of its own reads the main checkout's — and so does the GH_TIMEOUT_MS
+// getter, which resolves at process.cwd().
+// Root- and env-parameterised and deliberately NOT memoized: the GH_TIMEOUT_MS
+// getter below memoizes its own result, and a caller holding a different root
+// (or a test's env) must get that root's answer. A non-object (or array)
+// `opts.env` reads process.env; a non-string or empty `repoRoot` has no policy file.
+function ghTimeoutMsAt(repoRoot, opts) {
+  const env = opts && typeof opts.env === 'object' && opts.env !== null && !Array.isArray(opts.env) ? opts.env : process.env;
+  return ghTimeoutFromEnv(env) ?? ghTimeoutFromPolicy(repoRoot) ?? DEFAULT_GH_TIMEOUT_MS;
+}
+
 function resolveGhTimeoutMs() {
-  return ghTimeoutFromEnv() ?? ghTimeoutFromPolicy() ?? DEFAULT_GH_TIMEOUT_MS;
+  // process.cwd() throws when the cwd was deleted (a reaped worktree): the
+  // policy rung then yields nothing, so env or the default still resolves.
+  let root;
+  try {
+    root = process.cwd();
+  } catch {
+    root = undefined;
+  }
+  return ghTimeoutMsAt(root);
 }
 
 function getGhTimeoutMs() {
@@ -224,6 +247,17 @@ function getGitPushTimeoutMs() {
     resolvedGitPushTimeoutMs = timeoutFromEnv(GIT_PUSH_TIMEOUT_ENV_VAR, () => GIT_PUSH_TIMEOUT_BOUNDS) ?? DEFAULT_GIT_PUSH_TIMEOUT_MS;
   }
   return resolvedGitPushTimeoutMs;
+}
+
+// #5050: the one command-to-bound map the default exec seams share. `gh` takes the batched
+// bound, `git` the git bound, everything else (a `node` child) a fixed 30 s. The getters
+// are read here, per call — they memoize once per process, so never destructure them.
+const DEFAULT_EXEC_TIMEOUT_MS = 30000;
+
+function execTimeoutMsFor(cmd) {
+  if (cmd === 'gh') return module.exports.GH_BATCH_TIMEOUT_MS;
+  if (cmd === 'git') return module.exports.GIT_TIMEOUT_MS;
+  return DEFAULT_EXEC_TIMEOUT_MS;
 }
 
 function escapeRegExp(s) {
@@ -293,7 +327,7 @@ async function runClassifiedAsync(fn, mapError, { retryOnTimeout = false } = {})
 
 module.exports = {
   LARGE_MAX_BUFFER_BYTES, escapeRegExp, isPathContained, isTimeoutError, runClassified, runClassifiedAsync, toPosix,
-  relativeDisplayId,
+  relativeDisplayId, ghTimeoutMsAt, execTimeoutMsFor,
 };
 Object.defineProperty(module.exports, 'GH_TIMEOUT_MS', { enumerable: true, get: getGhTimeoutMs });
 Object.defineProperty(module.exports, 'GH_BATCH_TIMEOUT_MS', {

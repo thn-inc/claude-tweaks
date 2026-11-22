@@ -8,6 +8,8 @@ const cp = require('child_process');
 // compound-failure test's `t.mock.method(cp, 'execFileSync', ...)` below.
 const { execFileSync } = cp;
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-archive-merged-');
 const os = require('os');
 const path = require('path');
 const {
@@ -33,6 +35,8 @@ const {
   fixtureActiveUnstampedMergedRun, fixtureOrdinaryMergedNoConsole, cloneOfSeededOrigin, ref,
   fixtureAbandonedBehindOrigin, RUN_3976, headerMergedRepo3976, addOriginRemote,
 } = require('./archive-merged-helpers');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+const { pinnedGit, pinnedGitEnv } = require('../../helpers/pinned-git');
 
 // `git config core.quotepath true` as a plain config append, so it starts no git process.
 const setQuotepath = (root) => fs.appendFileSync(path.join(root, '.git', 'config'), '[core]\n\tquotepath = true\n');
@@ -1094,7 +1098,7 @@ test('archiveRunDir: a write landing after the readdir snapshot but before the f
 });
 
 test('listSpecDirs: only spec-* subdirectories, ignores files and non-matching dirs; empty for unreadable dir', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-spec-dirs-'));
+  const dir = scratchDir('list-spec-dirs-');
   fs.mkdirSync(path.join(dir, 'spec-1'));
   fs.mkdirSync(path.join(dir, 'spec-2'));
   fs.mkdirSync(path.join(dir, 'staged'));
@@ -1104,7 +1108,7 @@ test('listSpecDirs: only spec-* subdirectories, ignores files and non-matching d
 });
 
 test('listStagedItems: names top-level and spec-N staged items, skips dotfiles, reports an unreadable dir', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'list-staged-items-'));
+  const dir = scratchDir('list-staged-items-');
   fs.mkdirSync(path.join(dir, 'staged'));
   fs.writeFileSync(path.join(dir, 'staged', 'reflect-1.md'), 'x');
   fs.writeFileSync(path.join(dir, 'staged', '.DS_Store'), 'x');
@@ -1121,7 +1125,7 @@ test('listStagedItems: names top-level and spec-N staged items, skips dotfiles, 
 });
 
 test('consoleReplacedByAutoMerge: true only for the short-circuit\'s canonical issue line, never a resolved console', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-'));
+  const dir = scratchDir('auto-merge-sc-');
   const FAST = '- AUTO 19:26:04 — log-decision: Fast-lane auto-merge: issue #3130, assess-agent-autonomy verdict auto-merge, pr-first-merge outcome merged.\n';
   fs.writeFileSync(path.join(dir, 'decisions.md'), FAST);
   assert.strictEqual(consoleReplacedByAutoMerge(dir), true);
@@ -1139,11 +1143,11 @@ test('consoleReplacedByAutoMerge: true only for the short-circuit\'s canonical i
   fs.writeFileSync(path.join(dir, 'decisions.md'),
     `${FAST}- AUTO 10:05:00 — Review Console: terminal decision approve-all-merge. Reversibility: n/a.\n`);
   assert.strictEqual(consoleReplacedByAutoMerge(dir), false);
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-none-'));
+  const bare = scratchDir('auto-merge-sc-none-');
   assert.strictEqual(consoleReplacedByAutoMerge(bare), false);
   // An unprovable log (a non-ENOENT read failure — here decisions.md is a directory)
   // fails toward NOT archiving, unlike a missing one.
-  const unreadable = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-eisdir-'));
+  const unreadable = scratchDir('auto-merge-sc-eisdir-');
   fs.mkdirSync(path.join(unreadable, 'decisions.md'));
   assert.strictEqual(consoleReplacedByAutoMerge(unreadable), true);
 });
@@ -1161,7 +1165,7 @@ function shortCircuitLogTemplates(text) {
     .filter((t) => t.includes('assess-agent-autonomy'));
 }
 function detectsTemplate(template) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-twin-'));
+  const dir = scratchDir('auto-merge-sc-twin-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), `- AUTO 10:00:00 — ${template.replace('{n}', '3668')}\n`);
   return consoleReplacedByAutoMerge(dir);
 }
@@ -1182,7 +1186,7 @@ test('consoleReplacedByAutoMerge: detects every log-line template the producer s
 // console either, so its per-member verdict line and local-merge group line are producers
 // too. The needs-human fall-back line is not: a Review Console renders after it.
 test('consoleReplacedByAutoMerge: true for the dispatch bundle gate lines, never the needs-human fall-back', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-bundle-'));
+  const dir = scratchDir('auto-merge-sc-bundle-');
   const GATE = '- AUTO 10:00:00 — Auto-merge gate: #3740 assess-agent-autonomy verdict auto-merge. Reversibility: n/a.\n';
   const GROUP = '- AUTO 10:10:00 — Auto-merge: group [3740, 3741], assess-agent-autonomy verdict auto-merge for every member (see each member\'s RATIONALE). Merge commit: abc1234. Reversibility: high (git revert). [lever: auto-merge-max-lines=400 (default); auto-merge-max-files=10 (default); merge-sensitive-paths=x (default)]\n';
   const NEEDS_HUMAN = '- AUTO 10:00:00 — Auto-merge gate: #3740 assess-agent-autonomy verdict needs-human — group falls back to the Review Console. Reversibility: n/a.\n';
@@ -1217,7 +1221,7 @@ function fillDispatchTemplate(template) {
     .replace(/\{[a-z]+\}/g, 'x');
 }
 function detectsDispatchTemplate(template) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-merge-sc-bundle-twin-'));
+  const dir = scratchDir('auto-merge-sc-bundle-twin-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), `- AUTO 10:00:00 — ${fillDispatchTemplate(template)}\n`);
   return consoleReplacedByAutoMerge(dir);
 }
@@ -1250,7 +1254,7 @@ test('archive-merged module still exports readConsoleState', () => {
 // #1446/#1447 — archiveOrphanedMint's catch site must bind and thread the
 // underlying error as lastError, same as archiveRunDir's move-failed sites.
 test('archiveOrphanedMint: a forced fs.renameSync throw is captured as a non-empty lastError', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-orphan-mint-'));
+  const root = scratchDir('archive-orphan-mint-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-orphan');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{}');
@@ -1271,7 +1275,7 @@ test('archiveOrphanedMint: a forced fs.renameSync throw is captured as a non-emp
 // individually, which merges cleanly into a destination that already holds
 // unrelated entries from a prior partial attempt.
 test('archiveOrphanedMint: archives cleanly onto an archive twin that already exists non-empty', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-orphan-mint-preexist-'));
+  const root = scratchDir('archive-orphan-mint-preexist-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-orphan');
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{}');
@@ -1467,7 +1471,7 @@ test('archiveMerged: a git-error from the ls-files probe on an orphaned mint ass
 // #644 Deliverable 2 — trackArchiveResult is archiveMerged's one choke
 // point for the move-failed consecutive-failure counter and escalation.
 test('trackArchiveResult: escalates exactly once at the threshold via an injected escalate, never on later still-failing calls', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-'));
+  const root = scratchDir('archive-merged-track-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-stuck');
@@ -1489,7 +1493,7 @@ test('trackArchiveResult: escalates exactly once at the threshold via an injecte
 // call and the residue cache entry, mirroring reap-merged.js's
 // trackReapResidue exactly.
 test('trackArchiveResult: forwards result.lastError into escalate and the residue cache entry', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-lasterr-'));
+  const root = scratchDir('archive-merged-track-lasterr-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-lasterr');
@@ -1510,7 +1514,7 @@ test('trackArchiveResult: forwards result.lastError into escalate and the residu
 });
 
 test('trackArchiveResult: only tracks move-failed — a different failure reason never enters the counter', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track2-'));
+  const root = scratchDir('archive-merged-track2-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-other');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'commit-failed' });
   assert.deepEqual(listResidueFailures(root), []);
@@ -1520,7 +1524,7 @@ test('trackArchiveResult: only tracks move-failed — a different failure reason
 // escalate to residue tracking the same way move-failed does, instead of
 // being silently dropped by the reason guard every pass.
 test('trackArchiveResult: work-twin-conflict escalates via the same residue streak as move-failed', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-'));
+  const root = scratchDir('archive-merged-track-twin-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin');
@@ -1538,7 +1542,7 @@ test('trackArchiveResult: work-twin-conflict escalates via the same residue stre
 // `work-twin-conflict` — it must escalate under its own distinct reason key,
 // not be folded into `work-twin-conflict`'s or `move-failed`'s streak.
 test('trackArchiveResult: work-twin-resolve-failed-partial-revert tracks under its own distinct reason key', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track-twin-partial-'));
+  const root = scratchDir('archive-merged-track-twin-partial-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-twin-partial');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'work-twin-resolve-failed-partial-revert' });
   const entries = listResidueFailures(root);
@@ -1582,7 +1586,7 @@ test('resolveIdenticalWorkTwin: a git rm/mv failure populates hint from lastErro
 });
 
 test('trackArchiveResult: a success clears a prior failure streak for the same dir', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-track3-'));
+  const root = scratchDir('archive-merged-track3-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-recovered');
   trackArchiveResult(root, 'o/r', dir, { ok: false, reason: 'move-failed' });
   assert.equal(listResidueFailures(root).length, 1);
@@ -1593,7 +1597,7 @@ test('trackArchiveResult: a success clears a prior failure streak for the same d
 // #4202: a dir reconcile itself archives must come off the consolidated
 // stuck-paths record, not just drop its cache entry.
 function archivedStuckDirFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4202-'));
+  const root = scratchDir('archive-merged-4202-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-1');
   const live = path.join(root, 'live');
   fs.mkdirSync(live);
@@ -1660,7 +1664,7 @@ test('#4202 AC2.1: trackArchiveResult: a failed resolve keeps the structurally-s
 });
 
 test('#4202 trackArchiveResult: an unescalated structurally-stuck entry is cleared with no gh call', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4202-unescalated-'));
+  const root = scratchDir('archive-merged-4202-unescalated-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-2');
   recordResidueFailure(root, 'structurally-stuck', dir, { lastError: 'stuck at no-pr' });
   const runner = () => { throw new Error('gh must not be called'); };
@@ -1677,7 +1681,7 @@ test('isStaleDir: true once mtime is past the TTL', () => {
 });
 
 test('isStaleDir: false exactly at the TTL boundary (strict >, not >=)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-stale-'));
+  const dir = scratchDir('archive-merged-stale-');
   const backdated = new Date(Date.now() - ORPHAN_MINT_TTL_MS);
   fs.utimesSync(dir, backdated, backdated);
   // Read the mtime back rather than trusting the `backdated` value written
@@ -1727,7 +1731,7 @@ test('isStructurallyStuck: true for no-worktree/no-branch/no-pr once the TTL has
 });
 
 test('trackStuckSkip: escalates exactly once at the threshold for a genuinely stuck dir, never for a fresh one', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-stuckskip-'));
+  const root = scratchDir('archive-merged-stuckskip-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
@@ -1744,7 +1748,7 @@ test('trackStuckSkip: escalates exactly once at the threshold for a genuinely st
 });
 
 test('trackStuckSkip: never escalates an ordinary in-flight dir, no matter how many passes', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-notstuck-'));
+  const root = scratchDir('archive-merged-notstuck-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const freshDir = mkDirWithMtime(60 * 60 * 1000);
@@ -1762,7 +1766,7 @@ test('trackStuckSkip: never escalates an ordinary in-flight dir, no matter how m
 // run-state.json is written FIRST, then the dir is backdated — writing a file
 // into the dir moves its mtime and would defeat the TTL.
 function mkAdHocRunDir({ ageMs, worktree, sessionId, basename = '2026-10-17T081451-adhoc-standalone' } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-'));
+  const root = scratchDir('archive-merged-adhoc-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', basename);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({
@@ -1794,7 +1798,7 @@ test('AC3.1 #4179: a dir stamped with the main checkout as its worktree no longe
 });
 
 test('AC3.1 #4179: a main-checkout stamp reached through a symlinked path no longer classifies structurally-stuck', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-adhoc-real-'));
+  const real = scratchDir('archive-merged-adhoc-real-');
   const alias = `${real}-alias`;
   fs.symlinkSync(real, alias, 'dir');
   const dir = path.join(alias, '.claude-tweaks', 'pipelines', '2026-10-17T081451-adhoc-standalone');
@@ -1959,7 +1963,7 @@ test('recordedWorktreeIsMainCheckout is false for a linked, missing or absent wo
 });
 
 test('recordedWorktreeIsMainCheckout matches through a symlinked dir path', { skip: process.platform === 'win32' && 'win32: creating a directory symlink needs elevated rights' }, () => {
-  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4421-real-'));
+  const real = scratchDir('archive-merged-4421-real-');
   const alias = `${real}-alias`;
   fs.symlinkSync(real, alias, 'dir');
   const dir = path.join(alias, '.claude-tweaks', 'pipelines', '2026-08-01T090000-record-4421');
@@ -1968,7 +1972,7 @@ test('recordedWorktreeIsMainCheckout matches through a symlinked dir path', { sk
 });
 
 test('#4180 trackStuckSkip: dryRun on a past-threshold stuck dir neither escalates nor writes, and returns would-escalate', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
   const escalated = [];
   const escalate = (a) => { escalated.push(a); };
@@ -1986,7 +1990,7 @@ test('#4180 trackStuckSkip: dryRun on a past-threshold stuck dir neither escalat
 });
 
 test('#4180 trackStuckSkip: dryRun on a dir that is not stuck returns undefined and writes nothing', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const freshDir = mkDirWithMtime(0);
   assert.equal(trackStuckSkip(root, 'o/r', freshDir, 'no-branch', { dryRun: true }), undefined);
   assert.equal(fs.existsSync(cachePath(root)), false);
@@ -2006,13 +2010,13 @@ test('#4180 trackStuckSkip: dryRun on an exempted ad-hoc dir with an escalated e
 });
 
 test('#4180 trackStuckSkip: a real run still returns undefined', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const stuckDir = mkDirWithMtime(STRUCTURALLY_STUCK_TTL_MS * 2);
   assert.equal(trackStuckSkip(root, 'o/r', stuckDir, 'no-branch', { escalate: () => {} }), undefined);
 });
 
 test('#4180 trackArchiveResult: dryRun on a move-failed result calls no escalate and writes nothing', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-x');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD - 1; i++) recordResidueFailure(root, 'move-failed', dir, { lastError: 'EBUSY' });
   const before = fs.readFileSync(cachePath(root));
@@ -2024,7 +2028,7 @@ test('#4180 trackArchiveResult: dryRun on a move-failed result calls no escalate
 });
 
 test('#4180 trackArchiveResult: dryRun on an ok result clears nothing and resolves nothing', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-y');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
     recordResidueFailure(root, 'move-failed', dir, { lastError: 'EBUSY' });
@@ -2038,7 +2042,7 @@ test('#4180 trackArchiveResult: dryRun on an ok result clears nothing and resolv
 // The real success path clears `structurally-stuck` (resolving an escalated record); a dry run
 // returns that clear as its plan instead of nothing.
 test('#4180 trackArchiveResult: dryRun on an ok result returns the structurally-stuck clear it would do', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-4180-'));
+  const root = scratchDir('archive-merged-4180-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', 'run-z');
   assert.deepEqual(
     trackArchiveResult(root, 'o/r', dir, { ok: true }, { dryRun: true }),
@@ -2328,7 +2332,7 @@ test('archiveMerged: a main-loop decideArchiveCore skip (no-pr) enters the struc
   // realpath step of its own, so an un-realpath'd stamp here would silently
   // fail to match and fall through to 'no-branch' instead of exercising the
   // 'no-pr' skip this test means to reach.
-  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-nopr-main-')));
+  const wt = fs.realpathSync(scratchDir('archive-merged-nopr-main-'));
   git(root, 'worktree', 'add', '-q', wt, '-b', branch);
 
   const runId = '2026-01-01T000000-nopr-main-1733';
@@ -2570,7 +2574,7 @@ test('archiveMerged: an abandoned interrupted run whose archive move fails is re
 // since its fixture tears down the worktree and falls through to the
 // pre-existing no-branch skip either way).
 test('classifyRunDir abandoned-interrupted: not abandoned when owner === sessionId, abandoned when they differ (same state, same run dir)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-ownereq-'));
+  const root = scratchDir('archive-merged-ownereq-');
   const runDir = path.join(root, 'run');
   fs.mkdirSync(runDir, { recursive: true });
   // Dated well outside STALE_INTERRUPTED_TTL_MS so the recency half of the
@@ -2603,7 +2607,7 @@ test('classifyRunDir abandoned-interrupted: not abandoned when owner === session
 // reads, delegating to the original implementation so the read still
 // succeeds.
 test('#1737: classifyRunDir abandoned-interrupted performs at most one read of events.jsonl per call', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-onereadperclock-'));
+  const root = scratchDir('archive-merged-onereadperclock-');
   const runDir = path.join(root, 'run');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(
@@ -2628,7 +2632,7 @@ test('#1737: classifyRunDir abandoned-interrupted performs at most one read of e
 // toward stale — see ownEventRecency's header comment for why this must
 // not rely on checkRunIntegrity's own separate read of the same file.
 test('classifyRunDir abandoned-interrupted: an unreadable/absent events.jsonl is UNKNOWN evidence — never treated as abandoned', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-unknownlog-'));
+  const root = scratchDir('archive-merged-unknownlog-');
   const runDir = path.join(root, 'run-no-log');
   fs.mkdirSync(runDir, { recursive: true }); // events.jsonl deliberately never written
   const state = { status: 'interrupted' }; // no owner recorded either
@@ -2835,7 +2839,7 @@ test('archiveMerged threads runVerdict into the classifier', () => {
 });
 
 test('ownEventRecency: excludes fallback-attributed lines, returns the newest non-fallback timestamp', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-lastown-'));
+  const root = scratchDir('archive-merged-lastown-');
   const runDir = path.join(root, 'run');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'events.jsonl'), [
@@ -2846,7 +2850,7 @@ test('ownEventRecency: excludes fallback-attributed lines, returns the newest no
 });
 
 test('ownEventRecency: lastOwnMs is null when events.jsonl is absent', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-merged-lastown2-'));
+  const root = scratchDir('archive-merged-lastown2-');
   assert.equal(ownEventRecency(path.join(root, 'no-such-run')).lastOwnMs, null);
 });
 
@@ -4096,4 +4100,60 @@ test('AC4.2 fallback: a local-merge run merged without the move is still archive
   assert.equal(git(root, 'log', '-1', '--format=%s').trim().startsWith('[reconcile] archive run'), true);
   assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', '--name-only', 'main', `${ARCH_3976}/work/`)), [`${ARCH_3976}/work/7-spec.md`]);
   assert.deepEqual(lines3976(git(root, 'ls-tree', '-r', 'main', '--', `${LIVE_3976}/`)), []);
+});
+
+// #5846: the archive-merged fixtures are templates (#5772) — a warm-up call may build, a further call starts
+// no git process, and the mergedFeatureBranchRepo copies hold their branch. They live here because this
+// file's own tests already build every one of these templates. This file's `git` takes (cwd, ...args), so
+// the shared pinned-config runner is bound under its own name.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
+const originDirOf = (root) => readText(path.join(root, '.git', 'config')).match(/^\s*url = (.+)$/m)[1].trim();
+for (const [name, make, dirsOf] of [
+  ['makeRepo()', () => makeRepo(), (d) => [d]],
+  ['mergedFeatureBranchRepo(feat-x)', () => mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
+  ['fixtureCleanUnarchivedRun({ origin: true })', () => fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
+  ['fixtureAbandonedShippedRun', () => fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
+  ['cloneOfSeededOrigin()', () => cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', (t) => {
+  cleanupAfter(t, [mergedFeatureBranchRepo('feat-x').root]);
+  const { root, featureSha } = mergedFeatureBranchRepo('feat-x');
+  cleanupAfter(t, [root]);
+  const r = cp.spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: pinnedGitEnv() });
+  assert.strictEqual(r.status, 0, String(r.stderr));
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'feat-x']), featureSha);
+});
+
+for (const [name, make, dirsOf] of [
+  ['fixtureAbandonedBehindOrigin()', () => fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
+  ['fixtureAbandonedBehindOrigin({ squash: true })', () => fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
+  ['headerMergedRepo3976({ moved: true, merge: squash })', () => headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
+  ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
+]) {
+  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('AC3.1: archive-merged mergedFeatureBranchRepo(): a call with a new branch name starts no git process', (t) => {
+  warmCallStartsNoGit(() => mergedFeatureBranchRepo('feat-warm-5772'), {
+    traced: () => mergedFeatureBranchRepo('feat-fresh-5772'),
+    track: (r) => cleanupAfter(t, [r.root]),
+  });
+});
+
+test('mergedFeatureBranchRepo copy under a new branch name: the ref and its reflog carry that name only', (t) => {
+  const { root, featureSha } = mergedFeatureBranchRepo('feat/renamed-5772');
+  cleanupAfter(t, [root]);
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'feat/renamed-5772']), featureSha);
+  assert.strictEqual(pinnedGit(root, ['rev-parse', 'main']), featureSha);
+  assert.strictEqual(pinnedGit(root, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/feat/renamed-5772\nrefs/heads/main');
+  assert.notStrictEqual(pinnedGit(root, ['reflog', 'show', 'feat/renamed-5772']), '');
+  assert.match(pinnedGit(root, ['reflog', 'show', 'main']), /merge feat\/renamed-5772: Fast-forward/);
 });

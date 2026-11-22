@@ -236,7 +236,7 @@ function run(argv, deps = {}) {
     issues,
     continuation: stepToken !== null,
     resume: resume !== null,
-    profile: { name: profileName, model: profile.model, effort: profile.effort, source: profile.source },
+    profile: { name: profileName, model: profile.model, effort: profile.effort, source: profile.source, launchEffort: profile.launchEffort ?? null },
     selectedAt,
     sha256,
   })}\n`;

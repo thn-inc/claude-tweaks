@@ -35,6 +35,7 @@ const {
   ArtifactOverwriteCheckError,
 } = require(MOD);
 const { manifestInit, transitionSpec, readManifest } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'manifest.js'));
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
@@ -53,9 +54,7 @@ function repo() {
   const git = (...a) => execFileSync('git', a, {
     cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
   });
-  git('init', '-q');
-  git('config', 'user.email', 't@example.invalid');
-  git('config', 'user.name', 'Test');
+  initRepo(dir, { name: 'Test', email: 't@example.invalid', cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
   git('commit', '-q', '--allow-empty', '-m', 'base');
   const base = git('rev-parse', 'HEAD').trim();
   return { dir, git, base };

@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
@@ -14,7 +15,7 @@ const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-')); }
+function tmp() { return scratchDir('codehealth-ns-'); }
 // In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
 function runNextSlice(args, root) {
   const res = sweepCli(CLI, ['next-slice', '--root', root, ...args]);
@@ -30,9 +31,9 @@ function runNextSlice(args, root) {
 // `origin` remote at it. Only the WRITE path (gh api blob/tree/commit/ref
 // calls) requires live GitHub credentials — this helper never touches it.
 function seedDurableCursors(root, cursors) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-bare-'));
+  const bareDir = scratchDir('codehealth-ns-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-seed-'));
+  const seedDir = scratchDir('codehealth-ns-seed-');
   execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });

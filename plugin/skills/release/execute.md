@@ -381,7 +381,7 @@ records: 0 shipped
 
 When the shipped version differed from the gating version, the `release:` line names both — `release: {shipped} — {outcome} (gating version was {gating})` — so a reader never has to reconcile the console's number against the tag by hand.
 
-`HELD` is only ever a **pre-merge** word here — the `gh`-absent Transport stop, delta 5's re-rendered-major re-gate and the reviewed-tip comparison's two stops (`integration branch kept moving`, a blocking delta review), all of which move nothing — alongside the Step 4 HARD-GATEs that fire before this file runs at all. In any mode, `--train` and interactive alike, it asserts that nothing was merged or tagged, so applying it to anything this file did **after** the merge would be a false statement about the repository and would recommend re-running the train against a tag that already exists. Once Step 5 has landed, the only two outcomes are `released` and `PARTIAL`; when Step 5 did not land, the outcome is `failed`.
+`HELD` is only ever a **pre-merge** word here — the `gh`-absent Transport stop, delta 5's re-rendered-major re-gate and the reviewed-tip comparison's two stops (`integration branch kept moving`, a blocking delta review), all of which move nothing — alongside Step 1.5's release-block stop and the Step 4 HARD-GATEs, which fire before this file runs at all. In any mode, `--train` and interactive alike, it asserts that nothing was merged or tagged, so applying it to anything this file did **after** the merge would be a false statement about the repository and would recommend re-running the train against a tag that already exists. Once Step 5 has landed, the only two outcomes are `released` and `PARTIAL`; when Step 5 did not land, the outcome is `failed`.
 
 ## Anti-Patterns
 

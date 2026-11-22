@@ -1,12 +1,12 @@
 'use strict';
 // #5227: queue-pull module parity suite. The bash oracle runs plugin/skills/dispatch/
-// queue-pull-script.md's fence whole, in a throwaway sandbox under PATH shims for gh, git and
-// mktemp (tests/bin-lib/dispatch/queue-pull-oracle.js), with a frozen clock preloaded into every
+// queue-pull-script.md's fence whole, in a throwaway sandbox under PATH shims for gh and git
+// (tests/bin-lib/dispatch/queue-pull-oracle.js), with a frozen clock preloaded into every
 // node process (queue-pull-clock-stub.js).
 //
 // Normalizations (AC1, and nothing else): the sandbox root becomes <SCR> and the pre-minted
-// run-dir basename becomes <RUN>. The clock is frozen by the stub rather than normalized, and
-// temp names match across sides through the QP_TMPNAME_COUNTER_FILE seam.
+// run-dir basename becomes <RUN>. The clock is frozen by the stub rather than normalized; the one
+// temp file both sides name (the target-missing proposal) has a fixed name.
 // One documented exception (controller ruling, Task 4 review): the four failure lines whose fence
 // tail is `$(cat <err file>)` (the not-spec-shaped and open-pr corrupt-exclusions stop lines and
 // the not-spec-shaped / open-linked-PR filtering Warnings) compare up to and including their fixed
@@ -19,32 +19,34 @@
 // One exit-code mapping, not a normalization (R4): where the fence stops (`exit 1`), the CLI exits 4,
 // so the parity tests compare a stopped pair's statuses as 1 and 4 and everything else as is.
 //
-// Script defects the parity matrix (Task 8) shows, reproduced by the module, never fixed:
-//   - A candidate whose `labels` is not an array (SMalformed's #9020) throws inside the eligibility
-//     block (record-vocabulary.js's normalizeLabelNames calls .map on it), so the eligible list is
-//     never written and the pull stops at the group-building check: one malformed record stops
-//     every candidate, the clean #9001 included (a cross-candidate effect, on the run ledger).
-// Script behavior the fault rows (Task 9) show, reproduced by the module, never fixed:
-//   - D1 reaches past the session files: the second pull's write-back persists the first pull's
-//     stale groups under the second pull's freshness signal, so a third pull over the same queue
-//     would hit the cache on them (NEW: beyond ledger row 1, which names the session files only).
+// Script behavior the fault rows (Task 9) show, reproduced by the module (some since fixed, noted per bullet):
+//   - A candidate whose `labels` is not an array (SMalformed's #9020) threw inside the eligibility
+//     block, so one malformed record stopped every candidate; fixed by #5315: it is excluded as
+//     malformed-blocker with one Warning, the pull writes no queue-order cache, and the clean #9001
+//     dispatches.
+//   - D1 (a second pull in one session whose open-numbers fetch fails) reused the first pull's
+//     eligibility files and wrote its groups back under the new freshness signal; fixed by #5314:
+//     the miss path removes them first, so the pull stops at group-building as a fresh session does.
 //   - One failed native-dependency GraphQL call (F-native) turns off two passes: the blocked pass's
 //     native filtering and, through preflight-records.js's native read, the unlanded-blocker pass
-//     (a Warning each). One failed claim fetch (F-claim) prints an AUTO line for the shipped pass and
-//     one for the neighbour pass. (NEW cross-pass effects; each pass still fails open.)
-//   - A missing or malformed DISPATCH_FOREIGN_STATES file on files prints two fail-closed Warnings:
-//     the ignored file, then the gh lookup bodyForeignBlockers still attempts with no gh.
+//     (a Warning each). (NEW cross-pass effects; each pass still fails open.) Fixed by #5309: a
+//     failed call fails closed (every eligible record excluded as blocked, one Warning, no write-back).
+//   - One failed claim fetch (F-claim) printed an AUTO line for the shipped pass and one for the
+//     neighbour pass; #5304 prints one combined line per pull (both fence and module).
+//   - A missing or malformed DISPATCH_FOREIGN_STATES file on files printed two fail-closed Warnings
+//     (the ignored file, then the gh lookup with no gh); #5304 prints the ignored file's only.
 //   - A failed queue or open-numbers fetch stops the pull at the group-building check (the fetch
 //     pass's `stop`), a third and fourth stop beside Q3's corrupt-exclusions and unreadable-groups.
-//   - F-linked's single Warning (the open-linked-PR lookup failed) also turns off the shipped pass:
+//   - F-linked's single Warning (the open-linked-PR lookup failed) names the shipped pass it also turns off:
 //     it drops shipped:9010 as well as the two open-pr exclusions. F-intbranch (no integration-branch
-//     policy key, `git remote show origin` fails) drops the unlanded-blocker:9011 exclusion. (NEW
-//     cross-pass effects; each pass still fails open.)
-//   - A silent fail-open on the files transport: files-verifiedOpenDeps-missing and
-//     files-verifiedOpenDeps-malformed exit 0 with no Warning or AUTO line and drop the blocked:9002
-//     exclusion, so a blocked record becomes dispatchable with nothing printed (the files twin of
-//     F-depview).
-//   - The silent fail-opens (ledger row 6) are F-depfresh, F-depview, F-prview and F-openprs.
+//     policy key, `git remote show origin` fails) skips the target-missing pass with one Warning and
+//     drops the unlanded-blocker:9011 exclusion beside it. (NEW cross-pass effects; each pass still
+//     fails open.)
+//   - Fixed by #5311: a missing or malformed file fails closed (every unresolved dependency open, one
+//     Warning) — files-verifiedOpenDeps-missing and files-verifiedOpenDeps-malformed keep blocked:9002.
+//     F-depview fails closed too, with one Warning naming the view, since #5311.
+//   - No silent fail-open remains in this list: F-prview warns since #5313 and F-openprs since #5312. F-depfresh,
+//     F-depfresh-writeback and F-depfresh-both print one Warning per failed search since #5310.
 // One module divergence the matrix found and the module fixed (Task 3 carry): on `files` the
 // agent's dependency-freshness file stands where the fence's `gh issue list --search` stands, so
 // it is read only when there are dependency numbers to search; otherwise the fence's `echo '[]'`
@@ -59,15 +61,19 @@
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { readText } = require('../../helpers/read-skill');
 const {
   SCRIPT_MD, FENCE_FIRST_LINE, extractFence, createSandbox, runOracle, runModuleCli, runPair, normalize, reported, assertParity, runAll, failedJobs,
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
-const { S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, S1LiveDep, fakeRun, fakeSpawnCli } = require('./queue-pull-fixtures');
+const {
+  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, fakeRun, fakeSpawnCli,
+} = require('./queue-pull-fixtures');
 const { PASSES, SESSION_FILES, sessionPaths, makeContext, runPasses } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
 
@@ -79,7 +85,8 @@ const fenceText = (re) => {
   return m[1];
 };
 const HIT_MESSAGE = fenceText(/echo "(Queue-order cache hit [^"]*)" >&2/);
-const NATIVE_WARNING_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*)\$\(cat /);
+const NATIVE_WARNING_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*falling back[^$]*)\$\(cat /);
+const NATIVE_FAIL_CLOSED_PREFIX = fenceText(/echo "(Warning: native dependency query failed[^$]*fail closed[^$]*)\$\(cat /);
 const GROUPING_STOP_RE = /echo "(dispatch: queue-pull stopped -- group-building exclusion pass failed \(exit )\$GROUPING_RC(\); see error above\.)" >&2/;
 const CACHE_HIT_STOP_RE = /echo "(dispatch: queue-pull stopped -- cache-hit exclusion pass failed \(exit )\$CACHE_HIT_RC(\); see error above\.)" >&2/;
 const LINKED_WARNING = fenceText(/echo "(Warning: linked-PR query failed[^$]*)\$\(cat /);
@@ -89,6 +96,49 @@ const TARGET_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- target-mis
 const MALFORMED_CAUSE = 'a Blocked by line names no valid issue number (#0)';
 const NEIGHBOUR_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed \(exit )\$NEIGHBOUR_RC\); see error above\.\" >&2/);
 const IN_FLIGHT_POOL_AUTO = fenceText(/echo "(AUTO — dispatch: neighbour-in-flight pool fetch failed[^"]*)" >&2/);
+const UNLANDED_STOP = fenceText(/echo "(dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above\.)" >&2/);
+const OPEN_PR_FAIL = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
+const PR_VIEW_FAILED = (pr, n) => `Warning: gh pr view ${pr} failed — #${n} kept as a weak shipped candidate (files unprobed) this run\n`;
+
+// #5315: the eligibility step's Warning for a non-array labels value, read from the fence.
+const LABELS_WARNING_RE = /console\.error\('(Warning: #)' \+ i\.number \+ '([^']*)'\)/;
+const labelsWarning = (n) => {
+  const m = FENCE.match(LABELS_WARNING_RE);
+  assert.ok(m, `the fence no longer matches ${LABELS_WARNING_RE}`);
+  return `${m[1]}${n}${m[2]}\n`;
+};
+const LABELS_ENTRY_9020 = { reason: 'malformed-blocker', records: [9020], detail: { cause: 'its labels are not an array' } };
+
+// #5317: a Doc path holding ", $(id), a backtick and '. Its two " are deliberate: they keep the pre-fix
+// double-quoted comment line parseable, so bash really runs `id` there (an odd count is a syntax error,
+// nothing expands, and the "id never ran" assertion would pass on the unfixed code). The literal backslash-x27
+// is there so a fence regressing to `echo -e` / `printf '%b'` (which turns it into ') fails the verbatim check.
+const HOSTILE_DOC = 'docs/q"$(id)`id`"it\'s\\x27.md';
+const CLOSING_BODY = (tpath, ref) => `Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).`;
+
+// Runs the staged `gh issue comment <num> ...` line under bash with stub gh (logs its argv) and stub id
+// (drops a marker): the argv gh received, and whether anything but the quoted word ran `id`.
+function runStagedComment(proposalText, num) {
+  const dir = scratchDir('qp-5317-');
+  try {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    const log = path.join(dir, 'gh.log');
+    const marker = path.join(dir, 'id.ran');
+    fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexec node -e \'require("fs").appendFileSync(process.env.QP_GH_LOG, JSON.stringify(process.argv.slice(1)) + "\\n")\' -- "$@"\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'id'), '#!/bin/sh\n: > "$QP_ID_MARKER"\n', { mode: 0o755 });
+    const line = proposalText.split('\n').find((l) => l.startsWith(`gh issue comment ${num} `));
+    assert.ok(line, 'the proposal has a comment line');
+    const r = spawnSync('bash', ['-c', line], {
+      env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, QP_GH_LOG: log, QP_ID_MARKER: marker },
+      encoding: 'utf8', windowsHide: true,
+    });
+    const ghCalls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+    return { status: r.status, ghCalls, idRan: fs.existsSync(marker), stderr: r.stderr };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 // The canned dispatch-unlanded-blockers.js: for the pipeline fixture's #9012 (a Blocked by line with
 // no valid number) and #9011 (a closed blocker whose commit never landed) it appends the real CLI's
@@ -185,11 +235,12 @@ const groupedIn = (r) => JSON.parse(r.files['dispatch-groups.json']).flat().map(
 const ghCall = (r, pattern) => r.ghArgv.map((a) => a.argv).filter((argv) => argv.some((x) => pattern.test(x)));
 
 // ---- Task 9: fetch-failure faults (AC4), files-input faults (AC7.2) and the reproduced script
-// defects (D1, D3, D4). Each FAULTS row (queue-pull-fixtures.js) fails one gh fetch, and each
-// FILES_FAULTS row one files input, on both sides through the shared table. Its base is the same
-// scenario un-faulted: the matrix's config of it where the matrix has one (S1 and S2), else a base config of
-// its own; the fault pool runs either (the AC1 file's runs are not shared: each file is its own process).
-// One pool runs the rows, bases and D1 of the transports it is asked for, from one `before`. A row asserts what the ORACLE did (Plan Review
+// defects (D1, D4; D3 is fixed, #5307). Each FAULTS row (queue-pull-fixtures.js) fails one gh
+// fetch, and each FILES_FAULTS row one files input, on both sides through the shared table. Its
+// base is the same scenario un-faulted: the matrix's config of it where the matrix has one (S1
+// and S2), else a base config of its own; the fault pool runs either (the AC1 file's runs are not
+// shared: each file is its own process). One pool runs the rows, bases and D1 of the transports
+// it is asked for, from one `before`. A row asserts what the ORACLE did (Plan Review
 // Clarifications, criteria 4, 5 and 7): its exit, the lines it adds on each channel, and its
 // exclusions read against the base's. It then asserts that the module did the same.
 // Files compared: every session file, byte-equal (JSON-equal), with two row-level carve-outs (see
@@ -229,12 +280,18 @@ const STOP_LINE = {
   neighbour: `${NEIGHBOUR_STOP}1); see error above.`,
   target: `${TARGET_STOP}1); see error above.`,
 };
+const TARGET_MISSING_SKIPPED = fenceText(/echo "(Warning: target-missing pass skipped[^"]*)" >&2/);
 // Lines the CLIs and libraries the fence runs print (not fence echo text).
 const LANDING_SKIPPED = 'Warning: unlanded-blocker pass skipped — ';
 const LANDING_EXITED = `${LANDING_SKIPPED}preflight-records.js exited 1; no unlanded-blocker exclusions this pull`;
 const CLAIM_READ_FAILED_7001 = 'AUTO — dispatch: neighbour-in-flight claim read failed for #7001; treated as not in flight';
-const FOREIGN_LOOKUP_NO_GH = 'Warning: foreign blocker state lookup failed (exit 2: resolve-foreign-blockers.js: `gh` is required) — every body-declared foreign blocker reads state unreadable (fail closed)';
+// #5304: one line per pull when both passes read unreadable claims (F-claim), naming each and both consequences.
+const CLAIM_READ_COMBINED = 'AUTO — dispatch: claim read failed for #9010 (network-failure), #9016 (network-failure), #7001; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight';
+// #5304: the shipped pass's unreadable claims printed alone, by the fence's flush_shipped_claims at a stop between the passes.
+const CLAIM_READ_SHIPPED_ONLY = 'AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade';
 const NEAR_DUP = 'AUTO — dispatch: near-duplicate candidates across groups: ';
+const DEP_FRESH_USED = 'Warning: dependency-freshness search failed — queue-order cache not used this run';
+const DEP_FRESH_WRITTEN = 'Warning: dependency-freshness search failed — queue-order cache not written this run';
 const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 
 // The fault rows' expectations, one table per family. Each family's file asserts its own table row by
@@ -248,25 +305,39 @@ const FOREIGN_UNREADABLE = 'acme-corp/other#12 (state unreadable)';
 const FAULT_EXPECT = {
   'F-queue': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'F-opennum': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'F-depfresh': { status: 0, stderr: [], drops: [] },
-  'F-depview': { status: 0, base: 'gh-livedep', stderr: [], drops: ['blocked:9002'] },
-  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_WARNING_PREFIX}gh-fault: injected failure`, LANDING_EXITED], drops: ['blocked:9030'] },
+  'F-depfresh': { status: 0, stderr: [DEP_FRESH_USED], drops: [] },
+  // #5310: the cold write-back search fails; no blob on either side.
+  'F-depfresh-writeback': { status: 0, stderr: [DEP_FRESH_WRITTEN], drops: [], blob: null },
+  // #5310: a warm pull where the cache check's and the write-back's searches both fail prints both lines, in order.
+  'F-depfresh-both': { status: 0, stderr: [DEP_FRESH_USED, DEP_FRESH_WRITTEN], drops: [] },
+  'F-depview': { status: 0, base: 'gh-livedep', stderr: ['Warning: gh issue view 8000 failed — dependency #8000 treated as open (fail closed) this run'], drops: [], blob: null },
+  // #5309: both eligible records are excluded fail-closed (9030 was already blocked, now with the unreadable detail); the unlanded-blocker pass has no candidate left, so it prints nothing.
+  // blob: null, both sides, the row's cold origin left no order blob (no write-back); parityView compares the blobs only against each other.
+  'F-native': { status: 0, base: 'S2-gh-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001'], blob: null },
   'F-foreign': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
+  'F-foreign-states': { status: 0, base: 'S2-gh-miss', stderr: ['Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (ENOENT: ', 'Warning: foreign blocker state lookup failed (exit 3: gh-fault: injected failure resolve-foreign-blockers.js: '], drops: [] },
   'F-linked': { status: 0, stderr: [`${LINKED_WARNING}gh-fault: injected failure`], drops: ['open-pr:9005', 'open-pr:9008', 'shipped:9010'] },
   'F-intbranch': {
-    status: 0, stderr: [`${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
-    stdout: [6, 9, 17].map((n) => `- AUTO 12:00:00 — log-decision: dispatch: #90${String(n).padStart(2, '0')} excluded, named target docs/${{ 6: 'gone6', 9: 'gone', 17: 'present' }[n]}.md absent at origin/. Reversibility: n/a.`),
-    drops: ['unlanded-blocker:9011'], adds: ['target-missing:9017'],
+    // #9006 is no longer pre-excluded as target-missing, so the shipped pass (which runs next) excludes it on its merged-PR signal.
+    status: 0, stderr: [TARGET_MISSING_SKIPPED, 'AUTO — dispatch: #9006 excluded, shipped by merged PR #5006', `${LANDING_SKIPPED}no integration branch resolved; no unlanded-blocker exclusions this pull`],
+    stdout: [],
+    drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
   },
-  'F-prview': { status: 0, stderr: [], drops: [] },
+  'F-headunknown': {
+    // #5863: `HEAD branch: (unknown)` skips only the target-missing pass. The unlanded-blocker pass still gets `(unknown)`: its
+    // compare call 404s, so it keeps #9011 with one `undetermined` line (read from a baseline run), where F-intbranch's empty branch skips the pass.
+    status: 0, stderr: [TARGET_MISSING_SKIPPED, 'AUTO — dispatch: #9006 excluded, shipped by merged PR #5006', 'AUTO — dispatch: #9011 kept — blocker #8001 landing undetermined (via probe-failed)'],
+    stdout: [],
+    drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
+  },
+  'F-prview': { status: 0, stderr: [PR_VIEW_FAILED(5016, 9016).trimEnd()], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
-  'F-claim': {
-    status: 0,
-    stderr: ['AUTO — dispatch: shipped-candidate claim read failed for #9010 (network-failure), #9016 (network-failure); release time unknown, no downgrade', CLAIM_READ_FAILED_7001],
-    drops: ['neighbour-in-flight:9013'],
-  },
-  'F-openprs': { status: 0, stderr: [], drops: [] },
+  'F-claim': { status: 0, stderr: [CLAIM_READ_COMBINED], drops: ['neighbour-in-flight:9013'] },
+  'F-claim-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, UNLANDED_STOP], entries: '{corrupt' },
+  'F-claim-neighbour-stop': { status: 1, stderr: [CLAIM_READ_SHIPPED_ONLY, STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] },
+  // #5312: the failed open-PR list warns on both sides; the overlap file is still [].
+  'F-openprs': { status: 0, stderr: [OPEN_PR_FAIL], drops: [] },
   'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
   'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
   'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
@@ -274,22 +345,30 @@ const FAULT_EXPECT = {
 const posture = (r) => (r.status === 0 ? 'open' : 'stop');
 
 const FILES_STOPPED_NEIGHBOUR = { status: 1, stderr: [STOP_LINE.neighbour], drops: ['neighbour-in-flight:9013'] };
-const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`, FOREIGN_LOOKUP_NO_GH], drops: [] });
+const FILES_FOREIGN = (why) => ({ status: 0, base: 'S2-files-miss', stderr: [`Warning: foreign blocker states file <SCR>/agent/foreign-states.json ignored (${why}`], drops: [] });
 const FILES_EXPECT = {
+  // #5309: gh present on files, resolve-blockers.js exits 3: the fence's files exit-3 branch fails closed.
+  'F-native-files': { status: 0, base: 'S2-files-miss', stderr: [`${NATIVE_FAIL_CLOSED_PREFIX}gh-fault: injected failure`], drops: [], adds: ['blocked:9001', 'blocked:9030'], blob: null },
   'files-queueRaw-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
+  'files-depFreshness-missing-cold': { status: 0, base: 'files-opendeps', stderr: [], drops: [] },
   'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
-  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
-  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: [], drops: ['blocked:9002'] },
+  // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
+  'files-verifiedOpenDeps-missing': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
+  'files-verifiedOpenDeps-malformed': { status: 0, base: 'files-livedep', stderr: ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run'], drops: [], adds: ['blocked:9011'], blob: null },
+  'files-verifiedOpenDeps-missing-none': { status: 0, base: 'S2-files-miss', stderr: [], drops: [] },
   'files-inFlightRaw-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightRaw-malformed': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-missing': FILES_STOPPED_NEIGHBOUR,
   'files-inFlightClaims-malformed': FILES_STOPPED_NEIGHBOUR,
-  'files-queueRaw-wrapper': { status: 0, stderr: [], entries: [] },
+  'files-queueRaw-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-wrapper/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
+  'files-queueRaw-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-string/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
+  'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-string/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
+  'files-depFreshness-wrapper-cold': { status: 0, base: 'files-opendeps', stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
   'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
@@ -339,13 +418,13 @@ function assertFailOpenPostures(pool, family, t) {
 }
 
 // A row's default base, and the fault pool's bases: the matrix configs themselves (one
-// definition of each base), the live-dependency scenario the matrix does not run, and S1-gh-hit,
+// definition of each base), the live-dependency and open-dependency scenarios the matrix does not run, and S1-gh-hit,
 // F-depfresh's un-faulted warm control on the same miss origin.
 const MATRIX_CFG = Object.fromEntries(MATRIX.map((c) => [c.name, c]));
 const BASE = { gh: 'S1-gh-miss', files: 'S1-files-miss' };
 const FAULT_BASES = [
   MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
-  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' },
+  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' }, { name: 'files-opendeps', scenario: S1OpenDeps(), transport: 'files' },
 ];
 
 // The fault pool's pair configs for the transports it runs: their bases, then each transport's rows (a
@@ -395,6 +474,10 @@ function assertFaultRow(row, expect, R, transport) {
     const want = [...baseEntries.filter((e) => !expect.drops.includes(e)), ...(expect.adds || [])].sort();
     assert.deepEqual([...entries].sort(), want, `${row.id}: the oracle's exclusions against its base's`);
   }
+  if (expect.blob === null) {
+    assert.equal(oracle.orderBlob, null, `${row.id}: the oracle writes no order blob`);
+    assert.equal(pair.module.orderBlob, null, `${row.id}: the module writes no order blob`);
+  }
   if (transport === 'gh' && row.pass !== '(stop)') {
     // The fault fired: each side logged an injected call its base did not make.
     const baseInjected = new Set(injectedCalls(base.oracle));
@@ -403,35 +486,50 @@ function assertFaultRow(row, expect, R, transport) {
   assertFaultFiles(pair, transport, row.id, module);
 }
 
-// D1: two pulls in one session per side (the one deliberate session reuse: one session id and one
-// TMPDIR), the second answering from D1Second's table.
-async function runD1() {
+// D1: three pulls in one session per side (the one deliberate session reuse: one session id and one
+// TMPDIR), the second answering from D1Second's table, the third from D1Third's.
+// Each later scenario is a function: `later` pulls follow `first`, one after the other.
+async function runSession(name, first, later) {
   const made = [];
   try {
-    const oracleSb = createSandbox(S1(), { name: 'D1' });
+    const oracleSb = createSandbox(first(), { name });
     made.push(oracleSb);
-    const moduleSb = createSandbox(S1(), { name: 'D1' });
+    const moduleSb = createSandbox(first(), { name });
     made.push(moduleSb);
-    const both = () => Promise.all([
-      runOracle(oracleSb, FENCE, { tmp: 'one-session' }),
-      runModuleCli(moduleSb, ['--transport', 'gh'], { tmp: 'one-session' }),
-    ]);
-    const [o1, m1] = await both();
-    for (const sb of made) sb.setScenario(D1Second());
-    const [o2, m2] = await both();
-    return { first: { oracle: o1, module: m1 }, second: { oracle: o2, module: m2 } };
+    const both = async () => {
+      const [oracle, module] = await Promise.all([
+        runOracle(oracleSb, FENCE, { tmp: 'one-session' }),
+        runModuleCli(moduleSb, ['--transport', 'gh'], { tmp: 'one-session' }),
+      ]);
+      return { oracle, module };
+    };
+    const pulls = [await both()];
+    for (const scenario of later) {
+      for (const sb of made) sb.setScenario(scenario());
+      pulls.push(await both());
+    }
+    return pulls;
   } catch (err) {
     for (const sb of made) sb.cleanup();
     throw err;
   }
 }
+async function runD1() {
+  const [first, second, third] = await runSession('D1', S1, [D1Second, D1Third]);
+  return { first, second, third };
+}
+// #5314: a non-empty pull that persists a blob, then a well-formed empty queue.
+async function runEmptyAfterS1() {
+  const [first, second] = await runSession('EmptyAfterS1', S1, [EmptyAfterS1]);
+  return { first, second };
+}
 
 // The one fault pool of a process: the rows and bases of the `transports` it is asked for and, when
-// `d1` is true, D1, started by the first call. Each parity file runs in its own process now, so the
-// file's own `before` hooks are the only callers and their arguments the whole decision:
-// queue-pull-parity-ac4 runs ['gh'] without D1, queue-pull-parity-ac7 ['files'] without D1, and
-// queue-pull-parity-d1 D1 alone ([]). A second call with different arguments throws rather than
-// silently handing back the first pool.
+// `d1` is true, the two session jobs D1 and EmptyAfterS1 (#5314), started by the first call. Each
+// parity file runs in its own process now, so the file's own `before` hooks are the only callers and
+// their arguments the whole decision: queue-pull-parity-ac4 runs ['gh'] without them,
+// queue-pull-parity-ac7 ['files'] without them, and queue-pull-parity-d1 the two session jobs alone
+// ([]). A second call with different arguments throws rather than silently handing back the first pool.
 let faultPool = null;
 let faultPoolArgs = null;
 function runFaultPool(transports, { d1 }) {
@@ -443,8 +541,9 @@ function runFaultPool(transports, { d1 }) {
   if (!faultPool) {
     const configs = faultConfigs(transports);
     const t0 = Date.now();
-    // D1 first: its two pulls run one after the other, so it starts before the single-pull pairs.
-    faultPool = runAll([...(d1 ? [{ name: 'D1', run: runD1 }] : []), ...pairJobs(configs)], POOL)
+    // D1 and EmptyAfterS1 first: their pulls run one after the other, so they start before the single-pull pairs.
+    const sessionJobs = d1 ? [{ name: 'D1', run: runD1 }, { name: 'EmptyAfterS1', run: runEmptyAfterS1 }] : [];
+    faultPool = runAll([...sessionJobs, ...pairJobs(configs)], POOL)
       .then((R) => ({ R, pairs: configs.length, ms: Date.now() - t0 }));
     faultPoolArgs = args;
   }
@@ -453,7 +552,7 @@ function runFaultPool(transports, { d1 }) {
 
 // The two cleanup hooks every parity file registers once at its top level (a helper-module `after`
 // would also attach to files that run no pair): every memoized pair's sandboxes are removed once, after
-// the file's last test, and the fault pool's D1 sandboxes after them.
+// the file's last test, and the fault pool's session-job (D1, EmptyAfterS1) sandboxes after them.
 function registerParityCleanup() {
   after(async () => {
     const settled = await Promise.allSettled([...PAIR_MEMO.values()].map((m) => m.pair));
@@ -461,10 +560,11 @@ function registerParityCleanup() {
   });
   after(async () => {
     if (!faultPool) return;
-    let d1 = null;
-    try { d1 = (await faultPool).R.D1; } catch { return; } // a failed runD1 removed its own sandboxes
-    if (!d1) return; // a pool run with d1: false
-    cleanupPairs([d1.first]); // the second pull ran in the same two sandboxes; the pairs are the memo's
+    let R = null;
+    try { R = (await faultPool).R; } catch { return; } // a failed session job removed its own sandboxes
+    // A pool run with d1: false has neither session job.
+    // The later pulls ran in the same two sandboxes as the first; the pairs are the memo's.
+    cleanupPairs([R.D1, R.EmptyAfterS1].filter((s) => s && s.first).map((s) => s.first));
   });
 }
 
@@ -473,11 +573,10 @@ function registerParityCleanup() {
 
 // Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
 function inOwnTmp(fn) {
-  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
-  const keys = ['TMPDIR', 'TEMP', 'TMP', 'QP_TMPNAME_COUNTER_FILE'];
+  const own = scratchDir('qp-t2-');
+  const keys = ['TMPDIR', 'TEMP', 'TMP'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  for (const k of ['TMPDIR', 'TEMP', 'TMP']) process.env[k] = own;
-  delete process.env.QP_TMPNAME_COUNTER_FILE;
+  for (const k of keys) process.env[k] = own;
   try {
     return fn(own);
   } finally {
@@ -599,6 +698,15 @@ module.exports = {
   TARGET_STOP,
   NEIGHBOUR_STOP,
   IN_FLIGHT_POOL_AUTO,
+  NATIVE_FAIL_CLOSED_PREFIX,
+  UNLANDED_STOP,
+  OPEN_PR_FAIL,
+  PR_VIEW_FAILED,
+  labelsWarning,
+  LABELS_ENTRY_9020,
+  HOSTILE_DOC,
+  CLOSING_BODY,
+  runStagedComment,
   MALFORMED_CAUSE,
   cannedLanding,
   POOL,
@@ -607,6 +715,7 @@ module.exports = {
   FILES_S1_REASONS,
   MATRIX,
   AC1_FILES,
+  memoPair,
   pairJobs,
   assertEveryJobRan,
   sides,
@@ -619,6 +728,10 @@ module.exports = {
   faultComparison,
   assertFaultFiles,
   STOP_LINE,
+  TARGET_MISSING_SKIPPED,
+  CLAIM_READ_COMBINED,
+  DEP_FRESH_USED,
+  DEP_FRESH_WRITTEN,
   CLAIM_READ_FAILED_7001,
   FOREIGN_UNREADABLE,
   assertFaultRow,
@@ -627,6 +740,7 @@ module.exports = {
   FILES_EXPECT,
   assertFailOpenPostures,
   inOwnTmp,
+  NOW,
   EXPRESS_OFF,
   pull,
   entriesOf,

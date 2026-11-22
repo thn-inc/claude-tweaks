@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { seedDurableState } = require('./seed-durable-state');
@@ -13,7 +14,7 @@ const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-hea
 // In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
 const cli = (argv, opts) => sweepCli(CLI, argv, opts);
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-status-v2-')); }
+function tmp() { return scratchDir('codehealth-status-v2-'); }
 
 function writeV2Cache(root, entries) {
   // entries: [{ fp, status, severity, risk }]

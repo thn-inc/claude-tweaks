@@ -150,6 +150,19 @@ test('AC2.1: a real runner reach the CLI catches still fails the call', async ()
   assert.throws(() => runCliSync(path.join(FX, 'runner-cli.js'), ['catch']), REAL_RUNNER);
 });
 
+// #5902: claim-targets.js and release-claim.js keep the real station-event emitter in realDeps,
+// so a runCli test of either would append to the developer's main-checkout file without this.
+test('#5902: a real stationEvent left in realDeps is fail-closed, even when the CLI catches its throw', async () => {
+  const cli = path.join(FX, 'station-event-cli.js');
+  const REAL_EMITTER = /runCli: real stationEvent reached — pass a fake in deps or allowRealRunner: true/;
+  await assert.rejects(runCli(cli, []), REAL_EMITTER);
+  assert.throws(() => runCliSync(cli, []), REAL_EMITTER);
+  assert.strictEqual((await runCli(cli, [], { allowRealRunner: true })).stdout, 'real-station-event-reached');
+  const seen = [];
+  assert.strictEqual(runCliSync(cli, [], { deps: { stationEvent: (e) => { seen.push(e.kind); return 'fake'; } } }).stdout, 'fake');
+  assert.deepStrictEqual(seen, ['entered']);
+});
+
 test('refuses a CLI that exports no realDeps', async () => {
   assert.throws(() => runCliSync(path.join(FX, 'no-realdeps-cli.js'), []), /no-realdeps-cli\.js exports no realDeps/);
   await assert.rejects(runCli(path.join(FX, 'no-realdeps-cli.js'), []), /no-realdeps-cli\.js exports no realDeps/);

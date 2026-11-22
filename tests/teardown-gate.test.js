@@ -4,10 +4,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { findRunByWorktreePath, findRunsByWorktreePath, classifyOwnership, resolveRun, readRunState } = require('../plugin/bin/lib/hooks/context');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('./helpers/git-fixtures');
 const preToolUse = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { caseInsensitiveFs } = require('./helpers/case-insensitive-fs');
 const { readText } = require('./helpers/read-skill');
@@ -31,7 +32,7 @@ function sh(cwd, ...args) {
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-teardown-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-teardown-sandbox-');
 
 // #5377: runs hooks.js in-process through runHookCli; hookEnv carries `PIPELINE_RUN_DIR: ''` (what the
 // old spawn spread over process.env) and adds #1337's CT_HOOKS_TEST_MODE, which the old spawn never
@@ -48,7 +49,7 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) 
 // real cwd).
 let wtSeq = 0;
 function addWorktree(root) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-tdg-wt-'));
+  const parent = scratchDir('ct-tdg-wt-');
   const wt = path.join(parent, 'wt');
   sh(root, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${wtSeq++}`);
   return fs.realpathSync(wt);
@@ -67,10 +68,8 @@ function withPolicy(repo, content) {
 // main checkout resolution (bin/lib/hooks/worktree-detect.js), so the fixture
 // root must itself be a real git repo, same as tests/run-integrity.test.js.
 function fixtureRoot() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-tdg-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  const root = fs.realpathSync(scratchDir('ct-tdg-'));
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   sh(root, 'commit', '-q', '-m', 'base');

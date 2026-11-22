@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -10,7 +11,7 @@ const post = require('../plugin/bin/lib/hooks/post-tool-use');
 const substop = require('../plugin/bin/lib/hooks/subagent-stop');
 
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2-'));
+  const dir = scratchDir('ct-e2-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'seed', '-q'], {
     env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' },
@@ -18,7 +19,7 @@ function gitRepoWithCommit() {
   return fs.realpathSync(dir);
 }
 function mkRun() {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e2run-'));
+  const project = scratchDir('ct-e2run-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   return run;
@@ -71,7 +72,7 @@ test('post-tool-use without run dir or without git targets is a no-op', () => {
 // coverage. Pass `{ toolUse: false }` for a fixture that specifically wants
 // a zero-tool-use transcript.
 function transcript(lastText, { toolUse = true } = {}) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-e3-'), 'agent.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
   ];
@@ -109,7 +110,7 @@ test('subagent-stop accepts an old-format (bare-word-first) status line lenientl
 // A leading tool_use turn is included by default — same rationale as
 // transcript()'s own comment above.
 function multiTurnTranscript(texts, { toolUse = true } = {}) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-multi-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-e3-multi-'), 'agent.jsonl');
   const lines = [];
   if (toolUse) {
     lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Read', input: {} }] } }));
@@ -142,7 +143,7 @@ test('subagent-stop checks the LAST assistant message, not an earlier non-compli
 });
 
 function toolOnlyLastTurnTranscript() {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-toolonly-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-e3-toolonly-'), 'agent.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'still investigating, not done yet' }] } }),
@@ -168,7 +169,7 @@ test('subagent-stop treats a tool-call-only LAST assistant turn as nothing to gr
 });
 
 function textPlusToolUseLastTurnTranscript() {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-textplustool-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-e3-textplustool-'), 'agent.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'go' }] } }),
     // The TRUE last assistant turn: narration text ALONGSIDE a tool call in
@@ -452,7 +453,7 @@ function taskNotificationEntry() {
   return { type: 'user', message: { role: 'user', content: '<task-notification>\n<task-type>queued-remote-notifications</task-type>\n</task-notification>' }, origin: { kind: 'task-notification' } };
 }
 function transcriptWithPriorLines(priorEntries, lastText) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e3-async-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-e3-async-'), 'agent.jsonl');
   const lines = priorEntries.map((e) => JSON.stringify(e));
   lines.push(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: lastText }] } }));
   fs.writeFileSync(f, lines.join('\n') + '\n');

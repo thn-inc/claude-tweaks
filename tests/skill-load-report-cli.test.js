@@ -10,6 +10,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -41,7 +42,7 @@ const SKILL_PATH = '/home/u/.claude/plugins/cache/m/demo/1.0.0/skills/alpha/more
 // #3315, so this is portability, not a requirement).
 const posix = (p) => p.split(path.sep).join('/');
 
-function tmp(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
+function tmp(prefix) { return scratchDir(prefix); }
 
 function writeJsonl(file, lines, mtimeSec) {
   fs.mkdirSync(path.dirname(file), { recursive: true });

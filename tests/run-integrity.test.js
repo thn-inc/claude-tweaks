@@ -4,10 +4,11 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { checkRunIntegrity, checkBranchLanded, repoRootOf, worktreePathForBranch } = require('../plugin/bin/lib/hooks/run-integrity');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { fixtureGit, initRepo } = require('./helpers/git-fixtures');
 const { hookEnv, runHookCli } = require('./helpers/hook-event');
 const { withBrokenGitDir } = require('./helpers/process-env');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
@@ -33,10 +34,8 @@ const BEFORE_RUN_START = '2026-07-01T00:00:00Z';
 // resolved via policy.yml's integration-branch key), one linked worktree on a
 // feature branch with one commit, and one active run dir recording that worktree.
 function fixtureRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  const root = fs.realpathSync(scratchDir('ct-ri-'));
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'base');
@@ -58,10 +57,8 @@ function fixtureRepo() {
 // --is-ancestor branch integration` is trivially true. All history predates
 // the run directory's own 2026-08-01T090000 start time.
 function fixtureZeroCommitRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-zc-')));
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  const root = fs.realpathSync(scratchDir('ct-ri-zc-'));
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, BEFORE_RUN_START, 'commit', '-q', '-m', 'base');
@@ -166,10 +163,8 @@ test('#1672 validation: a resolved name that is not a real local ref never becom
 // Shared base repo for the worktreePathForBranch tests below: init + one commit on `trunk`,
 // nothing more — each test adds only what it individually needs on top of this.
 function basicRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wpfb-')));
-  execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 't@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'T'], { cwd: root });
+  const root = fs.realpathSync(scratchDir('ct-wpfb-'));
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk', cwd: root });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   execFileSync('git', ['add', 'a.txt'], { cwd: root });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: root });
@@ -213,12 +208,10 @@ test('worktreePathForBranch: null/empty branch -> null without spawning git', ()
 // actually exists resolves through preferRemoteTrackingRef to `origin/{name}`
 // (#1688) -- unlike fixtureRepo's plain `trunk`, never fetched from anywhere.
 function fixtureRemoteTrackingIntegrationRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-rt-')));
-  const remote = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-rt-remote-')));
+  const root = fs.realpathSync(scratchDir('ct-ri-rt-'));
+  const remote = fs.realpathSync(scratchDir('ct-ri-rt-remote-'));
   fixtureGit(['init', '-q', '--bare', '-b', 'trunk', remote]);
-  fixtureGit(['init', '-q', '-b', 'trunk', root]);
-  sh(root, 'config', 'user.email', 't@example.com');
-  sh(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   sh(root, 'add', 'a.txt');
   datedSh(root, AFTER_RUN_START, 'commit', '-q', '-m', 'base');
@@ -442,7 +435,7 @@ test('AC5: each fail-open input -> in-progress, no throw', () => {
   writeEvents(f3.runDir, [EV_BUILD]);
   assert.strictEqual(checkRunIntegrity(f3.runDir).state, 'in-progress');
   // git failure: run dir tree that is not a repo at all
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-bare-'));
+  const bare = scratchDir('ct-ri-bare-');
   const fakeRun = path.join(bare, '.claude-tweaks', 'pipelines', '2026-08-01T090000-spec-9');
   fs.mkdirSync(fakeRun, { recursive: true });
   writeRunState(fakeRun, { status: 'active', worktree: bare });
@@ -476,7 +469,7 @@ test('clean status is a VALID run-state shape but NOT in the non-terminal set ->
 
 // #5377: session-start runs in-process through runHookCli. It starts a detached background child
 // (fakeSpawn: no real one) and reads the home dir (a fixture home, not the machine's).
-const SESSION_START_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-home-'));
+const SESSION_START_HOME = scratchDir('ct-ri-home-');
 const fakeSpawn = () => ({ on() {}, unref() {} });
 async function runSessionStart(cwd) {
   const { code, stdout } = await runHookCli(['session-start'], {
@@ -541,7 +534,7 @@ test('AC9.1: run-integrity — an event call uses the injected cwd or env', asyn
   const { runDir, root } = fixtureRepo();
   writeEvents(runDir, [EV_BUILD]);
   assert.notStrictEqual(fs.realpathSync(root), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-home9-'));
+  const home = scratchDir('ct-ri-home9-');
   const { code, stdout } = await runHookCli(['session-start'], {
     input: JSON.stringify({}), cwd: root, env: fixtureHomeEnv(home, hookEnv()), deps: { spawn: fakeSpawn },
   });
@@ -605,7 +598,7 @@ test('#3497 checkBranchLanded: a clean (closed) run-state is still answered', ()
 });
 
 test('#3497 checkBranchLanded: no run-state -> landed null, never throws', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ri-nors-'));
+  const dir = scratchDir('ct-ri-nors-');
   const r = checkBranchLanded(dir);
   assert.strictEqual(r.landed, null);
   assert.deepStrictEqual(r.evidence, { branch: null, merged: null });

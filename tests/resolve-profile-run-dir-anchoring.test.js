@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
@@ -53,7 +54,7 @@ test('reject: whitespace-only --run-dir value degrades the same as empty', () =>
 
 test('accept: --run-dir outside any checkout (journey shape) — tally readable/appendable there', () => {
   const main = gitRepo();
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-journey-'));
+  const outside = scratchDir('rp-journey-');
   const res = runCli(['frontier', '--run-dir', outside], main);
   assert.strictEqual(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
@@ -90,7 +91,7 @@ test('reject: --run-dir inside a genuinely unrelated second repo (AC 10)', () =>
 });
 
 test('reject: no-repo-root cwd with --run-dir inside some checkout — distinct message (AC 6, fixture per AC 12)', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-norepo-'));
+  const bare = scratchDir('rp-norepo-');
   const repo = gitRepo();
   const res = runCli(['standard', '--run-dir', path.join(repo, 'run')], bare);
   assert.strictEqual(res.status, 1);
@@ -100,8 +101,8 @@ test('reject: no-repo-root cwd with --run-dir inside some checkout — distinct 
 
 test('accept: symlinked tmpdir spelling classifies by real location (AC 11)', () => {
   const main = gitRepo();
-  const realOutside = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-sym-'));
-  const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-symparent-'));
+  const realOutside = scratchDir('rp-sym-');
+  const aliasParent = scratchDir('rp-symparent-');
   const alias = path.join(aliasParent, 'alias');
   fs.symlinkSync(realOutside, alias);
   const res = runCli(['standard', '--run-dir', path.join(alias, 'r')], main);

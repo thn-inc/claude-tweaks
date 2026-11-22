@@ -7,8 +7,11 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
-const { fixtureGit } = require('./helpers/git-fixtures');
+const { execFileSync } = require('child_process');
+const pinned = require('./helpers/pinned-git');
+const { pinnedGit: git, pinnedGitEnv: gitEnv } = pinned;
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const gitFixtures = require('./helpers/git-fixtures');
 const {
   fromTemplate,
   fromTemplateSet,
@@ -27,21 +30,6 @@ function mk(prefix) {
   return d;
 }
 
-// An empty config file pinned as the global/system config, so a host's own
-// git config (maintenance.auto, receive.autogc, signing...) cannot leak in.
-const EMPTY_CONFIG = path.join(mk('ct-gt-cfg-'), 'empty');
-fs.writeFileSync(EMPTY_CONFIG, '');
-// Built per call, never at load: a template build appends maintenance-off keys
-// to process.env at build time, and a load-time snapshot would miss them.
-const gitEnv = () => ({
-  ...process.env,
-  GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test',
-  GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test',
-  GIT_CONFIG_GLOBAL: EMPTY_CONFIG, GIT_CONFIG_SYSTEM: EMPTY_CONFIG,
-});
-function git(cwd, args, env = gitEnv()) {
-  return fixtureGit(args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 function commit(cwd, name) {
   fs.writeFileSync(path.join(cwd, name), name);
   git(cwd, ['add', name]);
@@ -88,14 +76,34 @@ test('fromTemplate builds once and returns independent copies', () => {
 
 test('a copy starts no git process', () => {
   const build = repoBuild;
-  scratch.push(fromTemplate('k1', build, { prefix: 'ct-gt-' })); // warm-up: the build may spawn git
-  const trace = mk('ct-gt-trace-');
-  const copies = withEnv('GIT_TRACE2_EVENT', trace, () => [
-    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
-    fromTemplate('k1', build, { prefix: 'ct-gt-' }),
-  ]);
-  scratch.push(...copies);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
+  warmCallStartsNoGit(
+    () => fromTemplate('k1', build, { prefix: 'ct-gt-' }), // warm-up: the build may spawn git
+    {
+      traced: () => [
+        fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+        fromTemplate('k1', build, { prefix: 'ct-gt-' }),
+      ],
+      track: (r) => scratch.push(...[].concat(r)),
+    },
+  );
+});
+
+test('#5846 AC4.1: warmCallStartsNoGit throws when the traced call starts a git process, and restores GIT_TRACE2_EVENT', () => {
+  const before = process.env.GIT_TRACE2_EVENT;
+  const startsGit = () => execFileSync('git', ['--version'], { env: gitEnv(), stdio: 'ignore', windowsHide: true });
+  assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
+  assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
+  assert.throws(() => warmCallStartsNoGit(() => {}, { traced: async () => {} }), TypeError);
+  assert.strictEqual(process.env.GIT_TRACE2_EVENT, before);
+  const sentinel = path.join(mk('ct-gt-sentinel-'), 'sentinel');
+  withEnv('GIT_TRACE2_EVENT', sentinel, () => {
+    assert.throws(() => warmCallStartsNoGit(() => {}, { traced: startsGit }), assert.AssertionError);
+    assert.strictEqual(process.env.GIT_TRACE2_EVENT, sentinel);
+  });
+  const tracked = [];
+  const r = warmCallStartsNoGit(() => 'w', { traced: () => 't', track: (x) => tracked.push(x) });
+  assert.deepStrictEqual(r, { warm: 'w', traced: 't' });
+  assert.deepStrictEqual(tracked, ['w', 't']);
 });
 
 test('fromTemplateSet rewires a clone to its own copied origin', () => {
@@ -306,124 +314,6 @@ test('AC3.1: under the runner\'s git template a bare-origin push and a fixture c
   assert.ok(has(control.push), 'control: without the template the push starts maintenance');
 });
 
-// The per-test repo builders sit on templates (#5297): after one warm-up call
-// (which may build), a further call starts no git process.
-const preToolUse = require('./helpers/pre-tool-use');
-const gitFixtures = require('./helpers/git-fixtures');
-const builders = {
-  'pre-tool-use gitRepo': [() => preToolUse.gitRepo(), (d) => [d]],
-  'pre-tool-use gitRepoWithCommit': [() => preToolUse.gitRepoWithCommit(), (d) => [d]],
-  'git-fixtures gitRepo()': [() => gitFixtures.gitRepo(), (d) => [d]],
-  'git-fixtures gitRepo({ branch })': [() => gitFixtures.gitRepo({ branch: 'trunk' }), (d) => [d]],
-  'originWithTwoClones': [() => gitFixtures.originWithTwoClones('ct-gt-otc-'), (r) => [r.root]],
-};
-for (const [name, [make, dirsOf]] of Object.entries(builders)) {
-  test(`${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-// #5324: the pre-tool-use fixed pairs and repos sit on templates too.
-const preToolUsePairs = {
-  'pre-tool-use mainAndWorktree': [() => preToolUse.mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use mainAndWorktree({ localMain })': [() => preToolUse.mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
-  'pre-tool-use gitRepoOnLocalMain': [() => preToolUse.gitRepoOnLocalMain(), (d) => [d]],
-  'pre-tool-use unpinnedRepoWithOrigin': [() => preToolUse.unpinnedRepoWithOrigin(), (d) => [d]],
-};
-for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
-  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
-  const a = preToolUse.mainAndWorktree();
-  const b = preToolUse.mainAndWorktree();
-  scratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
-  for (const p of [a, b]) {
-    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
-    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
-    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
-    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
-    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
-  }
-  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
-    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
-  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
-  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
-  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
-  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
-  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
-});
-test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
-  const pair = preToolUse.mainAndWorktree({ localMain: true });
-  const repo = preToolUse.gitRepoOnLocalMain();
-  scratch.push(pair.main, path.dirname(pair.wt), repo);
-  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
-  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
-});
-test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
-  const repo = preToolUse.unpinnedRepoWithOrigin();
-  scratch.push(repo);
-  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
-  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
-});
-
-// #5324: the verify scenario builders sit on templates, keyed by their arguments.
-const verifyHelpers = require('./bin-lib/verify/cli-helpers');
-const verifyRules = (glob) => [{ match: glob, suites: ['unit'] }];
-for (const [name, make] of [
-  ['verify scopedRepo', () => verifyHelpers.scopedRepo(verifyRules('src/**'))],
-  ['verify scopedRepo with generated', () => verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] })],
-  ['verify flakyRepo()', () => verifyHelpers.flakyRepo()],
-  ['verify flakyRepo({ retryExit: 1 })', () => verifyHelpers.flakyRepo({ retryExit: 1 })],
-  ['verify baselineRepo', () => verifyHelpers.baselineRepo()],
-]) {
-  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
-    scratch.push(make().repo);
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(second.repo);
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-test('verify builders: per-call values match git, and different arguments never share a template', () => {
-  const s = verifyHelpers.scopedRepo(verifyRules('src/**'));
-  const s2 = verifyHelpers.scopedRepo(verifyRules('lib/**'));
-  const b = verifyHelpers.baselineRepo();
-  const fDefault = verifyHelpers.flakyRepo();
-  const fExit1 = verifyHelpers.flakyRepo({ retryExit: 1 });
-  scratch.push(s.repo, s2.repo, b.repo, fDefault.repo, fExit1.repo);
-  assert.strictEqual(s.branch, git(s.repo, ['symbolic-ref', '--short', 'HEAD']));
-  assert.ok(s.marker.startsWith(s.gitDir), s.marker);
-  assert.ok(s.unitCmd.includes(s.marker), s.unitCmd);
-  const rulesOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8')).rules;
-  assert.deepStrictEqual(rulesOf(s), verifyRules('src/**'));
-  assert.deepStrictEqual(rulesOf(s2), verifyRules('lib/**'));
-  assert.strictEqual(b.baseSha, git(b.repo, ['rev-parse', 'HEAD']));
-  assert.strictEqual(fDefault.branch, git(fDefault.repo, ['symbolic-ref', '--short', 'HEAD']));
-  assert.ok(fExit1.marker.startsWith(fExit1.repo), fExit1.marker);
-  assert.ok(fExit1.retryLog(0).startsWith(fExit1.gitDir), fExit1.retryLog(0));
-  assert.ok(fs.readFileSync(path.join(fExit1.repo, 'retry.js'), 'utf8').includes('process.exit(1)'));
-  assert.ok(fs.readFileSync(path.join(fDefault.repo, 'retry.js'), 'utf8').includes('process.exit(0)'));
-  // A key that dropped `failingFile` or `extra` would hand a later call the first call's files.
-  const fReal = verifyHelpers.flakyRepo({ failingFile: 'tests/real.test.js' });
-  const sGenerated = verifyHelpers.scopedRepo(verifyRules('src/**'), { generated: ['**'] });
-  scratch.push(fReal.repo, sGenerated.repo);
-  const failJs = (r) => fs.readFileSync(path.join(r.repo, 'fail.js'), 'utf8');
-  assert.ok(failJs(fReal).includes('tests/real.test.js'), failJs(fReal));
-  assert.ok(!failJs(fDefault).includes('tests/real.test.js'), failJs(fDefault));
-  const declOf = (r) => JSON.parse(fs.readFileSync(path.join(r.repo, r.declPath), 'utf8'));
-  assert.deepStrictEqual(declOf(sGenerated).generated, ['**']);
-  assert.strictEqual(declOf(s).generated, undefined);
-});
 test('Absorbed AC (identity): a fresh process building every owned fixture starts no git config user.name/user.email process', () => {
   const trace = mk('ct-gt-trace-');
   const freshTmp = mk('ct-gt-freshtmp-');
@@ -465,15 +355,6 @@ test('Absorbed AC (identity): a fresh process building every owned fixture start
   const offenders = argvs.filter((a) => configKeys(a).some((k) => k === 'user.name' || k === 'user.email'));
   assert.deepStrictEqual(offenders, []);
 });
-test('Absorbed AC (identity): the identity written into a template reaches its copies', () => {
-  // `--local` reads only the copy's own .git/config, so a CI-exported GIT_AUTHOR_* cannot stand in for it.
-  const plain = verifyHelpers.tmpGitRepo();
-  const scoped = verifyHelpers.scopedRepo(verifyRules('src/**'));
-  scratch.push(plain.repo, scoped.repo);
-  for (const r of [plain, scoped]) {
-    assert.strictEqual(git(r.repo, ['config', '--local', 'user.email']), 'verify-test@example.invalid');
-  }
-});
 
 test('template build runs with auto-maintenance off', () => {
   // The runner's own GIT_CONFIG_* (tools/run-tests.js) would mask a missing
@@ -483,8 +364,8 @@ test('template build runs with auto-maintenance off', () => {
   for (const [k] of saved) delete process.env[k];
   const trace = mk('ct-gt-trace-');
   try {
-    process.env.GIT_CONFIG_GLOBAL = EMPTY_CONFIG;
-    process.env.GIT_CONFIG_SYSTEM = EMPTY_CONFIG;
+    process.env.GIT_CONFIG_GLOBAL = pinned.EMPTY_GIT_CONFIG;
+    process.env.GIT_CONFIG_SYSTEM = pinned.EMPTY_GIT_CONFIG;
     withEnv('GIT_TRACE2_EVENT', trace, () => {
       // The file's own repoBuild path (call-time gitEnv), as every other build here.
       scratch.push(fromTemplate('maint-off', repoBuild, { prefix: 'ct-gt-' }));
@@ -497,319 +378,105 @@ test('template build runs with auto-maintenance off', () => {
   assert.ok(!tracedArgvs(trace).some((a) => a.includes('maintenance')), 'no maintenance process during the build');
 });
 
-test('git-fixtures gitRepo({ branch }) keeps the requested branch', () => {
-  const dir = gitFixtures.gitRepo({ branch: 'trunk' });
-  scratch.push(dir);
-  assert.strictEqual(git(dir, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
-});
-
-// reconcile's fixtures (#5297): same shape, plus the rewired origin/seed/main triple.
-const reconcileFixtures = require('./helpers/reconcile-fixtures');
-for (const [name, make, dirsOf] of [
-  ['reconcile pairedFixture', () => reconcileFixtures.pairedFixture(), (r) => Object.values(r)],
-  ['reconcile bareRepoRoot', () => reconcileFixtures.bareRepoRoot(), (d) => [d]],
-]) {
-  test(`${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-// claims-git-cas fixtures (#5769): same shape — origin, clone, registry and seeded claims built once per process.
-const claimsFixtures = require('./bin-lib/issues/claims-git-cas-fixtures');
-for (const builder of [
-  'makeBareOriginAndClone', 'makeBranchlessOriginAndClone', 'makeDecoyOriginAndClone', 'makeRegistryWithClaims',
-]) {
-  test(`AC4.1: claims-git-cas ${builder}: a second call starts no git process`, () => {
-    const make = () => claimsFixtures[builder]();
-    const first = make();
-    scratch.push(first.root);
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(second.root);
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-    if (builder === 'makeRegistryWithClaims') {
-      assert.strictEqual(git(first.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
-      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
-    }
-  });
-}
-
-// pre-review-catchup fixtures (#5769): originWithTwoClones seeded in its template, one variant per shared setup shape.
-const catchupFixtures = require('./bin-lib/pre-review-catchup/fixtures');
-for (const shape of [undefined, ...catchupFixtures.CATCHUP_SHAPES]) {
-  test(`AC4.1: pre-review-catchup catchupFixture${shape ? ` ${shape}` : ''}: a second call starts no git process`, () => {
-    const make = () => catchupFixtures.catchupFixture(shape);
-    scratch.push(make().root);
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(second.root);
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-// prune-remote fixtures (#5769): origin, repo and pushed branches built once per process, one variant per setup.
-const pruneFixtures = require('./bin-lib/reconcile/prune-remote-fixtures');
-for (const name of pruneFixtures.PRUNE_REMOTE_FIXTURES) {
-  test(`AC4.1: prune-remote ${name}: a second call starts no git process`, () => {
-    const make = () => pruneFixtures.pruneRemoteFixture(name);
-    const dirsOf = (r) => [r.dir, r.origin, r.wt].filter(Boolean);
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-test('a prune-remote squashed copy holds the squash commit on main over preSquash', () => {
-  const f = pruneFixtures.pruneRemoteFixture('squashed');
-  scratch.push(f.dir, f.origin);
-  assert.strictEqual(git(f.dir, ['rev-parse', 'main']), f.squash);
-  assert.strictEqual(git(f.dir, ['rev-parse', 'main~1']), f.preSquash);
-});
-
-test('a prune-remote b1-deleted copy lacks build/b1 on the origin but keeps its stale tracking ref', () => {
-  const f = pruneFixtures.pruneRemoteFixture('b1-deleted');
-  scratch.push(f.dir, f.origin);
-  const onOrigin = (ref) => spawnSync('git', ['-C', f.origin, 'show-ref', '--verify', '--quiet', ref], { env: gitEnv() }).status;
-  assert.notStrictEqual(onOrigin('refs/heads/build/b1'), 0);
-  assert.strictEqual(onOrigin('refs/heads/build/b2'), 0);
-  assert.strictEqual(git(f.dir, ['rev-parse', '--verify', 'refs/remotes/origin/build/b1']).length, 40);
-});
-
-test('AC4.1: originWithTwoClones with a seed and no key throws', () => {
-  assert.throws(() => gitFixtures.originWithTwoClones('ct-gt-otc-', { seed: () => {} }), /seed needs a key/);
-});
-
-test('catchupFixture rejects an unknown shape, inherited object keys included', () => {
-  for (const shape of ['no-such-shape', 'constructor', '__proto__']) {
-    assert.throws(() => catchupFixtures.catchupFixture(shape), /unknown shape/, shape);
-  }
-});
-
-test('a catchupFixture copy is on feat with origin/main equal to main in work and other', () => {
-  const f = catchupFixtures.catchupFixture();
-  scratch.push(f.root);
-  assert.strictEqual(git(f.work, ['symbolic-ref', '--short', 'HEAD']), 'feat');
-  const main = git(f.work, ['rev-parse', 'main']);
-  assert.strictEqual(git(f.work, ['rev-parse', 'origin/main']), main);
-  assert.strictEqual(git(f.other, ['rev-parse', 'origin/main']), main);
-  assert.strictEqual(git(f.other, ['rev-parse', 'main']), main);
-  assert.strictEqual(f.head(), git(f.work, ['rev-parse', 'HEAD']));
-});
-
-test('a catchupFixture shape copy holds the shape setup: a feat edit in work, an unfetched upstream commit on origin only when the shape pushes', () => {
-  for (const shape of catchupFixtures.CATCHUP_SHAPES) {
-    const f = catchupFixtures.catchupFixture(shape);
-    scratch.push(f.root);
-    assert.strictEqual(git(f.work, ['rev-list', '--count', 'main..HEAD']), '1', shape);
-    // The file content each shape's setup leaves: work's own edit, and upstream's pushed edit as `other` last saw origin.
-    const line = (text, n) => text.split('\n')[n - 1];
-    const workA = fs.readFileSync(path.join(f.work, 'a.txt'), 'utf8');
-    const upstreamA = () => git(f.other, ['show', 'origin/main:a.txt']);
-    if (shape === 'conflicting-edit') {
-      assert.strictEqual(line(workA, 3), 'FEAT', shape);
-      assert.strictEqual(line(upstreamA(), 3), 'UPSTREAM', shape);
-    } else {
-      assert.strictEqual(line(workA, 1), 'F1', shape);
-      if (shape === 'feat-edit-overlapping-upstream') assert.strictEqual(line(upstreamA(), 5), 'O5', shape);
-    }
-    git(f.work, ['fetch', '-q', 'origin']);
-    const upstream = git(f.work, ['rev-list', '--count', 'main..origin/main']);
-    assert.strictEqual(upstream, shape === 'feat-edit-only' ? '0' : '1', shape);
-  }
-});
-
-test('pairedFixture copies point at their own origin and sync through it', () => {
-  const a = reconcileFixtures.pairedFixture();
-  const b = reconcileFixtures.pairedFixture();
-  scratch.push(...Object.values(a), ...Object.values(b));
-  assert.strictEqual(git(a.mainDir, ['remote', 'get-url', 'origin']), a.originDir);
-  assert.strictEqual(git(b.mainDir, ['remote', 'get-url', 'origin']), b.originDir);
-  commit(a.seedDir, 'next');
-  git(a.seedDir, ['push', '-q', 'origin', 'main']);
-  git(a.mainDir, ['fetch', '-q', 'origin']);
-  assert.strictEqual(git(a.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
-  assert.notStrictEqual(git(b.mainDir, ['rev-parse', 'origin/main']), git(a.seedDir, ['rev-parse', 'HEAD']));
-});
-
-test('tmpGitRepo: a second call starts no git process and carries the verify identity', () => {
-  const { tmpGitRepo } = require('./bin-lib/verify/cli-helpers');
-  scratch.push(tmpGitRepo().repo);
+// #5771: one `git init` process per fixture repo, with the identity written as a config-file edit.
+test('AC1.1: initRepo starts exactly one git process for an init with an identity', () => {
   const trace = mk('ct-gt-trace-');
-  const second = withEnv('GIT_TRACE2_EVENT', trace, tmpGitRepo);
-  scratch.push(second.repo);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
-  assert.strictEqual(second.git('config', 'user.email').trim(), 'verify-test@example.invalid');
+  const dir = path.join(mk('ct-gt-ir-'), 'r');
+  const returned = withEnv('GIT_TRACE2_EVENT', trace, () => gitFixtures.initRepo(dir, { name: 'Test', email: 'test@example.com' }));
+  assert.strictEqual(returned, dir);
+  assert.strictEqual(fs.readdirSync(trace).length, 1);
+  assert.ok(tracedArgvs(trace)[0].includes('init'), JSON.stringify(tracedArgvs(trace)));
+  assert.strictEqual(git(dir, ['config', 'user.name']), 'Test');
+  assert.strictEqual(git(dir, ['config', 'user.email']), 'test@example.com');
 });
 
-test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
-  const { fixture } = require('./helpers/learned-skills-capture');
-  fixture(t);                       // warm-up
-  fixture(t, {}, { autocrlf: 'true' });
-  const trace = mk('ct-gt-trace-');
-  const [a, b] = withEnv('GIT_TRACE2_EVENT', trace, () => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
-  assert.notStrictEqual(a.repo, b.repo);
-  assert.ok(fs.statSync(a.runDir).isDirectory());
-  assert.strictEqual(a.mergeBase.length, 40);
-  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
-  const skill = '.claude/skills/x/SKILL.md';
-  let host = ''; // what the fixture pinned in the copy itself (the trace window is closed here)
-  try { host = execFileSync('git', ['-C', a.repo, 'config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
-  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
-  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
+test('initRepo honours branch and bare', () => {
+  const branched = gitFixtures.initRepo(path.join(mk('ct-gt-irb-'), 'r'), { branch: 'trunk' });
+  assert.strictEqual(git(branched, ['symbolic-ref', '--short', 'HEAD']), 'trunk');
+  const bare = gitFixtures.initRepo(path.join(mk('ct-gt-irbare-'), 'r.git'), { bare: true, name: 'T', email: 't@t' });
+  assert.strictEqual(git(bare, ['rev-parse', '--is-bare-repository']), 'true');
+  assert.strictEqual(git(bare, ['config', '--local', 'user.name']), 'T');
 });
 
-test('AC3.1: learned-skills land fixture(): a warm copy starts no git process and owns its paths', (t) => {
-  const { fixture, X } = require('./helpers/learned-skills-land');
-  for (const o of [{}, { autocrlf: 'true' }, { capturedTargets: [X] }, { originConflict: true }]) fixture(t, o);
-  const trace = mk('ct-gt-trace-');
-  const f = withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t));
-  withEnv('GIT_TRACE2_EVENT', trace, () => fixture(t, { originConflict: true }));
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
-  const manifest = JSON.parse(fs.readFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'), 'utf8'));
-  for (const e of manifest) assert.ok(e.patch.startsWith(f.runDir + path.sep), e.patch);
-  assert.strictEqual(git(f.repo, ['remote', 'get-url', 'origin']), f.origin);
-});
+test('writeIdentity values read back exactly as git config would', () => {
+  const name = 'A "Q" \\ B; #x';
+  const email = 'e@x.test';
+  // git prefers GIT_AUTHOR_*/GIT_COMMITTER_* over config (and CI exports GIT_AUTHOR_NAME), so the
+  // commit and log that read the identity back run without any of them.
+  const configOnlyEnv = Object.fromEntries(Object.entries(gitEnv()).filter(([k]) => !/^GIT_(AUTHOR|COMMITTER)_/.test(k)));
+  // Control: the unfiltered env does carry the identity variables, so the filter is what removes them.
+  assert.deepStrictEqual(Object.keys(gitEnv()).filter((k) => /^GIT_(AUTHOR|COMMITTER)_/.test(k)).sort(),
+    ['GIT_AUTHOR_EMAIL', 'GIT_AUTHOR_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_COMMITTER_NAME']);
 
-// #5772: stack-check, statusline and archive-merged builders — same shape as above.
-const stackFixtures = require('./bin-lib/staged-patch/stack-check-fixtures');
-for (const [name, make] of [
-  ['stack-check gitFixture(BASE)', () => stackFixtures.gitFixture(null)],
-  ['stack-check gitFixture(Latin-1 bytes)', () => stackFixtures.gitFixture(null, Buffer.from('caf\xe9\n', 'latin1'))],
-  ['stack-check repoWith(files)', () => stackFixtures.repoWith(null, { 'g.txt': 'one\n', 'bin.dat': Buffer.from([0, 1, 255]) })],
-]) {
-  test(`AC3.1: ${name}: a second call starts no git process`, () => {
-    scratch.push(make().dir);
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(second.dir);
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
+  const plain = gitFixtures.initRepo(path.join(mk('ct-gt-wip-'), 'r'));
+  gitFixtures.writeIdentity(plain, { name, email });
+  const bare = gitFixtures.initRepo(path.join(mk('ct-gt-wib-'), 'r.git'), { bare: true });
+  gitFixtures.writeIdentity(bare, { name, email });
+  const main = gitFixtures.initRepo(path.join(mk('ct-gt-wim-'), 'r'));
+  git(main, ['commit', '-q', '--allow-empty', '-m', 'base']);
+  const wt = path.join(mk('ct-gt-wiw-'), 'wt');
+  git(main, ['worktree', 'add', '-q', wt, '-b', 'wt-5771']);
+  gitFixtures.writeIdentity(wt, { name, email });
 
-test('AC4.1: a stack-check fixture copy carries maintenance.auto=false and gc.auto=0 in its own config', () => {
-  const fx = stackFixtures.gitFixture(null);
-  scratch.push(fx.dir);
-  assert.strictEqual(fx.git('config', '--local', 'maintenance.auto').stdout.trim(), 'false');
-  assert.strictEqual(fx.git('config', '--local', 'gc.auto').stdout.trim(), '0');
-  assert.strictEqual(fx.git('config', '--local', 'user.email').stdout.trim(), 'stack-check@example.invalid');
-});
-
-const archiveMergedHelpers = require('./bin-lib/reconcile/archive-merged-helpers');
-// The copied bare origin a clone fixture's .git/config names, so a test can clean it up too.
-const originDirOf = (root) => fs.readFileSync(path.join(root, '.git', 'config'), 'utf8').match(/^\s*url = (.+)$/m)[1].trim();
-for (const [name, make, dirsOf] of [
-  ['makeRepo()', () => archiveMergedHelpers.makeRepo(), (d) => [d]],
-  ['mergedFeatureBranchRepo(feat-x)', () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-x'), (r) => [r.root]],
-  ['fixtureCleanUnarchivedRun({ origin: true })', () => archiveMergedHelpers.fixtureCleanUnarchivedRun({ runId: '2026-08-01T090000-record-2', origin: true }), (r) => [r.root]],
-  ['fixtureAbandonedShippedRun', () => archiveMergedHelpers.fixtureAbandonedShippedRun({ runId: '2026-08-01T090000-record-1' }), (r) => [r.root]],
-  ['cloneOfSeededOrigin()', () => archiveMergedHelpers.cloneOfSeededOrigin(), (r) => [r.seed, r.root, originDirOf(r.root)]],
-]) {
-  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-test('mergedFeatureBranchRepo copy: feature tip is an ancestor of main and the branch ref exists', () => {
-  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-x').root);
-  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat-x');
-  scratch.push(root);
-  const r = spawnSync('git', ['merge-base', '--is-ancestor', featureSha, 'main'], { cwd: root, env: gitEnv() });
-  assert.strictEqual(r.status, 0, String(r.stderr));
-  assert.strictEqual(git(root, ['rev-parse', 'feat-x']), featureSha);
-});
-
-for (const [name, make, dirsOf] of [
-  ['fixtureAbandonedBehindOrigin()', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin(), (r) => [r.root, originDirOf(r.root)]],
-  ['fixtureAbandonedBehindOrigin({ squash: true })', () => archiveMergedHelpers.fixtureAbandonedBehindOrigin({ squash: true }), (r) => [r.root, originDirOf(r.root)]],
-  ['headerMergedRepo3976({ moved: true, merge: squash })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: true, merge: 'squash' }), (r) => [r.root]],
-  ['headerMergedRepo3976({ moved: false, merge: no-ff })', () => archiveMergedHelpers.headerMergedRepo3976({ moved: false, merge: 'no-ff' }), (r) => [r.root]],
-]) {
-  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-test('AC3.1: archive-merged mergedFeatureBranchRepo(): a call with a new branch name starts no git process', () => {
-  scratch.push(archiveMergedHelpers.mergedFeatureBranchRepo('feat-warm-5772').root);
-  const trace = mk('ct-gt-trace-');
-  const second = withEnv('GIT_TRACE2_EVENT', trace, () => archiveMergedHelpers.mergedFeatureBranchRepo('feat-fresh-5772'));
-  scratch.push(second.root);
-  assert.deepStrictEqual(fs.readdirSync(trace), []);
-});
-
-test('mergedFeatureBranchRepo copy under a new branch name: the ref and its reflog carry that name only', () => {
-  const { root, featureSha } = archiveMergedHelpers.mergedFeatureBranchRepo('feat/renamed-5772');
-  scratch.push(root);
-  assert.strictEqual(git(root, ['rev-parse', 'feat/renamed-5772']), featureSha);
-  assert.strictEqual(git(root, ['rev-parse', 'main']), featureSha);
-  assert.strictEqual(git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads']), 'refs/heads/feat/renamed-5772\nrefs/heads/main');
-  assert.notStrictEqual(git(root, ['reflog', 'show', 'feat/renamed-5772']), '');
-  assert.match(git(root, ['reflog', 'show', 'main']), /merge feat\/renamed-5772: Fast-forward/);
-});
-
-for (const [name, make, dirsOf] of [
-  ['deletedBranchMergedRepo(feat-3503-bynumber, origin)', () => archiveMergedHelpers.deletedBranchMergedRepo('feat-3503-bynumber', 'git@github.com:acme/w.git'), (r) => [r.root]],
-  ['reusedBranchLiveRepo()', () => archiveMergedHelpers.reusedBranchLiveRepo(), (r) => [r.root, r.wt]],
-  ['shellRepo3975()', () => archiveMergedHelpers.shellRepo3975(), (r) => [r.root]],
-]) {
-  test(`AC3.1: archive-merged ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-const statuslineFixtures = require('./helpers/statusline-fixtures');
-for (const [name, make, dirsOf] of [
-  ['committedRepo()', () => statuslineFixtures.committedRepo(), (d) => [d]],
-  ["committedRepo({ branch: 'feature/isolated-branch' })", () => statuslineFixtures.committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
-  ["repoWithOrigin('git@github.com:owner/repo.git')", () => statuslineFixtures.repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
-  ['repoWithOrigin(null)', () => statuslineFixtures.repoWithOrigin(null), (r) => [r.base]],
-  ['worktreeShapes()', () => statuslineFixtures.worktreeShapes(), (r) => [r.base]],
-  ['linkedWorktreeProject()', () => statuslineFixtures.linkedWorktreeProject(), (r) => [r.base]],
-]) {
-  test(`AC3.1: statusline ${name}: a second call starts no git process`, () => {
-    scratch.push(...dirsOf(make()));
-    const trace = mk('ct-gt-trace-');
-    const second = withEnv('GIT_TRACE2_EVENT', trace, make);
-    scratch.push(...dirsOf(second));
-    assert.deepStrictEqual(fs.readdirSync(trace), []);
-  });
-}
-
-test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', () => {
-  const { base, wt, sub, link } = statuslineFixtures.worktreeShapes();
-  scratch.push(base);
-  const realBase = fs.realpathSync(base);
-  const inside = (p) => p.startsWith(realBase + path.sep);
-  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
-  for (const dir of [wt, sub]) {
-    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
-    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  for (const dir of [plain, bare, wt]) {
+    assert.strictEqual(git(dir, ['config', 'user.name']), name, dir);
+    assert.strictEqual(git(dir, ['config', 'user.email']), email, dir);
   }
-  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
-  if (fs.existsSync(gitmodules)) {
-    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
-    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
-    for (const url of urls) {
-      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
-    }
+  assert.strictEqual(git(main, ['config', '--local', 'user.name']), name, 'the worktree identity lands in the common config');
+  git(plain, ['commit', '-q', '--allow-empty', '-m', 'id'], configOnlyEnv);
+  assert.strictEqual(git(plain, ['log', '-1', '--format=%an <%ae>'], configOnlyEnv), 'A "Q" \\ B; #x <e@x.test>');
+});
+
+test('writeIdentity writes the bytes git config writes', () => {
+  // The `[user]` section to the end of the file; git's own file is only read here, never written by fs.
+  const userSection = (repo) => {
+    const text = fs.readFileSync(path.join(repo, '.git', 'config'), 'utf8');
+    const at = text.indexOf('[user]');
+    assert.notStrictEqual(at, -1, `${repo} has no [user] section`);
+    return text.slice(at);
+  };
+  for (const v of ['Test', 't@example.com', ' lead', 'trail ', 'a;b', 'a#b', 'A "Q" \\ B', 'tab\there', 'a\rb', 'a\nb']) {
+    const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg-'), 'r'));
+    git(byGit, ['config', 'user.name', v]);
+    const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh-'), 'r'));
+    gitFixtures.writeIdentity(byHelper, { name: v });
+    assert.strictEqual(userSection(byHelper), userSection(byGit), JSON.stringify(v));
   }
+  // Both keys, in the order the swept call sites ran them: email, then name.
+  const byGit = gitFixtures.initRepo(path.join(mk('ct-gt-wbg2-'), 'r'));
+  git(byGit, ['config', 'user.email', 't@example.com']);
+  git(byGit, ['config', 'user.name', 'Test']);
+  const byHelper = gitFixtures.initRepo(path.join(mk('ct-gt-wbh2-'), 'r'));
+  gitFixtures.writeIdentity(byHelper, { name: 'Test', email: 't@example.com' });
+  assert.strictEqual(userSection(byHelper), userSection(byGit), 'name and email');
+});
+
+test('initRepo resolves a relative dir against opts.cwd for the identity write', () => {
+  const parent = mk('ct-gt-irc-');
+  const leaf = `${path.basename(parent)}-r`; // a name the process cwd does not hold
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'control: the leaf is absent from the process cwd');
+  assert.strictEqual(gitFixtures.initRepo(leaf, { cwd: parent, name: 'T', email: 't@t' }), leaf);
+  assert.ok(!fs.existsSync(path.resolve(leaf)), 'nothing lands in the process cwd');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.name']), 'T');
+  assert.strictEqual(git(path.join(parent, leaf), ['config', '--local', 'user.email']), 't@t');
+});
+
+test('writeIdentity starts the [user] section on its own line when the config lacks a final newline', () => {
+  const repo = gitFixtures.initRepo(path.join(mk('ct-gt-winl-'), 'r'));
+  const cfg = path.join(repo, '.git', 'config');
+  const before = fs.readFileSync(cfg, 'utf8').replace(/\n+$/, '');
+  fs.writeFileSync(cfg, before);
+  gitFixtures.writeIdentity(repo, { name: 'T', email: 't@t' });
+  assert.strictEqual(fs.readFileSync(cfg, 'utf8'), `${before}\n[user]\n\temail = t@t\n\tname = T\n`);
+  assert.strictEqual(git(repo, ['config', '--local', 'user.name']), 'T');
+});
+
+test('writeIdentity refuses a second identity and a non-repo', () => {
+  const dir = gitFixtures.initRepo(path.join(mk('ct-gt-wi2-'), 'r'), { name: 'T', email: 't@t' });
+  assert.throws(() => gitFixtures.writeIdentity(dir, { name: 'U' }), /already has a \[user\] section/);
+  const upper = gitFixtures.initRepo(path.join(mk('ct-gt-wiu-'), 'r'));
+  fs.appendFileSync(path.join(upper, '.git', 'config'), '[User]\n\tname = X\n');
+  assert.throws(() => gitFixtures.writeIdentity(upper, { email: 'u@u' }), /already has a \[user\] section/);
+  assert.throws(() => gitFixtures.writeIdentity(gitFixtures.initRepo(path.join(mk('ct-gt-wie-'), 'r')), {}), TypeError);
+  assert.throws(() => gitFixtures.writeIdentity(mk('ct-gt-nr-'), { name: 'T', email: 't@t' }), /not a git repository/);
 });

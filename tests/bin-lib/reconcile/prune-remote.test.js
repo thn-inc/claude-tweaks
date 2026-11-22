@@ -1,11 +1,13 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { decideRemotePrune, pruneRemote } = require('../../../plugin/bin/lib/reconcile/prune-remote');
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 const { gateOriginRepo } = require('../../../plugin/bin/lib/repo-resolve');
-const { pruneRemoteFixture, git } = require('./prune-remote-fixtures');
+const { pruneRemoteFixture, PRUNE_REMOTE_FIXTURES, git } = require('./prune-remote-fixtures');
+const { pinnedGit, pinnedGitEnv } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 // The delete bar is deliberately stricter than archive-branches' local -D:
 // a pushed deletion is unrecoverable from this checkout once origin GCs the
@@ -45,8 +47,9 @@ test('decideRemotePrune: transport failures -> skip (fail closed)', () => {
   assert.strictEqual(decideRemotePrune({ branch: 'build/x', cherryEquivalent: true, prState: 'network-failure' }).reason, 'network-failure');
 });
 
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { defaultRefExists } = require('../../../plugin/bin/lib/reconcile/prune-remote');
@@ -99,7 +102,7 @@ test('pruneRemote: refreshes origin before judging — a branch advanced from an
   const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
 
   // …but another machine pushes a further commit to the same remote branch.
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone2-'));
+  const other = scratchDir('prune-remote-clone2-');
   git(other, 'clone', originUrl, 'c');
   const clone2 = path.join(other, 'c');
   git(clone2, 'config', 'user.email', 't@t');
@@ -179,7 +182,7 @@ test('pruneRemote: branch advanced after its squash merge (another clone pushed 
   const { dir, squash } = buildSquashMergedFixture();
   const originUrl = git(dir, 'remote', 'get-url', 'origin').trim();
 
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-clone3-'));
+  const other = scratchDir('prune-remote-clone3-');
   git(other, 'clone', originUrl, 'c');
   const clone = path.join(other, 'c');
   git(clone, 'config', 'user.email', 't@t');
@@ -257,7 +260,7 @@ test('pruneRemote: branch attached to a live worktree is silently out of scope',
 // classify.js/shared-fetch.js, #820 D2). Intercept at the process-spawn
 // boundary instead: a `git` wrapper placed first on PATH.
 function installPushWrapper(failMultiBranch) {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap-'));
+  const logDir = scratchDir('prune-remote-gitwrap-');
   const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
@@ -336,7 +339,7 @@ test('pruneRemote: batch fails; a branch already deleted before the fallback pus
 // checkRefExists reporting the ref is still present (or indeterminate, on a
 // bad connection) must never be read as success.
 function installAlwaysFailWrapper(branchToFail) {
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prune-remote-gitwrap2-'));
+  const logDir = scratchDir('prune-remote-gitwrap2-');
   const logFile = path.join(logDir, 'push-calls.log');
   fs.writeFileSync(logFile, '');
   const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
@@ -625,4 +628,36 @@ test('#4794: an admitted origin screens with the bare owner/name slug, never the
 test('decideRemotePrune order pin: OPEN prState -> pr-open regardless of cherryEquivalent value (sentinel safety)', () => {
   assert.strictEqual(decideRemotePrune({ branch: 'x', cherryEquivalent: true, prState: { number: 1, state: 'OPEN' } }).reason, 'pr-open');
   assert.strictEqual(decideRemotePrune({ branch: 'x', cherryEquivalent: false, prState: { number: 1, state: 'OPEN' } }).reason, 'pr-open');
+});
+
+// #5846: the prune-remote fixtures are templates (#5769) — a warm-up call may build, a further call
+// starts no git process — and the squashed and b1-deleted copies hold their variant's setup. They live
+// here because this file's own tests already build every variant. This file's `git` takes (cwd, ...args),
+// so the shared pinned-config runner is bound under its own name.
+const movedFixtureDirs = [];
+after(() => {
+  for (const d of movedFixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+for (const name of PRUNE_REMOTE_FIXTURES) {
+  test(`AC4.1: prune-remote ${name}: a second call starts no git process`, () => {
+    const make = () => pruneRemoteFixture(name);
+    const dirsOf = (r) => [r.dir, r.origin, r.wt].filter(Boolean);
+    warmCallStartsNoGit(make, { track: (r) => movedFixtureDirs.push(...dirsOf(r)) });
+  });
+}
+
+test('a prune-remote squashed copy holds the squash commit on main over preSquash', () => {
+  const f = pruneRemoteFixture('squashed');
+  movedFixtureDirs.push(f.dir, f.origin);
+  assert.strictEqual(pinnedGit(f.dir, ['rev-parse', 'main']), f.squash);
+  assert.strictEqual(pinnedGit(f.dir, ['rev-parse', 'main~1']), f.preSquash);
+});
+
+test('a prune-remote b1-deleted copy lacks build/b1 on the origin but keeps its stale tracking ref', () => {
+  const f = pruneRemoteFixture('b1-deleted');
+  movedFixtureDirs.push(f.dir, f.origin);
+  const onOrigin = (ref) => spawnSync('git', ['-C', f.origin, 'show-ref', '--verify', '--quiet', ref], { env: pinnedGitEnv() }).status;
+  assert.notStrictEqual(onOrigin('refs/heads/build/b1'), 0);
+  assert.strictEqual(onOrigin('refs/heads/build/b2'), 0);
+  assert.strictEqual(pinnedGit(f.dir, ['rev-parse', '--verify', 'refs/remotes/origin/build/b1']).length, 40);
 });

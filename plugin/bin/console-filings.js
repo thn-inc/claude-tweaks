@@ -49,8 +49,8 @@
 // unreadable or unparseable --existing, an unreadable --digest-comments or one that is neither a
 // JSON array nor a JSON string, an --only naming no can't-tell item —
 // the message lists the valid ids); 3
-// when the run dir is missing or not anchored under the main checkout (a
-// worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// when the run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines (a
+// worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]), or --out-dir is unwritable. This is the Sanctioned-writer vocabulary
 // (no exit 1), though the run dir's only write is those appended decisions.md
 // lines: the other writes are the caller-named
@@ -140,7 +140,7 @@ function run(argv, overrides = {}) {
   }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`console-filings.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`console-filings.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`console-filings.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

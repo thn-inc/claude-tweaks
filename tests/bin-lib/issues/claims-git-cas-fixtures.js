@@ -7,7 +7,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { fromTemplate, disableReceiveAutoGc } = require('../../helpers/git-template');
-const { fixtureGit } = require('../../helpers/git-fixtures');
+const { fixtureGit, writeIdentity } = require('../../helpers/git-fixtures');
 const {
   readClaimBlobGit, writeClaimBlobGit, CLAIMS_BRANCH,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
@@ -40,8 +40,7 @@ function buildOriginAndClone(root, withRegistry) {
   setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);
   disableReceiveAutoGc(originDir);
   setupGit(['clone', '-q', originDir, cloneDir]);
-  setupGit(['-C', cloneDir, 'config', 'user.email', 'test@example.com']);
-  setupGit(['-C', cloneDir, 'config', 'user.name', 'Test']);
+  writeIdentity(cloneDir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(cloneDir, 'README.md'), 'seed\n');
   setupGit(['-C', cloneDir, 'add', 'README.md']);
   setupGit(['-C', cloneDir, 'commit', '-q', '-m', 'seed']);

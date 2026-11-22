@@ -54,6 +54,7 @@ function resolveConditions({ runDir, repoRoot }, deps = {}) {
   const runConfigRaw = readFileSafe(path.join(runDir, 'config.yml'), d.readFile);
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'), d.readFile);
   const policy = resolvePolicyKeys(['integration-model', 'autonomy', 'worktree-always'], { policyRaw, runConfigRaw });
+  // No factoryRaw is passed here yet (#6007), so no entry is factory-sourced; once one is, `!== 'default'` counts it as set.
   const isSet = (entry) => entry && !entry.error && entry.source !== 'default';
 
   const conditions = {};

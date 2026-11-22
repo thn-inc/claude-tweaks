@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
@@ -13,7 +14,7 @@ const {
   __dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'run.js'));
 
 function tmpLogDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'verify-run-test-'));
+  return scratchDir('verify-run-test-');
 }
 
 // Fake spawn: records spawn order; each child completes with the scripted

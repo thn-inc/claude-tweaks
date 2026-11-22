@@ -91,7 +91,15 @@ const SHAPING_PINS = [
   ['Risk flags step 3', 'stamping', item3, 'one `AskUserQuestion` call per message'],
   ['Risk flags step 3', 'stamping', item3, 'a chunk of two to four flags is one `multiSelect: true` question'],
   ['Risk flags step 3', 'stamping', item3, 'a lone flag, or a chunk remainder of one, is a single-select question'],
-  ['Risk flags step 3', 'stamping', item3, '`Keep {label} (Recommended)` or `Remove {label}`'],
+  // #5954: every flag question carries the skill's recommendation, multiSelect included.
+  ['Risk flags step 3', 'stamping', item3, 'one batch table (flag, evidence, recommendation;'],
+  ['Risk flags step 3', 'stamping', item3, 'keep by default, since keep is the fail direction'],
+  ['Risk flags step 3', 'stamping', item3, 'remove only when the flag\'s evidence no longer holds against the composed body'],
+  ['Risk flags step 3', 'stamping', item3, 'its question text states the chunk\'s recommendation as what to select'],
+  ['Risk flags step 3', 'stamping', item3, 'each option\'s `description` gives that flag\'s recommendation and its one-line reason'],
+  ['Risk flags step 3', 'stamping', item3, 'lists the recommended option first'],
+  ['Risk flags step 3', 'stamping', item3, '`Keep {label} (Recommended)` then `Remove {label}`'],
+  ['Risk flags step 3', 'stamping', item3, '`Remove {label} (Recommended)` then `Keep {label}` when the recommendation is remove'],
   ['Risk flags step 3', 'stamping', item3, "An `AskUserQuestion` (any chunk's) that errors"],
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), REMOVAL],
 ];

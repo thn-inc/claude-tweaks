@@ -70,7 +70,7 @@ test('AC8.1: resolve-profile.js <profile> prints exactly one JSON line (script e
   assert.strictEqual(r.stderr, '');
   assert.strictEqual(
     r.stdout,
-    '{"model":"sonnet","effort":"high","source":"default","effortLine":"[Effort: high — apply high-level reasoning depth to this task.]"}\n',
+    '{"model":"sonnet","effort":"high","source":"default","effortLine":"[Effort: high — apply high-level reasoning depth to this task.]","launchEffort":null}\n',
   );
   const lines = r.stdout.split('\n');
   assert.strictEqual(lines.length, 2);
@@ -140,7 +140,22 @@ test('resolves from the table when no policy file exists', () => {
   assert.deepStrictEqual(run(['standard'], dir), {
     model: 'sonnet', effort: 'high', source: 'default',
     effortLine: '[Effort: high — apply high-level reasoning depth to this task.]',
+    launchEffort: null,
   });
+});
+
+test('model-effort: profile prints launchEffort for the resolved effort', () => {
+  const dir = tmpProject('model-effort: profile\n');
+  assert.strictEqual(run(['standard'], dir).launchEffort, 'high');
+  const r = call(['standard'], dir);
+  assert.match(r.stdout, /"launchEffort":"high"/);
+});
+
+test('model-effort with an unknown value exits 1 naming it', () => {
+  const dir = tmpProject('model-effort: sometimes\n');
+  const r = call(['standard'], dir);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /sometimes/);
 });
 
 test('reads policy.yml from cwd and applies rows and stance', () => {

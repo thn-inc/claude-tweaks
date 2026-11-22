@@ -2,18 +2,40 @@
 // #5227 parity (AC5, portability): empty and malformed queues and the portability scenario. Split out of
 // queue-pull.test.js (one file per parity describe, each its own process); see queue-pull-helpers.js for
 // the oracle/parity header and the shared machinery.
-// Pool: this file runs its own six EXTRA pairs (POOL wide) and nothing else.
+// Pool: this file runs its own six EXTRA pairs (POOL wide) and, in the #5317 describe before them, the one
+// S1-hostile-target pair, and nothing else.
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { oracleSkip, reported, assertParity, runAll } = require('./queue-pull-oracle');
-const { SEmpty, SMalformed, SPortable, LANDING_COMMIT, PORTABLE_SLUG } = require('./queue-pull-fixtures');
+const { SEmpty, SMalformed, SPortable, SHostileTarget, LANDING_COMMIT, PORTABLE_SLUG } = require('./queue-pull-fixtures');
 const {
-  FENCE, GROUPING_STOP_RE, POOL, AC1_FILES, pairJobs, assertEveryJobRan, sides, assertClean, stopMapped, exclusionsIn, groupedIn, ghCall,
-  registerParityCleanup,
+  POOL, AC1_FILES, memoPair, pairJobs, assertEveryJobRan, sides, assertClean, exclusionsIn, groupedIn, ghCall, registerParityCleanup,
+  HOSTILE_DOC, CLOSING_BODY, runStagedComment, LABELS_ENTRY_9020, labelsWarning,
 } = require('./queue-pull-helpers');
 
 registerParityCleanup();
+
+describe('#5317 parity: a hostile named-target path', { skip: oracleSkip(), timeout: 600_000 }, () => {
+  let pair;
+  before(async () => { pair = await memoPair({ name: 'S1-hostile-target', scenario: SHostileTarget({ doc: HOSTILE_DOC }), transport: 'gh' }); });
+  test('AC2: the script and the module stage byte-identical proposals, and the rest of the run matches', () => {
+    assertClean(pair, 'S1-hostile-target');
+    assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+    assertParity(pair.oracle, pair.module, { files: AC1_FILES });
+    assert.equal(pair.module.staged['dispatch-target-missing-9050.md'], pair.oracle.staged['dispatch-target-missing-9050.md']);
+  });
+  for (const side of ['oracle', 'module']) {
+    test(`AC1 (${side}): run by bash, the staged comment posts the path verbatim and runs nothing else`,
+      { skip: process.platform === 'win32' && 'no bash' }, () => {
+        const run = runStagedComment(pair[side].staged['dispatch-target-missing-9050.md'], 9050);
+        assert.equal(run.status, 0, run.stderr);
+        assert.deepEqual({ idRan: run.idRan, ghCalls: run.ghCalls },
+          { idRan: false, ghCalls: [['issue', 'comment', '9050', '--body', CLOSING_BODY(HOSTILE_DOC, 'origin/main')]] },
+          'neither $(id) nor the backtick ran, and the path reached the comment verbatim');
+      });
+  }
+});
 
 describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_000 }, () => {
   const EXTRA = [
@@ -46,35 +68,34 @@ describe('#5227 parity (AC5, portability)', { skip: oracleSkip(), timeout: 600_0
     t.diagnostic(`AC5/portability: ${EXTRA.length} pairs (${EXTRA.length * 2} runs), pool ${POOL}, wall ${timing.ms} ms`);
   });
 
-  test('AC5.2: non-array labels, a non-string body and an invalid Blocked-by number are handled as the script handles them, and #9001\'s verdict matches the oracle\'s', () => {
+  test('AC5.2 / AC1.1 (#5315): non-array labels, a non-string body and an invalid Blocked-by number each exclude only their own record, and #9001\'s verdict matches the oracle\'s', () => {
     const verdict = (r) => ({
       grouped: r.files['dispatch-groups.json'] ? groupedIn(r).includes(9001) : null,
       reasons: r.files['dispatch-exclusions.json'] ? exclusionsIn(r).filter((e) => e.records.includes(9001)).map((e) => e.reason) : null,
     });
-    // Non-array labels: the script stops the whole pull at the group-building check (header).
-    for (const name of ['SMalformed-gh-miss', 'SMalformed-labels']) {
-      const pair = R[name];
-      assertClean(pair, name);
-      assertParity(pair.oracle, stopMapped(pair.oracle, pair.module), { files: AC1_FILES });
-      for (const [side, r] of sides(pair)) {
-        assert.deepEqual(reported(r.stderr), [`${GROUPING_STOP_RE.exec(FENCE)[1]}1${GROUPING_STOP_RE.exec(FENCE)[2]}`], `${name} ${side}`);
-        assert.equal(r.files['dispatch-groups.json'], '', `${name} ${side}: the grouping redirect truncated the groups file`);
-      }
-      assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
-    }
-    // A non-string body: not-spec-shaped. An invalid Blocked-by number: malformed-blocker.
-    const expected = {
-      'SMalformed-body': { reason: 'not-spec-shaped', records: [9021], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } },
-      'SMalformed-blocker': { reason: 'malformed-blocker', records: [9022], detail: { cause: 'a Blocked by line names no valid issue number (#99999999999)' } },
-    };
-    for (const [name, entry] of Object.entries(expected)) {
+    const NOT_SPEC_9021 = { reason: 'not-spec-shaped', records: [9021], detail: { missing: ['Current State', 'Deliverables', 'Acceptance Criteria', 'Release Note'] } };
+    const MALFORMED_BLOCKER_9022 = { reason: 'malformed-blocker', records: [9022], detail: { cause: 'a Blocked by line names no valid issue number (#99999999999)' } };
+    const TABLE = [
+      { name: 'SMalformed-gh-miss', entries: [LABELS_ENTRY_9020, NOT_SPEC_9021, MALFORMED_BLOCKER_9022], warns: true },
+      { name: 'SMalformed-labels', entries: [LABELS_ENTRY_9020], warns: true },
+      { name: 'SMalformed-body', entries: [NOT_SPEC_9021], warns: false },
+      { name: 'SMalformed-blocker', entries: [MALFORMED_BLOCKER_9022], warns: false },
+    ];
+    for (const { name, entries, warns } of TABLE) {
       const pair = R[name];
       assertClean(pair, name);
       assert.equal(pair.oracle.status, 0, pair.oracle.stderr.slice(-3000));
+      assert.equal(pair.module.status, 0, pair.module.stderr.slice(-3000));
       assertParity(pair.oracle, pair.module, { files: AC1_FILES });
       for (const [side, r] of sides(pair)) {
-        assert.deepEqual(exclusionsIn(r), [entry], `${name} ${side}`);
+        assert.deepEqual(exclusionsIn(r), entries, `${name} ${side}`);
         assert.deepEqual(groupedIn(r), [9001], `${name} ${side}: the clean record is dispatchable`);
+        if (warns) {
+          assert.ok(reported(r.stderr).includes(labelsWarning(9020).trimEnd()), `${name} ${side}: the labels Warning`);
+          assert.equal(r.orderBlob, null, `${name} ${side}: a non-array-labels pull writes no queue-order blob`);
+        } else {
+          assert.ok(r.orderBlob, `${name} ${side}: a pull without non-array labels persists its blob (control)`);
+        }
       }
       assert.deepEqual(verdict(pair.module), verdict(pair.oracle), `${name}: #9001's verdict`);
       assert.deepEqual(verdict(pair.oracle), { grouped: true, reasons: [] });

@@ -35,7 +35,7 @@ files:
 
 ### 5. Merge to `main` — the post-merge run
 - **Action:** Merge the PR.
-- **Expect:** `test.yml` does not run again; `test-impact-map.yml` runs the full suite once under the read tracer and turns red when the suite is red, so a commit that breaks `main` still shows on the commit. `windows-regression.yml` runs the suite on Windows separately.
+- **Expect:** `test.yml` does not run again; `test-impact-map.yml` runs the full suite once under the read tracer and turns red when the suite is red, so a commit that breaks `main` still shows on the commit. `windows-regression.yml` runs the suite on Windows separately. macOS has no push-triggered run: `macos-release-check.yml` runs only when dispatched on a release sha, or on a PR that edits it (`check-a-release-sha-on-macos-5881.md`).
 
 ### 6. Keep the shards balanced — after adding or splitting slow test files
 - **Action:** Run `node tools/run-tests.js --record-durations tools/test-durations.json` on Node 24 (Node 20 emits no per-file `test:summary`, so it writes nothing there) on an otherwise idle machine, then commit the file. The committed map was recorded on a CI runner instead, since a loaded machine inflates the times and can trip the 100,000 ms ceiling: push a temporary `workflow_dispatch` or push-triggered workflow that runs that command on Node 24 and uploads the file as an artifact, commit the artifact, and delete the workflow in the same commit.
@@ -43,3 +43,4 @@ files:
 
 ## Origin
 - Updated during build of #5319: step 4 now reproduces a CI failure with `npm test -- --full`, because a plain local `npm test` runs only the impact-selected subset (`run-a-plain-npm-test-on-the-impact-subset-5319.md`). CI runs the whole suite on every PR and is what catches a test the map failed to select.
+- Updated during the build of #5881: step 5 names the dispatch-only macOS release check.

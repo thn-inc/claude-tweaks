@@ -9,8 +9,8 @@
 //   decide --record <n>[,<m>…] [--run <dir>] [--repo [host/]owner/name]
 //          [--head <sha>] [--base <ref>] [--classification <file>]
 //     One JSON line, decideSeries' result. Control mode off (isControlModeOn over
-//     resolvePolicyKeys, the run's config.yml over policy.yml as resolve-policy.js --run reads
-//     them; without --run, the main checkout's policy.yml alone, as parked reads it) prints
+//     resolvePolicyKeys; control-mode is policyOnly (#5830), so the main checkout's policy.yml
+//     alone decides it, with or without --run, which still anchors the AUTO lines) prints
 //     `consulted: false` for every record and reads no record. On, each record's
 //     body gives its kept risk flags (parseRiskFlags: ok -> flags, unclassified -> [], unknown
 //     -> the widened flags, so it parks) and its Acceptance-target override; an invalid
@@ -28,7 +28,7 @@
 //     that will not read (gh absent included) — its decision is still printed, failing closed
 //     to local by invalid-input, and the caller must not merge — or a packet-facts write that
 //     failed (decision printed too); 2 malformed invocation; 3 --run
-//     refused (missing, or not anchored under the main checkout: a worktree-local shadow).
+//     refused (missing, or not anchored under the main checkout's .claude-tweaks/pipelines: a worktree-local shadow).
 //   park --run <dir> --record <n>[,<m>…] --pr <n> --head <sha> --worktree <path>
 //        [--claimed <n>[,<m>…]] [--worktree-mode remove|caller] [--repo [host/]owner/name]
 //     --record names the records whose decision parks; --claimed every record the run claimed
@@ -49,7 +49,7 @@
 //     repository; 3 --run refused; 4 gh absent, before any write.
 //   parked --record <n> [--run <dir>] [--repo [host/]owner/name]
 //     Prints parked / not-parked / unknown. control-mode resolves as decide resolves it (the
-//     run's config.yml over policy.yml with --run; the main checkout's policy.yml without): off
+//     main checkout's policy.yml alone, #5830; a run's config.yml never overrides it): off
 //     prints not-parked with no gh call, so a record parked under control mode is mergeable
 //     once control mode is off (the accepted tradeoff, spec AC2a). On: isParkedForLocalAcceptance
 //     over the record's labels and packet comment. Exit 0 parked, 5 not-parked, 6 unknown (a
@@ -78,6 +78,8 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawnSync } = require('child_process');
 const { pinExplicitRepoHost } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { transitionsForLabel, releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = [
   'usage: accept-park.js decide --record <n>[,<m>...] [--run <dir>] [--repo [host/]owner/name]',
@@ -194,6 +196,8 @@ const realDeps = {
   },
   ghAvailable: ({ env, cwd } = {}) => require('./lib/repo-resolve').ghAvailable({ env, cwd }),
   pinGhHost: (repoSpec, { env, cwd } = {}) => pinExplicitRepoHost(repoSpec, { env, cwd }),
+  // #5902: the station-event emitter; a caller that overrides it with undefined emits nothing.
+  stationEvent: (e) => appendStationEvent(e),
   // `{ cwd, env, stderr, homeDir }` is the injected process context.
   gh: (args, { cwd, env, stderr, homeDir } = {}) => {
     const { ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
@@ -263,7 +267,8 @@ function anchoredRun(runDir, deps) {
   }
   if (target.ok) return true;
   if (target.reason === 'missing') deps.stderr(`accept-park.js: run dir does not exist: ${runDir}\n`);
-  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
+  else if (target.reason === 'not-a-run-dir') deps.stderr(`accept-park.js: run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
+  else deps.stderr(`accept-park.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section\n`);
   return false;
 }
 
@@ -496,12 +501,13 @@ function runDecide(opts, deps, ctx) {
   const { isTrustedComment } = require('./lib/issues/comment-trust');
   const target = resolved['acceptance-target'];
   // Unset is the resolver's `default`; a set but invalid value is invalid, never the schema default.
+  // No factoryRaw reaches the acceptance-target and risk-path-globs reads yet (#6007); a factory value, once
+  // passed, is set like policy.yml's.
   let policyDefault = target.value;
   if (target.invalid) policyDefault = null;
   else if (target.source === 'default') policyDefault = undefined;
-  // Gated by the control-mode result above (the run's config.yml over policy.yml), never by readRiskPolicy,
-  // which gates on policy.yml alone. The two risk keys resolve from policy.yml only; integration-branch
-  // takes the run's config.yml over policy.yml.
+  // Gated by the control-mode result above (policy.yml alone, as readRiskPolicy gates, #5830). The two
+  // risk keys resolve from policy.yml only; integration-branch takes the run's config.yml over policy.yml.
   const tripwirePolicy = resolvePolicyKeys(['risk-categories', 'risk-path-globs', 'integration-branch'], { policyRaw, runConfigRaw });
   const extraCategories = extraCategoriesOf(tripwirePolicy['risk-categories'].value);
   const categories = [...BUILTIN_RISK_CATEGORIES, ...extraCategories];
@@ -718,16 +724,33 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
   const claimed = opts.claimed ?? opts.record;
   const prUrl = `https://${repoSpec.host || 'github.com'}/${repoSpec.owner}/${repoSpec.repo}/pull/${opts.pr}`;
   const worktree = ctx.absolute(opts.worktree);
+  const runId = path.basename(runDir) || null;
+  const repoName = toRepoName(`${repoSpec.owner}/${repoSpec.repo}`);
+  const sessionId = deps.env?.CLAUDE_CODE_SESSION_ID || null;
+  // #5902: optional dep (absent = none), each emission wrapped so a throwing
+  // emitter never changes a step's detail, stdout or the exit code.
+  const emit = (event) => {
+    if (typeof deps.stationEvent !== 'function' || !repoName) return;
+    try {
+      deps.stationEvent({ repoName, sessionId, lane: 'unknown', ...event });
+    } catch { /* best-effort: the park stands */ }
+  };
 
   return {
     postPacket: () => perRecord(opts.record, (n) => {
+      const added = (said) => {
+        for (const t of transitionsForLabel(LABELS.ACCEPT_PENDING, 'added')) {
+          emit({ ...t, recordNumber: n, runId, payload: { label: LABELS.ACCEPT_PENDING }, discriminator: `accept-pending:${n}:${runId || ''}` });
+        }
+        return said;
+      };
       const packet = readFoundPacket(n);
-      if (packet.status !== 'found') return postFreshPacket(n);
+      if (packet.status !== 'found') return added(postFreshPacket(n));
       const { labels } = JSON.parse(ctx.ghIssue(['issue', 'view', String(n), '--json', 'labels']));
       if (!Array.isArray(labels)) throw new Error('labels is not a list');
       if (acceptanceOf(normalizeLabelNames(labels)) === 'pending') return 'pending label present';
       ctx.ghIssue(['issue', 'edit', String(n), '--add-label', LABELS.ACCEPT_PENDING]);
-      return `${LABELS.ACCEPT_PENDING} added`;
+      return added(`${LABELS.ACCEPT_PENDING} added`);
     }),
     writeDeployStatus: () => perRecord(opts.record, (n) => {
       const packet = readFoundPacket(n);
@@ -759,6 +782,15 @@ function parkSteps({ opts, deps, ctx, runDir, repoSpec, log }) {
           owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: n, runId: path.basename(runDir),
           reason: PARK_REASON, link: prUrl, runner: ctx.gh, gitRunner: ctx.gitRunner, now: deps.now(),
         });
+        // Only a real release ends the build visit; `already-released` is a repeat.
+        // lane stays 'unknown' (the emit default): park cannot know the lane, and lane is no eventKey input.
+        const transition = releaseTransition(PARK_REASON);
+        if (r.outcome === 'released' && transition) {
+          emit({
+            ...transition, recordNumber: n,
+            runId, payload: { reason: PARK_REASON }, discriminator: `release:${runId || ''}:${r.claimedAt || ''}`,
+          });
+        }
         const released = r.outcome === 'released' || r.outcome === 'already-released';
         if (!released) ok = false;
         details.push(`#${n}: ${r.outcome}${r.error ? ` (${r.error})` : ''}${r.holder ? ` (held by ${r.holder})` : ''}`);
@@ -930,4 +962,4 @@ async function run(argv, overrides = {}) {
 
 module.exports = { run, parseArgs, realDeps };
 
-if (require.main === module) run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; });
+if (require.main === module) run(process.argv.slice(2)).then((code) => { process.exitCode = code; });

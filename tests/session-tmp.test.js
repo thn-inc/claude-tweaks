@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-session-tmp-');
 const {
   resolveSessionId,
   sessionTmpRoot,

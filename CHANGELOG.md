@@ -53,6 +53,91 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.175.0](https://github.com/thn-inc/claude-tweaks/compare/v6.174.0...v6.175.0) (2026-11-20)
+
+
+### Features
+
+* specify: the Risk flags multiSelect question has no way… ([#5954](https://github.com/thn-inc/claude-tweaks/issues/5954)) ([e2c39d5](https://github.com/thn-inc/claude-tweaks/commit/e2c39d576d69b8cae5c0eff09ce1f5874ef675a5))
+* Stop the driver worker running the whole test suite ([#5915](https://github.com/thn-inc/claude-tweaks/issues/5915)) ([d5346c1](https://github.com/thn-inc/claude-tweaks/commit/d5346c1c99056b72f56bd2172d720bd6a609fa5b)), closes [#5917](https://github.com/thn-inc/claude-tweaks/issues/5917)
+
+
+### Bug Fixes
+
+* Keep the station-event log from dirtying a project's main… ([#5957](https://github.com/thn-inc/claude-tweaks/issues/5957)) ([3ff22a3](https://github.com/thn-inc/claude-tweaks/commit/3ff22a37e0514aa9b0ddf1b2111e336bba5ba2ba))
+* Refresh the test-impact map when drift makes it stop… ([#5947](https://github.com/thn-inc/claude-tweaks/issues/5947)) ([2257937](https://github.com/thn-inc/claude-tweaks/commit/225793727bec167daa70a876f9e4483401e7705d))
+
+### Highlights
+* Added a maintainer report of what the pipeline costs per session type, model and merged pull request, and how much follow-up work it files.
+* Added three quality measures to the maintainer cost report so a cheaper pipeline can be checked against the quality of its output.
+* Added a maintainer report of what each kind of pipeline review found, by model tier and by review lens.
+* Station events no longer leave an untracked file in a project's main checkout, so archiving no longer stalls in a project that has not re-run /claude-tweaks:init.
+* Shortened pipeline driver runs by having the worker run only the tests for the files it changed.
+* Made every pipeline driver worker launch on a model set by policy instead of the account's default.
+* Specify's risk-flag question now gives a recommendation and a one-line reason for every flag, including when it asks about several flags in one question.
+* Scoped test runs refresh the test-impact map as soon as it stops paying for itself, so a typical change re-runs far fewer test files.
+
+## [6.174.0](https://github.com/thn-inc/claude-tweaks/compare/v6.173.1...v6.174.0) (2026-11-19)
+
+
+### Features
+
+* Run the full suite on GitHub's macOS runner and add a… ([#5881](https://github.com/thn-inc/claude-tweaks/issues/5881)) ([d64ba3c](https://github.com/thn-inc/claude-tweaks/commit/d64ba3cc1501b147eab76250ee8e36d9fd24909f)), closes [#5882](https://github.com/thn-inc/claude-tweaks/issues/5882) [#5883](https://github.com/thn-inc/claude-tweaks/issues/5883)
+
+
+### Bug Fixes
+
+* A per-run config or an arbitrary --run directory can… ([#5830](https://github.com/thn-inc/claude-tweaks/issues/5830)) ([f45a030](https://github.com/thn-inc/claude-tweaks/commit/f45a03067f5e158c6466ee3b0e451a7057b3ee30)), closes [#5863](https://github.com/thn-inc/claude-tweaks/issues/5863) [#5865](https://github.com/thn-inc/claude-tweaks/issues/5865) [#5879](https://github.com/thn-inc/claude-tweaks/issues/5879)
+
+### Highlights
+* Releases now stop while any open record carries the `release-block` label, naming each blocking record; closing the record or removing the label lifts the block.
+* A per-run config can no longer switch off the human-acceptance park gate, and the park and queue-pull commands now refuse a --run directory that is not a pipeline run directory.
+* `/claude-tweaks:dispatch` no longer excludes every record that names a file when the remote's default branch cannot be determined.
+* A gh-absent `/claude-tweaks:dispatch` queue pull no longer caches a queue order computed without a dependency it could not read.
+
+## [6.173.1](https://github.com/thn-inc/claude-tweaks/compare/v6.173.0...v6.173.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* Fail closed when the MCP verified-open-deps file omits an… ([#5408](https://github.com/thn-inc/claude-tweaks/issues/5408)) ([e97c8ab](https://github.com/thn-inc/claude-tweaks/commit/e97c8ab6390db6dff021ae0937dffa4a7201603d)), closes [#5722](https://github.com/thn-inc/claude-tweaks/issues/5722)
+
+### Highlights
+* Dispatch no longer treats a dependency as closed on a gh-absent firing just because the agent left it out of the verified-open list.
+* Dispatch no longer excludes a record as already shipped when it was shaped or granted after the mentioning PR merged.
+
+## [6.173.0](https://github.com/thn-inc/claude-tweaks/compare/v6.172.0...v6.173.0) (2026-11-17)
+
+
+### Features
+
+* Add a ci-health skill that audits where CI time goes and… ([#5757](https://github.com/thn-inc/claude-tweaks/issues/5757)) ([a17143a](https://github.com/thn-inc/claude-tweaks/commit/a17143a39050065eef2900773b8abb6a225df3fc))
+
+
+### Bug Fixes
+
+* Queue pull prints one fetch failure twice (claim fetch… ([#5304](https://github.com/thn-inc/claude-tweaks/issues/5304)) ([63a4fb1](https://github.com/thn-inc/claude-tweaks/commit/63a4fb1ea63440bde010a1341c0d3655a2169364)), closes [#5305](https://github.com/thn-inc/claude-tweaks/issues/5305) [#5306](https://github.com/thn-inc/claude-tweaks/issues/5306) [#5307](https://github.com/thn-inc/claude-tweaks/issues/5307) [#5309](https://github.com/thn-inc/claude-tweaks/issues/5309) [#5310](https://github.com/thn-inc/claude-tweaks/issues/5310) [#5311](https://github.com/thn-inc/claude-tweaks/issues/5311) [#5312](https://github.com/thn-inc/claude-tweaks/issues/5312) [#5313](https://github.com/thn-inc/claude-tweaks/issues/5313) [#5314](https://github.com/thn-inc/claude-tweaks/issues/5314) [#5315](https://github.com/thn-inc/claude-tweaks/issues/5315) [#5316](https://github.com/thn-inc/claude-tweaks/issues/5316) [#5317](https://github.com/thn-inc/claude-tweaks/issues/5317) [#5409](https://github.com/thn-inc/claude-tweaks/issues/5409)
+* Route every gh call's timeout through GH_TIMEOUT_MS ([#4856](https://github.com/thn-inc/claude-tweaks/issues/4856)) ([4b43e18](https://github.com/thn-inc/claude-tweaks/commit/4b43e182edd28a4f544a3588ec4b0bc8ef03faa2)), closes [#5050](https://github.com/thn-inc/claude-tweaks/issues/5050)
+
+### Highlights
+* The gh-timeout-ms setting now applies to the wrap-up engine, the residue sweep and the integration-model probe, and the residue sweep can no longer hang on a stalled gh call.
+* A raised `gh-timeout-ms` or `git-timeout-ms` now also reaches the flow preflight, release preflight, wrap-up pack and console-resolve reads, so they no longer give up after 30 s on a slow host.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: prints one fetch failure twice (claim fetch AUTO line, foreign-states Warning).
+* Fixed a /claude-tweaks:dispatch queue pull failure case: with no integration-branch key and a failing git remote show, target-missing excludes every named-target candidate.
+* /claude-tweaks:dispatch queue pull: when the linked-PR GraphQL call fails, the Warning now says the shipped-candidate exclusion was skipped too, not only the open-PR exclusion.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: silently reads a non-array MCP queue or dep-freshness file as empty.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: one failed native-blockers GraphQL call disables both the blocked and unlanded-blocker passes.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed dep-freshness search fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed per-dependency issue view drops the blocked exclusion silently, making a blocked record dispatchable.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed cross-PR open-PR list fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: a failed shipped-PR view fails open with no Warning.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: reuses a prior pull's session files when a later fetch returns empty, and writes the stale groups back.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: one queue record with string labels crashes eligibility and blocks every other candidate.
+* Fixed a /claude-tweaks:dispatch queue pull failure case: stages the target-missing Close proposal under a random extensionless name instead of .md.
+* `/claude-tweaks:dispatch` keeps a target-missing Close proposal's command intact when the target path contains a quote or shell syntax.
+* Dispatch no longer reuses a previous queue pull's data when a step of the current pull fails.
+* Add `/claude-tweaks:ci-health`, a report-only sweep that splits recent CI jobs into waiting, setup and running time, judges them against a stack-neutral checklist, and files deduplicated findings.
+
 ## [6.172.0](https://github.com/thn-inc/claude-tweaks/compare/v6.171.0...v6.172.0) (2026-11-17)
 
 

@@ -4,9 +4,12 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { CLI, tmpDir, runCli, tmpGitRepo, passStampFiles, commitFile, baselineRepo, SUITE, PER_FILE, nestedRunEnv, headCommit } = require('./cli-helpers');
+const { initRepo } = require('../../helpers/git-fixtures');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 test('--baseline: failures that also fail at base exit 0, stamp a baseline pass, and --stamp-status says verifiedHead (#3043 AC1)', async () => {
   const r = baselineRepo();
@@ -52,9 +55,7 @@ test('--baseline: run from a linked worktree nested in a space-containing checko
   const repo = path.join(tmpDir(), 'Code Workspaces', 'repo');
   fs.mkdirSync(repo, { recursive: true });
   const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git(repo, 'init', '-q');
-  git(repo, 'config', 'user.email', 'verify-test@example.invalid');
-  git(repo, 'config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   fs.mkdirSync(path.join(repo, 'tests'));
   fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
   fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
@@ -245,7 +246,7 @@ test('--baseline: a stale ct-verify-base-* scratch worktree from an earlier inte
   // check executes and before adjudication is even attempted — so a trivial
   // passing repo is enough; this test does not need a real baseline mismatch.
   const r = tmpGitRepo();
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   const staleWt = path.join(staleParent, 'wt');
   r.git('worktree', 'add', '--detach', staleWt, 'HEAD');
   // verify.js names the path git's porcelain listing prints, which Git for Windows
@@ -326,4 +327,9 @@ test('the baseline adjudication re-reads the repo root after the suites and reus
   const remove = events.findIndex(isWorktree('remove'));
   assert.ok(remove > add, 'the scratch worktree was removed');
   assert.ok(events.slice(remove + 1).some((e) => e.kind === 'git' && same(e.args, COMBINED_REV_PARSE)), 'the end read asks git again');
+});
+
+// #5846: the verify scenario builders sit on templates (#5324); this file already builds baselineRepo, so the warm-call check lives here.
+test('AC1.1 AC1.2: verify baselineRepo: a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => baselineRepo(), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
 });

@@ -1,6 +1,7 @@
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -23,9 +24,9 @@ const GIT_OPTS = { env: cleanGitEnv(process.env) };
 // for the filename. This is the shared implementation; call it with the
 // filename that varies per call site.
 function seedDurableState(root, filename, data) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-bare-'));
+  const bareDir = scratchDir('code-health-durable-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-seed-'));
+  const seedDir = scratchDir('code-health-durable-seed-');
   execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });

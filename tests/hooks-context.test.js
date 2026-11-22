@@ -3,13 +3,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const ctx = require('../plugin/bin/lib/hooks/context');
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hooks-'));
+  const dir = scratchDir('ct-hooks-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -44,7 +45,7 @@ test('resolveRunDir picks newest non-terminal, skips clean runs', () => {
 });
 
 test('resolveRunDir returns null with no pipelines dir', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   assert.strictEqual(ctx.resolveRunDir(bare, {}), null);
 });
 
@@ -98,7 +99,7 @@ test('findNonCanonicalRunDirs ignores canonical run-dirs, archive/, and unrelate
 });
 
 test('findNonCanonicalRunDirs returns [] when the pipelines dir does not exist', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   assert.deepStrictEqual(ctx.findNonCanonicalRunDirs(bare), []);
 });
 
@@ -282,7 +283,7 @@ test('#1175 findRunsByWorktreePath excludes excludeDir even when passed through 
   const project = fs.realpathSync(tmpProject());
   const primary = mkRun(project, '2026-07-01T090000-spec-500', { status: 'active', worktree: '/tmp/wt-a' });
   const adhoc = mkRun(project, '2026-07-02T060000-adhoc-standalone', { status: 'active', worktree: '/tmp/wt-a' });
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hooks-symlink-'));
+  const parent = scratchDir('ct-hooks-symlink-');
   const alias = path.join(parent, 'alias');
   fs.symlinkSync(project, alias, 'dir');
   const excludeDirViaSymlink = path.join(alias, '.claude-tweaks', 'pipelines', path.basename(primary));

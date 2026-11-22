@@ -18,13 +18,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-subagent-stop-');
 const os = require('os');
 const path = require('path');
 const substop = require('../plugin/bin/lib/hooks/subagent-stop');
 const contractRetries = require('../plugin/bin/lib/hooks/contract-retries');
 
 function mkRun() {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-'));
+  const project = scratchDir('ct-substop-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   return run;
@@ -36,7 +38,7 @@ function mkRun() {
 // `{ toolUse: false }` for a test that specifically wants a zero-tool-use
 // transcript.
 function transcriptWithToolUse(lastText, { toolUse = true } = {}) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-t-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-substop-t-'), 'agent.jsonl');
   const lines = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
   ];
@@ -357,7 +359,7 @@ function reply(text, min) {
 }
 const toLines = (entries) => entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e)));
 function writeTranscript(entries) {
-  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-substop-p-')), 'agent.jsonl');
+  const f = path.join(scratchDir('ct-substop-p-'), 'agent.jsonl');
   fs.writeFileSync(f, toLines(entries).join('\n') + '\n');
   return f;
 }
