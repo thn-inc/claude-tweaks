@@ -51,6 +51,7 @@ const { RUN_ID_RE } = require('./lib/hooks/context');
 const { hasCanonicalClaimLogFor } = require('./lib/log-decision/claim-log');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { lstatType } = require('./lib/path-guard');
+const { headerRelPaths } = require('./lib/run-header');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const SPEC_RUN_DIR_RE = /^spec-\d+$/;
@@ -122,12 +123,10 @@ function readDecisions(runDir) {
 function specCandidatePaths(runDir, issue, multiTarget) {
   const base = path.basename(runDir);
   const parent = path.basename(path.dirname(runDir));
-  const root = '.claude-tweaks/pipelines';
   if (SPEC_RUN_DIR_RE.test(base) && RUN_ID_RE.test(parent)) {
-    return [`${root}/${parent}/${base}/work/${issue}-spec.md`];
+    return headerRelPaths(parent, issue, { specDir: base });
   }
-  const nested = `${root}/${base}/spec-${issue}/work/${issue}-spec.md`;
-  return multiTarget ? [nested] : [`${root}/${base}/work/${issue}-spec.md`, nested];
+  return headerRelPaths(base, issue, { layout: multiTarget ? 'nested' : 'any' });
 }
 
 // true = git exited 0; false = git ran and exited non-zero; null = git did not
@@ -188,7 +187,7 @@ function run(argv, deps) {
   const claimRemedy = (n) => `node "${PLUGIN_ROOT}/bin/claim-targets.js" --run-id "${runId}" --targets ${n} --run "${runDir}" (gh-absent: flow/claim-targets.md's MCP claim procedure)`;
   // A bundle's parent run dir holds each member's spec under spec-{n}/; a spec-{N} run dir already is that dir.
   const bundleParent = targets.length > 1 && !SPEC_RUN_DIR_RE.test(runId);
-  const materializeRemedy = (n) => `node "${PLUGIN_ROOT}/bin/materialize.js" ${n} --run-dir "${runDir}"${bundleParent ? ` --multi-record-slug ${n}` : ''} [--record-json <path> when gh is absent] then commit work/${n}-spec.md`;
+  const materializeRemedy = (n) => `node "${PLUGIN_ROOT}/bin/materialize.js" ${n} --run-dir "${runDir}"${bundleParent ? ` --multi-record-slug ${n}` : ''} [--record-json <path> when gh is absent] then commit the spec file it writes (its JSON \`file\` field)`;
 
   const runState = deps.readRunState(runDir);
   if (!runState || !runState.worktree) {
@@ -298,7 +297,7 @@ function run(argv, deps) {
 // worktree-local shadow ([IL-127]); a refusal throws, which run() reports.
 function appendDecision({ runDir, entry }) {
   const target = resolveTarget({ runDir });
-  if (!target.ok) throw new Error(target.reason === 'missing' ? `run dir does not exist: ${runDir}` : `run dir is not anchored under the main checkout: ${runDir}`);
+  if (!target.ok) throw new Error(target.reason === 'missing' ? `run dir does not exist: ${runDir}` : `run dir is not anchored under the main checkout's .claude-tweaks/pipelines: ${runDir}`);
   return appendEntry({ runDir, entry });
 }
 

@@ -9,20 +9,32 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, readEvents } = require('../plugin/bin/friction-events');
 const { formatEntry, appendEntry } = require('../plugin/bin/lib/log-decision/append');
+const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+
+// The CLI resolves --run and --worktree, so the fakes' keys and the expected
+// values are resolved the same way. Sibling run dirs come back from the fakes
+// verbatim and stay literal. deps.cwd() is passed through verbatim, so
+// '/wt/current' stays literal; the #4704 fakes return MAIN from it so one value
+// stands for the main checkout.
+const PRIMARY = path.resolve('/run/primary');
+const MAIN = path.resolve('/main');
 
 function fakeDeps(overrides = {}) {
-  const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], stdout: [], stderr: [] };
+  const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], repoInfo: [], stdout: [], stderr: [] };
   return {
     calls,
     isDirectory: () => true,
     cwd: () => '/wt/current',
-    readEvents: (runDir, source) => (runDir === '/run/primary' ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
+    readEvents: (runDir, source) => (runDir === PRIMARY ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
     findRunsByWorktreePath: (cwd, target, excludeDir) => { calls.findRunsByWorktreePath.push({ cwd, target, excludeDir }); return []; },
     sessionId: () => null,
+    repoInfo: (p) => { calls.repoInfo.push(p); return { repoRoot: '/wt/current', isLinkedWorktree: true, indeterminate: false }; },
+    realpath: (p) => p,
     findAdHocRunsBySessionId: (cwd, sessionId, excludeDir) => { calls.findAdHocRunsBySessionId.push({ cwd, sessionId, excludeDir }); return []; },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
@@ -72,13 +84,13 @@ test('defaults --worktree to deps.cwd() when omitted', () => {
 test('an explicit --worktree overrides deps.cwd()', () => {
   const deps = fakeDeps();
   run(['--run', '/run/primary', '--worktree', '/wt/explicit'], deps);
-  assert.equal(deps.calls.findRunsByWorktreePath[0].target, '/wt/explicit');
+  assert.equal(deps.calls.findRunsByWorktreePath[0].target, path.resolve('/wt/explicit'));
 });
 
 test('excludes the primary run dir from the sibling lookup', () => {
   const deps = fakeDeps();
   run(['--run', '/run/primary'], deps);
-  assert.equal(deps.calls.findRunsByWorktreePath[0].excludeDir, '/run/primary');
+  assert.equal(deps.calls.findRunsByWorktreePath[0].excludeDir, PRIMARY);
 });
 
 // --- output shape ------------------------------------------------------
@@ -103,7 +115,7 @@ test('no primary events and no siblings — empty JSON array, not an error', () 
 test('unions sibling (ad-hoc) run events with the primary run\'s, tagged _source adhoc', () => {
   const deps = fakeDeps({
     findRunsByWorktreePath: () => [{ runDir: '/run/adhoc-1', state: { worktree: '/wt/current' } }],
-    readEvents: (runDir, source) => (runDir === '/run/primary'
+    readEvents: (runDir, source) => (runDir === PRIMARY
       ? [{ type: 'gate-denial', ts: 't1', _source: source }]
       : runDir === '/run/adhoc-1' ? [{ type: 'wd-deny', ts: 't0', _source: source }] : []),
   });
@@ -138,7 +150,7 @@ test('unions events from more than one sibling ad-hoc run dir', () => {
 // --- real readEvents behavior (against the actual filesystem-reading impl) ---
 
 test('the real readEvents helper parses events.jsonl, skips malformed lines, returns [] on a missing file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     '{"type":"gate-denial","ts":"t1"}\nnot json\n{"type":"wd-deny","ts":"t2"}\n',
@@ -157,7 +169,7 @@ test('the real readEvents helper parses events.jsonl, skips malformed lines, ret
 // other event type, even one that happens to carry `test: true`) still comes
 // through unfiltered.
 test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real one', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -182,7 +194,7 @@ test('#1337: readEvents drops a test-tagged gate-denial event but keeps a real o
 // unattributed event (or any event on the `adhoc` source, already
 // worktree-validated by findRunsByWorktreePath) still comes through.
 test('#1402: readEvents drops a primary fallback-attributed event but keeps a real one and an adhoc fallback one', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -203,7 +215,7 @@ test('#1402: readEvents drops a primary fallback-attributed event but keeps a re
 // visibility only) — it must never inflate the Friction lens's count the
 // same way a genuine violation does.
 test('#2350: readEvents drops a lenient-variant contract-violation event but keeps a genuine violation', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-events-'));
+  const dir = scratchDir('ct-fe-events-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -236,7 +248,7 @@ function withTz(tz, fn) {
 }
 
 test('#2989: readEvents excludes an event timestamped before the run dir\'s first decisions.md entry', () => withTz('UTC', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 12:00:00Z; claimed (decisions.md's first entry) at 12:02:00Z.
   const dir = path.join(parent, '2026-01-01T120000-record-999');
   fs.mkdirSync(dir);
@@ -257,7 +269,7 @@ test('#2989: readEvents excludes an event timestamped before the run dir\'s firs
 }));
 
 test('#2989: readEvents applies no pre-claim filtering when the run dir has no decisions.md yet', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   const dir = path.join(parent, '2026-01-01T120000-record-999');
   fs.mkdirSync(dir);
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
@@ -266,14 +278,14 @@ test('#2989: readEvents applies no pre-claim filtering when the run dir has no d
 });
 
 test('#2989: readEvents applies no pre-claim filtering on a non-canonical directory name', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-noncanonical-'));
+  const dir = scratchDir('ct-fe-claim-noncanonical-');
   fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"ask-user-question","ts":"2026-01-01T12:00:30.000Z"}\n');
   const events = readEvents(dir, 'primary');
   assert.equal(events.length, 1, 'no run-id-shaped name — mint time can\'t be established, so no exclusion');
 });
 
 test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight rollover', () => withTz('UTC', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 23:59:00Z on 2026-01-01; decisions.md's first entry logs only
   // HH:MM:SS (00:00:30), which is actually the next calendar day.
   const dir = path.join(parent, '2026-01-01T235900-record-999');
@@ -300,7 +312,7 @@ test('#2989: readEvents handles a mint/claim pair that straddles a UTC midnight 
 // claim time fails here.
 
 test('#3442 AC1.1: readEvents reads the decisions.md claim time as local time (TZ=Europe/Copenhagen)', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 18:39:00Z (20:39 local); claimed at 20:39:18 local = 18:39:18Z.
   const dir = path.join(parent, '2026-10-17T183900-record-999');
   fs.mkdirSync(dir);
@@ -321,7 +333,7 @@ test('#3442 AC1.1: readEvents reads the decisions.md claim time as local time (T
 }));
 
 test('#3442: a mint/claim pair straddling a local (non-UTC) midnight lands on the correct local day', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 22:30:00Z on 2026-10-17 (00:30 local on 2026-10-18); the
   // first decisions.md entry logs 00:31:00 local, which is 22:31:00Z.
   const dir = path.join(parent, '2026-10-17T223000-record-999');
@@ -343,7 +355,7 @@ test('#3442: a mint/claim pair straddling a local (non-UTC) midnight lands on th
 }));
 
 test('#3442: a claim logged after local midnight, past a mint before it, rolls to the next local day', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 21:50:00Z on 2026-10-17 (23:50 local on 10-17); the first
   // decisions.md entry logs 00:05:00 local, which is 10-18 00:05 local
   // (22:05:00Z) — read on the mint's own local day it lands before the mint,
@@ -372,7 +384,7 @@ test('#3442: a claim logged after local midnight, past a mint before it, rolls t
 // (UTC) reading of the claim time fails here.
 
 test('#3641 AC1.1: a log-decision-stamped claim under TZ=Europe/Copenhagen keeps a later wd-guard-refusal', () => withTz('Europe/Copenhagen', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 18:58:00Z; claimed at 18:59:10Z, which is 20:59:10 local.
   const dir = path.join(parent, '2026-10-19T185800-record-999');
   fs.mkdirSync(dir);
@@ -396,7 +408,7 @@ test('#3641 AC1.1: a log-decision-stamped claim under TZ=Europe/Copenhagen keeps
 }));
 
 test('#3641 AC2.1: under TZ=America/Los_Angeles a pre-claim event is still excluded', () => withTz('America/Los_Angeles', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-claim-'));
+  const parent = scratchDir('ct-fe-claim-');
   // Minted at 05:00:00Z on 2026-10-19 (22:00 local on 10-18, PDT); claimed at
   // 05:01:00Z, which is 22:01:00 local on 10-18. The UTC date in the name is
   // one day ahead of the local calendar day the claim belongs to.
@@ -430,7 +442,7 @@ test('#3641 AC2.1: under TZ=America/Los_Angeles a pre-claim event is still exclu
 // `session-end`, `skill_invoked`, …) never reaches stdout.
 
 test('#2016: run() filters the merged event stream to only the five Friction Lens vocabulary types', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-'));
+  const dir = scratchDir('ct-fe-vocab-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     [
@@ -457,7 +469,7 @@ test('#2016: run() filters the merged event stream to only the five Friction Len
 });
 
 test('#2016: a run dir whose events.jsonl holds only commit rows prints []', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-vocab-commits-'));
+  const dir = scratchDir('ct-fe-vocab-commits-');
   fs.writeFileSync(
     path.join(dir, 'events.jsonl'),
     ['{"type":"commit","ts":"t1"}', '{"type":"commit","ts":"t2"}'].join('\n') + '\n',
@@ -486,7 +498,7 @@ test('session id defaults to deps.sessionId() (CLAUDE_CODE_SESSION_ID) and exclu
   const deps = fakeDeps({ sessionId: () => 'S-env' });
   run(['--run', '/run/primary'], deps);
   assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId.map((c) => c.sessionId), ['S-env']);
-  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, '/run/primary');
+  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, PRIMARY);
 });
 
 test('no session id at all: the session lookup is not attempted', () => {
@@ -509,4 +521,201 @@ test('an ad-hoc dir found by BOTH the worktree and the session lookup is read on
   run(['--run', '/run/primary', '--session', 'S1'], deps);
   assert.strictEqual(reads, 1);
   assert.strictEqual(JSON.parse(deps.calls.stdout.join('')).length, 1);
+});
+
+// --- #4704: main-checkout union scoped to the current session ---------------
+//
+// From the main checkout every main-checkout session's ad-hoc run dir records
+// the same worktree path, so the path union alone pulls other sessions' friction
+// in. There the path match keeps only this session's ad-hoc dirs; a linked
+// worktree's path still identifies one session's work and is unchanged.
+
+const MINE = '/run/2026-10-31T100000-adhoc-standalone';
+const OTHER = '/run/2026-10-31T110000-adhoc-standalone';
+const FORMAL = '/run/2026-10-31T120000-spec-9';
+const MAIN_CHECKOUT = { repoRoot: MAIN, isLinkedWorktree: false, indeterminate: false };
+const fixtureEvents = (runDir) => ([MINE, OTHER, FORMAL].includes(runDir)
+  ? [{ type: 'wd-deny', ts: 't0', _runDir: runDir }]
+  : (runDir === PRIMARY ? [{ type: 'gate-denial', ts: 't1', _runDir: runDir }] : []));
+const pathSiblings = () => [
+  { runDir: MINE, state: { worktree: MAIN, sessionId: 'S1' } },
+  { runDir: OTHER, state: { worktree: MAIN, sessionId: 'S2' } },
+  { runDir: FORMAL, state: { worktree: MAIN, sessionId: 'S1' } },
+];
+
+test('#4704: from the main checkout only this session\'s ad-hoc dirs are unioned by path', () => {
+  const deps = fakeDeps({
+    repoInfo: (p) => { deps.calls.repoInfo.push(p); return MAIN_CHECKOUT; },
+    cwd: () => MAIN,
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    findRunsByWorktreePath: pathSiblings,
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
+  assert.deepStrictEqual(deps.calls.repoInfo, [MAIN]);
+});
+
+test('#4704: a linked worktree still unions another session\'s ad-hoc dir by path (#2783/#1333)', () => {
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => (runDir === OTHER ? [{ type: 'wd-deny', ts: 't0', _source: source, _runDir: runDir }] : []),
+    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: '/wt/current', sessionId: 'S2' } }],
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0]._source, 'adhoc');
+  assert.strictEqual(out[0]._runDir, OTHER);
+});
+
+test('#4704: from the main checkout with no session id, no path sibling is unioned', () => {
+  const deps = fakeDeps({
+    repoInfo: () => MAIN_CHECKOUT,
+    cwd: () => MAIN,
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    // An ad-hoc dir stamped with no session id: with no session id on this side
+    // either, `null === null` would match it were it not for the "session id is set" clause.
+    findRunsByWorktreePath: () => [{ runDir: MINE, state: { worktree: MAIN, sessionId: null } }],
+  });
+  assert.strictEqual(run(['--run', '/run/primary'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(out.map((e) => e._runDir), [PRIMARY]);
+  assert.ok(!out.some((e) => e._source === 'adhoc'));
+});
+
+test('#4704: from the main checkout with no session id, the skipped path sibling is named on stderr; with a session id it is not', () => {
+  const mainCheckoutDeps = () => fakeDeps({
+    repoInfo: () => MAIN_CHECKOUT,
+    cwd: () => MAIN,
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    findRunsByWorktreePath: pathSiblings,
+  });
+  const noSession = mainCheckoutDeps();
+  assert.strictEqual(run(['--run', '/run/primary'], noSession), 0);
+  assert.deepStrictEqual(JSON.parse(noSession.calls.stdout.join('')).map((e) => e._runDir), [PRIMARY]);
+  assert.match(noSession.calls.stderr.join(''), /^friction-events\.js: main-checkout ad-hoc run dirs skipped .*no session id resolvable.*--session.*CLAUDE_CODE_SESSION_ID\)\n$/);
+
+  const withSession = mainCheckoutDeps();
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], withSession), 0);
+  assert.deepStrictEqual(withSession.calls.stderr, []);
+});
+
+test('#4704: an indeterminate repoInfo keeps the path-only union', () => {
+  const deps = fakeDeps({
+    repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true }),
+    readEvents: (runDir, source) => (runDir === OTHER ? [{ type: 'wd-deny', ts: 't0', _source: source, _runDir: runDir }] : []),
+    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: '/wt/current', sessionId: 'S2' } }],
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(out.map((e) => e._runDir), [OTHER]);
+});
+
+// The path-only union is kept whenever the worktree path is not positively the
+// main checkout's root. Each case below gets the other-session sibling back.
+function otherSessionUnioned(overrides, extraArgv = []) {
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => (runDir === OTHER ? [{ type: 'wd-deny', ts: 't0', _source: source, _runDir: runDir }] : []),
+    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: MAIN, sessionId: 'S2' } }],
+    ...overrides,
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', ...extraArgv], deps), 0);
+  return JSON.parse(deps.calls.stdout.join('')).map((e) => e._runDir);
+}
+
+test('#4704: git saying "not a repo" keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: false }) }),
+    [OTHER],
+  );
+});
+
+test('#4704: a worktree path that does not exist (no repo root AND no realpath: null === null) keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: false }), realpath: () => null }),
+    [OTHER],
+  );
+});
+
+test('#4704: a --worktree that is not the main checkout\'s root keeps the path-only union even when repoInfo (walking up) reports the main checkout', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT }, ['--worktree', '/main/.claude/worktrees/removed']),
+    [OTHER],
+  );
+});
+
+test('#4704: a worktree path that does not resolve (realpath fails) keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT, realpath: () => null }, ['--worktree', MAIN]),
+    [OTHER],
+  );
+});
+
+test('#4704: repoRoot and the worktree path are compared through the same canonicalizer (case-folding fake: /Main vs /main is the main checkout)', () => {
+  const deps = fakeDeps({
+    repoInfo: () => ({ repoRoot: path.resolve('/Main'), isLinkedWorktree: false, indeterminate: false }),
+    realpath: (p) => (p ? p.toLowerCase() : null),
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    findRunsByWorktreePath: pathSiblings,
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', '--worktree', MAIN], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
+});
+
+// Initialises `repo` as a real main checkout holding two ad-hoc run dirs (sessions
+// S1 and S2, one friction event each) and a formal primary run dir.
+function initMainCheckoutWithTwoSessions(repo) {
+  const { writeRunState } = require('../plugin/bin/lib/hooks/context');
+  fixtureGit(['init', '-q'], { cwd: repo, windowsHide: true });
+  const root = fs.realpathSync(repo);
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const mk = (name) => { const d = path.join(pipelines, name); fs.mkdirSync(d, { recursive: true }); return d; };
+  const mine = mk('2026-10-31T100000-adhoc-standalone');
+  const other = mk('2026-10-31T110000-adhoc-standalone');
+  const primary = mk('2026-10-31T120000-spec-9');
+  for (const [dir, sessionId] of [[mine, 'S1'], [other, 'S2']]) {
+    writeRunState(dir, { worktree: root, status: 'active', sessionId });
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"wd-deny","ts":"2026-10-31T13:00:00.000Z"}\n');
+  }
+  return { root, primary };
+}
+
+// Runs the real CLI as session S1 from `root`; returns the basenames of the run dirs the events came from.
+function realCliRunDirsAsS1(root, primary, extraArgs = []) {
+  const { execFileSync } = require('child_process');
+  const stdout = execFileSync(process.execPath, [path.join(__dirname, '..', 'plugin', 'bin', 'friction-events.js'), '--run', primary, ...extraArgs], {
+    cwd: root,
+    env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' },
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: FIXTURE_TIMEOUT_MS,
+  });
+  return JSON.parse(stdout).map((e) => path.basename(e._runDir));
+}
+
+test('#4704: the real CLI from a real main checkout drops another session\'s ad-hoc dir (real writer)', () => {
+  const repo = scratchDir('ct-fe-main-');
+  try {
+    const { root, primary } = initMainCheckoutWithTwoSessions(repo);
+    assert.deepStrictEqual(realCliRunDirsAsS1(root, primary), ['2026-10-31T100000-adhoc-standalone']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// The main-checkout comparison must canonicalize both sides the way
+// findRunsByWorktreePath matches (on-disk case): a miscased --worktree still
+// matches the main checkout's siblings, so it must still be recognised as the
+// main checkout and scoped. Needs a case-insensitive volume to be reachable.
+test('#4704: a miscased --worktree spelling of the main checkout is still scoped to this session (real writer)', (t) => {
+  const repo = scratchDir('ct-fe-MixedCase-');
+  try {
+    const { root, primary } = initMainCheckoutWithTwoSessions(repo);
+    const miscased = root.toLowerCase();
+    if (miscased === root || !fs.existsSync(miscased)) { t.skip('case-sensitive filesystem'); return; }
+    assert.deepStrictEqual(realCliRunDirsAsS1(root, primary, ['--worktree', miscased]), ['2026-10-31T100000-adhoc-standalone']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });

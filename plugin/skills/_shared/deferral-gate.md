@@ -11,6 +11,7 @@ The single home of the rule every exhaust channel applies before anything become
 - `skills/build/SKILL.md` (Common Steps 2 and 4 — Scope and edit discipline's reported follow-ups; review findings carried to the ledger)
 - `skills/build/dispatch.md` (the SDD invocation's review-finding rule)
 - `skills/_shared/ledger-format.md` (the ledger resolve gate's Phase 1 / 2 / 3)
+- `skills/wrap-up/review-console-appendix.md` (an SDD ruling's reversal or ratify record — Deriving the value from the criteria)
 
 The code twins are `clearsFloor` (`bin/lib/issues/autonomy.js`) and `recordPayload`'s `deferReason` option (`bin/lib/issues/record.js`); `DEFER_REASONS` in `record.js` is the vocabulary's only code home, and `tests/deferral-gate-conformance.test.js` pins this file and that export equal.
 
@@ -36,14 +37,14 @@ Never use these to leave an item open, defer it, or file it:
 - *"Pre-existing"* — a reported pre-existing defect in a file this build's diff touches goes through the fix-now test above like any other finding; pre-existence alone is never a defer reason. Only `pre-existing-outside-diff` (a file the diff does not touch) defers on pre-existence
 - *"Following plan verbatim"* — when plan code conflicts with `.claude/rules/` or CLAUDE.md don'ts, fix the violation; the plan was written before review-time context
 - *"A future plan (P2/P3/...) might want X"* — speculative; only defer for *known* downstream needs
-- *"Bundle of small items"* — items get classified individually, never as a group; below-floor **deferred** items are the one exception — they batch into the digest by design, per `_shared/materiality-floor.md`, which is a routing decision made after the gate, never a reason to skip a fix
+- *"Bundle of small items"* — items get classified individually, never as a group; **deferred** items the digest takes by any rule in `_shared/materiality-floor.md`'s digest-label table are the one exception — they batch into the digest by design, per that file, which is a routing decision made after the gate, never a reason to skip a fix
 - *"Premature without consumer signal"* — clear bugs and convention violations get fixed now
 - *"Plan-prescribed routing"* — if the plan said "X moves to P6," that's plan documentation, not a ledger event; remove the item entirely instead of deferring
 - *"Minor / outside that scope / not load-bearing"* — severity is never a defer reason; review's severity floors decide what blocks, not what gets fixed
 
 ## `Defer-reason:` vocabulary
 
-An item that fails fix-now carries exactly one of these values. The list is closed — the same six values, in the same order, are `DEFER_REASONS` in `bin/lib/issues/record.js`:
+An item that fails fix-now carries exactly one of these values. The list is closed — the same seven values, in the same order, are `DEFER_REASONS` in `bin/lib/issues/record.js`:
 
 ```
 tangential — a new capability or idea the finding suggests, not a fix to the current work (Capture, never Defer)
@@ -52,6 +53,7 @@ pre-existing-outside-diff — a defect in a file this build's diff does not touc
 genuinely-larger — the fix expands scope past the fix-now criteria (long rebuild, >10 unrelated tests, spans unrelated systems)
 blocked-external — the fix waits on external state (third-party data, prod traffic, approvals)
 blocked-dependency — the fix waits on functionality not yet built
+needs-verification — the finding is unverified; the filed task is the bounded check that settles it (a builder verifies at the integration-branch tip, then fixes or closes)
 ```
 
 ### Floor mapping
@@ -64,8 +66,13 @@ blocked-dependency — the fix waits on functionality not yet built
 | `needs-human-decision` | yes |
 | `blocked-dependency` | yes |
 | `genuinely-larger` | yes |
+| `needs-verification` | yes |
 | `tangential` | no |
 | `pre-existing-outside-diff` | no |
+
+### Deriving the value from the criteria
+
+A producer that derives the value from the Fix-now criteria, rather than judging it directly, stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`. The derivation never reaches `tangential` or `pre-existing-outside-diff`, since neither is a criterion's value, and it never produces `needs-verification` either: only the Review Console's can't-tell filing stamps that value. When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`: scheduling work no fix wave can take any more is a human call. When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal's Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough.
 
 ## The hard gate
 
@@ -79,3 +86,4 @@ After any fix-now change made after `/claude-tweaks:review` passed, re-run `/cla
 
 - **Staged proposals** (`{run-dir}/staged/*.md`): a `Defer-reason: {value}` line inside the header block — the lines before the first blank line, alongside `Title:` / `Type:` / `Labels:`. Readers locate it **by key, never by position**.
 - **Directly-created records**: a `Defer-reason: {value}` line in the body, located **by key** (`recordPayload`'s match-or-throw reads it wherever it sits; `clearsFloor` never reads a body — it receives the extracted value itself). A composer-composed body (`specShapedBody`) places it in the provenance block — after `header`/`Origin:`, before `## Current State`; a bare `recordPayload({deferReason})` on a body without the line inserts it as the first body line.
+- **Evidence** (#5933): an item may carry one `Evidence: {kind}:{ref}` line beside its `Defer-reason:` — inside a staged proposal's header block, and in a created record's provenance block right after `Defer-reason:` (`specShapedBody`'s `provenance.evidence`) — located **by key**, like the reason. A producer writes `Evidence: test:{path}`, naming a test file that covers the defect by its path from the repository's top level, or `Evidence: ref:{id}`, naming an existing record (`#{digits}`) or incident (`IL-{digits}`). A file-and-line pointer (`src/x.js:10`) is neither and is not evidence. A routing site passes the line's value as `bin/deferral-route.js --evidence` only when it matches the grammar `_shared/materiality-floor.md`'s Applying the floor states, and a producer that routed with `--evidence` passes the same value as `provenance.evidence`; `specShapedBody` refuses any other kind, a file-and-line pointer included.

@@ -216,8 +216,8 @@ function resolve(opts = {}) {
 
   // --root-only: just the anchored main-checkout root, no run resolution at
   // all. For call sites that only ever needed $RUN_ROOT itself (a `find`
-  // backstop scoped to the whole pipelines/ tree, the wrap-up transitional
-  // copy-out guard's DEST computation), not a specific run's directory.
+  // backstop scoped to the whole pipelines/ tree), not a specific run's
+  // directory.
   if (opts.rootOnly) return ok(mainRoot, false);
 
   // #4677: `--archived` is read-only — it returns an existing run dir or fails, never mints one —
@@ -333,11 +333,16 @@ function resolve(opts = {}) {
         '(omit --mode entirely for a caller that creates in every mode, e.g. wrap-up).',
       );
     }
+    // Lazy require (hot paths that never mint skip the policy resolver); never passes env (the driver's is {});
+    // best-effort; skips the hook-stamped 'adhoc' dirs (hook events must not read process.env or spawn git).
+    const mintManifest = (dir, lane) => { if (opts.standalone !== 'adhoc') try { require('../run-manifest/write').initRunManifest(dir, { lane, cwd }); } catch { /* best-effort */ } };
     if (opts.standalone) {
       // The step-4 standalone-auto-fallback shape: {ts}-{name}-standalone,
-      // pre-populated with decisions.md and staged/ — byte-for-byte what the
-      // reference snippet's own standalone branch does.
-      const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${opts.standalone}-standalone`);
+      // pre-populated with decisions.md and staged/ — the reference snippet's
+      // file set, plus manifest.json (#5903). A {name} already ending in
+      // `-standalone` is used as-is, not suffixed twice (#4807).
+      const name = opts.standalone.endsWith('-standalone') ? opts.standalone : `${opts.standalone}-standalone`;
+      const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${name}`);
       // #208: never (re-)create a run-id that already exists under archive/ — archived is
       // terminal. Checked immediately before the mkdir, the one writer chokepoint.
       if (archiveStatus(pipelinesRoot, path.basename(dir)) === 'archived') {
@@ -349,12 +354,13 @@ function resolve(opts = {}) {
       }
       fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
       try { fs.closeSync(fs.openSync(path.join(dir, 'decisions.md'), 'a')); } catch { /* best-effort touch */ }
+      mintManifest(dir, 'unknown');
       return ok(dir, true);
     }
     if (opts.specSlug) {
       // The plain mint shape /flow (steps-and-gates.md case 4), /dispatch
       // (SKILL.md Step 4), and /claude-tweaks:flow's claim-targets.md use:
-      // mkdir only. config.yml/decisions.md are written later, by whichever
+      // mkdir plus manifest.json. config.yml/decisions.md are written later, by whichever
       // step actually initializes the run (the Config Manifesto), not by
       // this mint.
       const dir = path.join(pipelinesRoot, `${formatTimestamp(now)}-${opts.specSlug}`);
@@ -367,6 +373,7 @@ function resolve(opts = {}) {
         );
       }
       fs.mkdirSync(dir, { recursive: true });
+      mintManifest(dir, /^drive-\d+$/.test(opts.specSlug) ? 'driver' : 'unknown');
       return ok(dir, true);
     }
     return fail(

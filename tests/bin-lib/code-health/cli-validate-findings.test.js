@@ -1,26 +1,25 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { execFileSync, spawnSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const { extractFingerprint } = require('../../../plugin/bin/lib/issues/record');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-vf-'));
+  return scratchDir('codehealth-vf-');
 }
 
-function runValidateFindings(root, findingsFile, extraArgs = []) {
-  const result = spawnSync(
-    'node',
-    [CLI, 'validate-findings', findingsFile, '--root', root, ...extraArgs],
-    { encoding: 'utf8' },
-  );
-  return result;
+// In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
+function runValidateFindings(root, findingsFile, extraArgs = [], opts = {}) {
+  return sweepCli(CLI, ['validate-findings', findingsFile, '--root', root, ...extraArgs], opts);
 }
 
 function validFinding(overrides = {}) {
@@ -540,4 +539,124 @@ test('validate-findings: gh-absent MCP transport — an HTML-comment-stripped bo
     secondPayloads.length, 0,
     'identical finding must be suppressed, not re-filed, once dedup uses the MCP-recovered fingerprint',
   );
+});
+
+// Real-process pin of the script entry (#5381): a dry-run success prints the payload array on
+// stdout and the run summary on stderr, byte-identical before and after the entry conversion.
+test('AC7.1: validate-findings --dry-run on a valid finding exits 0 and prints the payload array (real process)', () => {
+  const { spawnCli } = require('../../helpers/run-cli');
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  const env = { ...cleanGitEnv(process.env), LC_ALL: 'C', LANG: 'C' };
+  const r = spawnCli(CLI, ['validate-findings', findingsFile, '--root', root, '--dry-run', '--run-id', 'fixed-run'], { env, cwd: root });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(
+    r.stdout,
+    '[\n  {\n    "title": "getUser is a passthrough",\n    "body": "**Criterion:** simplification | **Risk:** high | **Severity:** high | **Likelihood:** medium | **Effort:** medium | **Confidence:** high | **Area:** src/api\\n\\n## Current State\\n\\nAnchor: `src/api/user.js#getUser`\\n\\ngetUser delegates directly to UserRepository.find with no added logic.\\n\\n## Deliverables\\n\\nInline the call or add caching.\\n\\n## Acceptance Criteria\\n\\ngetUser adds caching or is removed.\\n\\n## Release Note\\n\\nNo user-visible change — internal code-quality fix.\\n\\n## Technical Approach\\n\\n### Key Files\\n\\n- `src/api/user.js` — address the finding at this anchor\\n\\n_Filed by `/claude-tweaks:code-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\\n\\n<!-- work-fingerprint: codehealth-a7f87202 -->\\nwork-fingerprint: codehealth-a7f87202",\n    "labels": [\n      "by:code-health",\n      "risk:high",\n      "size:medium",\n      "ready"\n    ],\n    "type": "task"\n  }\n]\n',
+  );
+  // Only the CLI-owned summary line is pinned; git's own stderr text varies by version, locale and checkout.
+  assert.ok(
+    r.stderr.split('\n').includes('[code-health] validate-findings fixed-run: 1 valid finding(s), 1 payload(s) after dedup'),
+    `expected the summary line in stderr: ${r.stderr}`,
+  );
+});
+
+// ── in-process entry (#5381) ────────────────────────────────────────────────
+
+// No --root, and a findings path relative to the injected cwd: the root and the findings file
+// both resolve against it. A non-dry-run with --slice '.' writes cache.json under the root, so
+// the cache landing in the injected cwd proves the root default too.
+test('AC8.1: validate-findings without --root and with a relative findings path reads and writes under the injected cwd', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'index.js'), 'module.exports = 1;\n');
+  fs.writeFileSync(path.join(root, 'findings.json'), JSON.stringify([validFinding({ areaId: '.', anchor: 'index.js#module', severity: 'high' })]));
+
+  const result = sweepCli(CLI, ['validate-findings', 'findings.json', '--slice', '.', '--run-id', 'r-cwd'], { cwd: root });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  assert.strictEqual(JSON.parse(result.stdout).length, 1);
+  assert.ok(
+    fs.existsSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json')),
+    'the cache must be written under the injected cwd, the default root',
+  );
+});
+
+// The exit code is returned, never read from or written to process.exitCode.
+test('AC2.1: validate-findings returns 0 on a valid findings file when process.exitCode is already 1', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  const prior = process.exitCode;
+  process.exitCode = 1;
+  let result;
+  try {
+    result = runValidateFindings(root, findingsFile, ['--dry-run']);
+  } finally {
+    process.exitCode = prior;
+  }
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const payloads = JSON.parse(result.stdout);
+  assert.ok(Array.isArray(payloads), 'stdout must be a JSON array');
+  assert.strictEqual(payloads.length, 1);
+});
+
+// env-only fixture: resolveReadCommit's git child sees the injected env, so a GIT_DIR that only
+// the injected env carries (root itself is not a repo) decides the Verified-as-of: line. The
+// fixture's own setup git calls and the injected env are stripped of the ambient git variables.
+test('validate-findings stamps Verified-as-of from the injected env: GIT_DIR names the repo, root is not one', () => {
+  const root = tmp(); // not a git repo
+  const repo = tmp();
+  const setup = { env: cleanGitEnv(process.env) };
+  execFileSync('git', ['init', '-q'], { cwd: repo, ...setup });
+  execFileSync('git', ['-C', repo, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '--allow-empty', '-m', 'seed'], setup);
+  const sha = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8', ...setup }).trim();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+
+  const result = runValidateFindings(root, findingsFile, ['--dry-run'], { env: { GIT_DIR: path.join(repo, '.git') } });
+  assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+  const [payload] = JSON.parse(result.stdout);
+  assert.ok(payload.body.includes(`Verified-as-of: ${sha}`), `expected the injected repo's HEAD ${sha}, got body:\n${payload.body}`);
+});
+
+test('AC5.1: an --issues file in gh\'s raw shape — a CLOSED match with no wontfix label reopens and is cached as regressed', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+  const first = runValidateFindings(root, findingsFile, ['--slice', 'src/api', '--run-id', 'r-raw-reopen-1']);
+  const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(codehealth-[0-9a-f]{8})\s*-->/)[1];
+
+  const issuesFile = path.join(root, 'issues.json');
+  fs.writeFileSync(issuesFile, JSON.stringify([{
+    number: 8, state: 'CLOSED', fingerprint: fp,
+    labels: [{ id: 'LA_1', name: 'by:code-health', color: 'ededed', description: '' }],
+  }]));
+  const second = runValidateFindings(root, findingsFile, ['--issues', issuesFile, '--slice', 'src/api', '--run-id', 'r-raw-reopen-2']);
+  assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
+  assert.strictEqual(JSON.parse(second.stdout).length, 1, 'a closed non-wontfix match must emit a reopen payload');
+  const cache = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json'), 'utf8'));
+  assert.strictEqual(cache[fp].status, 'regressed');
+  assert.strictEqual(cache[fp].issue, 8);
+});
+
+test('AC5.2: an --issues file in gh\'s raw shape — a wontfix label object suppresses and is cached as wontfix', () => {
+  const root = tmp();
+  const findingsFile = path.join(root, 'findings.json');
+  fs.writeFileSync(findingsFile, JSON.stringify([validFinding({ severity: 'high' })]));
+  const first = runValidateFindings(root, findingsFile, ['--slice', 'src/api', '--run-id', 'r-raw-wontfix-1']);
+  const fp = JSON.parse(first.stdout)[0].body.match(/<!--\s*work-fingerprint:\s*(codehealth-[0-9a-f]{8})\s*-->/)[1];
+
+  const issuesFile = path.join(root, 'issues.json');
+  fs.writeFileSync(issuesFile, JSON.stringify([{
+    number: 7, state: 'CLOSED', fingerprint: fp,
+    labels: [{ id: 'LA_1', name: 'by:code-health' }, { id: 'LA_2', name: 'wontfix' }],
+  }]));
+  const second = runValidateFindings(root, findingsFile, ['--issues', issuesFile, '--slice', 'src/api', '--run-id', 'r-raw-wontfix-2']);
+  assert.strictEqual(second.status, 0, `stderr: ${second.stderr}`);
+  assert.strictEqual(JSON.parse(second.stdout).length, 0, 'a wontfix label object must suppress');
+  const cache = JSON.parse(fs.readFileSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json'), 'utf8'));
+  assert.strictEqual(cache[fp].status, 'wontfix');
+  assert.strictEqual(cache[fp].issue, 7);
 });

@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -9,8 +10,9 @@ const {
   missingJourneyFiles, deletedFileSignature, currentDeletedFileSignature,
 } = require('../../../plugin/bin/lib/journey-health/scope');
 const { buildValidateFindingsUpdate } = require('../../../plugin/bin/lib/journey-health/cache');
+const { initRepo } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-scope-')); }
+function tmp() { return scratchDir('journey-health-scope-'); }
 
 function writeJourney(root, name, filesFrontmatter) {
   const dir = path.join(root, 'docs', 'journeys');
@@ -100,6 +102,25 @@ test('selectTarget picks the highest-churn journey via the signals injection hoo
   assert.strictEqual(result.id, 'checkout-flow');
   assert.strictEqual(result.why, 'hotspot');
   assert.strictEqual(result.churnCount, 5);
+});
+
+test('selectTarget passes opts.env to the churn lookup (a fresh journey is a hotspot only through the injected GIT_DIR)', () => {
+  const repo = tmp();
+  writeJourney(repo, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  initRepo(repo, { name: 'test', email: 'test@example.com' });
+  execFileSync('git', ['-C', repo, 'add', '.']);
+  execFileSync('git', ['-C', repo, 'commit', '-q', '-m', 'first']);
+  const root = tmp();
+  writeJourney(root, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  const other = tmp();
+  writeJourney(other, 'checkout-flow', ['src/checkout/Cart.tsx']);
+  const now = Date.now();
+  const cursors = { 'checkout-flow': { lastLightAuditMs: now - 86400000 } };
+  const env = { ...process.env, GIT_DIR: path.join(repo, '.git') };
+  const picked = selectTarget(root, cursors, { now, tier: 'light', env });
+  assert.ok(picked !== null, 'the commit visible only through env must register as churn');
+  assert.strictEqual(picked.why, 'hotspot');
+  assert.strictEqual(selectTarget(other, cursors, { now, tier: 'light' }), null, 'without env the non-repo root has no churn');
 });
 
 test('selectTarget returns null when no candidate is stale and none has churn', () => {
@@ -423,9 +444,7 @@ test('domainChurn caches identical (root, paths, sinceMs) calls instead of re-sp
   const root = tmp();
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src', 'a.ts'), '', 'utf8');
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  initRepo(root, { name: 'test', email: 'test@example.com' });
   execFileSync('git', ['-C', root, 'add', '.']);
   execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'init']);
 
@@ -460,9 +479,7 @@ test('domainChurn(root, paths, 0) counts a commit from well in the past, not jus
   const root = tmp();
   fs.mkdirSync(path.join(root, 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'src', 'b.ts'), '', 'utf8');
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  initRepo(root, { name: 'test', email: 'test@example.com' });
   execFileSync('git', ['-C', root, 'add', '.']);
   const backdated = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 minutes in the past
   execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'init'], {
@@ -482,9 +499,7 @@ test('domainChurn(root, paths, 0) counts a commit from well in the past, not jus
 test('selectTarget registers hotspot churn from a journey\'s own edit history, even when its declared files never changed', () => {
   const root = tmp();
   writeJourney(root, 'checkout-flow', ['src/checkout/Cart.tsx']);
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  initRepo(root, { name: 'test', email: 'test@example.com' });
   execFileSync('git', ['-C', root, 'add', '.']);
   execFileSync('git', ['-C', root, 'commit', '-q', '-m', 'first']);
 

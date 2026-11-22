@@ -24,7 +24,7 @@
 //
 // Status is data: exit 0 in every state, including no-pr and read-failed.
 // 2 malformed invocation; 3 run dir missing or not anchored under the main
-// checkout (a worktree-local shadow -- _shared/pipeline-run-dir.md, [IL-127]).
+// checkout (a worktree-local shadow, or a directory outside pipelines/ -- _shared/pipeline-run-dir.md, [IL-127]).
 'use strict';
 
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
@@ -119,7 +119,7 @@ function run(argv, overrides = {}) {
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`pr-merge-state.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`pr-merge-state.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`pr-merge-state.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   let state = null;
@@ -130,7 +130,7 @@ function run(argv, overrides = {}) {
   try { view = deps.resolvePrState(deps.cwd(), n); } catch { return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'resolver-threw' }); }
   if (view === null) return report(deps, { state: 'no-pr', phase });
   if (view === 'gh-absent') return reportDegraded(deps, o.run, { state: 'gh-absent', pr: n, phase });
-  if (view === 'network-failure' || view === 'invalid-arguments') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: view });
+  if (view === 'network-failure' || view === 'invalid-arguments' || view === 'unknown-host') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: view });
   if (typeof view !== 'object') return reportDegraded(deps, o.run, { state: 'read-failed', pr: n, phase, reason: 'unparseable' });
   const mergeable = isStr(view.mergeable) ? view.mergeable : null;
   const mergeStateStatus = isStr(view.mergeStateStatus) ? view.mergeStateStatus : null;

@@ -18,7 +18,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint, inputSectionBody } = require('./helpers/argument-hint');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -113,11 +113,18 @@ test('sweep/SKILL.md: never-invokes-build-machinery boundary is stated in When-t
     l.startsWith('| Invoking `/claude-tweaks:dispatch`, `/claude-tweaks:flow`, or `/claude-tweaks:build` from sweep'),
   );
   assert.ok(antiPatternRow, 'expected the Anti-Patterns row naming dispatch/flow/build');
+  // #5561: the row used to end "— the eval scenario fails CI on this, not just
+  // doc review". The eval harness is deleted and never ran in CI, so the row now
+  // ends on its reason. The frozen pre-change row proves the end-anchored
+  // pattern can go red [IL-105].
+  const PRE_CHANGE_ROW = "| Invoking `/claude-tweaks:dispatch`, `/claude-tweaks:flow`, or `/claude-tweaks:build` from sweep | Sweep's legality as a headless parent of the grant chain rests on never claiming, building, or merging — the eval scenario fails CI on this, not just doc review |";
+  const endsOnReason = /rests on never claiming, building, or merging \|$/;
   assert.match(
     antiPatternRow,
-    /the eval scenario fails CI on this, not just doc review/,
-    'expected the Anti-Patterns row to cite the eval scenario as the enforcement mechanism',
+    endsOnReason,
+    'expected the Anti-Patterns row to end on the legality reason, with no enforcement claim after it',
   );
+  assert.doesNotMatch(PRE_CHANGE_ROW, endsOnReason, 'pattern must NOT match the pre-change row (proves it can go red)');
 });
 
 // --- (5) _shared/run-dir-resolution.md's standalone-auto allowlist contains

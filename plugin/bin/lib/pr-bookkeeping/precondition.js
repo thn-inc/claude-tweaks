@@ -104,12 +104,22 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   if (runState.pr || runState.prExempt) return { ok: true, reason: 'pr-stamped-or-exempt' };
 
   let model;
+  let degraded = false;
+  const onDegrade = () => { degraded = true; };
   try {
     const mainRoot = mainCheckoutRoot(worktreeRoot) || worktreeRoot;
-    model = resolveRunPinnedIntegrationModel(mainRoot, runDir);
+    // No timeoutMs: this is a CLI, not a hook, so the forge probe follows the
+    // gh-timeout-ms ladder (record #4578 Decision Q3).
+    model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { onDegrade });
   } catch {
     model = 'local-merge';
   }
+  // A forge detection that timed out, and whose retry did not succeed, cannot
+  // prove the run is pr-first or not, so this fails open like every other
+  // ambiguity here -- but under its own reason, so /test can log that the
+  // precondition went unverified rather than reporting a 'not-pr-first' it never
+  // established (record #4578 Decision Q11).
+  if (degraded) return { ok: true, reason: 'degraded-detection' };
   if (model !== 'pr-first') return { ok: true, reason: 'not-pr-first' };
 
   if (hasLoggedPrDegrade(runDir) || (parentRunDir && hasLoggedPrDegrade(parentRunDir))) {

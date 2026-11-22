@@ -2,11 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-agent-trust-'));
+  return scratchDir('codehealth-agent-trust-');
 }
 
 function write(root, rel, content) {
@@ -29,6 +30,17 @@ test('no .claude-tweaks/policy.yml: not applicable, zero candidates', () => {
   assert.equal(result.notApplicable, true);
   assert.match(result.notApplicableReason, /no \.claude-tweaks\/policy\.yml/);
   assert.deepStrictEqual(result.candidates, []);
+  assert.equal(result.discoveryFailed, false);
+});
+
+// #4492: a linked worktree of a project that gitignores policy.yml reads the main checkout's file.
+test('linked worktree with no policy.yml of its own reads the main checkout\'s policy', () => {
+  const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
+  const main = gitRepo();
+  write(main, '.claude-tweaks/policy.yml', 'autonomy: default\n');
+  const wt = linkedWorktreeOf(main);
+  const result = scanAgentTrustScope(wt);
+  assert.equal(result.notApplicable, false);
   assert.equal(result.discoveryFailed, false);
 });
 

@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -16,6 +17,7 @@ const { reconcile } = require('../../../plugin/bin/lib/reconcile');
 const { residueBody } = require('../../../plugin/bin/lib/reconcile/escalate-residue');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -39,7 +41,7 @@ function installGhWrapper(prsJson) {
 // how many of those invocations were a `status --porcelain` read.
 function installGitPorcelainSpy() {
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-gitspy-'));
+  const logDir = scratchDir('reap-merged-gitspy-');
   const logPath = path.join(logDir, 'calls.log');
   const restore = installStub('git', `#!/bin/sh\necho "$@" >> "${logPath}"\nexec "${realGit}" "$@"\n`);
   return {
@@ -82,10 +84,8 @@ function buildReapableFixture({ worktreeDirName = 'issue-1' } = {}) {
   // joining onto the un-resolved root — a different string from the one
   // reapMerged actually hands to releasePorts, so the #1793 assertions
   // below never matched on a real Mac (#1900).
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-root-')));
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  const root = fs.realpathSync(scratchDir('reap-merged-root-'));
+  initRepo(root, { branch: 'main', name: 't', email: 't@t' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(root, 'add', 'a.txt');
   git(root, 'commit', '-q', '-m', 'init');
@@ -244,7 +244,7 @@ test('#1793: a removed path with no lease is a no-op release with no note', { sk
   // registry.release() itself no-ops for an unknown path (#1791 AC6) — the
   // real release function proves the "no note" half of this without a fake.
   const { release } = require('../../../plugin/bin/lib/ports/registry');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-reap-merged-ports-home-'));
+  const home = scratchDir('ct-reap-merged-ports-home-');
   let result;
   try {
     result = reapMerged({ cwd: root, releasePorts: (p) => release(p, { home }) });
@@ -440,7 +440,7 @@ test('reapMerged: a successful removal performs no git status --porcelain read',
 });
 
 test('trackReapResidue: escalates exactly once at the threshold via an injected escalate, never on later still-failing calls', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-'));
+  const root = scratchDir('reap-merged-track-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
 
@@ -467,7 +467,7 @@ test('trackReapResidue: escalates exactly once at the threshold via an injected 
 // proof that trackReapResidue actually forwards it into escalateResidue's
 // own runner param, the same wiring reapMerged's real call sites use.
 test('trackReapResidue: two paths crossing threshold share one injected runner — only one underlying issue-list call fires', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-runner-'));
+  const root = scratchDir('reap-merged-track-runner-');
   const calls = [];
   // Wrapped through Task 1's createIssueListCache, the same shape
   // reconcile/index.js's own (Task 5) shared cache produces — a bare
@@ -490,7 +490,7 @@ test('trackReapResidue: two paths crossing threshold share one injected runner �
 });
 
 test('trackReapResidue: omitting `runner` is unaffected by this change', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track-no-runner-'));
+  const root = scratchDir('reap-merged-track-no-runner-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
@@ -503,7 +503,7 @@ test('trackReapResidue: omitting `runner` is unaffected by this change', () => {
 // #1341 acceptance criterion — trackReapResidue's `escalate` call must carry
 // real captured stderr as `lastError`, not the literal string 'git-error'.
 test('trackReapResidue: escalate\'s lastError carries real captured stderr, not the literal string "git-error"', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track3-'));
+  const root = scratchDir('reap-merged-track3-');
   const calls = [];
   const escalate = (args) => { calls.push(args); return { status: 'filed', number: 1 }; };
   const realStderr = 'fatal: cannot remove a locked working tree, lock reason: stuck\nuse \'remove -f -f\' to override or unlock first';
@@ -531,7 +531,7 @@ test('residueBody: the rendered "Last error" line carries actual git output, not
 });
 
 test('trackReapResidue: never throws when escalate itself throws (best-effort)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-track2-'));
+  const root = scratchDir('reap-merged-track2-');
   const escalate = () => { throw new Error('gh not found'); };
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
     assert.doesNotThrow(() => trackReapResidue(root, 'o/r', '/x/wt', { failed: true, lastError: 'x' }, { escalate }));
@@ -551,31 +551,29 @@ test('trackReapResidue: never throws when escalate itself throws (best-effort)',
 // call bypasses this entirely and gives false confidence — this test goes
 // through reconcile() itself to close that gap.
 function buildReapableFixtureWithRemote() {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-origin-'));
+  const originDir = scratchDir('reap-merged-origin-');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', originDir], { stdio: 'ignore' });
 
   // `origin/HEAD` (what resolveIntegrationBranch reads) is only set by a
   // clone taken AFTER origin already has a commit — a bare `git init` alone
   // has no HEAD to symlink to. Seed origin from a throwaway clone first,
-  // exactly like tests/reconcile.test.js's own pairedFixture() does, then
+  // exactly like tests/helpers/reconcile-fixtures.js's own pairedFixture() does, then
   // clone again into the fixture's real main checkout.
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-seed-'));
+  const seedDir = scratchDir('reap-merged-seed-');
   execFileSync('git', ['clone', '-q', originDir, seedDir], { stdio: 'ignore' });
-  git(seedDir, 'config', 'user.email', 't@t');
-  git(seedDir, 'config', 'user.name', 't');
+  writeIdentity(seedDir, { name: 't', email: 't@t' });
   fs.writeFileSync(path.join(seedDir, 'a.txt'), 'a\n');
   git(seedDir, 'add', 'a.txt');
   git(seedDir, 'commit', '-q', '-m', 'seed');
   git(seedDir, 'push', '-q', 'origin', 'main');
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-remote-root-'));
+  const root = scratchDir('reap-merged-remote-root-');
   execFileSync('git', ['clone', '-q', originDir, root], { stdio: 'ignore' });
-  git(root, 'config', 'user.email', 't@t');
-  git(root, 'config', 'user.name', 't');
+  writeIdentity(root, { name: 't', email: 't@t' });
 
   // reconcile()'s pr-first branch is policy-gated, not auto-detected from a
   // local bare-repo origin URL — force it explicitly, same as this repo's
-  // other full-reconcile() fixtures (tests/reconcile.test.js's D2 test).
+  // other full-reconcile() fixtures (tests/reconcile-preflight-fetch.test.js's D2 test).
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
   git(root, 'add', '.claude-tweaks/policy.yml');
@@ -876,7 +874,7 @@ test('#2566: the fallback is never attempted on a non-win32 platform — no beha
 // leave the marker), while the resolver's deps answer a MERGED PR whose number
 // only they could produce — it lands in the worktree-reaped event.
 function installFailingGhWithMarker() {
-  const markerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'reap-merged-failgh-'));
+  const markerDir = scratchDir('reap-merged-failgh-');
   const marker = path.join(markerDir, 'gh-was-called');
   const restore = installStub('gh', `#!/bin/sh\ntouch "${marker}"\nexit 1\n`);
   return { marker, restore };

@@ -10,6 +10,7 @@
 // GitHub remote (ruling 1 in the plan).
 
 const { renderReleaseNotes } = require('../release-notes');
+const { parseChangelogFooter } = require('../changelog');
 
 // release-please's default changelog-sections: order is render order; hidden
 // types render only when the commit is breaking (ruling 2).
@@ -59,7 +60,7 @@ function renderSection({ version, previousTag, date, commits, repo }) {
   const notes = breaking.length ? `### ⚠ BREAKING CHANGES\n\n${breaking.map(note).join('')}\n` : '';
   // Positioned after BREAKING CHANGES and before the type-grouped sections —
   // first when there's no breaking block to follow (#2581 AC9/AC10). null
-  // (no commit carries a non-empty releaseNote) omits the block entirely,
+  // (no commit carries a renderable release note) omits the block entirely,
   // never an empty ### Highlights heading with no content (AC11).
   const highlights = renderReleaseNotes(commits);
   const highlightsSection = highlights !== null ? `### Highlights\n\n${highlights}\n\n` : '';
@@ -74,7 +75,13 @@ const FIRST_VERSION_HEADING_RE = /^##+ \[?v?\d+\.\d+\.\d+/m;
 function prependSection(existing, section) {
   if (existing === null || existing === undefined || existing.trim() === '') return `# Changelog\n\n${section}`;
   const at = existing.search(FIRST_VERSION_HEADING_RE);
-  if (at === -1) return `${existing.replace(/\s*$/, '')}\n\n${section}`;
+  if (at === -1) {
+    // A trimmed file's "Older releases" footer stays the last section, so with no version
+    // section above it the new one goes in front of the footer, never after it.
+    const footer = parseChangelogFooter(existing);
+    if (footer) return `${existing.slice(0, footer.index)}${section}\n${existing.slice(footer.index)}`;
+    return `${existing.replace(/\s*$/, '')}\n\n${section}`;
+  }
   return `${existing.slice(0, at)}${section}\n${existing.slice(at)}`;
 }
 

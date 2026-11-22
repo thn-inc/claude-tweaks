@@ -8,6 +8,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { resolvePolicyConfig } = require('../policy-schema');
 const { computeDerivedDefaults } = require('../policy-derived-defaults');
+const { modelProfilesEntry } = require('../model-profiles/policy-fragment');
 // Read through the module at call time: GIT_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -35,8 +36,11 @@ function defaultReadFile(p) {
 // integration-model costs a `git remote get-url` + `gh repo view` probe, so callers on a
 // hot path request only the keys they need).
 function defaultResolvePolicy(keys, { runDir = null } = {}) {
-  const { root, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
-  return computeDerivedDefaults(result, keys, root);
+  const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
+  const resolved = computeDerivedDefaults(result, keys, root, { runConfigRaw });
+  // model-profiles is a policy-only block the flat resolver cannot read (#5917).
+  if (keys.includes('model-profiles')) resolved['model-profiles'] = modelProfilesEntry(policyRaw);
+  return resolved;
 }
 
 module.exports = { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy };

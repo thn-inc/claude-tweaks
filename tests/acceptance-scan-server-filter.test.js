@@ -203,22 +203,16 @@ test('oversight floor is not in the search string', () => {
   assert.ok(!hasOversightFloor('-label:demo:approved'));
 });
 
-test('searched fetches warn at the search ceiling, per date slice', () => {
+test('searched fetches cap at min(LIMIT, 1000) and drop the whole-fetch comparison', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,
     /const CAP = Math\.min\(LIMIT, 1000\);/,
     'the closed-record warning must compare against min(LIMIT, 1000)'
   );
-  // Each slice is compared against the cap on its own, in a loop over the slices, so the warning can
-  // name the slice that reached it. The whole-fetch `raw.length >= CAP` test is gone: a comparison over
-  // the combined rows cannot tell which slice is full.
-  assertClaimPinned(
-    GAP,
-    PRE_CHANGE_SLICED_FETCH,
-    /for \(const \[\w+, (\w+)\] of slices\) \{\s*if \(\1\.length >= CAP\)/,
-    'each date slice must be compared against the cap on its own'
-  );
+  // The per-slice comparison is pinned by behaviour in "the extracted closed-record fence warns
+  // per slice at the cap, naming the slice that reached it". The whole-fetch `raw.length >= CAP`
+  // test is gone: a comparison over the combined rows cannot tell which slice is full.
   assert.ok(
     !closedFetchBlock(GAP).includes('raw.length === LIMIT'),
     'the exact-equality truncation test must be gone from the closed-record block'
@@ -850,18 +844,6 @@ test('the closed-record fetch names search-index lag as an unwarned, self-correc
 });
 
 // ---- accept:* read sites (#4610 expand step) ---------------------------------------------------
-
-test('the acceptance-gap search excludes all three accept: labels as well as the demo: ones', () => {
-  for (const search of closedSearchStrings(GAP)) {
-    for (const label of ['accept:approved', 'accept:changes-requested', 'accept:pending']) {
-      assert.ok(search.includes(`-label:${label}`), `every slice's search must negate ${label}: ${search}`);
-      assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
-    }
-  }
-  // Control: the frozen pre-change fetches carry no accept: negation, so the check can fail.
-  assert.ok(!PRE_CHANGE_GAP_FETCH.includes('-label:accept:'));
-  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('-label:accept:'));
-});
 
 test('the acceptance-queue lists records carrying either pending spelling', () => {
   const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');

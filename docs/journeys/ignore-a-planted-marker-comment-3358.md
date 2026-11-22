@@ -3,8 +3,9 @@ files:
   - plugin/bin/lib/issues/comment-trust.js
   - plugin/bin/find-run-comment.js
   - plugin/skills/_shared/pr-run-comments.md
-  - plugin/skills/demo/entry-paths.md
+  - plugin/skills/accept/entry-paths.md
   - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/skills/_shared/acceptance-packet.md
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/bin/lib/issues/grant-maturation.js
   - plugin/skills/_shared/work-record.md
@@ -22,24 +23,24 @@ files:
 
 **Persona:** A maintainer of a public repository where anyone with a GitHub account can comment on issues and PRs. A stranger has posted a comment that copies one of the plugin's markers, such as a `<!-- run-comment: try-it -->` walkthrough or a backdated `grant-mode-audit … auto-merge=pending` line.
 **Goal:** Have every plugin reader treat that comment as if it were absent, and see in one line that it was skipped, so a planted comment can never steer a demo, pass a check, or mature a merge grant.
-**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:demo #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, the backlog's `needs-decision` lane, or the materiality digest (routing dedup and `/claude-tweaks:tidy`'s digest sweep).
+**Entry point:** Any plugin step that reads marker comments back from GitHub: `/claude-tweaks:accept #N`, wrap-up's acceptance-labeling check, `hooks.js resolve-console`, the auto-merge grant gate, the backlog's `needs-decision` lane, or the materiality digest (routing dedup and `/claude-tweaks:tidy`'s digest sweep).
 **Success state:** Every reader took the "no such comment" path for the planted comment and printed `skipped marker comment {url} by {login} ({association}) — not an owner, member, or collaborator`. Comments from the maintainer and their collaborators still worked exactly as before.
 
 ## Steps
 
-### 1. Demo a record whose PR carries a stranger's walkthrough — `/claude-tweaks:demo #N`
-- **URL:** `/claude-tweaks:demo #N`, for a record whose PR has a `<!-- run-comment: try-it -->` comment posted by an account with author association `NONE`
-- **Action:** Run demo. It reads the PR's run comments through `_shared/pr-run-comments.md`'s Find step, which keeps only comments whose author association (`authorAssociation` from `gh`, `author_association` from REST and MCP) is `OWNER`, `MEMBER` or `COLLABORATOR`.
+### 1. Demo a record whose issue or PR carries a stranger's walkthrough — `/claude-tweaks:accept #N`
+- **URL:** `/claude-tweaks:accept #N`, for a record whose issue has a `<!-- acceptance-packet: v1 -->` comment, or whose PR has a `<!-- run-comment: try-it -->` comment, posted by an account with author association `NONE`
+- **Action:** Run demo. It reads the record's comments for the packet first, then the PR's run comments through `_shared/pr-run-comments.md`'s Find step. Both keep only comments whose author association (`authorAssociation` from `gh`, `author_association` from REST and MCP) is `OWNER`, `MEMBER` or `COLLABORATOR`.
 - **Should feel:** Uneventful. The walkthrough on screen is the run's own, or a fresh one composed from the record's acceptance criteria. The stranger's steps never appear.
 - **Should understand:** The skip line, printed one line above the verdict, names the planted comment's URL, its author and their association. Trust comes from GitHub's author association, not from which account is reading. Anyone with write access could already push to the branch, so a collaborator's comment is trusted, and another maintainer reading the same PR sees the same result.
 - **Red flags:** Steps from the planted comment shown as the walkthrough. A planted comment dropped with no skip line. A collaborator's legitimate walkthrough rejected because a different account ran demo.
 
-### 2. Close a run whose issue carries a planted Verification Brief — wrap-up's acceptance check
+### 2. Close a run whose issue carries a planted acceptance packet or Verification Brief — wrap-up's acceptance check
 - **URL:** wrap-up's verify table (`bin/lib/wrap-up/engine-verify.js` acceptance-labeling check) on a `demo:pending` record
-- **Action:** A stranger has posted a comment headed `## Verification Brief`, or the pointer line `Verification Brief posted to PR #…`, and it is the only brief on the record. Run wrap-up's verification.
-- **Should feel:** Strict in the right place. The check fails as if no brief were posted.
-- **Should understand:** The failing row's detail ends with `; ignored: skipped marker comment …`. When a run spans several records and some pass, each passing record's ignored comments still show as `; ignored (#N): …`, so none goes unmentioned. The same brief posted by a member passes.
-- **Red flags:** The check passing on the planted brief. A pass row that hides a skipped comment it ignored.
+- **Action:** A stranger has posted a comment whose first line is the packet marker `<!-- acceptance-packet: v1 -->`, a comment headed `## Verification Brief`, or the pointer line `Verification Brief posted to PR #…`, and it is the only one on the record. Run wrap-up's verification.
+- **Should feel:** Strict in the right place. The check fails as if no packet or brief were posted.
+- **Should understand:** The failing row's detail ends with `; ignored: skipped marker comment …`. The packet is read first, through the same trust filter, so a stranger's packet is no more a packet than a stranger's brief is a brief. A comment that holds more than one marker is named once. When a run spans several records and some pass, each passing record's ignored comments still show as `; ignored (#N): …`, so none goes unmentioned. The same packet or brief posted by a member passes.
+- **Red flags:** The check passing on the planted packet or brief. A pass row that hides a skipped comment it ignored. The same skipped comment named twice in one row.
 
 ### 3. Resolve a Review Console that has a planted "executed" reply — `hooks.js resolve-console`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-console --run {run-dir}`
@@ -90,4 +91,5 @@ files:
 - Step 7 added, and step 1's association wording updated, during build of #3823 (trusted-author jq reads both association spellings, so it works on the REST/MCP transport)
 - Step 8 added during build of #3936 (the Find step's worktree-safe form, `bin/find-run-comment.js`, applies the same trust rule to a fetched comments file)
 - `files:` updated during build of #4182 (step 6's materiality-fingerprint marker parsing moved to `health-core/fingerprint.js`'s shared `parseMarkerFingerprints`; no step behavior changed)
-- Related specs: #3358, #3766, #3823, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)
+- Steps 1 and 2 updated during build of #4611 (the acceptance packet comment is a marker comment too: demo and wrap-up's acceptance check read it from trusted authors only, and name an untrusted one once)
+- Related specs: #4611, #3358, #3766, #3823, #2821 (the try-it walkthrough demo reads back), #309 (pending-grant maturation)

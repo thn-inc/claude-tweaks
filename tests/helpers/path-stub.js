@@ -31,6 +31,7 @@
 // check tests every PATHEXT extension instead: an excluded `gh.CMD` still
 // means gh might resolve through a shell, so that check stays conservative.
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -38,7 +39,7 @@ const STUB_SKIP_REASON = 'win32: execFile resolves only .exe/.com on PATH, so a 
 const STUB_SKIP = process.platform === 'win32' && STUB_SKIP_REASON;
 
 function installStub(name, script) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stub-'));
+  const dir = scratchDir('ct-stub-');
   const file = path.join(dir, name);
   try {
     fs.writeFileSync(file, script);
@@ -68,6 +69,20 @@ function isFile(p) {
   } catch {
     return false;
   }
+}
+
+// findOnPath(name) returns the first `name` (or `name.exe` on win32) file on
+// this process's PATH, or null. Used by the hooks.sh launcher suites to pick
+// the shells and awks they run (#5392).
+function findOnPath(name) {
+  const names = process.platform === 'win32' ? [name, name + '.exe'] : [name];
+  for (const dir of (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean)) {
+    for (const n of names) {
+      const f = path.join(dir, n);
+      if (isFile(f)) return f;
+    }
+  }
+  return null;
 }
 
 // findEntry(dir, candidates, isWin) returns the first candidate file in dir.
@@ -110,7 +125,7 @@ function pathWithOnly(names, { exclude = [], env = process.env, platform = proce
     if (!found) throw new Error(`pathWithOnly: ${name} not found on PATH (searched ${dirs.length} dirs: ${dirs.join(', ') || 'none'})`);
     let dir = path.dirname(found);
     if (excluded(dir)) {
-      if (!linkDir) linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-path-only-'));
+      if (!linkDir) linkDir = scratchDir('ct-path-only-');
       fs.symlinkSync(found, path.join(linkDir, path.basename(found)));
       dir = linkDir;
     }
@@ -140,5 +155,6 @@ module.exports = {
   STUB_SKIP,
   installStub,
   pathWithOnly,
+  findOnPath,
   findColonPathJoins,
 };

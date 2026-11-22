@@ -58,7 +58,10 @@ never restate their internals a third way):
 3. Archive it: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This
    archives the tracked `work/` directory and moves every other entry (`config.yml`,
    `decisions.md`, `events.jsonl`, `staged/`, and anything else present) in one call. The verb
-   refuses a non-terminal run — step 2 above is what makes that refusal unreachable here.
+   refuses a non-terminal run — step 2 above is what makes that refusal unreachable here. An
+   unexpected exception instead prints no report, exits 1 and writes `claude-tweaks: archive-run:
+   {message}` on stderr (#4932): the run is not archived — report that line rather than the
+   archive.
 4. Skipped staged items remain in the archive; they are NOT silently dropped. Do NOT delete the
    run directory outright — the auto-decision log is project history, not disposable pipeline
    state.

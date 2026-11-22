@@ -15,14 +15,16 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { ownedPlansFiles } = require('./ledger-ownership');
-const { splitLedgerRow, escapeLedgerCell } = require('./ledger-cells');
+const { splitLedgerRow, escapeLedgerCell, collapseLineBreaks } = require('./ledger-cells');
 const { isPathContained } = require('../shared-primitives');
+const { resolveAgainst } = require('../health-core/io');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
 
 // Local on purpose: resolveLedgerPath must not load pack.js eagerly (pack.js is required lazily, only on the docs/plans fallback).
-function defaultGit(args, { cwd } = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+// `env` is the caller's injected environment (#5379); absent, the child inherits the real one.
+function defaultGit(args, { cwd, env } = {}) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(env ? { env } : {}) });
 }
 
 // Resolves the single active ledger file for a run dir, per
@@ -42,21 +44,24 @@ function defaultGit(args, { cwd } = {}) {
 // `ledger.md` or `*-ledger.md` and its real path must sit under `runDir` or
 // `worktree` — otherwise `{ ok: false, reason: 'rejected', detail }`, since
 // callers unlink or overwrite whatever it names.
-function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
+function resolveLedgerPath({ runDir, worktree, explicit, env, deps = {}, cwd } = {}) {
   const existsSync = deps.existsSync || fs.existsSync;
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const realpathSync = deps.realpathSync || fs.realpathSync;
-  const git = deps.git || defaultGit;
+  const git = deps.git || ((args, o) => defaultGit(args, { ...o, env }));
   // Lazy: pack.js is a heavy module, and only the docs/plans fallback needs it.
-  const resolveBase = deps.resolveBase || ((wt) => require('./pack').resolveWorktreeBase(wt));
+  const resolveBase = deps.resolveBase || ((wt) => { const pack = require('./pack'); return pack.resolveWorktreeBase(wt, pack.defaultDeps(wt, { env })); });
 
+  // `cwd` (optional): the directory a relative `explicit` is read against. The fs calls get the path joined onto
+  // it without normalizing (resolveAgainst); `explicit` itself is echoed back as given. Absent, fs sees `explicit` as is.
+  const at = (p) => (cwd === undefined ? p : resolveAgainst(cwd, p));
   if (explicit) {
     const base = path.basename(explicit);
     if (base !== 'ledger.md' && !base.endsWith('-ledger.md')) {
       return { ok: false, reason: 'rejected', detail: 'not a ledger file name (expected ledger.md or *-ledger.md)', candidates: [explicit] };
     }
-    if (!existsSync(explicit)) return { ok: false, reason: 'not-found', candidates: [explicit] };
-    const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+    if (!existsSync(at(explicit))) return { ok: false, reason: 'not-found', candidates: [explicit] };
+    const real = (p) => { try { return realpathSync(at(p)); } catch { return null; } };
     const target = real(explicit);
     const roots = [runDir, worktree].filter(Boolean).map(real).filter(Boolean);
     if (!target || !roots.some((r) => isPathContained(target, r))) {
@@ -94,8 +99,10 @@ function resolveLedgerPath({ runDir, worktree, explicit, deps = {} } = {}) {
 // another run — for a caller that must show the split rather than act on one
 // target. `report` mirrors the resolve outcome: found | none | ambiguous |
 // unattributable. An unattributable run names no this-run/other-run entries
-// (ownership is unknown), only `unattributed`.
-function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
+// (ownership is unknown), only `unattributed`. `env` is forwarded to
+// resolveLedgerPath, so its ownership git children see the caller's injected
+// environment (#5375); absent, they inherit the real one.
+function describeRunLedgers({ runDir, worktree, env = process.env, deps = {} } = {}) {
   const readdirSync = deps.readdirSync || fs.readdirSync;
   const plansDir = path.join(worktree, 'docs', 'plans');
   let entries = [];
@@ -103,7 +110,7 @@ function describeRunLedgers({ runDir, worktree, deps = {} } = {}) {
   const plans = entries.filter((f) => f.endsWith('-ledger.md')).map((f) => path.join(plansDir, f));
   const without = (taken) => plans.filter((p) => !taken.includes(p));
 
-  const r = resolveLedgerPath({ runDir, worktree, deps });
+  const r = resolveLedgerPath({ runDir, worktree, env, deps });
   if (r.ok) return { report: 'found', ledgers: [r.path], others: without([r.path]), unattributed: [], detail: null };
   if (r.reason === 'ambiguous') return { report: 'ambiguous', ledgers: r.candidates, others: without(r.candidates), unattributed: [], detail: null };
   if (r.reason === 'unattributable') return { report: 'unattributable', ledgers: [], others: [], unattributed: r.candidates, detail: r.detail };
@@ -168,8 +175,11 @@ function serializeLedgerTable(table) {
 // leaving the `#`/Phase/Item cells and every other row untouched. Throws
 // when `item` has no matching row, or `status` is not one of the five
 // terminal statuses (`open` is never a valid target here — this function
-// only resolves items, never reopens one; ledger-format.md's lifecycle has
-// no terminal-to-open transition). `resolution` is required unless `status`
+// only resolves items, never reopens one. ledger-format.md's one
+// terminal-to-open transition, a `deferred` row whose staged proposal the
+// Review Console refuses, is specified by wrap-up/refused-proposals.md's
+// Ledger origin and applied through rewriteLedgerRow by stage-item/ledger.js's
+// settleRow, not here). `resolution` is required unless `status`
 // is `observation`, matching ledger-format.md's Resolution-text requirement.
 function flipLedgerRow(text, { item, status, resolution }) {
   if (!TERMINAL_STATUSES.includes(status)) {
@@ -178,6 +188,14 @@ function flipLedgerRow(text, { item, status, resolution }) {
   if (status !== 'observation' && !String(resolution || '').trim()) {
     throw new Error(`resolution text is required for status '${status}'`);
   }
+  return rewriteLedgerRow(text, { item, status, resolution });
+}
+
+// flipLedgerRow's rewrite with no status validation: the caller owns the
+// status rules (`flipLedgerRow` above for the terminal-only flip,
+// stage-item/ledger.js's settleRow for the plain-row writer). A missing row
+// and a row that is not the 5-column shape still throw.
+function rewriteLedgerRow(text, { item, status, resolution }) {
   const table = parseLedgerTable(text);
   const key = String(item);
   const row = table.rows.get(key);
@@ -193,10 +211,10 @@ function flipLedgerRow(text, { item, status, resolution }) {
   }
   cells[4] = ` ${status} `;
   // Line breaks collapse to one space: a raw newline would split the row across lines.
-  const singleLine = String(resolution || '').replace(/\s*\r?\n\s*/g, ' ').trim();
+  const singleLine = collapseLineBreaks(resolution || '');
   cells[5] = ` ${escapeLedgerCell(singleLine) || '—'} `;
   table.rows.set(key, cells.join('|'));
   return serializeLedgerTable(table);
 }
 
-module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow };
+module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow, rewriteLedgerRow };

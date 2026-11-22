@@ -1,8 +1,11 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
 // control-mode policy keys, the `element` list validation they introduced,
-// isControlModeOn, and the `risk-path-globs` block key. Every test builds a
+// isControlModeOn, readRiskPolicy (#4618), and the `risk-path-globs` block key. JSON-shape checks run
+// resolvePolicyKeys in-process via json() (pinned equal to the CLI by the parity
+// test; json()'s own comment says which keys need cliJson() instead);
+// --values output, stderr warnings and invocation errors still build a
 // throwaway fixture repo under os.tmpdir() (never inside this repo — IL-80),
-// writes policy.yml into it, and spawns bin/resolve-policy.js with cwd set
+// write policy.yml into it, and spawn bin/resolve-policy.js with cwd set
 // there. The keys are inert: nothing reads them yet, so this file pins only
 // resolution and validation.
 'use strict';
@@ -15,8 +18,9 @@ const path = require('node:path');
 
 const { POLICY_KEYS, resolvePolicyKeys, resolveValue, auditPolicy, BUILTIN_RISK_CATEGORIES } = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 const { parseRiskPathGlobs } = require('../plugin/bin/lib/risk-path-globs');
-const { isControlModeOn } = require('../plugin/bin/lib/policy');
+const { isControlModeOn, readRiskPolicy } = require('../plugin/bin/lib/policy');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 
@@ -36,16 +40,74 @@ function makeRepo(policy) {
   return tmp;
 }
 
+function runPolicy(args, cwd, env) {
+  const res = runCliSync(CLI, args, { cwd, env: { ...(env || process.env) } });
+  return { status: res.code, stdout: res.stdout, stderr: res.stderr };
+}
+
 function values(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, '--values', ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+  const res = runPolicy(['--values', ...keys], makeRepo(policy));
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
-function json(policy, ...keys) {
-  const res = spawnSync(process.execPath, [CLI, ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
+function cliJson(policy, ...keys) {
+  const res = runPolicy(keys, makeRepo(policy));
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   return JSON.parse(res.stdout);
 }
+
+const CLI_SPECIAL_KEYS = ['integration-model', 'merge-verification', 'model-profiles'];
+
+// In-process twin of cliJson. The JSON round-trip mirrors the CLI's
+// JSON.stringify(result): it drops an `undefined` value, which the release-hook
+// test's `{ source: 'policy' }` expectation relies on. Use it for single-name
+// keys other than CLI_SPECIAL_KEYS, which the CLI derives or special-cases after
+// resolvePolicyKeys, so tests of those keys must use cliJson(). The parity test
+// below runs every other schema key through both paths, so a key the CLI starts
+// special-casing turns it red instead of drifting silently.
+function json(policy, ...keys) {
+  if (keys.length === 0) throw new Error('json() needs at least one key, as the CLI does: use cliJson() to exercise the usage error');
+  for (const key of keys) {
+    if (CLI_SPECIAL_KEYS.includes(key) || key.includes(',')) {
+      throw new Error(`json() cannot resolve ${key}: use cliJson() — the CLI derives or special-cases it after resolvePolicyKeys`);
+    }
+  }
+  return JSON.parse(JSON.stringify(resolvePolicyKeys(keys, { policyRaw: policy === undefined ? null : policy, runConfigRaw: null })));
+}
+
+test('the in-process json() helper matches the CLI JSON output', () => {
+  const cases = [
+    [undefined, 'control-mode', 'owned-owners'],
+    ['control-mode: maybe\n', 'control-mode'],
+    ['release-hook: ""\n', 'release-hook'],
+    ['deploy-command: "never closed\n', 'deploy-command'],
+    ['risk-path-globs:\r\n  auth: [src/auth/**]\r\nautonomy: trusted\r\n', 'risk-path-globs', 'autonomy'],
+    ['risk-categories: data-export,pii\n', 'risk-categories'],
+  ];
+  for (const [policy, ...keys] of cases) {
+    assert.deepStrictEqual(json(policy, ...keys), cliJson(policy, ...keys), `${JSON.stringify(policy)} ${keys.join(',')}`);
+  }
+});
+
+test('smoke (real process): the in-process json() helper matches the CLI for every other schema key', () => {
+  const res = spawnCli(CLI, ['--all'], { cwd: makeRepo(undefined), env: { ...process.env } });
+  assert.strictEqual(res.code, 0, `expected exit 0, got ${res.code}; stderr: ${res.stderr}`);
+  const viaCli = JSON.parse(res.stdout);
+  const keys = POLICY_KEYS.map((row) => row.key).filter((key) => !CLI_SPECIAL_KEYS.includes(key));
+  const inProcess = json(undefined, ...keys);
+  for (const key of keys) {
+    // --all decorates each entry with its schema metadata; json() returns the bare entry.
+    const { summary, category, tier, type, default: dflt, ...entry } = viaCli[key];
+    assert.deepStrictEqual(inProcess[key], entry, key);
+  }
+});
+
+test('json() refuses keys the CLI derives or special-cases, comma-joined keys, and an empty key list', () => {
+  for (const k of [...CLI_SPECIAL_KEYS, 'control-mode,autonomy']) {
+    assert.throws(() => json(undefined, k), /use cliJson\(\)/);
+  }
+  assert.throws(() => json(undefined), /use cliJson\(\)/);
+});
 
 test('AC1.1: with no keys set, control-mode, acceptance-target and deploy-reach print their defaults', () => {
   const res = values(undefined, 'control-mode', 'acceptance-target', 'deploy-reach');
@@ -218,6 +280,18 @@ test('a policyOnly key ignores the --run overlay, and a sibling flat key still h
   );
 });
 
+// #5830: control-mode is the single human-in-control switch and a run's own agent writes its config.yml, so the overlay is closed in both directions.
+test('control-mode ignores the --run overlay both ways', () => {
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: 'control-mode: on\n', runConfigRaw: 'control-mode: off\n' })['control-mode'],
+    { value: 'on', source: 'policy' },
+  );
+  assert.deepStrictEqual(
+    resolvePolicyKeys(['control-mode'], { policyRaw: null, runConfigRaw: 'control-mode: on\n' })['control-mode'],
+    { value: 'off', source: 'default' },
+  );
+});
+
 test('risk-categories and risk-path-globs agree when a run config names a slug', () => {
   const policyRaw = 'risk-categories: pii\nrisk-path-globs:\n  pii: [a]\n';
   const out = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw, runConfigRaw: 'risk-categories: other\n' });
@@ -230,6 +304,43 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
   for (const v of ['ON', 'On', 'yes', 'off', '', ' on', undefined, null, true, 1]) {
     assert.strictEqual(isControlModeOn(v), false, String(v));
   }
+});
+
+// Keys that land before their consumer: no plugin code acts on them yet, and the
+// record that wires a key (the #4608 leaves for the control-mode keys, #5997/#5999
+// for `implementer-tier`) removes it from this list and drops "Not yet used" from
+// its summary.
+const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors', 'implementer-tier'];
+
+test('every key that landed before its consumer says so in its summary (#4816)', () => {
+  for (const key of NOT_YET_USED) {
+    const row = POLICY_KEYS.find((r) => r.key === key);
+    assert.ok(row, `${key} missing from POLICY_KEYS`);
+    assert.match(row.summary, /^Not yet used[.;] /, key);
+  }
+});
+
+test('no key outside NOT_YET_USED opens its summary with "Not yet used" (#4816)', () => {
+  const marked = POLICY_KEYS.filter((r) => /^Not yet used\b/.test(r.summary)).map((r) => r.key);
+  assert.deepStrictEqual(marked.sort(), [...NOT_YET_USED].sort());
+});
+
+test('readRiskPolicy: control mode off consults neither extra key', () => {
+  const read = () => 'risk-categories: pii\nrisk-path-globs:\n  auth: [a/**]\n';
+  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: read }), { controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
+});
+
+test('readRiskPolicy: control mode on resolves both, a malformed block is flagged', () => {
+  const on = (rest) => () => `control-mode: on\n${rest}`;
+  assert.deepStrictEqual(readRiskPolicy('/r', { readFile: on('risk-categories: pii\nrisk-path-globs:\n  pii: [a/**]\n') }), { controlMode: true, extraCategories: ['pii'], pathGlobs: { pii: ['a/**'] }, globsInvalid: false });
+  assert.strictEqual(readRiskPolicy('/r', { readFile: on('risk-path-globs: x\n') }).globsInvalid, true);
+});
+
+test('readRiskPolicy: an absent file is control mode off, another error throws', () => {
+  const err = (code) => () => { throw Object.assign(new Error(code), { code }); };
+  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOENT') }).controlMode, false);
+  assert.strictEqual(readRiskPolicy('/r', { readFile: err('ENOTDIR') }).controlMode, false);
+  assert.throws(() => readRiskPolicy('/r', { readFile: err('EACCES') }), /EACCES/);
 });
 
 test('risk-categories accepts extra slugs and rejects a non-slug', () => {
@@ -615,7 +726,7 @@ test('risk-path-globs ignores the --run config overlay', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-policy-control-run-'));
   tempDirs.push(runDir);
   fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
-  const res = spawnSync(process.execPath, [CLI, '--run', runDir, 'risk-path-globs'], { cwd: makeRepo(undefined), encoding: 'utf8' });
+  const res = runPolicy(['--run', runDir, 'risk-path-globs'], makeRepo(undefined));
   assert.strictEqual(res.status, 0, res.stderr);
   assert.deepStrictEqual(JSON.parse(res.stdout)['risk-path-globs'], { value: {}, source: 'default' });
 });

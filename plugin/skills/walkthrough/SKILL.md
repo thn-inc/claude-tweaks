@@ -8,7 +8,7 @@ argument-hint: "[<story-path>|--story <name>|#N] --base <url> [--budget-mb <n>] 
 
 Executes an existing schema-v2 user story through Playwright CLI, captures one PNG frame per step, and encodes an animated GIF plus an ordered caption list — a walkthrough that survives being attached to a PR, dropped in chat, or committed into docs, unlike the QA screenshots every `/claude-tweaks:test qa` run already captures and discards under `.claude-tweaks/artifacts/`.
 
-Not `/claude-tweaks:demo` — that name means human acceptance sign-off on a built thing. This produces a shareable artifact, nothing more.
+Not `/claude-tweaks:accept` — that name means human acceptance sign-off on a built thing. This produces a shareable artifact, nothing more.
 
 ## When to Use
 
@@ -16,7 +16,11 @@ Not `/claude-tweaks:demo` — that name means human acceptance sign-off on a bui
 - An existing story already exercises the flow worth sharing
 - You want the "what happens when you do this" story, not a full video recording (this plugin ships no video capability — see Non-Goals below)
 
-Not for: acceptance sign-off (`/claude-tweaks:demo`), authoring a new story (`/claude-tweaks:stories`, which this skill offers and stops when no story matches), true motion capture (cursor travel, scroll, CSS transitions — Playwright CLI exposes no screencast operation).
+Not for: acceptance sign-off (`/claude-tweaks:accept`), authoring a new story (`/claude-tweaks:stories`, which this skill offers and stops when no story matches), true motion capture (cursor travel, scroll, CSS transitions — Playwright CLI exposes no screencast operation).
+
+## Automatic path
+
+The acceptance packet's Recording does not come from this skill: wrap-up's `snapshot` builds that GIF through `encodeWalkthrough` from the pipeline's own happy-path screenshots, never through this skill and never with a browser run, and the GIF is stored in the run's local directory and never uploaded. Its exposure and redaction rules live in `_shared/acceptance-packet.md`'s `## Recording`. This standalone path applies no redaction: the human choosing the destination owns what it shows.
 
 ## Input
 

@@ -1,7 +1,7 @@
 // tests/dispatch-named-form-exclusion-reasons.test.js — #3084.
 //
 // Anchored prose-conformance: dispatch/SKILL.md's `#N` and `#N[,#M,#O...]` bullets must explain a
-// record missing from dispatch-groups.json by EVERY reason queue-pull-script.md removes candidates
+// record missing from dispatch-groups.json by EVERY reason the queue pull removes candidates
 // for — not only `open-pr`. Before #3084 both bullets filtered dispatch-exclusions.json to
 // `reason: 'open-pr'`, so a record #3073's not-spec-shaped pass dropped was misreported as having an
 // open PR (or not explained at all). Sibling: tests/dispatch-not-spec-shaped-exclusion-fixture.test.js
@@ -16,26 +16,26 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 const { sessionTmpPath } = require('../plugin/bin/lib/session-tmp');
+const { UNCLOSED_FENCE_PREFIX } = require('../plugin/bin/lib/issues/materialize-format');
 
 const DISPATCH = path.join(__dirname, '..', 'plugin', 'skills', 'dispatch');
 const SKILL = readText(path.join(DISPATCH, 'SKILL.md'));
 const OPEN_PR_REPORT = readText(path.join(DISPATCH, 'open-pr-exclusion-report.md'));
 const BLOCKED_REPORT = readText(path.join(DISPATCH, 'blocked-exclusion-report.md'));
 
-const QUEUE_PULL = readText(path.join(DISPATCH, 'queue-pull-script.md'));
+const { PASSES } = require('../plugin/bin/lib/dispatch/queue-pull');
 const NOT_SPEC_SHAPED_REPORT = readText(path.join(DISPATCH, 'not-spec-shaped-exclusion-report.md'));
+const MATERIALIZE_GATE = readText(path.join(__dirname, '..', 'plugin', 'skills', 'flow', 'materialize.md'));
 
-// Every reason queue-pull-script.md's passes drop a candidate from dispatch-groups.json for, read from
-// its own `- \`reason: '...'\`` bullets (#3087): a bullet whose entries stay IN dispatch-groups.json
-// (today `oversized`) is not a removing reason. A reason added to the script is checked here unedited.
-const REMOVING_REASONS = QUEUE_PULL.split('\n')
-  .map((line) => ({ line, m: line.match(/^- `reason: '([a-z-]+)'`/) }))
-  .filter(({ m }) => m)
-  .filter(({ line }) => !line.includes('stay IN `dispatch-groups.json`'))
-  .map(({ m }) => m[1]);
+// Every reason the queue pull drops a candidate from dispatch-groups.json for, read from the
+// queue-pull module's PASSES registry (#5230; before it, from queue-pull-script.md's reason bullets,
+// #3087): an exclusion whose entries stay IN dispatch-groups.json (`removes: false`, today
+// `oversized` and `neighbour-in-flight`) is not a removing reason. A reason added to the registry is
+// checked here unedited.
+const REMOVING_REASONS = [...new Set(PASSES.filter((p) => p.kind === 'exclusion' && p.removes).map((p) => p.reason))];
 
-test('REMOVING_REASONS is derived from queue-pull-script.md, non-empty, and excludes oversized (#3087)', () => {
-  assert.ok(REMOVING_REASONS.length >= 5, `derived only ${JSON.stringify(REMOVING_REASONS)} -- the bullet pattern no longer matches queue-pull-script.md`);
+test('REMOVING_REASONS is derived from the PASSES registry, non-empty, and excludes oversized (#3087)', () => {
+  assert.ok(REMOVING_REASONS.length >= 5, `derived only ${JSON.stringify(REMOVING_REASONS)} -- the PASSES filter no longer matches the registry`);
   assert.ok(REMOVING_REASONS.includes('not-spec-shaped'));
   assert.ok(!REMOVING_REASONS.includes('oversized'), 'oversized groups stay in dispatch-groups.json; it is not a removing reason');
 });
@@ -85,14 +85,25 @@ test('open-pr-exclusion-report.md no longer says the named forms read only open-
   );
 });
 
-test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to /claude-tweaks:tidy and anything else to /claude-tweaks:specify #N (#3087)', () => {
+function remedySelectionRule() {
   const start = NOT_SPEC_SHAPED_REPORT.indexOf('**Remedy selection:**');
   assert.notStrictEqual(start, -1, 'Remedy selection paragraph not found -- anchor out of sync with the live file');
-  const rule = NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+  return NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+}
+
+test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to /claude-tweaks:tidy and anything else to /claude-tweaks:specify #N (#3087)', () => {
+  const rule = remedySelectionRule();
   assert.match(rule, /when `missing` is exactly `\["Release Note"\]`, the remedy is `` `\/claude-tweaks:tidy` ``/);
   assert.match(rule, /Any other `missing` set .* gets `` `\/claude-tweaks:specify #\{number\}` ``/);
   assert.ok(NOT_SPEC_SHAPED_REPORT.includes('`#{number} excluded — not spec-shaped (missing: {missing, comma-joined}). Run {remedy}.`'),
     'the per-record line the remedy is spliced into is missing');
+});
+
+test('the prose that quotes the unclosed-fence entry matches the string shapeGate emits (#4350)', () => {
+  const quoted = `${UNCLOSED_FENCE_PREFIX}N`;
+  const rule = remedySelectionRule();
+  assert.ok(rule.includes(`\`${quoted}\``), 'not-spec-shaped-exclusion-report.md Remedy selection no longer quotes the entry shapeGate emits');
+  assert.ok(MATERIALIZE_GATE.includes(`\`${quoted}\``), 'flow/materialize.md Materialization hard gate no longer quotes the entry shapeGate emits');
 });
 
 test('the #3084 journey names every removing exclusion reason, with a matching count (#3103)', () => {
@@ -182,6 +193,6 @@ test('the unreadable-exclusions report maps absent to the reason-unknown line, o
 });
 
 test('AC5.3: neighbour-in-flight is a queue-pull reason that is not removing (#3278)', () => {
-  assert.ok(QUEUE_PULL.includes("- `reason: 'neighbour-in-flight'`"), 'queue-pull-script.md has no neighbour-in-flight reason bullet');
+  assert.ok(PASSES.some((p) => p.kind === 'exclusion' && p.reason === 'neighbour-in-flight'), 'PASSES has no neighbour-in-flight exclusion row');
   assert.ok(!REMOVING_REASONS.includes('neighbour-in-flight'), 'neighbour-in-flight records stay in dispatch-groups.json');
 });

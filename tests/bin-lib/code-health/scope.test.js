@@ -1,6 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -8,13 +9,12 @@ const { listSlices, contentHash, selectSlice, listWorkspaceSlices, gitChurn, sli
 const { MAX_STALE_DAYS } = require('../../../plugin/bin/lib/code-health/score');
 const { toPosix } = require('../../../plugin/bin/lib/shared-primitives');
 const { chmodDenialSkip } = require('../../helpers/root');
+const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-scope-')); }
+function tmp() { return scratchDir('codehealth-scope-'); }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 // ─── sliceRecursive ────────────────────────────────────────────────────────
@@ -909,4 +909,126 @@ test('sourceFiles returns absolute paths regardless of where the root sits', () 
   for (const root of [checkoutUnder(), checkoutUnder('.claude', 'worktrees', 'demo')]) {
     for (const f of sourceFiles(root)) assert.ok(path.isAbsolute(f), `not absolute: ${f}`);
   }
+});
+
+// ─── injected env / stderr (#5381) ─────────────────────────────────────────
+
+function cleanEnv() {
+  return cleanGitEnv(process.env);
+}
+
+// A repo B with a recent commit touching src/a.js, and a NON-git root holding
+// src/a.js: git sees B's history only through an injected GIT_DIR.
+function envOnlyFixture() {
+  const B = tmp();
+  const env = cleanEnv();
+  const git = (args) => execFileSync('git', ['-C', B, ...args], { env, stdio: 'pipe' });
+  git(['init', '-q']);
+  writeIdentity(B, { name: 'Test', email: 'test@test.com' });
+  fs.mkdirSync(path.join(B, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(B, 'src', 'a.js'), 'module.exports = 1;\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'touch a']);
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'a.js'), 'module.exports = 1;\n');
+  return { B, root, injected: { ...env, GIT_DIR: path.join(B, '.git') } };
+}
+
+test('gitChurn runs git log with the injected env', () => {
+  const { root, injected } = envOnlyFixture();
+  const now = Date.now();
+  assert.ok(gitChurn(root, 'src', now, { recursive: true, env: injected }) >= 1);
+  assert.strictEqual(gitChurn(root, 'src', now, { recursive: true, env: cleanEnv() }), 0);
+});
+
+test('selectSlice passes env through to gitChurn', () => {
+  const { root, injected } = envOnlyFixture();
+  // A second slice, equally fresh, whose churn exists nowhere.
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'lib', 'z.js'), 'module.exports = 2;\n');
+  const now = Date.now();
+  const cursors = {
+    src: { lastSweptMs: now - 86400000, lastHash: 'mismatch' },
+    lib: { lastSweptMs: now - 86400000, lastHash: 'mismatch' },
+  };
+  const picked = selectSlice(root, cursors, { now, env: injected });
+  assert.strictEqual(picked.id, 'src');
+  assert.strictEqual(picked.why, 'hotspot');
+});
+
+test('listSlices writes its unsupported-workspace-pattern warning to the injected stderr', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/**'] }));
+  const recorded = [];
+  const orig = process.stderr.write;
+  process.stderr.write = (t) => { recorded.push(String(t)); return true; };
+  let err = '';
+  try {
+    listSlices(root, { stderr: (t) => { err += t; } });
+  } finally {
+    process.stderr.write = orig;
+  }
+  assert.match(err, /unsupported workspace pattern/);
+  assert.deepStrictEqual(recorded, []);
+});
+
+test('listSlices still writes the warning to process.stderr when no stderr is injected', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ workspaces: ['packages/**'] }));
+  const recorded = [];
+  const orig = process.stderr.write;
+  process.stderr.write = (t) => { recorded.push(String(t)); return true; };
+  try {
+    listSlices(root);
+  } finally {
+    process.stderr.write = orig;
+  }
+  assert.match(recorded.join(''), /\[code-health\] scope: skipping unsupported workspace pattern "packages\/\*\*"/);
+});
+
+test('contentHash and listSlices reach find with the injected env', () => {
+  // A PATH holding no `find` makes the scan throw: sourceFiles degrades to [],
+  // so the dir hashes as empty and listSlices emits no "." slice. The default
+  // env still finds it.
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'top.js'), 'module.exports = 1;\n');
+  const noFind = { ...cleanEnv(), PATH: tmp() };
+  assert.notStrictEqual(contentHash(root, null, { env: noFind }), contentHash(root, null));
+  assert.deepStrictEqual(listSlices(root, { env: noFind }), []);
+  assert.deepStrictEqual(listSlices(root).map((s) => s.id), ['.']);
+});
+
+test('sliceRecursive(id, root, { env }) lists slices with the injected env', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'big', 'deep'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'big', 'own.js'), `// ${BIG}\n`);
+  fs.writeFileSync(path.join(root, 'big', 'deep', 'd.js'), `// ${BIG}\n`);
+  assert.strictEqual(sliceRecursive('big', root, { env: cleanEnv() }), false);
+  // No `find` on the injected PATH: no slice is listed, so the id falls back to
+  // the pre-split heuristic (recursive) — proof the env reached listSlices.
+  assert.strictEqual(sliceRecursive('big', root, { env: { ...cleanEnv(), PATH: tmp() } }), true);
+});
+
+test('selectSlice reads each candidate\'s files with the injected env', { skip: process.platform === 'win32' && 'sh shim' }, () => {
+  // A `find` shim on the injected PATH counts the calls that carry the env's
+  // marker variable; selectSlice makes one more than listSlices alone (the
+  // Phase 2 content read of the one fresh candidate).
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'a.js'), 'module.exports = 1;\n');
+  const shimDir = tmp();
+  const logFile = path.join(shimDir, 'calls.txt');
+  const realFind = execFileSync('which', ['find'], { encoding: 'utf8' }).trim();
+  fs.writeFileSync(path.join(shimDir, 'find'), `#!/bin/sh\necho "$FIND_MARK" >> "${logFile}"\nexec "${realFind}" "$@"\n`, { mode: 0o755 });
+  const env = { ...cleanEnv(), PATH: `${shimDir}${path.delimiter}${process.env.PATH}`, FIND_MARK: 'marked' };
+  const calls = () => (fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).length : 0);
+  listSlices(root, { env });
+  const listCalls = calls();
+  assert.ok(listCalls >= 1, 'the shim must be reached through the injected PATH');
+  fs.writeFileSync(logFile, '');
+  const now = Date.now();
+  const cursors = { src: { lastSweptMs: now - 86400000, lastHash: 'mismatch' } };
+  selectSlice(root, cursors, { now, env, signals: { src: { churn: 1, loc: 1 } } });
+  assert.strictEqual(calls(), listCalls + 1);
 });

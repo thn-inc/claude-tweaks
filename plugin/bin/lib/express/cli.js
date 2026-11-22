@@ -9,7 +9,8 @@
 //             both against the worktree run-state.json records (never the process
 //             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
 //             the envelope's `head` carries for the push) or an escalation line under
-//             ## /express-lane.
+//             ## /express-lane. `--max-lines` (the driver's flag) replaces
+//             `auto-merge-max-lines` as the line bound.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
@@ -28,7 +29,7 @@
 // an upstream failure (gate --issue's fetch, samples' fetches or a search still at its
 // 1000-result cap within one second, a policy read); 2 malformed invocation (an unreadable or
 // mis-shaped --records-json / --record-json / --detail-file included) or `gh` absent
-// where it is needed; 3 the --run dir is missing or not anchored under the main checkout
+// where it is needed; 3 the --run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines
 // (log-decision/append.js's resolveTarget, [IL-127]), or (escalate only) decisions.md is
 // unwritable. check self-logs its entry and reports a failed append as `logged: false`
 // in its envelope plus a stderr line, never through the exit code.
@@ -45,20 +46,21 @@ const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check')
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
-const { ghAvailable } = require('../repo-resolve');
+const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
 const USAGE = [
   'usage: express-lane.js gate (--issue <n> | --records-json <file>) [--run <dir>] [--repo owner/name]',
-  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name]',
+  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>]',
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
+  "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
   '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
-  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
+  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout\'s .claude-tweaks/pipelines, or (escalate) decisions.md unwritable;',
   '      check reports its own failed decisions.md append as `logged: false` in the JSON, exit 0',
   '',
 ].join('\n');
@@ -93,7 +95,7 @@ const NO_HEAD = 'the runner stamp names no HEAD sha';
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
-  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo'],
+  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines'],
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
   samples: ['--every', '--repo'],
@@ -122,6 +124,7 @@ function parseArgs(argv) {
   }
   if (flags['--issue'] !== undefined) flags['--issue'] = positiveInt('--issue', flags['--issue']);
   if (flags['--every'] !== undefined) flags['--every'] = positiveInt('--every', flags['--every']);
+  if (flags['--max-lines'] !== undefined) flags['--max-lines'] = positiveInt('--max-lines', flags['--max-lines']);
   if (flags['--repo'] !== undefined && !REPO_RE.test(flags['--repo'])) throw new UsageError(`--repo must be owner/name, got "${flags['--repo']}"`);
   if (flags['--reason'] !== undefined && !ESCALATION_REASONS.includes(flags['--reason'])) {
     throw new UsageError(`--reason must be one of ${ESCALATION_REASONS.join('|')}`);
@@ -203,7 +206,7 @@ function anchoredDecisions(deps, runDir) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { throw new AnchorError(String(err && err.message)); }
   if (target.ok) return target.file;
   if (target.reason === 'missing') throw new AnchorError(`run dir does not exist: ${runDir}`);
-  throw new AnchorError(`run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
+  throw new AnchorError(`run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
 }
 
 function readDecisions(deps, file) {
@@ -284,6 +287,11 @@ function runGate(deps, flags) {
   const enabled = policy['express-lane'].value === true;
   const opts = { enabled, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
   const verdicts = issues.map((issue) => evaluateRecordEligibility(issue, { ...opts, escalated: decisionsFile !== null && hasEscalation(decisionsText, issue.number) }));
+  // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
+  // fill changes nothing below.
+  if (decisionsFile && verdicts.every((v) => v.eligible === true)) {
+    try { require('../run-manifest/write').fillRunManifest(path.dirname(decisionsFile), { lane: 'express' }, { stderr: deps.stderr }); } catch { /* never changes the gate's outcome */ }
+  }
   deps.stdout(`${JSON.stringify({ enabled, verdicts })}\n`);
   return 0;
 }
@@ -329,8 +337,10 @@ function runCheck(deps, flags) {
     const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
     const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
     // The same two policy keys the normal auto-merge path weighs (`merge-sensitive-paths`,
-    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard.
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: config.autoMergeMaxLines });
+    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
+    // replaces the line limit.
+    const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
@@ -342,7 +352,9 @@ function runCheck(deps, flags) {
   // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
   // stability): eligibility required pr-first, and the merge steps that follow must not
   // re-detect it, where a transient `gh` failure would flip the run to local-merge.
-  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification}`;
+  // spec={n} is the run's record pin (set-config.js's RUN_PINS): wrap-up's run binding
+  // and the pack's record resolution read `spec:` from this config.yml.
+  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification},spec=${n}`;
   return emit(deps, { action: 'proceed', head, mergeVerification, configSet, bounds }, logged);
 }
 
@@ -472,7 +484,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  gh: (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
+  gh: (args, opts = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true })),
   ghAvailable: () => ghAvailable(),
   git: defaultGit,
   readFile: defaultReadFile,

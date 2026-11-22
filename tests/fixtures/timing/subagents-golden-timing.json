@@ -1,0 +1,618 @@
+{
+  "runDir": "<RUN_DIR>",
+  "generatedAt": "<GENERATED_AT>",
+  "phases": [
+    {
+      "phase": "call-1",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "call-2",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "build",
+      "start": "2026-10-17T09:58:00.000Z",
+      "end": "2026-10-17T10:10:00.000Z",
+      "minutes": 12,
+      "ownMinutes": 12,
+      "source": "skill_invoked",
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-10-17T09:58:00.000Z",
+          "end": "2026-10-17T10:10:00.000Z"
+        }
+      ],
+      "tokens": {
+        "input": 1,
+        "output": 1,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {
+        "claude-opus-5-5": 1
+      },
+      "context": {
+        "turns": 1,
+        "p50": 1,
+        "p90": 1
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "plan",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "tasks",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "test",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "review",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "polish",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "wrap-up",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    },
+    {
+      "phase": "merge",
+      "start": null,
+      "end": null,
+      "minutes": 0,
+      "ownMinutes": 0,
+      "source": "unattributed",
+      "verify": [],
+      "spans": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreate": 0
+      },
+      "procedureBytes": 0,
+      "procedureFiles": {},
+      "toolRoundTrips": 0,
+      "turnClasses": {
+        "edit": 0,
+        "read": 0,
+        "explore": 0,
+        "procedure": 0,
+        "bookkeeping": 0,
+        "orientation": 0,
+        "verify": 0,
+        "guard-refusal": 0,
+        "dispatch": 0,
+        "other": 0
+      },
+      "modelMix": {},
+      "context": {
+        "turns": 0,
+        "p50": null,
+        "p90": null
+      },
+      "subagents": 0,
+      "ceremonyShare": null
+    }
+  ],
+  "totals": {
+    "minutes": 12,
+    "verifyRuns": 0,
+    "verifyMinutes": 0,
+    "verifyModes": [],
+    "tokens": {
+      "input": 1,
+      "output": 1,
+      "cacheRead": 0,
+      "cacheCreate": 0
+    },
+    "procedureBytes": 0,
+    "procedureFiles": {},
+    "toolRoundTrips": 0,
+    "turnClasses": {
+      "edit": 0,
+      "read": 0,
+      "explore": 0,
+      "procedure": 0,
+      "bookkeeping": 0,
+      "orientation": 0,
+      "verify": 0,
+      "guard-refusal": 0,
+      "dispatch": 0,
+      "other": 0
+    },
+    "context": {
+      "turns": 1,
+      "p50": 1,
+      "p90": 1
+    },
+    "modelMix": {
+      "claude-opus-5-5": 1
+    },
+    "subagents": 0,
+    "ceremonyShare": null,
+    "guard": {
+      "gateDenial": 0,
+      "wdAmbiguous": 0,
+      "wdDeny": 0
+    }
+  },
+  "unattributed": {
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "cacheRead": 0,
+      "cacheCreate": 0
+    },
+    "procedureBytes": 0,
+    "procedureFiles": {},
+    "toolRoundTrips": 0,
+    "rows": 0,
+    "turnClasses": {
+      "edit": 0,
+      "read": 0,
+      "explore": 0,
+      "procedure": 0,
+      "bookkeeping": 0,
+      "orientation": 0,
+      "verify": 0,
+      "guard-refusal": 0,
+      "dispatch": 0,
+      "other": 0
+    },
+    "modelMix": {},
+    "context": {
+      "turns": 0,
+      "p50": null,
+      "p90": null
+    },
+    "subagents": 0,
+    "ceremonyShare": null
+  },
+  "transcripts": [
+    {
+      "path": "<HOME>/.claude/projects/-Users-x-Code-repo--claude-worktrees-wt/sess-1.jsonl",
+      "rows": 1
+    }
+  ],
+  "dispatches": {
+    "scope": "run-window",
+    "items": [
+      {
+        "agentId": "a1",
+        "description": "Implement Task 1: parser",
+        "agentType": "general-purpose",
+        "metaModel": "sonnet",
+        "transcriptModel": "claude-sonnet-5-5",
+        "parentAgentId": null,
+        "spawnDepth": 1,
+        "startTs": "2026-10-17T10:00:00.000Z",
+        "endTs": "2026-10-17T10:01:05.000Z",
+        "wallClockMs": 65000,
+        "tokens": {
+          "input": 13,
+          "output": 24,
+          "cacheRead": 100,
+          "cacheCreate": 5
+        },
+        "procedureFiles": {},
+        "notFound": null,
+        "tier": "standard",
+        "rawModel": "sonnet",
+        "role": "implementer"
+      },
+      {
+        "agentId": "a2",
+        "description": "Review Task 1 (spec + quality)",
+        "agentType": "general-purpose",
+        "metaModel": "sonnet",
+        "transcriptModel": "claude-sonnet-5-5",
+        "parentAgentId": null,
+        "spawnDepth": 1,
+        "startTs": "2026-10-17T10:02:00.000Z",
+        "endTs": "2026-10-17T10:02:30.000Z",
+        "wallClockMs": 30000,
+        "tokens": {
+          "input": 7,
+          "output": 8,
+          "cacheRead": 50,
+          "cacheCreate": 0
+        },
+        "procedureFiles": {},
+        "notFound": null,
+        "tier": "standard",
+        "rawModel": "sonnet",
+        "role": "task review"
+      },
+      {
+        "agentId": "a3",
+        "description": "Final whole-branch review #3386",
+        "agentType": "general-purpose",
+        "metaModel": "opus",
+        "transcriptModel": "claude-opus-5-5",
+        "parentAgentId": null,
+        "spawnDepth": 1,
+        "startTs": "2026-10-17T10:05:00.000Z",
+        "endTs": "2026-10-17T10:07:00.000Z",
+        "wallClockMs": 120000,
+        "tokens": {
+          "input": 20,
+          "output": 30,
+          "cacheRead": 0,
+          "cacheCreate": 10
+        },
+        "procedureFiles": {},
+        "notFound": null,
+        "tier": "capable",
+        "rawModel": "opus",
+        "role": "whole-branch review"
+      }
+    ],
+    "byTier": {
+      "standard": {
+        "dispatches": 2,
+        "agentSeconds": 95,
+        "elapsedMinutes": 2,
+        "tokens": {
+          "input": 20,
+          "output": 32,
+          "cacheRead": 150,
+          "cacheCreate": 5
+        }
+      },
+      "capable": {
+        "dispatches": 1,
+        "agentSeconds": 120,
+        "elapsedMinutes": 2,
+        "tokens": {
+          "input": 20,
+          "output": 30,
+          "cacheRead": 0,
+          "cacheCreate": 10
+        }
+      }
+    },
+    "byRole": {
+      "implementer": {
+        "dispatches": 1,
+        "agentSeconds": 65,
+        "elapsedMinutes": 1,
+        "tokens": {
+          "input": 13,
+          "output": 24,
+          "cacheRead": 100,
+          "cacheCreate": 5
+        }
+      },
+      "task review": {
+        "dispatches": 1,
+        "agentSeconds": 30,
+        "elapsedMinutes": 1,
+        "tokens": {
+          "input": 7,
+          "output": 8,
+          "cacheRead": 50,
+          "cacheCreate": 0
+        }
+      },
+      "whole-branch review": {
+        "dispatches": 1,
+        "agentSeconds": 120,
+        "elapsedMinutes": 2,
+        "tokens": {
+          "input": 20,
+          "output": 30,
+          "cacheRead": 0,
+          "cacheCreate": 10
+        }
+      }
+    },
+    "excludedOutsideWindow": 0
+  },
+  "questions": []
+}

@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "parked",
+  "record": 3381,
+  "title": "Decide /flow's double whole-branch review from me…",
+  "action": "Promote (trigger met) — run /claude-tweaks:specify #3381",
+  "command": "/claude-tweaks:specify #3381"
+ }
+]

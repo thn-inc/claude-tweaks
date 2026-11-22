@@ -2,16 +2,15 @@
 // Pure: record-payload/specShapedBody composition — one of record.js's four
 // split boundaries (#2805). recordPayload (facet values -> emitted labels +
 // body), specShapedBody (the shared Current State/Deliverables/Acceptance
-// Criteria/Release Note composer every born-ready producer uses), the
+// Criteria/Release Note composer every born-ready producer uses), and the
 // body-metadata-line readers that round-trip what specShapedBody writes
-// (Verified-as-of/Premise-check/Template), the generic markdown-section
-// extractor shared by compose-subject.js/decomposition-crossref.js/
-// grouping.js, and the backtick-fence helpers used when composing a body
-// that wraps arbitrary content. No network.
+// (Verified-as-of/Premise-check/Template). No network.
 'use strict';
 
 const nodePath = require('node:path');
 const { ORIGINS, TYPES, TIERS, CEREMONY_TIERS, PRIORITIES, LABELS } = require('./record-vocabulary');
+const { unfencedText, fencedLineMask } = require('../markdown-blocks');
+const { EVIDENCE_KINDS } = require('../deferral-route/evidence');
 
 // The closed Defer-reason: vocabulary — the code twin of
 // skills/_shared/deferral-gate.md's "Defer-reason: vocabulary" section
@@ -24,6 +23,7 @@ const DEFER_REASONS = Object.freeze([
   'genuinely-larger',
   'blocked-external',
   'blocked-dependency',
+  'needs-verification',
 ]);
 
 // Matches a Defer-reason: line on ANY line of the body (the /m flag) — the
@@ -31,9 +31,9 @@ const DEFER_REASONS = Object.freeze([
 // the first line of the body is where the insert path and producers put it
 // (deferral-gate.md's "Where the reason lives"). Read through unfencedText: a
 // Defer-reason: line quoted inside a fenced block is never the record's own
-// (#4368). Still fence-blind, not covered by #4368: the Origin: readers
-// (provenance.js, trust.js) and the work-fingerprint reader — #4368 scopes to the
-// metadata lines an executor, the drift checks, or this insert path consume.
+// (#4368). The Origin: readers (provenance.js, trust.js) read through
+// ownOriginLine below (#4502); the work-fingerprint reader stays out of that scope
+// (it defuses quoted markers at compose time).
 const DEFER_REASON_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
 
 // Freshness stamp (#117): the commit each health-sweep skill actually read at
@@ -70,99 +70,13 @@ const TEMPLATE_STAMP_VALUE_RE = /^\S+ @ \S+$/;
 // trimmed; single-line only (materialize.js runs it as-is via the shell).
 const PREMISE_CHECK_RE = /^Premise-check: (.+)$/m;
 
+// #4502: one body line's `Origin:` marker; the capture is `.*?` so a bare `Origin:` yields ''.
+const ORIGIN_LINE_RE = /^Origin:[ \t]*(.*?)[ \t]*$/;
+
 function oneOf(name, value, allowed) {
   if (!allowed.includes(value)) {
     throw new Error(`${name} must be one of ${allowed.join('|')} (got "${value}")`);
   }
-}
-
-// Returns a backtick fence at least one character longer than the longest run
-// of backticks found inside `text`, so a fenced code block wrapping arbitrary
-// finding content (a docs/skill/rule/CLAUDE.md excerpt) can never be closed
-// early by a ``` sequence already present in that content — GitHub's
-// fence-matching rule only treats a run of >= the opening fence's length as
-// a closer.
-function fenceFor(text) {
-  const runs = String(text).match(/`+/g) || [];
-  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-  return '`'.repeat(Math.max(3, longest + 1));
-}
-
-function fencedBlock(text) {
-  const fence = fenceFor(text);
-  return `${fence}\n${text}\n${fence}`;
-}
-
-// lines -> [start, end] inclusive line-index ranges, one per fenced block: from
-// the opening fence line through its closing fence line, or lines.length - 1
-// when unclosed (a truncated fence is quoted content, the safer direction).
-// The one fence rule shared by stripCodeSpans (materialize-format.js), sectionText
-// and extractSection (#4169), mergeStateDemands (merge-gate.js) and
-// extractCurrentStateAnchors (near-duplicate.js) (#4369), and the three
-// body-metadata extractors extractVerifiedAsOf / extractPremiseCheck /
-// extractTemplateStamp (#4368): an opener is an optional U+FEFF byte-order mark,
-// 0-3 leading spaces (CommonMark), then a run of 3+ backticks or tildes — a
-// backtick run only when no backtick follows it on the line, since CommonMark
-// reads "```a`b" as an inline code span, not a fence; the closer is 0-3 leading
-// spaces, then the same character, at least the opener's length, and nothing
-// else on its line but trailing spaces/tabs (plus the CR a LF-only split leaves
-// on a CRLF body). Four or more leading spaces is an indented code block, not a
-// fence. Matches what fenceFor and fencedBlock write (column-0 fences).
-function scanFences(lines) {
-  const ranges = [];
-  let unclosed = false;
-  let i = 0;
-  while (i < lines.length) {
-    const fenceMatch = lines[i].match(/^\uFEFF? {0,3}(`{3,}(?=[^`]*$)|~{3,})/);
-    if (!fenceMatch) {
-      i++;
-      continue;
-    }
-    const fenceChar = fenceMatch[1][0];
-    const fenceLen = fenceMatch[1].length;
-    const closeRe = new RegExp(`^ {0,3}${fenceChar}{${fenceLen},}[ \\t\\r]*$`);
-    let j = i + 1;
-    while (j < lines.length && !closeRe.test(lines[j])) j++;
-    unclosed = j >= lines.length;
-    const end = unclosed ? lines.length - 1 : j;
-    ranges.push([i, end]);
-    i = end + 1;
-  }
-  return { ranges, unclosed };
-}
-
-function fencedLineRanges(lines) {
-  return scanFences(lines).ranges;
-}
-
-// lines -> boolean[] parallel to lines: true for every line inside a fenced
-// block, per fencedLineRanges (#4369). `{ unclosedAsText: true }` leaves a
-// trailing unclosed fence out of the mask, for a caller that gates on a heading
-// and must not lose it to a stray unclosed fence — an unclosed fence is read as
-// the prose it likely is rather than as a block swallowing the rest of the body.
-function fencedLineMask(lines, { unclosedAsText = false } = {}) {
-  const mask = new Array(lines.length).fill(false);
-  const { ranges, unclosed } = scanFences(lines);
-  const kept = unclosedAsText && unclosed ? ranges.slice(0, -1) : ranges;
-  for (const [s, e] of kept) {
-    for (let k = s; k <= e; k += 1) mask[k] = true;
-  }
-  return mask;
-}
-
-// body -> body with every line inside a fenced block (per fencedLineRanges)
-// blanked to ''. Splits on every CommonMark line ending (CRLF, lone CR, LF)
-// keeping the separators, so every unfenced line and every separator stays
-// byte-identical and a metadata regex reads unfenced text exactly as it did
-// on the raw body (#4368).
-function unfencedText(body) {
-  const parts = body.split(/(\r\n|\r|\n)/);
-  const lines = [];
-  for (let i = 0; i < parts.length; i += 2) lines.push(parts[i]);
-  for (const [s, e] of fencedLineRanges(lines)) {
-    for (let k = s; k <= e; k++) parts[k * 2] = '';
-  }
-  return parts.join('');
 }
 
 // { title, body, type, origin?, risk?, size?, ceremony?, solutionUnjustified?, ready?, parked?, priority?, fingerprint?, deferReason? }
@@ -275,6 +189,34 @@ function extractPremiseCheck(body) {
   return m ? m[1].trim() : null;
 }
 
+// body -> the text after `Origin:` on the record's own Origin: line (leading/trailing
+// spaces and tabs trimmed; '' for a bare `Origin:`), or null when there is none or body
+// is not a string (#4502). A record's provenance comes from its own line only, so three
+// rules: a line inside a fenced block never counts (fencedLineMask, default options — an
+// unclosed fence hides every later line, same as unfencedText under #4368); a line under a
+// `## Absorbed: …` heading never counts (the section runs to the next unfenced `## `
+// heading; `###` sub-headings keep it open); a line under `## Original request` still
+// counts, because that is the record's own earlier text. Fenced lines are never read and
+// never change the Absorbed state.
+function ownOriginLine(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const lines = body.split(/\r\n|\r|\n/);
+  const fenced = fencedLineMask(lines);
+  let inAbsorbed = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
+    const line = lines[i];
+    if (line.startsWith('## ')) {
+      inAbsorbed = line.startsWith('## Absorbed:');
+      continue;
+    }
+    if (inAbsorbed) continue;
+    const m = ORIGIN_LINE_RE.exec(line);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 // body -> { path, version } the harness-health finding's Proposed block was
 // snapshotted from, or null when the record carries no Template: line (every
 // finding except a template-derived CLAUDE.md/rule template-conformance or
@@ -303,58 +245,16 @@ function keyFilePathProblem(filePath) {
   return null;
 }
 
+// The kinds a provenance Evidence: line may carry (#5933), built from the one vocabulary
+// `deferral-route/evidence.js` checks; the text before the first colon.
+const EVIDENCE_KIND_RE = new RegExp(`^(?:${EVIDENCE_KINDS.join('|')}):`);
+
 function isRepoRelativeKeyFilePath(filePath) {
   return keyFilePathProblem(filePath) === null;
 }
 
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
-
-// body, heading text, options -> the section text under that heading, or null
-// when absent. Shared line-boundary finder behind compose-subject.js's
-// Breaking Change/Release Note/Overview extraction, decomposition-crossref.js's
-// Gotchas/Prerequisites extraction, and grouping.js's Key Files extraction —
-// three independent re-implementations of the same "find a heading, walk
-// lines until the next one" loop (#2251 review row 18) — and, called directly
-// for its null-on-absent result, materialize-format.js's sectionText (#4367).
-//   levelPattern: the `{...}` regex-quantifier body for this heading's own
-//     level (default '2,4' — h2 through h4, decomposition-crossref.js's and
-//     grouping.js's shared original range).
-//   stopPattern: the level-class that terminates the section (default
-//     '1,6' — any heading; compose-subject.js overrides to '2' since its own
-//     sections may carry nested subsections that must stay inside them).
-//   trim: trim the joined result (default false, decomposition-crossref.js's
-//     and grouping.js's original behavior; compose-subject.js overrides true).
-// CRLF-normalized before matching — none of the three original
-// implementations did this, so a CRLF file (this repo has at least one,
-// `[IL-160]`) could silently fail every heading match; this fixes that as a
-// side effect rather than as its own goal. Headings inside fenced blocks are
-// quoted content and never match (#4169); a fenced line never stops the section.
-function findSection(body, heading, { levelPattern = '2,4', stopPattern = '1,6', trim = false } = {}) {
-  if (typeof body !== 'string') return null;
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const headingRe = new RegExp(`^#{${levelPattern}}[ \\t]+${escaped}[ \\t]*$`);
-  const stopRe = new RegExp(`^#{${stopPattern}}[ \\t]`);
-  const lines = body.replace(/\r\n/g, '\n').split('\n');
-  const fenced = fencedLineMask(lines);
-  const start = lines.findIndex((line, idx) => !fenced[idx] && headingRe.test(line));
-  if (start === -1) return null;
-  const out = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (!fenced[i] && stopRe.test(lines[i])) break;
-    out.push(lines[i]);
-  }
-  const joined = out.join('\n');
-  return trim ? joined.trim() : joined;
-}
-
-// findSection's text, or '' when the heading is absent. A caller that must tell absent
-// from empty (sectionText, #4367) calls findSection directly.
-function extractSection(body, heading, options) {
-  return findSection(body, heading, options) ?? '';
-}
-
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
-//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string,
+//   provenance?: { origin?, deferReason?, evidence? }, footer?: string | null, verifiedAsOf?: string,
 //   keyFiles?: Array<{ path, change? }> } -> body string.
 // Additive over the original shape: a call passing none of provenance/footer/openQuestion/
 // verifiedAsOf (and a non-empty header) composes byte-identical output — the four health-suite
@@ -362,9 +262,12 @@ function extractSection(body, heading, options) {
 // of acceptanceCriteria/openQuestion must be supplied: openQuestion is the composer's
 // needs:definition variant, rendering `## Open Question` in place of Acceptance
 // Criteria so a needs-you record never carries placeholder AC. Provenance lines
-// (Origin:, then Defer-reason: — validated against DEFER_REASONS) render between
-// header and `## Current State`, where provenance.js's line-anchored Origin: parse
-// reads them. footer: a string replaces the default health-suite sentence, null omits
+// (Origin:, then Defer-reason: — validated against DEFER_REASONS — then Evidence:) render
+// between header and `## Current State`, where ownOriginLine (above) reads them. evidence
+// (#5933, optional) is a single-line `test:{path}` or `ref:{id}`: only the kind before the
+// first colon is checked here (the path/id form is bin/deferral-route.js's to judge), so a
+// file-and-line pointer such as `src/x.js:10` throws instead of filling the slot. footer: a
+// string replaces the default health-suite sentence, null omits
 // it; exhaust producers pass `_Filed by \`{producer}\` via specShapedBody._` — the
 // machine-visible marker _shared/work-record.md's born-shaped matrix rows key on.
 // header is the slot for producer-specific leading lines (e.g. `Trigger: {condition}`)
@@ -393,7 +296,7 @@ function extractSection(body, heading, options) {
 // (#2660) `releaseNote` is REQUIRED, not optional, alongside currentState/
 // deliverables/filedBy below — deliberately, not an oversight. This composer
 // is the shared body-composition path for every "born-ready" producer
-// (`_shared/work-record.md`'s Born-ready rule): the four health-sweep
+// (`_shared/work-record.md`'s Born-ready rule): the five health-sweep
 // skills' issue-payload.js files, plus /wrap-up, /reflect, and /review's
 // `side-effect:*` producers. `_shared/work-record.md` and
 // `bin/lib/compose-record/compose.js`'s own `REQUIRED_SECTIONS` both already
@@ -470,8 +373,11 @@ function specShapedBody({
     }
     return `- \`${filePath}\` — ${change}`;
   });
-  const { origin, deferReason } = provenance || {};
+  const { origin, deferReason, evidence } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
+  if (!isEmpty(evidence) && (typeof evidence !== 'string' || KEY_FILE_LINE_BREAK_RE.test(evidence) || !EVIDENCE_KIND_RE.test(evidence))) {
+    throw new Error('specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}');
+  }
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
@@ -480,6 +386,7 @@ function specShapedBody({
   if (!isEmpty(templateStamp)) parts.push(`Template: ${templateStamp}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
+  if (!isEmpty(evidence)) parts.push(`Evidence: ${evidence}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
   if (hasOQ) parts.push('## Open Question', block(openQuestion));
   else parts.push('## Acceptance Criteria', block(acceptanceCriteria));
@@ -495,6 +402,5 @@ function specShapedBody({
 
 module.exports = {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
-  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, fencedLineRanges, fencedLineMask, findSection, extractSection,
+  extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine,
 };

@@ -116,7 +116,7 @@ Render this block, unmodified, immediately before the final Resolve checkbox:
 
 The SDD-ruling and finding-row bullets are the two exceptions to the declined rule: the executing
 session performs the ratify or reverse write-back per `wrap-up/review-console-appendix.md`'s
-`sdd-ruling-*` bullet, and the file or drop per `wrap-up/review-console.md` step 7
+`sdd-ruling-*` bullet (a ticked deferral ruling files its record too, then its ledger row reads `ratified → #{n}`), and the file or drop per `wrap-up/review-console.md` step 7
 (`_shared/console-execution.md`'s Execution routing).
 
 ## Resolve checkbox
@@ -247,3 +247,5 @@ run cleanly. No blocking wait, no `AskUserQuestion`. Log to `decisions.md`:
 
 `AUTO {time} — Console-on-PR: rendered {N} items ({M} sections) to PR #{number}, comment
 {comment-id}. Reversibility: high (comment is editable/re-renderable).`
+
+A Step 2.9 park (`_shared/pr-first-merge.md`) ends the run `pending-review` / `awaiting-local-acceptance`: the console is not a stop under control mode, and the durable state is the pending label plus the packet. No timeout, no nagging.

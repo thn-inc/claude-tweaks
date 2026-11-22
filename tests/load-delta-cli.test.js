@@ -7,12 +7,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const { run, renderText } = require('../plugin/bin/load-delta');
 const { readText } = require('./helpers/read-skill');
+const { fromTemplate } = require('./helpers/git-template');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const REPO = path.join(__dirname, '..');
 
@@ -28,16 +31,24 @@ function write(root, rel, text) {
 
 // A repo with one commit on main, recorded as origin/main, then optional head edits.
 function makeRepo(baseFiles, { origin = true } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-'));
-  git(dir, 'init', '-q', '-b', 'main');
-  git(dir, 'config', 'user.email', 't@example.com');
-  git(dir, 'config', 'user.name', 't');
-  for (const [rel, text] of Object.entries(baseFiles)) write(dir, rel, text);
-  git(dir, 'add', '-A');
-  git(dir, 'commit', '-q', '-m', 'base');
-  if (origin) git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
-  return dir;
+  return fromTemplate(JSON.stringify([baseFiles, origin]), (dir) => {
+    initRepo(dir, { name: 't', email: 't@example.com', branch: 'main', cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    for (const [rel, text] of Object.entries(baseFiles)) write(dir, rel, text);
+    git(dir, 'add', '-A');
+    git(dir, 'commit', '-q', '-m', 'base');
+    if (origin) git(dir, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  }, { prefix: 'load-delta-' });
 }
+
+test('makeRepo templates are keyed by baseFiles and origin', () => {
+  const a = makeRepo({ 'a.md': 'x' });
+  const b = makeRepo({ 'b.md': 'y' });
+  assert.strictEqual(git(a, 'ls-files').trim(), 'a.md');
+  assert.strictEqual(git(b, 'ls-files').trim(), 'b.md');
+  const noOrigin = makeRepo({ 'a.md': 'x' }, { origin: false });
+  assert.throws(() => git(noOrigin, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main'));
+  assert.doesNotThrow(() => git(a, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main'));
+});
 
 // Default mock resolver matches the branch every makeRepo() repo records as
 // origin/main (resolveIntegrationBranch's real default would spawn
@@ -293,7 +304,7 @@ test('F4: an untracked uncited skill file routes to outcome 2, not outcome 1', (
 
 test('F5: --plugin-root outside the repository (with a real skills/ beneath it) exits 2 naming the reason', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  const outside = scratchDir('load-delta-outside-');
   write(outside, 'skills/t/SKILL.md', 'z\n');
   const r = call(['--plugin-root', outside], dir);
   assert.strictEqual(r.code, 2);
@@ -302,7 +313,7 @@ test('F5: --plugin-root outside the repository (with a real skills/ beneath it) 
 
 test('a cited symlink to a file outside the repository is never read into the closure', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'Read `x.md` in this skill\'s directory.\n' });
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  const outside = scratchDir('load-delta-outside-');
   write(outside, 'secret.md', 'o'.repeat(5000));
   fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'plugin/skills/s/x.md'));
   git(dir, 'add', '-A');

@@ -9,17 +9,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-session-tmp-resolve-cli-');
 const os = require('node:os');
 const path = require('node:path');
 const { formatPrintedPath } = require('../plugin/bin/session-tmp-resolve.js');
+const { runCliSync, spawnCli } = require('./helpers/run-cli');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'session-tmp-resolve.js');
 
+// In-process: the merged env is the complete environment the CLI sees (the old spawn helper passed the same merge).
 function run(args, env = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-  });
+  const { code, stdout, stderr } = runCliSync(CLI, args, { env: { ...process.env, ...env } });
+  return { status: code, stdout, stderr };
 }
 
 // The CLI prints forward-slash paths on win32 (a backslash path interpolated into a JS string
@@ -120,6 +123,7 @@ test('--value combined with VAR=file exits 1', () => {
   }
 });
 
+// real process: its subject is the shell substitution line
 test('--value path is usable via command substitution with no eval (the guard-accepted multi-path form)', { skip: process.platform === 'win32' }, () => {
   const script = `A="$(node "${CLI}" --value a.json)"\nB="$(node "${CLI}" --value b.md)"\necho "$A"\necho "$B"`;
   const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'sess-subst' } });
@@ -144,7 +148,60 @@ test('VAR=filename: a leading "=" (empty variable name) exits non-zero', () => {
 test('the resolved value is safe to eval directly in bash', () => {
   const { stdout } = run(['ST_FOO=foo.json'], { CLAUDE_CODE_SESSION_ID: 'sess-eval-test' });
   const script = `eval "${stdout.trim().replace(/"/g, '\\"')}"\necho "$ST_FOO"`;
-  const result = require('node:child_process').spawnSync('bash', ['-c', script], { encoding: 'utf8' });
+  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
   assert.equal(result.status, 0);
   assert.equal(result.stdout.trim(), printed(path.join(os.tmpdir(), 'ct-session-sess-eval-test', 'foo.json')));
+});
+
+test('AC2.1: --value reads the session id from the injected env, not process.env', () => {
+  const before = process.env.CLAUDE_CODE_SESSION_ID;
+  process.env.CLAUDE_CODE_SESSION_ID = 'not-s1';
+  try {
+    const { code, stdout } = runCliSync(CLI, ['--value', 'x.json'], { env: { CLAUDE_CODE_SESSION_ID: 's1' } });
+    assert.equal(code, 0);
+    assert.match(stdout, /s1/);
+    assert.doesNotMatch(stdout, /not-s1/);
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_CODE_SESSION_ID; else process.env.CLAUDE_CODE_SESSION_ID = before;
+  }
+});
+
+test('AC9.1: the temp root comes from the injected env TMPDIR', () => {
+  const T = scratchDir('st-resolve-');
+  try {
+    const { code, stdout } = runCliSync(CLI, ['--value', 'x.json'], {
+      env: { CLAUDE_CODE_SESSION_ID: 's2', TMPDIR: T, TMP: T, TEMP: T },
+    });
+    assert.equal(code, 0);
+    assert.equal(stdout, formatPrintedPath(path.join(T, 'ct-session-s2', 'x.json')) + '\n');
+  } finally {
+    fs.rmSync(T, { recursive: true, force: true });
+  }
+});
+
+test('AC9.1: with no session id the fallback path also uses the injected env TMPDIR', () => {
+  const T = scratchDir('st-resolve-');
+  try {
+    const { code, stdout } = runCliSync(CLI, ['--value', 'x.json'], { env: { TMPDIR: T, TMP: T, TEMP: T } });
+    assert.equal(code, 0);
+    assert.equal(stdout, formatPrintedPath(path.join(T, 'x.json')) + '\n');
+  } finally {
+    fs.rmSync(T, { recursive: true, force: true });
+  }
+});
+
+// real process: proves the script entry (`require.main` guard sets the exit code and prints the path)
+test('script entry: --value prints the path and exits 0', () => {
+  const env = { ...process.env, CLAUDE_CODE_SESSION_ID: 'sess-spawn' };
+  const { code, stdout } = spawnCli(CLI, ['--value', 'a.json'], { env });
+  assert.equal(code, 0);
+  assert.equal(stdout, `${printed(path.join(os.tmpdir(), 'ct-session-sess-spawn', 'a.json'))}\n`);
+});
+
+// real process: proves the script entry's exit code and stderr for a bare invocation (AC6.1)
+test('AC6.1: no arguments exits 1 with the usage line on stderr and nothing on stdout', () => {
+  const { code, stdout, stderr } = spawnCli(CLI, []);
+  assert.equal(code, 1);
+  assert.equal(stdout, '');
+  assert.equal(stderr, 'Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...] | --value filename\n');
 });

@@ -11,6 +11,8 @@ const { dispositionState, approvalProvenance } = require('../plugin/bin/lib/issu
 const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-breaker');
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
+const { publishPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
+const { automaticLabelAction, verdictLabelEdits } = require('../plugin/bin/lib/issues/accept-entry');
 
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
@@ -20,9 +22,10 @@ const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 //   - AC3.3: no reader sees `accept:pending` (or any accept:* label) as "no
 //     acceptance state", and a NEW module that reads demo:* labels fails here
 //     until it is classified.
-//   - the guard: a demo:* verdict literal in plugin/bin code outside the three
-//     modules that must spell it (the vocabulary, the batch marker, and the closure
-//     check that reports the legacy spelling back) fails.
+//   - the guard: a demo:* verdict literal in plugin/bin code outside the four
+//     modules that must spell it (the vocabulary, the batch marker, the closure
+//     check that reports the legacy spelling back, and the below-floor close's
+//     comment copy) fails.
 //   - the prose rules the labels depend on: a /demo verdict replaces prior labels,
 //     /demo finds a fresh brief behind an outranked pending label, and the acceptance
 //     consumers provision the accept:* rows.
@@ -142,13 +145,59 @@ const DEMO_LABEL_READERS = {
     run: (labels) => acceptanceLabelingResult(labels),
     expect: { pending: 'pass', approved: 'fail', 'changes-requested': 'fail', none: 'fail' },
   },
+  'lib/issues/accept-entry.js': {
+    what: "/accept's automatic entry, which labels only a record with no acceptance state",
+    run: (labels) => automaticLabelAction(labels),
+    expect: { pending: 'none', approved: 'none', 'changes-requested': 'none', none: 'apply-pending' },
+  },
+  'lib/wrap-up/packet-post.js': {
+    what: 'the failed-publish clear, which removes a pending label in either spelling',
+    run: (labels) => failedPublishLabelRemoval(labels),
+    expect: { pending: 'removed', approved: 'absent', 'changes-requested': 'absent', none: 'absent' },
+  },
 };
+
+// Modules that name a demo:* label only inside copy they write for a human to read,
+// and read no acceptance label. Each row pins the exact copy text the label may sit
+// in; a demo:* match anywhere else in the module's code is a reader and fails the
+// walk below. The copy is twin-pinned to its prose by the module's own test.
+const DEMO_LABEL_COPY_ONLY = {
+  'lib/issues/below-floor-parent-close.js': {
+    what: 'the closing comment on a parent closed below the oversight floor, byte-pinned to wrap-up/verification-brief-parent-gate.md Close step 2',
+    copy: '\\`demo:pending\\` sign-off is owed',
+  },
+};
+
+// One matcher source for both walks. Any DEMO_* identifier counts except the two named
+// non-label constants. The global regex is for matchAll; demoLabelUse builds its own
+// non-global one so exec carries no lastIndex state between calls.
+const DEMO_LABEL_SOURCE = String.raw`\bDEMO_(?!CREDENTIAL_RE\b|ACCOUNT\b)[A-Z0-9_]+\b|\bdemo:`;
+const DEMO_MATCH_RE = new RegExp(DEMO_LABEL_SOURCE, 'g');
+
+// -> [{ line, text }] for every demo:* match in `raw`'s code that is not inside the
+// pinned `copy` text. The copy is removed from its line before matching, so a
+// reader on the copy's own line is flagged too.
+function copyOnlyViolations(raw, copy) {
+  const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
+  const out = [];
+  src.split('\n').forEach((text, i) => {
+    for (const m of text.split(copy).join('').matchAll(DEMO_MATCH_RE)) out.push({ line: i + 1, text: m[0] });
+  });
+  if (verdict !== 'ok') out.push({ line: 0, text: STRIPPER_VERDICT_MESSAGES[verdict] });
+  return out;
+}
 
 function acceptanceLabelingResult(labels) {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'accept-reader-'));
   try {
     fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
     fs.writeFileSync(path.join(runDir, 'work', '900-spec.md'), '---\nrecord: 900\n---\n# 900: title\n');
+    // #4551: this fake gh answers the native GraphQL parent call; the work-links
+    // schema default is body-text, so the fixture says native explicitly (this
+    // test pins the label reader, not the link model).
+    fs.mkdirSync(path.join(runDir, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, '.claude-tweaks', 'policy.yml'), 'work-links: native\n');
     const gh = (args) => {
       if (args[0] === '--version') return 'gh version 2.0.0';
       if (args[0] === 'api' && args[1] === 'graphql') {
@@ -170,16 +219,32 @@ function acceptanceLabelingResult(labels) {
   }
 }
 
+// The packet post fails, so publishPacket clears the pending label. The fake gh refuses
+// --remove-label of an absent label as the real one does, so a clear that reads a
+// spelling wrong reports 'failed' or 'absent', never 'removed'.
+function failedPublishLabelRemoval(labels) {
+  const runner = (args) => {
+    if (args.includes('comments')) return JSON.stringify({ comments: [] });
+    if (args[1] === 'comment') throw new Error('post failed');
+    if (args.includes('labels')) return JSON.stringify({ labels: labels.map((name) => ({ name })) });
+    const at = args.indexOf('--remove-label');
+    if (at !== -1 && labels.includes(args[at + 1])) return '';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  return publishPacket({ issue: 7, bodyFile: 'unused', runner }).labelRemoval;
+}
+
 // -> null when `raw` names no demo:* label, else a short description of how. A
 // stripper mis-parse is reported as a use, never as "this file names nothing".
 function demoLabelUse(raw) {
   const src = stripComments(raw);
   const verdict = stripperVerdict(raw, src);
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
-  // A bare demo: catches a startsWith / concatenation reader; the bare DEMO_ names
-  // catch a destructured LABELS member. Not DEMO_ alone: candidates-app-store-readiness.js
-  // names DEMO_CREDENTIAL_RE and DEMO_ACCOUNT.
-  const m = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/.exec(src);
+  // A bare demo: catches a startsWith / concatenation reader; a DEMO_* identifier
+  // catches a destructured LABELS member. Only the exact names DEMO_CREDENTIAL_RE and
+  // DEMO_ACCOUNT (named in candidates-app-store-readiness.js, not labels) are excluded,
+  // so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
+  const m = new RegExp(DEMO_LABEL_SOURCE).exec(src);
   return m ? m[0] : null;
 }
 
@@ -190,15 +255,31 @@ test('AC3.3: every plugin/bin module that names a demo:* label is classified, so
     const use = demoLabelUse(readText(file));
     if (use === null) continue;
     seen.push(rel(file));
-    if (!Object.hasOwn(DEMO_LABEL_READERS, rel(file))) unclassified.push(`${rel(file)}  (${use})`);
+    if (!Object.hasOwn(DEMO_LABEL_READERS, rel(file)) && !Object.hasOwn(DEMO_LABEL_COPY_ONLY, rel(file))) unclassified.push(`${rel(file)}  (${use})`);
   }
   assert.deepEqual(unclassified, [],
-    'classify these in DEMO_LABEL_READERS with a branch that proves they read accept:* alongside demo:*');
+    'classify these in DEMO_LABEL_READERS with a branch that proves they read accept:* alongside demo:* (or in DEMO_LABEL_COPY_ONLY when the label sits only in copy the module writes)');
   assert.ok(BIN_FILES.length >= 400, `walked ${BIN_FILES.length} files, expected the whole plugin/bin tree`);
   // Both directions: a classified module that stopped naming a label keeps a row
-  // that proves nothing, so the table must equal what the walk found.
-  assert.deepEqual(seen.sort(), Object.keys(DEMO_LABEL_READERS).sort(),
-    'DEMO_LABEL_READERS and the modules the walk matched differ — drop a stale row or fix the matcher');
+  // that proves nothing, so the two tables together must equal what the walk found.
+  assert.deepEqual(seen.sort(), [...Object.keys(DEMO_LABEL_READERS), ...Object.keys(DEMO_LABEL_COPY_ONLY)].sort(),
+    'DEMO_LABEL_READERS + DEMO_LABEL_COPY_ONLY and the modules the walk matched differ — drop a stale row or fix the matcher');
+});
+
+test('AC3.3: a copy-only module names a demo:* label only inside its pinned copy, so it reads none', () => {
+  for (const [file, row] of Object.entries(DEMO_LABEL_COPY_ONLY)) {
+    assert.deepEqual(copyOnlyViolations(readText(path.join(BIN_ROOT, file)), row.copy), [], `${file} (${row.what})`);
+  }
+});
+
+test('guard self-test: a copy-only module gains a reader outside, or on, the copy line and is flagged', () => {
+  const copy = DEMO_LABEL_COPY_ONLY['lib/issues/below-floor-parent-close.js'].copy;
+  const copyLine = 'const c = `so no Brief or ' + copy + '.`;';
+  assert.deepEqual(copyOnlyViolations(copyLine, copy), []);
+  assert.deepEqual(copyOnlyViolations(copyLine + "\nconst r = (l) => l.startsWith('demo:');", copy), [{ line: 2, text: 'demo:' }]);
+  assert.deepEqual(copyOnlyViolations(copyLine + '\nconst p = LABELS.DEMO_PENDING;', copy), [{ line: 2, text: 'DEMO_PENDING' }]);
+  assert.deepEqual(copyOnlyViolations(copyLine + '\nconst b = DEMO_PENDING_BATCH;', copy), [{ line: 2, text: 'DEMO_PENDING_BATCH' }]);
+  assert.deepEqual(copyOnlyViolations(copyLine.replace('.`;', ".`; const r = (l) => l.includes('demo:approved');"), copy), [{ line: 1, text: 'demo:' }]);
 });
 
 test('AC3.3: no reader sees accept:* as no acceptance state, and each outcome matches its demo:* twin', () => {
@@ -215,14 +296,17 @@ test('AC3.3: no reader sees accept:* as no acceptance state, and each outcome ma
 
 // --- Guard: demo:* verdict literals live only where they must ---
 
-// The three modules allowed to spell a demo:* verdict: the vocabulary and the batch
+// The four modules allowed to spell a demo:* verdict: the vocabulary and the batch
 // marker define the legacy spelling; the closure check keeps it in its pinned
-// failure text. Every other reader goes through acceptanceOf / dispositionState
+// failure text; the below-floor parent close writes it in close-comment copy that is
+// twin-pinned to the parent-gate prose (and DEMO_LABEL_COPY_ONLY holds it to that
+// copy). Every other reader goes through acceptanceOf / dispositionState
 // and names a label only through LABELS (the lane breaker does).
 const LITERAL_ALLOWED = new Set([
   'lib/issues/record-vocabulary.js',
   'lib/issues/acceptance.js',
   'lib/wrap-up/engine-verify.js',
+  'lib/issues/below-floor-parent-close.js',
 ]);
 const DEMO_LITERAL_RE = /demo:(?:pending|approved-batch|approved|changes-requested)/g;
 
@@ -273,12 +357,18 @@ test('guard self-test: the reader walk names a planted mis-parse, not "no label 
   assert.equal(demoLabelUse("const r = (labels, s) => labels.includes('demo:' + s);"), 'demo:');
   assert.equal(demoLabelUse('const { DEMO_PENDING } = LABELS;'), 'DEMO_PENDING');
   assert.equal(demoLabelUse('const { DEMO_CHANGES_REQUESTED: bad } = LABELS;'), 'DEMO_CHANGES_REQUESTED');
+  // A new label-shaped name outside the three known ones must be classified too.
+  assert.equal(demoLabelUse('const DEMO_PENDING_BATCH = 1;'), 'DEMO_PENDING_BATCH');
+  assert.equal(demoLabelUse('const n = LABELS.DEMO_LABEL_BATCH;'), 'DEMO_LABEL_BATCH');
+  // The exclusion is exact: a name that merely starts with an excluded constant still counts.
+  assert.equal(demoLabelUse('const DEMO_ACCOUNT_PENDING = 1;'), 'DEMO_ACCOUNT_PENDING');
+  assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE_BATCH = 1;'), 'DEMO_CREDENTIAL_RE_BATCH');
   // Unrelated DEMO_ names are not label readers.
   assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE = /x/; const DEMO_ACCOUNT = 1;'), null);
   assert.equal(demoLabelUse("// LABELS.DEMO_PENDING and demo:pending in a comment\nconst ok = 1;"), null);
 });
 
-test('plugin/bin names a demo:* verdict literal only in the three modules that must', () => {
+test('plugin/bin names a demo:* verdict literal only in the four modules that must', () => {
   const offenders = [];
   let sites = 0;
   for (const file of BIN_FILES) {
@@ -288,7 +378,7 @@ test('plugin/bin names a demo:* verdict literal only in the three modules that m
     }
   }
   assert.deepEqual(offenders, [],
-    'read a verdict through acceptanceOf / dispositionState, never a demo:* literal — only the vocabulary, the batch marker and the closure check spell the legacy label');
+    'read a verdict through acceptanceOf / dispositionState, never a demo:* literal — only the vocabulary, the batch marker, the closure check and the below-floor close comment copy spell the legacy label');
   assert.ok(BIN_FILES.length >= 400, `walked ${BIN_FILES.length} files, expected the whole plugin/bin tree`);
   assert.ok(sites >= 5, `matched ${sites} allowed literal sites, expected at least 5 — the matcher stopped matching`);
 });
@@ -300,12 +390,13 @@ const collapse = (text) => text.replace(/\s+/g, ' ');
 const LABEL_RE = /`((?:demo|accept):[a-z-]+)`/g;
 const labelsIn = (text) => [...text.matchAll(LABEL_RE)].map((m) => m[1]).sort();
 
-// The labels /demo's replacement rule removes, per bullet.
-function demoRemovals() {
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
-  assert.notEqual(from, -1, 'the replacement rule must exist in /demo Step 3');
-  const rule = skill.slice(from, skill.indexOf('**Provenance signal', from));
+// The labels /accept's replacement rule removes, per bullet. #4613 moved the rule from the
+// skill's Step 3 into verdict-interim.md and made the edit accept-entry.js labels' output.
+function acceptRemovals() {
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
+  assert.notEqual(from, -1, 'the replacement rule must exist in /accept verdict-interim.md');
+  const rule = interim.slice(from, interim.indexOf('**Provenance signal', from));
   const bullet = (name) => {
     const line = rule.split('\n').find((l) => l.startsWith(`- **${name}`));
     assert.ok(line, `the replacement rule must have a ${name} bullet`);
@@ -316,86 +407,106 @@ function demoRemovals() {
     every: bullet('Every verdict:'),
     approve: bullet('Approve:'),
     single: bullet('Single-record Approve'),
+    batch: bullet('Batch-sourced Approve:'),
     changes: bullet('Request changes:'),
   };
 }
 
-test('/demo Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
-  const { every, approve, single, changes } = demoRemovals();
-  assert.deepEqual(every, ['accept:pending', 'demo:pending']);
-  assert.deepEqual(approve, ['accept:changes-requested', 'demo:changes-requested']);
-  assert.deepEqual(single, ['accept:approved-batch', 'demo:approved-batch']);
-  assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch']);
+// Every record a verdict can land on: each subset of the three states and the batch marker,
+// both spellings.
+const PRIOR_LABELS = [...STATES, 'approved-batch'].flatMap((state) => [`demo:${state}`, `accept:${state}`]);
 
-  // Every record a verdict can land on: each subset of the three states and the batch
-  // marker, both spellings.
-  const prior = [...STATES, 'approved-batch'].flatMap((state) => [`demo:${state}`, `accept:${state}`]);
-  const apply = (labels, removed, added) => [...labels.filter((l) => !removed.includes(l)), ...added];
-  for (let mask = 0; mask < 2 ** prior.length; mask += 1) {
-    const labels = prior.filter((_, i) => mask & (1 << i));
+test('/accept Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
+  const { every, approve, single, batch, changes } = acceptRemovals();
+  assert.deepEqual(every, ['accept:pending', 'demo:pending']);
+  assert.deepEqual(approve, ['accept:changes-requested', 'demo:approved', 'demo:changes-requested']);
+  assert.deepEqual(single, ['accept:approved-batch', 'demo:approved-batch']);
+  assert.deepEqual(batch, ['demo:approved-batch']);
+  assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch', 'demo:changes-requested']);
+
+  // The prose rule is what the labels command computes, on a record holding every label.
+  const removed = (verdict, opts) => [...verdictLabelEdits(PRIOR_LABELS, verdict, opts).remove].sort();
+  assert.deepEqual(removed('approved'), [...every, ...approve, ...single].sort());
+  assert.deepEqual(removed('approved', { batch: true }), [...every, ...approve, ...batch].sort());
+  assert.deepEqual(removed('changes-requested'), [...every, ...changes].sort());
+
+  const apply = (labels, verdict, opts) => {
+    const { add, remove } = verdictLabelEdits(labels, verdict, opts);
+    for (const name of remove) assert.ok(labels.includes(name), `removes only a held label: ${name}`);
+    return [...labels.filter((l) => !remove.includes(l)), ...add];
+  };
+  for (let mask = 0; mask < 2 ** PRIOR_LABELS.length; mask += 1) {
+    const labels = PRIOR_LABELS.filter((_, i) => mask & (1 << i));
     const name = labels.join('+');
-    const individual = apply(labels, [...every, ...approve, ...single], ['demo:approved']);
+    const individual = apply(labels, 'approved');
     assert.equal(acceptanceOf(individual), 'approved', name);
     assert.equal(approvalProvenance(individual), 'walkthrough', `an individual Approve replaces the batch one: ${name}`);
-    const batch = apply(labels, [...every, ...approve], ['demo:approved', 'demo:approved-batch']);
-    assert.equal(approvalProvenance(batch), 'batch', `the batch action keeps its own label: ${name}`);
-    assert.equal(acceptanceOf(apply(labels, [...every, ...changes], ['demo:changes-requested'])), 'changes-requested', name);
+    const batched = apply(labels, 'approved', { batch: true });
+    assert.equal(approvalProvenance(batched), 'batch', `the batch action keeps its own label: ${name}`);
+    const changed = apply(labels, 'changes-requested');
+    assert.equal(acceptanceOf(changed), 'changes-requested', name);
+    for (const result of [individual, batched, changed]) {
+      assert.deepEqual(result.filter((l) => l.startsWith('demo:')), [], `no demo:* twin survives a verdict: ${name}`);
+    }
   }
 });
 
-test('/demo Step 3: a batch-sourced Approve cannot strip the batch label it writes', () => {
-  const { rule } = demoRemovals();
-  assert.match(rule, /A batch-sourced Approve \(the Provenance signal note below\) removes neither batch label/);
+test('/accept Step 3: a batch-sourced Approve cannot strip the batch label it writes', () => {
+  const { rule } = acceptRemovals();
+  assert.match(rule, /A batch-sourced Approve \(the Provenance signal note below\) keeps `accept:approved-batch`/);
 });
 
 // One verdict's command text, from its opener up to where the other driver's branch starts.
 function verdictCommand(opener, end) {
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf(opener);
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf(opener);
   assert.notEqual(from, -1, `the verdict command must open with: ${opener}`);
-  const to = skill.indexOf(end, from);
+  const to = interim.indexOf(end, from);
   assert.notEqual(to, -1, `the verdict command must end before: ${end}`);
-  return skill.slice(from, to);
+  return interim.slice(from, to);
 }
 
-test('/demo Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
-  const skill = skillText('demo', 'SKILL.md');
-  const { rule } = demoRemovals();
+test('/accept Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
+  const interim = skillText('accept', 'verdict-interim.md');
+  const { rule } = acceptRemovals();
   assert.match(rule, /only when those labels hold it\*\*, `demo:pending` included/);
   assert.match(rule, /exits 1 with "not found"/);
-  assert.doesNotMatch(skill, /silent no-op/);
+  assert.match(rule, /Fetch the labels fresh/, 'the labels are re-read right before the edit');
+  assert.doesNotMatch(interim, /silent no-op/);
 });
 
-test('/demo Step 3: each verdict command names no literal removal and cites the replacement rule', () => {
+test('/accept Step 3: each verdict command names no literal label and cites the replacement rule', () => {
   const commands = [
     ['Approve', verdictCommand('- **Approve** — `gh issue edit', '`work-backend: local-files`')],
     ['Request changes', verdictCommand('1. **`work-backend: github-issues`:** `gh issue edit', '**`work-backend: local-files`:**')],
   ];
   for (const [name, command] of commands) {
     // A literal label here would run unconditionally, whichever position it holds.
-    assert.doesNotMatch(command, /--remove-label[\s=]+\S*(?:demo|accept):/, name);
-    assert.ok(command.includes(`plus the \`--remove-label\` flags the replacement rule above selects for ${name}`), `${name} must cite the rule`);
+    assert.doesNotMatch(command, /--(?:remove|add)-label[\s=]+\S*(?:demo|accept):/, name);
+    assert.ok(command.includes(`the flags the replacement rule above selects for ${name}, computed by the labels command`), `${name} must cite the rule`);
   }
-  assert.match(commands[0][1], /for a batch-sourced verdict .{0,60}add `--add-label demo:approved-batch`/);
+  assert.match(commands[0][1], /plus `--batch` for a batch-sourced verdict/);
 });
 
-test('the permission matrix gives /demo the same removals as its Step 3, and adds no accept:* label', () => {
-  const { every, approve, single, changes } = demoRemovals();
-  const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/demo`** |'));
-  assert.ok(row, 'the matrix must have a /demo row');
+test('the permission matrix gives /accept the same removals as its Step 3, and adds only accept:* labels', () => {
+  const { every, approve, single, batch, changes } = acceptRemovals();
+  const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/accept`**'));
+  assert.ok(row, 'the matrix must have an /accept row');
   const [, adds, removes] = row.split(' | ').map((cell) => cell.trim());
-  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...single, ...changes].sort());
-  assert.match(removes, /on a single-record Approve, never on a batch-sourced one/);
+  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...single, ...batch, ...changes].sort());
+  assert.match(removes, /on a single-record Approve, and only `demo:approved-batch` on a batch-sourced one/);
   assert.match(removes, /only when the record holds it/);
-  assert.deepEqual(labelsIn(adds).filter((l) => l.startsWith('accept:')), []);
+  assert.deepEqual([...new Set(labelsIn(adds))], ['accept:approved', 'accept:approved-batch', 'accept:changes-requested', 'accept:pending']);
+  assert.ok(!row.startsWith('| **`/demo`**') && !skillText('_shared', 'work-record-permission-matrix.md').includes('| **`/demo`** |'), 'the /demo row became the /accept row');
 });
 
-test('the two contract files state /demo as the one exception to "no skill writes accept:*"', () => {
+test('the two contract files state /accept as the one skill that writes accept:*', () => {
   const matrix = collapse(skillText('_shared', 'work-record-permission-matrix.md'));
   const bootstrap = collapse(skillText('_shared', 'label-bootstrap.md'));
-  assert.match(matrix, /no skill adds an `accept:\*` label today\. The one exception on the removing side is `\/demo`/);
-  assert.match(bootstrap, /No skill adds an `accept:\*` label yet; `\/demo` removes them/);
-  assert.doesNotMatch(matrix, /adds or removes an `accept:\*` label/);
+  assert.match(matrix, /`\/accept` is the one skill that adds an `accept:\*` label/);
+  assert.match(bootstrap, /`\/accept` is the one skill that adds an `accept:\*` label/);
+  assert.doesNotMatch(matrix, /no skill adds an `accept:\*` label today/);
+  assert.doesNotMatch(bootstrap, /No skill adds an `accept:\*` label yet/);
   assert.doesNotMatch(bootstrap, /no skill writes `accept:\*`/);
 });
 
@@ -414,22 +525,26 @@ test('every acceptance bootstrap list provisions the four accept:* rows, byte-eq
     assert.deepEqual(rows.filter(([name]) => name.startsWith('demo:')).map(([name]) => name), ['demo:pending'], file.join('/'));
   }
 
-  // /demo lists names and copies the rows from the canonical array.
-  const skill = skillText('demo', 'SKILL.md');
-  const from = skill.indexOf('**Label-backed entries** (Step 1');
-  const list = labelsIn(skill.slice(from, skill.indexOf('**A verdict replaces', from)));
-  for (const [name] of acceptRows) assert.ok(list.includes(name), `/demo Step 3 must bootstrap ${name}`);
+  // /accept lists names and copies the rows from the canonical array.
+  const interim = skillText('accept', 'verdict-interim.md');
+  const from = interim.indexOf('**Label-backed entries** (Step 1');
+  assert.notEqual(from, -1, 'verdict-interim.md must carry the bootstrap list');
+  const list = labelsIn(interim.slice(from, interim.indexOf('**A verdict replaces', from)));
+  for (const [name] of acceptRows) assert.ok(list.includes(name), `/accept Step 3 must bootstrap ${name}`);
+  assert.deepEqual(list.filter((name) => name.startsWith('demo:')), [], '/accept Step 3 adds no demo:* label, so bootstraps none');
 });
 
 test('/demo fetches the fresh brief when any pending label is present, even one a verdict outranks', () => {
-  const paths = collapse(skillText('demo', 'entry-paths.md'));
+  const paths = collapse(skillText('accept', 'entry-paths.md'));
   assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
+  // #4613 R1: the state classifier agrees, so the fresh brief is reachable.
+  assert.match(paths, /reads changes-requested beside a pending label as awaiting re-acceptance, never `already-decided`/);
   assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
   assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
 });
 
 test('/demo Input states the same fallback condition as its entry path', () => {
-  const skill = collapse(skillText('demo', 'SKILL.md'));
+  const skill = collapse(skillText('accept', 'SKILL.md'));
   assert.match(skill, /falling back — when it carries no pending acceptance label \(either spelling/);
   assert.doesNotMatch(skill, /when its acceptance facet does not read `pending`/);
 });

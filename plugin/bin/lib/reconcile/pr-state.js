@@ -22,8 +22,9 @@
 const fs = require('fs');
 const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { classifyGhApiError } = require('../issues/claim-store');
-const { repoSlugOf } = require('../hooks/git-exec');
+const { repoTargetOf } = require('../hooks/git-exec');
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 // Shared with claim-store.js/preflight.js/release-merged.js rather than a
 // fourth/fifth copy of the same ENOENT-vs-everything-else classification
@@ -98,10 +99,11 @@ function resolvePrState(repoRoot, branch, opts) {
   if (!branch) return null;
   return runClassified(
     () => {
+      const args = ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)];
       const stdout = execFileSyncTimed(
         'gh',
-        ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)],
-        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+        args,
+        ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
       );
       return buildSuccess(JSON.parse(stdout), opts);
     },
@@ -168,43 +170,54 @@ function isPrNotFoundBody(stdout) {
     && Array.isArray(e.path) && e.path.length === 2 && e.path[0] === 'repository' && e.path[1] === 'pullRequest');
 }
 
+// `{ args }` for an admitted origin, `{ refusal }` when the #4933 host gate refuses it (an SSH
+// alias, an unknown host: #4794), null when origin is absent or unparseable. A refused origin
+// confirms nothing and spawns nothing; the by-number resolver reports it as 'unknown-host'.
 function prNotFoundProbeArgs(repoRoot, number) {
-  const slug = repoSlugOf(repoRoot);
-  if (!slug) return null;
-  const [owner, name] = slug.split('/');
-  // owner/name come from `origin` (repoSlugOf) — the same origin-is-the-base-repo
+  const target = repoTargetOf(repoRoot);
+  if (!target) return null;
+  if (target.refusal) return { refusal: target.refusal };
+  // GraphQL owner/name are the bare split of `slug`: a host-qualified value would put the host in `owner`.
+  const [owner, name] = target.slug.split('/');
+  // owner/name come from `origin` (repoTargetOf) — the same origin-is-the-base-repo
   // assumption resolvePrStatesBulk already makes — whereas `gh pr view` resolves
   // its own base repo. In a checkout whose gh default repo is not origin, a
   // confirm could target a different repo: worst case a false pr-not-found
   // escalation, never a wrong archive or release.
   // -f for the String! variables, -F only for the Int! number (#610's shipped bug shape)
-  return ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`, '-f', `query=${PR_NOT_FOUND_QUERY}`];
+  return { args: ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`, '-f', `query=${PR_NOT_FOUND_QUERY}`] };
 }
 
 function probeBodyOf(e) {
   return (e && e.stdout) || '';
 }
 
+// 'pr-not-found' when the probe confirms it, 'unknown-host' when the gate refused the origin (no
+// probe ran), else null: the caller keeps the primary call's own failure.
 function confirmPrNotFound(repoRoot, number) {
-  const args = prNotFoundProbeArgs(repoRoot, number);
-  if (!args) return false;
+  const probe = prNotFoundProbeArgs(repoRoot, number);
+  if (!probe) return null;
+  if (probe.refusal) return 'unknown-host';
+  const { args } = probe;
   const body = runClassified(
-    () => execFileSyncTimed('gh', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
+    () => execFileSyncTimed('gh', args, ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true })),
     probeBodyOf,
     { retryOnTimeout: true },
   );
-  return isPrNotFoundBody(body);
+  return isPrNotFoundBody(body) ? 'pr-not-found' : null;
 }
 
 async function confirmPrNotFoundAsync(repoRoot, number) {
-  const args = prNotFoundProbeArgs(repoRoot, number);
-  if (!args) return false;
+  const probe = prNotFoundProbeArgs(repoRoot, number);
+  if (!probe) return null;
+  if (probe.refusal) return 'unknown-host';
+  const { args } = probe;
   const body = await runClassifiedAsync(
-    async () => (await execFileAsyncTimed('gh', args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true })).stdout,
+    async () => (await execFileAsyncTimed('gh', args, ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }))).stdout,
     probeBodyOf,
     { retryOnTimeout: true },
   );
-  return isPrNotFoundBody(body);
+  return isPrNotFoundBody(body) ? 'pr-not-found' : null;
 }
 
 // #1962: archive-merged.js's main sweep derives a branch name to query by
@@ -229,23 +242,26 @@ async function confirmPrNotFoundAsync(repoRoot, number) {
 // gh call made; or a repoRoot that names no directory) / 'pr-not-found'
 // (#3543: the primary call failed and a structured GraphQL probe confirmed the
 // repo resolves but holds no PR with that number — never derived from stderr
-// text).
+// text) / 'unknown-host' (#4794: the primary call failed and the #4933 host gate
+// refuses origin, so no probe ran — a refused origin is not an outage; the
+// refusal text does not travel in this string return).
 function resolvePrStateByNumber(repoRoot, number) {
   if (!number) return null;
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   const result = runClassified(
     () => {
+      const args = ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS];
       const stdout = execFileSyncTimed(
         'gh',
-        ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
-        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+        args,
+        ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
       );
       return JSON.parse(stdout);
     },
     classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
-  return result === 'network-failure' && confirmPrNotFound(repoRoot, number) ? 'pr-not-found' : result;
+  return result === 'network-failure' ? (confirmPrNotFound(repoRoot, number) || result) : result;
 }
 
 // #1811: archive-merged.js's no-run-state.json terminal path needs to know
@@ -264,10 +280,11 @@ function resolveIssueStateByNumber(repoRoot, number) {
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   return runClassified(
     () => {
+      const args = ['issue', 'view', String(number), '--json', 'state'];
       const stdout = execFileSyncTimed(
         'gh',
-        ['issue', 'view', String(number), '--json', 'state'],
-        { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+        args,
+        ghOptions(args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
       );
       return JSON.parse(stdout);
     },
@@ -288,10 +305,11 @@ async function resolvePrStateAsync(repoRoot, branch) {
   if (!branch) return null;
   return runClassifiedAsync(
     async () => {
+      const args = ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)];
       const { stdout } = await execFileAsyncTimed(
         'gh',
-        ['pr', 'list', '--head', branch, ...PR_LIST_ARGS.slice(2)],
-        { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+        args,
+        ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
       );
       return buildSuccess(JSON.parse(stdout));
     },
@@ -311,17 +329,18 @@ async function resolvePrStateByNumberAsync(repoRoot, number) {
   if (!byNumberArgsValid(repoRoot, number)) return 'invalid-arguments';
   const result = await runClassifiedAsync(
     async () => {
+      const args = ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS];
       const { stdout } = await execFileAsyncTimed(
         'gh',
-        ['pr', 'view', String(number), '--json', PR_VIEW_JSON_FIELDS],
-        { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+        args,
+        ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
       );
       return JSON.parse(stdout);
     },
     classifyByNumberError(repoRoot),
     { retryOnTimeout: true },
   );
-  return result === 'network-failure' && await confirmPrNotFoundAsync(repoRoot, number) ? 'pr-not-found' : result;
+  return result === 'network-failure' ? ((await confirmPrNotFoundAsync(repoRoot, number)) || result) : result;
 }
 
 const BULK_TIMEOUT_MS = 15000; // one chunked call covers many branches — roomier than FETCH_TIMEOUT_MS's per-branch 5s
@@ -338,7 +357,7 @@ function buildBulkQuery(branches) {
 }
 
 function defaultBulkRunner(args, cwd) {
-  return execFileSyncTimed('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: BULK_TIMEOUT_MS, windowsHide: true });
+  return execFileSyncTimed('gh', args, ghOptions(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: BULK_TIMEOUT_MS, windowsHide: true }));
 }
 
 // The bulk screen (#1082): every requested branch's governing PR in
@@ -350,12 +369,24 @@ function defaultBulkRunner(args, cwd) {
 // A returned Map is complete for every requested branch; null means
 // genuinely no governing PR/ref (including a ref deleted after merge —
 // the probe-confirmed blind spot callers gate with per-branch confirms).
+// Returns `Map | 'gh-absent' | 'network-failure' | 'unknown-host'` (#4794):
+// 'unknown-host' is an origin the #4933 host gate refuses (an SSH alias, an
+// unknown host) — nothing is spawned, and it is not an outage. No origin at all
+// stays 'network-failure'. `opts.repoSlug` (a caller that gated the origin
+// itself) skips the read, and must be a `repoTargetOf` result's bare `.slug`, never
+// its `.ghRepo`; `opts.gateDeps` is the gate's injectable env/readFile.
+// The GraphQL owner/name pair is the bare split of the slug, never host-qualified.
 function resolvePrStatesBulk(repoRoot, branches, opts = {}) {
   const runner = opts.runner || ((args) => defaultBulkRunner(args, repoRoot));
   const map = new Map();
   if (!Array.isArray(branches) || branches.length === 0) return map;
-  const slug = opts.repoSlug || repoSlugOf(repoRoot);
-  if (!slug) return 'network-failure'; // no resolvable origin — fail closed, spawn nothing
+  let slug = opts.repoSlug;
+  if (!slug) {
+    const target = repoTargetOf(repoRoot, opts.gateDeps);
+    if (target && target.refusal) return 'unknown-host'; // the gate refused origin — spawn nothing
+    if (!target) return 'network-failure'; // no resolvable origin — fail closed, spawn nothing
+    slug = target.slug;
+  }
   const [owner, name] = slug.split('/');
   for (let at = 0; at < branches.length; at += BULK_CHUNK) {
     const chunk = branches.slice(at, at + BULK_CHUNK);

@@ -6,13 +6,14 @@
 // every check's own 5-10 s timeout, and a pre-exhausted budget skips every check in under 1 s. Both do no
 // real work, so the margins are generous. Lives outside tests/ because a wall-clock assertion flakes under
 // sibling-suite load; the functional halves (the preflight skip entry, the budget-exceeded skip entry) stay
-// in tests/reconcile.test.js.
+// in tests/reconcile-preflight-fetch.test.js.
 'use strict';
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../tests/helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -25,10 +26,10 @@ function git(args, cwd) {
 // Two-repo fixture: `origin` (bare) + a clone that plays the role of the
 // main checkout, both on `main`. Fully local — no network, no gh.
 function pairedFixture() {
-  const originDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-origin-'));
+  const originDir = scratchDir('ct-recon-origin-');
   git(['init', '-q', '--bare', '--initial-branch=main'], originDir);
 
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-seed-'));
+  const seedDir = scratchDir('ct-recon-seed-');
   git(['clone', '-q', originDir, seedDir]);
   git(['config', 'user.email', 'test@example.com'], seedDir);
   git(['config', 'user.name', 'Test'], seedDir);
@@ -37,7 +38,7 @@ function pairedFixture() {
   git(['commit', '-q', '-m', 'seed'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
 
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-main-'));
+  const mainDir = scratchDir('ct-recon-main-');
   git(['clone', '-q', originDir, mainDir]);
   git(['config', 'user.email', 'test@example.com'], mainDir);
   git(['config', 'user.name', 'Test'], mainDir);

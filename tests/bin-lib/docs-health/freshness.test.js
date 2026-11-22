@@ -2,17 +2,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { parseFilesField, checkTrackedFreshness, gitLastChangedMap } = require('../../../plugin/bin/lib/docs-health/freshness');
 const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
+const { cleanGitEnv, initRepo, writeIdentity } = require('../../helpers/git-fixtures');
 
 function makeTmpGitRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-freshness-'));
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+  const root = scratchDir('docs-health-freshness-');
+  initRepo(root, { name: 'Test', email: 'test@example.com', cwd: root });
   return root;
 }
 
@@ -166,7 +166,7 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
   commitFile(root, 'src/c.ts', 'export const c = 1;\n');
 
   const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-  const countDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-git-count-'));
+  const countDir = scratchDir('fake-git-count-');
   const countFile = path.join(countDir, 'count.txt');
   fs.writeFileSync(countFile, '');
 
@@ -182,4 +182,26 @@ test('checkTrackedFreshness spawns exactly one git subprocess for multiple track
   }
 
   assert.strictEqual(invocations, 1, `expected exactly one git subprocess spawn for 3 tracked files, got ${invocations}`);
+});
+
+test('checkTrackedFreshness runs git log with the injected env (#5381)', () => {
+  const clean = cleanGitEnv(process.env);
+  const B = scratchDir('docs-health-freshness-envB-');
+  const git = (args) => execFileSync('git', ['-C', B, ...args], { env: clean, stdio: 'pipe' });
+  git(['init', '-q']);
+  writeIdentity(B, { name: 'Test', email: 'test@example.com' });
+  fs.mkdirSync(path.join(B, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(B, 'src', 'a.ts'), 'export const a = 1;\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'add a']);
+  // A non-git root holding the same path: history is visible only via GIT_DIR.
+  const root = scratchDir('docs-health-freshness-envroot-');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'a.ts'), 'export const a = 1;\n');
+
+  const content = '---\nfiles:\n  - src/a.ts\n---\n\n# Doc\n';
+  const since = Date.now() - 86400000;
+  const injected = { ...clean, GIT_DIR: path.join(B, '.git') };
+  assert.deepStrictEqual(checkTrackedFreshness(content, root, since, { env: injected }).stale.map((s) => s.path), ['src/a.ts']);
+  assert.deepStrictEqual(checkTrackedFreshness(content, root, since, { env: clean }).stale, []);
 });

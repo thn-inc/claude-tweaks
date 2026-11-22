@@ -125,14 +125,27 @@ test('AC5.3: the Trusted authors section carries the jq select and skip-notice j
 
 test('AC5.3: the Trusted authors section states the fixed facts', () => {
   const body = collapse(section(COMMENTS, '## Trusted authors') ?? '');
-  for (const fact of [
+  const facts = [
     '`authorAssociation`',
     '`author_association`',
     'bin/lib/issues/comment-trust.js',
-    'missing',
-    'viewer',
-  ]) {
+    'A missing field is untrusted',
+    'There is no viewer lookup',
+  ];
+  const statesAll = (text) => facts.every((fact) => text.includes(fact));
+  for (const fact of facts) {
     assert.ok(body.includes(fact), `Trusted authors section must mention: ${fact}`);
+  }
+  // Go-red control [IL-105]: deleting one fact sentence (never a global token replace — #4400)
+  // must fail the pin.
+  for (const [sentence, fact] of [
+    ['A missing field is untrusted — a comment with neither field is skipped.', 'A missing field is untrusted'],
+    ['There is no viewer lookup.', 'There is no viewer lookup'],
+  ]) {
+    const doctored = body.replace(sentence, '');
+    assert.notStrictEqual(doctored, body, `doctoring must change the section: ${sentence}`);
+    assert.ok(!doctored.includes(fact), `deleting "${sentence}" must remove its own fact: ${fact}`);
+    assert.ok(!statesAll(doctored), `deleting "${sentence}" must fail the fixed-facts pin`);
   }
 });
 
@@ -166,7 +179,7 @@ test("tidy's tombstone check names each skipped untrusted tombstone", () => {
 // ---- Task 5: demo, parent-gate and grant-maturation readers (#3358) ----
 
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
-const ENTRY_PATHS = readText(path.join(SKILLS, 'demo', 'entry-paths.md'));
+const ENTRY_PATHS = readText(path.join(SKILLS, 'accept', 'entry-paths.md'));
 const PARENT_GATE = readText(path.join(SKILLS, 'wrap-up', 'verification-brief-parent-gate.md'));
 const GRANT_GATE = readText(path.join(SKILLS, 'dispatch', 'grant-maturation-gate.md'));
 const SHORT_CIRCUIT = readText(path.join(SKILLS, 'wrap-up', 'auto-merge-short-circuit.md'));
@@ -179,6 +192,8 @@ comments\`) and take the last one carrying that heading — test the heading, ne
 position. A \`.comments[-1]\` shortcut holds only when the brief happens to be the most recent
 comment, which nothing about the record predicts. Go straight to
 Step 2 with it.`;
+const PRE_CHANGE_DEMO_PACKET = `Fetch every comment and take the earliest comment by
+\`createdAt\` whose first line is exactly \`<!-- acceptance-packet: v1 -->\`. Go straight to Step 2 with it.`;
 const PRE_CHANGE_DEMO_POINTER = `**Under \`pr-first\` the brief lives on the PR** (\`wrap-up/verification-brief.md\` Step 4's \`pr\`
 object present branch), and the issue carries only the unmarkered pointer line \`Verification Brief
 posted to PR #{pr-number}: {pr-url}\`. When no issue comment carries the heading but one carries
@@ -193,7 +208,7 @@ const PRE_CHANGE_DEMO_LOOKUP = `2. **Read its comments by marker** — \`_shared
 3. **Fail open, visibly.** No PR.`;
 const PRE_CHANGE_PARENT_GATE = `**Then check whether a brief is already posted, before posting one** — and, when re-entering for
 a parent that may already be partially applied, before even composing it above. Fetch the parent's comments
-(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:demo\`'s Step 1
+(\`gh issue view $PARENT_NUM --json comments\`, the same lookup \`/claude-tweaks:accept\`'s Step 1
 already does) and test whether **any** of them contains a \`## Verification Brief\` heading **with
 a \`### Confirmed\` section** — every comment on the parent.`;
 const PRE_CHANGE_SNIPPET_COMMENTS_LINE = `// comments: this member's fetched comment body array (issue.comments[].body).
@@ -215,6 +230,7 @@ const TRUST_CITATION = /Trusted authors/;
 const SKIP_NOTICE = /skipped marker comment|skip notice/;
 
 const DEMO_PASSAGES = [
+  ['issue-side packet read', (t) => paragraphContaining(t, '`createdAt` whose first line is exactly'), PRE_CHANGE_DEMO_PACKET],
   ['issue-side brief scan', (t) => paragraphContaining(t, 'comment **containing** `## Verification Brief`'), PRE_CHANGE_DEMO_BRIEF],
   ['pointer paragraph', (t) => paragraphContaining(t, 'posted to PR #{pr-number}: {pr-url}`. When no issue comment'), PRE_CHANGE_DEMO_POINTER],
   ['PR run-comment lookup step 2', (t) => listItem(t, '2. **Read its comments by marker**', '3. **Fail open, visibly.**'), PRE_CHANGE_DEMO_LOOKUP],
@@ -294,7 +310,7 @@ for (const [file, doc] of SNIPPETS) {
     const script = body
       .replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, PLUGIN_ROOT)
       .replace(/\$GRANT_VETO_WINDOW_HOURS/g, '24');
-    const prelude = `const labels = ['auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
+    const prelude = `const labels = ['auto:build', 'auto:merge-pending']; const comments = ${JSON.stringify(comments)};\n`;
     const run = spawnSync(process.execPath, ['-e', prelude + script], { encoding: 'utf8' });
     assert.strictEqual(run.status, 0, `snippet failed: ${run.stderr}`);
     // Only the 48h-old MEMBER grant counts -> matured; an unfiltered read would see the 1h-old NONE marker as latest.

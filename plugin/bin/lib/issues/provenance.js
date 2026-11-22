@@ -23,16 +23,27 @@
 // genuine `Origin: unstructured` body line resolves to `side-effect:unstructured`,
 // never to this module's `unstructured:unstructured`.
 //
+// A `by:*` label needs triage access to apply, but an `Origin:` body line is
+// plain text any issue author can type — so only a trusted author's line may
+// claim a side-effect class (`authorTrust`, from issueAuthorTrust below); an
+// untrusted author's line is ignored and the record resolves human. An
+// `unknown` author (no attestation on the payload) fails OPEN to the line, the
+// pre-gate behaviour: absent evidence is not evidence of a forger. The
+// association is the author's current one, as seen by the fetching token: a
+// former collaborator's old records, or a private org member seen through a
+// token without org visibility, can read CONTRIBUTOR/NONE, so their `Origin:`
+// lines count as untrusted and the record resolves human — the fail-closed
+// direction, accepted.
+//
 // This module reads that axis. It never writes one, and never extends ORIGINS.
-const { ORIGINS } = require('./record.js');
+//
+// The Origin line is the record's OWN line (record-payload.js's ownOriginLine,
+// #4502): a line inside a fenced block or under a `## Absorbed: …` heading is
+// someone else's text and never counts; one under `## Original request` does.
+const { ORIGINS, ownOriginLine } = require('./record.js');
+const { TRUSTED_AUTHOR_ASSOCIATIONS, commentAssociation } = require('./comment-trust.js');
 
 const BY_LABEL = /^by:(.+)$/;
-// Anchored to line start so prose describing the convention is not mistaken
-// for a provenance claim. The capture is `.*?`, not `.+?`, so a bare `Origin:`
-// line with nothing after it still enters the branch below and resolves to the
-// ungradable bucket — an empty marker is malformed provenance, not the absent
-// marker that means human-filed.
-const ORIGIN_LINE = /^Origin:[ \t]*(.*?)[ \t]*$/m;
 // A trailing source reference makes the context per-record unique, which would
 // explode the class count and give every cell a sample size of one. This is
 // stripped AFTER clause truncation so that trailing punctuation doesn't defeat
@@ -66,7 +77,19 @@ function truncateAtClauseBoundary(source) {
   return source;
 }
 
-function resolveProvenance({ labels, body } = {}) {
+// record: a `gh --json` issue (camelCase `authorAssociation`, `author.is_bot`)
+// or a REST issue (`author_association`, `user.type`). Bots are trusted — the
+// plugin's own automation files records under a bot identity.
+// Returns 'trusted' | 'untrusted' | 'unknown' (no attestation on the payload).
+function issueAuthorTrust(record) {
+  const r = record && typeof record === 'object' ? record : {};
+  if ((r.author && r.author.is_bot === true) || (r.user && r.user.type === 'Bot')) return 'trusted';
+  const association = commentAssociation(r);
+  if (association === null) return 'unknown';
+  return TRUSTED_AUTHOR_ASSOCIATIONS.has(association) ? 'trusted' : 'untrusted';
+}
+
+function resolveProvenance({ labels, body, authorTrust } = {}) {
   const names = Array.isArray(labels) ? labels : [];
   for (const name of names) {
     const match = BY_LABEL.exec(name);
@@ -75,11 +98,16 @@ function resolveProvenance({ labels, body } = {}) {
     }
   }
 
-  const line = ORIGIN_LINE.exec(typeof body === 'string' ? body : '');
-  if (line) {
+  // ownOriginLine anchors to line start so prose describing the convention is
+  // not mistaken for a provenance claim, and its capture is `.*?`, not `.+?`, so
+  // a bare `Origin:` line (returned as '') still enters the branch below and
+  // resolves to the ungradable bucket — an empty marker is malformed provenance,
+  // not the absent marker (null) that means human-filed.
+  const line = authorTrust === 'untrusted' ? null : ownOriginLine(body);
+  if (line !== null) {
     // Truncate at clause boundaries first (before stripping trailing source),
     // so that punctuation after "from #N" doesn't prevent the pattern from matching.
-    let source = truncateAtClauseBoundary(line[1]).trim();
+    let source = truncateAtClauseBoundary(line).trim();
     // Then strip the trailing source reference.
     source = source.replace(TRAILING_SOURCE, '').trim();
     // Lowercase and check length. If still exceeds MAX_SOURCE_LENGTH, return
@@ -103,4 +131,11 @@ function resolveProvenance({ labels, body } = {}) {
   return { kind: 'human', source: 'human' };
 }
 
-module.exports = { resolveProvenance, PRODUCERS: ORIGINS };
+// True when the body carries an own `Origin:` line by the same ownOriginLine rule
+// resolveProvenance reads, so callers that select records for an author-trust
+// lookup (author-association.js) select exactly the ones the gate will judge.
+function hasOriginLine(body) {
+  return ownOriginLine(body) !== null;
+}
+
+module.exports = { resolveProvenance, issueAuthorTrust, hasOriginLine, PRODUCERS: ORIGINS };

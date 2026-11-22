@@ -373,6 +373,69 @@ test('evidence verification: an evidence path mismatch is unverified (AC10.1)', 
   assert.equal(r.reason, 'evidence-path-mismatch');
 });
 
+// ---- skill-relative Location (#4164) ----
+
+const SKILL_FINDING = { lens: '3a', path: 'wrap-up/x.md', line: 10, claim: 'c', reporterSeverity: 'high', kind: 'unconfirmed' };
+const SKILL_LINES = Array.from({ length: 20 }, (_, i) => `// filler line ${i + 1}`);
+SKILL_LINES[9] = 'const answer = compute(input);'; // line 10
+const SKILL_FULL_PATH = 'plugin/skills/wrap-up/x.md';
+const SKILL_QUOTE = 'const answer = compute(input);';
+const only = (served) => (asked) => {
+  if (asked !== served) throw new Error(`ENOENT: ${asked}`);
+  return SKILL_LINES.join('\n');
+};
+const every = () => SKILL_LINES.join('\n');
+const cite = (p) => `${p}:10 \`${SKILL_QUOTE}\``;
+
+test('AC1.1 AC1.2 skill-relative Location with full-path Evidence resolves confirmed (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('same reply with verdict refuted resolves drop (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ verdict: 'refuted', evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'drop');
+});
+
+test('AC2.1 AC2.2 another file is still a mismatch (#4164)', () => {
+  for (const p of ['plugin/skills/review/x.md', 'plugin/bin/x.md']) {
+    const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(p) }), { readFile: every, now: NOW });
+    assert.ok(isCantTell(r), p);
+    assert.equal(r.reason, 'evidence-path-mismatch', p);
+  }
+});
+
+test('AC3.1 a plugin/ finding never gains the skills prefix (#4164)', () => {
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/x.md' };
+  const r = resolveTiebreak(f, reply({ evidence: cite('plugin/skills/plugin/bin/x.md') }), { readFile: every, now: NOW });
+  assert.equal(r.reason, 'evidence-path-mismatch');
+});
+
+test('a skill-relative finding citing the path as given still verifies (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite('wrap-up/x.md') }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('the canonical file missing is unverified (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.reason, 'evidence-unverified');
+});
+
+test('the id and logged Location stay the finding\'s own (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.id, findingId(SKILL_FINDING));
+  assert.match(r.logLine, /wrap-up\/x\.md:10/);
+  assert.ok(!r.logLine.includes('plugin/skills/'));
+});
+
+test('AC4.1 a single-backtick wrap of a backtick-bearing line resolves confirmed (#4164)', () => {
+  const lines = [...SKILL_LINES];
+  lines[9] = 'Run `foo` then `bar` now';
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/foo.js' };
+  const r = resolveTiebreak(f, reply({ evidence: 'plugin/bin/foo.js:10 `Run `foo` then `bar` now`' }), { readFile: () => lines.join('\n'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
 test('line forms: a range uses its first line, an absent line is cant-tell (AC9.1)', () => {
   const range = resolve({ ...FINDING, line: '20-24' }, reply());
   assert.equal(range.outcome, 'confirmed');
@@ -480,8 +543,9 @@ test('same lens+path:line, different claims → two ids, two lines needed (AC7.1
   const b = { ...RAW[0], claim: 'never closes the fd' };
   assert.notEqual(findingId(a), findingId(b));
   writeFindings(dir, buildFindingsArtifact([a, b]));
-  // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
-  // path:line, which these two share — coverage keys on the id instead.
+  // The console/resolve.js matcher keys on lens + path:line (a verdict's whole
+  // path, a STAGED line's longest named candidate, #4632), which these two
+  // share — coverage keys on the id instead.
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
   fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);
@@ -742,6 +806,18 @@ test('coverage counts only a verdict-shaped line, never the marker quoted elsewh
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [b.id]);
 });
 
+test('AC3.2: coverage does not count a confirmed line with text after Confirmed., as the console does not (#4632)', (t) => {
+  const dir = tmpDir(t);
+  writeFindings(dir, buildFindingsArtifact([FINDING]));
+  const r = resolve(FINDING, reply());
+  assert.equal(r.outcome, 'confirmed');
+  const line = formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line.replace(' Reversibility:', ' Then more. Reversibility:')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(FINDING)]);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, []);
+});
+
 test("every resolver outcome's written line counts as coverage", (t) => {
   const outcomes = [
     resolve(FINDING, reply()),
@@ -810,6 +886,36 @@ test('a path:line token wrapped in one pair of backticks parses like the bare to
   }
 });
 
+test('AC2.1: evidence at a space-holding finding path resolves drop and confirmed (#4632)', () => {
+  const f = { ...RAW[0], path: 'a dir/x.ts', line: 3 };
+  for (const [verdict, outcome] of [['refuted', 'drop'], ['confirmed', 'confirmed']]) {
+    for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+      const r = resolveTiebreak(f, `Verdict: ${verdict}\nEvidence: ${ev}\nSeverity: medium\nSTATUS: DONE`, { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+      assert.strictEqual(r.outcome, outcome, `${verdict} ${ev}`);
+    }
+  }
+});
+test('PRC1: parseTiebreakReply with findingPath returns the finding path as the evidence path (#4632)', () => {
+  for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+    assert.deepEqual(parseTiebreakReply(`Verdict: confirmed\nEvidence: ${ev}\nSTATUS: DONE`, { findingPath: 'a dir/x.ts' }).evidence, { path: 'a dir/x.ts', line: 3, quote: 'quote text here' }, ev);
+  }
+});
+test('PRC1: parseTiebreakReply treats null options like no options (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE', null).evidence, null);
+  assert.deepEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:3 x\nSTATUS: DONE', null).evidence, { path: 'a.js', line: 3, quote: 'x' });
+});
+test('PRC1: resolveTiebreak of a non-object finding still throws the findingId error (#4632)', () => {
+  assert.throws(() => resolveTiebreak(null, 'Verdict: confirmed\nSTATUS: DONE', { now: NOW }), /findingId: finding must be an object/);
+});
+test('PRC1: a space-holding evidence path for a different finding path still fails (#4632)', () => {
+  const f = { ...RAW[0], path: 'b dir/x.ts', line: 3 };
+  const r = resolveTiebreak(f, 'Verdict: refuted\nEvidence: a dir/x.ts:3 `quote text here`\nSeverity: medium\nSTATUS: DONE', { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+  assert.strictEqual(r.outcome, 'console');
+});
+test('PRC1: parseTiebreakReply without findingPath keeps today\'s evidence parse (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE').evidence, null);
+});
+
 test('Recommendation reasons split on an en dash and a comma like the other separators', () => {
   for (const rec of ['drop – guarded upstream', 'drop, guarded upstream', 'drop–guarded upstream', 'drop,guarded upstream',
     'drop — guarded upstream', 'drop: guarded upstream', 'drop - guarded upstream']) {
@@ -869,4 +975,341 @@ test('an ENOENT read whose lstat cannot prove absence is present and invalid; on
   assert.deepEqual(readFindingsArtifact(dir), { present: true, valid: false, findings: null });
   t.mock.restoreAll();
   assert.deepEqual(readFindingsArtifact(dir), { present: false, valid: true, findings: null });
+});
+
+// ---- chunked replies (#5540) ----
+
+const { CHUNK_MAX, splitChunkReply, resolveTiebreakChunk } = require('../../plugin/bin/lib/tiebreak');
+
+const CHUNK_F1 = { ...FINDING, claim: 'first claim' };
+const CHUNK_F2 = { ...FINDING, claim: 'second claim' };
+const CHUNK_F3 = { ...FINDING, claim: 'third claim' };
+const [ID1, ID2] = [CHUNK_F1, CHUNK_F2].map(findingId);
+const CONFIRMED_BODY = ['Verdict: confirmed', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: medium'].join('\n');
+const REFUTED_BODY = ['Verdict: refuted', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: low'].join('\n');
+const CANT_TELL_BODY = 'Verdict: cant-tell';
+const block = (id, body) => `Id: ${id}\n${body}`;
+const chunkResolve = (findings, text) => resolveTiebreakChunk(findings, text, { readFile: reader, now: NOW });
+const stripKeys = ({ id, index, ...rest }) => rest; // eslint-disable-line no-unused-vars
+
+test('CHUNK_MAX is 8', () => {
+  assert.equal(CHUNK_MAX, 8);
+});
+
+test('AC1.1: each chunk verdict line equals the one-finding call on the same entry and block', () => {
+  const entries = [CHUNK_F1, CHUNK_F2, CHUNK_F3];
+  const bodies = [CONFIRMED_BODY, REFUTED_BODY, CANT_TELL_BODY];
+  const text = `${entries.map((f, i) => block(findingId(f), bodies[i])).join('\n')}\nSTATUS: DONE`;
+  const chunk = chunkResolve(entries, text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 3);
+  entries.forEach((entry, i) => {
+    const single = resolve(entry, `${bodies[i]}\nSTATUS: DONE`);
+    assert.equal(chunk.results[i].logLine, single.logLine);
+    assert.equal(chunk.results[i].id, findingId(entry));
+    assert.equal(chunk.results[i].index, i);
+    assert.deepEqual(stripKeys(chunk.results[i]), stripKeys(single));
+  });
+  assert.deepEqual(chunk.results.map((r) => r.outcome), ['confirmed', 'drop', 'console']);
+});
+
+test('AC1.2: a one-finding chunk settles like the one-finding call', () => {
+  const chunk = chunkResolve([CHUNK_F1], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`);
+  const single = resolve(CHUNK_F1, `${CONFIRMED_BODY}\nSTATUS: DONE`);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].logLine, single.logLine);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(single));
+});
+
+test('AC3.1: a reply missing one id leaves that finding unsettled and settles the others', () => {
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`);
+  assert.deepEqual(chunk.unsettled, [{ id: ID2, index: 1, reason: 'missing' }]);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].index, 0);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.ok(chunk.results.every((r) => r.id !== ID2));
+  assert.ok(chunk.results.every((r) => !r.logLine.includes(ID2)));
+});
+
+test('AC3.1: a reply repeating one id leaves that finding unsettled and settles the others', () => {
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, REFUTED_BODY), block(ID2, REFUTED_BODY), 'STATUS: DONE'].join('\n');
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, [{ id: ID2, index: 1, reason: 'duplicated' }]);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.ok(chunk.results.every((r) => r.id !== ID2));
+});
+
+test('Review Focus 1: an id quoted inside Evidence is not a block boundary', () => {
+  const quoted = `const note = "Id: ${ID2}";`;
+  const lines = FILE_LINES.slice();
+  lines[19] = quoted;
+  const first = ['Verdict: confirmed', `Evidence: plugin/bin/foo.js:20 \`${quoted}\``, 'Severity: medium'].join('\n');
+  const text = [block(ID1, first), `Note about Id: ${ID2}`, block(ID2, REFUTED_BODY.replace('const x = readSync(fd);', quoted)), 'STATUS: DONE'].join('\n');
+  const chunk = resolveTiebreakChunk([CHUNK_F1, CHUNK_F2], text, { readFile: () => lines.join('\n'), now: NOW });
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results[0].outcome, 'confirmed');
+  assert.equal(chunk.results[1].outcome, 'drop');
+});
+
+test('Review Focus 2: no trailing STATUS line leaves every finding can\'t-tell', () => {
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, CONFIRMED_BODY)].join('\n');
+  assert.equal(splitChunkReply(text, [ID1, ID2]).status, null);
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 2);
+  for (const r of chunk.results) {
+    assert.equal(r.reason, 'could-not-parse');
+    assert.notEqual(r.outcome, 'confirmed');
+  }
+});
+
+test('Review Focus 3: preamble and foreign ids attach to no finding', () => {
+  const foreign = 'abcdef012345';
+  const text = [
+    'Verdict: refuted', 'Here are my verdicts.',
+    block(ID1, CONFIRMED_BODY),
+    block(foreign, 'Verdict: refuted'),
+    'Verdict: confirmed',
+    block(ID2, REFUTED_BODY),
+    'STATUS: DONE',
+  ].join('\n');
+  const split = splitChunkReply(text, [ID1, ID2]);
+  assert.deepEqual([...split.blocks.keys()], [ID1, ID2]);
+  assert.equal(split.status, 'STATUS: DONE');
+  const chunk = chunkResolve([CHUNK_F1, CHUNK_F2], text);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.deepEqual(chunk.results.map((r) => r.outcome), ['confirmed', 'drop']);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(resolve(CHUNK_F1, `${CONFIRMED_BODY}\nSTATUS: DONE`)));
+});
+
+test('Review Focus 5: a chunk with two entries of the same id throws', () => {
+  assert.throws(() => chunkResolve([CHUNK_F1, CHUNK_F1], `${block(ID1, CONFIRMED_BODY)}\nSTATUS: DONE`), TypeError);
+});
+
+test('buildFindingsArtifact refuses a non-boolean vacuity and does not keep a boolean one', () => {
+  assert.throws(() => buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: 'yes' }]), TypeError);
+  assert.throws(() => buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: 1 }]), TypeError);
+  assert.equal('vacuity' in buildFindingsArtifact([{ ...CHUNK_F1, kind: 'unconfirmed', vacuity: true }])[0], false);
+});
+
+test('Review Focus 6: a vacuity entry\'s confirmed block resolves can\'t-tell', () => {
+  const vacuous = { ...CHUNK_F1, vacuity: true };
+  const text = [block(ID1, CONFIRMED_BODY), block(ID2, CONFIRMED_BODY), 'STATUS: DONE'].join('\n');
+  const chunk = chunkResolve([vacuous, CHUNK_F2], text);
+  const rewritten = CONFIRMED_BODY.replace('Verdict: confirmed', 'Verdict: cant-tell');
+  assert.deepEqual(chunk.unsettled, []);
+  assert.deepEqual(stripKeys(chunk.results[0]), stripKeys(resolve(vacuous, `${rewritten}\nSTATUS: DONE`)));
+  assert.equal(chunk.results[0].reason, 'verdict:cant-tell');
+  assert.equal(chunk.results[1].outcome, 'confirmed');
+  const refuted = chunkResolve([vacuous], `${block(ID1, REFUTED_BODY)}\nSTATUS: DONE`);
+  assert.equal(refuted.results[0].outcome, 'drop');
+  // vacuity is not part of the identity, and the one-finding form ignores it.
+  assert.equal(findingId(vacuous), ID1);
+  assert.equal(resolve(vacuous, `${CONFIRMED_BODY}\nSTATUS: DONE`).outcome, 'confirmed');
+});
+
+// ---- judge tiers by severity (#5541) ----
+
+const { TIERS, judgeTier, planChunks, escalation } = require('../../plugin/bin/lib/tiebreak');
+
+const withSeverity = (reporterSeverity, claim = 'tier claim') => ({ ...FINDING, claim, reporterSeverity });
+const contested = (...severities) => ({ ...FINDING, kind: 'contested', positions: severities.map((severity) => ({ severity })) });
+
+test('TIERS lists capable first, then standard', () => {
+  assert.deepEqual(TIERS, ['capable', 'standard']);
+});
+
+test('judgeTier: info is standard, every other severity capable', () => {
+  assert.equal(judgeTier(withSeverity('info')), 'standard');
+  for (const sev of ['low', 'medium', 'high', 'critical', null, undefined, 'bogus']) {
+    assert.equal(judgeTier(withSeverity(sev)), 'capable', String(sev));
+  }
+  assert.equal(judgeTier(contested('info', 'medium')), 'capable');
+  assert.equal(judgeTier(contested('info', 'info')), 'standard');
+  assert.equal(judgeTier(contested('info', null)), 'capable');
+  assert.equal(judgeTier(contested('info', 'bogus')), 'capable');
+  assert.equal(judgeTier(contested('info', undefined)), 'capable');
+  assert.equal(judgeTier({ ...FINDING, kind: 'contested', positions: [{ severity: 'info' }, null] }), 'capable');
+});
+
+test('planChunks: a chunk never mixes tiers', () => {
+  const entries = [];
+  for (let i = 0; i < 10; i += 1) {
+    entries.push(withSeverity('low', `low ${i}`));
+    if (i % 4 === 0) entries.push(withSeverity('info', `info ${i}`));
+  }
+  const lowIdx = entries.map((f, i) => (f.reporterSeverity === 'low' ? i : -1)).filter((i) => i >= 0);
+  const infoIdx = entries.map((f, i) => (f.reporterSeverity === 'info' ? i : -1)).filter((i) => i >= 0);
+  assert.equal(lowIdx.length, 10);
+  assert.equal(infoIdx.length, 3);
+  const chunks = planChunks(entries);
+  assert.deepEqual(chunks, [
+    { tier: 'capable', indexes: lowIdx.slice(0, 8) },
+    { tier: 'capable', indexes: lowIdx.slice(8) },
+    { tier: 'standard', indexes: infoIdx },
+  ]);
+  for (const chunk of chunks) {
+    assert.ok(chunk.indexes.length <= 8, 'a chunk holds at most CHUNK_MAX (8) findings');
+    assert.ok(chunk.indexes.every((i) => judgeTier(entries[i]) === chunk.tier));
+  }
+});
+
+test('planChunks: a repeated entry goes in once', () => {
+  const A = withSeverity('low', 'A');
+  const B = withSeverity('info', 'B');
+  const chunks = planChunks([A, B, A]);
+  assert.deepEqual(chunks, [{ tier: 'capable', indexes: [0] }, { tier: 'standard', indexes: [1] }]);
+  assert.ok(chunks.every((c) => !c.indexes.includes(2)));
+});
+
+test('planChunks: [] gives []; a malformed entry throws TypeError', () => {
+  assert.deepEqual(planChunks([]), []);
+  assert.throws(() => planChunks('nope'), TypeError);
+  assert.throws(() => planChunks([null]), TypeError);
+  assert.throws(() => planChunks([withSeverity('low'), { ...FINDING, kind: 'single-read' }]), TypeError);
+  assert.throws(() => planChunks([{ ...FINDING, claim: '' }]), TypeError);
+});
+
+const INFO1 = withSeverity('info', 'first info');
+const INFO2 = withSeverity('info', 'second info');
+const LOW1 = withSeverity('low', 'low claim');
+const [INFO_ID1, INFO_ID2] = [INFO1, INFO2].map(findingId);
+const tierResolve = (findings, text, tier) => resolveTiebreakChunk(findings, text, { readFile: reader, now: NOW, ...(tier ? { tier } : {}) });
+
+test('resolveTiebreakChunk at standard: a raised finding is escalated, not settled', () => {
+  const infoBody = ['Verdict: confirmed', 'Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: info'].join('\n');
+  const text = [block(INFO_ID1, CONFIRMED_BODY), block(INFO_ID2, infoBody), 'STATUS: DONE'].join('\n');
+  const chunk = tierResolve([INFO1, INFO2], text, 'standard');
+  assert.deepEqual(chunk.escalated, [{ id: INFO_ID1, index: 0, reason: 'raised', severity: 'medium' }]);
+  assert.deepEqual(chunk.unsettled, []);
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].index, 1);
+  assert.equal(chunk.results[0].id, INFO_ID2);
+  assert.ok(chunk.results.every((r) => !r.logLine.includes(INFO_ID1)));
+});
+
+test('resolveTiebreakChunk at standard: an unparsed or non-DONE block is not escalated', () => {
+  const noVerdict = ['Evidence: plugin/bin/foo.js:20 `const x = readSync(fd);`', 'Severity: high'].join('\n');
+  const unparsed = tierResolve([INFO1], `${block(INFO_ID1, noVerdict)}\nSTATUS: DONE`, 'standard');
+  assert.deepEqual(unparsed.escalated, []);
+  assert.equal(unparsed.results.length, 1);
+  const blocked = tierResolve([INFO1], `${block(INFO_ID1, CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: BLOCKED`, 'standard');
+  assert.deepEqual(blocked.escalated, []);
+  assert.equal(blocked.results.length, 1);
+  const noStatus = tierResolve([INFO1], block(INFO_ID1, CONFIRMED_BODY.replace('medium', 'high')), 'standard');
+  assert.deepEqual(noStatus.escalated, []);
+});
+
+test('resolveTiebreakChunk at standard: a vacuity entry raised to medium still escalates', () => {
+  const vacuous = { ...INFO1, vacuity: true };
+  const chunk = tierResolve([vacuous], `${block(INFO_ID1, CONFIRMED_BODY)}\nSTATUS: DONE`, 'standard');
+  assert.deepEqual(chunk.escalated, [{ id: INFO_ID1, index: 0, reason: 'raised', severity: 'medium' }]);
+  assert.deepEqual(chunk.results, []);
+});
+
+test('resolveTiebreakChunk: capable never escalates; default tier is capable', () => {
+  const text = `${block(findingId(LOW1), CONFIRMED_BODY.replace('medium', 'high'))}\nSTATUS: DONE`;
+  for (const chunk of [tierResolve([LOW1], text, 'capable'), tierResolve([LOW1], text)]) {
+    assert.deepEqual(chunk.escalated, []);
+    assert.deepEqual(chunk.unsettled, []);
+    assert.equal(chunk.results.length, 1);
+    assert.equal(chunk.results[0].outcome, 'confirmed');
+  }
+});
+
+test('resolveTiebreakChunk at standard refuses a capable-tier finding; an unknown tier throws', () => {
+  const text = `${block(findingId(LOW1), CONFIRMED_BODY)}\nSTATUS: DONE`;
+  assert.throws(() => tierResolve([LOW1], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([INFO1, LOW1], text, 'standard'), TypeError);
+  assert.throws(() => tierResolve([LOW1], text, 'fast'), TypeError);
+  assert.throws(() => resolveTiebreakChunk([LOW1], text, { readFile: reader, now: NOW, tier: null }), TypeError);
+});
+
+// ---- severityFloor: a failed escalation re-judge keeps the raised severity (#5541) ----
+
+test('severityFloor: a failed re-judge of a raised info finding settles can\'t-tell at the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  for (const text of ['', 'garbage', reply({ verdict: 'cant-tell', evidence: null }), reply({ status: 'BLOCKED' })]) {
+    const r = resolve(floored, text);
+    assert.equal(r.severity, 'high', text);
+    assert.equal(r.outcome, 'console', text);
+    assert.equal(r.listInConsole, false, text);
+    assert.match(r.logLine, /Severity: high\./, text);
+  }
+});
+
+test('severityFloor: a Capable confirm settles on its own verdict, never the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  for (const severity of ['low', 'info', 'medium']) {
+    const withFloor = resolve(floored, reply({ severity }));
+    const without = resolve(INFO1, reply({ severity }));
+    assert.equal(withFloor.outcome, 'confirmed', severity);
+    assert.equal(withFloor.severity, without.severity, severity);
+    assert.deepEqual({ ...withFloor, id: null }, { ...without, id: null }, severity);
+  }
+  assert.equal(resolve(floored, reply({ severity: 'low' })).severity, 'info');
+});
+
+test('severityFloor: a Capable refute drops at its own severity, never the floor', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  const r = resolve(floored, reply({ verdict: 'refuted', severity: 'info' }));
+  assert.equal(r.outcome, 'drop');
+  assert.equal(r.severity, 'info');
+  assert.equal(r.listInConsole, false);
+  assert.match(r.logLine, /Severity: info\./);
+  assert.deepEqual({ ...r, id: null }, { ...resolve(INFO1, reply({ verdict: 'refuted', severity: 'info' })), id: null });
+});
+
+test('severityFloor: the same finding without a floor still settles at info', () => {
+  const r = resolve(INFO1, '');
+  assert.equal(r.severity, 'info');
+  assert.equal(r.outcome, 'digest');
+  const settled = resolve(INFO1, reply({ severity: 'low' }));
+  assert.equal(settled.outcome, 'confirmed');
+  assert.equal(settled.severity, 'info');
+});
+
+test('severityFloor: a floor below the computed severity changes nothing', () => {
+  const finding = { ...withSeverity('high', 'high claim'), severityFloor: 'low' };
+  assert.deepEqual({ ...resolve(finding, ''), id: null }, { ...resolve(withSeverity('high', 'high claim'), ''), id: null });
+  assert.equal(resolve(finding, '').severity, 'high');
+});
+
+test('severityFloor: an absent, null or unknown floor is ignored', () => {
+  const base = resolve(INFO1, '');
+  for (const severityFloor of [undefined, null, 'bogus', '', 7, {}]) {
+    const r = resolve({ ...INFO1, severityFloor }, '');
+    assert.deepEqual(r, base, String(severityFloor));
+  }
+  assert.equal(resolve({ ...INFO1, severityFloor: ' High ' }, '').severity, 'high', 'a known severity is read like every other severity');
+});
+
+test('severityFloor: it is not part of the id, the tier or the artifact', () => {
+  const floored = { ...INFO1, severityFloor: 'high' };
+  assert.equal(findingId(floored), findingId(INFO1));
+  assert.equal(judgeTier(floored), 'standard');
+  assert.deepEqual(buildFindingsArtifact([floored]), buildFindingsArtifact([INFO1]));
+  assert.deepEqual(planChunks([floored]), [{ tier: 'standard', indexes: [0] }]);
+  assert.equal(escalation(floored, reply({ severity: 'info' }), 'standard'), null);
+  // A floored finding settles in the capable chunk form, never refused there, and a confirm there settles on its own verdict.
+  const chunk = tierResolve([floored], `${block(INFO_ID1, CONFIRMED_BODY.replace('Severity: medium', 'Severity: low'))}\nSTATUS: DONE`, 'capable');
+  assert.equal(chunk.results.length, 1);
+  assert.equal(chunk.results[0].severity, 'info');
+  // ...while an empty block there is a no-verdict settle, which the floor lifts.
+  const unsettledBlock = tierResolve([floored], `${block(INFO_ID1, 'Verdict: cant-tell')}\nSTATUS: DONE`, 'capable');
+  assert.equal(unsettledBlock.results[0].severity, 'high');
+});
+
+test('escalation: one-finding check', () => {
+  const high = reply({ severity: 'high' });
+  assert.deepEqual(escalation(INFO1, high, 'standard'), { reason: 'raised', severity: 'high' });
+  assert.deepEqual(escalation(INFO1, reply({ severity: 'medium' }), 'standard'), { reason: 'raised', severity: 'medium' });
+  assert.equal(escalation(INFO1, high, 'capable'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'low' }), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'info' }), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({}), 'standard'), null);
+  assert.equal(escalation(INFO1, reply({ severity: 'high', status: 'BLOCKED' }), 'standard'), null);
+  assert.equal(escalation(INFO1, 'Severity: high\nSTATUS: DONE', 'standard'), null);
 });

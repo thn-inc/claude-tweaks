@@ -4,37 +4,29 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const {
+  detectIntegrationModel, resolveIntegrationModel, resolveForgeProbeTimeoutMs, formatForgeDegrade, resolvePolicyKeys, POLICY_KEYS,
+} = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
-const { pathWithOnly } = require('./helpers/path-stub');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
+const { runCliSync } = require('./helpers/run-cli');
+const { gitRepo, ghAbsentPath, GH_REMOTE, withTimeoutEnv, writePolicy } = require('./helpers/integration-model');
+
+// The other half of the gh timeout ladder tests lives in tests/integration-model-gh-timeout.test.js.
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
 const REPO_ROOT = path.join(__dirname, '..');
 
-function gitRepo({ remote } = {}) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-intmodel-')));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  if (remote) execFileSync('git', ['-C', dir, 'remote', 'add', 'origin', remote]);
-  return dir;
-}
-
-// Fakes "gh absent, git present" without an empty PATH — blanking PATH
-// entirely would also break the git remote-get-url probe that must keep
-// succeeding. pathWithOnly resolves git via the *current* PATH and returns
-// git's own directory as the override PATH; on some machines (this repo's dev
-// environment included) git and gh live in the SAME directory (e.g. both
-// under /opt/homebrew/bin via Homebrew), so when that directory also holds gh
-// it substitutes a scratch dir holding only a git symlink — git resolves, gh
-// does not.
-function ghAbsentPath() {
-  return pathWithOnly(['git'], { exclude: ['gh'] });
-}
-
-function runResolvePolicy(args, { cwd, env } = {}) {
-  return execFileSync(process.execPath, [RESOLVE_POLICY, ...args], { cwd, env, encoding: 'utf8' });
+// In-process (#5384): returns stdout, throwing on a non-zero exit like the execFileSync it replaced.
+function runResolvePolicy(args, { cwd, env = { ...process.env } } = {}) {
+  const r = runCliSync(RESOLVE_POLICY, args, { cwd, env });
+  if (r.code !== 0) throw Object.assign(new Error(`resolve-policy exited ${r.code}: ${r.stderr}`), { status: r.code, stdout: r.stdout, stderr: r.stderr });
+  return r.stdout;
 }
 
 // --- Schema shape ---
@@ -109,6 +101,152 @@ test('detectIntegrationModel: mcpReachable:false is unchanged from no-override �
   assert.strictEqual(detectIntegrationModel(dir, { mcpReachable: false }), 'local-merge');
 });
 
+// --- gh timeout ladder, retry-once, degrade callback (#4578) ---
+
+test('detectIntegrationModel: gh-timeout-ms 20000 in policy.yml outlasts an 8 s gh -> pr-first (AC1.1, AC1.2)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  writePolicy(dir, 'gh-timeout-ms: 20000\n');
+  const gh = fakeGh({ first: { slow: 8 } });
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir), 'pr-first');
+    });
+    assert.strictEqual(gh.count(), 1);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: explicit opts.timeoutMs 1000 beats env 20000 -> degraded local-merge after two attempts (AC2.2)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: { slow: 8 } });
+  const seen = [];
+  try {
+    withTimeoutEnv('20000', () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 2);
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: timeout on the first call, success on the second -> pr-first, two invocations, no degrade (AC3.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'hang', rest: 'ok' });
+  const seen = [];
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'pr-first');
+    });
+    assert.strictEqual(gh.count(), 2);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: immediate non-zero gh exit -> local-merge, one invocation, no degrade (AC4.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'fail' });
+  const seen = [];
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 1);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: gh absent with a remote -> local-merge, no degrade (AC5.1)', () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const originalPath = process.env.PATH;
+  process.env.PATH = ghAbsentPath();
+  const seen = [];
+  try {
+    assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIntegrationModel: a policy.yml pin never invokes gh (AC7.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  writePolicy(dir, 'integration-model: pr-first\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    assert.strictEqual(resolveIntegrationModel(dir), 'pr-first');
+    assert.strictEqual(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveForgeProbeTimeoutMs: explicit > valid env > policy > 5000; invalid env falls through to policy', () => {
+  const bare = gitRepo();
+  const withPolicy = gitRepo();
+  writePolicy(withPolicy, 'gh-timeout-ms: 7000\n');
+  const outOfRange = gitRepo();
+  writePolicy(outOfRange, 'gh-timeout-ms: 90000\n');
+
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(bare)), 5000);
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(withPolicy)), 7000);
+  assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy)), 9000);
+  for (const bad of ['abc', '0', '90000']) {
+    assert.strictEqual(withTimeoutEnv(bad, () => resolveForgeProbeTimeoutMs(withPolicy)), 7000, `env ${bad} falls through to policy`);
+  }
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(outOfRange)), 5000);
+  assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: 1234 })), 1234);
+  for (const bad of [0, -1, 'x', 1.5, null, undefined]) {
+    assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: bad })), 9000, `opts.timeoutMs ${String(bad)} ignored`);
+  }
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: 0 })), 7000);
+});
+
+test('resolveForgeProbeTimeoutMs: a non-string repoRoot resolves the default instead of throwing', () => {
+  for (const bad of [undefined, null, 42]) {
+    assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(bad)), 5000, `repoRoot ${String(bad)}`);
+    assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(bad)), 9000, `env still wins for ${String(bad)}`);
+  }
+});
+
+test('the gh probe bound is documented as the resolved gh-timeout-ms, not a fixed 5 s (#4578 AC)', () => {
+  const FIXED_5S = /\b5\s?s(?:ec(?:onds?)?)?\s+timeout|timeout of 5\s?s\b|under a 5\s?s\b/i;
+  const schemaText = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const at = schemaText.indexOf('function detectIntegrationModel(');
+  assert.ok(at > 0, 'detectIntegrationModel must exist');
+  // The header comment: the contiguous `//` block directly above the function.
+  const linesAbove = schemaText.slice(0, at).trimEnd().split('\n');
+  const headerLines = [];
+  for (let i = linesAbove.length - 1; i >= 0 && /^\s*\/\//.test(linesAbove[i]); i -= 1) headerLines.unshift(linesAbove[i]);
+  const header = headerLines.join('\n');
+  assert.match(header, /gh-timeout-ms/, 'the header must name the timeout source');
+  assert.doesNotMatch(header, FIXED_5S, 'the header must not state a fixed 5 s timeout');
+  const doc = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'forge-detection.md'));
+  const twin = doc.slice(doc.indexOf('**Code twin.**'), doc.indexOf('**Dispatcher-inlining note'));
+  assert.ok(twin.length > 0, 'the Code twin paragraph must exist');
+  assert.match(twin, /gh-timeout-ms/, 'the Code twin paragraph must name the timeout source');
+  assert.doesNotMatch(twin, FIXED_5S, 'the Code twin paragraph must not state a fixed 5 s timeout');
+  // Go-red control: the pre-#4578 header sentence is exactly what the matcher must flag.
+  assert.match('Each check runs under a 5s timeout.', FIXED_5S);
+});
+
+test('formatForgeDegrade renders both exact degraded strings', () => {
+  assert.strictEqual(
+    formatForgeDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }),
+    'forge detection timed out after 1000 ms (x2)',
+  );
+  assert.strictEqual(
+    formatForgeDegrade({ reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 }),
+    'forge detection timed out after 1000 ms, then gh failed on retry',
+  );
+});
+
 test('resolveIntegrationModel: forwards opts through to detectIntegrationModel', () => {
   const { resolveIntegrationModel } = require('../plugin/bin/lib/policy-schema');
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
@@ -141,7 +279,7 @@ test('CLI: run-config value is pinned and wins over policy.yml (run-scoped stabi
   const dir = gitRepo();
   fs.mkdirSync(path.join(dir, '.claude-tweaks'));
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-intmodel-run-'));
+  const runDir = scratchDir('ct-intmodel-run-');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: pr-first\n');
   const out = runResolvePolicy(['--values', '--run', runDir, 'integration-model'], { cwd: dir });
   assert.strictEqual(out.trim(), 'pr-first');
@@ -152,7 +290,7 @@ test('CLI: this repo resolves a valid enum value regardless of policy.yml state 
   assert.ok(['pr-first', 'local-merge'].includes(out.trim()));
 });
 
-test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves without shelling out to git/gh (AC1)', () => {
+test('CLI: this repo pins integration-model: pr-first in policy.yml and the CLI resolves that pin (AC1)', () => {
   const policyPath = path.join(REPO_ROOT, '.claude-tweaks', 'policy.yml');
   const policyRaw = readText(policyPath);
   assert.match(policyRaw, /^integration-model:\s*pr-first\s*$/m, '.claude-tweaks/policy.yml must pin integration-model: pr-first');
@@ -160,18 +298,54 @@ test('CLI: this repo pins integration-model: pr-first in policy.yml — resolves
   assert.strictEqual(out.trim(), 'pr-first');
 });
 
+// AC7 (#5384): the injected `env` decides which `gh` the in-process forge probe can run. fakeGh also puts the
+// stub on the real process.env.PATH, so the first call's counter would move even if `run` ignored `env`; only the
+// second call discriminates — its injected PATH excludes the stub, so the counter must not move and the answer
+// must fall open to local-merge.
+test('CLI: the forge probe runs the gh stub on the injected PATH and the stub counter moves (AC7)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env } });
+    assert.strictEqual(out.trim(), 'pr-first');
+    assert.ok(gh.count() >= 1, `the gh stub on the injected PATH must have been called, got ${gh.count()}`);
+    const before = gh.count();
+    const absent = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env: { ...process.env, PATH: ghAbsentPath() } });
+    assert.strictEqual(absent.trim(), 'local-merge');
+    assert.strictEqual(gh.count(), before, 'a PATH without the stub must not reach it');
+  } finally {
+    gh.restore();
+  }
+});
+
+// The gh-absent cases below install a counting fakeGh on the real PATH. In the two cases without
+// --mcp-reachable the injected PATH excludes it, so a count above 0 means the injected env was ignored; the
+// --mcp-reachable case returns pr-first before any probe, so it pins flag forwarding. The stub is never spawned
+// on win32, so the count assertions run off win32 only and the answers are still checked there.
 test('CLI: --mcp-reachable resolves pr-first when gh is faked absent and a real remote exists (AC4)', () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
-  const env = { ...process.env, PATH: ghAbsentPath() };
-  const out = runResolvePolicy(['--values', 'integration-model', '--mcp-reachable'], { cwd: dir, env });
-  assert.strictEqual(out.trim(), 'pr-first');
+  const gh = fakeGh({ first: 'fail' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
+    const out = runResolvePolicy(['--values', 'integration-model', '--mcp-reachable'], { cwd: dir, env });
+    assert.strictEqual(out.trim(), 'pr-first');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
 test('CLI: omitting --mcp-reachable preserves todays local-merge fail-open behavior when gh is absent (AC4)', () => {
   const dir = gitRepo({ remote: 'https://github.com/thomasholknielsen/claude-tweaks.git' });
-  const env = { ...process.env, PATH: ghAbsentPath() };
-  const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env });
-  assert.strictEqual(out.trim(), 'local-merge');
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
+    const out = runResolvePolicy(['--values', 'integration-model'], { cwd: dir, env });
+    assert.strictEqual(out.trim(), 'local-merge');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
 test('CLI: --mcp-reachable forwards into merge-verification even when integration-model is NOT also requested (#1421 Finding 3)', () => {
@@ -187,19 +361,26 @@ test('CLI: --mcp-reachable forwards into merge-verification even when integratio
   git('symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${branch}`);
   fs.mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.github', 'workflows', 'ci.yml'), 'name: ci\non:\n  push:\n    branches: [main]\n  pull_request:\njobs: {}\n');
-  const env = { ...process.env, PATH: ghAbsentPath() };
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const env = { ...process.env, PATH: ghAbsentPath() };
 
-  // Without the flag: gh absent -> forge detection falls open to local-merge
-  // -> branch (1) -> off.
-  const withoutFlag = runResolvePolicy(['--values', 'merge-verification'], { cwd: dir, env });
-  assert.strictEqual(withoutFlag.trim(), 'off');
+    // Without the flag: gh absent -> forge detection falls open to local-merge
+    // -> branch (1) -> off.
+    const withoutFlag = runResolvePolicy(['--values', 'merge-verification'], { cwd: dir, env });
+    assert.strictEqual(withoutFlag.trim(), 'off');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
 
-  // With the flag, requesting ONLY merge-verification (not integration-model
-  // in the same call): before the fix, the flag was silently dropped on this
-  // path and the result matched the line above (off). After the fix, it
-  // forwards through resolveIntegrationModel -> pr-first -> merge-when-green.
-  const withFlag = runResolvePolicy(['--values', 'merge-verification', '--mcp-reachable'], { cwd: dir, env });
-  assert.strictEqual(withFlag.trim(), 'merge-when-green');
+    // With the flag, requesting ONLY merge-verification (not integration-model
+    // in the same call): before the fix, the flag was silently dropped on this
+    // path and the result matched the line above (off). After the fix, it
+    // forwards through resolveIntegrationModel -> pr-first -> merge-when-green.
+    const withFlag = runResolvePolicy(['--values', 'merge-verification', '--mcp-reachable'], { cwd: dir, env });
+    assert.strictEqual(withFlag.trim(), 'merge-when-green');
+    if (!STUB_SKIP) assert.strictEqual(gh.count(), 0, 'the gh stub on the real PATH must not be reached');
+  } finally {
+    gh.restore();
+  }
 });
 
 // --- Consumer conformance ---

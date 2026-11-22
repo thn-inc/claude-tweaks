@@ -5,12 +5,13 @@ files:
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/log-decision.js
+  - plugin/skills/_shared/local-merge-sequence.md
 ---
 
 # Trust a Singleton Auto-Merge to Refuse Without a Verdict
 
 **Persona:** A claude-tweaks maintainer who granted `auto:merge` on a single record, let `/claude-tweaks:dispatch` (or a direct `/claude-tweaks:flow #N`) run it unattended overnight, and the next morning reads `decisions.md` and `git log` to decide whether the fast lane can keep that grant — after once finding a PR merged with no `merge-check` ever run (#2938).
-**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance brief posted, no ledger deletion pushed, no merge.
+**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance packet or brief posted, no ledger deletion pushed, no merge.
 **Entry point:** `/claude-tweaks:wrap-up`'s Review Console reaching `wrap-up/auto-merge-short-circuit.md` for a record whose live labels carry `auto:merge` (or a matured `auto:merge-pending`, or a `merge-authorization: pre-authorized` run).
 **Success state:** `decisions.md` shows `Auto-merge short-circuit: #N assess-agent-autonomy verdict auto-merge` before any acceptance-labeling or merge line, and the merge landed — or it shows `Auto-merge short-circuit: #N merge-check verdict not confirmed in decisions.md (latest: …) — treated as needs-human` and the PR is still open, awaiting the maintainer, with the console resolved to `leave-open`.
 
@@ -34,7 +35,7 @@ files:
 - **URL:** the branch openers ("run the Verdict backstop above first") on the `pr-first` branch (before `_shared/pr-first-merge.md`), the `local-merge` branch (before `close-run` and `git merge --no-ff`), and the dispatch-call `local-merge` relay (before `OUTCOME: ready-to-merge`)
 - **Action:** Acceptance labeling and ledger deletion run, then each merging branch re-runs the same check immediately before its own merge call or relay, and merges.
 - **Should feel:** Identical to the fast lane before #2941 — no added prompts, no added waits.
-- **Should understand:** A dispatched singleton under `local-merge` relays `ready-to-merge` to `dispatch/settle-and-merge.md`'s local-merge fallback, which re-runs the same module and accepts the singleton's `Auto-merge short-circuit:` marker. A confirmed verdict is not the last check before acceptance labeling. Since #4171 the run first lists its can't-tell review findings. At `unattended` it files them and continues. Below `unattended`, or when a filing fails, it logs `#N has {k} can't-tell finding(s) … short-circuit refused, Review Console renders normally` and the PR stays open for the console. That line carries no `needs-human`, so it is not this journey's 3b refusal (`keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md`).
+- **Should understand:** A dispatched singleton under `local-merge` relays `ready-to-merge` to `dispatch/settle-and-merge.md`'s local-merge fallback, which re-runs the same module and accepts the singleton's `Auto-merge short-circuit:` marker. A confirmed verdict is not the last check before acceptance labeling. Since #4171 the run first lists its can't-tell review findings. At `unattended` it settles them and continues: since #4679 a `drop`-recommended one goes to the materiality digest and every other one is filed as a verification task. Below `unattended`, or when a filing or digest post fails, it logs `#N has {k} can't-tell finding(s) … short-circuit refused, Review Console renders normally` and the PR stays open for the console. That line carries no `needs-human`, so it is not this journey's 3b refusal (`keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md`).
 - **Red flags:** A singleton relayed as `ready-to-merge` that the dispatching session then refuses with `=0` despite a pass line being present — the two paths have drifted on the marker text.
 
 ### 3b. Not confirmed — the run refuses and falls through to the console
@@ -42,11 +43,13 @@ files:
 - **Action:** The run logs the refusal (and does not also write a fabricated `assess-agent-autonomy verdict needs-human` line), skips acceptance labeling, ledger deletion, and the merge, and renders the Review Console normally.
 - **Should feel:** Safe and legible — the record is exactly where a real `needs-human` would have left it, and the refusal line says why.
 - **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`. `{detail}` is `, error: {error}` when `decisions.md` was unreadable, `, snippet exited {code} with no output` when the check crashed, and empty otherwise — so the morning reader can tell a broken path or a crash from a Layer 2 that never ran.
-- **Red flags:** A posted Verification Brief or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
+- **Red flags:** A posted acceptance packet or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
 
 ## Origin
+- Step 3b's red flag updated during build of #4611 (acceptance labeling now posts the acceptance packet in place of the Verification Brief)
 - Created during build of #2941
 - Steps 1-3b built in this session
 - Related specs: #2429 (bundle-path backstop this ports), #2853 / PR #2938 (the incident)
 - Updated during build of #3870: Step 2 now covers a noted `Reversibility:` on the pass line, which confirms, and a tail after the note, which is rejected. Both are pinned in `tests/bin-lib/dispatch/merge-verdict.test.js`.
 - Updated during wrap-up of #4171: Step 3a notes the can't-tell findings check that runs after a confirmed verdict, and its own refusal line.
+- Updated during wrap-up of #4679: Step 3a's `unattended` branch digests a `drop`-recommended can't-tell finding instead of filing it.

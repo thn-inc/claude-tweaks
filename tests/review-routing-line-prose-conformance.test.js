@@ -6,6 +6,7 @@
 // release-gate token.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -98,7 +99,7 @@ for (const c of CASES) {
 // #4484: the record proposal is two paragraphs, the staging steps and then their below-floor digest branch.
 // Neither is a `- **Label** —` bullet, so they get their own finder. Each paragraph is one physical line;
 // a wrapped paragraph reports every clause after the break as missing.
-const RECORD_PROPOSAL_LABELS = ['**Staging a record proposal', '**Below the materiality floor'];
+const RECORD_PROPOSAL_LABELS = ['**Staging a record proposal', '**A digest verdict'];
 
 function recordProposalParagraph() {
   const lines = md.split('\n');
@@ -112,7 +113,7 @@ function recordProposalParagraph() {
 // Each clause is one literal the paragraph must carry, so removing it turns exactly that clause red.
 const RECORD_PROPOSAL_CLAUSES = [
   ['--id review-followup-1', 'stages under a review-followup id with a starting slot'],
-  ['--allocate', 'allocates the number'],
+  ['--file {proposal} --allocate', 'allocates the number'],
   ['from the path its first stdout line prints', 'takes {n} from the path stage-item.js prints'],
   ['a literal `{n}` passed to `--id` exits 2', 'warns that a literal {n} id exits 2'],
   ['Finding: {severity} {category}', 'writes the Finding: header line'],
@@ -121,7 +122,7 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['session-tmp-resolve.js" --value review-followup-proposal.md', 'resolves a .md scratch path'],
   ['written `deferred`, its Resolution naming `staged/', 'writes the staged proposal ledger row deferred, naming its staged path'],
   ["Before composing, apply `_shared/materiality-floor.md`'s floor test", 'applies the materiality floor before composing'],
-  ['other than `tangential` goes to the digest container', 'routes a below-floor non-tangential finding to the digest'],
+  ['`digest` goes to the digest container instead', 'routes a digest verdict to the digest container'],
   ['(`isMaterialityDuplicate`)', 'runs the digest dedup check'],
   ['`AUTO … materiality-floor:` audit line', 'logs the materiality-floor audit line'],
   ['skips the compose, stage and composer-log steps', 'skips compose, stage and composer-log for a digest-routed finding'],
@@ -130,7 +131,8 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['entry on `local-files`', 'names the specs/digest.md entry in the digest-routed ledger row on local-files'],
   ['when a run directory resolves', 'logs the audit line only when a run directory resolves'],
   ['end-of-run summary states the digest comment URL', 'states the digest comment URL and count in the end-of-run summary'],
-  ['A `tangential` finding, a `high` one, or one that clears the floor, is staged', 'stages a tangential, high or floor-clearing finding'],
+  ['A finding the command routes `file` is staged', 'stages a finding the command files'],
+  ['its Resolution keeping `severity={severity}`', 'keeps the severity token when a refused floor call leaves the row open'],
   ['A digest entry is not a work record', 'states a digest entry is not a work record'],
   ['A `high` finding never takes the digest branch', 'keeps a high finding off the digest branch, so its composer line reaches the release gate'],
   ['A non-zero `stage-item.js` exit stages nothing', 'leaves the ledger row open when staging fails'],
@@ -139,6 +141,39 @@ const RECORD_PROPOSAL_CLAUSES = [
   ['names the finding as `{category} at {file:line}`, never its text', 'keeps finding text out of the materiality-floor audit line'],
   ['the two exceptions to the "status `open`" wording', 'names both ledger-status exceptions'],
 ];
+
+// #5931: control mode reads an open review row's severity from its Resolution (_shared/ledger-format.md),
+// so the ledger-first paragraph must write the token and keep it while the row stays open.
+const SEVERITY_TOKEN_CLAUSES = [
+  ["`--resolution 'severity={severity}'`", 'appends a review row with its severity token'],
+  ['kept through each rewrite while it stays `open`', 'keeps the severity token through every open rewrite'],
+];
+const ledgerFirstParagraph = (text) => text.split('\n').find((l) => l.startsWith('**Ledger first, then the patch.**')) || '';
+const missingSeverityTokenClauses = (text) => {
+  const paragraph = ledgerFirstParagraph(text);
+  return SEVERITY_TOKEN_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
+};
+test('#5931: the ledger-first paragraph writes and keeps each open review row\'s severity token', () => {
+  assert.ok(ledgerFirstParagraph(md), 'the "Ledger first, then the patch." paragraph is missing');
+  assert.deepEqual(missingSeverityTokenClauses(md), []);
+});
+for (const [literal, fact] of SEVERITY_TOKEN_CLAUSES) {
+  test(`#5931 the clause that ${fact} occurs exactly once, so a second copy cannot mask its loss`, () => {
+    assert.equal(ledgerFirstParagraph(md).split(literal).length - 1, 1, `"${literal}" must occur exactly once`);
+  });
+  test(`#5931 go-red: removing the clause that ${fact} turns that clause red`, () => {
+    const paragraph = ledgerFirstParagraph(md);
+    const doctored = md.replace(paragraph, () => paragraph.split(literal).join(''));
+    assert.notEqual(doctored, md, `anchor: "${literal}" not found — proof cannot discriminate`);
+    assert.deepEqual(missingSeverityTokenClauses(doctored), [fact]);
+  });
+}
+test('#5931 go-red: the severity clauses moved out of the ledger-first paragraph turn both red', () => {
+  const paragraph = ledgerFirstParagraph(md);
+  const stripped = SEVERITY_TOKEN_CLAUSES.reduce((p, [literal]) => p.split(literal).join(''), paragraph);
+  const moved = `${md.replace(paragraph, () => stripped)}\n${SEVERITY_TOKEN_CLAUSES.map(([literal]) => literal).join(' ')}\n`;
+  assert.deepEqual(missingSeverityTokenClauses(moved), SEVERITY_TOKEN_CLAUSES.map(([, fact]) => fact));
+});
 
 function missingRecordProposalClauses(paragraph) {
   return RECORD_PROPOSAL_CLAUSES.filter(([literal]) => !paragraph.includes(literal)).map(([, fact]) => fact);
@@ -164,6 +199,9 @@ test('#4484: the record-proposal paragraph cites a composer command that stages 
 });
 
 for (const [literal, fact] of RECORD_PROPOSAL_CLAUSES) {
+  test(`#5931 the clause that ${fact} occurs exactly once, so a second match cannot mask its loss`, () => {
+    assert.equal(recordProposalParagraph().split(literal).length - 1, 1, `"${literal}" must occur exactly once`);
+  });
   test(`#4484 go-red: removing the clause that ${fact} turns that clause red`, () => {
     const paragraph = recordProposalParagraph();
     const doctored = paragraph.split(literal).join('');
@@ -203,6 +241,87 @@ for (const o of STACKED_OUTCOMES) {
     assert.ok(text.includes(o.logged), `the line carries the ${o.flag} outcome: ${text}`);
   });
 }
+
+// #4637: --stack-stderr carries raw git stderr, which can quote a repo-controlled path. The composer rule must
+// single-quote it like --category and --at, so a `'` in the value cannot close the quote and run the rest as shell.
+function composerRuleParagraph() {
+  const paragraph = md.split('\n').find((l) => l.startsWith('The composer writes each'));
+  assert.ok(paragraph, 'step3-routing.md must carry a paragraph starting "The composer writes each"');
+  return paragraph;
+}
+
+test('#4637: the composer rule single-quotes --stack-stderr alongside --category and --at, escapes `\'` as `\'\\\'\'`, and gives the reason', () => {
+  const paragraph = composerRuleParagraph();
+  assert.ok(paragraph.includes('`--category`, `--at` and `--stack-stderr` single-quoted'), `the rule must single-quote --stack-stderr with --category and --at: ${paragraph}`);
+  assert.ok(paragraph.includes("`'\\''`"), `the rule must write each ' as '\\'': ${paragraph}`);
+  assert.ok(paragraph.includes('raw git stderr can quote a repo-controlled path'), `the rule must give the reason: ${paragraph}`);
+});
+
+const hasPosixSh = spawnSync('sh', ['-c', 'exit 0'], { windowsHide: true }).status === 0;
+const SH_SKIP = process.platform === 'win32' && !hasPosixSh ? 'no POSIX sh on win32, so the shell round trip cannot run' : false;
+
+function markerPath() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rrl-stderr-'));
+  roots.push(dir);
+  return path.join(dir, 'marker');
+}
+
+// A stderr line that closes the quote and runs a command substitution, which would create the marker file.
+// The shell sees the marker path, so a Windows path goes in with forward slashes (its backslashes would be escapes);
+// double-quoted, so a temp path holding a space stays one argument.
+const rawStderr = (marker) => `x'$(touch "${marker.split(path.sep).join('/')}")'y`;
+// The rule's escaping, read from the prose rather than restated here: each ' is written as the span the rule names,
+// the whole value wrapped in single quotes. A rule that named a wrong escape turns the round trip below red.
+const shellSingleQuote = (value) => {
+  const named = composerRuleParagraph().match(/written as `([^`]+)`/);
+  assert.ok(named, 'the composer rule must name the span each \' is written as');
+  return `'${value.split("'").join(named[1])}'`;
+};
+
+test('#4637: a --stack-stderr value escaped by the rule round-trips a POSIX shell byte-identical and runs nothing', { skip: SH_SKIP }, () => {
+  const marker = markerPath();
+  const raw = rawStderr(marker);
+  const out = spawnSync('sh', ['-c', `printf '%s' ${shellSingleQuote(raw)}`], { encoding: 'utf8', windowsHide: true });
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(out.stdout, raw);
+  assert.equal(fs.existsSync(marker), false, 'the escaped value must not run the command substitution');
+});
+
+test('#4637 go-red: the same value left unescaped inside single quotes does not round-trip, and its substitution runs', { skip: SH_SKIP }, () => {
+  const marker = markerPath();
+  const raw = rawStderr(marker);
+  const out = spawnSync('sh', ['-c', `printf '%s' '${raw}'`], { encoding: 'utf8', windowsHide: true });
+  assert.notEqual(out.stdout, raw, 'the unescaped value must not round-trip');
+  assert.equal(fs.existsSync(marker), true, 'the unescaped substitution must run, so the escaped case above is a real discrimination');
+});
+
+test('#4637: the raw --stack-stderr value reaches the logged STAGED line verbatim through run()', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const raw = rawStderr(path.join(main, 'marker'));
+  const argv = [...instantiate(citedCommand('STAGED'), 'high', runDir), '--stack-exit', '2', '--stack-stderr', raw];
+  assert.equal(run(argv, deps(main, out)), 0, `exit 0 for: ${argv.join(' ')}`);
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.ok(text.includes('high-severity finding'), `the line keeps the release token: ${text}`);
+  assert.ok(text.includes(`(${raw})`), `the raw stderr must be logged verbatim: ${text}`);
+});
+
+function stagingPatchParagraph() {
+  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
+  assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  return paragraph;
+}
+
+test('#4637: the "Staging a patch" paragraph points its --stack-stderr usage back at the quoting rule', () => {
+  const paragraph = stagingPatchParagraph();
+  assert.ok(paragraph.includes('follow the quoting rule above'), `the --stack-stderr usage must cite the quoting rule: ${paragraph}`);
+});
+
+test('#4637: both --stack-stderr spans in the "Staging a patch" paragraph are single-quoted', () => {
+  const paragraph = stagingPatchParagraph();
+  const spans = paragraph.match(/--stack-stderr [^`\s]/g) || [];
+  assert.deepEqual(spans, ["--stack-stderr '", "--stack-stderr '"], `the conflict and unverifiable-stack spans must each open with a single quote: ${paragraph}`);
+});
 
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
   assert.doesNotMatch(md, /`[^`\n]*\{time\} — Step 3 Routing:/);

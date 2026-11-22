@@ -32,8 +32,8 @@
 //
 // Status is data: exit 0 in every route and state.
 // 2 malformed invocation, or --worktree is not a git checkout.
-// 3 run dir missing or not anchored under the main checkout (a worktree-local
-//   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
+// 3 run dir missing or not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
+//   shadow, or a directory outside pipelines/ -- _shared/pipeline-run-dir.md, [IL-127]).
 'use strict';
 
 const path = require('path');
@@ -91,12 +91,13 @@ function run(argv, overrides = {}) {
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`phase-exit.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`phase-exit.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`phase-exit.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 
-  // Absolute from here on: the sub-steps spawn with cwd --worktree, so a relative
-  // path would name a different directory in different sub-steps.
+  // Absolute from here on: the hooks.js and resolve-policy.js sub-steps spawn with cwd
+  // --worktree, while pr-checklist.js and pr-merge-state.js run in-process at this
+  // process's cwd, so a relative path would name a different directory in those two kinds.
   let envelope;
   try {
     envelope = runPhaseExit({

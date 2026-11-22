@@ -14,6 +14,8 @@
 // read time from those two files, never stored — console.json is written once at resolve time,
 // before the filing outcome exists, so a stored word would go stale the moment a re-run files it,
 // and `UNRESOLVED_RESOLUTIONS` stays exactly `pending`/`keep-staged`.
+// `digest-pending` (#4679) is its twin for a planned can't-tell digest entry (`console.json#digests`) with no
+// `AUTO … digested (work-fingerprint …)` line, derived the same way.
 // Leaf module (fs/path only): reconcile code loads it at module load and must not pull wrap-up/pack.js.
 'use strict';
 
@@ -22,14 +24,29 @@ const path = require('path');
 
 const UNRESOLVED_RESOLUTIONS = new Set(['pending', 'keep-staged']);
 // #4172: a PR console's item whose filing or reverse failed is residue too; its
-// `outcome` is the failed word, and its id names a PR row, not a staged file.
+// `outcome` is the failed word, and its id names a PR row or a ruling's staged file
+// (#3942: a ratified deferral whose record failed to land reads `filing-failed` too).
 const FAILED_OUTCOMES = new Set(['filing-failed', 'reverse-failed']);
 const MISSING_RESOLUTION = 'missing';
 const FILING_PENDING_RESOLUTION = 'filing-pending';
+// #4679: the digest twin of `filing-pending` — a planned can't-tell digest entry (`console.json#digests`) with no
+// digested line in decisions.md has not reached the materiality digest. Derived at read time, never stored.
+const DIGEST_PENDING_RESOLUTION = 'digest-pending';
+
+// The one spelling of a can't-tell finding fingerprint (`consolefinding-{8 hex}`, finding-filing.js's
+// findingFingerprint): the two AUTO-line patterns below and finding-filing.js's marker reader all build on it. It
+// lives here because this module is a leaf (fs/path only) that finding-filing.js can require without a cycle.
+const CONSOLE_FINDING_FP = 'consolefinding-[0-9a-f]{8}';
 
 // An AUTO line recording a created or deduped filing. Anchored on `^- AUTO `: the same phrase in a
 // STAGED/SKIP line (or quoted prose) is not evidence a record exists.
-const FILED_LINE_RE = /^- AUTO .*?(?:already )?filed as #(\d+) \(work-fingerprint (consolefinding-[0-9a-f]{8})\)/;
+const FILED_LINE_RE = new RegExp(`^- AUTO .*?(?:already )?filed as #(\\d+) \\(work-fingerprint (${CONSOLE_FINDING_FP})\\)`);
+
+// An AUTO line recording a digested or deduped can't-tell digest entry (#4679). Stricter than FILED_LINE_RE: it
+// is anchored on the Queue-write step and a whitespace-free item token, exactly the shape log-decision.js's
+// formatEntry writes (`- AUTO {hms} — Queue write: {item} digested (work-fingerprint …)`), so negative wording
+// (`not digested`, `undigested`) or another step's line is never evidence.
+const DIGESTED_LINE_RE = new RegExp(`^- AUTO \\S+ — Queue write: \\S+ (?:already )?digested \\(work-fingerprint (${CONSOLE_FINDING_FP})\\)`);
 
 // decisions.md text -> Map<fingerprint, record number>; the first line for a fingerprint wins.
 function filedRecords(decisions) {
@@ -61,11 +78,17 @@ function unresolvedItems(consoleJson) {
 function pendingFilings(consoleJson, decisions) {
   if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.filings)) return [];
   const filed = filedRecords(decisions);
+  const digested = digestedFindings(decisions);
   const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
   return consoleJson.filings.flatMap((entry) => {
     if (!entry || typeof entry.item !== 'string' || typeof entry.fingerprint !== 'string') return [];
+    // #4679: a previous-release run's `drop` item sits in `filings`; its default-selection re-run digests it, so
+    // a digested line settles the entry as a filed line does (pendingDigests clears on a filed line the same way).
+    if (digested.has(entry.fingerprint)) return [];
     if (filed.has(entry.fingerprint)) return [];
     const item = items.find((i) => i && i.id === entry.item);
+    // #4620: a failed filing rewritten `carried` lives in the acceptance packet now, not in this run's residue.
+    if (item && item.resolution === 'carried') return [];
     return [{
       ...(item || { id: entry.item }),
       resolution: FILING_PENDING_RESOLUTION,
@@ -74,8 +97,38 @@ function pendingFilings(consoleJson, decisions) {
   });
 }
 
+// decisions.md text -> Set<fingerprint> of the digested or already-digested lines (#4679).
+function digestedFindings(decisions) {
+  const out = new Set();
+  for (const line of String(decisions || '').split('\n')) {
+    const m = DIGESTED_LINE_RE.exec(line);
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+// One item per planned digest entry (`console.json#digests`) whose fingerprint has no digested line, and no
+// filed line either (an existing record wins over a digest), in `decisions`: the console item it was planned for (a bare `{ id }` when none), re-worded `digest-pending`.
+// The mirror of pendingFilings; malformed entries are skipped, and no `digests` array is none pending.
+function pendingDigests(consoleJson, decisions) {
+  if (!consoleJson || typeof consoleJson !== 'object' || !Array.isArray(consoleJson.digests)) return [];
+  const digested = digestedFindings(decisions);
+  const filed = filedRecords(decisions);
+  const items = Array.isArray(consoleJson.items) ? consoleJson.items : [];
+  return consoleJson.digests.flatMap((entry) => {
+    if (!entry || typeof entry.item !== 'string' || typeof entry.fingerprint !== 'string') return [];
+    if (digested.has(entry.fingerprint) || filed.has(entry.fingerprint)) return [];
+    const item = items.find((i) => i && i.id === entry.item);
+    return [{
+      ...(item || { id: entry.item }),
+      resolution: DIGEST_PENDING_RESOLUTION,
+      reason: "planned can't-tell digest entry has no digested line in decisions.md",
+    }];
+  });
+}
+
 function consoleResidueItems(consoleJson, decisions = '') {
-  return [...unresolvedItems(consoleJson), ...pendingFilings(consoleJson, decisions)];
+  return [...unresolvedItems(consoleJson), ...pendingFilings(consoleJson, decisions), ...pendingDigests(consoleJson, decisions)];
 }
 
 // Partition unresolved items into those a human can still review and those
@@ -84,7 +137,7 @@ function consoleResidueItems(consoleJson, decisions = '') {
 // (`docs:CLAUDE.md` — a `{row}:{label}` item with no staged file of its own),
 // or an id that is not a bare file name is never classified missing — only a
 // plain staged-file id can be proven absent. A failed PR outcome (#4172) is never
-// missing either: its id is a PR row, so there is no staged file to be absent. Nor is a
+// missing either: it is residue whether or not its staged file (a ruling row's id) exists. Nor is a
 // `filing-pending` item (#4170): its absent record is the residue, whatever its id looks like.
 function splitMissing(items, consoleDir, exists = fs.existsSync) {
   const kept = [];
@@ -92,7 +145,8 @@ function splitMissing(items, consoleDir, exists = fs.existsSync) {
   for (const item of items) {
     const id = item && item.id;
     const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id
-      && !FAILED_OUTCOMES.has(item.resolution) && item.resolution !== FILING_PENDING_RESOLUTION;
+      && !FAILED_OUTCOMES.has(item.resolution) && item.resolution !== FILING_PENDING_RESOLUTION
+      && item.resolution !== DIGEST_PENDING_RESOLUTION;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
     } else {
@@ -129,7 +183,7 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
     // Valid JSON that is not an object (`null`, a number) is a malformed console, not "no residue".
     if (!parsed || typeof parsed !== 'object') { unreadable.push(p); continue; }
     let decisions = '';
-    if (Array.isArray(parsed.filings) && parsed.filings.length > 0) {
+    if ([parsed.filings, parsed.digests].some((list) => Array.isArray(list) && list.length > 0)) {
       try { decisions = readFile(path.join(path.dirname(p), 'decisions.md')); } catch { decisions = ''; }
     }
     const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions), path.dirname(p), exists);
@@ -147,25 +201,45 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
 
 const shown = (v) => (v === undefined || v === null || v === '' ? '—' : v);
 
-// The paste-ready `console-filings.js --only` re-run for the named planned filings. `ids` are
-// single-quoted into one comma-joined `--only` value (a `'` inside is written `'\''`); without a
-// `pluginRoot` the CLI is named bare.
-function filingRerunCommand({ consoleDir, ids, pluginRoot }) {
+// The paste-ready `console-filings.js` re-run for a console's planned filings and digest entries (#4679): the
+// default (unattended) selection, never `--only` — `filing-pending` and `digest-pending` exist only for unattended
+// runs, and `--only` composes the human-present `needs:definition` shape. One command settles both kinds:
+// already-filed items dedup against `--existing`, held digests against `--digest-comments`, so the command
+// depends on no item id. Without a `pluginRoot` the CLI is named bare.
+function consoleRerunCommand({ consoleDir, pluginRoot }) {
   const bin = pluginRoot ? `node "${pluginRoot}/bin/console-filings.js"` : 'console-filings.js';
-  const only = ids.join(',').replace(/'/g, `'\\''`);
-  return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --only '${only}'`;
+  return `${bin} --run "${consoleDir}" --existing <issues.json> --out-dir <dir> --digest-comments <comments.json>`;
 }
 
 // #4170: a `filing-pending` item clears only on a logged filed/deduped line (FILED_LINE_RE), so the remedy
 // names the log lines, not just the create — a session that died after the create re-runs to a `deduped` entry,
 // which console-filings.js logs itself (#4026), leaving only its `logFailures` to hand-log.
-const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
+const FILING_LOG_REMEDY = "file each printed `file` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any `logFailures` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each `deduped` entry itself; a `drop` item's re-run logs its digested line instead), via log-decision.js `--run` that console's dir, per wrap-up/review-console.md's Can't-tell filings";
+
+// #4679: a `digest-pending` item clears only on a logged digested line (DIGESTED_LINE_RE).
+// DIGESTED_LINE_RE accepts only the `AUTO … Queue write: …` shape, so the remedy names the full command (no `--spec`).
+// `{item}` and `{fp}` stay placeholders (they vary per entry); the console dir and plugin root are filled in, and
+// the CLI is named bare without a `pluginRoot`, as consoleRerunCommand does.
+function digestLogRemedy({ consoleDir, pluginRoot }) {
+  const bin = pluginRoot ? `node "${pluginRoot}/bin/log-decision.js"` : 'log-decision.js';
+  return 'post each printed digest line to the materiality digest and log it with '
+    + `\`${bin} --run "${consoleDir}" --status AUTO --section "/wrap-up" --step "Queue write" --text '{item} digested (work-fingerprint {fp})' --reversibility n/a\``
+    + " (no `--spec`), hand-logging a held entry with the text '{item} already digested (work-fingerprint {fp})'";
+}
+
+function pendingKindOf(resolution) {
+  if (resolution === FILING_PENDING_RESOLUTION) return 'filing';
+  if (resolution === DIGEST_PENDING_RESOLUTION) return 'digest';
+  return null;
+}
 
 // One item line plus its pointer: a `cat` of the staged file, or for a
 // `decision:` item (no staged file — it lives in decisions.md) a `see` line.
 // An item without a usable id is still listed, as `(no id)`, but gets no
 // pointer — a malformed item must never throw and hide every other banner.
-function itemLines(item, consoleDir, pluginRoot) {
+// `printed` is one console's state ({ rerun, kinds }): the re-run command prints once per console, and each
+// pending kind's remedy once, however many items of either kind it holds.
+function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds: new Set() }) {
   const hasId = typeof item.id === 'string' && item.id !== '';
   const lines = [`  - ${hasId ? item.id : '(no id)'} — ${shown(item.section)}: ${item.resolution} (${shown(item.reason)})`];
   if (!hasId) return lines;
@@ -176,9 +250,18 @@ function itemLines(item, consoleDir, pluginRoot) {
   }
   const staged = path.join(consoleDir, 'staged', item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
-  if (item.resolution === FILING_PENDING_RESOLUTION) {
-    lines.push(`    re-run filing: ${filingRerunCommand({ consoleDir, ids: [item.id], pluginRoot })}`);
-    lines.push(`      (<issues.json>: gh issue list --state all --json number,body --limit <N>; ${FILING_LOG_REMEDY})`);
+  const kind = pendingKindOf(item.resolution);
+  if (kind) {
+    const first = !printed.rerun;
+    if (first) lines.push(`    re-run ${kind}: ${consoleRerunCommand({ consoleDir, pluginRoot })}`);
+    printed.rerun = true;
+    if (!printed.kinds.has(kind)) {
+      printed.kinds.add(kind);
+      const lead = first ? '' : 'same re-run; ';
+      lines.push(kind === 'filing'
+        ? `      (${lead}<issues.json>: gh issue list --state all --json number,body --limit <N>; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
+        : `      (${lead}<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
+    }
   }
   return lines;
 }
@@ -195,9 +278,10 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
     if (count >= maxItems) break;
     const consoleDir = path.dirname(c.path);
     if (!single) lines.push(`  (${path.relative(dir, c.path)})`);
+    const printed = { rerun: false, kinds: new Set() };
     for (const item of c.items) {
       if (count >= maxItems) break;
-      lines.push(...itemLines(item, consoleDir, pluginRoot));
+      lines.push(...itemLines(item, consoleDir, pluginRoot, printed));
       count += 1;
     }
   }
@@ -214,7 +298,8 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 }
 
 module.exports = {
-  UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, FILED_LINE_RE, FILING_LOG_REMEDY,
-  filedRecords, unresolvedItems, pendingFilings, consoleResidueItems, splitMissing, filingRerunCommand,
+  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
+  FILING_LOG_REMEDY, digestLogRemedy,
+  filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, consoleRerunCommand,
   readRunResidue, formatResidueLines,
 };

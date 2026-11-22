@@ -1,2 +1,0 @@
-integration-branch: main
-merge-sensitive-paths: bin/hooks.js,.claude-tweaks/policy.yml

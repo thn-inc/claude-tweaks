@@ -21,7 +21,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { extractArgumentHint, inputSectionBody } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint, inputSectionBody } = require('./helpers/argument-hint');
 const { listSkillDirs } = require('../plugin/bin/lib/skill-audit/skill-catalog');
 const { readText } = require('./helpers/read-skill');
 
@@ -154,10 +154,16 @@ const EXTRACTORS = {
 };
 
 // `{skill}:{surface}` -> reason, for a surface that legitimately diverges
-// from its skill's argument-hint. Empty by design: every divergence found
-// when this suite landed was staleness or an abbreviation, and was fixed.
-// An entry whose surface passes is itself reported, so the list cannot rot.
-const EXCEPTIONS = {};
+// from its skill's argument-hint. Every divergence found when this suite
+// landed was staleness or an abbreviation, and was fixed; the one entry is a
+// deprecated alias. An entry whose surface passes is itself reported, so the
+// list cannot rot.
+const EXCEPTIONS = {
+  // #4613: /demo is a deprecated alias of /accept. Its removal condition (a)
+  // bars `claude-tweaks:demo` from the card, so its row is a bare `/demo` row
+  // this extractor does not key on. Remove with the alias.
+  'demo:reference-card-takes': 'deprecated alias: the card lists it as a bare `/demo` row (#4613)',
+};
 
 // Walk every enumerated surface for every skill. `read` is injectable so the
 // discrimination tests below can hand the walker a mutated copy of one file.

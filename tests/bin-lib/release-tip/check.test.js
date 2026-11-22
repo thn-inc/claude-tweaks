@@ -23,7 +23,7 @@ const deltaVerdict = (tip, base = 'c'.repeat(40)) => `- AUTO 10:20:00 — Step 5
 const decisions = (lines) => ['# Decisions', '', '## /release', ...lines, ''].join('\n');
 
 const boundOf = (value, source = 'default', extra = {}) => ({
-  status: 0, stdout: JSON.stringify({ 'release-tip-moves': { value, source, ...extra } }), stderr: '',
+  code: 0, result: { 'release-tip-moves': { value, source, ...extra } },
 });
 
 function withFixture(fn) {
@@ -57,11 +57,13 @@ function pushRunDirUpstream(fx) {
   fx.run(fx.other, ['push', '-q', 'origin', BRANCH]);
 }
 
+const THROWS = Symbol('resolveBound throws');
+
 function check(fx, { decisionsText, bound = boundOf(2), asGiven = false, git } = {}) {
   const logged = [];
   const v = checkReviewedTip(
     { decisionsText, branch: BRANCH, asGiven, preMajor: false },
-    { git: git || runner(fx.work, fx.env), resolveBound: () => bound, appendLog: (t) => logged.push(t) },
+    { git: git || runner(fx.work, fx.env), resolveBound: () => { if (bound === THROWS) throw new Error('kaboom'); return bound; }, appendLog: (t) => logged.push(t) },
   );
   assert.deepStrictEqual(Object.keys(v).sort(), VERDICT_KEYS, 'a verdict always carries every key');
   return { v, logged };
@@ -184,10 +186,8 @@ test('bound equal to move is not exceeded', () => {
 
 test('unreadable lever → failed', () => {
   const cases = [
-    ['non-zero exit', { status: 1, stdout: '', stderr: 'boom' }, /^boom$/],
-    ['non-zero exit, silent', { status: 3, stdout: '', stderr: '' }, /exited 3/],
-    ['not JSON', { status: 0, stdout: 'nope', stderr: '' }, /not JSON/],
-    ['entry missing', { status: 0, stdout: '{}', stderr: '' }, /missing from the resolver output/],
+    ['refused', { code: 1, message: 'boom' }, /^resolve-policy: boom$/],
+    ['resolveBound throws (AC5)', THROWS, /kaboom/],
     ['invalid: true', boundOf(2, 'policy', { invalid: true }), /invalid value/],
     ['negative', boundOf(-1), /non-negative integer/],
     ['fractional', boundOf(1.5), /non-negative integer/],

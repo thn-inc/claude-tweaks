@@ -2,17 +2,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { domainChurn } = require('../../../plugin/bin/lib/health-core/churn');
+const { initRepo } = require('../../helpers/git-fixtures');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'health-core-churn-')); }
+function tmp() { return scratchDir('health-core-churn-'); }
 
 function initGitRepo(root) {
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@test.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@test.com' });
 }
 
 function commit(root, msg) {
@@ -73,6 +73,18 @@ test('domainChurn caches identical (root, paths, sinceMs) calls instead of re-sp
   fs.rmSync(path.join(root, '.git'), { recursive: true, force: true });
   const second = domainChurn(root, ['src/a.ts'], 0);
   assert.strictEqual(second, first);
+});
+
+test('domainChurn runs git with the injected env', () => {
+  const B = tmp();
+  fs.writeFileSync(path.join(B, 'a.md'), 'x\n');
+  initGitRepo(B);
+  commit(B, 'first');
+  const notARepo = tmp();
+  // GIT_DIR points git at B's repository even though `-C` names a non-repo
+  // directory; the count is 0 when the injected env is ignored.
+  const env = { ...process.env, GIT_DIR: path.join(B, '.git') };
+  assert.strictEqual(domainChurn(notARepo, ['a.md'], 0, { env }), 1);
 });
 
 // Regression: this module is required by all three health-sibling scope.js

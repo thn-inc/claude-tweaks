@@ -5,19 +5,33 @@ const assert = require('node:assert');
 const {
   readOrder, writeOrder, buildFreshnessSignal, signalsMatch, composeOrderBlob, cacheUsable, GROUPING_MODE, groupingMode,
 } = require('../../../plugin/bin/lib/dispatch/queue-order.js');
+const { isCatFileBatch, answerCatFileBatch } = require('../../helpers/fake-cat-file-batch');
 
 // Same minimal fake git runner shape as merge-lane-breaker.test.js's own
 // (kept independent rather than importing it — this suite only needs
 // read/write wiring proof, not the full CAS-loop coverage
-// durable-state.test.js already owns).
+// durable-state.test.js already owns). A `git cat-file --batch` read no rule
+// matches is answered from the same rules, one synthetic `git show` per object.
 function fakeRunner(script) {
-  function run(cmd, args) {
+  function applyRules(cmd, args) {
     for (const rule of script) {
       if (rule.match(cmd, args)) {
         const throwsVal = typeof rule.throws === 'function' ? rule.throws(cmd, args) : rule.throws;
         if (throwsVal) throw new Error(throwsVal);
-        return typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns;
+        return { matched: true, value: typeof rule.returns === 'function' ? rule.returns(cmd, args) : rule.returns };
       }
+    }
+    return { matched: false };
+  }
+  function run(cmd, args, opts) {
+    const hit = applyRules(cmd, args);
+    if (hit.matched) return hit.value;
+    if (isCatFileBatch(cmd, args)) {
+      return answerCatFileBatch(args, opts, (showArgs) => {
+        const shown = applyRules('git', showArgs);
+        if (!shown.matched) throw new Error(`fakeRunner: no rule matched git ${JSON.stringify(showArgs)}`);
+        return shown.value;
+      });
     }
     throw new Error(`fakeRunner: no rule matched ${cmd} ${JSON.stringify(args)}`);
   }
@@ -166,6 +180,20 @@ test('groupingMode names the express variant only when express is enabled; GROUP
   assert.equal(GROUPING_MODE, 'per-record');
 });
 
+test('AC12.1, AC6.1: groupingMode maps the four lane combinations to four distinct stamps; cacheUsable accepts a blob only under its exact stamp', () => {
+  assert.equal(groupingMode(false, false), 'per-record');
+  assert.equal(groupingMode(true, false), 'per-record+express');
+  assert.equal(groupingMode(false, true), 'per-record+driver');
+  assert.equal(groupingMode(true, true), 'per-record+express+driver');
+  assert.equal(groupingMode(false), 'per-record');
+  assert.equal(groupingMode(true), 'per-record+express');
+  const stamps = ['per-record', 'per-record+express', 'per-record+driver', 'per-record+express+driver'];
+  for (const stamped of stamps) {
+    const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: stamped });
+    for (const mode of stamps) assert.equal(cacheUsable(blob, SIGNAL, mode), stamped === mode, `${stamped} blob under ${mode}`);
+  }
+});
+
 test('composeOrderBlob stamps a passed grouping, and the stamp gates cacheUsable (#4025)', () => {
   const express = composeOrderBlob({
     computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: 'per-record+express',
@@ -184,6 +212,49 @@ test('cacheUsable(null, x) is false and never throws on malformed input', () => 
   assert.equal(cacheUsable(undefined, SIGNAL), false);
   assert.equal(cacheUsable({ grouping: 'per-record' }, SIGNAL), false);
   assert.equal(cacheUsable({ grouping: 'per-record', freshnessSignal: SIGNAL }, null), false);
+});
+
+// #4793: a foreign issue closing changes nothing in the freshness signal, so a hit would replay a
+// stale foreign verdict. A queue whose body declares 'Blocked by owner/name#N' is never a hit.
+test('#4793: the same queue is a cache hit without a qualified foreign Blocked by line, and a miss with one', () => {
+  const queue = (body) => [{ number: 1, updatedAt: 'a', state: 'OPEN', body }];
+  const persistedFor = (issues) => composeOrderBlob({
+    computedAt: 'x', runId: 'y', freshnessSignal: buildFreshnessSignal(issues), groups: [], excluded: [],
+  });
+  for (const body of ['Blocked by #7', 'see other/repo#5 for context', '', undefined]) {
+    assert.equal(cacheUsable(persistedFor(queue(body)), buildFreshnessSignal(queue(body))), true, `body ${JSON.stringify(body)}`);
+  }
+  for (const body of ['Blocked by other/repo#5', 'intro\nBlocked by Other/Repo#5\n']) {
+    const foreign = queue(body);
+    assert.equal(cacheUsable(persistedFor(foreign), buildFreshnessSignal(foreign)), false, `body ${JSON.stringify(body)}`);
+  }
+  // Any one candidate declaring it is enough, and the flag is the only extra key on the signal.
+  const mixed = [...queue(''), { number: 2, updatedAt: 'b', state: 'OPEN', body: 'Blocked by acme/x#2' }];
+  assert.deepStrictEqual(buildFreshnessSignal(mixed).foreignDeclared, true);
+  assert.equal('foreignDeclared' in buildFreshnessSignal(queue('')), false, 'absent when no body declares one');
+});
+
+// signalsMatch pairs entries by issue number: two signals of the same length that differ only in one
+// number must not match (an absent number is a mismatch, not "compare against itself").
+test('signalsMatch and cacheUsable reject two same-length signals with one issue number swapped', () => {
+  const persisted = { issues: [{ number: 1, updatedAt: 'a', state: 'OPEN' }, { number: 2, updatedAt: 'b', state: 'OPEN' }] };
+  const current = { issues: [{ number: 1, updatedAt: 'a', state: 'OPEN' }, { number: 3, updatedAt: 'b', state: 'OPEN' }] };
+  assert.equal(signalsMatch(persisted, current), false);
+  const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: persisted, groups: [], excluded: [] });
+  assert.equal(cacheUsable(blob, current), false);
+  assert.equal(cacheUsable(blob, persisted), true, 'the identical signal is still a hit');
+});
+
+// #4793: a native or body-declared foreign blocker closing changes nothing in the freshness signal, so
+// a hit must not replay a persisted exclusion that names one.
+test('#4793: cacheUsable misses when a persisted exclusion names a foreign blocker, and hits when it names only this repository\'s #N', () => {
+  const blobWith = (excluded) => composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded });
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['other/repo#5'] }]), SIGNAL), false);
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['other/repo#5 (state unreadable)'] }]), SIGNAL), false);
+  assert.equal(cacheUsable(blobWith([{ number: 2, blockedBy: [4, 'Other/Repo#5'] }]), SIGNAL), false, 'one foreign entry among local ones');
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: [5] }]), SIGNAL), true);
+  assert.equal(cacheUsable(blobWith([{ number: 1, blockedBy: ['#5', 'not a ref'] }]), SIGNAL), true, 'strings that are not owner/name#N are not foreign');
+  assert.equal(cacheUsable(blobWith([]), SIGNAL), true);
 });
 
 // --- readOrder / writeOrder wiring ---

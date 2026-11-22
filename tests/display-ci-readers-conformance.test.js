@@ -173,7 +173,7 @@ function repoWideItem1Slice() {
 
 test('AC1.1: pr-scan repo-wide item 1 calls pr-checks.js --pr only for rollup-green PRs', () => {
   const slice = repoWideItem1Slice();
-  assert.match(slice, /gh pr list --state open --json [^\n]*statusCheckRollup[^\n]*--limit 100/, 'the open-PR list fetches statusCheckRollup');
+  assert.match(slice, /gh pr list --state open --json [^\n]*statusCheckRollup[^\n]*--limit \{resolved-limit\}/, 'the open-PR list fetches statusCheckRollup');
   assert.ok(slice.includes('PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "'), 'the CI script receives the plugin root through the environment');
   assert.ok(!slice.includes('gh pr checks'), 'the gh pr checks read is retired');
 });

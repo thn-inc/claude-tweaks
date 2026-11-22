@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2027-01-07T09:30:00.000Z",
+  "phases": [
+    {
+      "phase": "review",
+      "start": "2027-01-07T09:10:00.000Z",
+      "end": "2027-01-07T09:25:00.000Z",
+      "source": "skill_invoked",
+      "procedureFiles": { "skills/review/code-mode-steps.md": 4, "skills/review/step3-lens-dispatch.md": 2 }
+    }
+  ],
+  "totals": { "minutes": 30, "procedureFiles": { "skills/review/code-mode-steps.md": 4, "skills/review/step3-lens-dispatch.md": 2 } }
+}

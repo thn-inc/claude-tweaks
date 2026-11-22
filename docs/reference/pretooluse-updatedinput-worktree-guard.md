@@ -64,6 +64,48 @@ TOOL_RESULT toolu_01LPvynCFKzWh79UBeWJjY34 is_error=true: "This session is isola
 
 Evidence (the maintainer's run directory, not shipped): `evidence/guard-rewrite-live-probe.jsonl` and `evidence/guard-rewrite-live-probe-control.jsonl` under `.claude-tweaks/pipelines/2026-10-24T193452-record-4028/`.
 
+## Probe 3: `drop-git-C-cwd` and `quote-exit-status`, measured live
+
+- **Claude Code version:** 2.1.325 (`claude --version`)
+- **Date measured:** 2026-11-16
+- **Record:** #5588, run with the branch's `plugin/` before merge.
+
+```
+claude -p -w probe-5588-plugin --plugin-dir "<worktree>/plugin" --model haiku --dangerously-skip-permissions --setting-sources local --output-format stream-json --verbose --include-hook-events --max-budget-usd 1 < probe3-prompt.txt
+claude -p -w probe-5588-ctl --model haiku --dangerously-skip-permissions --setting-sources local --output-format stream-json --verbose --include-hook-events --max-budget-usd 1 < probe3-prompt.txt
+```
+
+The prompt asked for four Bash calls, verbatim and one per call: `pwd`, then the three refused forms, the third with the path `pwd` printed pasted in as a literal. The second command is the control, without the plugin. Raw lines from the plugin run (stream-json; the `HOOK` lines are the `PreToolUse:Bash` hook's stdout, `<wt>` is the path `pwd` printed, `/Users/…/.claude/worktrees/probe-5588-plugin`):
+
+```
+TOOL_USE toolu_01HKDgiccKpcd4yaC97L8QVX: {"command":"git -C . rev-parse --short HEAD",...}
+HOOK hook_response: {"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"git rev-parse --short HEAD",...}}}
+TOOL_RESULT toolu_01HKDgiccKpcd4yaC97L8QVX is_error=false: "57c0f74099"
+TOOL_USE toolu_01KCY6PsqEtaguCLDayzKdrV: {"command":"git -C \"<wt>\" grep -c X -- tools/guard-refusals/*.js",...}
+HOOK hook_response: {"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"git grep -c X -- tools/guard-refusals/*.js",...}}}
+TOOL_RESULT toolu_01KCY6PsqEtaguCLDayzKdrV is_error=false: "tools/guard-refusals/shapes.js:9"
+TOOL_USE toolu_01EPYnndhjxY7vivWJTeTctK: {"command":"git merge-base --is-ancestor HEAD HEAD; echo exit=$?",...}
+HOOK hook_response: {"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"git merge-base --is-ancestor HEAD HEAD; echo \"exit=$?\"",...}}}
+TOOL_RESULT toolu_01EPYnndhjxY7vivWJTeTctK is_error=false: "exit=0"
+RESULT subtype=success is_error=false cost=0.00989967 turns=5
+```
+
+Control, without the plugin (`<wt>` is `/Users/…/.claude/worktrees/probe-5588-ctl`):
+
+```
+TOOL_RESULT toolu_0159vAQvWuQomuo5gM4MxxX6 is_error=true: "This session is isolated in the worktree <wt>, but this command points git at a directory computed at runtime (-C .), which can't be verified before it runs. Refusing to run it ..."
+TOOL_RESULT toolu_01JdTUYUC4xK7iZD2RXq59gS is_error=true: "This session is isolated in the worktree <wt>, but this command redirects git through a glob pattern that expands at runtime. Refusing to run it ..."
+TOOL_RESULT toolu_017e3qCDwPbyRAU1Tk93sM3W is_error=true: "This session is isolated in the worktree <wt>, but this command names git in a form too complex to verify that it stays inside the worktree. Refusing to run it ..."
+```
+
+- **`git -C . rev-parse --short HEAD`:** refused in the control; with the plugin, `drop-git-C-cwd` rewrote it to `git rev-parse --short HEAD`, which ran.
+- **`git -C "<own worktree>" grep -c X -- tools/guard-refusals/*.js`:** refused in the control (the glob pathspec); with the plugin, `drop-git-C-cwd` rewrote it to `git grep -c X -- tools/guard-refusals/*.js`, which ran.
+- **`git merge-base --is-ancestor HEAD HEAD; echo exit=$?`:** refused in the control; with the plugin, `quote-exit-status` rewrote it to `…; echo "exit=$?"`, which ran and printed `exit=0`.
+- **No `permissionDecision`:** no hook output in the plugin run carried one, and the `pwd` call got no rewrite (empty hook stdout).
+- **Base commit:** `-w` created both probe worktrees from `main` (`57c0f74099`), not from the branch; the hook code came from `--plugin-dir`, so the rewrite measured is the branch's.
+
+Evidence (the maintainer's run directory, not shipped): `evidence/guard-rewrite-probe3.jsonl` and `evidence/guard-rewrite-probe3-control.jsonl` under `.claude-tweaks/pipelines/2026-11-16T004706-record-5588/`.
+
 ## How the guard resolves variables (controller probes, 2026-10-25)
 
 Measured in a guard-isolated worktree session, to decide which shapes the inline-literal-assignment rule actually helps:
@@ -76,7 +118,7 @@ So the one measured refused shape inline-literal-assignment turns into an accept
 
 ## What the plugin does with it
 
-`plugin/bin/lib/hooks/guard-rewrite.js` rewrites five shapes, only inside a linked worktree, and returns the rewrite as `hookSpecificOutput.updatedInput` from both PreToolUse paths (the prefilter fast path and `pre-tool-use.js`'s `run()`). Rule ids: `inline-literal-assignment`, `plugin-root-placeholder`, `node-eval-separator`, `quote-escaped-space`, `drop-redundant-cd`. Rules 1 and 2 apply only when every command-position word is a plain literal outside the runner, reserved-word and computed-name-assigning builtin sets and the command has no arithmetic context; rule 2 inlines only files under `bin/`. It never emits `permissionDecision`, and it never throws (any failure is a silent skip). `docs/hooks.md` carries the dispatcher-side contract; the module header carries the residuals.
+`plugin/bin/lib/hooks/guard-rewrite.js` rewrites seven shapes, only inside a linked worktree, and returns the rewrite as `hookSpecificOutput.updatedInput` from both PreToolUse paths (the prefilter fast path and `pre-tool-use.js`'s `run()`). Rule ids: `inline-literal-assignment`, `plugin-root-placeholder`, `node-eval-separator`, `quote-escaped-space`, `drop-redundant-cd` (`cd <cwd> &&` when the shell is already there), `drop-git-C-cwd` (`git -C .` anywhere, or `git -C <the session cwd, exact spelling>` on the text's first command, only before a read subcommand), `quote-exit-status` (a `word=$?` argument double-quoted when the text names `git` or `gh`). Rules 1 and 2 apply only when every command-position word is a plain literal outside the runner, reserved-word and computed-name-assigning builtin sets and the command has no arithmetic context; rule 2 inlines only files under `bin/`. On Windows, rule 2 inlines the root forward-slashed (`toPosix`, `D:/p/root/bin/x.js`), and `shippedUnder` still lstats the native join; a win32 root with no drive or UNC prefix (a drive-relative `\p\root`, which would become `/p/root`, drive `P:` to Git Bash) declines. It never emits `permissionDecision`, and it never throws (any failure is a silent skip). `docs/hooks.md` carries the dispatcher-side contract; the module header carries the residuals.
 
 Two things the rewrites are *not*:
 
@@ -86,5 +128,7 @@ Two things the rewrites are *not*:
 ## Not measured
 
 - **Not measured:** interactive mode, how a prompt in a non-bypass permission mode evaluates the rewritten input, and other Claude Code versions.
+- **Not measured:** a Windows session. Whether the guard treats the forward-slashed plugin root `D:/…` like a native root is unprobed, and so is what Git Bash sets `$PWD` to after a native-spelled `cd "D:\w\cwd"` (the form `drop-redundant-cd` drops), so "same argv" for that Windows form is a premise, not a measurement; a refusal there is the same refusal an unrewritten command gets.
+- **Not measured:** how a permission rule written for the `git -C` spelling treats the plain spelling `drop-git-C-cwd` leaves, which is why the rule is restricted to read subcommands.
 - Probe 2 ran under `--dangerously-skip-permissions`; the permission mode of probe 1 was not recorded. In a mode that prompts, whether the prompt shows the original or the rewritten command is unknown.
 - A Claude Code release that reorders the hook and the guard would turn every rewrite into a no-op (the guard would see the original). Re-run probe 2 after a Claude Code upgrade that touches hooks or the guard.

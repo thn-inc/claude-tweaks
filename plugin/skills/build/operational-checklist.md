@@ -19,7 +19,7 @@ These findings have an in-codebase fix. Common Step 5 applies them before its ve
 | New environment variables | Grep changed files for new `process.env.*` or env access patterns | Check `.env.example` (or equivalent) includes the new variable. Add if missing. |
 | New package exports | `package.json` `exports` field changed | Run the package build to verify exports resolve correctly. |
 
-Common Step 5.5 appends each Category A finding to the open items ledger (see `/claude-tweaks:ledger`) with the appropriate phase and status `fixed` once its Common Step 5 action completed — `open` for a schema change with no documented push command, or for any action that did not complete.
+Common Step 5.5 appends each Category A finding to the open items ledger (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section) with the appropriate phase and status `fixed` once its Common Step 5 action completed — `open` for a schema change with no documented push command, or for any action that did not complete.
 
 ---
 
@@ -39,7 +39,7 @@ These tasks live outside source code, but most have a CLI. "Requires human actio
 | `*_STRIPE_*` env vars | Stripe | `which stripe && stripe config --list` | webhook subscription, key rotation |
 | `Dockerfile*` modified | Docker | `which docker` | build (auto), push (explicit confirmation) |
 
-Then, for each finding below, apply the Step 2.5 triage (auto-executable / auth-gap / truly manual):
+Then, for each finding below, read `manual-steps.md` in this skill's directory and apply its triage (auto-executable / auth-gap / truly manual):
 
 | Check | Detect | Default action if probe passes |
 |-------|--------|--------------------------------|

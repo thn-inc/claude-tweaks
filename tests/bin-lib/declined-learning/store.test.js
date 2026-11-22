@@ -1,8 +1,24 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const store = require('../../../plugin/bin/lib/declined-learning/store');
+const { fixtureGit } = require('../../helpers/git-fixtures');
+
+// storePath() anchors at the main checkout whenever cwd is inside a git repo (store.js header).
+// The in-process cases below key their fakes on the relative path, so run this file from a fresh
+// directory outside any repo; node --test gives each file its own process, so the chdir cannot
+// leak into another suite.
+const priorCwd = process.cwd();
+const outsideRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'declined-store-cwd-'));
+process.chdir(outsideRepo);
+after(() => {
+  process.chdir(priorCwd);
+  fs.rmSync(outsideRepo, { recursive: true, force: true });
+});
 
 // Fake deps are plain objects backed by an in-memory `data` keyed by the path a real fs call
 // would use — same convention as tests/bin-lib/transcript-judge/watermark.test.js's makeStore().
@@ -24,7 +40,7 @@ const STORE_REL = path.join('.claude-tweaks', 'declined-learning', 'store.json')
 
 // ---- storePath ---------------------------------------------------------
 
-test('storePath: fixed location under .claude-tweaks/declined-learning/', () => {
+test('storePath: outside a git repository, the relative location under .claude-tweaks/declined-learning/', () => {
   assert.equal(store.storePath(), STORE_REL);
 });
 
@@ -339,4 +355,126 @@ test('pruneDeclines: defaults maxAgeDays to DEFAULT_PRUNE_MAX_AGE_DAYS (180) whe
   const removed = store.pruneDeclines({ now: NOW }, deps);
 
   assert.equal(removed, 1);
+});
+
+// ---- main-checkout anchoring (#4360) ----------------------------------------
+// A decline written from a linked worktree must land in the main checkout's store, so it survives
+// the worktree's removal and a lookup from the main checkout finds it. Every store call runs in a
+// child process so its cwd is real, and every git command gets a pinned environment.
+
+const STORE_MODULE = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'declined-learning', 'store.js');
+
+function pinnedEnv() {
+  const env = { ...process.env };
+  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete env[key];
+  return {
+    ...env,
+    GIT_AUTHOR_NAME: 'fixture',
+    GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+    GIT_COMMITTER_NAME: 'fixture',
+    GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+  };
+}
+
+function git(args, cwd) {
+  fixtureGit(args, { cwd, env: pinnedEnv(), stdio: 'pipe' });
+}
+
+// Runs `body` in a child process whose cwd is `cwd` and returns its stdout.
+function runStore(cwd, body) {
+  const script = `const store = require(${JSON.stringify(STORE_MODULE)});\n${body}`;
+  const r = spawnSync(process.execPath, ['-e', script], { cwd, env: pinnedEnv(), encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout;
+}
+
+function withWorktreeFixture(fn) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'declined-store-wt-')));
+  try {
+    const main = path.join(root, 'main');
+    const linked = path.join(root, 'linked');
+    fs.mkdirSync(main);
+    git(['init', '-q'], main);
+    git(['-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init'], main);
+    git(['worktree', 'add', '-q', '-b', 'linked-branch', linked], main);
+    const sub = path.join(linked, 'sub');
+    fs.mkdirSync(sub);
+    return fn({ main: fs.realpathSync(main), linked: fs.realpathSync(linked), sub: fs.realpathSync(sub) });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('#4360 recordDecline from a linked worktree writes the main checkout store and nothing under the worktree', () => withWorktreeFixture(({ main, linked }) => {
+  const reported = runStore(linked, 'process.stdout.write(store.storePath());\nstore.recordDecline("feedback-from-wt", { source: "feedback", reason: "stale" });');
+
+  assert.equal(reported, path.join(main, STORE_REL));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(main, STORE_REL), 'utf8'));
+  assert.equal(onDisk['feedback-from-wt'].source, 'feedback');
+  assert.equal(fs.existsSync(path.join(linked, '.claude-tweaks', 'declined-learning')), false, 'no store under the worktree');
+}));
+
+test('#4360 lookupDecline from the main checkout finds a decline recorded from a linked worktree', () => withWorktreeFixture(({ main, linked }) => {
+  runStore(linked, 'store.recordDecline("feedback-from-wt", { source: "feedback", reason: "stale", subject: "wt subject" });');
+
+  const found = JSON.parse(runStore(main, 'process.stdout.write(JSON.stringify(store.lookupDecline("feedback-from-wt")));'));
+
+  assert.equal(found.source, 'feedback');
+  assert.equal(found.subject, 'wt subject');
+}));
+
+test('#4360 a cwd in a subdirectory of a linked worktree resolves to the same main checkout store', () => withWorktreeFixture(({ main, linked, sub }) => {
+  runStore(sub, 'store.recordDecline("feedback-from-sub", { source: "feedback" });');
+
+  assert.equal(runStore(sub, 'process.stdout.write(store.storePath());'), path.join(main, STORE_REL));
+  assert.equal(fs.existsSync(path.join(linked, '.claude-tweaks')), false, 'no store under the worktree');
+  const found = JSON.parse(runStore(main, 'process.stdout.write(JSON.stringify(store.lookupDecline("feedback-from-sub")));'));
+  assert.equal(found.source, 'feedback');
+}));
+
+test('#4360 recordDecline from a linked worktree holds the store lock under the main checkout, not the worktree', () => withWorktreeFixture(({ main, linked }) => {
+  const lockRel = path.join('.claude-tweaks', 'declined-learning', '.store.lock');
+  const seen = JSON.parse(runStore(linked, `const fs = require('node:fs');
+const seen = {};
+store.recordDecline("feedback-lock", { source: "feedback" }, { readFile: (p, enc) => {
+  seen.main = fs.existsSync(${JSON.stringify(path.join(main, lockRel))});
+  seen.linked = fs.existsSync(${JSON.stringify(path.join(linked, lockRel))});
+  return fs.readFileSync(p, enc);
+} });
+process.stdout.write(JSON.stringify(seen));`));
+
+  assert.deepEqual(seen, { main: true, linked: false });
+}));
+
+test('#4360 outside a git repository storePath() stays the relative path and recordDecline writes under the cwd', () => {
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'declined-store-norepo-')));
+  try {
+    assert.equal(runStore(outside, 'process.stdout.write(store.storePath());'), STORE_REL);
+    runStore(outside, 'store.recordDecline("feedback-norepo", { source: "feedback" });');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(outside, STORE_REL), 'utf8'))['feedback-norepo'].source, 'feedback');
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+// Windows refuses to remove a directory that is a process's cwd (EBUSY/EPERM), so the removal in the
+// child below cannot happen there; the case is POSIX-only.
+test('#4360 a process whose cwd was deleted keeps the relative path and degrades open on read', { skip: process.platform === 'win32' }, () => {
+  // Outside the checkout, and not under the per-user temp dir on darwin. Observed on darwin:
+  // process.cwd() on a deleted cwd under /var/folders (os.tmpdir()) blocked instead of throwing
+  // ENOENT, while the same call threw ENOENT under /private/tmp.
+  const base = process.platform === 'darwin' ? '/private/tmp' : os.tmpdir();
+  const doomed = fs.realpathSync(fs.mkdtempSync(path.join(base, 'declined-store-gone-')));
+  try {
+    // chdir clears Node's cached cwd, so the removal below is observed by process.cwd().
+    const out = runStore(doomed, `process.chdir(${JSON.stringify(doomed)});
+require('node:fs').rmdirSync(${JSON.stringify(doomed)});
+let cwdGone = false;
+try { process.cwd(); } catch { cwdGone = true; }
+if (!cwdGone) throw new Error('precondition: process.cwd() should throw once the cwd is removed');
+process.stdout.write(JSON.stringify({ storePath: store.storePath(), lookup: store.lookupDecline('feedback-x') }));`);
+    assert.deepEqual(JSON.parse(out), { storePath: STORE_REL, lookup: null });
+  } finally {
+    fs.rmSync(doomed, { recursive: true, force: true });
+  }
 });

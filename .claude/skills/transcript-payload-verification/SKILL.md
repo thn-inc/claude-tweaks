@@ -129,6 +129,23 @@ produced zero captured events, reproduced twice, while the identical setup corre
 section for the full measurement. Capture one scenario per tool the pattern is meant to match, and
 keep the measurement date beside the pattern.
 
+**A plugin hook's matcher is probed through a scratch plugin, not `--settings` (#4589).** When the
+question is whether a `plugin/hooks/hooks.json` entry fires (which tool name it sees, whether its
+deny takes effect), load a scratch plugin (`.claude-plugin/plugin.json`, plus `hooks/hooks.json`
+running a stdin logger through `${CLAUDE_PLUGIN_ROOT}`) with `claude -p --plugin-dir <scratch>
+--output-format stream-json --verbose --include-hook-events`. The entry is then a plugin hook like
+the shipped one, and the stream carries each hook's own stdout and exit code beside the tool result.
+`docs/reference/pretooluse-agent-tool-probe.md` is the instance: one scenario per branch the gate
+takes (a main-thread call, a denied call, a nested call, a prompt passed from a file), with an
+`Agent` and a `Task` matcher both registered so the capture shows which name fires (only `Agent`, on
+2.1.322). Two of its checks carry over. Prove a deny by its effect, not by the hook's output: the
+denied stream held zero `"parent_tool_use_id":"toolu_…"` lines, so no subagent started. And a probe
+spawned from inside a Claude Code session removes that session's variables (`CLAUDECODE`,
+`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID` and the rest the probe doc lists) from the child's
+environment, so it runs as a fresh top-level session rather than a child that could inherit the
+parent's session id. `docs/reference/pretooluse-updatedinput-worktree-guard.md` (#4028) took the same
+`--plugin-dir` route against the real `plugin/` directory.
+
 ## A fixture is a claim, not ground truth
 
 The same gap one level over: a fixture's literal values are an assertion about the real shape,
@@ -213,6 +230,21 @@ producer's transcripts, run step 2 against a real sample of each kind (the main 
 subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
 date beside the rule, the way `transcript.js`'s header does for the subagent layout.
 
+**Not every assistant line is a model call (#5914).** Claude Code records an API error, such as
+a usage or rate limit, as an `assistant` line with `message.model: "<synthetic>"`,
+`isApiErrorMessage: true` and every usage field at zero (observed on 2.1.302 with
+`error: "rate_limit"`). Zero usage leaves token sums unchanged, so a reader that only adds tokens
+never notices the line. A reader that compares each call with the previous one does: with
+`<synthetic>` lines kept in the previous-call chain as a model of their own, the pipeline-economy
+baseline's main-session model-switch cut came to 170 requests and $621.72, against 17 requests and
+$50.92 with them left out. `tools/pipeline-cost-report/spend.js` (`SYNTHETIC_MODEL`) keeps such a
+line in its request list at zero cost, never lets it act as the previous call for the model-switch
+or idle-gap check, and never lets it use up a pending compaction marker;
+`tests/pipeline-cost-report/spend.test.js` pins each case. `transcriptModelOf` in
+`plugin/bin/lib/timing/transcript.js` skips the same line when naming a transcript's model. Before
+chaining on "the previous call", or counting calls, grep a real store for `"model":"<synthetic>"`
+and decide which tallies such a line belongs in.
+
 ## One Claude Code version does not speak for another
 
 The same event can reach a transcript through a different carrier on a different release, so a
@@ -232,12 +264,24 @@ So before writing a parser for an event that has a carrier: `grep -l` the event'
 `<task-notification>`) across `{store}/projects/*/*/subagents/*.jsonl`, group the matches by the
 `version` field on each line, and read one line per distinct version and per distinct `type`.
 Build fixtures from those verbatim lines (long values truncated with `…`) and name the source file
-and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js` returns an
-indeterminate result when `<task-notification>` or `<fork-boilerplate>` shows up in any other entry
-shape, and its tests pin both the recognized carriers and that fallback. A test that asserts only the
-fail-closed outcome (`block`) passes whether the carrier is recognized or not, so also assert the
-parsed value (a count of `0`, not `null`). Keep the versions you observed beside the rule, as
-`subagent-stop.js`'s header comment does.
+and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js`'s gate
+count (`countPendingDispatches`) returns an indeterminate result when `<task-notification>` or
+`<fork-boilerplate>` shows up in any other entry shape, and its tests pin both the recognized
+carriers and that fallback. A test that asserts only the fail-closed outcome (`block`) passes whether
+the carrier is recognized or not, so also assert the parsed value (a count of `0`, not `null`). Keep
+the versions you observed beside the rule, as `subagent-stop.js`'s header comment does.
+
+**Pick each reader's indeterminate rule by what its wrong answer costs.** One scan can feed two
+readers whose failures cost different things. Record #5706 is the instance: `scanPendingDispatches`
+returns `{ gate, marker }` from one pass. The gate count decides whether a reply is blocked, so it
+still returns `null` on any unrecognized carrier. The stop-marker count only decides when
+`wait-for.js agents` returns, and a `null` there is a wait that never sees a finished child. So the
+marker skips a `<task-notification>` found in the agent's first user message (its own prompt), a
+`toolUseResult` line or an assistant line, and keeps counting; any other shape still nulls both
+counts. Before loosening one reader, show that no shape it skips can ever be a completion, so its
+count never falls below the true pending count, and leave the stricter reader alone unless
+something measured says it is wrong. Measure the skipped shapes on real transcripts first (#5706
+tallied 31,980 final stops across 2.1.283 to 2.1.325) and record that range beside the rule.
 
 A new carrier must reach every reader of the event, not only the one that surfaced it. #3015
 taught `countPendingDispatches` the `queued_command` shape while `isAsyncWaitSignal` (#2041), which
@@ -251,12 +295,40 @@ re-wake behavior: interactive 2.1.302 holds a dispatched agent open and re-wakes
 `Monitor` watch it started reports, headless (`claude -p`) 2.1.302 and later runs a nested `Agent` call
 synchronously, and headless 2.1.299 and older never re-wakes it for a nested child. The contract had stated
 "never re-woken" as universal, and every restatement had to be qualified once the interactive cell
-contradicted it (`tests/foreground-execution-instruction.test.js` now pins six claim sites). A `claude -p`
+contradicted it (`tests/foreground-execution-instruction.test.js` now pins five claim sites). A `claude -p`
 probe, the throwaway-hook recipe above included, measures headless only. When
 contract prose states harness behavior, measure each launch mode and version it will run under, record each
 cell's result beside the claim with its version (`plugin/skills/_shared/subagent-dispatch-core.md`'s
 "Measured on Claude Code (#3722)" sentence), and word the rule itself as only what holds in every cell — there,
 "cannot count on being re-woken".
+
+## Writing a probe up as a `docs/reference` document
+
+Three probe write-ups share one shape: `docs/reference/pretooluse-updatedinput-worktree-guard.md`
+(#4028), `docs/reference/pretooluse-agent-tool-probe.md` (#4589) and
+`docs/reference/workflow-tool-probe.md` (#5596). The last is the fullest; copy its parts.
+
+- **A scope block first.** The CLI version from `claude --version` and from each child's `init`
+  event, the date, the platform, the config root, the permission mode each `init` event reported
+  (#5596's `dontAsk` came from user settings, not a flag), every launch mode measured, and each
+  probe not run with the reason it could not be.
+- **Throwaway tooling in scratch, evidence in the run directory.** The probe plugin and launcher
+  live in the session's scratchpad and are never committed. Copy the raw captures into the run
+  directory's `evidence/` before the worktree or scratch is torn down, and quote the lines each row
+  rests on in an "Observed output" section, which is the permanent copy. Give the full command
+  line, the removed environment variables, the working directory and every prompt, so a probe
+  re-runs from the document alone.
+- **One Results row per probe**, naming its launch mode, the captures and run count it rests on,
+  the CLI version, the date, a Result from a closed vocabulary, the observed value, and what it
+  means for each record that reads it. Descriptive text stays out of the Result cell: #5596's
+  reviews sent seven cells back for it.
+- **An interactive measurement is the building session's own transcript.** A `claude -p` child
+  cannot measure an interactive session. Quote the building session's transcript rows by file and
+  line, and label every row resting on them as one interactive run.
+- **A "Depended on by" list** names each record and the rows it reads, with a re-run rule keyed to
+  the CLI version (#5596 re-runs a read row when the installed minor version differs).
+- **A result that contradicts a dependent record's text** is posted as a comment on that record,
+  quoting the row, and the PR lists the comments posted (#5596's AC7).
 
 ## When to use
 
@@ -278,5 +350,6 @@ cell's result beside the claim with its version (`plugin/skills/_shared/subagent
 ## Origin
 
 Surfaced during #452 (Add a Friction reflect lens fed by hook-denial and AskUserQuestion events) —
-see that record's final review and `evals/NOTES.md`'s "AskUserQuestion input/output shapes"
-section's Correction for the concrete incident this skill generalizes from.
+see that record's final review and `docs/reference/agent-sdk-payload-notes.md`'s
+"AskUserQuestion input/output shapes" section's Correction for the concrete incident this skill
+generalizes from.

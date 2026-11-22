@@ -121,6 +121,9 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   gh pr reopen {number} --repo {host}/{owner}/{repo}
   ```
 
+  A zero exit is not proof (#4833): re-run Step 1's `gh pr list` and require the picked PR to read
+  `state: OPEN`.
+
   **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
   **This log line is mandatory, not optional, for the same reason the reuse-open and no-match
   lines are (#1800)** — and it names `{branch}`, not just `{number}`, so the bookkeeping-stamps
@@ -144,14 +147,23 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   {run-id}. Reversibility: n/a.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
-  rejects): fall through to creation below. The fresh PR reuses the same title/body template;
-  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a pointer
-  comment already exists on the issue from an earlier attempt that reached far enough to post one
-  (Verification Brief routing, `_shared/pr-run-comments.md`) — update that pointer comment to the
-  new PR via the same find-and-update-by-marker shape, since it would otherwise link to a closed,
-  now-orphaned PR. A failed HARD-GATE run never reaches the brief, so this update is usually a
-  no-op — stated for the rare case a later phase's own failure follows an earlier phase's partial
-  progress.
+  rejects, or the re-list does not read `state: OPEN`): fall through to creation below. A rejected
+  reopen logs the first line; a zero exit whose re-list reads otherwise, or fails, logs the second
+  or third instead (`{error}` writes `failed` as `errored`, so it never reads as a degrade):
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} was rejected; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} exited 0 but the PR still reads {state}; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: could not confirm reopen of closed PR #{number} for {branch} ({error}); creating. Reversibility: n/a.`
+
+  An adopted picked PR is rebound as above. The fresh PR reuses the same title/body template;
+  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a legacy
+  pointer comment already exists on the issue, left by a run from before the acceptance packet
+  (new runs post none: the packet sits on the record, `_shared/acceptance-packet.md`) — update that
+  pointer comment to the new PR via the same find-and-update-by-marker shape, since it would
+  otherwise link to a closed, now-orphaned PR. This update is usually a no-op — stated for the
+  rare record that carries one.
 - **A match with `state: MERGED`**: this branch's PR already merged — the record is done. Treat
   as no match and fall through to creation; a fresh run against an already-merged branch is an
   unexpected precondition this file does not need to specially handle beyond not erroring.
@@ -322,7 +334,9 @@ on either form — use the HTML-comment form for compatibility with every existi
 read going through `pull_request_read` (or `update_pull_request`'s own re-fetch) has every
 `<!-- ... -->` span stripped from what it returns — key on the plain-text companion form
 instead. Neither form is ever removed once written, so a run that starts `gh`-absent and
-later gains `gh` (or vice versa) never loses recognition.
+later gains `gh` (or vice versa) never loses recognition. A repair after an MCP read
+(`repairPrBody`) puts back the HTML-comment form the read stripped, so an MCP write-back keeps
+both forms (#5358).
 
 **Phase checklist rows are delimited by `<!-- phases-start -->`/`<!-- phases-end -->` HTML
 comments** so `_shared/pr-checklist-refresh.md`'s phase-checklist update procedure can re-compose reliably (read body,
@@ -469,16 +483,6 @@ gh pr view {recorded-number} --repo {host}/{owner}/{repo} --json state,isDraft,u
   one (Step 3) and re-`record-pr` (Step 4) to overwrite the stale value. Log:
 
   `AUTO {time} — PR-early run lifecycle: recorded PR #{old} no longer open; {reused #{new} | created #{new}}. Reversibility: high.`
-
-## Phase-checklist update and pre-merge title/description refresh — moved
-
-Both moved to `_shared/pr-checklist-refresh.md` (#2002), which now carries the "Phase-checklist
-update (every phase exit)" and "Pre-merge title/description refresh" sections in full — read
-there. They moved out of this file so the two merge-time compose call sites
-(`wrap-up/auto-merge-short-circuit.md`, `wrap-up/review-console.md`) no longer need to compose
-this file's run-start-only Steps 1-4, Root cause, and Resume sections (below and above) just to
-reach that content — this file alone was 30+ KB of the ~57-60 KB the `merge` composed bundle
-measured, most of it never read again after run start.
 
 ## Skip / degrade behavior
 

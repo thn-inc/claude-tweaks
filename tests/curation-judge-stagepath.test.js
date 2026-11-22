@@ -3,9 +3,9 @@
 // stagePath is a payload violation the controller rejects; and after every judged fan-out the
 // engine sweeps the current worktree's shadow of the run-dir `staged/` path. #738 promoted that
 // sweep from a bash snippet embedded in curation-engine.md §4 to `bin/hooks.js sweep-shadow`
-// (bin/lib/hooks/sweep-shadow.js) — the probes below now exercise the verb directly (a real
-// spawned CLI process, so the documented invocation is what this file actually runs) instead of
-// spawning `bash -c` over an inline snippet copy.
+// (bin/lib/hooks/sweep-shadow.js) — the probes below now exercise the verb directly (in-process
+// through runCli, with two spawnCli tests proving the script entry) instead of spawning
+// `bash -c` over an inline snippet copy.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,6 +14,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { chmodDenialSkip } = require('./helpers/root');
+const { runCli, spawnCli } = require('./helpers/run-cli');
+const { hookEnv, writeIdentity } = require('./helpers/git-fixtures');
 const { readText } = require('./helpers/read-skill');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
@@ -83,7 +85,7 @@ test('multispec-batch-curation.md cites the sweep at its registry pass', () => {
 });
 
 // ---- Live probe: `node bin/hooks.js sweep-shadow` relocates a stray shadow file and leaves work/ alone ----
-test('probe: sweep-shadow relocates a staged file written to the worktree shadow and never touches work/', (t) => {
+test('probe: sweep-shadow relocates a staged file written to the worktree shadow and never touches work/', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   // A judge that resolved the run dir relatively from inside the worktree — the incident shape.
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
@@ -92,7 +94,7 @@ test('probe: sweep-shadow relocates a staged file written to the worktree shadow
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '# Auto-Decision Log — x\n\n## /wrap-up\n- STAGED stray line\n');
   fs.writeFileSync(path.join(shadow, 'work', '1-spec.md'), 'materialized — must stay\n');
 
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /relocated: wrap-up-skill-1\.md/);
   assert.match(r.stdout, /relocated: decisions\.md/);
@@ -106,7 +108,7 @@ test('probe: sweep-shadow relocates a staged file written to the worktree shadow
   assert.ok(fs.existsSync(path.join(shadow, 'work', '1-spec.md')), 'work/ untouched');
 });
 
-test('probe: sweep-shadow is a no-op when no shadow exists', (t) => {
+test('probe: sweep-shadow is a no-op when no shadow exists', async (t) => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stagepath-probe-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const main = path.join(root, 'main');
@@ -115,7 +117,7 @@ test('probe: sweep-shadow is a no-op when no shadow exists', (t) => {
   assert.equal(r0.status, 0, r0.stderr);
   const runDir = path.join(main, '.claude-tweaks/pipelines/x/spec-1');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
-  const r = sweep(main, { runDir, worktree: main });
+  const r = await sweep(main, { runDir, worktree: main });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), '');
   assert.ok(fs.existsSync(path.join(runDir, 'staged')), 'anchored staged/ survives — the same-path guard stops the sweep from rmdir-ing it');
@@ -134,8 +136,7 @@ function buildFixture(t, { realpath = true } = {}) {
   const main = path.join(root, 'main');
   fs.mkdirSync(main);
   git(main, 'init', '-q');
-  git(main, 'config', 'user.email', 'probe@example.invalid');
-  git(main, 'config', 'user.name', 'probe');
+  writeIdentity(main, { name: 'probe', email: 'probe@example.invalid' });
   fs.writeFileSync(path.join(main, 'a.txt'), 'a\n');
   git(main, 'add', 'a.txt');
   git(main, 'commit', '-q', '-m', 'base');
@@ -151,27 +152,33 @@ function buildFixture(t, { realpath = true } = {}) {
 // `node bin/hooks.js sweep-shadow [--run <runDir>] [--worktree <worktree>]` — a flag is omitted
 // entirely (not passed as an empty string) when the caller wants the "unset" case, matching what
 // an actually-missing PIPELINE_RUN_DIR/WORKTREE looks like to the verb.
-function sweep(cwd, { runDir, worktree } = {}) {
-  const args = [HOOKS_JS, 'sweep-shadow'];
+function sweepArgs({ runDir, worktree } = {}) {
+  const args = ['sweep-shadow'];
   if (runDir !== undefined) args.push('--run', runDir);
   if (worktree !== undefined) args.push('--worktree', worktree);
-  // #1270: neutralize any ambient PIPELINE_RUN_DIR (present in every
-  // /flow-dispatched shell) so a case that omits `runDir` (the deliberate
-  // "unset" probe this helper's own comment above documents) resolves the
-  // verb's own unset-arg fallback rather than silently picking up a real run
-  // dir this test never named — same defense-in-depth convention #1130
-  // established for every other bin/hooks.js test spawn helper.
-  return spawnSync(process.execPath, args, {
-    cwd, encoding: 'utf8', timeout: 30_000, env: { ...process.env, PIPELINE_RUN_DIR: '' },
-  });
+  return args;
 }
 
-test('probe: a same-basename collision keeps the anchored file, moves the shadow copy to .shadow-dup, and says so', (t) => {
+// #1270: neutralize any ambient PIPELINE_RUN_DIR (present in every
+// /flow-dispatched shell) so a case that omits `runDir` (the deliberate
+// "unset" probe this file's own comment above documents) resolves the
+// verb's own unset-arg fallback rather than silently picking up a real run
+// dir this test never named — same defense-in-depth convention #1130
+// established for every other bin/hooks.js test spawn helper. The shared
+// hookEnv() supplies it, and is the whole environment the verb sees (#5376).
+
+// Runs the verb in-process (#5376); the script entry has its own two tests below.
+async function sweep(cwd, { runDir, worktree } = {}) {
+  const r = await runCli(HOOKS_JS, sweepArgs({ runDir, worktree }), { cwd, env: hookEnv() });
+  return { status: r.code, stdout: r.stdout, stderr: r.stderr };
+}
+
+test('probe: a same-basename collision keeps the anchored file, moves the shadow copy to .shadow-dup, and says so', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md'), 'ANCHORED ORIGINAL\n');
   fs.writeFileSync(path.join(shadow, 'staged', 'wrap-up-skill-1.md'), 'shadow copy\n');
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /collision: wrap-up-skill-1\.md \(kept as wrap-up-skill-1\.md\.shadow-dup\)/);
   assert.doesNotMatch(r.stdout, /relocated: wrap-up-skill-1\.md/, 'a collision is never reported as a relocation');
@@ -180,53 +187,55 @@ test('probe: a same-basename collision keeps the anchored file, moves the shadow
   assert.ok(!fs.existsSync(path.join(shadow, 'staged')), 'shadow staged/ emptied and removed');
 });
 
-test('probe: run from the main checkout with a trailing-slash worktree arg, the guard holds and the anchored staged/ survives', (t) => {
+test('probe: run from the main checkout with a trailing-slash worktree arg, the guard holds and the anchored staged/ survives', async (t) => {
   const { main, runDir } = buildFixture(t);
-  const r = sweep(main, { runDir: runDir + '/', worktree: main + '/' });
+  const r = await sweep(main, { runDir: runDir + '/', worktree: main + '/' });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), '', 'a well-configured no-op prints nothing');
   assert.ok(fs.existsSync(path.join(runDir, 'staged')), 'anchored staged/ survives — trailing slashes cannot defeat the -ef guard');
 });
 
-test('probe: a symlinked temp root (raw mkdtemp path, no realpath) still relocates — pwd -P normalizes both sides', (t) => {
+test('probe: a symlinked temp root (raw mkdtemp path, no realpath) still relocates — pwd -P normalizes both sides', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t, { realpath: false });
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'claude-md-1.md'), 'p\n');
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /relocated: claude-md-1\.md/);
   assert.ok(fs.existsSync(path.join(runDir, 'staged', 'claude-md-1.md')), 'relocated to the anchored path despite symlinked components');
 });
 
-test('probe: an unset worktree arg is a loud diagnostic, exit 1, not a silent no-op — nothing is moved', (t) => {
+// real process: the script entry's refusal of a misconfigured sweep (AC5.1) — a spawned
+// `node hooks.js sweep-shadow` with --worktree omitted exits 1 and prints the diagnostic on stdout.
+test('AC5.1: sweep-shadow with an unset worktree arg exits 1 with its diagnostic through the script entry', (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'x.md'), 'x\n');
-  const r = sweep(wt, { runDir });
-  assert.equal(r.status, 1, r.stderr);
+  const r = spawnCli(HOOKS_JS, sweepArgs({ runDir }), { cwd: wt, env: hookEnv() });
+  assert.equal(r.code, 1, r.stderr);
   assert.match(r.stdout, /not swept/);
   assert.ok(fs.existsSync(path.join(shadow, 'staged', 'x.md')), 'nothing moved when misconfigured');
 });
 
-test('probe: a run dir outside RUN_ROOT is a loud diagnostic, exit 1 — nothing is moved', (t) => {
+test('probe: a run dir outside RUN_ROOT is a loud diagnostic, exit 1 — nothing is moved', async (t) => {
   const { wt, shadow } = buildFixture(t);
   const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stagepath-other-')));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   fs.mkdirSync(path.join(other, 'staged'));
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'x.md'), 'x\n');
-  const r = sweep(wt, { runDir: other, worktree: wt });
+  const r = await sweep(wt, { runDir: other, worktree: wt });
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stdout, /not under .* — not swept/);
   assert.ok(fs.existsSync(path.join(shadow, 'staged', 'x.md')), 'nothing moved');
 });
 
-test('probe: a headers-only shadow decisions.md is dropped and reported as such, never as "entries appended"', (t) => {
+test('probe: a headers-only shadow decisions.md is dropped and reported as such, never as "entries appended"', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(shadow, { recursive: true });
   fs.writeFileSync(path.join(shadow, 'decisions.md'), '# Auto-Decision Log — x\n\n## /wrap-up\n');
   const before = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stdout, /had no entries — dropped/);
   assert.doesNotMatch(r.stdout, /entries appended/);
@@ -234,25 +243,25 @@ test('probe: a headers-only shadow decisions.md is dropped and reported as such,
   assert.ok(!fs.existsSync(path.join(shadow, 'decisions.md')), 'shadow file removed');
 });
 
-test('probe: a repeated collision keeps every earlier .shadow-dup — the second lands as .shadow-dup-1', (t) => {
+test('probe: a repeated collision keeps every earlier .shadow-dup — the second lands as .shadow-dup-1', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md'), 'ANCHORED\n');
   fs.writeFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md.shadow-dup'), 'FIRST DUP — pending\n');
   fs.writeFileSync(path.join(shadow, 'staged', 'wrap-up-skill-1.md'), 'second shadow copy\n');
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /collision: wrap-up-skill-1\.md \(kept as wrap-up-skill-1\.md\.shadow-dup-1\)/);
   assert.equal(fs.readFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md.shadow-dup'), 'utf8'), 'FIRST DUP — pending\n', 'earlier dup untouched');
   assert.equal(fs.readFileSync(path.join(runDir, 'staged', 'wrap-up-skill-1.md.shadow-dup-1'), 'utf8'), 'second shadow copy\n');
 });
 
-test('probe: a symlink in the shadow staged/ is skipped with a diagnostic, exit 1, never moved, and the shadow dir is left for inspection', (t) => {
+test('probe: a symlink in the shadow staged/ is skipped with a diagnostic, exit 1, never moved, and the shadow dir is left for inspection', async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'secret.txt'), 'outside staged\n');
   fs.symlinkSync(path.join(shadow, 'secret.txt'), path.join(shadow, 'staged', 'link.md'));
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 1, r.stderr);
   assert.match(r.stdout, /skipped link\.md — not a regular file/);
   assert.match(r.stdout, /shadow staged\/ not empty after sweep/);
@@ -260,18 +269,51 @@ test('probe: a symlink in the shadow staged/ is skipped with a diagnostic, exit 
   assert.ok(fs.lstatSync(path.join(shadow, 'staged', 'link.md')).isSymbolicLink(), 'symlink left in place');
 });
 
-test('probe: an mv failure is a loud diagnostic, exit 1, not a silent no-op', chmodDenialSkip('root ignores directory permissions'), (t) => {
+test('probe: an mv failure is a loud diagnostic, exit 1, not a silent no-op', chmodDenialSkip('root ignores directory permissions'), async (t) => {
   const { wt, runDir, shadow } = buildFixture(t);
   fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(shadow, 'staged', 'x.md'), 'x\n');
   fs.chmodSync(path.join(runDir, 'staged'), 0o555);
   t.after(() => { if (fs.existsSync(path.join(runDir, 'staged'))) fs.chmodSync(path.join(runDir, 'staged'), 0o755); });
-  const r = sweep(wt, { runDir, worktree: wt });
+  const r = await sweep(wt, { runDir, worktree: wt });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /FAILED to move x\.md/);
   assert.match(r.stdout, /shadow staged\/ not empty after sweep/);
   assert.ok(fs.existsSync(path.join(shadow, 'staged', 'x.md')), 'file still in the shadow — nothing lost');
   fs.chmodSync(path.join(runDir, 'staged'), 0o755);
+});
+
+// #5376: the injected cwd is the only thing that can resolve relative --run/--worktree values, so a verb
+// that read process.cwd() instead would not find the shadow and would print its "not swept" diagnostic.
+test('AC6.1: sweep-shadow resolves relative --run and --worktree against the injected cwd', async (t) => {
+  const { wt, runDir, shadow } = buildFixture(t);
+  fs.mkdirSync(path.join(shadow, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(shadow, 'staged', 'rel-1.md'), 'p\n');
+  assert.notEqual(fs.realpathSync(process.cwd()), fs.realpathSync(wt), 'the injected cwd must differ from the runner\'s');
+  const r = await sweep(wt, { runDir: path.relative(wt, runDir), worktree: '.' });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /relocated: rel-1\.md/);
+  assert.ok(fs.existsSync(path.join(runDir, 'staged', 'rel-1.md')), 'file now at the anchored path');
+});
+
+// real process: the script entry's success path (AC5.1) — the same sweep on two identical fixtures, once
+// in-process and once through a spawned `node hooks.js`, with the identical explicit env, returns the same
+// code and stdout (the lines name the file only, never a path).
+test('AC5.1: sweep-shadow relocating a shadow staged file through runCli and spawnCli returns the same code and stdout', async (t) => {
+  const stage = (fx) => {
+    fs.mkdirSync(path.join(fx.shadow, 'staged'), { recursive: true });
+    fs.writeFileSync(path.join(fx.shadow, 'staged', 'wrap-up-skill-1.md'), 'proposal\n');
+  };
+  const a = buildFixture(t);
+  const b = buildFixture(t);
+  stage(a);
+  stage(b);
+  const inProcess = await sweep(a.wt, { runDir: a.runDir, worktree: a.wt });
+  const spawned = spawnCli(HOOKS_JS, sweepArgs({ runDir: b.runDir, worktree: b.wt }), { cwd: b.wt, env: hookEnv() });
+  assert.deepEqual({ code: spawned.code, stdout: spawned.stdout }, { code: inProcess.status, stdout: inProcess.stdout });
+  assert.equal(inProcess.status, 0);
+  assert.equal(inProcess.stdout, 'relocated: wrap-up-skill-1.md\n');
+  assert.ok(fs.existsSync(path.join(b.runDir, 'staged', 'wrap-up-skill-1.md')), 'the spawned run relocated it too');
 });
 
 // #1140: concurrent fan-out judges raced their own `git add`/`git commit` on the shared

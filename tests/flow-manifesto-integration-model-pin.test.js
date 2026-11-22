@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../plugin/bin/set-config');
@@ -40,7 +41,7 @@ function writeMechanismParagraph(manifesto) {
 }
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'impin-'));
+  const root = scratchDir('impin-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-19T090000-spec-3350');
   fs.mkdirSync(runDir, { recursive: true });
@@ -130,9 +131,34 @@ test('manifesto.md Write mechanism: an empty integration-model resolve omits the
   assert.match(para, /log-decision\.js --status SKIP/, 'Write mechanism must log the omission as a SKIP decision');
 });
 
+test('manifesto.md Write mechanism: a degraded resolve line is handled like the EMPTY value — no pin, a SKIP (#4578 Q10, AC20.1, AC20.2)', () => {
+  const para = writeMechanismParagraph(readText(MANIFESTO));
+  assert.match(para, /resolve-policy: degraded — integration-model:/, 'Write mechanism must name the degrade line the resolve prints on stderr');
+  assert.match(para, /never becomes the run pin/, 'Write mechanism must say a degraded detection never becomes the run pin');
+  assert.match(para, /`merge-verification` entry carries a `degraded` field[^.]*`wait`/, 'Write mechanism must write a degraded-derived merge-verification lever as wait');
+});
+
+test('AC1.1: the Write mechanism writes spec: through a single-key set-config call', () => {
+  const para = writeMechanismParagraph(readText(MANIFESTO));
+  assert.match(para, /--key spec --value \{lowest record number\}/, 'Write mechanism must write spec: via a single-key set-config call');
+  const setMatch = /--set "([^"]*)"/.exec(para);
+  assert.ok(setMatch, 'Write mechanism paragraph has no --set "..." argument');
+  assert.ok(!/(^|,)spec=/.test(setMatch[1]), 'the 14-pair --set batch must not carry a spec= pair');
+});
+
+test('integration-model.md Run-scoped stability: a degraded detection is never pinned (#4578 Q10, AC20.2)', () => {
+  const text = readText(path.join(REPO_ROOT, 'plugin', 'skills', '_shared', 'integration-model.md'));
+  const start = text.indexOf('## Run-scoped stability');
+  assert.notEqual(start, -1, 'integration-model.md: "## Run-scoped stability" heading not found');
+  const next = text.indexOf('\n## ', start + 4);
+  const section = text.slice(start, next === -1 ? text.length : next);
+  assert.match(section, /degraded detection[^.]*never (becomes the run pin|pinned)/);
+});
+
 test('the degrade-line prefixes the readers print are the ones the skill prose tells callers to log as SKIP', () => {
   const read = (...p) => readText(path.join(REPO_ROOT, ...p));
   const sites = [
+    ['plugin/bin/resolve-policy.js', 'resolve-policy: degraded —', ['plugin/skills/flow/manifesto.md']],
     ['plugin/bin/verify-run-bookends.js', 'verify-run-bookends: degraded —', ['plugin/skills/dispatch/task-prompt.md', 'plugin/skills/flow/claim-targets.md']],
     ['plugin/bin/lib/dispatch/first-call-artifact-check.js', 'first-call-artifact-check: degraded —', ['plugin/skills/dispatch/two-call-gate.md']],
   ];

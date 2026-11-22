@@ -22,6 +22,18 @@ test('cmdStatus prints the remembered count from readDurableState', () => {
   assert.strictEqual(out, 'remembered:3\n');
 });
 
+test('cmdStatus writes through an injected io, defaults root to io.cwd(), and returns 0', () => {
+  const roots = [];
+  let out = '';
+  const cmdStatus = makeCmdStatus({
+    readDurableState: (r) => { roots.push(r); return { remembered: { a: {} } }; },
+    io: { stdout: (t) => { out += t; }, stderr: () => {}, cwd: () => '/injected/cwd' },
+  });
+  assert.strictEqual(cmdStatus({}), 0);
+  assert.deepStrictEqual(roots, ['/injected/cwd']);
+  assert.strictEqual(out, 'remembered:1\n');
+});
+
 test('cmdStatus prints 0 when remembered is empty', () => {
   const readDurableState = () => ({ remembered: {} });
   const cmdStatus = makeCmdStatus({ readDurableState });

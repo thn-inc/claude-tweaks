@@ -12,7 +12,9 @@
 // hasLoggedPrDegrade releases a PR-less run only on a `... FAILED` line. That
 // regex is case-insensitive, so a line on a path that can leave the run
 // PR-less must not contain "failed" unless it is that degrade: this is why
-// the reopen-rejected line carries no reason. The one other line containing
+// the reopen-rejected line carries no reason, and the unconfirmed-reopen line
+// names its error with "failed" turned into "errored" (execFileSync's "Command
+// failed:" would match). The one other line containing
 // "failed" is the spec's own rebind SKIP wording, shared by the reopened and
 // reused paths. It does read as a degrade, and that is harmless only because
 // the PR is recorded right after the rebind attempt, whatever its outcome,
@@ -182,17 +184,40 @@ async function openPrEarly(opts, deps) {
     return { outcome: 'reused', number: open.number, url: open.url };
   }
 
+  // Re-list after a reopen that exited 0: null when the PR reads OPEN, else the
+  // cause line for the create path.
+  const unconfirmedReopenLine = (number) => {
+    try {
+      const now = listPrs().find((p) => p.number === number);
+      if (now && now.state === 'OPEN') return null;
+      return `reopen of closed PR #${number} for ${branch} exited 0 but the PR still reads ${now ? now.state : 'ABSENT'}; creating`;
+    } catch (e) {
+      return `could not confirm reopen of closed PR #${number} for ${branch} (${oneLine(errText(e).replace(/failed/gi, 'errored'))}); creating`;
+    }
+  };
+
   const closed = prs.filter((p) => p.state === 'CLOSED');
   let reopenRejected = null;
+  // The picked CLOSED PR's number, kept for the landed-PR rebind after creation.
+  let closedPick = null;
+  // The one cause line for an unconfirmed reopen, in place of the rejected line.
+  let unconfirmedLine = null;
   if (closed.length) {
     const adopted = adoptedPriorAttemptPr(deps.readDecisions ? deps.readDecisions() : '', branch);
     const pick = (adopted !== null && closed.find((p) => p.number === adopted)) || closed[0];
+    closedPick = pick.number;
     try {
       deps.gh(['pr', 'reopen', String(pick.number), '--repo', repo]);
     } catch {
       // Spec: a rejected reopen (branch force-pushed out from under it, or
       // any state GitHub refuses) falls through to creation.
       reopenRejected = pick.number;
+    }
+    // #4833: a reopen that exits 0 proves nothing. Only a re-list that reads
+    // the picked PR OPEN confirms it; anything else falls through to creation.
+    if (reopenRejected === null) {
+      unconfirmedLine = unconfirmedReopenLine(pick.number);
+      if (unconfirmedLine !== null) reopenRejected = pick.number;
     }
     if (reopenRejected === null) {
       log(`reopened PR #${pick.number} for ${branch} (retry)`, 'high');
@@ -208,7 +233,8 @@ async function openPrEarly(opts, deps) {
   }
 
   // No usable match (none, MERGED only, or a rejected reopen): create.
-  if (reopenRejected !== null) log(`reopen of closed PR #${reopenRejected} for ${branch} was rejected; creating`, 'n/a');
+  if (unconfirmedLine !== null) log(unconfirmedLine, 'n/a');
+  else if (reopenRejected !== null) log(`reopen of closed PR #${reopenRejected} for ${branch} was rejected; creating`, 'n/a');
   else log(`no existing PR for ${branch}; creating`, 'n/a');
 
   // The result names a rejected reopen, so the caller can repoint an earlier
@@ -234,6 +260,8 @@ async function openPrEarly(opts, deps) {
     '--title', title, '--body-file', bodyPath];
   let created = null;
   let reason = null;
+  // The open PR lookForLanded adopted, when the create path adopted one.
+  let landedRow = null;
   const tryCreate = () => {
     try { created = createdPr(deps.gh(createArgs)); } catch (e) { reason = oneLine(errText(e)); }
     return created !== null;
@@ -245,7 +273,10 @@ async function openPrEarly(opts, deps) {
   const lookForLanded = () => {
     try {
       const landed = listPrs().find((p) => p.state === 'OPEN');
-      if (landed) created = { number: landed.number, url: landed.url };
+      if (landed) {
+        created = { number: landed.number, url: landed.url };
+        landedRow = landed;
+      }
       return true;
     } catch (e) {
       // The marker goes first and each error is bounded on its own: a single
@@ -267,6 +298,15 @@ async function openPrEarly(opts, deps) {
   if (!created) {
     log(`gh pr create for ${branch} FAILED (${reason}); run proceeds local-only, no PR opened`, 'n/a');
     return degrade({ outcome: 'create-failed', reason });
+  }
+  // #4833: a picked CLOSED PR that a look found OPEN is this run's reopened PR
+  // after all (its reopen landed despite the unconfirmed read). Rebind its body
+  // like the reopened path does, before it is recorded. Unlike that path, this
+  // runs after the push: the create path has already pushed by the time a
+  // landed PR is known. A PR created here is never compared: only a
+  // landed-look adoption sets landedRow.
+  if (landedRow !== null && created.number === closedPick && namesOtherRun(landedRow.body)) {
+    rebind(created.number, 'reopened');
   }
   log(`opened PR #${created.number} for ${branch}`, 'high');
   record(created.number, created.url);

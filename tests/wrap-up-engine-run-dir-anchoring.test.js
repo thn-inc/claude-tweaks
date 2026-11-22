@@ -12,24 +12,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { gitRepo, linkedWorktreeOf } = require('./helpers/git-fixtures');
+const { runCliSync } = require('./helpers/run-cli');
 
 const ENGINE_JS = path.join(__dirname, '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
+// In-process `run` with the cwd injected: every case below has a cwd that is not the runner's.
 function runPlan(args, cwd) {
-  try {
-    const stdout = execFileSync('node', [ENGINE_JS, 'plan', ...args], { cwd, timeout: 15000 });
-    return { code: 0, stdout: stdout.toString('utf8'), stderr: '' };
-  } catch (e) {
-    return {
-      code: typeof e.status === 'number' ? e.status : 1,
-      stdout: e.stdout ? e.stdout.toString('utf8') : '',
-      stderr: e.stderr ? e.stderr.toString('utf8') : '',
-    };
-  }
+  return runCliSync(ENGINE_JS, ['plan', ...args], { cwd, env: { ...process.env } });
 }
 
 test('reject: --run-dir is a bare-relative path (never created)', () => {
@@ -89,7 +82,7 @@ test('reject: --run-dir resolves under a directory with no git repo ancestor at 
   // the ancestor chain) is a DIFFERENT failure than "exists, but resolves
   // outside a KNOWN main checkout" — a bare mkdtempSync dir with no git init
   // reproduces it without needing a git-repo fixture at all.
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wrapup-norepo-'));
+  const bare = scratchDir('ct-wrapup-norepo-');
   const abs = path.join(bare, '.claude-tweaks', 'pipelines', '2026-01-01T000000-spec-793');
   const out = runPlan(['--run-dir', abs, '--base', 'HEAD'], bare);
   assert.strictEqual(out.code, 2);

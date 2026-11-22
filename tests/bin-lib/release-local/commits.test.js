@@ -5,34 +5,34 @@ const { parseCommit, readCommits, lastTag, conventionalHistory } = require('../.
 
 test('parseCommit: type, scope, description', () => {
   const c = parseCommit({ sha: 'a'.repeat(40), subject: 'fix(deps): bump x', body: '' });
-  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false, releaseNote: null });
+  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false, releaseNotes: [], fixes: [], refs: [] });
 });
 
-test('parseCommit: Release-Note footer (conventional path) is captured as releaseNote', () => {
+test('parseCommit: Release-Note footer (conventional path) is captured as releaseNotes', () => {
   const c = parseCommit({ sha: 'f'.repeat(40), subject: 'fix: y', body: 'body\n\nRelease-Note: Fixed the thing.' });
-  assert.strictEqual(c.releaseNote, 'Fixed the thing.');
+  assert.deepStrictEqual(c.releaseNotes, ['Fixed the thing.']);
 });
 
 test('parseCommit: Release-Note footer is captured in the unconventional early-return branch too', () => {
   const c = parseCommit({ sha: 'g'.repeat(40), subject: 'Merge branch x', body: 'Release-Note: Merged the branch.' });
   assert.strictEqual(c.unconventional, true);
-  assert.strictEqual(c.releaseNote, 'Merged the branch.');
+  assert.deepStrictEqual(c.releaseNotes, ['Merged the branch.']);
 });
 
 test('parseCommit: a multi-line Release-Note section is truncated to its first line', () => {
   const c = parseCommit({ sha: 'h'.repeat(40), subject: 'feat: z', body: 'Release-Note: First line.\nSecond line that should not appear.' });
-  assert.strictEqual(c.releaseNote, 'First line.');
+  assert.deepStrictEqual(c.releaseNotes, ['First line.']);
 });
 
-test('parseCommit: no Release-Note footer at all returns releaseNote: null', () => {
+test('parseCommit: no Release-Note footer at all returns releaseNotes: []', () => {
   const c = parseCommit({ sha: 'i'.repeat(40), subject: 'chore: w', body: 'just a body, no footers' });
-  assert.strictEqual(c.releaseNote, null);
+  assert.deepStrictEqual(c.releaseNotes, []);
 });
 
 test('parseCommit: BREAKING CHANGE and Release-Note footers in the same body are each extracted independently, no cross-match', () => {
   const c = parseCommit({ sha: 'j'.repeat(40), subject: 'fix!: v', body: 'BREAKING CHANGE: config key renamed\n\nRelease-Note: Renamed the config key.' });
   assert.strictEqual(c.breakingNote, 'config key renamed');
-  assert.strictEqual(c.releaseNote, 'Renamed the config key.');
+  assert.deepStrictEqual(c.releaseNotes, ['Renamed the config key.']);
 });
 
 test('parseCommit: ! marker is breaking with the description as its note', () => {
@@ -143,4 +143,39 @@ test('conventionalHistory: passes opts through to readCommits', () => {
   const git = (args) => { calls.push(args); return args[0] === 'tag' ? 'v1.2.0\n' : ''; };
   conventionalHistory(git, 'HEAD', { firstParent: false });
   assert.ok(!calls[1].includes('--first-parent'), calls[1].join(' '));
+});
+
+test('parseCommit reads whole-line Fixes #N and Refs #N into fixes and refs, in body order', () => {
+  const c = parseCommit({ sha: 'k'.repeat(40), subject: 'fix: bundle (#10)', body: 'Release-Note: A.\n\nFixes #10\nRefs #11\nFixes #12' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10, 12], [11]]);
+});
+
+test('parseCommit ignores a Fixes line with trailing text, a Refs not opening its line, and lowercase forms', () => {
+  const c = parseCommit({ sha: 'l'.repeat(40), subject: 'fix: y', body: 'Fixes #13 and more\nfixes #14\nSee Refs #15\nrefs #16' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[], []]);
+});
+
+test('parseCommit reads Fixes/Refs lines from a CRLF body', () => {
+  const c = parseCommit({ sha: 'm'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\r\n\r\nFixes #10\r\nRefs #11\r\n' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
+});
+
+test('parseCommit reads a Refs line with trailing text as kept open, so its record is never booked', () => {
+  const c = parseCommit({ sha: 'o'.repeat(40), subject: 'chore: y (#20)', body: 'Refs #3351 — wrap-up cleanup item 2.\nRefs #4847 (opt-out).\nRefs #15x\nSee Refs #16' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[], [3351, 4847]]);
+});
+
+for (const [name, sep] of [['U+2028', ' '], ['U+2029', ' ']]) {
+  test(`parseCommit reads no footer behind ${name}, which git and GitHub keep inside the line`, () => {
+    const body = `Release-Note: A${sep}Fixes #99${sep}Refs #98${sep}Release-Note: fake${sep}BREAKING CHANGE: x\n\nFixes #10`;
+    const c = parseCommit({ sha: 'p'.repeat(40), subject: 'fix: y', body });
+    assert.deepStrictEqual([c.fixes, c.refs], [[10], []]);
+    assert.strictEqual(c.releaseNotes.length, 1);
+    assert.strictEqual(c.breaking, false);
+  });
+}
+
+test('parseCommit tolerates trailing spaces and tabs after a Fixes/Refs number', () => {
+  const c = parseCommit({ sha: 'n'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\n\nFixes #10  \nRefs #11\t\n' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
 });

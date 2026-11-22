@@ -1,6 +1,6 @@
 'use strict';
 
-// Conformance pins (#695): /specify and /demo accept a comma-separated
+// Conformance pins (#695): /specify and /accept (formerly /demo, #4613) accept a comma-separated
 // `#N,#M[,...]` batch argument that iterates the single-item procedure
 // sequentially. These pin the load-bearing rule text so a later edit that
 // drops the sequential / refs-only / never-a-sweep rules — or the batch form
@@ -10,14 +10,14 @@
 // Extended by #762: the comma-list grammar (notation, tokenization, element
 // classification) moved out of each consumer's own restatement into
 // `plugin/skills/_shared/record-batch-input.md`, cited by all four consumers
-// (flow, dispatch, specify, demo) instead of restated. These additions pin
+// (flow, dispatch, specify, accept) instead of restated. These additions pin
 // the citation in each of the four, the unified `#N[,#M...]` notation
 // (fixing flow's `<#n>[,#m,#o]` drift), and the absence of the retired
 // restated-grammar text.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { extractArgumentHint } = require('../plugin/bin/lib/skill-audit/argument-hint');
+const { extractArgumentHint } = require('./helpers/argument-hint');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -66,17 +66,17 @@ test('shaping-mode Actions Performed documents the per-element outcome vocabular
   assert.ok(src.includes('no `skipped` outcome'), 'stop-all rationale for the missing skipped outcome not documented');
 });
 
-test('demo argument-hint accepts a comma-separated record-ref list', () => {
-  const hint = extractArgumentHint(read('plugin/skills/demo/SKILL.md'));
+test('accept argument-hint accepts a comma-separated record-ref list', () => {
+  const hint = extractArgumentHint(read('plugin/skills/accept/SKILL.md'));
   assert.strictEqual(hint, '[#N[,#M...]]');
 });
 
-test('demo Input cites the shared batch grammar and keeps its own per-item skip-and-continue semantics', () => {
-  const src = readFlat('plugin/skills/demo/SKILL.md');
-  assert.ok(src.includes('Step 1 → Step 2 → Step 3 to completion before the next ref begins'), 'per-item completion rule missing from demo Input');
-  assert.ok(src.includes("A batch is the human's own list — never a sweep"), 'never-a-sweep restatement missing from demo Input');
-  assert.ok(src.includes('Per-item failure isolation: a ref that resolves to nothing'), 'per-item failure isolation missing from demo Input');
-  assert.ok(src.includes('_shared/record-batch-input.md'), 'demo Input must cite the shared batch-grammar contract');
+test('accept Input cites the shared batch grammar and keeps its own per-item skip-and-continue semantics', () => {
+  const src = readFlat('plugin/skills/accept/SKILL.md');
+  assert.ok(src.includes('Step 1 → Step 2 → Step 3 to completion before the next ref begins'), 'per-item completion rule missing from accept Input');
+  assert.ok(src.includes("A batch is the human's own list — never a sweep"), 'never-a-sweep restatement missing from accept Input');
+  assert.ok(src.includes('Per-item failure isolation: a ref that resolves to nothing'), 'per-item failure isolation missing from accept Input');
+  assert.ok(src.includes('_shared/record-batch-input.md'), 'accept Input must cite the shared batch-grammar contract');
 });
 
 // --- #762: flow's notation drift fix + shared-grammar citation ---

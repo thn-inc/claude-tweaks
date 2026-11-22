@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
@@ -9,7 +10,7 @@ const { startServer, resolveSafe } = require('../../../plugin/bin/lib/visual-dec
 const { readText } = require('../../helpers/read-skill');
 
 function mkTmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 function request(port, reqPath, { method = 'GET', headers = {}, body } = {}) {
@@ -104,7 +105,7 @@ test('resolveSafe rejects escapes and accepts in-tree paths', () => {
   assert.equal(resolveSafe(root, '/a.txt'), path.join(root, 'a.txt'));
   assert.equal(resolveSafe(root, '/../etc/passwd'), null);
   assert.equal(resolveSafe(root, '/..%2f..%2fetc%2fpasswd'), null);
-  assert.equal(resolveSafe(root, '/').replace(/\/$/, ''), root);
+  assert.equal(path.resolve(resolveSafe(root, '/')), path.resolve(root));
 });
 
 test('AC3: POST /events appends exactly one JSONL line per request; malformed body -> 400, file unchanged', async () => {

@@ -1,0 +1,7 @@
+'use strict';
+const test = require('node:test');
+
+test('reads a property of null', () => {
+  const value = null;
+  return value.length;
+});

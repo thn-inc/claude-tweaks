@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { gatherFacts } = require('../../../plugin/bin/lib/wrap-up/facts');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 let repoDir;
 let baseSha;
@@ -23,9 +24,7 @@ function git(args, cwd) {
 
 before(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com' });
 
   fs.writeFileSync(
     path.join(repoDir, 'CLAUDE.md'),
@@ -111,9 +110,7 @@ test('AC1.1: gatherFacts reports a non-ASCII changed path unquoted', () => {
   // Own repo: the shared one's changed-file set is asserted on by sibling tests.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-z-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'ö.md'), '# Moves\n\nenough shared body text for rename detection to pair these\n');
     git(['add', '.'], dir);
@@ -161,9 +158,7 @@ test('gatherFacts headingRenamed is false when no modified md file changed a hea
 test('gatherFacts headingRenamed separates a modified heading from a deleted file', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-heading-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'a.md'), '# Alpha\n\nbody\n');
     fs.writeFileSync(path.join(dir, 'b.md'), '## Beta\n\nbody\n');
     git(['add', '.'], dir);
@@ -192,9 +187,7 @@ test('gatherFacts headingRenamed separates a modified heading from a deleted fil
 test('AC1.1: removing a heading from docs/café.md still sets headingRenamed (regression pin — the -U0 scan reads no path)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-heading-z-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     git(['config', 'core.quotepath', 'true'], dir);
     fs.mkdirSync(path.join(dir, 'docs'));
     fs.writeFileSync(path.join(dir, 'docs', 'café.md'), '# Title\n\nbody\n');
@@ -218,9 +211,7 @@ test('gatherFacts headingRenamed degrades to false outside a repo', () => {
 test('gatherFacts claudeMdCommandRenamed is false when CLAUDE.md is absent at base', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-nobase-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
     git(['add', '.'], dir);
     git(['commit', '-q', '-m', 'no claude md'], dir);
@@ -238,9 +229,7 @@ test('gatherFacts claudeMdCommandRenamed is false when CLAUDE.md is absent at ba
 test('gatherFacts claudeMdOverBudget is true when CLAUDE.md exceeds the always-loaded budget', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     // Default always-loaded-budget is 150 lines (bin/lib/policy-schema.js) —
     // no .claude-tweaks/policy.yml in this temp dir, so the schema default applies.
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), `${'line\n'.repeat(151)}`);
@@ -260,7 +249,7 @@ test('gatherFacts claudeMdOverBudget is true when CLAUDE.md exceeds the always-l
   }
 });
 
-test('gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the resolver round-trip, not the catch-all default', () => {
+test('AC7 facts: gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the resolver round-trip, not the catch-all default', () => {
   // resolveBudgets() falls back to the schema defaults (30/150) on ANY
   // resolver failure — the same values an unconfigured repo resolves to — so
   // the default-boundary tests above cannot tell a working key name from a
@@ -268,9 +257,7 @@ test('gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the r
   // default can: 6 lines is under 150 but over 5.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-policy-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'harness-health-always-loaded-budget: 5\n');
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'line\n'.repeat(6));
@@ -284,12 +271,76 @@ test('gatherFacts claudeMdOverBudget honors a policy.yml budget — proves the r
   }
 });
 
+function budgetFixture(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  initRepo(dir, { name: 'Test', email: 'test@example.com' });
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'harness-health-always-loaded-budget: 5\n');
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'line\n'.repeat(6));
+  git(['add', '.'], dir);
+  git(['commit', '-q', '-m', 'fixture'], dir);
+  return { dir, sha: git(['rev-parse', 'HEAD'], dir) };
+}
+
+test('AC5 facts: a resolvePolicy that throws falls back to the 30/150 schema defaults', () => {
+  const { dir, sha } = budgetFixture('wrapup-facts-budget-throw-');
+  try {
+    const f = gatherFacts({ cwd: dir, base: sha, resolvePolicy: () => { throw new Error('boom'); } });
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 150);
+    assert.strictEqual(f.claudeMdOverBudget, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC2 facts (injected-resolver half; the no-child half is Task 7\'s count-node-procs measurement): gatherFacts resolves budgets through the injected resolvePolicy', () => {
+  const { dir, sha } = budgetFixture('wrapup-facts-budget-inject-');
+  try {
+    const calls = [];
+    const resolvePolicy = (req) => {
+      calls.push(req.keys);
+      return { code: 0, result: { 'harness-health-scoped-rule-budget': { value: 30 }, 'harness-health-always-loaded-budget': { value: 5 } } };
+    };
+    const f = gatherFacts({ cwd: dir, base: sha, resolvePolicy });
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual([...calls[0]].sort(), ['harness-health-always-loaded-budget', 'harness-health-scoped-rule-budget']);
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 5);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('AC7 facts: the injected env reaches the core — GIT_DIR/GIT_WORK_TREE only in env move the root lookup to another repo', () => {
+  // cwd is repo A (no policy.yml: budget 150). The env-only GIT_DIR/GIT_WORK_TREE
+  // point `git rev-parse --show-toplevel` at repo B, whose policy.yml sets 5.
+  // A 6-line CLAUDE.md in A is over budget only if env reached the core's git.
+  const gitEnv = { ...process.env };
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete gitEnv[k];
+  const b = budgetFixture('wrapup-facts-budget-env-b-');
+  const a = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-env-a-'));
+  try {
+    execFileSync('git', ['init', '-q'], { cwd: a, env: gitEnv });
+    fs.writeFileSync(path.join(a, 'CLAUDE.md'), 'line\n'.repeat(6));
+    const base = b.sha;
+    const env = { ...gitEnv, GIT_DIR: path.join(b.dir, '.git'), GIT_WORK_TREE: b.dir };
+    const f = gatherFacts({ cwd: a, base, env });
+    const target = f.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md'));
+    assert.ok(target);
+    assert.strictEqual(target.budget, 5, "B's policy.yml budget is read only if the injected env reached the root lookup");
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
 test('gatherFacts claudeMdOverBudget is false when CLAUDE.md is within budget and no rules exist', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-ok-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'short\n');
     git(['add', '.'], dir);
     git(['commit', '-q', '-m', 'in budget'], dir);
@@ -308,9 +359,7 @@ test('gatherFacts claudeMdOverBudget is false when CLAUDE.md is within budget an
 test('gatherFacts claudeMdOverBudget is true when a scoped rule exceeds the scoped-rule budget', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-budget-rule-'));
   try {
-    git(['init', '-q'], dir);
-    git(['config', 'user.email', 'test@example.com'], dir);
-    git(['config', 'user.name', 'Test'], dir);
+    initRepo(dir, { name: 'Test', email: 'test@example.com' });
     fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'short\n');
     fs.mkdirSync(path.join(dir, '.claude', 'rules'), { recursive: true });
     // Default scoped-rule-budget is 30 lines. A `paths:` key makes this a
@@ -328,5 +377,42 @@ test('gatherFacts claudeMdOverBudget is true when a scoped rule exceeds the scop
     assert.ok(ruleTarget.lines > ruleTarget.budget);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// #5379: gatherFacts' git children take the injected `env`. B alone holds `b-only.txt` after its
+// base commit, so reading it proves the child ran under `GIT_DIR=B/.git` while `cwd` stayed A.
+test('gatherFacts: git children get env (#5379)', () => {
+  const a = committedRepo({ prefix: 'wrapup-facts-env-a-', file: 'a.txt' });
+  const b = committedRepo({ prefix: 'wrapup-facts-env-b-', file: 'b-base.txt' });
+  try {
+    const bBase = b.head;
+    fs.writeFileSync(path.join(b.dir, 'b-only.txt'), 'b\n');
+    b.git('add', '.');
+    b.git('commit', '-q', '-m', 'b second');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.ok(gatherFacts({ cwd: a.dir, base: bBase, env }).changedFiles.includes('b-only.txt'));
+    assert.ok(!gatherFacts({ cwd: a.dir, base: bBase }).changedFiles.includes('b-only.txt'), 'no env: the child reads A, which has no such base');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
+});
+
+// lineCount's `wc` child gets the env too: a `wc` first on the injected PATH prints a fixed count, so the
+// measured `lines` is 999 only when that env reached the spawn (the inherited PATH finds the real wc: 1).
+test('gatherFacts: the wc child gets env (#5379)', { skip: process.platform === 'win32' && 'sh stub' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-wc-'));
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-facts-wc-stub-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'CLAUDE.md'), 'one line\n');
+    fs.writeFileSync(path.join(stubDir, 'wc'), '#!/bin/sh\necho "999 $2"\n', { mode: 0o755 });
+    const env = { ...cleanGitEnv(), PATH: stubDir + path.delimiter + process.env.PATH };
+    const lines = (facts) => facts.claudeMdBudgetTargets.find((t) => t.path.endsWith('CLAUDE.md')).lines;
+    assert.strictEqual(lines(gatherFacts({ cwd: dir, base: 'HEAD', env })), 999);
+    assert.strictEqual(lines(gatherFacts({ cwd: dir, base: 'HEAD' })), 1, 'no env: the real wc');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(stubDir, { recursive: true, force: true });
   }
 });

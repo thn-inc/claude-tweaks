@@ -2,14 +2,21 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { execFileSync, spawnSync } = require('child_process');
+
+const { sweepCli } = require('../../helpers/health-sweep-cli');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'docs-health.js');
 
+// In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
+function cli(argv, opts) {
+  return sweepCli(CLI, argv, opts);
+}
+
 function makeTmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-find-refs-'));
+  return scratchDir('docs-health-cli-find-refs-');
 }
 
 test('find-refs reports zero for an orphan doc', () => {
@@ -17,8 +24,9 @@ test('find-refs reports zero for an orphan doc', () => {
   fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
   const target = path.join(root, 'docs', 'orphan.md');
   fs.writeFileSync(target, '# Orphan\n');
-  const out = execFileSync('node', [CLI, 'find-refs', target, '--root', root], { encoding: 'utf8' });
-  const parsed = JSON.parse(out);
+  const res = cli(['find-refs', target, '--root', root]);
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  const parsed = JSON.parse(res.stdout);
   assert.strictEqual(parsed.result.count, 0);
 });
 
@@ -28,19 +36,20 @@ test('find-refs reports a reference from README.md', () => {
   const target = path.join(root, 'docs', 'setup.md');
   fs.writeFileSync(target, '# Setup\n');
   fs.writeFileSync(path.join(root, 'README.md'), 'See docs/setup.md.\n');
-  const out = execFileSync('node', [CLI, 'find-refs', target, '--root', root], { encoding: 'utf8' });
-  const parsed = JSON.parse(out);
+  const res = cli(['find-refs', target, '--root', root]);
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  const parsed = JSON.parse(res.stdout);
   assert.strictEqual(parsed.result.count, 1);
 });
 
 test('find-refs exits 2 with no path argument', () => {
-  const result = spawnSync('node', [CLI, 'find-refs']);
+  const result = cli(['find-refs']);
   assert.strictEqual(result.status, 2);
 });
 
 test('find-refs exits 1 for a missing file', () => {
   const root = makeTmpRoot();
-  const result = spawnSync('node', [CLI, 'find-refs', path.join(root, 'docs', 'nope.md'), '--root', root]);
+  const result = cli(['find-refs', path.join(root, 'docs', 'nope.md'), '--root', root]);
   assert.strictEqual(result.status, 1);
 });
 
@@ -57,11 +66,23 @@ test('find-refs resolves a relative path against --root, not the invoking cwd', 
   fs.writeFileSync(path.join(root, 'docs', 'setup.md'), '# Setup\n');
   fs.writeFileSync(path.join(root, 'README.md'), 'See docs/setup.md.\n');
 
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-find-refs-elsewhere-'));
-  const out = execFileSync(
-    'node', [CLI, 'find-refs', 'docs/setup.md', '--root', root],
-    { cwd: elsewhere, encoding: 'utf8' },
-  );
-  const parsed = JSON.parse(out);
+  const elsewhere = scratchDir('docs-health-cli-find-refs-elsewhere-');
+  const res = cli(['find-refs', 'docs/setup.md', '--root', root], { cwd: elsewhere });
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  const parsed = JSON.parse(res.stdout);
   assert.strictEqual(parsed.result.count, 1);
+});
+
+// ── in-process entry (#5381) ────────────────────────────────────────────────
+
+// No --root at all: the root is the injected cwd, and a relative target path resolves under it.
+test('AC8.1: find-refs without --root resolves a relative path under the injected cwd', () => {
+  const root = makeTmpRoot();
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs', 'setup.md'), '# Setup\n');
+  fs.writeFileSync(path.join(root, 'README.md'), 'See docs/setup.md.\n');
+
+  const res = cli(['find-refs', 'docs/setup.md'], { cwd: root });
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  assert.strictEqual(JSON.parse(res.stdout).result.count, 1);
 });

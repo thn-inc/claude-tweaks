@@ -31,7 +31,7 @@ the ceiling authorizes, and not the only road to born-`ready`: since #623, `/cla
 (`specShapedBody` composition — see `_shared/work-record.md`'s born-shaped rows), ceiling-independent
 the same way health-skill filings are. The in-run initiative budget rides the same `trusted` value
 with a different actor set and a different gate entirely (`_shared/initiative-budget.md`).
-`/claude-tweaks:demo` follow-ups keep the `Never` column their own permission-matrix row states,
+`/claude-tweaks:accept` follow-ups keep the `Never` column their own permission-matrix row states,
 whatever this lever is set to; widening born-`ready` to a further actor means editing that actor's
 row deliberately. `/claude-tweaks:backlog refine`
 consumes the ceiling but grants nothing from it: it renders an advisory column and inherits
@@ -68,10 +68,10 @@ action, unconditionally at **every** ceiling tier, not just `unattended`:
 
 Either source is read as `trustRows`' `negativeEvidence` count on the cell. A cell with
 `negativeEvidence > 0` cannot read `clean` regardless of how many positive (approved/operational)
-outcomes it also holds — one known-bad outcome in the sample is disqualifying, the same precedence
-`changesRequested`/`followUps` already had. Negative evidence counts toward `dispositioned` (and
-therefore `MIN_VERDICTS`) exactly like every other real outcome signal — a known-bad record is not
-an unknown one.
+outcomes it also holds — one known-bad outcome in the evaluation window is disqualifying, the
+same zero tolerance `changesRequested` has (corrective follow-ups are a rate, below). Negative
+evidence counts toward `dispositioned` (and therefore `MIN_VERDICTS`) exactly like every other real
+outcome signal — a known-bad record is not an unknown one.
 
 **Scope: applies only where no acceptance disposition already exists on the record** (the same
 `disposition === 'none'` branch the operational-good path already used) — a record that reached
@@ -81,17 +81,34 @@ retry ceilings, or its `auto:merge` revocation-on-retry is out of scope here —
 in full in `dispatch/settle-and-merge.md` and unchanged; this section only makes that classification
 durably visible to the trust table.
 
-**Not currently time-windowed.** `_shared/trust-table.md`'s "Known limitation: no time window"
-section applies here too: `trust.js` has no sample-size cap or aging mechanism today — every count,
-positive or negative, is all-time. A class carrying negative evidence therefore stays pinned below
-`clean` indefinitely under the shipped module, not until it "ages out" — there is no expiry
-machinery to age it out with. A future trailing-evaluation window (see that section's own note) would
-apply uniformly to every count trust.js keeps, negative evidence included, without any change here —
-but until one ships, do not read a class's current `clean` verdict as proof it has never had a
-negative outcome; read it only as "no negative outcome inside its current all-time evidence sample."
 The marker's *absence* on a record means "no correctness/ambiguous failure since this shipped,"
 never "no failures ever" — records built before this sub-issue landed carry no marker regardless of
 their actual build history.
+
+**Evaluation window and follow-up rate (#5291).** A class's evidence is graded over a trailing
+window, not all time. A closed record counts toward a cell only when its `closedAt` falls inside
+`trust-evaluation-window-days` (integer ≥ 1, default 30; the boundary is inclusive, a future
+`closedAt` counts, and a closed record with no parseable `closedAt` is out of window). A record
+outside the window forms no cell, but it is still scanned as a follow-up source. Corrective
+follow-ups are judged as a rate — the share of the class's in-window records that shipped
+(NOT_PLANNED closes excluded) which drew a corrective follow-up, where `followUpRecords` counts the
+distinct such records — against `trust-follow-up-rate-max-percent`
+(integer 0-100, default 30; `0` restores zero tolerance). `changesRequested` and `negativeEvidence`
+keep zero tolerance inside the window: one of either still pins the cell below `clean`. That makes
+recovery real — once the rejected or failed record ages out of the window, and the follow-up rate
+is at or under the maximum, the class can read `clean` again. Gate 2's deny reason for a `mixed`
+class names the failing conditions and the rate, so a refusal reads in plain words
+(`plugin/bin/lib/issues/grant-gate.js`). `_shared/trust-table.md`'s "Evaluation window" section
+carries the render and the fetch-limit bound. Read a `clean` verdict as "no negative outcome inside
+the window", never as proof the class never had one.
+
+**What this does not loosen.** `grant-origination-enabled` still gates every machine-originated
+grant, and `fleet-daily-grant-cap` still bounds how many grants one calendar day can mint: a class
+that reads `clean` earns eligibility for gate 2 only, not a grant.
+
+**Removal condition.** The window-and-rate rule is a bridge: it exists so machine-originated grants
+are reachable before the control mode of record #4623 lands. Re-decide it — retire it or keep it —
+when #4623 ships.
 
 ## Revocation: the global merge-lane circuit breaker (#311)
 
@@ -156,8 +173,8 @@ records is an open question left for a future record if operational evidence sho
 | `supervised` | Nothing. Trust is recorded and displayed, never acted on. **The default**, and the state of any repo that has not opted in. |
 | `trusted` | Four things. **(a)** Born-`ready` for agent-filed work whose provenance class carries a `clean` verdict — the filing chains straight into `/claude-tweaks:specify --chained` shaping (headless), skipping the *human* shaping round-trip but never the shaping itself and never the human grant gate; the capture turn pays the shaping cost, only at this ceiling with a `clean` verdict. Today that means `/claude-tweaks:capture` and no other actor. **(b)** The in-run initiative budget — up to three capped **pointer repairs** per run, applied instead of staged (`_shared/initiative-budget.md`). Unlike (a), this one is **not** trust-gated; see below. **(c)** Two bookkeeping capabilities — `ledgerNarrowing` and `queueWriteAutoFile` (see Bookkeeping capabilities below). **(d)** The `housekeeping-auto-merge` derived default — while that key is unset, `/claude-tweaks:tidy` arms a green, marker-stamped housekeeping PR's `--auto` at creation (Step 7.5, primary — #581) or via the Step 6/7 sweep backstop, instead of staging for a human (`_shared/policy-schema.md`'s lever row; code twin `bin/lib/policy-schema.js`'s `deriveHousekeepingAutoMerge`, #580). Ceiling-only like (c), not trust-gated, and **not** one of the `bookkeepingPermissions` capabilities; an explicit `housekeeping-auto-merge` value in `policy.yml` wins over the derivation in both directions. |
 | `unattended` | Everything `trusted` allows, plus the `unattended`-only rows of the Bookkeeping capabilities table below (`opsAckAutoAcknowledge`, `consoleAutoResolve`, `refineAutoApply`, `ledgerRouteRemainder`) and machine-originated `auto:build`. **The `auto:build` half is shut behind its own opt-in** — see below. Also unlocks `flow/multispec-freshness.md`'s Unattended default — a narrow HARD-GATE carve-out documented at its own site, not part of the Bookkeeping capabilities table above since it is not a `bookkeepingPermissions()` key. |
-| `train` | `/claude-tweaks:release --train` reads this row rather than introducing its own lever. At `unattended` (and only there, gated additionally on policy `release-train: true`), the train may merge and tag a minor or patch release whose Step 3 review came back clean or non-blocking. It never does three things at any ceiling, and the three do **not** share one outcome. The two that are evaluated **before** anything is merged or tagged — landing a major bump on the effective version, and proceeding past a `review: blocking` verdict (`--allow-blocking` is not honoured under `--train`) — stage `release-held.md` in the run directory and exit `HELD`: nothing moved, and re-running the train after the gate is addressed is the right recovery. Both are evaluated at Step 4, and again at Step 5 when the integration branch moved since Step 3 (a blocking delta review, a major arrived commit); Step 5's `integration branch kept moving` stop is the same `HELD`, but its recovery is to pause merges or raise `release-tip-moves`. The third — a failed publish hook — can only be observed at Step 6, **after** Step 5 has already merged and tagged, so it is never `HELD`: that outcome asserts nothing landed, and here a tag exists. It is reported as `PARTIAL`, carrying Step 6's own named recovery command (`gh run rerun {databaseId}` under pr-first; the engine's exit-`5` stderr verbatim under local-merge), and Step 7's bookkeeping still runs — the tag landed, so the shipped records did ship. |
-| `train (Routine firing)` | The scheduled Routine (`skills/release/routine-template.yml`, #2258) fires `/claude-tweaks:release --train` unattended; this row is what that *firing* may do, distinct from the `train` row above (what `--train` may do whenever invoked). Same ceiling, same two levers: at `unattended` with `release-train: true` a firing may merge the release PR (pr-first) or tag through `bin/release-local.js` (local-merge) — `release/execute.md`'s Step 5 dispatch, never re-derived here — for a minor or patch bump whose Step 3 review came back clean or non-blocking. Without both levers the firing is refused and — no human being present — the release skill stops before its Step 1 with outcome `failed` and the refusal line as its reason (SKILL.md's `## --train semantics`, Refusal): nothing read, nothing moved, and the firing reports it as blocked. It never lands a major bump, never proceeds past `review: blocking`, and never treats a failed publish hook as clean: the first two are `HELD` with `release-held.md` in the firing's run directory as the only record (no Review Console renders in a firing), the third is `PARTIAL` with Step 6's recovery command in the firing's report. |
+| `train` | `/claude-tweaks:release --train` reads this row rather than introducing its own lever. At `unattended` (and only there, gated additionally on policy `release-train: true`), the train may merge and tag a minor or patch release whose Step 3 review came back clean or non-blocking. It never does four things at any ceiling, and the four do **not** share one outcome. The three that are evaluated **before** anything is merged or tagged — releasing past an open `release-block` record, landing a major bump on the effective version, and proceeding past a `review: blocking` verdict (`--allow-blocking` is not honoured under `--train`) — stage `release-held.md` in the run directory and exit `HELD`: nothing moved, and re-running the train after the gate is addressed is the right recovery (for the release block, once a human closes the record or removes the label). The release block is evaluated at Step 1.5, before any review, and re-read at Step 4 (`_shared/release-block.md`). The other two are evaluated at Step 4, and again at Step 5 when the integration branch moved since Step 3 (a blocking delta review, a major arrived commit); Step 5's `integration branch kept moving` stop is the same `HELD`, but its recovery is to pause merges or raise `release-tip-moves`. The fourth — a failed publish hook — can only be observed at Step 6, **after** Step 5 has already merged and tagged, so it is never `HELD`: that outcome asserts nothing landed, and here a tag exists. It is reported as `PARTIAL`, carrying Step 6's own named recovery command (`gh run rerun {databaseId}` under pr-first; the engine's exit-`5` stderr verbatim under local-merge), and Step 7's bookkeeping still runs — the tag landed, so the shipped records did ship. |
+| `train (Routine firing)` | The scheduled Routine (`skills/release/routine-template.yml`, #2258) fires `/claude-tweaks:release --train` unattended; this row is what that *firing* may do, distinct from the `train` row above (what `--train` may do whenever invoked). Same ceiling, same two levers: at `unattended` with `release-train: true` a firing may merge the release PR (pr-first) or tag through `bin/release-local.js` (local-merge) — `release/execute.md`'s Step 5 dispatch, never re-derived here — for a minor or patch bump whose Step 3 review came back clean or non-blocking. Without both levers the firing is refused and — no human being present — the release skill stops before its Step 1 with outcome `failed` and the refusal line as its reason (SKILL.md's `## --train semantics`, Refusal): nothing read, nothing moved, and the firing reports it as blocked. It never releases past an open `release-block` record, never lands a major bump, never proceeds past `review: blocking`, and never treats a failed publish hook as clean: the first three are `HELD` with `release-held.md` in the firing's run directory as the only record (no Review Console renders in a firing), the fourth is `PARTIAL` with Step 6's recovery command in the firing's report. |
 
 ## Bookkeeping capabilities
 
@@ -168,11 +185,12 @@ The narrow, opt-in, logged, fully reversible bookkeeping behaviors in the table 
 |---|---|---|
 | `ledgerNarrowing` | `trusted`+ | `_shared/ledger-format.md`'s Resolve Gate Phase 2 skips the per-item drill for an item whose Phase 1 blocker reason clears the floor (below), auto-selecting `Route to a record -> Keep (backlog)` only. Never `Fix anyway`, `Accept`, `Drop`, or `Defer -> parked` from this drill specifically. |
 | `queueWriteAutoFile` | `trusted`+ | `wrap-up/review-console.md` creates a proposed record (from the above, from leftover routing, or from `/reflect`'s tangential-idea routing) directly, instead of waiting for a live per-item approval at the Review Console. Since #623, an auto-filed exhaust proposal is spec-shaped and born-ready **by construction** (`specShapedBody` composition, `_shared/work-record.md`'s born-shaped rows), so `refine-mode.md` Step 3.5's spec-shape gate never flags it back — prevented by construction rather than by chaining `/specify`. |
-| `needsDecisionMarker` | `trusted`+ | a headless unit may write a `needs:*` label plus its explanatory comment as its residue channel, with no per-write approval — describing exactly what bare-drain `specify`'s existing `needs:definition` stamp and this record's new `needs:decision` stamp both already do. This documents existing behavior for `needs:definition` as much as it authorizes the new label. The `trusted`+ check reads the *acting unit's own* invocation-context ceiling (the `resolve-policy.js` call each unit's own Preflight already makes) — never a per-record override; there is no such thing as a record with its own ceiling. Prose-governed only — not one of `bookkeepingPermissions()`'s returned keys, since nothing here gates a live `AskUserQuestion` skip the way the other six rows do. |
+| `needsDecisionMarker` | `trusted`+ | a headless unit may write a `needs:*` label plus its explanatory comment as its residue channel, with no per-write approval — describing exactly what bare-drain `specify`'s existing `needs:definition` stamp and this record's new `needs:decision` stamp both already do. This documents existing behavior for `needs:definition` as much as it authorizes the new label. The `trusted`+ check reads the *acting unit's own* invocation-context ceiling (the `resolve-policy.js` call each unit's own Preflight already makes) — never a per-record override; there is no such thing as a record with its own ceiling. Prose-governed only — not one of `bookkeepingPermissions()`'s returned keys, since nothing here gates a live `AskUserQuestion` skip the way the other seven rows do. |
 | `opsAckAutoAcknowledge` | `unattended` only | `wrap-up/nothing-left-behind.md`, wrap-up's Phase 3 ledger gate — auto-acknowledges every ops item instead of presenting the acknowledgment drill. Held to the higher tier deliberately: this is the one bookkeeping capability that skips acknowledging a post-merge infrastructure follow-up, not just a reversible ledger/queue item. |
-| `consoleAutoResolve` | `unattended` only | Zero-click, never zero-render: the Review Console resolves every section (batch table, `M#`, `Q#`, `U#`) per its own defaults with zero `AskUserQuestion` calls, but the FULL console — every table, every row — still renders in the terminal output, with each row pre-stamped `AUTO-RESOLVED` in place of a live decision. Skipping the prompt is not license to skip the render; a silent short-circuit that emits only a summary/prose recap, with none of the console's own rows, is the defect this capability's contract explicitly forbids. Three sanctioned callers: `wrap-up/review-console.md`'s own short-circuit (before a console ever renders), `_shared/console-execution.md`'s reconciler-side executor (for a console already rendered on a PR, when the ceiling is raised or reconciled under a higher tier afterward), and `release/disposition.md`'s Approval section (`/claude-tweaks:release` Step 8's disposition batch table, rows stamped `AUTO-RESOLVED`, executed by that file's own routing table). The first two callers do not share an executor. The **live-session caller**'s zero-click resolution is executed by `bin/console-resolve.js` (#1932) — one process for every staged item, one decisions block, one `console.json`; the skill executes the returned resolutions. The **reconciler-side caller keeps** its own, `bin/lib/reconcile/console-execute.js`, since it acts on a console already rendered on a PR rather than resolving one from scratch. Every can't-tell item of severity medium or higher (the tiebreak's console outcome) resolves `filed` whatever it recommended — an agent that could not tell is not licensed to drop — and files through the Queue-writes path — the live-session caller per `wrap-up/review-console.md`'s "Can't-tell filings", the auto-merge short-circuit per `wrap-up/auto-merge-short-circuit.md`'s Can't-tell findings (which refuses the short-circuit instead when this capability is not granted), the reconciler-side caller per `_shared/console-execution.md`'s Execution routing (a finding row, ticked) — deduplicated by `work-fingerprint` against every record, closed ones included (#3949). |
+| `consoleAutoResolve` | `unattended` only | Zero-click, never zero-render: the Review Console resolves every section (batch table, `M#`, `Q#`, `U#`) per its own defaults with zero `AskUserQuestion` calls, but the FULL console — every table, every row — still renders in the terminal output, with each row pre-stamped `AUTO-RESOLVED` in place of a live decision. Skipping the prompt is not license to skip the render; a silent short-circuit that emits only a summary/prose recap, with none of the console's own rows, is the defect this capability's contract explicitly forbids. Three sanctioned callers: `wrap-up/review-console.md`'s own short-circuit (before a console ever renders), `_shared/console-execution.md`'s reconciler-side executor (for a console already rendered on a PR, when the ceiling is raised or reconciled under a higher tier afterward), and `release/disposition.md`'s Approval section (`/claude-tweaks:release` Step 8's disposition batch table, rows stamped `AUTO-RESOLVED`, executed by that file's own routing table). The first two callers do not share an executor. The **live-session caller**'s zero-click resolution is executed by `bin/console-resolve.js` (#1932) — one process for every staged item, one decisions block, one `console.json`; the skill executes the returned resolutions. The **reconciler-side caller keeps** its own, `bin/lib/reconcile/console-execute.js`, since it acts on a console already rendered on a PR rather than resolving one from scratch. Every can't-tell item of severity medium or higher (the tiebreak's console outcome) resolves by its recommendation (#4679, reversing #3949's file-every-one rule): a `drop` resolves `digested` and its entry is posted to the materiality digest, deduplicated by its `console-finding` marker; every other item resolves `filed` as a `needs-verification` task. Both go through the Queue-writes path — the live-session caller per `wrap-up/review-console.md`'s "Can't-tell filings", the auto-merge short-circuit per `wrap-up/auto-merge-short-circuit.md`'s Can't-tell findings (which refuses the short-circuit instead when this capability is not granted), the reconciler-side caller per `_shared/console-execution.md`'s Execution routing (a finding row, ticked) — a filing deduplicated by `work-fingerprint` against every record, closed ones included (#3949), a digest entry against the digest's own comments. |
 | `refineAutoApply` | `unattended` only | Zero-click, never zero-render, the same shape as `consoleAutoResolve`: `backlog/refine-lanes.md`'s batch-confirm `AskUserQuestion` (`<!-- refine-confirm-gate -->`) is skipped entirely, and the whole batch — priority/Related/flag-back/dependency-repair rows and grant rows alike — resolves as "Apply all recommended." The full lane render still happens on every run regardless, with every auto-applied row stamped `[auto-applied]` in place of a live decision. One sanctioned caller: `refine-lanes.md`'s confirm-gate section, checked before that `AskUserQuestion` would otherwise render. Session-scoped only — a human running the same session at a ceiling below `unattended` can reach the equivalent zero-click behavior for later batches by opting into `refine-lanes.md`'s own session-scope override (a live, one-time follow-up question, not this capability, and not persisted past the session). |
-| `ledgerRouteRemainder` | `unattended` only | Extends `ledgerNarrowing` — a ledger item whose blocker reason misses the four-category floor also auto-routes to `Route to a record -> Keep (backlog)` (never `Fix anyway`/`Accept`/`Drop`). |
+| `ledgerRouteRemainder` | `unattended` only | Extends `ledgerNarrowing` — a ledger item whose blocker reason misses the five-category floor also auto-routes to `Route to a record -> Keep (backlog)` (never `Fix anyway`/`Accept`/`Drop`). |
+| `ownedUpstreamFiling` | control mode only, any ceiling | Under `control-mode: on`, the Review Console files a wrap-up upstream-feedback item (`U#`) with no per-item approval when its target repo is owned, and holds every other one as a decision fact. `bin/lib/issues/upstream-ownership.js`'s `upstreamFilingRoute` decides, judging the repo `/claude-tweaks:feedback` actually files into (a staged draft's header naming any other repo holds `external`); `bin/console-resolve.js --upstream-route` is its caller at every ceiling (at `unattended` the resolve shape routes in-process first and the per-item call repeats it idempotently, so a console only the reconciler-side executor resolves is routed too). It replaces only the `U#` default: an explicit decline (an unchecked Override item, an unticked PR row) still declines an owned item. `bookkeepingPermissions` returns it from control mode alone, so an explicit `supervised` ceiling still has it. |
 
 None of the bookkeeping capabilities touch `Fix anyway`/`Accept`/`Drop` dispositions, HARD-GATEs, `BLOCKED`/`STOP`
 conditions, or merge-conflict resolution — those stay fully human-gated at every tier.
@@ -196,7 +214,8 @@ Why merge stops short of the ceiling when every `unattended` capability above do
   only machine-originated merge grant is `/backlog refine`'s per-record, content-checked,
   double-opt-in `grant-origination-enabled` path.
 - **`unattended` already merges what a human authorized.** `consoleAutoResolve` resolves the merge
-  half to merge for a record carrying `auto:merge` or a matured `auto:merge-pending`. Deriving
+  half to merge for a record carrying `auto:build` with `auto:merge` or a matured
+  `auto:merge-pending`. Deriving
   `pre-authorized` from the ceiling would merge every `auto:build`-only record as well, erasing the
   build/merge grant split and overturning `wrap-up/review-console.md`'s ungranted-member carve-out
   (#1802, #1966), whose premise is that a withheld grant is itself a human decision.
@@ -205,14 +224,16 @@ Why merge stops short of the ceiling when every `unattended` capability above do
   13 alone, live, without reopening the rest. A dispatch-bound run ignores the token.
 
 So at `unattended` with `consoleAutoResolve` granted, a run ends with zero clicks either way:
-merged when its record carries `auto:merge` (or a matured `auto:merge-pending`) or its `/flow` was
+merged when its record carries `auto:build` with `auto:merge` (or a matured
+`auto:merge-pending`) or its `/flow` was
 invoked with `pre-authorize-merge` (under `integration-model: pr-first`, `_shared/integration-model.md`), and otherwise parked at `pending-review` — never an
 `AskUserQuestion` stall. Both merge routes still pass `assess-agent-autonomy` `merge-check`.
 
 ### Floor rule (ledger narrowing)
 
-`ledgerNarrowing` only narrows an item whose Phase 1 blocker reason matches one of the four
-categories `_shared/ledger-format.md`'s Resolve Gate Phase 1 already requires as legitimate:
+`ledgerNarrowing` only narrows an item whose Phase 1 blocker reason matches one of the five
+categories — the four `_shared/ledger-format.md`'s Resolve Gate Phase 1 already requires as
+legitimate, plus `needs-verification` (#4679), which the Review Console's can't-tell filing stamps:
 
 | Category | `Defer-reason:` value |
 |---|---|
@@ -220,6 +241,7 @@ categories `_shared/ledger-format.md`'s Resolve Gate Phase 1 already requires as
 | User product/design decision | `needs-human-decision` |
 | Not-yet-built dependency | `blocked-dependency` |
 | Scope expansion | `genuinely-larger` |
+| Bounded verification task | `needs-verification` |
 
 Implemented by `bin/lib/issues/autonomy.js`'s `clearsFloor(blockerReason)`, which since #696
 resolves a structured `Defer-reason:` value only — an exact `DEFER_REASONS` member — never
@@ -265,12 +287,29 @@ Same resolution order as every other lever, implemented by `resolveCeiling`:
 1. Explicit CLI arg
 2. `config.yml` (this run's Manifesto answer)
 3. `.claude-tweaks/policy.yml` project default
-4. Skill default: `supervised`
+4. `control-mode: on` (`policy.yml` only — `control-mode` is `policyOnly`, a run's `config.yml` is not read for it) → `unattended`
+5. Skill default: `supervised`
 
 An unrecognized value at any level is **skipped, not honored and not thrown on** — resolution
 continues to the next source, so a typo lands on whatever the next source says and in the worst
 case on `supervised`. Matching is exact and case-sensitive: `Trusted` is not `trusted`, and
 resolves to the default rather than to the tier it resembles.
+
+`console-resolve.js --run <dir> --ceiling` is the query for the resolved tier. An invalid `autonomy` value suppresses rung 4 and resolves `supervised`, reported as `source invalid-autonomy`.
+
+## Control mode (#4620)
+
+**Composition.** `control-mode: on` implies the `unattended` capability set through `effectiveCeiling`, which composes it below any explicit `autonomy`. An explicit value wins and `--ceiling` reports `source explicit`. `bookkeepingPermissions(null, { controlMode: true })` is that set plus one capability, `ownedUpstreamFiling`, which no ceiling grants without control mode and control mode grants at every ceiling. The run reads it as `ceiling {tier} consoleAutoResolve {true|false} control-mode {on|off} source {...}`, and an unreadable policy exits 3.
+
+**Hold over `unattended`.** Under control mode a `U#` files only when `upstreamFilingRoute` says `file`; any other target is held at every ceiling, `unattended` included, overriding `consoleAutoResolve`'s file-unconditionally `U#` stance, and an explicit check never files a held item. Outside control mode that stance is unchanged.
+
+**Carry route.** Every item the console would leave `pending`, `keep-staged` or `refused` resolves `carried` and becomes a `decision` fact in `{run-dir}/packet-facts/decisions.json` (`_shared/acceptance-packet.md`'s Decision facts). Can't-tell items still file.
+
+**Residue terminal states.** Each leftover ends in one of four. `resolved`. `filed`: a spec-shaped record with a valid `Defer-reason:`, authorized by `queueWriteAutoFile`. `digested`: a digest verdict (any rule in `_shared/materiality-floor.md`'s digest-label table), so the ledger row is `accepted` and names the digest. `carried`: the row is `deferred` and names the fact id, written only after `console-resolve.js --converge` has written that fact. A failed carry exits 6 and is a failure card naming the item.
+
+**Memory writes.** They go through `console-resolve.js --memory-write` with a logged path, the prior sha256 and a reversible whole-file diff.
+
+**HARD-GATEs.** Every HARD-GATE in `_shared/auto-mode-contract.md`'s "What `auto` does NOT silence" table, its merge-conflict resolution row included, still stops a control-mode run; the stop is reported with `flow/failure-cards.md`'s Generic gate failure card, never as a question. Nothing in the carry route or residue convergence applies to a HARD-GATE.
 
 ## Floor rule
 
@@ -289,7 +328,8 @@ A class earns nothing unless `permittedGrants` says so, which requires **all** o
 - The class's verdict is `clean`. That in turn requires `total >= MIN_SAMPLES`, **and**
   `dispositioned >= MIN_VERDICTS` — a floor counted on real outcome evidence (an acceptance
   disposition, or a merged-and-unreverted operational close), not on how many records the class has
-  closed — **and** no `changes-requested` and no corrective follow-ups. A `mixed` verdict earns
+  closed — **and** no `changes-requested`, no negative evidence, and a corrective follow-up rate
+  within `trust-follow-up-rate-max-percent`. A `mixed` verdict earns
   nothing; neither does `insufficient-evidence`.
 
 Read `_shared/trust-table.md` for what those columns mean and for the Coverage figure that says
@@ -340,11 +380,11 @@ one flag-back.
 invariant in `_shared/work-record.md`'s Grant semantics — that `auto:*` labels are only ever added
 by an interactive human session — and that invariant is not theoretical: it was written after a
 real run treated a low-risk, well-scoped, `ready` record as license to run a full build-to-close
-lifecycle on its own judgment. `evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`
-exists because of that incident, though what it can actually assert is narrower — its own
-description states the grant path is untestable in the sandbox (no live `gh`, network blocked), so
-it pins the `local-files` boundary rather than the grant invariant itself. The incident is the
-evidence; the eval is a partial guard on it.
+lifecycle on its own judgment. An eval scenario was written because of that incident, though what
+it could actually assert was narrower — the grant path was untestable in its sandbox (no live
+`gh`, network blocked), so it pinned the `local-files` boundary rather than the grant invariant
+itself; `docs/decisions/0036-evals-harness-and-benchmark-workflow-deleted.md` removed it. The
+incident is the evidence.
 
 So reaching the top tier is **not by itself** an amendment of that invariant. Machine-originated
 grants need a second, explicit opt-in beyond setting `autonomy: unattended`

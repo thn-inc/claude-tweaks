@@ -8,6 +8,7 @@
 // a file in a shared worktree in place to prove a test discriminates, and 15 SDD subagent replies
 // this run were logged as `contract-violation` events because the templates never asked for the
 // trailing status line (`_shared/subagent-output-contract.md`'s Implementer Status Protocol).
+// #4556: the scratch-checkout alternative is now the core recipe, cited and pasted through.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -42,10 +43,52 @@ test('dispatch.md: directs SDD to forbid in-place worktree mutation during a tas
   );
 });
 
-test('dispatch.md: the tree-immutability directive names the scratch-worktree alternative', () => {
+function assert2740(text) {
   assert.match(
-    DISPATCH,
-    /runs in a scratch `git worktree add`, never via `git checkout --` or an in-place edit-then-restore in this shared worktree/,
-    'dispatch.md must name the non-mutating alternative — a scratch `git worktree add` — for a reviewer/re-review discrimination check that needs to revert or edit a file.'
+    text,
+    /runs in a scratch checkout per `_shared\/subagent-dispatch-core\.md`'s \*\*Discrimination checks in a scratch checkout\*\* section/,
+    'dispatch.md must cite the core scratch-checkout recipe for a reviewer/re-review discrimination check that needs to revert or edit a file (#4556).'
   );
+  assert.ok(
+    text.includes('never via `git checkout --` or an in-place edit-then-restore in this shared worktree'),
+    'dispatch.md must keep the ban on git checkout -- and in-place edit-then-restore in the shared worktree.'
+  );
+  assert.match(
+    text,
+    /paste[s]? (?:its|that section's) steps/,
+    'dispatch.md must direct that the recipe steps be pasted into the SDD invocation instruction (#4556).'
+  );
+  assert.ok(
+    text.includes('`/build` fills `{plugin-root}` and `{worktree}`;'),
+    'dispatch.md must split placeholder ownership: /build fills plugin-root and worktree (#4556).'
+  );
+  assert.ok(
+    text.includes('SDD fills `{reviewed-sha}`, the commit under review, `{base-sha}`, the task\'s base, and `{id}`, task plus reviewer role plus round, per dispatch'),
+    'dispatch.md must give SDD the per-dispatch placeholders: reviewed-sha, base-sha, and id with the round (#4556).'
+  );
+  assert.ok(
+    !text.includes('scratch `git worktree add`'),
+    'dispatch.md must not carry a bare scratch `git worktree add` beside the recipe citation (#4556).'
+  );
+}
+
+test('dispatch.md: the tree-immutability directive cites the core scratch-checkout recipe (#4556)', () => {
+  assert2740(DISPATCH);
+});
+
+// Frozen: the #2740 sentence as it stood before #4556 (bare `git worktree add`, no recipe cite).
+const PRE_4556_2740 =
+  'a discrimination check that needs a reverted or edited file (e.g. proving a new test fails against the pre-fix code) runs in a scratch `git worktree add`, never via `git checkout --` or an in-place edit-then-restore in this shared worktree';
+
+test('the #2740 pin goes red on the pre-#4556 sentence (go-red)', () => {
+  assert.throws(() => assert2740(PRE_4556_2740));
+  assert.throws(() => assert2740(DISPATCH.split('`/build` fills `{plugin-root}`').join('`/build` supplies `{plugin-root}`')));
+  // Delete SDD's half of the split, and each placeholder within it.
+  const sddHalf = "SDD fills `{reviewed-sha}`, the commit under review, `{base-sha}`, the task's base, and `{id}`, task plus reviewer role plus round, per dispatch";
+  assert.ok(DISPATCH.includes(sddHalf), 'live dispatch.md must carry SDD\'s half to mutate');
+  assert.throws(() => assert2740(DISPATCH.split(sddHalf).join('SDD fills nothing')));
+  assert.throws(() => assert2740(DISPATCH.split('and `{id}`, task plus reviewer role plus round,').join('and `{id}`,')));
+  assert.throws(() => assert2740(DISPATCH.split('`{base-sha}`, the task\'s base,').join('')));
+  // A bare scratch worktree re-added beside the citation.
+  assert.throws(() => assert2740(`${DISPATCH}\nA discrimination check runs in a scratch \`git worktree add\`.\n`));
 });

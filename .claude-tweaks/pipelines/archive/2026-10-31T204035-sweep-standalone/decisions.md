@@ -1,0 +1,69 @@
+## /tidy
+- AUTO 22:05:21 — Step 7 Fill Release Note: filled the Release Note on #4760 with "Speed up the friction report's main-checkout check by removing a git subprocess; no other user-visible change."; snapshot snapshots/tidy-release-note-4760.original.md. Reversibility: high.
+- AUTO 22:07:31 — Step 6 routing: Step 6: archived 16 clean runs, deleted 6 merged branches with git branch -d (16 refused, none forced), kept all 72 plans under superpowers-plans-retention keep-forever (the #4465 rule on main, not the installed 6.156.1 table), staged 17 items. Excluded 2026-10-31T120302-record-4634 from archive: PR #4700 open with its worktree checked out. Design doctor skipped (not configured). Reversibility: n/a.
+- AUTO 22:07:51 — Step 6 routing: Step 6: archived 16 clean runs, deleted 6 merged branches with git branch -d (16 refused, none forced), kept all 72 plans under superpowers-plans-retention keep-forever (the #4465 rule on main, not the installed 6.156.1 table), staged 17 items. Excluded 2026-10-31T120302-record-4634 from archive: PR #4700 open with its worktree checked out. Design doctor skipped (not configured). Reversibility: n/a.
+## /flow
+- AUTO 22:08:54 — Step 2.8: claimed #4663 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:11:25 — Step 2.8: claimed #4664 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:12:27 — Step 2.8: claimed #4351 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:14:03 — Step 2.8: claimed #4644 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:15:04 — Step 2.8: claimed #4671 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:15:44 — Step 2.8: claimed #4725 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:16:23 — Step 2.8: claimed #4738 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:17:01 — Step 2.8: claimed #4741 (bin/claim-targets.js, transport: git). Reversibility: high.
+- AUTO 22:17:37 — Step 2.8: claimed #4764 (bin/claim-targets.js, transport: git). Reversibility: high.
+## /specify
+- AUTO 22:11:16 — Release: released claim on #4663 (shaped: #4663); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:12:17 — Release: released claim on #4664 (shaped: #4664); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:13:49 — Release: released claim on #4351 (shaped: #4351); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:14:54 — Release: released claim on #4644 (shaped: #4644); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:15:34 — Release: released claim on #4671 (shaped: #4671); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:16:13 — Release: released claim on #4725 (shaped: #4725); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:16:50 — Release: released claim on #4738 (shaped: #4738); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:17:27 — Release: released claim on #4741 (shaped: #4741); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:18:07 — Release: released claim on #4764 (shaped: #4764); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 22:18:10 — Close-out: Bare drain close-out: {shaped: 9, routed: 0, failed: 0}. shaped: #4663, #4664, #4351, #4644, #4671, #4725, #4738, #4741, #4764. Design-intent and Ui-stack not applicable: all backend or infra surfaces. Premise correction on #4664: stories is already a valid --next-steps token on main, so the record now states the remaining gap. Reversibility: n/a.
+## /backlog
+- AUTO 22:20:48 — apply-refine-labels: #4685: applied +priority:high. Reversibility: high.
+- AUTO 22:20:52 — apply-refine-labels: #4687: applied +priority:high. Reversibility: high.
+- AUTO 22:20:56 — apply-refine-labels: #4679: applied +priority:medium. Reversibility: high.
+- AUTO 22:20:59 — apply-refine-labels: #4693: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:04 — apply-refine-labels: #4707: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:08 — apply-refine-labels: #4709: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:12 — apply-refine-labels: #4710: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:15 — apply-refine-labels: #4718: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:19 — apply-refine-labels: #4725: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:23 — apply-refine-labels: #4736: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:28 — apply-refine-labels: #4738: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:32 — apply-refine-labels: #4741: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:36 — apply-refine-labels: #4748: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:40 — apply-refine-labels: #4750: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:44 — apply-refine-labels: #4764: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:49 — apply-refine-labels: #4767: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:52 — apply-refine-labels: #4773: applied +priority:medium. Reversibility: high.
+- AUTO 22:21:56 — apply-refine-labels: #4686: applied +priority:low. Reversibility: high.
+- AUTO 22:22:01 — apply-refine-labels: #4702: applied +priority:low. Reversibility: high.
+- AUTO 22:22:05 — apply-refine-labels: #4703: applied +priority:low. Reversibility: high.
+- AUTO 22:22:09 — apply-refine-labels: #4708: applied +priority:low. Reversibility: high.
+- AUTO 22:22:14 — apply-refine-labels: #4737: applied +priority:low. Reversibility: high.
+- AUTO 22:22:19 — apply-refine-labels: #4743: applied +priority:low. Reversibility: high.
+- AUTO 22:22:23 — apply-refine-labels: #4744: applied +priority:low. Reversibility: high.
+- AUTO 22:22:27 — apply-refine-labels: #4745: applied +priority:low. Reversibility: high.
+- AUTO 22:22:31 — apply-refine-labels: #4749: applied +priority:low. Reversibility: high.
+- AUTO 22:22:36 — apply-refine-labels: #4751: applied +priority:low. Reversibility: high.
+- AUTO 22:22:39 — apply-refine-labels: #4760: applied +priority:low. Reversibility: high.
+- AUTO 22:22:43 — apply-refine-labels: #4763: applied +priority:low. Reversibility: high.
+- AUTO 22:22:47 — apply-refine-labels: #4765: applied +priority:low. Reversibility: high.
+- AUTO 22:22:51 — apply-refine-labels: #4768: applied +priority:low. Reversibility: high.
+- AUTO 22:22:55 — apply-refine-labels: #4769: applied +priority:low. Reversibility: high.
+- AUTO 22:22:59 — apply-refine-labels: #4644: applied +size:low, -size:small. Reversibility: high.
+- AUTO 22:23:53 — Refine close-out: Backlog refine (headless): 32 priorities applied (2 high, 15 medium, 15 low), 4 needs:* records skipped, #4644 size:small replaced with size:low. Grant chain: zero-eligible short-circuit, 24 candidates, 0 needing grant-check: trust: 13, needs-label: 11. Priority pass read each record from a Current State excerpt, so no Related lines were written. Dependency repair: #4487 to #4572 attempted; #4756 needs none because #4495 is closed. 13 records carry an unresolved decision proposal, human decision only. Reversibility: n/a.
+## /sweep
+- AUTO 22:24:25 — Step 4 close-out: Sweep close-out. Tidy: 23 applied, 17 staged rows in 15 items, 20 Yours, 9 scans clean. Specify: shaped 9, routed 0, failed 0. Refine: granted 0, re-authorized 0, needs-decision 0, skipped 24 (trust 13, needs-label 11), 32 priorities, 1 blocked-by link. Reversibility: n/a.
+- AUTO 08:37:37 — Section E: released claim on #3942 (swept: stale claim) (swept from run 2026-10-26T203040-record-3942); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 08:37:45 — Section E: released claim on #3977 (swept: stale claim) (swept from run 2026-10-26T222042-record-3977); labels removed: bot:in-progress. Reversibility: high.
+- AUTO 08:37:53 — Section E: released claim on #4347 (swept: stale claim) (swept from run 2026-10-27T143545-record-4347); labels removed: bot:in-progress. Reversibility: high.
+## /claude-tweaks:tidy
+- AUTO 08:38:32 — tidy --approve: tidy --approve (user: run all next actions): filed 10 digest-cluster records #4807,#4809-#4817 absorbing 62 entries, each entry line in #1426 marked with its ref and read back. PR-overlap comment skipped by hand: the only hit, #4784, settles the issues area, none of these ten. Reversibility: med.
+- AUTO 08:38:32 — tidy --approve: tidy --approve: filed 4 capture records #4818-#4821 for the PR-scan and residue defects; bodies recomposed via specShapedBody, adding Release Note and Key Files the staged drafts lacked. Reversibility: med.
+- AUTO 08:38:32 — tidy --approve: tidy --approve: released stale claims #3942,#3977,#4347 after re-verifying: draft PRs #4444,#4445,#4476 idle since 10-26/10-27 and DIRTY, no worktree on disk. auto:build stays on all three. Reversibility: high.

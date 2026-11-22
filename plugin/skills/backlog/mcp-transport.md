@@ -43,7 +43,8 @@ exported):
    - The historical `--state all` record set (trust rows' input) → the same row, `state: "all"`,
      shaped to `record-snapshot.js`'s `UNION_FIELDS` — `_shared/record-queue-fetch.md`'s
      session-scoped snapshot still applies on this transport; a fresh MCP `list_issues` call reads
-     into that same cache rather than bypassing it.
+     into that same cache rather than bypassing it. Keep `author_association` and `user` from
+     `list_issues` as they arrive: they are what `issueAuthorTrust` reads, and absent means fail open.
    - Sub-issue numbers, only relevant when `work-links: native`: no MCP equivalent exists for the
      native sub-issues API (`_shared/github-write-transport.md`'s PR-scoped gap note is the same
      shape of gap — an uncovered read, not a write). Under `gh`-absent, always take
@@ -52,11 +53,24 @@ exported):
      it needs no extra call beyond the fetch above.
    - Git log → unaffected by `gh` presence at all: `fetchGitLog` shells `git`, not `gh`, so it runs
      identically on both transports. No MCP mapping needed here.
-2. **Compute, locally, no MCP call:** feed the fetched JSON into `filterCandidates` →
+2. **Foreign blockers, via MCP (#4793):** `filterCandidates`' third argument is required, so the
+   `gh`-absent path computes it the way the CLI does. Run `filterCandidates(issues, openNumbers,
+   new Map())` for the cheap survivors, read each survivor's body-declared foreign refs (`Blocked by
+   owner/name#N` lines) with `issue_read` (`get` method), and build one states object keyed
+   `owner/name#N`, each value copied from `issue_read`'s `state` (any case) or `null` for a ref it
+   cannot read. Build the Map with `bodyForeignBlockers(cheapSurvivors, { states })`
+   (`bin/lib/issues/cross-repo-states.js`) and pass it as the third argument of the second
+   `filterCandidates` call. A ref left out, or `null`, still blocks (fail closed). `backlog overview`
+   hard-gates on `gh`, so it has no `gh`-absent funnel to supply states to.
+3. **Compute, locally, no MCP call:** continue from step 2's `filterCandidates` result →
    `computePhaseA` / `machineGrantOutlook` / `trustRows` directly, via a `node -e` snippet
    `require`-ing `bin/lib/backlog-grant-gate/backlog-grant-gate.js` and `bin/lib/issues/backlog.js`
    — the same pure logic `bin/backlog-grant-gate.js` runs, called with MCP-sourced data instead of
-   `gh`-sourced data.
+   `gh`-sourced data. Pass `trustRows` a policy built from `TRUST_POLICY_KEYS`
+   (`bin/lib/issues/trust.js`), each key set to the value
+   `resolve-policy.js --values {the three keys}` prints for it. A closed record must carry
+   `closedAt` (camelCase, renamed from MCP's `closed_at`) or it forms no trust cell: a closed record
+   with no parseable `closedAt` is outside the evaluation window.
 
 This reproduces the CLI's outcome rather than a rewritten one — a live run should confirm the MCP
 `list_issues` field shapes line up with `CANDIDATE_FIELDS`/`UNION_FIELDS` closely enough that no

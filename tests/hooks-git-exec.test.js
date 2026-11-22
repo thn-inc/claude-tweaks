@@ -5,9 +5,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv } = require('../plugin/bin/lib/hooks/git-exec');
+const {
+  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSpecOf, repoTargetOf,
+  repoSpecOfRemote, repoTargetOfRemote,
+} = require('../plugin/bin/lib/hooks/git-exec');
+const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
 
@@ -23,12 +28,12 @@ test('runGit: success returns trimmed stdout and a null failure', () => {
   const dir = gitRepo();
   const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.ok(!stdout.endsWith('\n'), 'stdout must be trimmed');
 });
 
 test('runGit: a non-git directory is git-error — git ANSWERED, in the negative', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-nongit-'));
+  const dir = scratchDir('ct-ge-nongit-', { realpath: true });
   const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(stdout, null);
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
@@ -42,7 +47,7 @@ test('runGit: a non-git directory is git-error — git ANSWERED, in the negative
 // the fix: real stderr text comes back, and the four FAILURE.* category
 // values a caller switches on are untouched by adding it.
 test('runGit: a failing invocation returns git\'s real stderr text alongside the existing failure category', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-stderr-'));
+  const dir = scratchDir('ct-ge-stderr-', { realpath: true });
   const { stdout, failure, stderr } = runGit(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(stdout, null);
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
@@ -81,7 +86,7 @@ test('runGit: the timeout and non-git cases are distinguishable from each other'
   // both of these produced an identical `null`, so no caller could tell a
   // transient load spike from a permanent fact about the filesystem.
   const repo = gitRepo();
-  const nonGit = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-cmp-'));
+  const nonGit = scratchDir('ct-ge-cmp-', { realpath: true });
 
   const timedOut = runGit(['rev-parse', '--show-toplevel'], repo, { timeoutMs: 1 });
   const notARepo = runGit(['rev-parse', '--show-toplevel'], nonGit);
@@ -97,7 +102,7 @@ test('runGit: always returns an object, never null, on every path', () => {
   // correct then and would be silently WRONG now, so the rename to runGit is
   // load-bearing. This pins the new contract so a future revert to a nullable
   // return has to fail a test rather than fail a gate in production.
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-shape-'));
+  const dir = scratchDir('ct-ge-shape-', { realpath: true });
   for (const result of [
     runGit(['rev-parse', '--show-toplevel'], gitRepo()),
     runGit(['rev-parse', '--show-toplevel'], dir),
@@ -124,12 +129,12 @@ test('runGitAsync: success returns trimmed stdout and a null failure', async () 
   const dir = gitRepo();
   const { stdout, failure, stderr } = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.strictEqual(stderr, null, 'runGitAsync must match runGit\'s success shape: stderr is null, not omitted');
 });
 
 test('runGitAsync: a non-git directory is git-error — git ANSWERED, in the negative', async () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-async-nongit-'));
+  const dir = scratchDir('ct-ge-async-nongit-', { realpath: true });
   const { stdout, failure, stderr } = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(stdout, null);
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
@@ -144,7 +149,7 @@ test('runGitAsync: a non-git directory is git-error — git ANSWERED, in the neg
 // `err.code` (a number) — the shared buildFailure must read both, or the
 // async twin always reports `exitCode: null`.
 test('runGit and runGitAsync: a failing call reports git\'s numeric exit code', async () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-exitcode-'));
+  const dir = scratchDir('ct-ge-exitcode-', { realpath: true });
   const sync = runGit(['rev-parse', '--show-toplevel'], dir);
   const asyncResult = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(sync.failure, FAILURE.GIT_ERROR);
@@ -190,7 +195,7 @@ test('runGitAsync: a blown budget is timeout, and timeout is indeterminate (#134
 });
 
 test('runGitAsync: always returns an object, never null, on every path', async () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-async-shape-'));
+  const dir = scratchDir('ct-ge-async-shape-', { realpath: true });
   // #2500 review: this third call races a real subprocess against a real
   // `timeoutMs: 1`, the same shape as the two CT_HOOKS_GIT_TIMEOUT_MS tests
   // above that needed a mock-based rewrite — but unlike those, it does NOT
@@ -278,7 +283,7 @@ test('runGit: a non-numeric or non-positive CT_HOOKS_GIT_TIMEOUT_MS falls back t
     try {
       const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
       assert.strictEqual(failure, null, `bad override ${JSON.stringify(bad)} must not break a normal call`);
-      assert.strictEqual(stdout, fs.realpathSync(dir));
+      assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
     } finally {
       if (prior === undefined) delete process.env.CT_HOOKS_GIT_TIMEOUT_MS;
       else process.env.CT_HOOKS_GIT_TIMEOUT_MS = prior;
@@ -417,10 +422,196 @@ test('#3900 runGit/runGitAsync: only raw === true opts out of trimming (truthy n
 });
 
 test('#3900 runGit raw:true leaves the failure shape unchanged', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-raw-fail-'));
+  const dir = scratchDir('ct-ge-raw-fail-', { realpath: true });
   const { stdout, failure, stderr, exitCode } = runGit(['ls-files', '-z'], dir, { raw: true });
   assert.strictEqual(stdout, null);
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
   assert.match(stderr, /not a git repository/);
   assert.strictEqual(exitCode, 128);
+});
+
+test('repoSpecOf: the origin remote parsed with its host — github.com and GitHub Enterprise, SSH and HTTPS; repoTargetOf keeps the bare slug', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/w.git']);
+  assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
+  // #4933: ghe.example.com is a spec only when GH_HOST opts it in.
+  const gateDeps = { env: { GH_HOST: 'ghe.example.com' }, readFile: () => { throw new Error('none'); } };
+  for (const url of ['git@ghe.example.com:acme/w.git', 'https://ghe.example.com/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
+    assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
+    assert.strictEqual(repoTargetOf(repo, gateDeps).slug, 'acme/w', url);
+  }
+});
+
+test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } naming the host and the GH_HOST opt-in (#4794: an scp origin\'s names no host value)', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  for (const url of ['git@git.corp.invalid:acme/w.git', 'https://git.corp.invalid/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'add', 'origin', url]);
+    const got = repoSpecOf(repo, gateDeps);
+    assert.deepStrictEqual(Object.keys(got), ['refusal'], url);
+    assert.match(got.refusal, /origin host git\.corp\.invalid is not a known GitHub host/, url);
+    if (url.startsWith('https:')) {
+      assert.match(got.refusal, /export GH_HOST=git\.corp\.invalid/, url);
+    } else {
+      assert.strictEqual(got.refusal, gateOriginRepo(url, gateDeps).refusal, url);
+      assert.match(got.refusal, /export GH_HOST as that server's host/, url);
+      assert.doesNotMatch(got.refusal, /GH_HOST=git\.corp\.invalid/, url);
+    }
+    fixtureGit(['-C', repo, 'remote', 'remove', 'origin']);
+  }
+});
+
+test('repoSpecOf (#4794): an SSH-alias origin returns { refusal } advising the real host, never the alias', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github-work:acme/w.git']);
+  const got = repoSpecOf(repo, gateDeps);
+  assert.deepStrictEqual(Object.keys(got), ['refusal']);
+  assert.match(got.refusal, /origin host github-work is not a known GitHub host/);
+  assert.match(got.refusal, /export GH_HOST=github\.com/);
+  assert.match(got.refusal, /export GH_HOST as that server's host/);
+  assert.doesNotMatch(got.refusal, /GH_HOST=github-work/);
+});
+
+test('repoSpecOf (#4933): a known GitHub host resolves; a *.ghe.com host needs no opt-in', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git']);
+  assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'acme.ghe.com', owner: 'o', repo: 'r' });
+});
+
+test('repoSpecOf (#4933): an unreadable hosts.yml (readFile throws) is still a refusal, never a throw', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://git.corp.invalid/o/r.git']);
+  let got;
+  assert.doesNotThrow(() => { got = repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('EACCES'); } }); });
+  assert.ok(got && typeof got.refusal === 'string' && got.refusal.includes('git.corp.invalid'), JSON.stringify(got));
+});
+
+test('repoSpecOf (#4794): an ssh:// origin on an unknown host is refused exactly as its scp spelling is', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@git.corp.invalid/acme/w.git']);
+  const got = repoSpecOf(repo, gateDeps);
+  assert.deepStrictEqual(Object.keys(got), ['refusal']);
+  assert.strictEqual(got.refusal, gateOriginRepo('git@git.corp.invalid:acme/w.git', gateDeps).refusal);
+  assert.doesNotMatch(got.refusal, /GH_HOST=git\.corp\.invalid/);
+});
+
+test('repoSpecOf (#4794): an ssh:// github.com origin is read by the gate, host github.com', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  assert.strictEqual(repoTargetOf(repo, gateDeps).slug, 'acme/w');
+  assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'github.com', owner: 'acme', repo: 'w' });
+});
+
+test('repoSpecOf: no origin remote, or a directory outside any repo, is null', () => {
+  assert.strictEqual(repoSpecOf(gitRepo()), null);
+  assert.strictEqual(repoSpecOf(scratchDir('ct-ge-spec-nongit-', { realpath: true })), null);
+});
+
+// #4794: repoTargetOf — repoSpecOf's gated spec plus the one resolved host and the --repo slug
+// for it. The host comes only from the #4933 gate (or GH_HOST), so an SSH alias or an unknown
+// host is a refusal, never a bare slug.
+test('repoTargetOf (#4794): the gated origin host and its --repo slug — GHE qualified, github.com bare, GH_HOST wins', () => {
+  const repo = gitRepo();
+  const noHosts = () => { throw new Error('none'); };
+  const gateDeps = (env = {}, readFile = noHosts) => ({ env, readFile });
+  const set = (url) => {
+    fixtureGit(['-C', repo, 'remote', 'remove', 'origin']);
+    fixtureGit(['-C', repo, 'remote', 'add', 'origin', url]);
+  };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+  const ghe = { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/widgets' };
+
+  for (const url of ['https://acme.ghe.com/acme/widgets.git', 'git@acme.ghe.com:acme/widgets.git', 'https://ACME.ghe.com./acme/widgets.git',
+    // Task 1's normalized read: userinfo, port and ssh:// scheme do not change the verdict.
+    'ssh://git@acme.ghe.com/acme/widgets.git', 'https://oauth2@acme.ghe.com/acme/widgets.git', 'https://acme.ghe.com:8443/acme/widgets.git']) {
+    set(url);
+    assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), ghe, url);
+  }
+
+  // A gh hosts.yml key admits a non-.ghe.com host; without it the target is the gate's refusal.
+  set('https://ghe.example.com/acme/widgets.git');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({}, () => 'ghe.example.com:\n    user: x\n')), { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'ghe.example.com', ghRepo: 'ghe.example.com/acme/widgets' });
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), { refusal: gateOriginRepo('https://ghe.example.com/acme/widgets.git', gateDeps()).refusal });
+  // An exported but empty GH_HOST is no opt-in.
+  assert.deepStrictEqual(Object.keys(repoTargetOf(repo, gateDeps({ GH_HOST: '  ' }))), ['refusal']);
+
+  // AC2.1: a github.com origin keeps the bare slug, in both spellings.
+  for (const url of ['https://github.com/acme/widgets.git', 'git@github.com:acme/widgets.git']) {
+    set(url);
+    const got = repoTargetOf(repo, gateDeps());
+    assert.deepStrictEqual(got, { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'github.com', ghRepo: 'acme/widgets' }, url);
+  }
+
+  // Review Focus 1 / blanket rule 1: an SSH alias is refused in both spellings, with one text.
+  set('git@github-work:acme/widgets.git');
+  const alias = repoTargetOf(repo, gateDeps());
+  assert.deepStrictEqual(Object.keys(alias), ['refusal']);
+  assert.deepStrictEqual(alias, { refusal: gateOriginRepo('git@github-work:acme/widgets.git', gateDeps()).refusal });
+  set('ssh://git@github-work/acme/widgets.git');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), alias);
+  // Round 6 Q1: an ssh:// URL on an unknown host is refused as its scp spelling is.
+  set('ssh://git@git.corp.invalid/acme/widgets.git');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), { refusal: gateOriginRepo('git@git.corp.invalid:acme/widgets.git', gateDeps()).refusal });
+
+  // Review Focus 2, 7: gh's default host is GH_HOST, so the slug stays bare when the host is GH_HOST.
+  set('https://acme.ghe.com/acme/widgets.git');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({ GH_HOST: 'mine.example' })), { ...ghe, host: 'mine.example', ghRepo: 'acme/widgets' });
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({ GH_HOST: 'ACME.ghe.com' })), { ...ghe, ghRepo: 'acme/widgets' });
+  // AC2 with GH_HOST exported on a github.com origin: today's bare argv.
+  set('https://github.com/acme/widgets.git');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({ GH_HOST: 'mine.example' })),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'mine.example', ghRepo: 'acme/widgets' });
+
+  // #4857's fallback: a cloud sandbox proxy remote does not parse under the gate's read, so it is
+  // neither admitted nor refused; its host is GH_HOST or github.com, where the seam sends it too.
+  set('http://local_proxy@127.0.0.1:43215/git/acme/widgets');
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps()), { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'github.com', ghRepo: 'acme/widgets' });
+  assert.deepStrictEqual(repoTargetOf(repo, gateDeps({ GH_HOST: 'mine.example' })),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'mine.example', ghRepo: 'acme/widgets' });
+
+  // No origin remote -> null.
+  assert.strictEqual(repoTargetOf(gitRepo(), gateDeps()), null);
+});
+
+// #5109: the remote-taking core both CLIs call. repoTargetOf(root) is "read origin, then this".
+test('AC1.2 (#5109): repoTargetOfRemote is repoTargetOf on a URL; the loose fallback trims, and { loose: false } turns it off', () => {
+  const none = () => { throw new Error('none'); };
+  const deps = (env = {}) => ({ env, readFile: none });
+  const PROXY = 'http://local_proxy@127.0.0.1:43215/git/acme/widgets';
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git']);
+  for (const url of ['https://github.com/acme/widgets.git', 'git@acme.ghe.com:acme/widgets.git',
+    'https://ghe.example.com/acme/widgets.git', 'git@github-work:acme/widgets.git', PROXY]) {
+    fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
+    for (const env of [{}, { GH_HOST: 'mine.example' }]) {
+      assert.deepStrictEqual(repoTargetOfRemote(url, deps(env)), repoTargetOf(repo, deps(env)), `${url} ${JSON.stringify(env)}`);
+      assert.deepStrictEqual(repoSpecOfRemote(url, deps(env)), repoSpecOf(repo, deps(env)), `${url} ${JSON.stringify(env)}`);
+    }
+  }
+  // Review Focus 1: the real origin readers return untrimmed stdout.
+  assert.deepStrictEqual(repoTargetOfRemote(`${PROXY}\n`, deps()),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'github.com', ghRepo: 'acme/widgets' });
+  assert.deepStrictEqual(repoSpecOfRemote(`${PROXY}\r\n`, deps()), { host: null, owner: 'acme', repo: 'widgets' });
+  // Review Focus 2: { loose: false } is null for a remote the gate cannot read, GH_HOST or not ...
+  assert.strictEqual(repoTargetOfRemote(PROXY, deps(), { loose: false }), null);
+  assert.strictEqual(repoTargetOfRemote(PROXY, deps({ GH_HOST: 'mine.example' }), { loose: false }), null);
+  assert.strictEqual(repoSpecOfRemote(PROXY, deps(), { loose: false }), null);
+  // ... and changes nothing the gate decides.
+  assert.deepStrictEqual(repoTargetOfRemote('https://acme.ghe.com/acme/widgets.git\n', deps(), { loose: false }),
+    { owner: 'acme', repo: 'widgets', slug: 'acme/widgets', host: 'acme.ghe.com', ghRepo: 'acme.ghe.com/acme/widgets' });
+  assert.deepStrictEqual(repoTargetOfRemote('git@github-work:acme/widgets.git', deps(), { loose: false }),
+    { refusal: gateOriginRepo('git@github-work:acme/widgets.git', deps()).refusal });
+  // A null opts is the default (loose), never a throw.
+  assert.deepStrictEqual(repoTargetOfRemote(PROXY, deps(), null), repoTargetOfRemote(PROXY, deps()));
+  assert.deepStrictEqual(repoSpecOfRemote(PROXY, deps(), null), { host: null, owner: 'acme', repo: 'widgets' });
+  // Review Focus 5: degenerate remotes are null, never a throw.
+  for (const r of [null, undefined, '', '   \n', 'not a url']) {
+    assert.strictEqual(repoTargetOfRemote(r, deps()), null, JSON.stringify(r));
+    assert.strictEqual(repoSpecOfRemote(r, deps()), null, JSON.stringify(r));
+  }
 });

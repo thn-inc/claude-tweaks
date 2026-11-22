@@ -142,7 +142,7 @@ Silence there would read as "no evidence" when the truth is "not looked at."
 **This line is advisory and is never the reason a row is recommended.** It describes how the
 record's *class* has historically turned out; the Recommended value comes from a content-aware read
 of *this record* (Step 3's `assess-agent-autonomy` call). A class with no evidence is the normal
-state, not a warning: on a repo that has not been running `/claude-tweaks:demo`, every line reads
+state, not a warning: on a repo that has not been running `/claude-tweaks:accept`, every line reads
 `insufficient-evidence`, and its only job is to make that visible at the moment a human is granting
 anyway.
 
@@ -287,9 +287,11 @@ here.
 
 Population: `findUnresolvedDependencyProse`'s `{ flags }` output (Step 5's Dependency-repair-rows
 section names the detection and both `work-links` branches) — records whose prose names a blocker
-with no resolved `blockedBy`. A flagged record already carrying a row in an earlier lane above gets
-one annotation line under that row instead of a row here — one-lane-per-record; the repair need
-rides along as context, the literal shape:
+with no resolved `blockedBy`. A qualified `owner/name#N` line is a wired foreign blocker and never
+lands here, and a repair never takes a bare `#N` from a qualified `owner/name#N` mention (#4793).
+A flagged record already carrying a row in an earlier lane above gets one annotation line under that
+row instead of a row here — one-lane-per-record; the repair need rides along as context, the literal
+shape:
 
 ```
   # dependency-repair: Wire blocked-by #419 — prose cites #419 but resolved blockers were empty

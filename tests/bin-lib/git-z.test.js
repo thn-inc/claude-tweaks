@@ -11,6 +11,7 @@ const {
   splitNul, parseNameStatusZ, splitLogZ,
   parseNumstatZ, parseStatusPorcelainZ, parseLsTreeZ, unquoteCPath,
 } = require('../../plugin/bin/lib/git-z.js');
+const { initRepo } = require('../helpers/git-fixtures');
 
 const isHeader = (t) => t.startsWith('\x01');
 
@@ -69,9 +70,7 @@ test('AC1.1: real git -z output reports docs/café.md unquoted', () => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'git-z-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
   try {
-    git('init', '-q');
-    git('config', 'user.email', 'test@example.com');
-    git('config', 'user.name', 'Test');
+    initRepo(cwd, { name: 'Test', email: 'test@example.com', cwd, encoding: 'utf8' });
     // Pin the two settings a host's global config could flip: quotepath decides
     // whether the plain form below is C-quoted, gpgsign would make `commit` prompt.
     git('config', 'core.quotepath', 'true');
@@ -151,6 +150,18 @@ test('parseStatusPorcelainZ: copy and Y-column rename carry origPath; a token sh
   assert.deepEqual(parseStatusPorcelainZ('C  b.md\u0000a.md\u0000'), [{ xy: 'C ', path: 'b.md', origPath: 'a.md' }]);
   assert.deepEqual(parseStatusPorcelainZ(' R b.md\u0000a.md\u0000'), [{ xy: ' R', path: 'b.md', origPath: 'a.md' }]);
   assert.deepEqual(parseStatusPorcelainZ('M a\u0000 M ok.md\u0000'), [{ xy: ' M', path: 'ok.md' }]);
+});
+
+test('#4815 AC1.1: parseStatusPorcelainZ strict: a token shorter than 4 characters throws; well-formed input still parses', () => {
+  assert.throws(
+    () => parseStatusPorcelainZ('M a\u0000 M ok.md\u0000', { strict: true }),
+    /shorter than "XY path" \("M a"\)/,
+  );
+  assert.deepEqual(parseStatusPorcelainZ('R  new.md\u0000old.md\u0000 M b.md\u0000', { strict: true }), [
+    { xy: 'R ', path: 'new.md', origPath: 'old.md' },
+    { xy: ' M', path: 'b.md' },
+  ]);
+  assert.deepEqual(parseStatusPorcelainZ('', { strict: true }), []);
 });
 
 test('unquoteCPath: the remaining C escapes decode, and an unknown backslash escape is kept literally', () => {

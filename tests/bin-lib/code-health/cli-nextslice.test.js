@@ -2,16 +2,25 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
+const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { spawnCli } = require('../../helpers/run-cli');
+const { cleanGitEnv } = require('../../helpers/git-fixtures');
+
+// Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
+const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-')); }
+function tmp() { return scratchDir('codehealth-ns-'); }
+// In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
 function runNextSlice(args, root) {
-  const raw = execFileSync('node', [CLI, 'next-slice', '--root', root, ...args], { encoding: 'utf8' });
-  return JSON.parse(raw);
+  const res = sweepCli(CLI, ['next-slice', '--root', root, ...args]);
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  return JSON.parse(res.stdout);
 }
 
 // Cursors are now durable (health-state branch), not local disk (writeCursors
@@ -22,21 +31,22 @@ function runNextSlice(args, root) {
 // `origin` remote at it. Only the WRITE path (gh api blob/tree/commit/ref
 // calls) requires live GitHub credentials — this helper never touches it.
 function seedDurableCursors(root, cursors) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-bare-'));
-  execFileSync('git', ['init', '--bare', '-q', bareDir]);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-seed-'));
-  execFileSync('git', ['init', '-q', seedDir]);
-  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state']);
+  const bareDir = scratchDir('codehealth-ns-bare-');
+  execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
+  const seedDir = scratchDir('codehealth-ns-seed-');
+  execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
+  execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });
   fs.writeFileSync(path.join(seedDir, 'code-health', 'cursors.json'), JSON.stringify(cursors));
-  execFileSync('git', ['-C', seedDir, 'add', '-A']);
+  execFileSync('git', ['-C', seedDir, 'add', '-A'], GIT_OPTS);
   execFileSync(
     'git',
     ['-C', seedDir, '-c', 'user.email=test@example.com', '-c', 'user.name=test', 'commit', '-q', '-m', 'seed'],
+    GIT_OPTS,
   );
-  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state']);
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root });
+  execFileSync('git', ['-C', seedDir, 'push', '-q', bareDir, 'health-state'], GIT_OPTS);
+  execFileSync('git', ['init', '-q'], { cwd: root, ...GIT_OPTS });
+  execFileSync('git', ['remote', 'add', 'origin', bareDir], { cwd: root, ...GIT_OPTS });
 }
 
 test('next-slice returns a slice object for a new repo', () => {
@@ -46,6 +56,36 @@ test('next-slice returns a slice object for a new repo', () => {
   assert.ok(result !== null, 'must pick a slice when nothing has been judged');
   assert.ok(typeof result.id === 'string');
   assert.ok(typeof result.why === 'string');
+});
+
+// No --root: the root is the injected cwd, the same outcome as the --root twin above.
+test('AC8.1: next-slice without --root picks a slice under the injected cwd', () => {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'a.js'), 'const x = 1;\n');
+  const res = sweepCli(CLI, ['next-slice'], { cwd: root });
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  const result = JSON.parse(res.stdout);
+  assert.ok(result !== null, 'must pick a slice when nothing has been judged');
+  assert.ok(typeof result.id === 'string');
+  assert.strictEqual(result.path, root, 'the picked slice must lie under the injected cwd');
+});
+
+// Accepted output difference of the in-process entry (#5381): a RELATIVE --root now resolves
+// against the injected cwd once, so the printed slice paths are absolute.
+test('next-slice --root <relative> prints absolute slice paths under the injected cwd', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'src', 'pkg-a'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'src', 'pkg-b'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'src', 'pkg-a', 'a.js'), 'const a = 1;\n');
+  fs.writeFileSync(path.join(root, 'src', 'pkg-b', 'b.js'), 'const b = 2;\n');
+
+  const res = sweepCli(CLI, ['next-slice', '--root', 'src', '--budget', '2'], { cwd: root });
+  assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
+  const slices = JSON.parse(res.stdout);
+  assert.ok(slices.length >= 1, 'must pick at least one slice');
+  for (const slice of slices) {
+    assert.strictEqual(slice.path, path.resolve(root, 'src', slice.id), `slice ${slice.id} must print its absolute path`);
+  }
 });
 
 test('next-slice returns null when the only slice has an unchanged hash', () => {
@@ -67,7 +107,7 @@ test('next-slice --budget 2 returns an array of up to 2 slices', () => {
   fs.writeFileSync(path.join(root, 'pkg-a', 'a.js'), 'const a = 1;\n');
   fs.writeFileSync(path.join(root, 'pkg-b', 'b.js'), 'const b = 2;\n');
   // No cursors → all slices are stale → budget=2 returns up to 2
-  const raw = execFileSync('node', [CLI, 'next-slice', '--root', root, '--budget', '2'], { encoding: 'utf8' });
+  const raw = sweepCli(CLI, ['next-slice', '--root', root, '--budget', '2']).stdout;
   const result = JSON.parse(raw);
   assert.ok(Array.isArray(result), '--budget must return an array');
   assert.ok(result.length >= 1 && result.length <= 2);
@@ -84,7 +124,7 @@ test('next-slice exits 0 and writes nothing to disk', () => {
   const hash = contentHash(root, null, { recursive: sliceRecursive('.') });
   seedDurableCursors(root, { '.': { lastSweptMs: Date.now(), lastHash: hash } });
   // Must exit 0 even when returning null
-  const raw = execFileSync('node', [CLI, 'next-slice', '--root', root], { encoding: 'utf8' });
+  const raw = sweepCli(CLI, ['next-slice', '--root', root]).stdout;
   assert.strictEqual(JSON.parse(raw), null);
   // Cache must be untouched
   assert.strictEqual(fs.existsSync(path.join(root, '.claude-tweaks', 'code-health', 'cache.json')), false);
@@ -116,4 +156,16 @@ test('next-slice: a change inside a subdirectory does not make the "." slice loo
   // actually changed) is picked.
   assert.ok(result !== null, 'the changed "sub" slice should still be picked');
   assert.strictEqual(result.id, 'sub', 'a change inside "sub" must not make "." look changed instead');
+});
+
+// Real-process pin of the script entry (#5381): an unknown command exits 2 with empty stdout and
+// the usage text on stderr.
+test('AC2.1, AC2.2: code-health.js no-such-command exits 2 with the usage text on stderr, naming no removed command (real process)', () => {
+  const r = spawnCli(CLI, ['no-such-command'], { env: { ...process.env }, cwd: tmp() });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(
+    r.stderr,
+    'usage: code-health.js <command> [options]\ncommands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, retry-queue drain, retry-queue update <results.json>\n',
+  );
 });

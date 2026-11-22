@@ -15,7 +15,7 @@
 // Lever names validate against the canonical Manifesto lever set (pinned
 // against manifesto.md's config.yml example block by
 // tests/bin-lib/set-config/write.test.js), plus RUN_PINS — run-scoped keys
-// (integration-model) validated the same way but never Manifesto levers.
+// (integration-model, spec) validated the same way but never Manifesto levers.
 // Values validate against POLICY_KEYS enums where a schema row exists;
 // `mode` and `ceremony-profile` are config.yml-only levers with no
 // POLICY_KEYS row (flow/manifesto.md computes them per run), so their enums
@@ -33,7 +33,7 @@ const path = require('path');
 const { POLICY_KEYS } = require('../policy-schema');
 
 // Ordered per manifesto.md's canonical lever numbering (1=Mode ... 13=Merge
-// authorization). spec:/created: are run bookkeeping, not levers — excluded.
+// authorization). created: is run bookkeeping; spec: is a run pin (RUN_PINS) — neither is a lever.
 const MANIFESTO_LEVERS = Object.freeze([
   'mode', 'scope-creep', 'overlap', 'design-intent', 'leftover-default',
   'auto-fix-threshold', 'review-auto-apply-ceiling', 'tidy-aggressiveness',
@@ -62,12 +62,22 @@ const LEVER_LABELS = Object.freeze({
 });
 
 // Run pins: config.yml keys a run records once at its start, validated like
-// levers (enum from POLICY_KEYS) but deliberately NOT Manifesto levers — no
-// Manifesto prompt asks for them and the FYI table does not show them. They
-// stay out of MANIFESTO_LEVERS because integration-model is run-scoped
+// levers (enum from POLICY_KEYS, or a value pattern below) but deliberately
+// NOT Manifesto levers — no Manifesto prompt asks for them and the FYI table
+// does not show them. integration-model is run-scoped
 // (_shared/integration-model.md's Run-scoped stability): the value is fixed
 // for the run's life, not a policy the operator tunes at the Manifesto gate.
-const RUN_PINS = Object.freeze(['integration-model']);
+// spec (#5347) is the record number a run is bound to — an express-lane run
+// records it here so merge mode's run binding and the wrap-up pack's config
+// rung can read it; created: stays bookkeeping this CLI refuses.
+const RUN_PINS = Object.freeze(['integration-model', 'spec']);
+
+// Pin value patterns, for pins whose value is a shape rather than an enum.
+// A positive integer with no leading zero — an unparseable record number must
+// fail at the write (exit 2), not read back as a silent miss later.
+const PIN_PATTERNS = Object.freeze({
+  spec: Object.freeze({ re: /^[1-9][0-9]*$/, allowed: 'a positive integer record number' }),
+});
 
 function isConfigKey(key) {
   return MANIFESTO_LEVERS.includes(key) || RUN_PINS.includes(key);
@@ -97,6 +107,10 @@ function leverValues(key) {
 // { ok:false, reason:'invalid-value', allowed }
 function validateLever(key, value) {
   if (!isConfigKey(key)) return { ok: false, reason: 'unknown-key' };
+  const pattern = PIN_PATTERNS[key];
+  if (pattern) {
+    return pattern.re.test(value) ? { ok: true } : { ok: false, reason: 'invalid-value', allowed: [pattern.allowed] };
+  }
   const allowed = leverValues(key);
   if (allowed === null) return { ok: true }; // a lever with no known enum: name-only validation
   if (!allowed.includes(value)) return { ok: false, reason: 'invalid-value', allowed };
@@ -137,7 +151,12 @@ function setConfigLever({ runDir, key, value }) {
     }
   }
   fs.writeFileSync(file, lines.join('\n') + '\n');
+  // The run manifest (#5903) tracks the latest ceremony verdict. Best-effort: a failed fill never
+  // changes this write's outcome. Required lazily so the many callers that never touch it stay light.
+  if (key === 'ceremony-profile') {
+    try { require('../run-manifest/write').fillRunManifest(runDir, { ceremonyProfile: value }); } catch { /* never breaks the lever write */ }
+  }
   return { file, previous };
 }
 
-module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, isConfigKey, leverValues, validateLever, setConfigLever };
+module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, PIN_PATTERNS, isConfigKey, leverValues, validateLever, setConfigLever };

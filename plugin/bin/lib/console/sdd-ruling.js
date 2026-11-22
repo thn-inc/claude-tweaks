@@ -1,7 +1,7 @@
 // bin/lib/console/sdd-ruling.js — the sdd-ruling defer-reason check (#3880/#4049),
 // held in its own leaf (#4060): its only require is issues/record, so a caller
 // that needs only these names (reconcile/console-execute.js) does not load
-// console/resolve.js and through it wrap-up/pack.js. resolve.js re-exports both.
+// console/resolve.js and through it wrap-up/pack.js. resolve.js re-exports every name here.
 'use strict';
 
 const { DEFER_REASONS } = require('../issues/record');
@@ -24,22 +24,47 @@ const SDD_RULING_REASONS = Object.freeze({
   NEEDS_HUMAN_DECISION: 'sdd-ruling-needs-human-decision',
 });
 
-function sddRulingDeferralReason(text) {
-  if (text === null || text === undefined) return SDD_RULING_REASONS.UNCLASSIFIED;
+// #3942: what ratifying a ruling does. A deferral files the deferred work as a
+// backlog record (ledger row `deferred`, `ratified → #{n}`); a settled
+// `Defers: no` ruling keeps the `accepted` write-back. Two categories, not one:
+// "not auto-ratifiable" is `sddRulingDeferralReason` returning non-null (a human
+// must tick it), "not ratifiable" is `sddRulingRatifyAction` returning null (there
+// is no readable ruling to act on). Prose twin: the same appendix bullet's ratify
+// sentence, which names each value.
+const SDD_RULING_RATIFY_ACTIONS = Object.freeze({
+  FILE_RECORD: 'file-record',
+  ACCEPT: 'accept',
+});
+
+// The header's two keys, read once for both exports below. Both header keys match
+// case-insensitively; the reason VALUE check stays exact (in sddRulingDeferralReason).
+// Every header line beginning `Defers:` is a line, its value the trimmed rest of the
+// line: an empty or multi-word value counts too, so a `Defers: no` plus a stray `Defers:`
+// or `Defers: not sure` is two lines, never one. That also tightens the unattended
+// console-auto gate (`sddRulingDeferralReason` reads this parse): such a header is held as
+// `sdd-ruling-unclassified` where it used to auto-ratify as a settled `no` (#3942's spec,
+// Architecture Alignment: a recorded beneficial deviation).
+// Each match is `[line, value]`, the shape both callers index.
+function readHeader(text) {
   const header = [];
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.replace(/\s+$/, '');
     if (line === '') break;
     header.push(line);
   }
-  // Both header keys match case-insensitively; the reason VALUE check below stays exact. More than one
-  // `Defers:` line fails closed (the first line must not silently win).
-  const defersMatches = header.map((l) => /^defers:[ \t]*(\S+)$/i.exec(l)).filter(Boolean);
-  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
-  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
+  const defersMatches = header.map((l) => /^defers:(.*)$/i.exec(l)).filter(Boolean).map((m) => [m[0], m[1].trim()]);
   // Every header line beginning with `Defer-reason:` is a reason line, whatever its value looks like
   // (#3880 fix round 1): a malformed one must fail closed, not fall through as if it were absent.
   const reasons = header.map((l) => /^defer-reason:(.*)$/i.exec(l)).filter(Boolean).map((m) => m[1].trim());
+  return { defersMatches, reasons };
+}
+
+function sddRulingDeferralReason(text) {
+  if (text === null || text === undefined) return SDD_RULING_REASONS.UNCLASSIFIED;
+  const { defersMatches, reasons } = readHeader(text);
+  // More than one `Defers:` line fails closed (the first line must not silently win).
+  if (defersMatches.length > 1) return SDD_RULING_REASONS.UNCLASSIFIED;
+  const defers = defersMatches.length ? defersMatches[0][1].toLowerCase() : null;
   if (defers === 'yes' || reasons.length > 0) {
     if (reasons.length !== 1 || !DEFER_REASONS.includes(reasons[0])) return SDD_RULING_REASONS.NO_DEFER_REASON;
     return reasons[0] === 'needs-human-decision' ? SDD_RULING_REASONS.NEEDS_HUMAN_DECISION : null;
@@ -48,4 +73,21 @@ function sddRulingDeferralReason(text) {
   return SDD_RULING_REASONS.UNCLASSIFIED;
 }
 
-module.exports = { SDD_RULING_REASONS, sddRulingDeferralReason };
+// What a human ratify of this ruling does. null only when the ruling is not
+// ratifiable: no text, or text with no non-whitespace character (nothing to compose
+// a record from). accept only for a settled decision: one or more `Defers:` lines,
+// every value `no`, and no `Defer-reason:` line (agreeing lines are the same
+// decision as one). Everything else readable is file-record, including every
+// deferral `sddRulingDeferralReason` withholds from auto-ratify (no reason, several
+// or invalid reasons, needs-human-decision, no or conflicting or unknown `Defers:`):
+// a human tick files its record while the unattended gate still holds the row.
+function sddRulingRatifyAction(text) {
+  if (text === null || text === undefined || String(text).trim() === '') return null;
+  const { defersMatches, reasons } = readHeader(text);
+  const settledNo = defersMatches.length >= 1 && defersMatches.every((m) => m[1].toLowerCase() === 'no') && reasons.length === 0;
+  return settledNo ? SDD_RULING_RATIFY_ACTIONS.ACCEPT : SDD_RULING_RATIFY_ACTIONS.FILE_RECORD;
+}
+
+module.exports = {
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+};

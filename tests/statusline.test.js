@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 
 const { pathToFileURL } = require('node:url');
@@ -12,6 +13,11 @@ const sl = require('../plugin/bin/claude-tweaks-statusline.js');
 const color = require('../plugin/bin/lib/color');
 const { readText } = require('./helpers/read-skill');
 const { fixtureHomeEnv } = require('./helpers/fixture-home');
+const { runCli, spawnCli } = require('./helpers/run-cli');
+const { chmodDenialSkip } = require('./helpers/root');
+const { committedRepo, repoWithOrigin, linkedWorktreeProject, worktreeShapes, trySymlink } = require('./helpers/statusline-fixtures');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
 
 // The project segment wraps text in OSC 8 hyperlinks (\x1b]8;;URL\x07text\x1b]8;;\x07).
 // Assertions about segment order/content strip those wrappers first; the link
@@ -30,15 +36,14 @@ function linkedName(dir) {
 
 // Hermetic: a throwaway $HOME, and the running session's own CLAUDE_CONFIG_DIR
 // dropped so the acct segment sees only what `seedHome` put in that HOME.
-function runStatusline(input, env = {}, seedHome = () => {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-'));
+// In-process through runCli (#5386); cwd defaults to process.cwd(), as the
+// spawned child it replaces inherited.
+async function runStatusline(input, env = {}, seedHome = () => {}) {
+  const home = scratchDir('ct-sl-');
   try {
     seedHome(home);
-    return execFileSync('node', [STATUSLINE], {
-      input: JSON.stringify(input),
-      encoding: 'utf8',
-      env: { ...fixtureHomeEnv(home), ...env },
-    });
+    const res = await runCli(STATUSLINE, [], { env: { ...fixtureHomeEnv(home), ...env }, stdin: JSON.stringify(input) });
+    return res.stdout;
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -68,15 +73,8 @@ test('parseStatusBranch: empty or unparseable output reports no branch', () => {
 });
 
 test('renderGit: uses the passed cwd rather than the process-wide cwd', () => {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
+  const repoDir = committedRepo({ branch: 'feature/isolated-branch' });
   try {
-    execFileSync('git', ['init', '-q', '-b', 'feature/isolated-branch'], { cwd: repoDir });
-    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
-    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
-    execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
-    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
-
     // The real process cwd (this repo checkout) is on a different branch, so if renderGit
     // ever regresses to relying on execSync's implicit process.cwd() instead of the passed
     // cwd, this would report the wrong (or no) branch instead of the isolated repo's.
@@ -98,14 +96,7 @@ test('renderGit: uses the passed cwd rather than the process-wide cwd', () => {
 
 // A throwaway repo on `main` with one committed file (file.txt). Caller removes it.
 function makeCommittedRepo() {
-  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-git-'));
-  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repoDir });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repoDir });
-  fs.writeFileSync(path.join(repoDir, 'file.txt'), 'hello\n');
-  execFileSync('git', ['add', 'file.txt'], { cwd: repoDir });
-  execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repoDir });
-  return repoDir;
+  return committedRepo();
 }
 
 // renderGit with colors off, so assertions compare plain text.
@@ -302,19 +293,19 @@ test('githubRepoUrl rejects a github.com remote whose path is not owner/repo sha
   assert.strictEqual(sl.githubRepoUrl('https://github.com/a/b/c'), null);
 });
 
+// The URL goes into an OSC 8 link unescaped: a BEL would end the link early and
+// whatever follows it would reach the terminal as raw escape sequences.
+test('githubRepoUrl rejects a remote whose path carries a control character', () => {
+  for (const ch of ['\x07', '\x1b', '\x7f', '\x9c']) {
+    assert.strictEqual(sl.githubRepoUrl(`https://github.com/owner/re${ch}po.git`), null, JSON.stringify(ch));
+    assert.strictEqual(sl.githubRepoUrl(`git@github.com:ow${ch}ner/repo`), null, JSON.stringify(ch));
+    assert.strictEqual(sl.githubRepoUrl(`ssh://git@github.com/owner/repo${ch}x`), null, JSON.stringify(ch));
+  }
+});
+
 // Fixture: an init'd repo with one commit and, optionally, an origin remote.
 function withRepo(remoteUrl, fn) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-repo-'));
-  const repoDir = path.join(base, 'glyph-project');
-  fs.mkdirSync(repoDir);
-  const git = (args) => execFileSync('git', args, { cwd: repoDir, encoding: 'utf8' });
-  git(['init', '-q', '-b', 'main']);
-  git(['config', 'user.email', 'test@example.com']);
-  git(['config', 'user.name', 'Test']);
-  fs.writeFileSync(path.join(repoDir, 'README.md'), 'hi');
-  git(['add', '.']);
-  git(['commit', '-q', '-m', 'init']);
-  if (remoteUrl) git(['remote', 'add', 'origin', remoteUrl]);
+  const { base, repoDir } = repoWithOrigin(remoteUrl);
   try {
     return fn(repoDir);
   } finally {
@@ -345,19 +336,7 @@ test('renderProject: repo with no origin remote renders no glyph', () => {
 });
 
 test('renderProject: resolves a linked worktree to the main project name', () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-wt-'));
-  const mainDir = path.join(base, 'real-project-name');
-  fs.mkdirSync(mainDir);
-  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' });
-  git(['init', '-q', '-b', 'main'], mainDir);
-  git(['config', 'user.email', 'test@example.com'], mainDir);
-  git(['config', 'user.name', 'Test'], mainDir);
-  fs.writeFileSync(path.join(mainDir, 'README.md'), 'hi');
-  git(['add', '.'], mainDir);
-  git(['commit', '-q', '-m', 'init'], mainDir);
-  git(['remote', 'add', 'origin', 'git@github.com:owner/real-project.git'], mainDir);
-  const worktreeDir = path.join(base, 'worktree-branch-name');
-  git(['worktree', 'add', '-q', worktreeDir, '-b', 'feature'], mainDir);
+  const { base, mainDir, worktreeDir } = linkedWorktreeProject();
   try {
     // EnterWorktree pivots workspace.project_dir to the worktree path — the
     // statusline must still surface the real project's name, not the
@@ -371,16 +350,922 @@ test('renderProject: resolves a linked worktree to the main project name', () =>
       `${linkedName(fs.realpathSync(mainDir))} ${color.link('https://github.com/owner/real-project', '')}`,
     );
   } finally {
-    git(['worktree', 'remove', '--force', worktreeDir], mainDir);
     fs.rmSync(base, { recursive: true, force: true });
   }
+});
+
+const NO_SYMLINK = 'this host refuses to create a symlink (EPERM)';
+
+// Fixture for the spawn-free main-checkout resolution: one mkdtemp base holding
+// a main repo, an absolute linked worktree, a --relative-paths worktree (null
+// when this git lacks the flag) of a second main repo, since the flag writes an
+// [extensions] section into its main repo's config, a submodule checkout and a
+// symlink to the absolute worktree (null when the host refuses symlinks).
+// fn receives { base, main, wt, relWt, sub, link }.
+function withWorktrees(fn) {
+  const f = worktreeShapes();
+  try {
+    return fn(f);
+  } finally {
+    fs.rmSync(f.base, { recursive: true, force: true });
+  }
+}
+
+// Git prints forward slashes on win32 (D:/a/x) where a realpath has backslashes;
+// both name one directory. Folded on win32 only, so a POSIX compare stays byte-exact.
+function dirKey(p) {
+  return path.sep === '\\' ? path.resolve(p) : p;
+}
+
+// Git for Windows marks a linked worktree's .git file hidden, and a plain write
+// (CREATE_ALWAYS) over a hidden file is EPERM: remove it first.
+function overwriteGitFile(p, data) {
+  fs.rmSync(p);
+  fs.writeFileSync(p, data);
+}
+
+function gitCommonMain(dir) {
+  const out = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, encoding: 'utf8' }).trim();
+  return path.dirname(fs.realpathSync(path.resolve(dir, out)));
+}
+
+// What resolveMainProjectDir's git fallback answers when it is given `env`: its git
+// child runs under that env (#5386), so git's main dir under it, or `dir` itself when
+// git refuses or cannot start (the fallback's catch).
+function gitFallbackMain(dir, env) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return path.dirname(fs.realpathSync(path.resolve(dir, out)));
+  } catch {
+    return dir;
+  }
+}
+
+// A --relative-paths worktree is left out: its main config carries [extensions],
+// so the reader defers to git for it (pinned in its own test below).
+function shapeDirs(f) {
+  return [f.wt, f.sub, f.link].filter(Boolean);
+}
+
+// Runs fn(freshModule) with every child_process launcher wrapped by a
+// recording call-through, re-requiring the status line so its destructured
+// bindings capture the wrappers. Returns { result, launches }.
+function recordLaunches(fn) {
+  const cp = require('node:child_process');
+  const names = ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync'];
+  const originals = {};
+  const launches = [];
+  const modPath = require.resolve('../plugin/bin/claude-tweaks-statusline.js');
+  const savedEntry = require.cache[modPath];
+  for (const n of names) {
+    originals[n] = cp[n];
+    cp[n] = function (file, args, ...rest) {
+      launches.push({ fn: n, file, args: Array.isArray(args) ? args : [] });
+      return originals[n].call(this, file, args, ...rest);
+    };
+  }
+  try {
+    delete require.cache[modPath];
+    const fresh = require(modPath);
+    return { result: fn(fresh), launches };
+  } finally {
+    for (const n of names) cp[n] = originals[n];
+    delete require.cache[modPath];
+    if (savedEntry) require.cache[modPath] = savedEntry;
+  }
+}
+
+test('commonDirFromFs: matches git rev-parse --git-common-dir for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(dir), dir);
+    }
+  });
+});
+
+test('resolveMainProjectDir: equals git\'s answer for every worktree shape', () => {
+  withWorktrees((f) => {
+    for (const dir of shapeDirs(f)) {
+      assert.strictEqual(dirKey(sl.resolveMainProjectDir(dir)), dirKey(gitCommonMain(dir)), dir);
+    }
+  });
+});
+
+test('commonDirFromFs: GIT_DIR or GIT_COMMON_DIR in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_DIR: '' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_COMMON_DIR: '' }), null);
+  });
+});
+
+// A temp dir whose `.git` FILE holds `content`; fn receives the dir.
+function withGitFile(content, fn) {
+  const dir = scratchDir('ct-sl-gitfile-');
+  try {
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A fake gitdir whose `commondir` is a directory (EISDIR on read).
+function withEisdirCommondir(fn) {
+  const root = scratchDir('ct-sl-eisdir-');
+  try {
+    const gitdir = path.join(root, 'admin');
+    fs.mkdirSync(path.join(gitdir, 'commondir'), { recursive: true });
+    // Valid git-dir shape (also what an ENOENT fallback would land on), so only
+    // the EISDIR rule can reject it.
+    makeGitDirShape(gitdir);
+    const dir = path.join(root, 'checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${gitdir}\n`);
+    return fn(dir);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('commonDirFromFs: an unparseable .git file defers to git', () => {
+  withGitFile('not a gitdir line\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+// A checkout dir holding a real `admin/` dir whose commondir names a real main
+// .git, plus a `.git` file with the given content. A lax parser that slices the
+// content blindly would land on `admin` and return a WRONG non-null answer.
+function withLaxTrap(content, fn) {
+  withWorktrees((f) => {
+    const dir = path.join(f.base, 'trap-checkout');
+    fs.mkdirSync(path.join(dir, 'admin'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), path.join(f.main, '.git'));
+    fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(dir, '.git'), content);
+    fn(dir, f);
+  });
+}
+
+// Marks `root` as a valid git directory (HEAD file, objects/ and refs/ dirs).
+function makeGitDirShape(root) {
+  fs.mkdirSync(path.join(root, 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'refs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'HEAD'), 'ref: refs/heads/main\n');
+}
+
+const GIT_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+
+test('commonDirFromFs: an empty `gitdir: ` path defers to git (git: no path in gitfile)', () => {
+  withGitFile('gitdir: \n', (dir) => {
+    makeGitDirShape(dir); // without the guard, the checkout itself would pass as a git dir
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a zero-byte commondir defers to git (git dies on it)', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    makeGitDirShape(path.join(dir, 'admin')); // without the guard, the admin dir itself would pass
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), '');
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: a gitdir without HEAD is not a repository — defers to git', () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    fs.rmSync(path.join(dir, 'admin', 'HEAD'));
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  });
+});
+
+for (const missing of ['objects', 'refs']) {
+  test(`commonDirFromFs: a common dir without ${missing}/ is not a repository — defers to git`, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const common = path.join(dir, 'common2');
+      makeGitDirShape(common);
+      fs.rmSync(path.join(common, missing), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, dir);
+    });
+  });
+}
+
+test('commonDirFromFs: `gitdir:` without the space defers to git (git rejects it)', () => {
+  // 'gitdir:' is 7 chars; a parser that skips 8 would read `admin` from here.
+  withLaxTrap('gitdir:Xadmin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches.map((l) => l.file), ['git']);
+    assert.strictEqual(result, dir);
+  });
+});
+
+test('commonDirFromFs: `gitdir:` on a second line defers to git (git rejects it)', () => {
+  withLaxTrap('# comment\ngitdir: admin\n', (dir) => {
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: a multi-line gitdir value defers to git', { skip: process.platform === 'win32' ? 'win32 paths cannot contain a newline' : false }, () => {
+  withLaxTrap('gitdir: admin\nextra\n', (dir, f) => {
+    // A real directory literally named `admin\nextra`: a reader without the
+    // newline check would resolve to it and answer non-null.
+    const odd = path.join(dir, 'admin\nextra');
+    makeGitDirShape(odd);
+    fs.writeFileSync(path.join(odd, 'commondir'), path.join(f.main, '.git'));
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+for (const [label, setup] of [
+  ['garbage content', (head) => fs.writeFileSync(head, 'garbage\n')],
+  ['empty content', (head) => fs.writeFileSync(head, '')],
+  ['a directory', (head) => fs.mkdirSync(head)],
+  ['a symlink to a valid HEAD', (head) => {
+    fs.writeFileSync(`${head}.real`, 'ref: refs/heads/x\n');
+    fs.symlinkSync(`${head}.real`, head);
+  }],
+]) {
+  test(`commonDirFromFs: a gitdir whose HEAD is ${label} is not a repository — defers to git`, { skip: label === 'a symlink to a valid HEAD' && process.platform === 'win32' ? 'symlinks need privileges on win32' : false }, () => {
+    withLaxTrap('gitdir: admin\n', (dir) => {
+      const head = path.join(dir, 'admin', 'HEAD');
+      fs.rmSync(head);
+      setup(head);
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    });
+  });
+}
+
+test('commonDirFromFs: a 40- or 64-hex HEAD (detached) is a valid repository', () => {
+  for (const hex of ['a'.repeat(40), 'b'.repeat(64)]) {
+    withLaxTrap('gitdir: admin\n', (dir, f) => {
+      fs.writeFileSync(path.join(dir, 'admin', 'HEAD'), `${hex}\r\n`);
+      assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+    });
+  }
+});
+
+test('commonDirFromFs: an objects entry that is an executable FILE is not a repository — defers to git', { skip: process.platform === 'win32' ? 'win32 has no executable bit' : false }, () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.rmSync(path.join(common, 'objects'), { recursive: true });
+    const objectsFile = path.join(common, 'objects');
+    fs.writeFileSync(objectsFile, '', { mode: 0o755 }); // passes X_OK, is not a directory
+    fs.chmodSync(objectsFile, 0o755); // the write mode above is masked by the umask
+    // Fail loudly rather than pass vacuously (restrictive umask, noexec mount).
+    fs.accessSync(objectsFile, fs.constants.X_OK);
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    assert.strictEqual(sl.commonDirFromFs(dir), null);
+  });
+});
+
+test('commonDirFromFs: GIT_OBJECT_DIRECTORY in the env defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '/x' }), null);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { GIT_OBJECT_DIRECTORY: '' }), null);
+  });
+});
+
+test('commonDirFromFs: an objects/ dir without search permission defers to git (access X_OK)', chmodDenialSkip('root ignores directory permissions'), () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const common = path.join(dir, 'common2');
+    makeGitDirShape(common);
+    fs.writeFileSync(path.join(dir, 'admin', 'commondir'), common);
+    fs.chmodSync(path.join(common, 'objects'), 0o600);
+    try {
+      assert.strictEqual(sl.commonDirFromFs(dir), null);
+      const { launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    } finally {
+      fs.chmodSync(path.join(common, 'objects'), 0o755);
+    }
+  });
+});
+
+test('commonDirFromFs: sanity — the trap fixture resolves when the line is well formed', () => {
+  withLaxTrap('gitdir: admin\n', (dir, f) => {
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: a commondir with a trailing space is not trimmed (git fails on it too)', () => {
+  withWorktrees((f) => {
+    const admin = fs.readFileSync(path.join(f.wt, '.git'), 'utf8').replace(/^gitdir: /, '').trim();
+    fs.writeFileSync(path.join(admin, 'commondir'), '../.. \n');
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe' }));
+    assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+  });
+});
+
+test('resolveMainProjectDir: an env redirect reaches git, not the file read', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { GIT_DIR: '' } }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    // The git child runs under that env, and git refuses an empty GIT_DIR, so the
+    // git path answers the worktree dir.
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe', env: { ...process.env, GIT_DIR: '' } }), /not a git repository/);
+    assert.strictEqual(result, f.wt);
+  });
+});
+
+test('resolveMainProjectDir: an unreadable .git file reaches git', chmodDenialSkip('root ignores file permissions'), () => {
+  withWorktrees((f) => {
+    // A REAL worktree's gitdir line: readable, it takes the fast path (no spawn).
+    const gitFile = path.join(f.wt, '.git');
+    assert.deepStrictEqual(recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt)).launches, []);
+    fs.chmodSync(gitFile, 0);
+    try {
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, f.wt); // git cannot read it either
+    } finally {
+      fs.chmodSync(gitFile, 0o644);
+    }
+  });
+});
+
+// Points f.wt's `.git` at `gitdir: <linkParent>/link/<name>`, where `link` is a
+// directory symlink to main/.git/worktrees and the admin dir's commondir is `../..`.
+// Returns false, changing nothing, when the host refuses the symlink.
+function pointGitdirThroughSymlink(f, linkParent = f.base) {
+  const adminRoot = path.join(f.main, '.git', 'worktrees');
+  const link = path.join(linkParent, 'link');
+  if (!trySymlink(adminRoot, link)) return false;
+  const name = path.basename(fs.readFileSync(path.join(f.wt, '.git'), 'utf8').trim());
+  assert.strictEqual(fs.readFileSync(path.join(adminRoot, name, 'commondir'), 'utf8').trim(), '../..');
+  overwriteGitFile(path.join(f.wt, '.git'), `gitdir: ${path.join(link, name)}\n`);
+  return true;
+}
+
+test('resolveMainProjectDir: a gitdir reached through a symlink resolves a relative commondir against its realpath', (t) => {
+  withWorktrees((f) => {
+    if (!pointGitdirThroughSymlink(f)) return t.skip(NO_SYMLINK);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    if (process.platform === 'win32') {
+      // Git for Windows refuses this gitfile (run 43393630819), so the reader defers.
+      assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+      return;
+    }
+    assert.deepStrictEqual(launches, []); // the fast path answered, no spawn
+    assert.strictEqual(result, gitCommonMain(f.wt));
+    assert.strictEqual(result, fs.realpathSync(f.main));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path that crosses a symlink defers to git (Git for Windows refuses it)', (t) => {
+  withWorktrees((f) => {
+    // Built on the real base, so the link is the only symlink on the gitdir path.
+    if (!pointGitdirThroughSymlink(f, fs.realpathSync(f.base))) return t.skip(NO_SYMLINK);
+    assert.strictEqual(sl.commonDirFromFs(f.wt, undefined, undefined, 'win32'), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { platform: 'win32' }));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(sl.resolveMainProjectDir(f.wt, { fast: false })));
+  });
+});
+
+test('commonDirFromFs: on win32, a gitdir path with no symlink still answers from the file read', () => {
+  withWorktrees((f) => {
+    const answer = sl.commonDirFromFs(f.wt, undefined, undefined, 'win32');
+    assert.notStrictEqual(answer, null);
+    assert.strictEqual(answer, sl.commonDirFromFs(f.wt));
+  });
+});
+
+// A submodule checkout's `.git` holds a relative `gitdir: ../.git/modules/sub`
+// with no [extensions] in the config it leads to, so the fast path answers it. (A
+// --relative-paths worktree has the same relative gitdir, but its main config
+// carries extensions.relativeWorktrees, so the reader defers on it.)
+test('commonDirFromFs: a symlink at another depth to a checkout with a relative gitdir matches git (physical resolve)', (t) => {
+  withWorktrees((f) => {
+    assert.strictEqual(fs.readFileSync(path.join(f.sub, '.git'), 'utf8').trim(), 'gitdir: ../.git/modules/sub');
+    const deep = path.join(f.base, 'b', 'c');
+    fs.mkdirSync(deep, { recursive: true });
+    const link = path.join(deep, 'link');
+    if (!trySymlink(f.sub, link)) return t.skip(NO_SYMLINK);
+    // Decoy at the LEXICALLY resolved gitdir (<deep>/.git/modules/sub), shaped as a git dir.
+    makeGitDirShape(path.join(deep, '.git', 'modules', 'sub'));
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(link)), gitCommonMain(link));
+    assert.strictEqual(sl.resolveMainProjectDir(link), gitCommonMain(link));
+  });
+});
+
+test('commonDirFromFs: a --relative-paths worktree defers to git (its main config carries extensions.relativeWorktrees)', (t) => {
+  withWorktrees((f) => {
+    if (!f.relWt) return t.skip('git lacks --relative-paths');
+    assert.match(fs.readFileSync(path.join(f.base, 'rel-main', '.git', 'config'), 'utf8'), /\[extensions\]/);
+    assert.strictEqual(sl.commonDirFromFs(f.relWt), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.relWt));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.relWt)));
+  });
+});
+
+test('commonDirFromFs: a gitdir that does not exist defers to git', () => {
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', (dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('commonDirFromFs: an unreadable commondir defers to git', () => {
+  withEisdirCommondir((dir) => assert.strictEqual(sl.commonDirFromFs(dir), null));
+});
+
+test('resolveMainProjectDir: each fallback reaches git', () => {
+  const expectedLaunch = { fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] };
+  const check = (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [expectedLaunch]);
+    assert.strictEqual(result, dir);
+  };
+  withGitFile('not a gitdir line\n', check);
+  withGitFile('gitdir: /nonexistent/x/.git/worktrees/y\n', check);
+  withEisdirCommondir(check);
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('resolveMainProjectDir: fast:false skips the filesystem read and asks git', () => {
+  withWorktrees((f) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { fast: false }));
+    assert.deepStrictEqual(launches, [{ fn: 'execFileSync', file: 'git', args: ['rev-parse', '--git-common-dir'] }]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+test('commonDirFromFs: CRLF .git and commondir files parse the same', () => {
+  withWorktrees((f) => {
+    const fake = path.join(f.base, 'crlf-admin');
+    fs.mkdirSync(fake);
+    fs.writeFileSync(path.join(fake, 'commondir'), `${path.join(f.main, '.git')}\r\n`);
+    fs.writeFileSync(path.join(fake, 'HEAD'), 'ref: refs/heads/main\n');
+    const dir = path.join(f.base, 'crlf-checkout');
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, '.git'), `gitdir: ${fake}\r\n`);
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(dir)), gitCommonMain(f.wt));
+  });
+});
+
+// --- originUrlFromConfig / readOriginRemote (spawn-free origin URL) ---
+
+function gitOrigin(dir, env = process.env) {
+  try {
+    return execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: dir, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_URL = 'https://github.com/o/local.git';
+const ORIGIN_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['config', '--get', 'remote.origin.url'] };
+// tools/run-tests.js sets GIT_CONFIG_COUNT/KEY_n/VALUE_n for every test process,
+// and any GIT_CONFIG* var makes the origin reader defer to git. The reader calls
+// below take this env so a fallback test proves its own trigger, not the runner's.
+const READER_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_CONFIG/i.test(k)));
+
+// Fast-path case: the reader answers `expected`, equals git, and spawns nothing.
+function assertFastOrigin(dir, expected) {
+  assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), expected);
+  assert.strictEqual(gitOrigin(dir), expected);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+  assert.strictEqual(result, expected);
+  assert.deepStrictEqual(launches, []);
+}
+
+// Fallback case: the reader answers null ("ask git"), and readOriginRemote
+// launches exactly one `git config --get remote.origin.url` and equals git.
+function assertFallbackOrigin(dir, env = READER_ENV) {
+  assert.strictEqual(sl.originUrlFromConfig(dir, env), null);
+  const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env }));
+  assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+  // The git child runs under the same env the reader got (#5386).
+  assert.strictEqual(result, gitOrigin(dir, env));
+}
+
+test('originUrlFromConfig: plain origin matches git config --get', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => assertFastOrigin(dir, 'git@github.com:owner/repo.git'));
+});
+
+test('originUrlFromConfig: several url lines — the last wins, as git config --get does', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/o/second.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/second.git');
+  });
+});
+
+test('originUrlFromConfig: section and key names are case-insensitive', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace('[remote "origin"]', '[Remote "origin"]').replace('\turl =', '\tURL ='));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: CRLF config parses the same', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const cfg = path.join(dir, '.git', 'config');
+    fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').replace(/\n/g, '\r\n'));
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: a url in another remote or section is not origin\'s', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.appendFileSync(path.join(dir, '.git', 'config'), '[remote "upstream"]\n\turl = https://github.com/o/up.git\n[core]\n\turl = https://github.com/o/core.git\n');
+    assertFastOrigin(dir, LOCAL_URL);
+  });
+});
+
+test('originUrlFromConfig: no origin section — null, git also answers nothing', () => {
+  withRepo(null, (dir) => {
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(dir));
+    assert.strictEqual(result, null);
+  });
+});
+
+// Each case: a trigger appended/applied to a repo whose origin is LOCAL_URL.
+// Removing the trigger's check from the reader must make it answer something
+// non-null (usually the local url, which git does NOT answer), so the test goes red.
+const origCfg = (dir) => path.join(dir, '.git', 'config');
+const appendCfg = (dir, text) => fs.appendFileSync(origCfg(dir), text);
+const ORIGIN_FALLBACKS = [
+  ['an [include] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[include]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['an [includeIf] after the local origin (git answers the included url)', (dir) => {
+    fs.writeFileSync(path.join(dir, '.git', 'extra'), '[remote "origin"]\n\turl = https://github.com/o/included.git\n');
+    appendCfg(dir, '[includeIf "gitdir:**"]\n\tpath = extra\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/included.git');
+  }],
+  ['a value containing ;', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git;x\n')],
+  ['a value containing a backslash', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r\\.git\n')],
+  ['a quoted value', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/r.git"\n')],
+  ['a value containing #', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/r.git # note\n')],
+  ['an old-style [remote.origin] header (git answers it)', (dir) => {
+    appendCfg(dir, '[remote.origin]\n\turl = https://github.com/o/old.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/old.git');
+  }],
+  ['text after a section header (git answers the inline url)', (dir) => {
+    appendCfg(dir, '[remote "origin"] url = https://github.com/o/inline.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/inline.git');
+  }],
+  ['a trailing-backslash line that folds the next url line into it (git does not answer it)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\tfetch = x \\\n\turl = https://github.com/o/swallowed.git\n');
+    assert.strictEqual(gitOrigin(dir), LOCAL_URL);
+  }],
+  ['an unterminated quote in another section (git rejects the whole file)', (dir) => {
+    appendCfg(dir, '[alias]\n\tx = "a\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a vertical tab before = (git rejects the line)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\turl\v= https://github.com/o/vt.git\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a line starting with a form feed (git rejects the line)', (dir) => appendCfg(dir, '[core]\n\f\tbar = 1\n')],
+  ['an origin url value with a trailing NBSP (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/nb.git\u00a0\n')],
+  ['an origin url value with a leading U+3000 (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = \u3000https://github.com/o/ideo.git\n')],
+  ['an origin url value with a trailing vertical tab (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/vtab.git\v\n')],
+  ['a line holding only a form feed (git allows only space and tab as blank)', (dir) => appendCfg(dir, '[core]\n\f\n')],
+  ['a comment line preceded by a form feed (not a comment to git)', (dir) => appendCfg(dir, '[core]\n\f# note\n')],
+  ['a section header preceded by a form feed', (dir) => appendCfg(dir, '\f[core]\n')],
+  ['a section header followed by a form feed', (dir) => appendCfg(dir, '[core]\f\n')],
+  ['an origin url value with a trailing form feed (git keeps it; the git path trims its output, so the reader defers)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/ff.git\f\n')],
+  ['a line matching no config shape', (dir) => appendCfg(dir, '!!not config\n')],
+  ['a key line before any section (git accepts it; a conservative fallback)', (dir) => {
+    const cfg = origCfg(dir);
+    fs.writeFileSync(cfg, `url = https://github.com/o/stray.git\n${fs.readFileSync(cfg, 'utf8')}`);
+  }],
+  ['a url key with no = (a valueless boolean)', (dir) => appendCfg(dir, '[remote "origin"]\n\turl\n')],
+  ['a .git/config.worktree that git reads (extensions.worktreeConfig) and that overrides origin', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n');
+    fs.writeFileSync(path.join(dir, '.git', 'config.worktree'), '[remote "origin"]\n\turl = https://github.com/o/wt.git\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/wt.git');
+  }],
+  ['an [extensions] section naming an extension git does not know (git refuses the repo)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tnoSuchExtension = true\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['an [extensions] section naming a known extension (git answers; any [extensions] section defers)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tobjectFormat = sha1\n');
+    assert.strictEqual(gitOrigin(dir), LOCAL_URL);
+  }],
+  ['core.repositoryformatversion = 2 (git refuses the repo)', (dir) => {
+    appendCfg(dir, '[core]\n\trepositoryformatversion = 2\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['a non-numeric core.repositoryformatversion (git dies on it)', (dir) => {
+    appendCfg(dir, '[Core]\n\tRepositoryFormatVersion = abc\n');
+    assert.strictEqual(gitOrigin(dir), null);
+  }],
+  ['an origin url with an embedded NUL (git cuts the value there)', (dir) => {
+    appendCfg(dir, '[remote "origin"]\n\turl = https://github.com/o/nul.git\0junk\n');
+    assert.strictEqual(gitOrigin(dir), 'https://github.com/o/nul.git');
+  }],
+];
+for (const [label, setup] of ORIGIN_FALLBACKS) {
+  test(`originUrlFromConfig: ${label} defers to git`, () => {
+    withRepo(LOCAL_URL, (dir) => {
+      setup(dir);
+      assertFallbackOrigin(dir);
+    });
+  });
+}
+
+test('originUrlFromConfig: an unreadable config (a directory at .git/config) defers to git and never throws', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.rmSync(origCfg(dir));
+    fs.mkdirSync(origCfg(dir));
+    assertFallbackOrigin(dir);
+    assert.strictEqual(gitOrigin(dir), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_CONFIG* in the env defers to git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_CONFIG_GLOBAL: '/dev/null' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_COUNT: '0' }), null);
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_CONFIG_GLOBAL: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_DIR in the env defers to git (even empty)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { GIT_DIR: '/nonexistent' });
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_DIR: '' }), null);
+  });
+});
+
+test('originUrlFromConfig: GIT_COMMON_DIR in the env defers to git (git reads $GIT_COMMON_DIR/config)', () => {
+  withRepo('https://github.com/o/a.git', (a) => {
+    withRepo('https://github.com/o/b.git', (b) => {
+      const env = { GIT_COMMON_DIR: path.join(a, '.git') };
+      const real = execFileSync('git', ['config', '--get', 'remote.origin.url'], { cwd: b, encoding: 'utf8', env: { ...process.env, ...env } }).trim();
+      assert.strictEqual(real, 'https://github.com/o/a.git'); // git answers A, not B
+      assert.strictEqual(sl.originUrlFromConfig(b, env), null);
+      assert.strictEqual(sl.originUrlFromConfig(b, { GIT_COMMON_DIR: '' }), null);
+    });
+  });
+});
+
+test('originUrlFromConfig: an unrelated env var does not defer', () => {
+  withRepo(LOCAL_URL, (dir) => assert.strictEqual(sl.originUrlFromConfig(dir, { PATH: '/x', GITHUB_TOKEN: 'y' }), LOCAL_URL));
+});
+
+test('originUrlFromConfig: a .git FILE (linked worktree) defers to git', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.originUrlFromConfig(f.wt, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(f.wt, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(f.wt));
+  });
+});
+
+test('readOriginRemote: fast:false skips the filesystem read and asks git', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { fast: false }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, LOCAL_URL);
+  });
+});
+
+test('readOriginRemote: an existing directory that is not a repo answers null (git exits non-zero)', () => {
+  const dir = scratchDir('ct-sl-norepo-');
+  try {
+    assert.strictEqual(sl.originUrlFromConfig(dir, READER_ENV), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, null);
+    assert.strictEqual(gitOrigin(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('originUrlFromConfig: a comment line ending in a backslash does not swallow the next line (git agrees)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    appendCfg(dir, '# note \\\n[remote "origin"]\n\turl = https://github.com/o/after.git\n');
+    assertFastOrigin(dir, 'https://github.com/o/after.git');
+  });
+});
+
+// --- repos git refuses to open, non-regular files, env name case (#5266 review) ---
+
+const OWNER_OPTS = { skip: typeof process.geteuid !== 'function' && 'win32: no geteuid; git compares SIDs there and the readers skip the ownership check' };
+const OTHER_UID = typeof process.geteuid === 'function' ? process.geteuid() + 1 : null;
+// git's own test knob: git treats every repo as owned by someone else and refuses it,
+// unless a safe.directory entry trusts it. GitHub's Ubuntu runner image ships
+// `safe.directory = *` in the system config, so the host's system and global
+// config are shut out here.
+const DIFFERENT_OWNER_ENV = { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: '1', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+
+test('originUrlFromConfig: a main checkout owned by another user defers to git (ensure_valid_ownership)', OWNER_OPTS, () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assert.strictEqual(gitOrigin(dir, DIFFERENT_OWNER_ENV), null); // git really refuses it
+    assert.strictEqual(sl.originUrlFromConfig(dir, {}, process.geteuid()), LOCAL_URL);
+    assert.strictEqual(sl.originUrlFromConfig(dir, {}, OTHER_UID), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.readOriginRemote(dir, { env: READER_ENV, currentUid: OTHER_UID }));
+    assert.deepStrictEqual(launches, [ORIGIN_LAUNCH]);
+    assert.strictEqual(result, gitOrigin(dir));
+  });
+});
+
+test('commonDirFromFs: a linked worktree owned by another user defers to git (ensure_valid_ownership)', OWNER_OPTS, () => {
+  withWorktrees((f) => {
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe', env: DIFFERENT_OWNER_ENV }), /dubious ownership/);
+    assert.strictEqual(gitOrigin(f.wt, DIFFERENT_OWNER_ENV), null);
+    assert.strictEqual(path.dirname(sl.commonDirFromFs(f.wt, {}, process.geteuid())), gitCommonMain(f.wt));
+    assert.strictEqual(sl.commonDirFromFs(f.wt, {}, OTHER_UID), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { currentUid: OTHER_UID }));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+// Under sudo git compares SUDO_UID; both readers defer. On a non-root host this
+// cannot go red alone: with currentUid 0 the fixture's owner differs anyway.
+test('both readers defer to git under sudo (euid 0 with SUDO_UID set)', () => {
+  withWorktrees((f) => {
+    assert.strictEqual(sl.commonDirFromFs(f.wt, { SUDO_UID: '1000' }, 0), null);
+    assert.strictEqual(sl.originUrlFromConfig(f.main, { SUDO_UID: '1000' }, 0), null);
+  });
+});
+
+for (const missing of ['HEAD', 'objects', 'refs']) {
+  test(`originUrlFromConfig: a nested .git without ${missing} is not a repository — git answers the parent's url`, () => {
+    withRepo(LOCAL_URL, (dir) => {
+      const child = path.join(dir, 'child');
+      const childGit = path.join(child, '.git');
+      makeGitDirShape(childGit);
+      fs.writeFileSync(path.join(childGit, 'config'), '[remote "origin"]\n\turl = https://github.com/o/child.git\n');
+      assertFastOrigin(child, 'https://github.com/o/child.git'); // complete, it is the child's repo
+      fs.rmSync(path.join(childGit, missing), { recursive: true });
+      assert.strictEqual(gitOrigin(child), LOCAL_URL);
+      assertFallbackOrigin(child);
+    });
+  });
+}
+
+test('originUrlFromConfig: GIT_OBJECT_DIRECTORY in the env defers to git (is_git_directory checks it instead of .git/objects)', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    const env = { GIT_OBJECT_DIRECTORY: path.join(dir, 'nonexistent') };
+    assert.strictEqual(gitOrigin(dir, { ...process.env, ...env }), null); // git no longer sees a repo
+    assertFallbackOrigin(dir, env);
+    assert.strictEqual(sl.originUrlFromConfig(dir, { GIT_OBJECT_DIRECTORY: '' }), null);
+  });
+});
+
+test('commonDirFromFs: a NUL in the .git file defers to git, which reads up to it', () => {
+  withWorktrees((f) => {
+    const gitFile = path.join(f.wt, '.git');
+    overwriteGitFile(gitFile, `${fs.readFileSync(gitFile, 'utf8').trim()}\0junk\n`);
+    assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(dirKey(result), dirKey(gitCommonMain(f.wt)));
+  });
+});
+
+// A read that blocks on a FIFO blocks the whole thread, which node:test's timeout
+// cannot interrupt, so the reader runs in a child with its own timeout.
+const FIFO_OPTS = { timeout: 5000, skip: process.platform === 'win32' && 'win32: no mkfifo' };
+function readerInChild(call, p) {
+  const script = `const sl = require(process.argv[1]); const p = process.argv[2]; process.stdout.write(JSON.stringify(${call}));`;
+  return JSON.parse(execFileSync(process.execPath, ['-e', script, STATUSLINE, p], { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'pipe'] }));
+}
+
+test('commonDirFromFs: a FIFO at .git returns null promptly (git refuses it as not a regular file)', FIFO_OPTS, () => {
+  const dir = scratchDir('ct-sl-fifo-');
+  try {
+    execFileSync('mkfifo', [path.join(dir, '.git')]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
+    assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
+    assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: dir, stdio: 'pipe' }), /not a regular file/);
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(dir));
+    assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+    assert.strictEqual(result, dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// git itself blocks on these two, so the git fallback is not exercised here.
+test('commonDirFromFs: a FIFO at commondir returns null promptly', FIFO_OPTS, () => {
+  withLaxTrap('gitdir: admin\n', (dir) => {
+    const commondir = path.join(dir, 'admin', 'commondir');
+    fs.rmSync(commondir);
+    execFileSync('mkfifo', [commondir]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
+    assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', dir), null);
+  });
+});
+
+test('originUrlFromConfig: a FIFO at .git/config returns null promptly', FIFO_OPTS, () => {
+  withRepo(LOCAL_URL, (dir) => {
+    fs.rmSync(origCfg(dir));
+    execFileSync('mkfifo', [origCfg(dir)]);
+    // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
+    assert.strictEqual(readerInChild('sl.originUrlFromConfig(p, {})', dir), null);
+  });
+});
+
+test('originUrlFromConfig: env names match case-insensitively, as on win32', () => {
+  withRepo(LOCAL_URL, (dir) => {
+    assertFallbackOrigin(dir, { git_config_global: '/x' });
+    for (const name of ['git_dir', 'Git_Common_Dir', 'git_object_directory']) assertFallbackOrigin(dir, { [name]: '' });
+  });
+});
+
+// A linked worktree whose main repo config git refuses: git dies, so the fast path
+// must not answer the main dir.
+for (const [label, text, fatal] of [
+  ['version 1 with an unknown extension', '[core]\n\trepositoryformatversion = 1\n[extensions]\n\tnoSuchExtension = true\n', /unknown repository extension/],
+  ['version 2', '[core]\n\trepositoryformatversion = 2\n', /Expected git repo version <= 1, found 2/],
+  ['version 0 with a v1-only extension', '[extensions]\n\tobjectFormat = sha1\n', /repo version is 0, but v1-only extension found/],
+]) {
+  test(`commonDirFromFs: a main config git refuses (${label}) defers to git`, () => {
+    withWorktrees((f) => {
+      assert.deepStrictEqual(recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt)).launches, []); // fast before
+      fs.appendFileSync(path.join(f.main, '.git', 'config'), text);
+      assert.throws(() => execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: f.wt, stdio: 'pipe' }), fatal);
+      assert.strictEqual(sl.commonDirFromFs(f.wt), null);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH]);
+      assert.strictEqual(result, f.wt); // git died, so the git path answers the worktree dir
+    });
+  });
+}
+
+test('commonDirFromFs: a missing main config still answers fast (git accepts it and answers the same)', () => {
+  withWorktrees((f) => {
+    fs.rmSync(path.join(f.main, '.git', 'config'));
+    const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt));
+    assert.deepStrictEqual(launches, []);
+    assert.strictEqual(result, gitCommonMain(f.wt));
+  });
+});
+
+test('commonDirFromFs: a FIFO main config returns null promptly', FIFO_OPTS, () => {
+  withWorktrees((f) => {
+    const cfg = path.join(f.main, '.git', 'config');
+    fs.rmSync(cfg);
+    execFileSync('mkfifo', [cfg]);
+    try {
+      // Real process: a blocking FIFO read would hang the test thread, so the reader runs in a child with its own timeout.
+      assert.strictEqual(readerInChild('sl.commonDirFromFs(p, {})', f.wt), null);
+    } finally {
+      fs.rmSync(cfg); // git blocks on it too
+    }
+  });
+});
+
+test('originUrlFromConfig: a .git/commondir in a main checkout defers to git (git reads the config it names)', () => {
+  withRepo('https://github.com/o/other.git', (other) => {
+    withRepo('https://github.com/o/self.git', (self) => {
+      fs.writeFileSync(path.join(self, '.git', 'commondir'), path.join(other, '.git'));
+      assert.strictEqual(gitOrigin(self), 'https://github.com/o/other.git');
+      assertFallbackOrigin(self);
+    });
+  });
+});
+
+test('commonDirFromFs: env names match case-insensitively, as on win32', () => {
+  withWorktrees((f) => {
+    for (const name of ['git_dir', 'Git_Common_Dir', 'git_object_directory']) {
+      assert.strictEqual(sl.commonDirFromFs(f.wt, { [name]: '' }), null, name);
+      const { result, launches } = recordLaunches((fresh) => fresh.resolveMainProjectDir(f.wt, { env: { [name]: '' } }));
+      assert.deepStrictEqual(launches, [GIT_LAUNCH], name);
+      assert.strictEqual(dirKey(result), dirKey(gitFallbackMain(f.wt, { [name]: '' })), name);
+    }
+  });
 });
 
 // Fixture: a fake $HOME with a default `~/.claude/` config dir and, optionally,
 // `~/.claude.json` (rootJson) and/or `~/.claude/.claude.json` (dotClaudeJson).
 // Caller removes the returned home.
 function makeAccountHome({ rootJson, dotClaudeJson } = {}) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sl-home-'));
+  const home = scratchDir('ct-sl-home-');
   fs.mkdirSync(path.join(home, '.claude', 'projects', 'foo'), { recursive: true });
   if (rootJson !== undefined) fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify(rootJson));
   if (dotClaudeJson !== undefined) {
@@ -634,7 +1519,7 @@ test('colorByPct skips colors when NO_COLOR set', () => {
 // withSpecs below were structurally identical copies of this, differing
 // only in the mkdtemp prefix and the docs/plans vs specs subpath.
 function withFixtureDir(prefix, subpathSegments, files, fn) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const cwd = scratchDir(prefix);
   const dir = path.join(cwd, ...subpathSegments);
   fs.mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
@@ -660,7 +1545,7 @@ test('findOpenLedger returns null when no ledger files exist', () => {
 });
 
 test('findOpenLedger returns null when cwd has no docs/plans', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-noplans-'));
+  const cwd = scratchDir('ct-noplans-');
   try {
     assert.strictEqual(sl.findOpenLedger(cwd), null);
   } finally {
@@ -788,7 +1673,7 @@ test('findActiveSpec returns null when specs/ is empty', () => {
 });
 
 test('findActiveSpec returns null when specs/ does not exist', () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nospecs-'));
+  const cwd = scratchDir('ct-nospecs-');
   try {
     assert.strictEqual(sl.findActiveSpec(cwd), null);
   } finally {
@@ -855,8 +1740,8 @@ test('findActiveSpec skips a file raced out between readdir and stat, instead of
   );
 });
 
-test('end-to-end: real Claude Code schema renders model + context', () => {
-  const out = runStatusline(
+test('end-to-end: real Claude Code schema renders model + context', async () => {
+  const out = await runStatusline(
     {
       model: { id: 'claude-sonnet-5', display_name: 'Sonnet 5' },
       context_window: { used_percentage: 18, context_window_size: 200000 },
@@ -867,8 +1752,8 @@ test('end-to-end: real Claude Code schema renders model + context', () => {
   assert.ok(out.includes('ctx: 18%'), `missing ctx: ${out}`);
 });
 
-test('end-to-end: project segment renders before model', () => {
-  const out = runStatusline(
+test('end-to-end: project segment renders before model', async () => {
+  const out = await runStatusline(
     {
       workspace: { project_dir: '/Users/x/Code/claude-tweaks' },
       model: { display_name: 'Sonnet 5' },
@@ -879,9 +1764,9 @@ test('end-to-end: project segment renders before model', () => {
   assert.ok(out.includes('Sonnet 5'), `missing model: ${out}`);
 });
 
-test('end-to-end: rate_limits flow through to sess/week segments', () => {
+test('end-to-end: rate_limits flow through to sess/week segments', async () => {
   const sec = Math.floor(Date.now() / 1000);
-  const out = runStatusline(
+  const out = await runStatusline(
     {
       model: { display_name: 'Sonnet 5' },
       rate_limits: {
@@ -895,21 +1780,21 @@ test('end-to-end: rate_limits flow through to sess/week segments', () => {
   assert.ok(out.includes('week: 71%'), `missing week: ${out}`);
 });
 
-test('end-to-end: effort segment renders when level is set', () => {
-  const out = runStatusline(
+test('end-to-end: effort segment renders when level is set', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, effort: { level: 'high' } },
     { NO_COLOR: '1' },
   );
   assert.ok(out.includes('eff: high'), `missing eff: ${out}`);
 });
 
-test('end-to-end: empty input does not crash', () => {
-  const out = runStatusline({}, { NO_COLOR: '1' });
+test('end-to-end: empty input does not crash', async () => {
+  const out = await runStatusline({}, { NO_COLOR: '1' });
   assert.ok(typeof out === 'string');
 });
 
-test('end-to-end: project segment is always present, even with empty input', () => {
-  const out = runStatusline({}, { NO_COLOR: '1' });
+test('end-to-end: project segment is always present, even with empty input', async () => {
+  const out = await runStatusline({}, { NO_COLOR: '1' });
   // Derived independently of the implementation (not via resolveMainProjectDir)
   // so this stays a real regression check: when the test itself runs from
   // inside a linked worktree, the expected name is the main checkout's, not
@@ -923,8 +1808,8 @@ test('end-to-end: project segment is always present, even with empty input', () 
   assert.ok(stripLinks(out).startsWith(expectedName), `expected project segment: ${out}`);
 });
 
-test('end-to-end: transcript_path under .claude-accounts renders the acct segment at the end', () => {
-  const out = runStatusline(
+test('end-to-end: transcript_path under .claude-accounts renders the acct segment at the end', async () => {
+  const out = await runStatusline(
     {
       model: { display_name: 'Sonnet 5' },
       transcript_path: '/Users/x/.claude-accounts/personal-gmail/projects/foo/session.jsonl',
@@ -934,8 +1819,8 @@ test('end-to-end: transcript_path under .claude-accounts renders the acct segmen
   assert.ok(out.endsWith('acct: personal-gmail'), `expected acct segment at end: ${out}`);
 });
 
-test('end-to-end: default ~/.claude layout renders the acct segment from ~/.claude.json', () => {
-  const out = runStatusline(
+test('end-to-end: default ~/.claude layout renders the acct segment from ~/.claude.json', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' },
     { NO_COLOR: '1' },
     (home) =>
@@ -947,30 +1832,292 @@ test('end-to-end: default ~/.claude layout renders the acct segment from ~/.clau
   assert.ok(out.endsWith('acct: a@outlook.com'), `expected acct segment at end: ${out}`);
 });
 
-test('end-to-end: the cost segment sits just before acct:', () => {
+test('end-to-end: the cost segment sits just before acct:', async () => {
   const seedHome = (home) =>
     fs.writeFileSync(
       path.join(home, '.claude.json'),
       JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }),
     );
   const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
-  const out = runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  const out = await runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
   assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com'), `expected cost before acct: ${out}`);
-  const zero = runStatusline({ ...base, cost: { total_cost_usd: 0 } }, { NO_COLOR: '1' }, seedHome);
+  const zero = await runStatusline({ ...base, cost: { total_cost_usd: 0 } }, { NO_COLOR: '1' }, seedHome);
   assert.ok(!zero.includes('$'), `zero cost must render nothing: ${zero}`);
 });
 
-test('end-to-end: NO_COLOR strips ANSI codes even at high context', () => {
-  const out = runStatusline(
+// A per-session segment file another tool writes (cc-router's agent writes
+// `hub ✓`): ~/.claude/statusline/segments/<session id>.json.
+function writeSessionSegment(home, id, seg) {
+  const dir = path.join(home, '.claude', 'statusline', 'segments');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${id}.json`), typeof seg === 'string' ? seg : JSON.stringify(seg));
+}
+
+function withSegmentHome(fn) {
+  const home = scratchDir('ct-sl-seg-');
+  try {
+    return fn(home);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+const SEG_AT = Date.parse('2026-11-08T12:00:00Z');
+const HUB_LINK = '\x1b]8;;http://127.0.0.1:4100/s/sess-1\x1b\\hub ✓\x1b]8;;\x1b\\';
+
+test('renderSessionSegment: shows text while at + ttl_s is in the future, stale_text after', () => {
+  withSegmentHome((home) => {
+    writeSessionSegment(home, 'sess-1', { text: HUB_LINK, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+    const input = { session_id: 'sess-1' };
+    assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT + 9_999 }), HUB_LINK);
+    assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT + 10_000 }), 'hub offline');
+  });
+});
+
+test('renderSessionSegment: absent when there is no file, no session id, or an unsafe id', () => {
+  withSegmentHome((home) => {
+    writeSessionSegment(home, 'sess-1', { text: 'hub off', stale_text: 'hub off', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+    for (const input of [{}, { session_id: 'other' }, { session_id: '' }, { session_id: 42 }, { session_id: '../segments/sess-1' }, { session_id: 'sess-1.json' }]) {
+      assert.strictEqual(sl.renderSessionSegment(input, { home, now: SEG_AT }), null, JSON.stringify(input));
+    }
+  });
+});
+
+test('renderSessionSegment: a malformed file renders nothing, and an unreadable at or ttl_s reads as stale', () => {
+  const cases = [
+    ['not json', null],
+    [JSON.stringify(null), null],
+    [JSON.stringify({ stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', at: '2026-11-08T12:00:00Z', ttl_s: 10 }), null],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: 'yesterday', ttl_s: 10 }), 'hub offline'],
+    [JSON.stringify({ text: 'hub ✓', stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: '10' }), 'hub offline'],
+  ];
+  withSegmentHome((home) => {
+    for (const [body, want] of cases) {
+      writeSessionSegment(home, 'sess-1', body);
+      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), want, body);
+    }
+  });
+});
+
+test('renderSessionSegment: refuses text with control characters beyond OSC 8 links and SGR, or over 40 columns', () => {
+  // The SGR case expects color kept, so an ambient NO_COLOR (set on the Windows runner) must not apply.
+  const orig = process.env.NO_COLOR;
+  delete process.env.NO_COLOR;
+  try {
+    withSegmentHome((home) => {
+      const seg = (text) => ({ text, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+      // The last two hide controls inside an OSC 8 link's body, which a terminal can read as ending the link early.
+      for (const text of ['hub\x1b[2J', 'hub\r✓', 'hub\x07', 'x'.repeat(41), '\x1b]8;;\x18\u009b2J\x07x\x1b]8;;\x07', '\x1b]8;;http://h/\x1a\x07x\x1b]8;;\x07']) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), null, JSON.stringify(text));
+      }
+      for (const text of ['x'.repeat(40), '\x1b[33mhub ✓\x1b[0m', '\x1b]8;;http://h/s/1\x07hub ✓\x1b]8;;\x07']) {
+        writeSessionSegment(home, 'sess-1', seg(text));
+        assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), text, JSON.stringify(text));
+      }
+    });
+  } finally {
+    if (orig !== undefined) process.env.NO_COLOR = orig;
+  }
+});
+
+test('renderSessionSegment: NO_COLOR strips SGR but keeps the link', () => {
+  const orig = process.env.NO_COLOR;
+  try {
+    process.env.NO_COLOR = '1';
+    withSegmentHome((home) => {
+      writeSessionSegment(home, 'sess-1', { text: `\x1b[32m${HUB_LINK}\x1b[0m`, stale_text: 'hub offline', at: '2026-11-08T12:00:00Z', ttl_s: 10 });
+      assert.strictEqual(sl.renderSessionSegment({ session_id: 'sess-1' }, { home, now: SEG_AT }), HUB_LINK);
+    });
+  } finally {
+    if (orig === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = orig;
+  }
+});
+
+test('end-to-end: the session segment sits after acct:', async () => {
+  const seedHome = (home) => {
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@example.com' } }));
+    writeSessionSegment(home, 'sess-1', { text: 'hub off', stale_text: 'hub off', at: new Date().toISOString(), ttl_s: 10 });
+  };
+  const base = { session_id: 'sess-1', transcript_path: '/Users/x/.claude/projects/foo/s.jsonl' };
+  const out = await runStatusline({ ...base, cost: { total_cost_usd: 0.42 } }, { NO_COLOR: '1' }, seedHome);
+  assert.ok(stripLinks(out).endsWith('$0.42  acct: a@example.com  hub off'), `expected the segment after acct: ${out}`);
+});
+
+test('end-to-end: NO_COLOR strips ANSI codes even at high context', async () => {
+  const out = await runStatusline(
     { model: { display_name: 'Sonnet 5' }, context_window: { used_percentage: 95 } },
     { NO_COLOR: '1' },
   );
   assert.doesNotMatch(out, /\x1b\[/);
 });
 
+// The status-line script's own runs (#5386 AC1: at most these two). A realpath'd
+// temp dir with no git, so the project segment's macOS /private/var spelling
+// matches, and the four repo-redirecting GIT_* names dropped, since the expected
+// output depends on git finding no repository there.
+// The in-process AC8.1 tests below share the fixture: `root` holds `dir` and
+// `home`, and `base` is process.env minus those four GIT_* names.
+async function withScriptFixture(fn) {
+  const root = fs.realpathSync(scratchDir('ct-sl-script-'));
+  const dir = path.join(root, 'proj');
+  const home = path.join(root, 'home');
+  fs.mkdirSync(dir);
+  fs.mkdirSync(home);
+  const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR, ...base } = process.env;
+  try {
+    return await fn({ root, dir, home, base, env: { ...fixtureHomeEnv(home, base), NO_COLOR: '1' } });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const SCRIPT_PAYLOAD = (dir) => ({
+  model: { id: 'claude-sonnet-5', display_name: 'Sonnet 5' },
+  context_window: { used_percentage: 18, context_window_size: 200000 },
+  workspace: { current_dir: dir },
+});
+
+// Real process: proves the script entry, shebang and exit code (the wrapper starts this file as a script).
+// AC2.1 rides on the same spawn: the in-process call gets the identical env and stdin.
+test('AC2.1 AC5.1 AC7.1: script renders the payload and exits 0, and run matches it in-process', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const stdin = JSON.stringify(SCRIPT_PAYLOAD(dir));
+    const res = spawnCli(STATUSLINE, [], { env, stdin });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  Sonnet 5  ctx: 18%`);
+    assert.strictEqual(res.stderr, '');
+    const inProcess = await runCli(STATUSLINE, [], { env, stdin, cwd: dir });
+    assert.strictEqual(inProcess.code, 0);
+    assert.strictEqual(inProcess.stdout, res.stdout);
+    assert.strictEqual(inProcess.stderr, '');
+  });
+});
+
+// Real process: proves malformed stdin still exits 0 with output — the status line has no refusal path, so no non-zero smoke test exists.
+test('AC7.1: script given malformed JSON on stdin exits 0', async () => {
+  await withScriptFixture(({ dir, env }) => {
+    const res = spawnCli(STATUSLINE, [], { env, cwd: dir, stdin: 'not json' });
+    assert.strictEqual(res.code, 0, res.stderr);
+    assert.strictEqual(res.stdout, linkedName(dir));
+    assert.strictEqual(res.stderr, '');
+  });
+});
+
+test('AC8.1: payload directory wins over deps.cwd()', async () => {
+  await withScriptFixture(async ({ root, dir, env }) => {
+    const other = path.join(root, 'other');
+    // renderProject reads the payload itself; the spec segment reads run's cwd, so
+    // each directory carries a different spec number.
+    for (const [where, spec] of [[dir, '010-a.md'], [other, '020-b.md']]) {
+      fs.mkdirSync(path.join(where, 'specs'), { recursive: true });
+      fs.writeFileSync(path.join(where, 'specs', spec), '');
+    }
+    const res = await runCli(STATUSLINE, [], { env, cwd: other, stdin: JSON.stringify({ workspace: { current_dir: dir } }) });
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  spec: 010`);
+  });
+});
+
+test('AC8.1: deps.cwd() is used when the payload has no directory', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, stdin: '{}' });
+    assert.strictEqual(res.stdout, linkedName(dir));
+  });
+});
+
+test('AC8.1: session segment reads the injected HOME through deps.homeDir()', async () => {
+  await withScriptFixture(async ({ dir, home, env }) => {
+    writeSessionSegment(home, 'sess-1', { text: 'hub on', stale_text: 'hub on', at: new Date().toISOString(), ttl_s: 60 });
+    const stdin = JSON.stringify({ session_id: 'sess-1', workspace: { current_dir: dir } });
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, stdin });
+    assert.strictEqual(res.stdout, `${linkedName(dir)}  hub on`);
+  });
+});
+
+test('AC8.1: NO_COLOR in the injected env only turns colour off in-process', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    // process.env is never touched (the leak guard would fail the call): the
+    // coloured run's env simply has no NO_COLOR, whatever the ambient one says.
+    const { NO_COLOR, ...colorEnv } = env;
+    const stdin = JSON.stringify({ workspace: { current_dir: dir }, context_window: { used_percentage: 95 } });
+    const off = await runCli(STATUSLINE, [], { env, cwd: dir, stdin });
+    assert.ok(off.stdout.includes('ctx: 95%'), off.stdout);
+    assert.doesNotMatch(off.stdout, /\x1b\[/);
+    const on = await runCli(STATUSLINE, [], { env: colorEnv, cwd: dir, stdin });
+    assert.match(on.stdout, /\x1b\[31mctx: 95%\x1b\[0m/);
+  });
+});
+
+test('AC8.1: git child gets the injected env (env-only GIT_DIR fixture)', async () => {
+  await withScriptFixture(async ({ root, dir, base, env }) => {
+    // Setup git calls run without the four repo-redirecting names (base), so an
+    // ambient GIT_DIR cannot point them at another repository.
+    const git = (args, cwd) => execFileSync('git', args, { cwd, env: base, stdio: ['ignore', 'pipe', 'pipe'] });
+    const other = path.join(root, 'other');
+    fs.mkdirSync(other);
+    for (const [repo, branch] of [[dir, 'a-branch'], [other, 'b-branch']]) {
+      git(['init', '-q', '-b', branch], repo);
+      fs.writeFileSync(path.join(repo, 'file.txt'), 'hello\n');
+      git(['add', 'file.txt'], repo);
+      git(['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'], repo);
+    }
+    // GIT_DIR exists only in the injected env: renderGit's `status --porcelain -b`
+    // child reports b-branch only when it was started with that env.
+    const res = await runCli(STATUSLINE, [], { env: { ...env, GIT_DIR: path.join(other, '.git') }, cwd: dir, stdin: JSON.stringify({ workspace: { current_dir: dir } }) });
+    const segments = res.stdout.split('  ');
+    assert.ok(segments.some((s) => /^b-branch●?$/.test(s)), res.stdout);
+    assert.ok(!segments.some((s) => s.startsWith('a-branch')), res.stdout);
+  });
+});
+
+test('run swallows a render throw and returns 0', async () => {
+  await withScriptFixture(async ({ dir, env }) => {
+    const res = await runCli(STATUSLINE, [], { env, cwd: dir, deps: { stdin: () => { throw new Error('boom'); } } });
+    assert.strictEqual(res.code, 0);
+    assert.strictEqual(res.stdout, '');
+    assert.strictEqual(res.stderr, '');
+  });
+});
+
+// The generated wrapper requires this file and calls mod.main() with no arguments
+// on every render, and falls back to starting it as a script.
+test('main() with no arguments still renders through realDeps', () => {
+  assert.strictEqual(typeof sl.main, 'function');
+  assert.strictEqual(sl.main.length, 0);
+  assert.deepStrictEqual(Object.keys(sl.realDeps).sort(), ['cwd', 'env', 'homeDir', 'now', 'stdin', 'stdout']);
+  assert.strictEqual(sl.realDeps.stdin, sl.readStdin);
+  assert.strictEqual(sl.realDeps.env, process.env);
+  const wrapper = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'statusline-wrapper-source.js'));
+  assert.match(wrapper, /\.main\(\)/);
+  assert.match(wrapper, /spawn\('node', \[target\]/);
+});
+
+// main() closes over the exported realDeps object, so swapping its io keys for fakes runs the very
+// call the wrapper makes on every render. `run` swallows a throw into an empty render, so a main
+// that no longer hands realDeps to run shows as empty output, not a rejection: assert the render.
+test('main() with no arguments resolves 0 and renders the payload read from realDeps.stdin', async () => {
+  await withScriptFixture(async ({ dir, home }) => {
+    const saved = { ...sl.realDeps };
+    let written = '';
+    sl.realDeps.stdin = () => JSON.stringify(SCRIPT_PAYLOAD(dir));
+    sl.realDeps.stdout = (s) => { written += s; };
+    sl.realDeps.env = { NO_COLOR: '1' };
+    sl.realDeps.homeDir = () => home;
+    try {
+      assert.strictEqual(await sl.main(), 0);
+    } finally {
+      Object.assign(sl.realDeps, saved);
+    }
+    assert.match(written, /Sonnet 5/);
+    assert.match(written, /18%/);
+  });
+});
+
 // #1793 AC1: renderPorts and its toplevel-resolution helper.
 function tmpRepoDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 function writeRegistry(home, leases) {
   fs.mkdirSync(path.join(home, '.claude-tweaks'), { recursive: true });
@@ -1058,3 +2205,149 @@ test('renderPorts: no toplevel resolvable (no cwd, no ancestor .git) -> empty st
 // directly after renderGit(cwd)) rather than by an end-to-end subprocess
 // spawn: the ordering is a property of main()'s segments array, not of
 // anything a spawned child would add.
+
+// --- one child process per render (#5266) ---
+
+const STATUS_LAUNCH = { fn: 'execFileSync', file: 'git', args: ['--no-optional-locks', 'status', '--porcelain', '-b'] };
+
+test('render launches exactly one child process — git status, no shell — in a main checkout and a linked worktree', () => {
+  withRepo('git@github.com:owner/repo.git', (dir) => {
+    const wt = path.join(path.dirname(dir), 'one-spawn-wt');
+    execFileSync('git', ['worktree', 'add', '-q', wt, '-b', 'feature'], { cwd: dir });
+    for (const where of [dir, wt]) {
+      const { launches } = recordLaunches((fresh) => {
+        fresh.renderProject({ workspace: { project_dir: where } }, where, { env: READER_ENV });
+        return fresh.renderGit(where);
+      });
+      assert.deepStrictEqual(launches, [STATUS_LAUNCH], where);
+    }
+  });
+});
+
+test('renderGit: unborn branch renders its name', () => {
+  const dir = scratchDir('ct-sl-unborn-');
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'trunk'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), 'trunk');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('renderGit: detached HEAD renders nothing', () => {
+  withRepo(null, (dir) => {
+    execFileSync('git', ['checkout', '-q', '--detach'], { cwd: dir });
+    assert.strictEqual(renderGitPlain(dir), null);
+  });
+});
+
+test('renderGit: a directory that is not a repo renders nothing', () => {
+  const dir = scratchDir('ct-sl-norepo-');
+  try {
+    assert.strictEqual(renderGitPlain(dir), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('rendered project and git segments are byte-identical with the fast paths on and off, and nothing runs through a shell', () => {
+  const GH = 'https://github.com/o/parity.git';
+  const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const inTmp = (prefix, setup) => (run) => {
+    const dir = scratchDir(prefix);
+    try {
+      setup(dir);
+      return run(dir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const cases = [
+    ['main checkout', (run) => withRepo(GH, run)],
+    ['linked worktree', (run) => withWorktrees((f) => {
+      git(['remote', 'add', 'origin', GH], f.main);
+      return run(f.wt);
+    })],
+    // Pins the name and the link only: the project segment for a submodule checkout resolves to the superproject's .git/modules on both paths.
+    ['submodule checkout', (run) => withWorktrees((f) => run(f.sub))],
+    ['no origin', (run) => withRepo(null, run)],
+    ['non-GitHub origin', (run) => withRepo('git@gitlab.com:o/r.git', run)],
+    ['origin only in an included file', (run) => withRepo(null, (dir) => {
+      fs.writeFileSync(path.join(dir, '.git', 'extra'), `[remote "origin"]\n\turl = ${GH}\n`);
+      // A local non-GitHub url BEFORE the include: git answers the included GitHub url (last wins), a reader that ignores the include would answer this one.
+      // The relative path resolves against .git/; an absolute win32 path would hold backslashes, which git reads as escapes.
+      appendCfg(dir, '[remote "origin"]\n\turl = https://gitlab.com/o/main.git\n[include]\n\tpath = extra\n');
+      return run(dir);
+    })],
+    ['origin with a quoted value', (run) => withRepo(null, (dir) => {
+      appendCfg(dir, '[remote "origin"]\n\turl = "https://github.com/o/q.git"\n');
+      return run(dir);
+    })],
+    ['detached HEAD', (run) => withRepo(GH, (dir) => {
+      git(['checkout', '-q', '--detach'], dir);
+      return run(dir);
+    })],
+    ['unborn branch', inTmp('ct-sl-parity-unborn-', (dir) => {
+      git(['init', '-q', '-b', 'trunk'], dir);
+      git(['remote', 'add', 'origin', GH], dir);
+    })],
+    ['dirty tree', (run) => withRepo(GH, (dir) => {
+      fs.writeFileSync(path.join(dir, 'untracked.txt'), 'x\n');
+      return run(dir);
+    })],
+    ['not a repo', inTmp('ct-sl-parity-norepo-', () => {})],
+  ];
+  const compared = [];
+  const { launches } = recordLaunches((m) => {
+    for (const [label, build] of cases) {
+      build((dir) => {
+        const input = { workspace: { project_dir: dir } };
+        const on = `${m.renderProject(input, dir, { env: READER_ENV })}|${m.renderGit(dir)}`;
+        // The off side runs in its own recording so each case proves it reached git for the origin url.
+        const offRun = recordLaunches((fresh) => `${fresh.renderProject(input, dir, { fast: false })}|${fresh.renderGit(dir)}`);
+        assert.strictEqual(on, offRun.result, label);
+        assert.deepStrictEqual(offRun.launches.filter((l) => l.file === ORIGIN_LAUNCH.file && l.fn === ORIGIN_LAUNCH.fn && l.args.join(' ') === ORIGIN_LAUNCH.args.join(' ')), [ORIGIN_LAUNCH], label);
+        compared.push(label);
+      });
+    }
+  });
+  assert.strictEqual(compared.length, 11);
+  assert.deepStrictEqual(launches.filter((l) => l.fn === 'exec' || l.fn === 'execSync'), []);
+});
+
+// #5846: the statusline fixtures are templates (#5772) — a warm-up call may build, a further call starts no
+// git process, and the worktreeShapes copy holds its own paths. They live here because this file's own tests
+// already build every one of these templates.
+const cleanupAfter = (t, dirs) => t.after(() => { for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); });
+for (const [name, make, dirsOf] of [
+  ['committedRepo()', () => committedRepo(), (d) => [d]],
+  ["committedRepo({ branch: 'feature/isolated-branch' })", () => committedRepo({ branch: 'feature/isolated-branch' }), (d) => [d]],
+  ["repoWithOrigin('git@github.com:owner/repo.git')", () => repoWithOrigin('git@github.com:owner/repo.git'), (r) => [r.base]],
+  ['repoWithOrigin(null)', () => repoWithOrigin(null), (r) => [r.base]],
+  ['worktreeShapes()', () => worktreeShapes(), (r) => [r.base]],
+  ['linkedWorktreeProject()', () => linkedWorktreeProject(), (r) => [r.base]],
+]) {
+  test(`AC3.1: statusline ${name}: a second call starts no git process`, (t) => {
+    warmCallStartsNoGit(make, { track: (r) => cleanupAfter(t, dirsOf(r)) });
+  });
+}
+
+test('worktreeShapes copy: link points at this copy\'s wt, and wt and sub resolve inside this copy', (t) => {
+  const { base, wt, sub, link } = worktreeShapes();
+  cleanupAfter(t, [base]);
+  const realBase = fs.realpathSync(base);
+  const inside = (p) => p.startsWith(realBase + path.sep);
+  if (link !== null) assert.strictEqual(fs.realpathSync(link), fs.realpathSync(wt));
+  for (const dir of [wt, sub]) {
+    const common = fs.realpathSync(path.resolve(dir, git(dir, ['rev-parse', '--git-common-dir'])));
+    assert.ok(inside(common), `${dir}: ${common} is outside ${realBase}`);
+  }
+  const gitmodules = path.join(base, 'main-repo', '.gitmodules');
+  if (fs.existsSync(gitmodules)) {
+    const urls = [...fs.readFileSync(gitmodules, 'utf8').matchAll(/^\s*url\s*=\s*(.+?)\s*$/gm)].map((m) => m[1]);
+    assert.ok(urls.length > 0, 'control: .gitmodules names a url');
+    for (const url of urls) {
+      assert.ok(inside(fs.realpathSync(path.resolve(url))), `.gitmodules url ${url} is outside ${realBase}`);
+    }
+  }
+});

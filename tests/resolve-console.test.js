@@ -6,15 +6,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const {
-  resolveConsoleExecution, REVERSE_FAILED_NOTE, DROPPED_NOTE, FILING_FAILED_NOTE,
+  resolveConsoleExecution, REVERSE_FAILED_NOTE, DROPPED_NOTE, FILING_FAILED_NOTE, DIGESTED_NOTE,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-'));
+  return scratchDir('ct-resolve-console-');
 }
 
 function writeConsoleJson(dir, overrides = {}) {
@@ -157,7 +158,9 @@ const RULING_ITEMS = [
   { id: 'r1', kind: 'staged', summary: 'SDD ruling', isRulingRow: true },
 ];
 
-async function runRuling(items, { approve, decline, reverseFailed, filingFailed }) {
+async function runRuling(items, {
+  approve, decline, reverseFailed, filingFailed, digested,
+}) {
   const dir = makeRunDir();
   writeConsoleJson(dir, { items });
   const ghCalls = [];
@@ -167,7 +170,9 @@ async function runRuling(items, { approve, decline, reverseFailed, filingFailed 
     gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(items.map((i) => i.id)) }),
     writeFile: (p, content) => writeCalls.push({ path: p, content }),
   };
-  const result = await resolveConsoleExecution(dir, { approve, decline, reverseFailed, filingFailed }, deps);
+  const result = await resolveConsoleExecution(dir, {
+    approve, decline, reverseFailed, filingFailed, digested,
+  }, deps);
   const markerBody = ghCalls.find((a) => a[0] === 'api').find((a) => a.startsWith('body='));
   const replyCall = ghCalls.find((a) => a[0] === 'pr' && a[1] === 'comment');
   const replyBody = replyCall[replyCall.indexOf('--body') + 1];
@@ -354,6 +359,39 @@ test('a finding row whose tick no comment carries reads declined and leaves Reso
   assert.equal(written.resolved, false);
 });
 
+// #3942 — ratifying a deferral ruling files a record; when that filing failed the
+// executing session names the ruling in filingFailed: filing-failed, not cleared,
+// outranking the tick — never executed, which would read as a clean ratify.
+test('AC3.1: a ticked ruling named in filingFailed reads filing-failed, uncleared, Resolve unticked (#3942)', async () => {
+  const { result, markerBody, replyBody, written } = await runRuling(RULING_ITEMS, { approve: ['1', 'r1'], decline: [], filingFailed: ['r1'] });
+  const r1 = result.outcomes.find((o) => o.id === 'r1');
+  assert.equal(r1.outcome, 'filing-failed');
+  assert.equal(r1.note, FILING_FAILED_NOTE);
+  assert.equal(r1.isRulingRow, true);
+  assert.equal(result.resolved, false);
+  assert.doesNotMatch(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`r1\`: ${FILING_FAILED_NOTE}`));
+  assert.equal(written.resolved, false);
+  assert.equal(written.items.find((i) => i.id === 'r1').outcome, 'filing-failed');
+});
+
+test('#3942: a ruling id in both reverseFailed and filingFailed is rejected as conflicting-failure-ids before any write', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: RULING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], reverseFailed: ['r1'], filingFailed: ['r1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'r1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'conflicting-failure-ids');
+  assert.deepEqual(result.ids, ['r1']);
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
+  assert.equal(writeCalls.length, 0);
+});
+
 test('an id without findingItem in filingFailed is rejected as not-finding-items before any write', async () => {
   const dir = makeRunDir();
   writeConsoleJson(dir, { items: FINDING_ITEMS });
@@ -368,6 +406,60 @@ test('an id without findingItem in filingFailed is rejected as not-finding-items
   assert.equal(result.reason, 'not-finding-items');
   assert.deepEqual(result.ids, ['1']);
   assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
+  assert.equal(writeCalls.length, 0);
+});
+
+// #4679: a can't-tell drop backfilled into the digest is a settled outcome, never executed.
+test('resolve-console --digested records a finding row digested and clears it (#4679)', async () => {
+  const items = [{ id: 'f1', kind: 'staged', summary: 'can\'t-tell drop', findingItem: 'tiebreak:3f2a9c1b7d04' }];
+  const { result, markerBody, replyBody, written } = await runRuling(items, { approve: [], decline: [], digested: ['f1'] });
+  const f1 = result.outcomes.find((o) => o.id === 'f1');
+  assert.equal(f1.outcome, 'digested');
+  assert.equal(f1.note, DIGESTED_NOTE);
+  assert.equal(DIGESTED_NOTE, 'digested — logged to the materiality digest, nothing filed');
+  assert.equal(f1.findingItem, 'tiebreak:3f2a9c1b7d04');
+  assert.equal(result.resolved, true);
+  assert.match(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`f1\`: ${DIGESTED_NOTE}`));
+  assert.equal(written.items[0].outcome, 'digested');
+  assert.equal(written.items[0].note, DIGESTED_NOTE);
+});
+
+test('--digested outranks a tick: a ticked digested row is never executed (#4679)', async () => {
+  const { result } = await runRuling(FINDING_ITEMS, { approve: ['1', 'f1'], decline: [], digested: ['f1'] });
+  assert.equal(result.outcomes.find((o) => o.id === 'f1').outcome, 'digested');
+});
+
+test('--digested naming a non-finding row is not-finding-items before any write (#4679)', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: FINDING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], digested: ['1', 'f1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'f1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'not-finding-items');
+  assert.deepEqual(result.ids, ['1']);
+  assert.ok(ghCalls.every((a) => !(a[0] === 'pr' && a[1] === 'comment') && a[0] !== 'api'));
+  assert.equal(writeCalls.length, 0);
+});
+
+test('an id in both --digested and --filing-failed is rejected as conflicting-failure-ids (#4679)', async () => {
+  const dir = makeRunDir();
+  writeConsoleJson(dir, { items: FINDING_ITEMS });
+  const ghCalls = [];
+  const writeCalls = [];
+  const result = await resolveConsoleExecution(dir, { approve: [], decline: [], digested: ['f1'], filingFailed: ['f1'] }, {
+    now: () => Date.now(),
+    gh: fakeGh(ghCalls, { prViewBody: primaryCommentBody(['1', 'f1']) }),
+    writeFile: (p, c) => writeCalls.push({ p, c }),
+  });
+  assert.equal(result.status, 'error');
+  assert.equal(result.reason, 'conflicting-failure-ids');
+  assert.deepEqual(result.ids, ['f1']);
   assert.equal(writeCalls.length, 0);
 });
 
@@ -569,7 +661,7 @@ test('a trusted reply is still updated when an untrusted planted one is also pre
 // The final console.json write is the only unguarded I/O in the function
 // (#2568 follow-up review finding): a throw there — after both gh writes
 // already landed — must surface as a distinguishable error status, never
-// propagate uncaught to hooks.js's top-level catch-and-exit-0.
+// propagate uncaught to hooks.js's generic exception exit (#4932).
 test('resolveConsoleExecution: a console.json write failure after both gh writes landed returns console-write-failed, never throws', async () => {
   const dir = makeRunDir();
   writeConsoleJson(dir);

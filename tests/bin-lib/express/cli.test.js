@@ -244,6 +244,80 @@ test('gate --run marks a record already escalated in this run (Review Focus 4)',
   assert.deepStrictEqual(h.calls.resolvePolicy[0].opts, { runDir: fx.runDir });
 });
 
+// The gate's lane fill (#5903): the run's manifest.json, as the mint left it.
+const manifestFile = (fx) => path.join(fx.runDir, 'manifest.json');
+function seedManifest(fx, over = {}) {
+  const manifest = { v: 1, runId: path.basename(fx.runDir), createdAt: '2026-10-25T09:00:00.000Z', lane: 'unknown', ceremonyProfile: null, pluginVersion: '1.2.3', policyHash: 'abc', baseCommit: 'def', modelProfile: 'standard', ...over };
+  fs.writeFileSync(manifestFile(fx), `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+const readManifest = (fx) => JSON.parse(fs.readFileSync(manifestFile(fx), 'utf8'));
+
+test('gate --run with eligible:true sets lane express', () => {
+  const fx = fixture();
+  const seeded = seedManifest(fx);
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7), record(8)])), '--run', fx.runDir], h.deps), 0);
+  assert.deepStrictEqual(readManifest(fx), { ...seeded, lane: 'express' });
+  assert.deepStrictEqual(h.json().verdicts.map((v) => v.eligible), [true, true]);
+});
+
+test('gate --run --issue (one verdict) with eligible:true sets lane express', () => {
+  const fx = fixture();
+  seedManifest(fx);
+  const h = harness(fx, { gh: () => JSON.stringify(record(7)) });
+  assert.strictEqual(run(['gate', '--issue', '7', '--run', fx.runDir], h.deps), 0);
+  assert.strictEqual(readManifest(fx).lane, 'express');
+});
+
+test('gate --run with one eligible:false verdict leaves the manifest untouched', () => {
+  const fx = fixture();
+  seedManifest(fx);
+  const before = fs.readFileSync(manifestFile(fx), 'utf8');
+  const medium = record(8, ['risk:medium', 'size:low', 'ceremony:fast-lane', 'type:task']);
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7), medium])), '--run', fx.runDir], h.deps), 0);
+  assert.deepStrictEqual(h.json().verdicts.map((v) => v.eligible), [true, false]);
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), before);
+  const off = harness(fx, {}, { 'express-lane': false });
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)])), '--run', fx.runDir], off.deps), 0);
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), before, 'a disabled lane leaves it untouched');
+});
+
+test('gate without --run writes no manifest', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)]))], h.deps), 0);
+  assert.strictEqual(h.json().verdicts[0].eligible, true);
+  assert.deepStrictEqual(fs.readdirSync(fx.runDir), []);
+  assert.deepStrictEqual(fs.readdirSync(fx.shadow), []);
+});
+
+test('gate --run keeps a known lane: an express gate never overwrites it', () => {
+  const fx = fixture();
+  seedManifest(fx, { lane: 'driver' });
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)])), '--run', fx.runDir], h.deps), 0);
+  assert.strictEqual(readManifest(fx).lane, 'driver');
+});
+
+test('a manifest fill failure leaves stdout and exit code unchanged', () => {
+  const fx = fixture();
+  const file = fx.file('records.json', JSON.stringify([record(7)]));
+  const clean = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', file, '--run', fx.runDir], clean.deps), 0);
+  fs.rmSync(manifestFile(fx));
+
+  fs.writeFileSync(manifestFile(fx), 'not json');
+  const h = harness(fx);
+  const code = run(['gate', '--records-json', file, '--run', fx.runDir], h.deps);
+  assert.strictEqual(h.err.length, 1, 'the fill really failed, on the gate\'s one injected stderr channel');
+  assert.match(h.err[0], /run-manifest: manifest\.json is not valid JSON/);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(h.out.join(''), clean.out.join(''));
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), 'not json', 'the unreadable manifest is left as it was');
+});
+
 // --- check ----------------------------------------------------------------------
 
 // check reads run-state.json's worktree; seed it (the linked worktree, never the cwd) unless a test already did.
@@ -297,7 +371,7 @@ test('check proceed: a Key-File-only diff logs the proceed line and no escalatio
   const res = h.json();
   assert.strictEqual(res.action, 'proceed');
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
   assert.strictEqual(res.bounds.implLines, 4);
   assert.strictEqual(res.head, HEAD_SHA);
   const text = decisions(fx);
@@ -339,11 +413,24 @@ test('AC4.1 configSet: check under merge-verification off yields merge-when-gree
   assert.strictEqual(run(checkArgv(fx), h.deps), 0);
   const res = h.json();
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
 
   const wait = harness(fx, {}, { 'merge-verification': 'wait' });
   assert.strictEqual(run(checkArgv(fx), wait.deps), 0);
-  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait');
+  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait,spec=7');
+});
+
+test('AC1.1 AC3.1: the proceed configSet written through set-config.js leaves spec: {n} in config.yml', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  const { configSet } = h.json();
+  const out = []; const err = [];
+  const scDeps = { cwd: () => fx.main, stdout: (s) => out.push(s), stderr: (s) => err.push(s) };
+  assert.strictEqual(require('../../../plugin/bin/set-config.js').run(['--run', fx.runDir, '--set', configSet], scDeps), 0, err.join(''));
+  const body = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.match(body, /^spec: 7$/m);
+  assert.match(body, /^integration-model: pr-first$/m);
 });
 
 test('check: a BlastRadiusError from the diff gather escalates as express-error, never a proceed', () => {
@@ -750,4 +837,49 @@ test('bin/express-lane.js runs as a process: --help prints USAGE (exit 0), a mal
   const bad = spawnSync(process.execPath, [cli, 'verify', '--issue', '7'], { encoding: 'utf8' });
   assert.strictEqual(bad.status, 2);
   assert.match(bad.stderr, /verify requires --run/);
+});
+
+// --- check --max-lines (#5224) --------------------------------------------------
+
+test('AC4.1: check with --max-lines evaluates the diff bounds with that maxLines', () => {
+  const sixty = numstat([[60, 0, KEY_FILES[0]]]);
+  const config = () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 });
+
+  const without = fixture();
+  const w = harness(without, { git: fakeGit(without, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(without), w.deps), 0);
+  assert.deepStrictEqual(w.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 40' });
+
+  const withFlag = fixture();
+  const f = harness(withFlag, { git: fakeGit(withFlag, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(withFlag, ['--max-lines', '80']), f.deps), 0);
+  const res = f.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.strictEqual(res.bounds.implLines, 60);
+
+  const tight = fixture();
+  const t = harness(tight, { git: fakeGit(tight, sixty), blastRadiusConfig: () => ({ ...config(), autoMergeMaxLines: 100 }) });
+  assert.strictEqual(run(checkArgv(tight, ['--max-lines', '50']), t.deps), 0);
+  assert.deepStrictEqual(t.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 50' });
+});
+
+test('AC4.2: a malformed --max-lines is a usage error', () => {
+  for (const v of ['5.0', '-3', '0', 'abc']) {
+    const fx = fixture();
+    const h = harness(fx);
+    assert.strictEqual(run(checkArgv(fx, ['--max-lines', v]), h.deps), 2, v);
+    assert.match(h.err.join(''), /--max-lines/, v);
+    assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false, v);
+    assert.strictEqual(h.out.join(''), '', v);
+  }
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx, ['--max-lines']), h.deps), 2);
+  assert.match(h.err.join(''), /--max-lines requires a value/);
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
+});
+
+test('AC4.1: the USAGE check line names --max-lines as the driver flag', () => {
+  assert.ok(USAGE.includes('[--repo owner/name] [--max-lines <n>]'));
+  assert.match(USAGE, /--max-lines: the pipeline driver's implementation-line bound/);
 });

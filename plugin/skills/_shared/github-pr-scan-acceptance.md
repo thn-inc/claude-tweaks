@@ -11,16 +11,16 @@ canonical contract two files deep is worse than one extra `Read` at dispatch tim
 file: subagents cannot read this file directly, the dispatcher inlines the relevant scope section
 whole into the scan agent's prompt.
 
-Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — see
-`github-pr-scan.md`'s own opening note for why.
+Every `gh issue list`/`gh pr list` call below carries an explicit `--limit`, sized from
+`backlog-fetch-limit` except the acceptance-queue fetch's fixed cap (follow-up #4906).
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
 every other count in this file, since a pending acceptance persists independent of open/closed state
-(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
-no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
-explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
+(an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/accept`
+resolves only the items you name (a bare ref or an explicit `#N,#M` list, never a scan), so this is
+the sole place the outstanding set is enumerated.
 
 ```bash
 gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
@@ -33,8 +33,8 @@ so a record labelled seconds before the run can be missing while the search inde
 and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
-({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
-when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
+({title1}), #{n2} ({title2}), ... — run /claude-tweaks:accept #{n1},#{n2},... to review them all` (a single ref
+when `{N}` is 1: `run /claude-tweaks:accept #{n1}`) — omit entirely when the count is 0.
 
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 
@@ -53,7 +53,7 @@ whole file whenever `gh` is unreachable — it checks remote/install/auth, never
 `local-files` twin of this sweep is `tidy/step-1-records.md`'s Shape 8, reading the record store
 through `queryRecords` and translating `facets.closed`/`facets.acceptance`/`facets.parent`/`facets.isParentIssue`/`facets.notPlanned` into
 the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at the identical
-severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
+severity and recommends the identical `/claude-tweaks:accept` invocation, so no consumer
 distinguishes the two.
 
 Record set: closed records from the last 30 days. The fetch splits that window into two date slices — `closed:$SINCE..$MID` and `closed:>$MID` — and applies the disposition, not-planned and duplicate exclusions server-side through `--search` on each slice; the client-side `closedAt` cutoff, `needsBackstop` and the oversight floor still run on the merged set, unchanged. Negated
@@ -110,14 +110,14 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
-`isParent` field excludes every parent — its acceptance is the parent gate's: the below-floor close
-(#4466) or `/claude-tweaks:demo` above it. Resolving
+`isParent` field excludes every parent here (only `parent-gate`'s closed branch passes `parentExceedsFloor`) — its acceptance is the parent gate's: the below-floor close
+(#4466) or `/claude-tweaks:accept` above it (a hand-closed one: `parent-gate` below). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
 per-sub-issue state, so it skips that scope's state-map plumbing; and it fetches `--state all` rather
 than `parent-gate`'s `--state open`, because a sub-issue whose parent was already gated and approved —
-which closes the parent (`demo/SKILL.md`'s Approve step) — must still be suppressed here, and an
+which closes the parent (`accept/SKILL.md`'s Approve step) — must still be suppressed here, and an
 open-only fetch would miss it.
 
 ### `work-links` resolution
@@ -350,7 +350,7 @@ node -e "
       isParent: parseRecordFacets(r.labels).isParentIssue,
       stateReason: r.stateReason,
     }));
-  gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + r.number));
+  gaps.forEach(r => console.log('[acceptance-gap] #' + r.number + ': ' + r.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept #' + r.number));
 " -- "$RISK_FLOOR" "$SIZE_FLOOR"
 ```
 
@@ -403,7 +403,7 @@ this sweep lives in `tidy/step-1-records.md` (Shape 7), reading the record store
 
 Record set: open records carrying `parent-issue` (`/claude-tweaks:specify` labels every
 decomposition parent this way — see `specify/record-creation.md`'s Parent record section),
-plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
+plus those closed in the last 30 days, plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
 
 ### `work-links` resolution
 
@@ -454,8 +454,11 @@ Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
 PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
 ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+PC_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-new.json)"
+PC_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-legacy.json)"
 PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
 : > "$PARENTS"
+gh api user --jq .login > "$PARENTS.login"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 STATE_SEARCH='{state-map-search}'
@@ -466,6 +469,10 @@ gh issue list --label parent-issue --state open --json number,title,body,labels 
 # removable only at a major version dropping pre-rename repo support. [IL-85]
 gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
   > "$PI_LEG"
+gh issue list --label parent-issue --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_NEW"
+gh issue list --label family:parent --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_LEG"
 
 gh issue list --state all --search "$STATE_SEARCH" --json number,state,labels --limit "$LIMIT" \
   > "$ALL_STATES"
@@ -474,9 +481,12 @@ node -e "
   const fs = require('fs');
   if (!['', 'has:parent-issue'].includes(process.env.STATE_SEARCH)) throw new Error('STATE_SEARCH is not a known value — the state-map-search placeholder was not substituted.');
   const LIMIT = Number(process.env.FETCH_LIMIT);
-  const fetched = ['$PI_NEW', '$PI_LEG'].map(require);
-  // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
-  const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
+  const { isCloseMarkerComment } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/below-floor-parent-close.js');
+  const { IDENTITY_PROBE_FAILED_NOTE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
+  const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
+  const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
+  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login; open-parent rows are unaffected, an [acceptance-gap] row may be a false positive.');
+  const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
   if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
@@ -492,17 +502,17 @@ node -e "
 "
 ```
 
-When this block fails — the state-map-search guard throws, or a failed `gh` call leaves a fetch file
-unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
+When this block fails — the state-map-search guard throws, or a failed
+`gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
 `$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
-read every sub-issue as `OPEN`.
+read every sub-issue as `OPEN`. An empty login is not a stop: report its WARNING verbatim with the rows.
 
 The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
 pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
 `gh` round-trip per parent or per sub-issue.
 
 **Report every warning emitted above verbatim beside this scope's rows, and never suppress
-either of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
+any of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
 which is exactly the direction a backstop must never fail in silently, since a scope that emits
 nothing is indistinguishable from a repo with no un-gated parents.
 
@@ -536,9 +546,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: parseSubIssues(p.body).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -587,9 +598,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: (byParent[p.number] || []).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -643,9 +655,10 @@ node -e "
       number,
       title: p.title,
       parentLabels: p.labels.map(l => l.name),
+      state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
       subIssues: subIssueNumbers.map(n => {
         const info = infoOf.get(n);
-        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
       }),
     };
   });
@@ -654,8 +667,8 @@ node -e "
 ```
 
 Both the primary path and the Fallback path converge on the same session-scoped
-`tidy-parent-gates.json` shape — `{number, title, parentLabels, subIssues:[{number,state,labels}]}`
-per parent.
+`tidy-parent-gates.json` shape — `{number, title, parentLabels, state, stateReason, belowFloorClose,
+subIssues:[{number,state,labels,unread}]}` per parent.
 
 ### Oversight-floor pre-filter
 
@@ -681,10 +694,10 @@ session-scoped paths first (`_shared/session-tmp-root.md`):
 GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
-  const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
+  const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { parseRecordFacets, TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-  const gates = require('$GATES'); // [{number, title, subIssues, parentLabels}]
+  const gates = require('$GATES');
   const [riskFloor] = process.argv.slice(1);
   function maxRiskTier(subIssues) {
     let hasUnscored = false;
@@ -697,13 +710,25 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
-  gates
-    .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
-      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number
-      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
+  const bad = {};
+  gates.forEach((f) => {
+    if (f.state === 'CLOSED') {
+      const v = closedParentGap({ ...f, subIssues: f.subIssues.map((s) => ({ risk: parseRecordFacets(s.labels).risk, unread: s.unread })), riskFloor });
+      if (v === 'gap') console.log('[acceptance-gap] #' + f.number + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:accept #' + f.number);
+      else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
+      return;
+    }
+    if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
+    console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept #' + f.number
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
+  });
+  for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check work-links and backlog-fetch-limit, then re-run.');
 " -- "$RISK_FLOOR"
 ```
+
+A `CLOSED` gate's row is `closedParentGap`'s verdict: a `gap` prints `acceptance-gap`'s row, severity and
+routing (`/claude-tweaks:accept #{n}`), mutating nothing. Report its two `WARNING:` lines verbatim beside the rows; never suppress them.
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,
 executed for this scope's rows via `tidy/actions-github-issues.md`'s `## Open parent gate`) — never applied without
@@ -720,10 +745,10 @@ step of a pipeline a human already launched against one named record and sits in
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
 scope and the `Open parent gate` action it feeds never write an approved or changes-requested
 Acceptance label (`_shared/work-record.md`) under any circumstance — that disposition stays exclusively
-`/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
-ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
+`/claude-tweaks:accept`'s job, staged and human-only, which is why an above-floor recommendation still
+ends with "then `/claude-tweaks:accept #{n}`" even once the gate is open. Approving a below-floor row
 closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the
-floor**, with no `/claude-tweaks:demo` step.
+floor**, with no `/claude-tweaks:accept` step.
 
 Emit `[parent-gate]` rows per the Output Contract, at severity `info` — the same severity
 `acceptance-gap` uses and for the same reason: `/claude-tweaks:tidy` runs this scope in the same

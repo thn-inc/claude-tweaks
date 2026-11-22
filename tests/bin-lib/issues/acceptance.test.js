@@ -7,6 +7,7 @@ const {
   verificationSurface,
   needsBackstop,
   parentGateState,
+  closedParentGap,
   approvalProvenance,
   APPROVAL_PROVENANCE_LABEL,
   APPROVAL_PROVENANCE_LABELS,
@@ -278,4 +279,70 @@ test('AC4.1: needsBackstop excludes a decomposition parent', () => {
   // Controls: the same record without the flag (false or absent) is still a gap.
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: false }), true);
   assert.equal(needsBackstop({ state: 'CLOSED', labels: [] }), true);
+});
+
+test('AC1.1: needsBackstop admits a closed parent the caller shows above the floor', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: true }), true);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: ['demo:approved'], isParent: true, parentExceedsFloor: true }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: true, stateReason: 'NOT_PLANNED' }), false);
+  assert.equal(needsBackstop({ state: 'OPEN', labels: [], isParent: true, parentExceedsFloor: true }), false);
+});
+
+test('AC2.1: needsBackstop keeps a parent at or below the floor excluded', () => {
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: false }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true, parentExceedsFloor: 'true' }), false);
+  assert.equal(needsBackstop({ state: 'CLOSED', labels: [], isParent: true }), false);
+});
+
+test('AC1.1: closedParentGap reports a hand-closed parent above the floor', () => {
+  const high = [{ risk: 'high' }, { risk: 'low' }];
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'COMPLETED', subIssues: high, riskFloor: 'high' }), 'gap');
+  // Unscored fails closed.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: null }], riskFloor: 'high' }), 'gap');
+  // Disposition, not planned and duplicate are never a gap.
+  assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: ['accept:pending'], subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'NOT_PLANNED', subIssues: high, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], stateReason: 'DUPLICATE', subIssues: high, riskFloor: 'high' }), 'none');
+});
+
+test('AC2.1: closedParentGap excludes a #4466-closed parent before the floor', () => {
+  // Relabelled to risk:high after the close: the marker still excludes it (Decision Q1).
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'none');
+  // Control: the same parent without the marker is a gap.
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: false, subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'gap');
+  // Below the floor with no marker (hand-closed below the floor): no sign-off owed.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'medium' }], riskFloor: 'high' }), 'none');
+});
+
+test('AC1.1: closedParentGap applies the caller\'s risk floor, not a fixed one', () => {
+  const medium = [{ risk: 'medium' }];
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: medium, riskFloor: 'medium' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }], riskFloor: 'always' }), 'gap');
+  // The marker still wins over every floor.
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: medium, riskFloor: 'always' }), 'none');
+});
+
+test('closedParentGap reports an unreadable parent instead of guessing', () => {
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [], riskFloor: 'high' }), 'no-sub-issues');
+  assert.equal(closedParentGap({ parentLabels: [], riskFloor: 'high' }), 'no-sub-issues');
+  // A readable sub-issue already above the floor proves the gap: an unread one can only raise the max.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'high' }, { risk: null, unread: true }], riskFloor: 'high' }), 'gap');
+  // Readable ones below the floor: indeterminate, never a guessed row.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }, { risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  // The disposition and marker checks run first: an approved or #4466-closed parent is never counted.
+  assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: [], riskFloor: 'high' }), 'none');
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [], riskFloor: 'high' }), 'none');
+});
+
+test('closedParentGap treats an unbuildable sub-issue entry as unread, not unscored', () => {
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'high' }], riskFloor: 'high' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: ['high', { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+});
+
+test('closedParentGap excludes on the marker only for literal true', () => {
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: 'true', subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'gap');
 });

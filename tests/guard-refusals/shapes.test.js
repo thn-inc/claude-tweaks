@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const { readText } = require('../helpers/read-skill');
-const { DETECTORS, UNDETECTED_ROWS, detectShapes } = require('../../tools/guard-refusals/shapes');
+const { DETECTORS, UNDETECTED_ROWS, FORMER_REASONS, detectShapes } = require('../../tools/guard-refusals/shapes');
+const { REASONS } = require('../../tools/guard-refusals/trace');
 const { shellFences, malformedFences } = require('../../tools/guard-refusals/fences');
 
 // #4028: tools/guard-refusals/shapes.js holds one static detector per refused
@@ -29,7 +30,7 @@ function section7Rows() {
   const rows = [];
   for (let i = head + 2; i < lines.length && lines[i].startsWith('|'); i++) {
     const cells = splitRow(lines[i]);
-    rows.push({ example: cells[1], verdict: cells[2] });
+    rows.push({ example: cells[1], verdict: cells[2], verified: cells[5] });
   }
   return rows;
 }
@@ -61,7 +62,7 @@ function unflaggedRows(detectors, undetected) {
 
 test('section 7 yields the refused and passes rows this suite sweeps', () => {
   const rows = section7Rows();
-  assert.ok(rows.filter((r) => r.verdict === 'refused').length >= 17, 'refused rows went missing from the parse');
+  assert.ok(rows.filter((r) => r.verdict === 'refused').length >= 20, 'refused rows went missing from the parse');
   assert.ok(rows.filter((r) => r.verdict === 'passes').length >= 18, 'passes rows went missing from the parse');
   for (const r of rows) assert.ok(candidates(r.example).length > 0, `no backtick span in Example: ${r.example}`);
 });
@@ -405,4 +406,157 @@ test('node-eval-computed-arg: a quoted reference to a literally assigned name is
 test('github-url-with-var: a quoted reference to a literally assigned name is not flagged; an unquoted one is', () => {
   assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo "$U"'), []);
   assert.deepStrictEqual(detectShapes('U=https://github.com/o/r; echo $U'), ['github-url-with-var']);
+});
+
+// #5588: a git command chained by ; && or || onto $? on one line. A quoted word
+// that is exactly "$?" is refused too (live probe); "exit=$?" runs.
+test('git-chained-status: unquoted and bare quoted $? after ; && ||, but not "exit=$?" or a literal', () => {
+  for (const op of [';', '&&', '||']) {
+    assert.deepStrictEqual(detectShapes(`git status ${op} echo $?`), ['git-chained-status'], op);
+    assert.deepStrictEqual(detectShapes(`git status ${op} echo "$?"`), ['git-chained-status'], op);
+  }
+  assert.deepStrictEqual(detectShapes('git status; echo "exit=$?"'), []);
+  assert.deepStrictEqual(detectShapes('git status; echo "a $? b"'), []);
+  assert.deepStrictEqual(detectShapes("git status; echo '$?'"), []);
+  assert.deepStrictEqual(detectShapes('digit status; echo "$?"'), []);
+});
+
+// The chain is read on the line the text after `git<blank>` continues, as the regex form read it:
+// a `\n` right after the word starts that line; a `$?` before the separator, or on another line, is
+// not chained.
+test('git-chained-status: the separator and $? follow the git word on its own line', () => {
+  assert.deepStrictEqual(detectShapes('git\n; echo $?'), ['git-chained-status']);
+  assert.deepStrictEqual(detectShapes('git status\n; echo $?'), []);
+  assert.deepStrictEqual(detectShapes('echo $?; git status'), []);
+  assert.deepStrictEqual(detectShapes('echo x\ngit status; echo $?\necho y'), ['git-chained-status']);
+  assert.deepStrictEqual(detectShapes('gh pr view 1 --repo github.com/o/r\n&& echo $?'), []);
+});
+
+// #5588: `git -C .` and `git -C <operand>` with an unquoted glob later in the same simple command.
+// The negatives are the rules' own bounds: only the bare or quoted dot, a quoted glob is not a glob,
+// and a glob in the next command is not this command's.
+test('git-C-dot: the bare or quoted dot only', () => {
+  assert.deepStrictEqual(detectShapes('git -C . log'), ['git-C-dot']);
+  assert.deepStrictEqual(detectShapes('git -C "." log'), ['git-C-dot']);
+  assert.deepStrictEqual(detectShapes('git -C .. log'), []);
+  assert.deepStrictEqual(detectShapes('git -C sub log'), []);
+});
+
+test('git-C-glob: an unquoted glob in the same simple command, not a quoted or later-command one', () => {
+  assert.deepStrictEqual(detectShapes('git -C "/w" grep x -- a/*.js'), ['git-C-glob']);
+  assert.deepStrictEqual(detectShapes('git -C /w grep x -- a/*.js'), ['git-C-glob']);
+  assert.deepStrictEqual(detectShapes('git -C "/w" grep x -- "a/*.js"'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w log; ls *.js'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w log\ngit status *.js'), []);
+  assert.deepStrictEqual(detectShapes('git -C /w status'), []);
+});
+
+// The long single-line verdicts behind perf/guard-refusals-chained-status-linearity.test.js, which
+// holds the timing.
+test('chained status on a long line: no $? is not flagged, a trailing chained $? is', () => {
+  assert.ok(!detectShapes('git x; '.repeat(2000)).includes('git-chained-status'));
+  assert.ok(!detectShapes('gh x --repo github.com/o/r; '.repeat(1000)).includes('gh-jq-pipe-chained'));
+  assert.ok(detectShapes('git x; '.repeat(2000) + 'echo $?').includes('git-chained-status'));
+  assert.ok(detectShapes('gh x --repo github.com/o/r; '.repeat(1000) + 'echo $?').includes('gh-jq-pipe-chained'));
+});
+
+test('#5590: complete, eval and source tokens are refused in any letter case', () => {
+  assert.deepStrictEqual(detectShapes('echo COMPLETE'), ['complete-token']);
+  assert.deepStrictEqual(detectShapes('echo Eval'), ['eval-token']);
+  assert.deepStrictEqual(detectShapes('grep -c "Source" README.md'), ['source-token']);
+  assert.deepStrictEqual(detectShapes('grep -c "[S]ource" README.md'), []);
+  assert.deepStrictEqual(detectShapes('echo Evaluate Completed Sourced'), []);
+});
+
+test('#5590: git-word-argument flags a git argument whose basename is git or git-*', () => {
+  for (const c of ['git grep -c "git-discipline" -- f.md', 'git log --oneline -1 -- git', 'git log -1 -- GIT', 'git log -1 -- x/git-y', 'git log -1 --grep "git"', '/usr/bin/git log -1 -- git', 'git log -1 -- gi\\\nt']) {
+    assert.deepStrictEqual(detectShapes(c), ['git-word-argument'], c);
+  }
+});
+
+test('#5590: git-word-argument reads an escaped backslash before a newline as a literal backslash, not a continuation', () => {
+  // `\\` then a real line break: `git` on the next line is its own command, not an argument.
+  assert.deepStrictEqual(detectShapes('git log -1 -- \\\\\ngit'), []);
+  assert.deepStrictEqual(detectShapes('git log -1 -- gi\\\nt'), ['git-word-argument']);
+});
+
+test('#5590: git-word-argument passes the live-run forms', () => {
+  for (const c of ['git grep -c "[g]it-discipline" -- f.md', 'git log -1 -- gitx', 'git log -1 -- x-git', 'git log -1 -- git.md', 'git log -1 -- plugin/skills/_shared/git-discipline.md', 'git log -1 --grep=git', 'git log -1 --grep "a git-b c"', 'git log -1 -- "git x"', 'ls -d git-nonexistent', 'grep -c "git-discipline" README.md', 'git rev-parse --short HEAD && git log --oneline -1', 'git status; ls git']) {
+    assert.deepStrictEqual(detectShapes(c), [], c);
+  }
+});
+
+test('#5590: heredoc-brace-quote flags a quote inside an open brace in a heredoc body', () => {
+  for (const c of ["node /lit/x.js a <<'EOF'\nconst r = { a: 'x' };\nEOF", 'cat <<EOF\n{a:"x"}\nEOF', "cat <<'EOF'\n{\n'x'\n}\nEOF", "cat <<'EOF'\n{ 'x'\nEOF"]) {
+    assert.deepStrictEqual(detectShapes(c), ['heredoc-brace-quote'], c);
+  }
+});
+
+test('#5590: heredoc-brace-quote passes braces without a quote, a quote outside braces, and non-heredoc text', () => {
+  for (const c of ["cat <<'EOF'\n{ a: 1 }\nEOF", "cat <<'EOF'\n{a:x} 'y'\nEOF", "cat <<'EOF'\n'y' {a:x}\nEOF", "cat <<'EOF'\n['x', 'y']\nEOF", 'node -e "const r = { a: \'x\' }"', 'echo "{a:\'x\'}"', "node /lit/x.js <<'EOF'\nconsole.log(JSON.stringify(process.argv.slice(1)));\nEOF"]) {
+    assert.deepStrictEqual(detectShapes(c), [], c);
+  }
+});
+
+// #5590 AC5: every case below is a live probe (2026-11-16, macOS zsh, Claude Code 2.1.325, main session).
+test('#5590: the four shapes probed for AC5 are flagged, each by its own detector only', () => {
+  const REFUSED = [
+    ['unterminated-quote', 'grep -c "^# " "README.md'],
+    ['quoted-backslash-space', 'grep -c "a\\ b" README.md'],
+    ['quoted-backslash-space', "grep -c 'a\\ b' README.md"],
+    ['quoted-backslash-space', 'grep -c "a\\\\ b" README.md'],
+    ['equals-word', 'grep -c "x =require" README.md'],
+    ['equals-word', "grep -c 'x =require' README.md"],
+    ['equals-word', 'grep -c "a\\|=token" README.md'],
+    ['equals-word', 'grep -c "a|=b" README.md'],
+    ['equals-word', 'grep -c x =y README.md'],
+    ['git-text-late-var', 'pwd; F="README.md"; grep -c "digit" "$F"'],
+    ['git-text-late-var', 'pwd && F="README.md" && grep -c "digit" "$F"'],
+    ['git-text-late-var', 'pwd\nF="README.md"\ngrep -c "digit" "$F"'],
+    ['git-text-late-var', 'pwd; F="README.md"; git log --oneline -1 -- "$F"'],
+    ['git-text-late-var', 'cd /tmp; W="/abs/wt"; git -C "$W" log --oneline -1'],
+  ];
+  const wrong = REFUSED.filter(([id, c]) => JSON.stringify(detectShapes(c)) !== JSON.stringify([id])).map(([id, c]) => `${id}: ${c} -> ${detectShapes(c)}`);
+  assert.deepStrictEqual(wrong, []);
+});
+
+test('#5590: the passing neighbours of those four shapes are not flagged', () => {
+  const PASSES = [
+    'grep -c "^# " "README.md"',
+    'grep -c "a\\\\b" README.md',
+    'grep -c "=require" README.md',
+    'grep -c "x = require" README.md',
+    'grep -c "x =1" README.md',
+    'grep -c "a(=b" README.md',
+    'grep -c "a,=b" README.md',
+    'grep -c "x == y" README.md',
+    'grep -c "x =\\|y" README.md',
+    'grep -c "x [=]require" README.md',
+    "grep -c 'a\\\\[ ]b' README.md",
+    // The assignment first, the name never referenced, no `git` text, a literal path.
+    'F="README.md"; pwd; grep -c "digit" "$F"',
+    'W="/abs/wt"; pwd; git -C "$W" log --oneline -1',
+    'W="/abs/wt"; git -C "$W" log --oneline -1',
+    'pwd; F="README.md"; grep -c "git" README.md',
+    'pwd; F="README.md"; grep -c "plugin" "$F"',
+    'pwd; git -C "/abs/wt" log --oneline -1',
+  ];
+  const wrong = PASSES.filter((c) => detectShapes(c).length).map((c) => `${c} -> ${detectShapes(c)}`);
+  assert.deepStrictEqual(wrong, []);
+});
+
+test('#5590: a quote, an `=word` or a backslash-space in a comment or a heredoc body is not flagged', () => {
+  for (const c of ["echo ok # don't", "cat <<'EOF'\nit's x =y a\\ b\nEOF", 'echo ok # x =y']) {
+    assert.deepStrictEqual(detectShapes(c), [], c);
+  }
+});
+
+test('every FORMER_REASONS entry names a reason id and a live passes row last verified on its `until` day', () => {
+  const passes = new Map(section7Rows().filter((r) => r.verdict === 'passes').map((r) => [r.example, r.verified]));
+  assert.ok(Object.keys(FORMER_REASONS).length > 0);
+  for (const [reason, former] of Object.entries(FORMER_REASONS)) {
+    assert.ok(REASONS.includes(reason), `${reason} is not a reason id`);
+    assert.ok(passes.has(former.row), `${reason}: no passes row has this Example cell`);
+    assert.ok(String(passes.get(former.row)).startsWith(former.until), `${reason}: the row's Last verified cell does not start with ${former.until}`);
+  }
 });

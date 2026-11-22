@@ -23,10 +23,12 @@ const { parseStatusPorcelainZ } = require('../git-z');
 // its source is deleted from the tree relative to HEAD, so a non-generated
 // file renamed into a generated path must still disqualify the stamp. A
 // copy's source is unchanged, so only its new path counts.
-function dirtyFilePaths(execImpl = execFileSync) {
+// `status` (#5773), when a string, is the raw output of this very command that the caller already
+// read in this directory with nothing able to write the tree since; it is parsed instead of asking git.
+function dirtyFilePaths(execImpl = execFileSync, status = null) {
   let out;
   try {
-    out = String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true }));
+    out = typeof status === 'string' ? status : String(execImpl('git', ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all'], { encoding: 'utf8', windowsHide: true }));
   } catch {
     return null;
   }
@@ -59,9 +61,10 @@ function gitInfo(execImpl = execFileSync) {
 // bin/verify.js resolves its default --log-dir/--count-stamp and the #1921
 // stamp location from this; null means "not inside a checkout" and the CLI
 // falls back to its tmpdir behavior.
-function gitDir(execImpl = execFileSync, cwd = process.cwd()) {
+// `env` (optional) is the child's environment; absent, the child inherits process.env.
+function gitDir(execImpl = execFileSync, cwd = process.cwd(), env) {
   try {
-    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, windowsHide: true })).trim();
+    const out = String(execImpl('git', ['rev-parse', '--git-dir'], { encoding: 'utf8', cwd, env, windowsHide: true })).trim();
     if (out === '') return null;
     return path.resolve(cwd, out);
   } catch {
@@ -99,6 +102,10 @@ function entryFor(check) {
   // #1837: never disable the count-stamp comparison silently — a tests
   // check whose counts didn't parse (with a stamp in play) says so.
   if (check.countsUnparsed) entry.countsUnparsed = check.countsUnparsed;
+  // #4347: a check whose verdict is a CI job's names that run.
+  if (check.ci) entry.ci = check.ci;
+  // #5119: the suite slot a CI-answered suite's local retry held.
+  if (check.retrySlot) entry.retrySlot = check.retrySlot;
   return entry;
 }
 

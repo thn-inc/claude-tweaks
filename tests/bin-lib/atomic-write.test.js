@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { writeFileAtomic } = require('../../plugin/bin/lib/atomic-write');
@@ -16,7 +17,7 @@ test('writeFileAtomic: writes to a pid-suffixed tmp path in the same directory, 
 
   assert.equal(writeCalls.length, 1);
   assert.notEqual(writeCalls[0].p, '/x/y/store.txt', 'writes to a tmp path, not the final path directly');
-  assert.ok(writeCalls[0].p.startsWith('/x/y/store.txt.tmp-'), 'tmp path is derived from the real path, in the same directory');
+  assert.ok(writeCalls[0].p.startsWith(path.join('/x/y', 'store.txt.tmp-')), 'tmp path is derived from the real path, in the same directory');
   assert.equal(writeCalls[0].content, 'hello');
   assert.equal(renameCalls.length, 1);
   assert.equal(renameCalls[0].from, writeCalls[0].p);
@@ -43,7 +44,7 @@ test('writeFileAtomic: a write failure is cleaned up (best-effort unlink of the 
     /ENOSPC/,
   );
   assert.equal(unlinkCalls.length, 1);
-  assert.ok(unlinkCalls[0].startsWith('/x/store.txt.tmp-'));
+  assert.ok(unlinkCalls[0].startsWith(path.join('/x', 'store.txt.tmp-')));
 });
 
 test('writeFileAtomic: a rename failure is cleaned up (best-effort unlink of the tmp file) and rethrown unchanged', () => {
@@ -80,7 +81,7 @@ test('writeFileAtomic: on success, unlink is never called', () => {
 });
 
 test('writeFileAtomic: real-filesystem round-trip — writes the file with correct content and leaves no stray tmp file', () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-write-'));
+  const tmpDir = scratchDir('atomic-write-');
   const outPath = path.join(tmpDir, 'out.txt');
 
   writeFileAtomic(outPath, 'hello world');
