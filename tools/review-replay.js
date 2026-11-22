@@ -3,18 +3,19 @@
 // tools/review-replay.js — replays archived review runs through the tiebreak judge and scores the agreement (#5557).
 //
 //   node tools/review-replay.js baseline --runs <root> [--select <name,...>]
-//   node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> ...
+//   node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> ...
 //
 // baseline: reads every archived run directory under <root> and <root>/archive and prints one JSON object
 // { runs, excluded }: per run the recorded verdicts and how they matched the findings, the review head and base, the
 // lens and tiebreak agent cost. A run that cannot be replayed is listed in `excluded` with its reason, never dropped.
 //
 // extract: selects the replayable findings and writes trees, judge prompts per arm, manifest.json, fixture.json and
-// archived-verdicts.json under <dir> (tools/review-replay/extract.js).
+// archived-verdicts.json under <dir> (tools/review-replay/extract.js). An arm's `effort=` replaces its profile's effort.
 //
 // score: settles every replay judge's reply through plugin/bin/lib/tiebreak.js and prints the agreement with the archived
 // verdicts and the cost per arm as one JSON object (tools/review-replay/score.js); --transcripts is the workflow's
-// directory holding journal.jsonl and agent-{id}.jsonl.
+// directory holding journal.jsonl and agent-{id}.jsonl. score checks every arm whose effort is not null (from `effort=` or
+// its profile; only `fast` without `effort=` is null) against the effort each judge recorded.
 //
 // counterfactual: had each lens run one reviewer instead of a pair, how many confirmed findings would still have been
 // raised; reads each lens agent's own findings table from --transcripts (a directory searched recursively for
@@ -39,7 +40,7 @@ const { VERDICT_CLASSES, RUN_RECORDS_DIR } = require('./review-replay/schema.js'
 
 const USAGE = [
   'usage: node tools/review-replay.js baseline --runs <root> [--select <name,...>]',
-  '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>,repeat=<n> [--arm ...]',
+  '       node tools/review-replay.js extract --runs <root> --out <dir> --arm name=<id>,chunk=<n>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
   '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',

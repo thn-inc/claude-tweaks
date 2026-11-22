@@ -501,3 +501,20 @@ test('real git: a remote that never had claims-registry reads as branchMissing, 
   assert.equal('branchMissing' in after, false);
   assert.equal(after.tipSha, claimsTip);
 });
+
+// #5846: the four fixtures are templates (#5769) — a warm-up call may build, a further call starts no
+// git process. They live here because this file's own tests already build all four.
+const { pinnedGit: git } = require('../../helpers/pinned-git');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
+for (const builder of [
+  'makeBareOriginAndClone', 'makeBranchlessOriginAndClone', 'makeDecoyOriginAndClone', 'makeRegistryWithClaims',
+]) {
+  test(`AC4.1: claims-git-cas ${builder}: a second call starts no git process`, () => {
+    const make = () => fixtures[builder]();
+    const { warm: first, traced: second } = warmCallStartsNoGit(make, { track: (r) => fixtureRoots.push(r.root) });
+    if (builder === 'makeRegistryWithClaims') {
+      assert.strictEqual(git(first.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+      assert.strictEqual(git(second.cloneDir, ['rev-parse', 'origin/claims-registry']), first.tipAfter.get(44));
+    }
+  });
+}

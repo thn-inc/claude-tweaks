@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -15,7 +16,7 @@ function cli(argv, opts) {
 }
 
 function makeTmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-find-refs-'));
+  return scratchDir('docs-health-cli-find-refs-');
 }
 
 test('find-refs reports zero for an orphan doc', () => {
@@ -65,7 +66,7 @@ test('find-refs resolves a relative path against --root, not the invoking cwd', 
   fs.writeFileSync(path.join(root, 'docs', 'setup.md'), '# Setup\n');
   fs.writeFileSync(path.join(root, 'README.md'), 'See docs/setup.md.\n');
 
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cli-find-refs-elsewhere-'));
+  const elsewhere = scratchDir('docs-health-cli-find-refs-elsewhere-');
   const res = cli(['find-refs', 'docs/setup.md', '--root', root], { cwd: elsewhere });
   assert.strictEqual(res.status, 0, `stderr: ${res.stderr}`);
   const parsed = JSON.parse(res.stdout);

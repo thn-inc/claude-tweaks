@@ -6,6 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -34,7 +35,7 @@ const CANNED = {
 };
 
 function tmp(t, prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = scratchDir(prefix);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -416,6 +417,23 @@ const CLI_TABLE = [
   // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
   // open PR, so the read is its one network-bound gh call and no per-record read follows.
   { cli: 'stuck-open-prs.js', argv: ['--records', 'records.json'], setup: writeJsonFile('records.json', [{ number: 1, state: 'OPEN', title: 'R', createdAt: '2026-10-01T08:00:00Z', labels: [{ name: 'auto:build' }] }]), acceptsRepo: false, canned: { 'api-graphql': STUCK_OPEN_PRS_GRAPHQL } },
+  // release-block.js (#5882): `check` makes one gh call, the labelled open-record list.
+  { cli: 'release-block.js', argv: ['check'], acceptsRepo: true, canned: { 'issue-list': '[]' } },
+  // release-state.js (#5883): `marker read` over the contents API. The git leg's fetch fails under the
+  // table's GIT_ALLOW_PROTOCOL=file, so the read reaches the contents-API call the canned answer serves.
+  {
+    cli: 'release-state.js',
+    argv: ['marker', 'read'],
+    acceptsRepo: true,
+    canned: {
+      'api-repos/o/r/contents/reviewed-through.json?ref=release-state': JSON.stringify({
+        content: JSON.stringify({
+          version: 1, sha: 'a'.repeat(40), advancedAt: '2026-11-18T10:00:00.000Z', run: 'r1',
+        }),
+        sha: 'b'.repeat(40),
+      }),
+    },
+  },
 ];
 
 module.exports = {

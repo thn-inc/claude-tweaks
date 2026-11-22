@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { readText } = require('../../helpers/read-skill');
 const { CLI, tmpDir, runCli, tmpGitRepo, stampOf, passStampFiles, commitFile, flakyRepo } = require('./cli-helpers');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 test('flaky retry: an allowlisted failing file is re-run through the template and the run passes with flakyRetried on row, report, and stamp (#1925 AC3)', async () => {
   const r = flakyRepo();
@@ -517,4 +518,9 @@ test('preExisting: log frames are relativized against --cwd, not the process cwd
   const { code, stdout, stderr } = await runCli([...r.args, '--cwd', r.repo], { cwd: sub });
   assert.strictEqual(code, 0, stdout + stderr);
   assert.match(stdout, /Pre-existing: adjudicated — 1 failing file\(s\) covered by the declared preExisting allowlist: tests\/known-shallow\.test\.js/);
+});
+
+// #5846: the verify scenario builders sit on templates (#5324); this file builds flakyRepo()'s default template, so that warm-call check lives here (the retryExit: 1 one is in cli.test.js).
+test('AC1.1 AC1.2: verify flakyRepo(): a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => flakyRepo(), { track: (r) => t.after(() => fs.rmSync(r.repo, { recursive: true, force: true })) });
 });

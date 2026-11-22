@@ -12,7 +12,7 @@
 // Exit 0 appended (every entry echoed to stdout, in order); 2 malformed invocation (incl. a text beginning with
 // its own --step value followed by `:` — formatEntry writes that prefix, so the repeat is refused — or a STAGED reproduction
 // entry naming several findings (one line per finding — lib/log-decision/aggregate-reproduction.js)); 3 run dir missing or not
-// anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md).
+// anchored under the main checkout (a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md).
 // The decisions.md half of #637; the staged/ half now ships as bin/stage-item.js.
 'use strict';
 
@@ -96,7 +96,7 @@ function run(argv, deps = {}) {
   try { target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { deps.stderr(`log-decision.js: ${err && err.message}\n`); return 3; }
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`log-decision.js: run dir does not exist: ${o.run}\n`);
-    else deps.stderr(`log-decision.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`log-decision.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
   const now = deps.now();

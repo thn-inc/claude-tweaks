@@ -6,6 +6,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
@@ -26,7 +27,7 @@ function git(args, cwd) {
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-archrun-sandbox-');
 // #5375 ledger row 2: the archive-run and close-run calls below run in this
 // process, so a deps.cwd() -> process.cwd() regression in hooks.js would resolve
 // the test runner's own working directory (a real checkout under npm test) and
@@ -52,7 +53,7 @@ function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
 }
 
 function runDirFixture(status) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-')));
+  const root = fs.realpathSync(scratchDir('ct-archrun-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -84,7 +85,7 @@ test('archive-run: refuses a run with status interrupted', async () => {
 });
 
 test('archive-run: refuses a run dir with no run-state.json, naming archiveOrphanedMint', async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-orphan-')));
+  const root = fs.realpathSync(scratchDir('ct-archrun-orphan-'));
   git(['init', '-q', '--initial-branch=main'], root);
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-08-14T120000-spec-orphan');
   fs.mkdirSync(runDir, { recursive: true });
@@ -137,7 +138,7 @@ test('archive-run: a not-yet-clean run gets timing.json phase rows and exactly o
 // this checkout), not the generic 'archival refused — git-mv-failed' a
 // human has no way to act on.
 test('archive-run: sweep-standalone run with untracked decisions.md/staged refuses audit-untracked, names the files and the fix', async () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-standalone-')));
+  const root = fs.realpathSync(scratchDir('ct-archrun-standalone-'));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -686,7 +687,7 @@ function trackedRunFixture() {
 }
 
 function addBareOrigin(root, branch = 'main') {
-  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-origin-')));
+  const bare = fs.realpathSync(scratchDir('ct-archrun-origin-'));
   git(['init', '-q', '--bare'], bare);
   git(['remote', 'add', 'origin', bare], root);
   git(['push', '-q', '-u', 'origin', branch], root);
@@ -753,7 +754,7 @@ test('#3721 a tag named like the branch keeps the plain name and push state', as
 test('#3721 invoked from a linked worktree names the main checkout\'s branch', async () => {
   const { root, runDir } = trackedRunFixture();
   addBareOrigin(root);
-  const holder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-wt-')));
+  const holder = fs.realpathSync(scratchDir('ct-archrun-wt-'));
   const wt = path.join(holder, 'wt');
   git(['worktree', 'add', '-q', '-b', 'other', wt], root);
   const result = await runHook(['archive-run', '--run', runDir], { cwd: wt });
@@ -793,7 +794,7 @@ test('AC10.1: archive-run resolves a relative --run against the injected cwd and
 // probe. Neither value is in this process's environment or the fixture's git config.
 test('AC10.1: archive-run starts the archive commit and its push-state probe with the injected env', async () => {
   const { root, runDir, runId } = trackedRunFixture();
-  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-origin-')));
+  const bare = fs.realpathSync(scratchDir('ct-archrun-origin-'));
   git(['init', '-q', '--bare'], bare);
   git(['remote', 'add', 'origin', bare], root);
   git(['push', '-q', 'origin', 'main'], root);
@@ -858,7 +859,7 @@ const CLOSE_ENV = { CLAUDE_CODE_SESSION_ID: 'archive-run-verb-test', CLAUDE_PLUG
 // bound to a scratch worktree path, with a work/ file so close-run prints its archive-run hint (the run path).
 async function recordedRunFixture() {
   const fx = runDirFixture('active');
-  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-closewt-')));
+  const wt = fs.realpathSync(scratchDir('ct-archrun-closewt-'));
   fs.mkdirSync(path.join(fx.runDir, 'work'));
   fs.writeFileSync(path.join(fx.runDir, 'work', '999-spec.md'), '# 999\n');
   const stamp = await runHook(['record-worktree', '--run', fx.runDir, wt], { cwd: fx.root, env: CLOSE_ENV });

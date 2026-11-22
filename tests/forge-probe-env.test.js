@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -25,7 +26,7 @@ const GHE_HOST = 'ghe.example.test';
 const CI_WORKFLOW = 'on:\n  pull_request:\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n';
 
 function tmp(prefix) {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `forge-probe-${prefix}-`)));
+  return fs.realpathSync(scratchDir(`forge-probe-${prefix}-`));
 }
 
 // A fixture git call that ignores any repo-locating variable the test process inherited.
@@ -157,6 +158,46 @@ test('resolveForgeProbeTimeoutMs reads CLAUDE_TWEAKS_GH_TIMEOUT_MS from opts.env
     if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
     else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
   }
+});
+
+test('resolveForgeProbeTimeoutMs accepts the shared env spellings 9e3 and " 9000"', () => {
+  const root = tmp('timeout');
+  assert.equal(resolveForgeProbeTimeoutMs(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '9e3' } }), 9000);
+  assert.equal(resolveForgeProbeTimeoutMs(root, { env: { CLAUDE_TWEAKS_GH_TIMEOUT_MS: ' 9000' } }), 9000);
+});
+
+test('resolveForgeProbeTimeoutMs with opts.env null reads the policy and never throws', () => {
+  const root = tmp('timeout-null');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 7000\n');
+  const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  try {
+    assert.equal(resolveForgeProbeTimeoutMs(root, { env: null }), 7000);
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+  }
+});
+
+test("deriveMergeVerification: readDefaultBranch's gh call takes GH_TIMEOUT_MS (12000), not a hard-coded 5000 (#4856)", () => {
+  const { captureGhTimeout } = require('./helpers/gh-timeout-probe');
+  const mvPath = require.resolve('../plugin/bin/lib/merge-verification');
+  const seen = captureGhTimeout({
+    envValue: '12000',
+    modulePaths: [mvPath],
+    reply: 'main\n',
+    exercise: (setEnv) => {
+      setEnv();
+      const { deriveMergeVerification: fresh } = require('../plugin/bin/lib/merge-verification');
+      fresh(tmp('mv-timeout'), {
+        integrationModel: () => 'pr-first',
+        readWorkflows: () => [{ text: CI_WORKFLOW }],
+        integrationBranch: () => 'main',
+      });
+    },
+  });
+  assert.equal(seen, 12000);
 });
 
 test('resolvePolicyConfig falls back to the given cwd when git fails', () => {

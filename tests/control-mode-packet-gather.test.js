@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -25,7 +26,7 @@ const SUGGESTION = 'decide whether the finding holds; fix it or decline';
 const NOTE = (runDir) => `could not read ${runDir}/packet-facts/decisions.json — carried decisions not shown`;
 
 function checkout({ staged = {}, policy = 'control-mode: on\n' } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'control-mode-gather-')));
+  const root = fs.realpathSync(scratchDir('control-mode-gather-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });

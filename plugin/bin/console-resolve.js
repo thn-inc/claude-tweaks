@@ -130,7 +130,7 @@ const { resolveAll, renderStoredTable } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
-const { resolvePolicyConfig, parseFlatLines } = require('./lib/policy-schema');
+const { resolvePolicyConfig, parseFlatLines, EMPTY_LIST_RE } = require('./lib/policy-schema');
 const { UPSTREAM_FILING_TARGET, ownedOwnersList, ownerContextFromOrigin, parseTargetRepo, upstreamFilingRoute, parseStagedUpstream } = require('./lib/issues/upstream-ownership');
 const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
@@ -147,6 +147,7 @@ const { settleRow } = require('./lib/stage-item/ledger');
 const { ghOptions } = require('./lib/repo-resolve');
 const { sensitivePathsOf } = require('./lib/express/policy');
 const { canonicalRealpath, lstatType } = require('./lib/path-guard');
+const { execTimeoutMsFor } = require('./lib/shared-primitives');
 const { REFERENCE_REPAIR_REASONS, stagedDiffPaths, referenceRepairFloorHits, referenceRepairFloorReason, referenceRepairHoldReason, referenceFindingsByFile } = require('./lib/console/reference-repair');
 
 const EXIT_CARRY_FAILED = 6;
@@ -251,8 +252,9 @@ function parseArgs(argv) {
   return out;
 }
 
+// Exported for #5050's per-command bound tests (tests/bin-lib/console/resolve.test.js) — keep the export.
 function defaultExecFile(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: 30000, ...opts, windowsHide: true });
+  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true });
 }
 
 // The ceiling AND the veto window, resolved in-process with the same precedence
@@ -300,7 +302,6 @@ function readPolicy({ execFile, cwd, runDir, strict = false }) {
 // `{condition} → fallback: {what the resolver does instead}`, that the caller logs as a SKIP line. A bad
 // `owned-owners` entry is ignored on its own (ownedOwnersList), never the whole list.
 const NOTE_TEXT_MAX = 160;
-const EMPTY_LIST_RE = /^\[\s*\]$/;
 
 function oneLineNote(value) {
   const text = String(value).replace(/\s+/g, ' ').trim();
@@ -994,7 +995,7 @@ async function run(argv, deps = {}) {
   if (!isDir) { stderr(`console-resolve.js: --run ${o.run} is not a directory\n${USAGE}\n`); return 2; }
   const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`console-resolve.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`console-resolve.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   const runDir = target.dir;
@@ -1132,4 +1133,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };
+module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -25,7 +26,7 @@ function runHook(args, { cwd } = {}) {
 
 // The temp dir's parent name contains a space, as a real checkout path can.
 function gitRoot() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct resolve ledger ')));
+  const root = fs.realpathSync(scratchDir('ct resolve ledger '));
   git(['init', '-q', '--initial-branch=main'], root);
   writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
@@ -165,7 +166,7 @@ function runInProcess(args, { cwd, env } = {}) {
 test('AC10.1: resolve-ledger reports an inherited ledger as other-run only when describeRunLedgers reads the injected env', async () => {
   const root = gitRoot();
   const runDir = runDirFixture(root);
-  const worktree = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-ledger-nongit-')));
+  const worktree = fs.realpathSync(scratchDir('ct-resolve-ledger-nongit-'));
   const rel = 'docs/plans/2026-08-14-old-ledger.md';
   const ledger = path.join(worktree, ...rel.split('/'));
   fs.mkdirSync(path.dirname(ledger), { recursive: true });
@@ -222,7 +223,7 @@ function assertFellThrough(r) {
 
 test('R8: a relative PIPELINE_RUN_DIR naming a different directory against the real cwd falls through to the run scan', async () => {
   const { root } = twoRunRoot();
-  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-ledger-real-cwd-')));
+  const elsewhere = fs.realpathSync(scratchDir('ct-resolve-ledger-real-cwd-'));
   const r = await withRealCwd(elsewhere, () => runInProcess(['resolve-ledger'], { cwd: root, env: { PIPELINE_RUN_DIR: '.' } }));
   assertFellThrough(r);
 });

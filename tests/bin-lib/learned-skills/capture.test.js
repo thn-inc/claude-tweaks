@@ -5,11 +5,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { capture, stageEntry, readManifest, realDeps, withReadCache } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 const {
   X, sh, write, read, lf, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM,
 } = require('../../helpers/learned-skills-capture.js');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 function recorder() {
   const calls = [];
@@ -1179,4 +1181,19 @@ test('AC1.1: one resetToHead() on a tree already at HEAD runs diff HEAD -- <rel>
   assert.equal(status(f.repo, X), '');
   assert.equal(read(f.repo, X), original);
   assert.equal(diffs.length, 1);
+});
+
+// #5846: the capture fixture is a template (#5770) — a warm call starts no git process. The test lives
+// here because this file's own tests already build both variants.
+test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
+  const { traced: [a, b] } = warmCallStartsNoGit(() => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
+  assert.notStrictEqual(a.repo, b.repo);
+  assert.ok(fs.statSync(a.runDir).isDirectory());
+  assert.strictEqual(a.mergeBase.length, 40);
+  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
+  const skill = '.claude/skills/x/SKILL.md';
+  let host = ''; // what the fixture pinned in the copy itself (the trace window is closed here)
+  try { host = execFileSync('git', ['-C', a.repo, 'config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
+  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
+  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
 });

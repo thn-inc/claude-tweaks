@@ -8,6 +8,8 @@
 const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-queue-pull-');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync, execFileSync } = require('node:child_process');
@@ -28,7 +30,7 @@ const {
 } = require('./queue-pull-fixtures');
 const {
   PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, QueuePullStopped, sessionPaths, runPasses, resolveOmit, defaultDeps, makeContext, queuePull,
-  rankNext, rankFromFiles, STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
+  rankNext, rankFromFiles, STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS, closedDependencyNumbers,
 } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
 const { aliasMcpTimestamps } = require('../../../plugin/bin/lib/issues/mcp-issue-shape');
@@ -201,7 +203,7 @@ test('#5227 oracle: orderBlob is null only for a missing health-state branch or 
 });
 
 test('#5227 oracle: withEscapeGuard rejects a run that moves the guarded repo HEAD', async () => {
-  const repo = gitRepo({ parent: fs.mkdtempSync(path.join(os.tmpdir(), 'qp-guard-')) });
+  const repo = gitRepo({ parent: scratchDir('qp-guard-') });
   try {
     assert.equal(await withEscapeGuard(repo, async () => 'kept'), 'kept');
     await assert.rejects(
@@ -504,7 +506,7 @@ test('#5227 truncate keeps only firing entries (Q28)', () => inOwnTmp((own) => {
 
 test('#5227 truncate: a throw prints "queue-pull: truncate: <message>" and the run continues', () => {
   const errs = [];
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-trunc-'));
+  const dir = scratchDir('qp-t2-trunc-');
   try {
     const paths = { 'dispatch-exclusions.json': path.join(dir, 'missing-dir', 'x.json') };
     for (const name of END_WRITTEN_FILES) paths[name] = path.join(dir, name); // #5409: the truncate pass removes these first
@@ -1084,12 +1086,12 @@ function mcpRecord(number, body) {
 test('#5227 files: the queue file is copied into the session file and aliased there, dispatch-verified-open-deps.txt replaces the gh issue view loop, and no gh call is made', () => {
   const calls = [];
   const noGh = (cmd, args) => { calls.push([cmd, ...args]); throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
-  const write = (own, { verified }) => {
+  const write = (own, { verified, freshness = '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]' }) => {
     return {
       inputs: {
         queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `Blocked by #8000\n\n${withBody(9002)}`)])),
         openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
-        depFreshness: writeInput(own, 'dep.json', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'),
+        depFreshness: writeInput(own, 'dep.json', freshness),
         verifiedOpenDeps: verified === null ? path.join(own, 'absent.txt') : writeInput(own, 'verified.txt', verified),
       },
     };
@@ -1123,8 +1125,8 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   const crlf = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '8000\r\n\n' }) });
   assert.deepEqual(groupNumbers(crlf), [[9001]]);
   assert.deepEqual(warningsOf(crlf), [], 'CRLF and a blank line are well-formed');
-  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '' }) });
-  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file is a well-formed "none open" answer');
+  const empty = pull(S1(), { transport: 'files', run: noGh, prepare: (own) => write(own, { verified: '', freshness: '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]' }) });
+  assert.deepEqual(groupNumbers(empty), [[9001], [9002]], 'an empty file with the dependency shown closed is a well-formed "none open" answer');
   assert.deepEqual(warningsOf(empty), []);
   assert.deepEqual(calls, []);
 
@@ -1142,6 +1144,143 @@ test('#5227 files: the queue file is copied into the session file and aliased th
   });
   assert.deepEqual(entriesOf(foreign, 'blocked'), [{ reason: 'blocked', records: [9001], detail: { blockedBy: ['acme-corp/other#12'] } }], 'PF17: foreignStates is read on files too');
   assert.deepEqual(foreign.cliCalls.filter(([n]) => n === 'resolve-foreign-blockers.js'), []);
+});
+
+test('AC1.1, AC1.2 (#5408): files: an unresolved dependency the verified-open-deps file omits and the dependency-freshness file does not show closed is treated as open, with one Warning naming it', () => {
+  const OMITTED = (n) => `Warning: verified-open-deps file omits #${n}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run`;
+  const noGh = (cmd, args) => { throw new Error(`gh must not be called on files: ${args.join(' ')}`); };
+  // freshness === null leaves the dependency-freshness file absent (the agent wrote none).
+  const run = (blockedBody, freshness, verified = '') => pull(S1(), { transport: 'files', run: noGh, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+    depFreshness: freshness === null ? path.join(own, 'absent-dep.json') : writeInput(own, 'dep.json', freshness),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', verified),
+  } }) });
+  const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
+
+  for (const [label, freshness] of [
+    ['an empty dependency-freshness file', '[]'],
+    ['an entry showing the dependency open', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"open"}]'],
+    ['an absent dependency-freshness file', null],
+    ['an entry whose number is a string', '[{"number":"8000","state":"closed"}]'],
+    ['an entry with no state', '[{"number":8000}]'],
+    ['an object wrapper around the entries', '{"issues":[{"number":8000,"state":"closed"}]}'],
+    ['an unparseable file', 'not json'],
+    ['contradictory entries, closed then open', '[{"number":8000,"state":"closed"},{"number":8000,"state":"open"}]'],
+    ['contradictory entries, open then closed', '[{"number":8000,"state":"open"},{"number":8000,"state":"closed"}]'],
+  ]) {
+    const r = run('Blocked by #8000', freshness);
+    assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
+    assert.deepEqual(entriesOf(r, 'blocked'), BLOCKED_8000, label);
+    assert.deepEqual(warningsOf(r), [OMITTED(8000)], label);
+    assert.equal(r.store.written.length, 0, `${label}: a fail-closed verdict is never persisted to the queue-order cache`);
+  }
+
+  const closed = run('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"CLOSED"}]');
+  assert.deepEqual(groupNumbers(closed), [[9001], [9002]], 'a dependency the freshness file shows closed does not block');
+  assert.deepEqual(warningsOf(closed), []);
+  assert.equal(closed.store.written.length, 1, 'a dependency shown closed is a trusted verdict: the write-back still runs');
+
+  const two = run('Blocked by #8000\nBlocked by #8001', '[]');
+  assert.deepEqual(warningsOf(two), [OMITTED(8000), OMITTED(8001)], 'one Warning per omitted dependency, in dependency order');
+
+  const mixed = run('Blocked by #8000\nBlocked by #8001', '[]', '8000\n');
+  assert.deepEqual(warningsOf(mixed), [OMITTED(8001)], 'a dependency the file lists draws no Warning; only the omitted one does');
+  assert.deepEqual(entriesOf(mixed, 'blocked'), [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000, 8001] } }]);
+  assert.deepEqual(groupNumbers(mixed), [[9001]]);
+
+  const listedClosed = run('Blocked by #8000', '[{"number":8000,"state":"closed"}]', '8000\n');
+  assert.deepEqual(entriesOf(listedClosed, 'blocked'), BLOCKED_8000, 'a dependency the verified-open-deps file lists still blocks when the freshness file shows it closed');
+  assert.deepEqual(groupNumbers(listedClosed), [[9001]]);
+  assert.deepEqual(warningsOf(listedClosed), []);
+});
+
+// Pulls two records on `files` where #9002's body starts with `blockedBody`, with the given
+// dependency-freshness and verified-open-deps file contents.
+function pullBlockedRecord(blockedBody, freshness, verified = '') {
+  return pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, `${blockedBody}\n\n${withBody(9002)}`)])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002}]'),
+    depFreshness: writeInput(own, 'dep.json', freshness),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', verified),
+  } }) });
+}
+
+test('AC1.1, AC2.1, AC3.1, AC3.2 (#5865): files: a dependency-freshness entry marked unreadable is treated as open, prints one Warning naming it and writes no queue-order cache', () => {
+  const UNREADABLE = (...ns) => `Warning: dependency-freshness file marks ${ns.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run`;
+  const warningsNaming = (r, n) => r.stderr.split('\n').filter((l) => l.startsWith('Warning:') && l.includes(`#${n}`));
+  const BLOCKED_8000 = [{ reason: 'blocked', records: [9002], detail: { blockedBy: [8000] } }];
+
+  for (const [label, freshness, verified] of [
+    ['absent from the verified-open-deps file', '[{"number":8000,"state":"unreadable"}]', ''],
+    ['listed in the verified-open-deps file', '[{"number":8000,"state":"unreadable"}]', '8000\n'],
+    ['a mixed-case state and a contradicting closed entry', '[{"number":8000,"state":"closed"},{"number":8000,"state":"UNREADABLE"}]', ''],
+  ]) {
+    const r = pullBlockedRecord('Blocked by #8000', freshness, verified);
+    assert.deepEqual(entriesOf(r, 'blocked'), BLOCKED_8000, label);
+    assert.deepEqual(groupNumbers(r), [[9001]], `${label}: #9002 is not dispatchable`);
+    assert.deepEqual(warningsNaming(r, 8000), [UNREADABLE(8000)], `${label}: exactly one Warning names #8000`);
+    assert.equal(r.store.written.length, 0, `${label}: no queue-order cache`);
+  }
+
+  const closed = pullBlockedRecord('Blocked by #8000', '[{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  assert.deepEqual(groupNumbers(closed), [[9001], [9002]]);
+  assert.ok(!closed.stderr.split('\n').some((l) => l.startsWith('Warning:') && l.includes('unreadable')), 'a closed entry draws no unreadable Warning');
+  assert.equal(closed.store.written.length, 1);
+
+  const other = pullBlockedRecord('Blocked by #8000\nBlocked by #8001', '[{"number":8000,"state":"unreadable"},{"number":8001,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  assert.equal(other.store.written.length, 0, 'one unreadable entry keeps the cache unwritten');
+  assert.deepEqual(entriesOf(other, 'blocked'), BLOCKED_8000, '#8001 is still counted closed');
+  assert.deepEqual(warningsNaming(other, 8000), [UNREADABLE(8000)]);
+  assert.deepEqual(warningsNaming(other, 8001), [], 'no Warning names the closed #8001');
+
+  const both = pullBlockedRecord('Blocked by #8000\nBlocked by #8001', '[{"number":8001,"state":"unreadable"},{"number":8000,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
+  assert.deepEqual(both.stderr.split('\n').filter((l) => l.startsWith('Warning: dependency-freshness')), [UNREADABLE(8000, 8001)], 'one Warning, numbers ascending and de-duplicated');
+
+  assert.ok(!closedDependencyNumbers('[{"number":8000,"state":"unreadable"}]').has(8000), 'an unreadable entry is never a closed one');
+
+  // The malformed verified-open-deps file (the `bad` branch): the existing malformed-file Warning, the
+  // one unreadable Warning, and no cache.
+  const bad = pullBlockedRecord('Blocked by #8000', '[{"number":8000,"state":"unreadable"}]', 'x\n');
+  const badWarnings = bad.stderr.split('\n').filter((l) => l.startsWith('Warning:'));
+  assert.deepEqual(badWarnings, ['Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run', UNREADABLE(8000)]);
+  assert.equal(bad.store.written.length, 0, 'a malformed file plus an unreadable entry writes no cache');
+});
+
+test('AC3.1 (#5865): files: an unreadable entry draws a Warning only for an in-range dependency of an eligible record', () => {
+  const unreadableLines = (r) => r.stderr.split('\n').filter((l) => l.includes('unreadable'));
+
+  // `Blocked by #0`: not an issue number, so the agent writes an unreadable entry for it, but it is the
+  // blocker-landing pass's malformed-blocker case, not a live-check dependency (#5311).
+  const zero = pullBlockedRecord('Blocked by #0', '[{"number":0,"state":"unreadable"}]');
+  assert.deepEqual(unreadableLines(zero), [], '#0 draws no unreadable Warning');
+  assert.equal(zero.store.written.length, 1, '#0 does not keep the cache unwritten');
+
+  // A number above GRAPHQL_INT_MAX is out of range the same way.
+  const huge = pullBlockedRecord('Blocked by #2147483648', '[{"number":2147483648,"state":"unreadable"}]');
+  assert.deepEqual(unreadableLines(huge), [], 'an out-of-range number draws no unreadable Warning');
+  assert.equal(huge.store.written.length, 1);
+
+  // An unreadable number no eligible record depends on.
+  const stray = pullBlockedRecord('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"updated_at":"2026-11-09T10:00:00Z","state":"closed"}]');
+  assert.deepEqual(unreadableLines(stray), [], 'a stray number draws no Warning');
+  assert.equal(stray.store.written.length, 1, 'a stray number does not keep the cache unwritten');
+
+  // An unreadable number only an ineligible (bot:parked) record depends on.
+  const parked = { ...mcpRecord(9003, `Blocked by #7777\n\n${withBody(9003)}`), labels: [{ name: 'auto:build' }, { name: 'ready' }, { name: 'bot:parked' }] };
+  const ineligible = pull(S1(), { transport: 'files', run: noGhOnFiles, prepare: (own) => ({ inputs: {
+    queueRaw: writeInput(own, 'queue.json', JSON.stringify([mcpRecord(9001, withBody(9001)), mcpRecord(9002, withBody(9002)), parked])),
+    openNumbers: writeInput(own, 'open.json', '[{"number":9001},{"number":9002},{"number":9003}]'),
+    depFreshness: writeInput(own, 'dep.json', '[{"number":7777,"state":"unreadable"}]'),
+    verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+  } }) });
+  assert.deepEqual(unreadableLines(ineligible), [], 'a number only an ineligible record depends on draws no Warning');
+  assert.equal(ineligible.store.written.length, 1, 'a number only an ineligible record depends on does not keep the cache unwritten');
+
+  // Control: an in-range dependency of an eligible record still warns, alongside a stray one.
+  const real = pullBlockedRecord('Blocked by #8000', '[{"number":7777,"state":"unreadable"},{"number":8000,"state":"unreadable"}]');
+  assert.deepEqual(unreadableLines(real), ['Warning: dependency-freshness file marks #8000 unreadable — treated as open (fail closed), queue-order cache not written this run']);
+  assert.equal(real.store.written.length, 0);
 });
 
 test('AC1.1 (#5311): a failed dependency view excludes the dependent record as blocked and prints the line naming the view', () => {
@@ -1181,6 +1320,51 @@ test('AC1.1 (#5311) multi: every failed view prints its own Warning', () => {
   const r = pull(s);
   assert.deepEqual(warningsOf(r), [DEP_VIEW_FAILED(8000), DEP_VIEW_FAILED(8002)]);
   assert.equal(r.text['dispatch-verified-open-deps.txt'], '8000\n8002\n');
+});
+
+// #5879: the verified-open-deps step's own read of the unresolved list fails once (a one-off failure; the
+// blocked pass's later read of the same file gets through).
+function pullWithUnresolvedReadFailingOnce(scenario, o = {}) {
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function readUnresolvedOnce(file, ...rest) {
+    if (path.basename(String(file)) === 'dispatch-unresolved-deps.json' && ++reads === 1) {
+      throw Object.assign(new Error('EACCES: permission denied, open dispatch-unresolved-deps.json'), { code: 'EACCES' });
+    }
+    return realRead.call(this, file, ...rest);
+  };
+  try {
+    return { r: pull(scenario, o), reads };
+  } finally {
+    fs.readFileSync = realRead;
+  }
+}
+const verifiedOpenDepsFiles = (r) => Object.keys(r.text).filter((k) => path.basename(k) === 'dispatch-verified-open-deps.txt');
+
+test('AC1.1 (#5879): gh: an unreadable unresolved-deps list leaves no verified-open-deps file and the blocked pass fails closed', () => {
+  const { r, reads } = pullWithUnresolvedReadFailingOnce(S1({ parity: true }), {
+    before: (ctx) => fs.writeFileSync(ctx.state.files.verifiedOpenDeps, '7777\n'),
+  });
+  // Read 1 is the step's (it throws) and read 2 the blocked pass's fail-closed re-read; read 3 is pull()'s
+  // end-of-run collection of the session files. The old truncate code skips read 2.
+  assert.equal(reads, 3, 'the step\'s read failed, the blocked pass read the list again, then the harness collected it');
+  assert.deepEqual(r.json('dispatch-unresolved-deps.json'), [8001], 'one unresolved dependency');
+  assert.deepEqual(verifiedOpenDepsFiles(r), [], 'the file is absent: neither empty nor the stale 7777');
+  assert.deepEqual(r.errs.filter((l) => l.startsWith('queue-pull: verified-open-deps:')),
+    ['queue-pull: verified-open-deps: EACCES: permission denied, open dispatch-unresolved-deps.json\n'], r.stderr);
+  assert.deepEqual(warningsOf(r), [VERIFIED_UNREADABLE], r.stderr);
+  assert.ok(!r.stderr.includes('queue-pull: blocked-body:'), r.stderr);
+  assert.ok(entriesOf(r, 'blocked').some((e) => e.records.includes(9011)), 'the dependent #9011 is held as blocked');
+  assert.ok(!r.ghCalls.some((a) => a[0] === 'issue' && a[1] === 'view'), 'no dependency is viewed');
+  assert.equal(r.store.written.length, 0, 'a fail-closed verdict is never persisted to the queue-order cache');
+});
+
+test('AC1.1 (#5879) control: with no unresolved dependency the step still ends with an empty file and prints no Warning', () => {
+  const r = pull(S1(), { before: (ctx) => fs.writeFileSync(ctx.state.files.verifiedOpenDeps, '7777\n') });
+  assert.deepEqual(r.json('dispatch-unresolved-deps.json'), []);
+  assert.equal(r.text['dispatch-verified-open-deps.txt'], '', 'present and empty: "none open"');
+  assert.deepEqual(warningsOf(r), []);
+  assert.ok(!r.stderr.includes('queue-pull: '), r.stderr);
 });
 
 test('AC2.1 (#5311) control: with no unresolved dependency and no verified-open-deps file, no Warning and both records are grouped', () => {
@@ -1698,7 +1882,7 @@ test('#5313 shipped: a failed gh pr view writes files:null and prints one Warnin
   assert.ok(r.errs.includes(weakAuto));
   assert.ok(groupNumbers(r).flat().includes(9016), 'a failed view never excludes');
   assert.ok(!r.stderr.includes('boom'), 'the failed call stderr is dropped (2>/dev/null)');
-  assert.ok(FENCE.includes("if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
+  assert.ok(FENCE.includes("if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');"));
 
   // A failed call that printed something first still reads as null: the fence assigns null, not the partial output.
   const partial = FULL();
@@ -1781,6 +1965,75 @@ test('#5227 shipped: no mention means no probe and no AUTO line; a weak mention 
   assert.ok(FENCE.includes("' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'"));
 });
 
+const SHAPED_AFTER_MERGE = '2026-11-07T10:00:00Z';
+const shapedScenario = (n, lastShapedAt) => {
+  const scenario = FULL();
+  scenario.linked[n] = { ...scenario.linked[n], lastShapedAt };
+  return scenario;
+};
+
+test('AC1.1 (#5722) shipped: a strong title match shaped after the merge stays in dispatch-groups.json, unprobed, with the shaping kept line', () => {
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE));
+  assert.ok(groupNumbers(r).flat().includes(9010), 'the record stays in the groups');
+  assert.deepEqual(entriesOf(r, 'shipped'), [], 'a mention that predates the shaping rates weak, so it is not excluded');
+  assert.deepEqual(r.cap.staged.filter((s) => s.id === 'shipped-close-9010'), [], 'no Close proposal is staged');
+  assert.deepEqual(prViews(r), [PR_VIEW(5016)], 'only the unshaped weak candidate is probed; the shaped one is skipped');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates ready/auto:build labeling at 2026-11-07T10:00:00Z — remaining work assumed\n',
+  ]);
+  assert.ok(FENCE.includes("          : downgradedAfterMerge(result)\n            ? ' kept: merged PR #' + result.pr + ' predates ready/auto:build labeling at ' + entry.lastShapedAt + ' — remaining work assumed'"));
+});
+
+test('AC2.1 (#5722) shipped: a shaping time before the merge leaves 9010 excluded and its Close proposal staged', () => {
+  const r = pull4(shapedScenario(9010, '2026-11-05T09:00:00Z'));
+  assertShipped(r);
+  assert.deepEqual(r.cap.staged.filter((s) => s.id.startsWith('shipped-close-')).map((s) => s.id), ['shipped-close-9010']);
+});
+
+test('#5722 shipped: release and shaping both after the merge print the claim-release kept line', () => {
+  const claims = { 9010: JSON.stringify({ released: true, releasedAt: SHAPED_AFTER_MERGE }) };
+  const r = pull4(shapedScenario(9010, SHAPED_AFTER_MERGE), { claims });
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('AUTO — dispatch: #9010')), [
+    'AUTO — dispatch: #9010 kept: merged PR #5010 predates claim release at 2026-11-07T10:00:00.000Z — remaining work assumed\n',
+  ]);
+  assert.deepEqual(entriesOf(r, 'shipped'), []);
+});
+
+test('#5722 shipped: a weak mention predating the shaping that shares a failed probed PR prints no Warning', () => {
+  const labels = ['auto:build', 'ready'];
+  const numbers = [9301, 9302];
+  const linked = Object.fromEntries(numbers.map((n) => [n, { mentions: [mention(6301, 'Unrelated cleanup of the build output')] }]));
+  linked[9301].lastShapedAt = SHAPED_AFTER_MERGE;
+  const scenario = {
+    policy: { 'work-links': 'body-text' },
+    origin: { branches: { main: {} } },
+    linked,
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(numbers.map((n) => ghRecord(n, { body: withBody(n), labels }))) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: `${JSON.stringify(numbers.map((number) => ({ number })))}\n` },
+      { argv: PR_VIEW(6301), stdout: '', status: 1 },
+    ],
+  };
+  const r = pull4(scenario);
+  assert.deepEqual(prViews(r), [PR_VIEW(6301)], 'the unshaped record makes the PR a probe candidate');
+  assert.deepEqual(r.errs.filter((e) => e.startsWith('Warning:')), [PR_VIEW_FAILED(6301, 9302)], 'the shaped record 9301 stays silent');
+  assert.ok(r.errs.some((e) => e.startsWith('AUTO — dispatch: #9301 kept: merged PR #6301 predates ready/auto:build labeling at')), r.stderr);
+});
+
+// pull4 runs the module only, so the fence's shaping wiring is pinned by text: both classifyShipped
+// calls carry lastShapedAt, and the first pass skips the probe for either downgrade.
+test('#5722 fence: the first-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
+});
+
+test('#5722 fence: the first pass skips the probe for either downgrade through downgradedAfterMerge', () => {
+  assert.ok(FENCE.includes("if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);"));
+});
+
+test('#5722 fence: the second-pass classifyShipped call passes lastShapedAt', () => {
+  assert.ok(FENCE.includes("const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });"));
+});
+
 test('#5227 shipped: at most 5 distinct PRs are probed per pull', () => {
   const labels = ['auto:build', 'ready'];
   const numbers = [9201, 9202, 9203, 9204, 9205, 9206, 9207, 9208];
@@ -1830,16 +2083,17 @@ test('#5227 portability: the integration branch comes from the policy key, else 
   const viaRemote = pull4({ ...FULL(), headBranch: 'trunk', origin: { branches: { main: {}, trunk: { 'docs/gone.md': 'x' } } } }, {
     run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); },
   });
-  assert.deepEqual(gitArgvs, [['remote', 'show', 'origin'], ['cat-file', '-e', 'origin/trunk:docs/gone6.md'], ['cat-file', '-e', 'origin/trunk:docs/gone.md']]);
+  assert.deepEqual(gitArgvs, [['remote', 'show', 'origin'], ['rev-parse', '--verify', '--quiet', 'origin/trunk^{commit}'], ['cat-file', '-e', 'origin/trunk:docs/gone6.md'], ['cat-file', '-e', 'origin/trunk:docs/gone.md']]);
   assert.equal(viaRemote.state.integrationBranch, 'trunk');
   assert.deepEqual(entriesOf(viaRemote, 'target-missing').map((e) => e.records[0]), [9006]);
 
   const policyGit = [];
-  const policyBase = fakeRun(FULL());
-  pull4({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' } }, {
+  const policyScenario = { ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' }, origin: { branches: { 'release/next': { 'docs/gone.md': 'x' }, main: {} } } };
+  const policyBase = fakeRun(policyScenario);
+  pull4(policyScenario, {
     run: (cmd, args, opts) => { if (cmd === 'git') policyGit.push(args); return policyBase(cmd, args, opts); },
   });
-  assert.deepEqual(policyGit.map((a) => a.join(' ')), ['cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
+  assert.deepEqual(policyGit.map((a) => a.join(' ')), ['rev-parse --verify --quiet origin/release/next^{commit}', 'cat-file -e origin/release/next:docs/gone6.md', 'cat-file -e origin/release/next:docs/gone.md'], 'no `git remote show origin` when the policy answers');
 });
 
 test('#5227 portability: a failing `git remote show origin` leaves the branch empty, composes no origin/ ref, skips the target-missing pass and the pull continues', () => {
@@ -1853,9 +2107,30 @@ test('#5227 portability: a failing `git remote show origin` leaves the branch em
   assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an empty branch');
   assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`), r.stderr);
   assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'), 'no `git cat-file` probe runs against an empty branch');
+  assert.ok(!gitArgvs.some((a) => a[0] === 'rev-parse'), 'no `git rev-parse` ref probe runs against an empty branch (#5863: the probe guard keeps the empty-branch short-circuit)');
   assert.deepEqual(reasonsOf(r, 9006), ['shipped'], 'a later pass still ran: #9006 is excluded as shipped, not as target-missing');
   const named = JSON.parse(r.text['dispatch-named-targets.json']).map((e) => e.number);
   assert.ok(named.includes(9006) && named.includes(9009), 'dispatch-named-targets.json is still written with the named candidates');
+});
+
+test('#5863: an origin HEAD branch of (unknown) skips the target-missing pass with the Warning, excludes nothing as target-missing and stages no Close proposal', () => {
+  const skipped = (scenario) => {
+    const gitArgvs = [];
+    const base = fakeRun(scenario);
+    const r = pull4(scenario, { run: (cmd, args, opts) => { if (cmd === 'git') gitArgvs.push(args); return base(cmd, args, opts); } });
+    assert.deepEqual(entriesOf(r, 'target-missing'), [], 'no named target is excluded against an unresolvable branch');
+    assert.ok(r.errs.includes(`${TARGET_MISSING_SKIPPED}\n`), r.stderr);
+    assert.ok(!r.cap.staged.some((s) => s.id.startsWith('dispatch-target-missing-')), 'no Close proposal is staged');
+    assert.ok(!gitArgvs.some((a) => a[0] === 'cat-file'), 'no `git cat-file` probe runs against an unresolvable branch');
+    return r;
+  };
+  // Reading B (spec 5863 Plan Review Clarifications): only this pass skips; the shared branch stays as resolved for the unlanded-blocker pass.
+  const viaRemote = skipped({ ...FULL(), headBranch: '(unknown)' });
+  assert.equal(viaRemote.state.integrationBranch, '(unknown)');
+  assert.equal(viaRemote.state.integrationRef, 'origin/(unknown)');
+  const viaPolicy = skipped({ ...FULL(), policy: { 'work-links': 'body-text', 'integration-branch': 'no-such-branch' } });
+  assert.equal(viaPolicy.state.integrationBranch, 'no-such-branch');
+  assert.equal(viaPolicy.state.integrationRef, 'origin/no-such-branch');
 });
 
 test('AC4.6 (in-process): a corrupt exclusions file before the open-PR append throws QueuePullStopped with the fence stop line, runs no later pass and leaves the file as it was', () => {
@@ -2546,7 +2821,7 @@ for (const c of RANK_CASES) {
     assert.deepEqual(JSON.parse(oracle.pickText), c.expected);
     assert.equal(oracle.pickText, JSON.stringify(c.expected) + '\n');
     const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    const dir = scratchDir('qp-rank-case-');
     try {
       const paths = seedModuleSession(sessionId, writeCaseFiles(dir, c));
       const pick = rankFromFiles({ sessionId, priority: c.priority });
@@ -2668,7 +2943,7 @@ test('AC6.3 oracle: a missing or malformed dispatch-groups.json fails the fence 
     assert.notEqual(oracle.status, 0, 'the fence exits non-zero');
     assert.equal(oracle.pickText, '', 'the redirect truncated the stale pick');
     const sessionId = `qp-rank-${process.pid}-${rankSession += 1}`;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-rank-case-'));
+    const dir = scratchDir('qp-rank-case-');
     try {
       const paths = seedModuleSession(sessionId, writeCaseFiles(dir, { groups, exclusions: [] }));
       fs.writeFileSync(paths['dispatch-next-pick.json'], 'STALE\n');
@@ -2934,8 +3209,12 @@ test('#5227 filesOracleScript: every gh fetch becomes the agent write, the neigh
 
   const anchors = FENCE.split('\n').filter((l) => /^\s*(if ! )?gh (issue|pr) /.test(l));
   assert.equal(anchors.length, 6, `the fence's gh fetch lines: ${anchors.join('\n')}`);
-  for (const line of [...anchors, ': > "$DISPATCH_VERIFIED_OPEN_DEPS"']) {
+  for (const line of [...anchors, 'rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"']) {
     assert.throws(() => filesOracleScript(FENCE.replace(line, '# moved'), mcp), (err) => err.message === `anchor not found: ${line}`, line);
+  }
+  // #5879: the span the agent write replaces: remove, then create the empty file only once the unresolved list was read.
+  for (const line of ['rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"', 'DEP_LIST=$(node -e "console.log(require(process.argv[1]).join(\' \'))" -- "$DISPATCH_UNRESOLVED_DEPS") && : > "$DISPATCH_VERIFIED_OPEN_DEPS"', 'for DEP in $DEP_LIST; do']) {
+    assert.ok(FENCE.split('\n').includes(line), `the fence holds the whole line: ${line}`);
   }
   // mcp-transport.md's claim-targets fence (step 2) is the only one whose first line ends at this argument.
   assert.throws(() => filesOracleScript(FENCE, mcp.replace('"$DISPATCH_IN_FLIGHT_RAW" <<NODE_EVAL_EOF', '"$X" <<NODE_EVAL_EOF')), /anchor not found/);
@@ -3168,6 +3447,38 @@ test('#5230 express: the grouping pass, the write-back blob and the cache check 
   assert.equal(otherMode.state.cacheHit, false, 'a blob stamped under another grouping is never reused');
 });
 
+test('AC9.1 (#6011): a files-transport pull with the driver half on writes each driver-routable fast-lane record as its own group and no bundles', () => {
+  const { expressQueuePolicy } = require('../../../plugin/bin/lib/express/queue');
+  const values = {
+    'express-lane': true, 'integration-model': 'pr-first', 'merge-sensitive-paths': [],
+    'express-driver-max-size': 'medium', 'express-driver-max-key-files': 3, 'express-driver-review': 'beyond-express',
+  };
+  // Disjoint non-protected Key Files per record, so the control bundles; the paths sit beside the ones Task 2's tests use.
+  const fastMedium = (n) => ({
+    ...mcpRecord(n, withBody(n).replace(`- \`plugin/bin/fixture-${n}.js\``, `- \`plugin/skills/init/claude-md-template-${n}.md\`\n- \`plugin/skills/init/rules-template-${n}.md\``)),
+    labels: ['auto:build', 'ready', 'ceremony:fast-lane', 'risk:low', 'size:medium', 'type:task'].map((name) => ({ name })),
+  });
+  const scenario = () => {
+    const s = S1();
+    return { ...s, policy: { ...s.policy, 'dispatch-group-size-guard': '3', 'dispatch-fastlane-bundle-cap': '3' } };
+  };
+  const run = (driver) => pull(scenario(), {
+    transport: 'files', run: noGhOnFiles,
+    deps: { expressQueuePolicy: (o) => expressQueuePolicy({ ...o, resolvePolicy: (keys) => Object.fromEntries(keys.map((k) => [k, { value: k === 'express-driver' ? driver : values[k], source: 'policy' }])) }) },
+    prepare: (own) => ({ inputs: {
+      queueRaw: writeInput(own, 'queue.json', JSON.stringify([9201, 9202, 9203].map(fastMedium))),
+      openNumbers: writeInput(own, 'open.json', '[{"number":9201},{"number":9202},{"number":9203}]'),
+      depFreshness: writeInput(own, 'dep.json', '[]'),
+      verifiedOpenDeps: writeInput(own, 'verified.txt', ''),
+    } }),
+  });
+  const on = run('on');
+  assert.deepEqual(groupNumbers(on), [[9201], [9202], [9203]]);
+  assert.deepEqual(on.json('dispatch-fastlane-bundles.json'), []);
+  const off = run('off');
+  assert.deepEqual(off.json('dispatch-fastlane-bundles.json'), [{ records: [9201, 9202, 9203] }], 'control: with the driver half off the same records bundle');
+});
+
 // #5230 (moved from tests/bin-lib/stage-item/cli.test.js, #3488): the shipped Close proposal's
 // stage-item.js call drops its stdout but forwards its stderr, so a staging failure reaches the
 // firing's log. And the pass only stages the Close (moved from dispatch-shipped-candidate-prose,
@@ -3248,7 +3559,8 @@ test('#5409 (AC1, AC2): a pull whose cross-pr-overlap step throws leaves no earl
 
 test('#5409: every session file is end-written (removed at pull start) or named here with the reason it is not', () => {
   // A new SESSION_FILES entry fails this until it is classed: one written only after its step's
-  // fallible work belongs in END_WRITTEN_FILES (and the fence's rm -f line), never in this list.
+  // fallible work belongs in END_WRITTEN_FILES (and the fence's rm -f line), never in this list,
+  // unless it is an agent input on `files` that a pull-start removal would delete (verified-open-deps).
   const NOT_END_WRITTEN = [
     'dispatch-queue-raw.json', 'dispatch-open-numbers.json', 'dispatch-native-deps.json', 'dispatch-native-deps.tmp.json',
     'dispatch-native-deps.err', 'dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json',
@@ -3256,7 +3568,7 @@ test('#5409: every session file is end-written (removed at pull start) or named 
     'dispatch-linked-prs.json', 'dispatch-linked-prs.err', 'dispatch-shipped-pr-files.jsonl', 'dispatch-shape-gate.err',
     'dispatch-next-pick.json', // reset before its step's fallible work, or an agent input on `files`
     'dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json',
-    'dispatch-blocked-excluded-body.json', 'dispatch-verified-open-deps.txt', // removed by the blocked pass (#5314), or its agent input
+    'dispatch-blocked-excluded-body.json', 'dispatch-verified-open-deps.txt', // removed by the blocked pass (#5314); verified-open-deps also removed at its step's start on gh (#5879), or its agent input on files
   ];
   assert.deepEqual([...END_WRITTEN_FILES, ...NOT_END_WRITTEN].sort(), [...SESSION_FILES].sort());
 });
@@ -3306,7 +3618,7 @@ function withPooled(scenario, record) {
 // the pull) }. Returns pull4's result plus the firing's decisions.md text (null when absent), the
 // numbers the injected check was asked about and the queue-order cache call counts.
 function pullNamed(scenario, o = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-named-run-'));
+  const runDir = scratchDir('qp-named-run-');
   const decisionsFile = path.join(runDir, 'decisions.md');
   if (o.decisions !== undefined) fs.writeFileSync(decisionsFile, o.decisions);
   const asked = [];
@@ -3409,7 +3721,7 @@ test('AC5.4: an admitted record whose body is not spec-shaped is excluded as not
 const TYPED_FIXTURES = path.join(REPO, 'tests', 'fixtures', 'typed-command');
 const capturedRows = (c) => JSON.parse(fs.readFileSync(path.join(TYPED_FIXTURES, `captured-${c}.json`), 'utf8'));
 function realPull(c, { pointer = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-typed-'));
+  const root = scratchDir('qp-typed-');
   try {
     const rows = capturedRows(c);
     const configDir = path.join(root, 'config');
@@ -3640,7 +3952,7 @@ test('#5584: with no named option the pull makes no record fetch and still reads
 // ---- #5584 CLI: --named / --run ----------------------------------------------------------------------
 // A stand-in main checkout: a `.git` directory, and one firing run dir under .claude-tweaks/pipelines.
 function withMainCheckout(fn) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-main-')));
+  const root = fs.realpathSync(scratchDir('qp-main-'));
   try {
     fs.mkdirSync(path.join(root, '.git'));
     const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
@@ -3682,7 +3994,7 @@ test('AC7.2: --named without --run, --run without --named, an empty or non-numer
 });
 
 test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, exits 1 before gh is probed, and writes nothing', () => withMainCheckout(({ root, runDir }) => {
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-outside-')));
+  const outside = fs.realpathSync(scratchDir('qp-outside-'));
   const linked = path.join(root, 'linked');
   fs.mkdirSync(path.join(linked, 'run-2'), { recursive: true });
   fs.writeFileSync(path.join(linked, '.git'), 'gitdir: /nowhere/.git/worktrees/linked\n');
@@ -3707,6 +4019,22 @@ test('AC7.3: a --run that names no run directory, or one resolveTarget refuses, 
     assert.equal(r.code, 1);
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
+  }
+}));
+
+test('#5830: --run naming a directory outside .claude-tweaks/pipelines/ is refused', () => withMainCheckout(({ root }) => {
+  const stray = path.join(root, 'plugin');
+  fs.mkdirSync(stray);
+  for (const transport of ['gh', 'files']) {
+    let probed = 0; let pulled = 0;
+    const r = cliRun(['--transport', transport, '--named', '12', '--run', stray], {
+      env: {}, cwd: root, ghAvailable: () => { probed += 1; return true; }, queuePull: () => { pulled += 1; },
+    });
+    assert.equal(r.code, 1, `${transport}: ${r.stderr}`);
+    assert.match(r.stderr, /not a pipeline run directory/);
+    assert.equal(r.stdout, '');
+    assert.deepEqual([probed, pulled], [0, 0]);
+    assert.equal(fs.existsSync(path.join(stray, 'decisions.md')), false, 'nothing is written into the stray directory');
   }
 }));
 

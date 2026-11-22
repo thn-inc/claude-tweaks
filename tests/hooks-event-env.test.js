@@ -5,6 +5,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-hooks-event-env-');
 const os = require('os');
 const path = require('path');
 const { runHookCli, hookEnv } = require('./helpers/hook-event');
@@ -219,7 +221,7 @@ test('post-tool-use runs its git children under the injected env (a commit check
 test('post-tool-use stamps the owner pid and owner block from the injected env, and its marker under the injected tmp dir', async () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-tmp-'));
+  const tmp = scratchDir('ct-env5377-tmp-');
   const injected = String(process.pid);
   // A fresh session id: the non-EnterWorktree ad-hoc check leaves a once-per-session marker under the tmp dir.
   const sessionId = `sess-5377-${process.pid}-${Date.now()}`;
@@ -318,7 +320,7 @@ test('subagent-stop reads nothing from process.env', async () => {
 test('subagent-stop writes its retry counter under the injected tmp dir', async () => {
   const sessionId = `sess-5377-retry-${process.pid}-${Date.now()}`;
   const { project } = ownedProject({ session: sessionId });
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-tmp-'));
+  const tmp = scratchDir('ct-env5377-tmp-');
   const transcript = path.join(project, 'agent.jsonl');
   fs.writeFileSync(transcript, [
     JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'task' }] } }),
@@ -379,14 +381,14 @@ function sessionStartFixture(extraEnv = {}) {
   const repo = gitRepo();
   fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(repo, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({ completedAt: 1, surfaced: true, summary: {} }));
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  const home = scratchDir('ct-env5377-home-');
   return { repo, home, env: fixtureHomeEnv(home, hookEnv(extraEnv)) };
 }
 
 // Gives `repo` a bare origin with origin/HEAD set (`setHead`) or left unset, so reconcile resolves an
 // integration branch (or has to repair origin/HEAD). Returns the bare repository's path.
 function addOrigin(repo, { setHead = true } = {}) {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-origin-'));
+  const bare = scratchDir('ct-env5377-origin-');
   const git = (args) => fixtureGit(['-C', repo, ...args], { env: cleanGitEnv(), stdio: 'ignore' });
   fixtureGit(['init', '-q', '--bare', '-b', 'main', bare], { env: cleanGitEnv(), stdio: 'ignore' });
   git(['remote', 'add', 'origin', bare]);
@@ -548,7 +550,7 @@ function prFirstRepo() {
 
 // Puts one new commit on the bare origin's main, from a throwaway clone.
 function advanceOrigin(bare) {
-  const clone = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-clone-'));
+  const clone = scratchDir('ct-env5377-clone-');
   try {
     const git = (args) => fixtureGit(['-C', clone, '-c', 'user.name=T', '-c', 'user.email=t@example.test', ...args], { env: cleanGitEnv(), stdio: 'ignore' });
     fixtureGit(['clone', '-q', bare, clone], { env: cleanGitEnv(), stdio: 'ignore' });
@@ -563,7 +565,7 @@ const headOf = (repo, ref) => fixtureGit(['-C', repo, 'rev-parse', ref], { env: 
 
 test('reconcile FAST_CHECKS under pr-first run their children under the passed env', { skip: process.platform === 'win32' }, async () => {
   const reconcileLib = require('../plugin/bin/lib/reconcile');
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  const stubDir = scratchDir('ct-env5377-gh-');
   ghStub(stubDir);
   const log = path.join(stubDir, 'gh.log');
   const brokenGitDir = path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir');
@@ -636,7 +638,7 @@ test('the synchronous preflight and shared fetch run under the passed env', { sk
   const { ghHealthCheck } = require('../plugin/bin/lib/reconcile/preflight');
   const { sharedFetch, sharedFetchAsync } = require('../plugin/bin/lib/reconcile/shared-fetch');
   const { mirrorFastForward } = require('../plugin/bin/lib/reconcile/mirror-ff');
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  const stubDir = scratchDir('ct-env5377-gh-');
   ghStub(stubDir);
   const log = path.join(stubDir, 'gh.log');
   const { repo, bare } = prFirstRepo();
@@ -662,7 +664,7 @@ test('the synchronous preflight and shared fetch run under the passed env', { sk
 
 test('the console check fetches member grants and its veto window under the passed env', { skip: process.platform === 'win32' }, async () => {
   const { consoleExecuteDetect } = require('../plugin/bin/lib/reconcile/console-execute');
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  const stubDir = scratchDir('ct-env5377-gh-');
   ghStub(stubDir);
   const log = path.join(stubDir, 'gh.log');
   const { repo, bare } = prFirstRepo();
@@ -692,8 +694,8 @@ test('the pr-first checks read gh\'s config dir through the passed homeDir', { s
   // An origin on a non-github.com host sends ghOptions to gh's hosts file, found under homeDir() when neither
   // GH_CONFIG_DIR nor XDG_CONFIG_HOME names a directory.
   fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', 'https://127.0.0.1:1/o/r.git'], { env: cleanGitEnv(), stdio: 'ignore' });
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  const fakeHome = scratchDir('ct-env5377-home-');
+  const stubDir = scratchDir('ct-env5377-gh-');
   ghStub(stubDir);
   try {
     const env = prFirstEnv(stubDir, path.join(stubDir, 'gh.log'));
@@ -746,8 +748,8 @@ test('pre-tool-use\'s forge probe reads gh\'s config dir through the context\'s 
   const wt = linkedWorktreeOf(main);
   commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
   mkRunAt(main, RUN_ID, wt);
-  const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-gh-'));
+  const fakeHome = scratchDir('ct-env5377-home-');
+  const stubDir = scratchDir('ct-env5377-gh-');
   ghStub(stubDir);
   try {
     const log = path.join(stubDir, 'gh.log');
@@ -769,7 +771,7 @@ test('pre-tool-use\'s forge probe reads gh\'s config dir through the context\'s 
 test('ports ensure resolves the checkout under the passed env and rejects a missing env or home', async () => {
   const portsEnsure = require('../plugin/bin/lib/ports/ensure');
   const repo = gitRepo();
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-home-'));
+  const home = scratchDir('ct-env5377-home-');
   const broken = { ...hookEnv(), GIT_DIR: path.join(os.tmpdir(), 'ct-env5377-no-such-git-dir') };
   const probe = async () => true;
   try {
@@ -813,7 +815,7 @@ test('session-start helpers only the event calls throw TypeError when env or hom
 
 test('deps.collect reads PATH from the passed env', { skip: process.platform === 'win32' }, () => {
   const { collect } = require('../plugin/bin/lib/deps');
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-env5377-bin-'));
+  const bin = scratchDir('ct-env5377-bin-');
   try {
     for (const name of ['git', 'playwright-cli']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\n', { mode: 0o755 });
     assert.deepStrictEqual(collect({ env: { PATH: bin }, cwd: null }), [], 'both tools are found on the passed PATH');

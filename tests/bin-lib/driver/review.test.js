@@ -16,9 +16,12 @@ const {
 const { lstatType, canonicalRealpath } = require(path.join(LIB, 'path-guard'));
 const { EXPRESS_MAX_KEY_FILES } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { POLICY_KEYS } = require(path.join(LIB, 'policy-schema.js'));
-const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs } = require(path.join(LIB, 'driver', 'roles.js'));
+const { REVIEW_RESULT_SCHEMA, ROLES, composeArgs, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { conformsTo, superviseChild, launchWorker } = require(path.join(LIB, 'driver', 'worker.js'));
 const { neutralize } = require(path.join(LIB, 'driver', 'events.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'review-evidence');
 
@@ -906,6 +909,10 @@ const POLICY = Object.freeze({
   'express-driver-wall-clock-minutes': { value: 20 },
   'express-driver-spend-ceiling-dollars': { value: 5 },
   'merge-sensitive-paths': { value: [] },
+  ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }),
+});
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('reviewer', POLICY), PROFILES[DRIVER_ROLE_PROFILES.reviewer].model);
 });
 const DIFF = 'diff --git a/src/a.js b/src/a.js\n+module.exports = (a, b) => a - b;\n';
 const HEAD_SHA = 'a'.repeat(40);
@@ -1155,6 +1162,38 @@ test('AC1: a reviewer launch that throws stops with fixed text and at most the e
     assert.strictEqual(rig.ctx.shared.activeWorker, null);
     assert.strictEqual(ofKind(rig.calls, 'writeFileExclusive').length, 0);
   }
+});
+
+test('#5917: a reviewer launch that throws after the model resolved still names the model on the stop line', async () => {
+  const rig = passRig({ findings: [reviewFinding(0)] });
+  rig.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const out = await rig.run();
+  assert.strictEqual(out.result.detail, 'reviewer launch failed (EACCES)');
+  assert.strictEqual(out.result.extra.model, roleModel('reviewer', POLICY));
+  assert.strictEqual(out.extra.model, roleModel('reviewer', POLICY));
+});
+
+const PROFILE_POLICY = Object.freeze({ ...POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) });
+
+test('#5942: the reviewer line carries effort on the happy path and after a launcher throw', async () => {
+  const unset = passRig({ findings: [] });
+  const unsetOut = await unset.run();
+  assert.ok('effort' in unsetOut.extra && unsetOut.extra.effort === null, 'unset: effort is null');
+  const happy = passRig({ findings: [] });
+  happy.ctx.shared.policy = PROFILE_POLICY;
+  const out = await happy.run();
+  assert.strictEqual(out.extra.effort, 'high');
+  assert.strictEqual(out.extra.model, roleModel('reviewer', PROFILE_POLICY));
+  const thrown = passRig({ findings: [reviewFinding(0)] });
+  thrown.ctx.shared.policy = PROFILE_POLICY;
+  thrown.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const stop = await thrown.run();
+  assert.strictEqual(stop.result.extra.effort, 'high');
+  assert.strictEqual(stop.extra.effort, 'high');
+  const bare = passRig({ findings: [reviewFinding(0)] });
+  bare.deps.launchWorker = async () => { throw Object.assign(new Error('spawn failed'), { code: 'EACCES' }); };
+  const bareStop = await bare.run();
+  assert.ok('effort' in bareStop.extra && bareStop.extra.effort === null);
 });
 
 test('AC2: an envelope fail, timeout or unparseable result stops at the review step', async () => {
@@ -1427,7 +1466,7 @@ test('AC7, AC12: a mid-pass stop has fixed counts and takes back every evidence 
   assert.strictEqual(out.result.detail, 'the evidence run changed the tree outside the evidence files: second.txt');
   // The finding the pass stopped on, and those after it, are not counted.
   assert.deepStrictEqual(out.counts, { returned: 3, reproduced: 1, discarded: 0 });
-  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
+  assert.deepStrictEqual(out.extra, { returned: 3, reproduced: 1, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY), effort: null });
   assert.deepStrictEqual(out.result.extra, out.extra);
   // The current file first, then the confirmed ones, newest first, with the directories the pass made.
   assert.deepStrictEqual(ofKind(rig.calls, 'rmFile').map((c) => c.p), [at('tests/new/r1.test.js'), at('tests/new/r0.test.js')]);
@@ -1718,17 +1757,18 @@ test('AC12: counts add up', async () => {
   assert.strictEqual(out.result, null);
   assert.deepStrictEqual(out.counts, { returned: 7, reproduced: 1, discarded: 6 });
   assert.strictEqual(out.counts.returned, out.counts.reproduced + out.counts.discarded);
-  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(out.extra).sort(), ['costUsd', 'denials', 'discarded', 'effort', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(out.extra, {
+    model: roleModel('reviewer', POLICY), effort: null,
     returned: 7, reproduced: 1, discarded: 6, usage: { input_tokens: 7 }, costUsd: 0.1, turns: 2,
     denials: [{ tool_name: 'Read', tool_input: neutralize(JSON.stringify(denials[0].tool_input)) }],
   });
   assert.ok(!out.extra.denials[0].tool_input.includes('#3') && out.extra.denials[0].tool_input.includes('@​bob'));
-  // A stop carries the same seven keys, on the result's extra too: a reviewer that failed after
-  // spending reports its cost and turns.
+  // A stop carries the same seven keys plus the reviewer's model (#5917), on the result's extra too: a reviewer
+  // that failed after spending reports its cost and turns.
   const stopped = passRig({ envelope: { ...okEnvelope([]), status: 'fail', reason: 'exit', result: null, denials, usage: null, costUsd: 0.25, turns: 3 } });
   const s = await stopped.run();
-  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'reproduced', 'returned', 'turns', 'usage']);
+  assert.deepStrictEqual(Object.keys(s.extra).sort(), ['costUsd', 'denials', 'discarded', 'effort', 'model', 'reproduced', 'returned', 'turns', 'usage']);
   assert.deepStrictEqual(s.result.extra, s.extra);
   assert.deepStrictEqual([s.extra.costUsd, s.extra.turns], [0.25, 3]);
   // An envelope that reports neither gives null for both, as for usage.
@@ -1822,7 +1862,7 @@ test('review: a raw error from a dep after an evidence write is a stop that take
   assert.strictEqual(out.result.detail, 'the review pass failed unexpectedly (EACCES)');
   assert.doesNotMatch(JSON.stringify(out), /SECRET|wt/);
   assert.deepStrictEqual(out.confirmed, []);
-  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2 });
+  assert.deepStrictEqual(out.extra, { returned: 1, reproduced: 0, discarded: 0, usage: { input_tokens: 7 }, denials: [], costUsd: 0.1, turns: 2, model: roleModel('reviewer', POLICY), effort: null });
   assert.strictEqual(ofKind(rig.calls, 'rmFile').length, 1, 'the written file was removed');
   assert.strictEqual(rig.types.get(at('tests/new/r0.test.js')), undefined);
 });

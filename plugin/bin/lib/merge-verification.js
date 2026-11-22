@@ -22,6 +22,7 @@ const { execFileSync } = require('child_process');
 const { resolveIntegrationModel } = require('./policy-schema');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./hooks/worktree-reap');
 const { ghOptions, injectedGhDeps, pickInjected } = require('./repo-resolve');
+const sharedPrimitives = require('./shared-primitives');
 
 const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
 
@@ -1198,9 +1199,10 @@ function readDefaultBranch(repoRoot, env, homeDir, stderr) {
   const ghDeps = injectedGhDeps({ env, stderr, homeDir });
   try {
     // windowsHide restated in the call: the windows-hide scan reads a bare
-    // opts, never one wrapped in ghOptions (#4505's GH_HOST seam).
+    // opts, never one wrapped in ghOptions (#4505's GH_HOST seam). The gh call
+    // takes the shared gh-timeout-ms ladder (#4856); the local git fallback keeps 5000.
     const args = ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'];
-    const name = execFileSync('gh', args, ghOptions(args, { ...opts, windowsHide: true }, ghDeps)).trim();
+    const name = execFileSync('gh', args, ghOptions(args, { ...opts, timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true }, ghDeps)).trim();
     if (name) return name;
   } catch {}
   try {

@@ -159,8 +159,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
 NODE_EVAL_EOF
 [ $? -eq 3 ] && LABELS_SKIPPED=1 || LABELS_SKIPPED=
 DEP_UNREADABLE=
-: > "$DISPATCH_VERIFIED_OPEN_DEPS"
-for DEP in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS"); do
+rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"
+DEP_LIST=$(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPATCH_UNRESOLVED_DEPS") && : > "$DISPATCH_VERIFIED_OPEN_DEPS"
+for DEP in $DEP_LIST; do
   STATE=$(gh issue view "$DEP" --json state -q .state 2>/dev/null) || { STATE=OPEN; DEP_UNREADABLE=1; echo "Warning: gh issue view $DEP failed — dependency #$DEP treated as open (fail closed) this run" >&2; }
   if [ "$STATE" = "OPEN" ]; then echo "$DEP" >> "$DISPATCH_VERIFIED_OPEN_DEPS"; fi
 done
@@ -318,8 +319,7 @@ then
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
   # #3110: same distinction as the open-linked-PR pass below -- a thrown
-  # appendExclusion means the exclusions file itself may be partially
-  # written, which is not safe to just skip past.
+  # appendExclusion means the exclusions file may be partially written.
   if grep -q 'appendExclusion:' "$DISPATCH_SHAPE_GATE_ERR" 2>/dev/null; then
     echo "dispatch: queue-pull stopped -- not-spec-shaped exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
     exit 1
@@ -362,10 +362,10 @@ then
   mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
 else
   rm -f "${DISPATCH_GROUPS}.tmp"
-  # #3110: a thrown appendExclusion (corrupt/unreadable dispatch-exclusions.json)
-  # is not the same failure as a transient resolve-linked-prs.js/network issue --
-  # stop the firing instead of the warn-and-continue-unfiltered degrade below,
-  # since the exclusions file itself may now be partially written.
+  # #3110: a thrown appendExclusion (corrupt
+  # exclusions file) is not a transient
+  # resolve-linked-prs.js/network issue: stop,
+  # don't degrade unfiltered below.
   if grep -q 'appendExclusion:' "$DISPATCH_LINKED_PRS_ERR" 2>/dev/null; then
     echo "dispatch: queue-pull stopped -- open-linked-PR exclusion pass hit a corrupt exclusions file: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
     exit 1
@@ -391,8 +391,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     .filter((c) => c.target);
   fs.writeFileSync(process.argv[2], JSON.stringify(named));
 NODE_EVAL_EOF
-if [ -z "$INTEGRATION_BRANCH" ]; then
-  echo "Warning: target-missing pass skipped — no integration branch resolved" >&2
+if [ -z "$INTEGRATION_BRANCH" ] || ! git rev-parse --verify --quiet "$INTEGRATION_REF^{commit}" >/dev/null 2>&1; then # #5305 empty, #5863 unresolved ref: skips only this pass
+  echo "Warning: target-missing pass skipped — no resolvable integration branch" >&2
 else
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_NAMED_TARGETS" "$INTEGRATION_REF" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
   const { execFileSync } = require('child_process');
@@ -463,13 +463,9 @@ flush_shipped_claims() {
   node -e "const s = (() => { try { const v = JSON.parse(process.argv[1]); return Array.isArray(v) ? v : []; } catch (e) { return []; } })(); if (s.length) console.error('AUTO — dispatch: shipped-candidate claim read failed for ' + s.join(', ') + '; release time unknown, no downgrade')" -- "${SHIPPED_UNREADABLE:-[]}"
 }
 
-# #1984: shipped-candidate classification after the #1224/#1983 exclusions.
-# #4314: a mention whose PR predates the record never counts. #4432: one merged before
-# the latest claim release rates weak at most (unreadable claim: no downgrade).
-#
-# First pass: title-only; only a non-predating `weak` is probed (5 `gh pr view` max).
+# #1984/#4314/#4432/#5722: first pass title-only; probes a `weak` not downgraded after the merge.
 SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
-  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, downgradedAfterMerge } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
   const unreadable = [];
@@ -480,8 +476,8 @@ SHIPPED_UNREADABLE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPAT
     const entry = linkedPRs[c.number];
     const mentions = (entry && entry.mentions) || [];
     if (mentions.length === 0) continue;
-    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-    if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
+    if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
 NODE_EVAL_EOF
@@ -493,11 +489,10 @@ for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPA
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: `strong` is excluded, logged for a staged Close;
-# `weak` stays eligible (warns on a failed probe); `none` is silent.
+# #1984/#4314/#4432/#5722, second pass: `strong` is excluded for a staged Close; `weak` stays.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
-  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
@@ -511,7 +506,7 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
       if (result.tier === 'strong') {
         appendExclusion(process.argv[3], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         console.error('AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')');
@@ -520,8 +515,10 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
       if (result.tier === 'weak') {
         console.error('AUTO — dispatch: #' + c.number + (predatesClaimRelease(result)
           ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
-          : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
-        if (!predatesClaimRelease(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');
+          : downgradedAfterMerge(result)
+            ? ' kept: merged PR #' + result.pr + ' predates ready/auto:build labeling at ' + entry.lastShapedAt + ' — remaining work assumed'
+            : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
+        if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) console.error('Warning: gh pr view ' + result.pr + ' failed — #' + c.number + ' kept as a weak shipped candidate (files unprobed) this run');
       }
       return true;
     }))

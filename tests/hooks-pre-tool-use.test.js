@@ -1,8 +1,9 @@
 // tests/hooks-pre-tool-use.test.js
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -13,13 +14,15 @@ const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
 const { readText } = require('./helpers/read-skill');
 const { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 // A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
 const BASE_ENV = Object.freeze({ ...process.env });
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function mkRun(worktree, sessionId) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1run-'));
+  const project = scratchDir('ct-e1run-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = worktree ? { status: 'active', worktree } : { status: 'active' };
@@ -31,7 +34,7 @@ function mkRun(worktree, sessionId) {
 // listRunDirs(ctx.cwd) can see siblings — mirrors two parallel /flow
 // terminals sharing one main checkout.
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1proj-'));
+  const dir = scratchDir('ct-e1proj-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -219,7 +222,7 @@ test('ambiguity allows: no worktree assigned, non-repo dir, non-Bash tool, no ru
   const { run, state } = mkRun(null);
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt }), {});
   const assigned = mkRun(wt);
-  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nonrepo-'));
+  const nonRepo = scratchDir('ct-nonrepo-');
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', nonRepo), runDir: assigned.run, runState: assigned.state, cwd: nonRepo }), {});
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: {}, cwd: wt }, runDir: assigned.run, runState: assigned.state, cwd: wt }), {});
   assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: null, runState: null, cwd: wt }), {});
@@ -330,7 +333,7 @@ test('deny reason substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the litera
 });
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-wtparent-'));
+  const parent = scratchDir('ct-e1-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -548,7 +551,7 @@ test('powershell-opaque gate: policy off allows `-Command` from the main checkou
 // host git config.
 function cloneWithOrigin() {
   const origin = gitRepoWithCommit();
-  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-clone-'));
+  const local = scratchDir('ct-e1-clone-');
   execFileSync('git', ['clone', '-q', origin, local]);
   const branch = execFileSync('git', ['-C', local, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
   return { local: fs.realpathSync(local), branch };
@@ -620,7 +623,7 @@ test('deny paths always carry exit: 0 — the deny signal is JSON permissionDeci
 });
 
 test('worktree-required: a policy file in an ancestor directory OUTSIDE the target repo does not leak in (repo-scoped, not filesystem-ancestor-scoped)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-ancestor-'));
+  const parent = scratchDir('ct-e1-ancestor-');
   withPolicy(parent, 'worktree-always: true\n');
   const nestedRepo = path.join(parent, 'nested-repo');
   fs.mkdirSync(nestedRepo, { recursive: true });
@@ -1072,7 +1075,7 @@ test('isUntrackedOrIgnored fails closed on anything it cannot prove, and is giti
   // A path resolving outside repoRoot is a real git failure (exit 128, with
   // stderr) for check-ignore — indeterminate, not a clean negative, so it
   // must fail closed rather than being read as "not ignored".
-  const outsideRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-outside-'));
+  const outsideRepo = scratchDir('ct-e1-outside-');
   fs.writeFileSync(path.join(outsideRepo, 'x.txt'), 'x');
   assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt'), { env: BASE_ENV }), false,
     'a path outside repoRoot is a git fatal error, not a clean negative — fails closed');
@@ -1253,14 +1256,14 @@ test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-bra
 
 test('AC9.3 hasMaterializeCommit returns false when git cannot run', () => {
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
-  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nogit-')), 'does-not-exist');
+  const missing = path.join(scratchDir('ct-e1-nogit-'), 'does-not-exist');
   assert.strictEqual(pre.hasMaterializeCommit(missing, runDir), false, 'a cwd git cannot spawn in reads as not materialized');
-  const notARepo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-norepo-')));
+  const notARepo = fs.realpathSync(scratchDir('ct-e1-norepo-'));
   assert.strictEqual(pre.hasMaterializeCommit(notARepo, runDir), false, 'git exiting 128 outside a repo reads as not materialized');
 });
 
 test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.deepStrictEqual(pre.getMaterializedRecordNumbers(path.join(root, 'does-not-exist'), runDir), []);
   // The run dir path is a regular file: every readdir under it fails with ENOTDIR.
@@ -1271,11 +1274,11 @@ test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', (
 });
 
 test('getMaterializedRecordNumbers walks only real spec-* directories: a spec-* symlink is skipped', { skip: process.platform === 'win32' && 'directory symlinks need privileges on Windows' }, () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   const base = path.join(root, '.claude-tweaks', 'pipelines', MATERIALIZE_RUN_ID);
   fs.mkdirSync(path.join(base, 'spec-3', 'work'), { recursive: true });
   fs.writeFileSync(path.join(base, 'spec-3', 'work', '3-spec.md'), 'spec\n');
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-symtarget-'));
+  const elsewhere = scratchDir('ct-e1-symtarget-');
   fs.mkdirSync(path.join(elsewhere, 'work'));
   fs.writeFileSync(path.join(elsewhere, 'work', '9-spec.md'), 'spec\n');
   fs.symlinkSync(elsewhere, path.join(base, 'spec-9'), 'dir');
@@ -1376,7 +1379,7 @@ function writeHeaderFile(root, rel) {
 }
 
 test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and spec-{N})', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-7/work/7-spec.md'));
   const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
@@ -1384,7 +1387,7 @@ test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and s
 });
 
 test('AC1.1 getMaterializedRecordNumbers merges a run\'s live and archived headers by record, counting a duplicate once', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-nums-')));
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
   writeHeaderFile(root, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md')); // stale or mid-move copy
   writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-6/work/6-spec.md'));
@@ -1594,7 +1597,7 @@ test('#4559: `git stash drop` from the main checkout is silent', () => {
 // machine, sibling sessions' dev servers included. The warning is run- and
 // location-independent, so every fixture runs in a plain temp dir (no git repo, no
 // policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
-const killDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+const killDir = scratchDir('ct-4548-');
 const runKill = (cmd) => pre.run({ env: BASE_ENV, input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
 const assertKillWarning = (out) => {
   assert.ok(out.json, 'expected a hook response');
@@ -1888,7 +1891,7 @@ test('#3712: ceiling comes from the injected reader, not the run config', () => 
 
 test('#3712: a non-git cwd fails open even with autonomy: unattended in the run config', () => {
   const dir = consoleRun('unattended');
-  const notGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogit-')));
+  const notGit = fs.realpathSync(scratchDir('ct-nogit-'));
   const ctx = consoleCtx(dir, CONSOLE_Q);
   ctx.cwd = notGit;
   ctx.input = askInput(CONSOLE_Q, notGit);
@@ -2083,4 +2086,122 @@ test('#4492 F1: worktree-required allows a Write inside a submodule of a sibling
   assert.deepStrictEqual(allowed, {});
   const denied = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
   assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #5846: the pre-tool-use fixture builders sit on templates (#5297, #5324) — a warm-up call may
+// build, a further call starts no git process — and the copies carry the right git state. They
+// live here because this file's own tests already build every one of these templates.
+const movedScratch = [];
+after(() => {
+  for (const d of movedScratch) fs.rmSync(d, { recursive: true, force: true });
+});
+function mk(prefix) {
+  const d = scratchDir(prefix);
+  movedScratch.push(d);
+  return d;
+}
+const preToolUseBuilders = {
+  'pre-tool-use gitRepo': [() => gitRepo(), (d) => [d]],
+  'pre-tool-use gitRepoWithCommit': [() => gitRepoWithCommit(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUseBuilders)) {
+  test(`${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+const preToolUsePairs = {
+  'pre-tool-use mainAndWorktree': [() => mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => unpinnedRepoWithOrigin(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
+  const a = mainAndWorktree();
+  const b = mainAndWorktree();
+  movedScratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
+  for (const p of [a, b]) {
+    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
+    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
+    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
+    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
+    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
+  }
+  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
+  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
+  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
+  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
+  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
+});
+test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
+  const pair = mainAndWorktree({ localMain: true });
+  const repo = gitRepoOnLocalMain();
+  movedScratch.push(pair.main, path.dirname(pair.wt), repo);
+  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
+  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
+});
+test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
+  const repo = unpinnedRepoWithOrigin();
+  movedScratch.push(repo);
+  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
+  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
+});
+
+// --- #6006: the factory layer reaches the two policy reads through the event's own env ---
+
+test('readConsoleCeiling reads the factory layer from the passed env, not the process env', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  assert.notStrictEqual(pre.readConsoleCeiling(run, repo, { env: base }), 'unattended');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'autonomy: unattended\n' } }), 'unattended');
+});
+
+// #6006 final review Minor 3: the factory file is located through the context's homeDir, as the other hook read
+// does (resolveRunPinnedIntegrationModel), never through env.HOME.
+test('readConsoleCeiling reads the factory file under opts.homeDir, not env.HOME; the Review Console gate passes ctx.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE;
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'autonomy: unattended\n');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: base, homeDir: () => fileHome }), 'unattended');
+
+  const dir = consoleRun('supervised');
+  const ctx = consoleCtx(dir, CONSOLE_Q);
+  const homeDir = () => fileHome;
+  ctx.homeDir = homeDir;
+  const seen = [];
+  pre.run(ctx, { readConsoleCeiling: (runDir, cwd, opts) => { seen.push(opts); return 'supervised'; } });
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0].homeDir, homeDir);
+  assert.strictEqual(seen[0].env, ctx.env);
+});
+
+test('resolveRunPinnedIntegrationModel honours a factory integration-model pin from opts.env, and a factory file under opts.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const home = scratchDir('ct-fac-home-');
+  const base = { ...BASE_ENV, HOME: home, USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE; // the runner's relocation would hide the file under opts.homeDir
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: pr-first\n' } }), 'pr-first');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' } }), 'local-merge');
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'integration-model: pr-first\n');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: base, homeDir: () => fileHome }), 'pr-first');
 });

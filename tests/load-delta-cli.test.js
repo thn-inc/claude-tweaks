@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -303,7 +304,7 @@ test('F4: an untracked uncited skill file routes to outcome 2, not outcome 1', (
 
 test('F5: --plugin-root outside the repository (with a real skills/ beneath it) exits 2 naming the reason', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'x\n' });
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  const outside = scratchDir('load-delta-outside-');
   write(outside, 'skills/t/SKILL.md', 'z\n');
   const r = call(['--plugin-root', outside], dir);
   assert.strictEqual(r.code, 2);
@@ -312,7 +313,7 @@ test('F5: --plugin-root outside the repository (with a real skills/ beneath it) 
 
 test('a cited symlink to a file outside the repository is never read into the closure', () => {
   const dir = makeRepo({ 'plugin/skills/s/SKILL.md': 'Read `x.md` in this skill\'s directory.\n' });
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'load-delta-outside-'));
+  const outside = scratchDir('load-delta-outside-');
   write(outside, 'secret.md', 'o'.repeat(5000));
   fs.symlinkSync(path.join(outside, 'secret.md'), path.join(dir, 'plugin/skills/s/x.md'));
   git(dir, 'add', '-A');

@@ -102,6 +102,7 @@ function readBound(r) {
   const entry = r.result['release-tip-moves'];
   if (entry.invalid === true) return { detail: 'release-tip-moves holds an invalid value' };
   if (!Number.isInteger(entry.value) || entry.value < 0) return { detail: 'release-tip-moves is not a non-negative integer' };
+  // The source passes through for reporting only (`factory` included, #6006); nothing branches on it.
   return { value: entry.value, source: typeof entry.source === 'string' ? entry.source : null };
 }
 

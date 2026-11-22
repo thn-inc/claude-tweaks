@@ -23,6 +23,10 @@ const { readText } = require('../../helpers/read-skill');
 const { BAD_MERGE_CHECK_ENVELOPES } = require('../../helpers/merge-check-envelopes');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures');
 const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
 const CLOCK_START = 1000;
@@ -552,6 +556,13 @@ test('AC8.1: merge-when-green and wait are taken as given, and no lever line is 
     assert.deepEqual(h.logs.filter((l) => l.step === 'Step 2.5'), [], value);
     assert.match(h.events[0].detail, new RegExp(`lever ${expected} \\(run-config\\)`));
   }
+});
+
+test('a factory-sourced merge-verification passes through to the merge-entry event as (factory) (#6006)', async () => {
+  const entry = resolvePolicyKeys(['merge-verification'], { factoryRaw: 'merge-verification: wait\n' })['merge-verification'];
+  const h = mergeHarness({ verification: leverReply(entry) });
+  await merge(CTX, h.deps);
+  assert.match(h.events.find((e) => e.step === 'merge-entry').detail, /lever wait \(factory\)/);
 });
 
 test('AC8.1: a failed merge-verification read never stops entry; a failed integration-model read is not-pr-first', async () => {
@@ -2892,7 +2903,10 @@ test('AC13.1–AC13.3: express-lane.js verify exits 0 for fixture runs driven to
 
 // ---- AC10: the real judgment supplier (judgments.js, acceptance.js) behind merge() ----
 
-const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } };
+const POLICY_CEILINGS = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('merge-check', POLICY_CEILINGS), PROFILES[DRIVER_ROLE_PROFILES['merge-check']].model);
+});
 const TRY_IT_GROUP = { name: 'Run the thing', precondition: 'none', access: 'none', entryPoint: 'node bin/x.js', steps: ['Run it', 'Read the output'], expected: 'It prints ok' };
 
 // The replies the supplier's own reads and writes need, tried before the merge harness's defaults: the

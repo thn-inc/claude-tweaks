@@ -220,7 +220,7 @@ function resolveVetoWindowHours(runDir, repoRoot, inj = {}) {
   try {
     const git = (args) => execFileSyncTimed('git', args, { cwd: repoRoot, encoding: 'utf8', windowsHide: true, ...(inj.env ? { env: inj.env } : {}) });
     const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
-    const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'] });
+    const { result } = resolvePolicyConfig({ git, readFile, runDir, keys: ['grant-veto-window-hours'], ...(inj.env ? { env: inj.env } : {}), ...(inj.homeDir ? { homeDir: inj.homeDir } : {}) });
     const entry = result['grant-veto-window-hours'];
     const raw = entry && entry.error === undefined ? entry.value : null;
     const veto = raw === null || raw === undefined ? NaN : Number(raw);

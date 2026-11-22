@@ -18,6 +18,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
@@ -30,7 +31,7 @@ function readEvents(runDir) {
 }
 
 function makeRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-auq-run-'));
+  return scratchDir('ct-auq-run-');
 }
 
 function askCtx({ toolInput, toolResponse, ownedRun } = {}) {

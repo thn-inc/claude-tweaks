@@ -1,8 +1,9 @@
 'use strict';
-const { test } = require('node:test');
+const { test, describe } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -21,7 +22,7 @@ const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, R
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {}, config = null,
 } = {}) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const runDir = scratchDir('console-resolve-');
   fs.mkdirSync(path.join(runDir, 'staged'), { recursive: true });
   fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
@@ -1112,7 +1113,7 @@ test('AC2.1: a console.json written with the old 58-character id shape still rea
 });
 
 test('AC2.1: old-shape and new-shape decision ids coexist in one console.json — residue counts both and points both at decisions.md (#3816)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-'));
+  const dir = scratchDir('console-resolve-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), SAME_PREFIX);
   const line = SUPERSEDED.split('\n')[1];
   const oldId = `decision:${line.slice(2, 60)}`;
@@ -2415,4 +2416,41 @@ test('#4636: review-console-appendix.md names every reference-repair pending rea
   assert.ok(reasons.length >= 4);
   const text = APPENDIX.replace(/\s+/g, ' ');
   for (const reason of reasons) assert.ok(text.includes('pending — ' + reason), reason);
+});
+
+// #5050: console-resolve.js's default runner bounds each spawn by command — `gh` follows
+// CLAUDE_TWEAKS_GH_TIMEOUT_MS (floored at 30000 by the batched bound), `git` follows
+// CLAUDE_TWEAKS_GIT_TIMEOUT_MS. `run` reaches a `gh` spawn only past a full resolve fixture, so the
+// probe calls the exported default runner directly: it is the very function `deps.execFile || defaultExecFile` picks.
+describe('default exec bound (#5050)', () => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  const CONSOLE_RESOLVE = require.resolve('../../../plugin/bin/console-resolve');
+  const probe = (cmd, env) => captureExecTimeouts({
+    env,
+    modulePaths: [CONSOLE_RESOLVE],
+    exercise: (setEnv) => {
+      setEnv();
+      require(CONSOLE_RESOLVE).defaultExecFile(cmd, ['--version']);
+    },
+  });
+
+  test('console-resolve gh spawn follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' }).gh[0], 45000);
+  });
+
+  test('console-resolve gh spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined }).gh[0], 30000);
+  });
+
+  test('console-resolve gh spawn is floored at 30000 when the env is 10000', () => {
+    assert.strictEqual(probe('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' }).gh[0], 30000);
+  });
+
+  test('console-resolve git spawn follows CLAUDE_TWEAKS_GIT_TIMEOUT_MS', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' }).git[0], 90000);
+  });
+
+  test('console-resolve git spawn keeps the 30000 default when the env is unset', () => {
+    assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined }).git[0], 30000);
+  });
 });

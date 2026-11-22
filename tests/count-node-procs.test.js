@@ -3,6 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-count-node-procs-');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -167,7 +169,7 @@ test('formatTable prints the floor note, one row per file and a total', () => {
 });
 
 test('AC10.1: run passes the list through, returns the test run\'s exit code and writes --json', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const outPath = path.join(tmp, 'out.json');
     let calls = 0;
@@ -189,7 +191,7 @@ test('AC10.1: run passes the list through, returns the test run\'s exit code and
 });
 
 test('run reports an unwritable --json path and keeps the test run\'s exit code', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const bad = path.join(tmp, 'no-such-dir', 'out.json');
     for (const [status, expected] of [[0, 1], [5, 5]]) {
@@ -203,7 +205,7 @@ test('run reports an unwritable --json path and keeps the test run\'s exit code'
 });
 
 test('run with no arguments names both default roots', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const { deps } = fakeDeps((cmd, args) => {
       assert.deepStrictEqual(args.slice(1), ['tests', path.join('tools', 'upstream-drift', 'tests')]);
@@ -224,7 +226,7 @@ test('run rejects an unknown flag with exit 2', () => {
 });
 
 test('the preload logs a start and an exit line and prints nothing', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const logFile = path.join(tmp, 'log.jsonl');
     const r = spawnSync(process.execPath, ['-e', '0'], {
@@ -246,7 +248,7 @@ test('the preload logs a start and an exit line and prints nothing', () => {
 });
 
 test('the preload logs one start and one exit line for a process that creates a worker thread', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const logFile = path.join(tmp, 'log.jsonl');
     const script = "const { Worker } = require('worker_threads'); new Worker('0', { eval: true });";
@@ -264,7 +266,7 @@ test('the preload logs one start and one exit line for a process that creates a 
 });
 
 test('AC10.1: one real run prints a row for the listed test file', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const listFile = path.join(tmp, 'list.txt');
     const outPath = path.join(tmp, 'out.json');

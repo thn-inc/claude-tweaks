@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const M = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'init', 'ci-workflow-review.js'));
@@ -628,7 +629,7 @@ test('AC7.1: a malformed on: yields an unparsed entry naming the file, never an 
 });
 
 test('readCiSources: null with no verify-scope.json, [] when declared without ci, the sources when declared', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cwr-mod-'));
+  const root = scratchDir('cwr-mod-');
   assert.deepEqual(M.readCiSources(root), { ok: true, ciSources: null });
   const declPath = path.join(root, '.claude-tweaks', 'verify-scope.json');
   fs.mkdirSync(path.dirname(declPath));

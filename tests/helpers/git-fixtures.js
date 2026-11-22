@@ -24,6 +24,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 // Loading git-template.js also points a bare run's repoInfo store at a temp file (#5294).
 const { fromTemplate, disableReceiveAutoGc } = require('./git-template');
+const { scratchDir } = require('./tmp-dir');
 
 // Ceiling for a single fixture git spawn.
 //
@@ -154,7 +155,7 @@ function gitRepo({ parent = os.tmpdir(), branch } = {}) {
 // `<main>/.claude/worktrees/`, so this is also the fixture for "a worktree the
 // reaper must refuse to touch."
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wtd-parent-'));
+  const parent = scratchDir('ct-wtd-parent-');
   const wt = path.join(parent, 'wt');
   fixtureGit(['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -253,7 +254,7 @@ function hookEnv(extra = {}) {
 // prefixes hold distinct commits): `{ dir, head, git }`. `git(...args)` runs in `dir` under cleanGitEnv()
 // with a fixed identity and returns trimmed stdout; the caller removes `dir`.
 function committedRepo({ prefix = 'ct-fx-', file = 'seed.txt', branch } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = scratchDir(prefix);
   const env = cleanGitEnv();
   const git = (...args) => fixtureGit(['-c', 'user.name=T', '-c', 'user.email=t@example.com', ...args], { cwd: dir, env, encoding: 'utf8' }).trim();
   git('init', '-q', ...(branch ? ['-b', branch] : []));

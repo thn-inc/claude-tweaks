@@ -8,13 +8,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const { spawnBackgroundIfStale, STATUS_FILENAME } = require('../../../plugin/bin/lib/reconcile/background-spawn');
 
 function rootWithStatus(status) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bgspawn-'));
+  const root = scratchDir('ct-bgspawn-');
   if (status) {
     fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
     fs.writeFileSync(path.join(root, '.claude-tweaks', STATUS_FILENAME), JSON.stringify(status));

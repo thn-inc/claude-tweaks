@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -10,7 +11,7 @@ const {
 const { readCache, writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pr-state-cache-'));
+  const root = scratchDir('ct-pr-state-cache-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   return root;
 }

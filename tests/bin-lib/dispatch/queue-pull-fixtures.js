@@ -181,6 +181,12 @@ function fakeRun(scenario, { sessionDir } = {}) {
       if (sub.length === 3 && sub[0] === 'remote' && sub[1] === 'show' && sub[2] === 'origin') {
         return `* remote origin\n  Fetch URL: ${table.git.remoteUrl}\n  HEAD branch: ${scenario.headBranch || 'main'}\n`;
       }
+      // #5863: `rev-parse --verify --quiet origin/{branch}^{commit}` resolves only a branch origin holds.
+      if (sub.length === 4 && sub[0] === 'rev-parse' && sub[1] === '--verify' && sub[2] === '--quiet' && sub[3].endsWith('^{commit}')) {
+        const ref = sub[3].slice(0, -'^{commit}'.length);
+        if (originBranchFiles(scenario, ref.replace(/^origin\//, ''))) return `${'a'.repeat(40)}\n`;
+        throw fakeFailure(args, { status: 1, stdout: '', stderr: '' });
+      }
       if (sub.length === 3 && sub[0] === 'cat-file' && sub[1] === '-e') {
         const colon = sub[2].indexOf(':');
         const ref = sub[2].slice(0, colon);
@@ -252,7 +258,10 @@ function S0() {
 const REPO_SLUG = 'fixture-owner/fixture-repo';
 
 // A linked-PR GraphQL node (the oracle's gh table) for record `n`; `spec` is scenario.linked[n]:
-// { openPR, mentions: [{ number, title, merged, mergedAt, createdAt }] }.
+// { openPR, mentions: [{ number, title, merged, mergedAt, createdAt }], lastShapedAt }.
+// `lastShapedAt` (#5722, an ISO string) is the one source for both halves: here it becomes a
+// single `auto:build` LabeledEvent, which fetchLinkedPRs reduces back to the same string;
+// linkedOutput prints it directly — so the oracle's real CLI and the module's fake agree.
 function linkedNode(n, spec = {}) {
   const mentions = spec.mentions || [];
   return {
@@ -262,11 +271,12 @@ function linkedNode(n, spec = {}) {
     timelineItems: { nodes: mentions.map((m) => ({ source: {
       number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null, repository: { nameWithOwner: REPO_SLUG },
     } })) },
+    labelEvents: { nodes: spec.lastShapedAt ? [{ createdAt: spec.lastShapedAt, label: { name: 'auto:build' } }] : [] },
   };
 }
 
-// What bin/resolve-linked-prs.js prints for `numbers` over scenario.linked: openPR, mentions and
-// hasClosingPRReference only (the CLI drops fetchLinkedPRs' issueState).
+// What bin/resolve-linked-prs.js prints for `numbers` over scenario.linked: openPR, mentions,
+// hasClosingPRReference and lastShapedAt (the CLI drops fetchLinkedPRs' issueState).
 function linkedOutput(linked, numbers) {
   const out = {};
   for (const n of numbers) {
@@ -275,6 +285,7 @@ function linkedOutput(linked, numbers) {
       openPR: spec.openPR || null,
       mentions: (spec.mentions || []).map((m) => ({ number: m.number, title: m.title, state: m.merged ? 'MERGED' : 'OPEN', merged: !!m.merged, mergedAt: m.mergedAt || null, createdAt: m.createdAt || null })),
       hasClosingPRReference: Boolean(spec.openPR),
+      lastShapedAt: spec.lastShapedAt || null,
     };
   }
   return out;
@@ -638,6 +649,26 @@ function S1LiveDep({ viewFails = false } = {}) {
   return s;
 }
 
+// #5408: S1({ parity: true }) with #8001 (#9011's dependency, closed in S1) OPEN: `issue view 8001` answers
+// OPEN, so the files transport's verified-open-deps file lists it, and the dependency-freshness answer and
+// the landing node read it open too. The dependency-freshness fault rows run here: faulting that file
+// removes the module's only closed evidence for an unresolved dependency the verified-open file omits, and
+// it counts that dependency open where the retained script counts it closed (S1's closed #8001). With #8001
+// listed open there is no such dependency, so both sides hold #9011 as blocked and the pair still
+// exercises its freshness fault.
+function S1OpenDeps() {
+  const s = S1({ parity: true });
+  const view = ['issue', 'view', '8001', '--json', 'state', '-q', '.state'];
+  s.name = 'S1OpenDeps';
+  s.gh = s.gh.map((e) => {
+    if (sameArgv(e.argv, view)) return { ...e, stdout: 'OPEN\n' };
+    if (e.stdout === DEP_FRESHNESS_PIPELINE) return { ...e, stdout: DEP_FRESHNESS_PIPELINE.replace('"state":"CLOSED"', '"state":"OPEN"') };
+    if (e.graphql === 'landing') return { ...e, aliases: { ...e.aliases, b8001: OPEN_LANDING(8001) } };
+    return e;
+  });
+  return s;
+}
+
 // FAULTS (gh transport): { id, pass, scenario(), warm? }. `pass` is the PASSES id whose fetch the
 // fault fails ('(stop)' for the two effects that make a step's input unreadable). `warm` runs it
 // after a clean miss of the same base, each side copying its own origin (the queue-order blob).
@@ -670,6 +701,19 @@ const FAULTS = [
     scenario: () => Object.assign(withRecord(P1(), ghRecord(9017, {
       body: `**Doc:** docs/present.md | **Section:** fixture\n\n${withBody(9017)}`, labels: ['auto:build', 'ready', 'by:docs-health'],
     })), { gitFail: [['remote', 'show', 'origin']] }),
+  },
+  {
+    // #5863: origin's HEAD dangles after the clone, so `git remote show origin` prints `HEAD branch: (unknown)`: no origin/ ref
+    // resolves, so the target-missing pass skips. The unlanded-blocker pass still gets the branch; no such branch exists on
+    // GitHub, so its compare call answers 404.
+    id: 'F-headunknown', pass: 'target-missing',
+    scenario: () => {
+      const s = Object.assign(withRecord(P1(), ghRecord(9017, {
+        body: `**Doc:** docs/present.md | **Section:** fixture\n\n${withBody(9017)}`, labels: ['auto:build', 'ready', 'by:docs-health'],
+      })), { danglingHead: true });
+      s.gh.unshift({ argv: compareArgv(REPO_SLUG, '(unknown)'), stdout: '', stderr: 'gh: Not Found (HTTP 404)\n', status: 1 });
+      return s;
+    },
   },
   { id: 'F-prview', pass: 'shipped', scenario: () => failGh(P1(), PR_VIEW_5016_ARGV) },
   { id: 'F-landing', pass: 'blocker-landing', scenario: () => failGraphql(P1(), 'landing') },
@@ -725,7 +769,7 @@ const withAgent = (name, content) => (files) => {
 };
 const FILES_INPUTS = [
   { input: 'queueRaw', file: 'dispatch-queue-raw.json', pass: 'fetch' },
-  { input: 'depFreshness', file: 'dispatch-dep-freshness.json', pass: 'fetch', warm: true },
+  { input: 'depFreshness', file: 'dispatch-dep-freshness.json', pass: 'fetch', warm: true, scenario: S1OpenDeps },
   { input: 'openNumbers', file: 'dispatch-open-numbers.json', pass: 'fetch' },
   { input: 'verifiedOpenDeps', file: 'dispatch-verified-open-deps.txt', pass: 'blocked', scenario: () => S1LiveDep() },
   { input: 'inFlightRaw', file: 'dispatch-in-flight-raw.json', pass: 'neighbour-in-flight' },
@@ -740,7 +784,7 @@ for (const { input, file, pass, warm, scenario = P1 } of FILES_INPUTS) {
 FILES_FAULTS.push(
   // The same missing file on a cold cache: only the write-back's search point reads it (the
   // in-process twin is the files dependency-freshness test's third block).
-  { id: 'files-depFreshness-missing-cold', input: 'depFreshness', mode: 'missing (cold cache)', pass: 'fetch', warm: false, scenario: P1, agent: withAgent('dispatch-dep-freshness.json', undefined) },
+  { id: 'files-depFreshness-missing-cold', input: 'depFreshness', mode: 'missing (cold cache)', pass: 'fetch', warm: false, scenario: S1OpenDeps, agent: withAgent('dispatch-dep-freshness.json', undefined) },
   { id: 'files-queueRaw-wrapper', input: 'queueRaw', mode: 'wrapper', pass: 'fetch', scenario: P1,
     agent: (files) => ({ ...files, 'dispatch-queue-raw.json': JSON.stringify({ issues: JSON.parse(files['dispatch-queue-raw.json']) }) }) },
   // #5307: a 500+ character JSON string queue has a string `.length` past the fence's cap, so
@@ -748,11 +792,11 @@ FILES_FAULTS.push(
   { id: 'files-queueRaw-string', input: 'queueRaw', mode: 'JSON string', pass: 'fetch', scenario: P1,
     agent: withAgent('dispatch-queue-raw.json', JSON.stringify('x'.repeat(600))) },
   // #5307: the dependency-freshness wrapper, warm (the cache check stops) and cold (the write-back does).
-  { id: 'files-depFreshness-wrapper', input: 'depFreshness', mode: 'wrapper', pass: 'fetch', warm: true, scenario: P1,
+  { id: 'files-depFreshness-wrapper', input: 'depFreshness', mode: 'wrapper', pass: 'fetch', warm: true, scenario: S1OpenDeps,
     agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
-  { id: 'files-depFreshness-string', input: 'depFreshness', mode: 'JSON string', pass: 'fetch', warm: true, scenario: P1,
+  { id: 'files-depFreshness-string', input: 'depFreshness', mode: 'JSON string', pass: 'fetch', warm: true, scenario: S1OpenDeps,
     agent: withAgent('dispatch-dep-freshness.json', JSON.stringify('not an array')) },
-  { id: 'files-depFreshness-wrapper-cold', input: 'depFreshness', mode: 'wrapper (cold cache)', pass: 'fetch', warm: false, scenario: P1,
+  { id: 'files-depFreshness-wrapper-cold', input: 'depFreshness', mode: 'wrapper (cold cache)', pass: 'fetch', warm: false, scenario: S1OpenDeps,
     agent: (files) => ({ ...files, 'dispatch-dep-freshness.json': JSON.stringify({ issues: JSON.parse(files['dispatch-dep-freshness.json']) }) }) },
   { id: 'files-inFlightRaw-empty', input: 'inFlightRaw', mode: 'empty []', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-raw.json', '[]') },
   { id: 'files-inFlightClaims-empty', input: 'inFlightClaims', mode: 'empty {}', pass: 'neighbour-in-flight', scenario: P1, agent: withAgent('dispatch-in-flight-claims.json', '{}') },
@@ -887,5 +931,5 @@ module.exports = {
   ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
-  SHostileTarget, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
+  SHostileTarget, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,
 };

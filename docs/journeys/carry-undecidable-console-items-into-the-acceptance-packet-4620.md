@@ -12,13 +12,15 @@ files:
   - plugin/skills/_shared/autonomy-ceiling.md
   - plugin/skills/_shared/ledger-format.md
   - plugin/skills/_shared/acceptance-packet.md
+  - plugin/bin/deferral-route.js
+  - plugin/skills/_shared/materiality-floor.md
 ---
 
 # Carry Undecidable Console Items Into the Acceptance Packet
 
 **Persona:** the claude-tweaks maintainer who turned on `control-mode: on` so they only decide at two points, intent and acceptance. They want a finished run to leave nothing behind: no `pending` console items, no `keep-staged` files, no `open` ledger rows. A second persona is the wrap-up agent running the Review Console and the ledger gate in that run.
 **Goal:** every item the console or the ledger could not settle by policy ends as a decision the maintainer sees in the acceptance packet, instead of residue they have to find later.
-**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose run config or `.claude-tweaks/policy.yml` sets `control-mode: on`, reaching `/claude-tweaks:wrap-up`.
+**Entry point:** a `/claude-tweaks:flow` or `/claude-tweaks:dispatch` run whose `.claude-tweaks/policy.yml` sets `control-mode: on` (a run config cannot — the key is `policyOnly`, #5830), reaching `/claude-tweaks:wrap-up`.
 **Success state:** the acceptance packet's Decisions left for you lists one line per carried item, `console-residue.js --run` reports nothing for the run, and every ledger row is `fixed`, `accepted` (digested) or `deferred` naming a staged proposal or a `carried to the acceptance packet as {factId}` fact.
 
 ## Steps
@@ -55,6 +57,7 @@ files:
 - **Should understand:**
   - `--converge` and `--memory-write` hold the same gate as the resolve call in code: with control mode off or `consoleAutoResolve` not granted they exit 4 and write nothing.
   - The four terminal states are `resolved`, `filed`, `digested` and `carried`.
+  - `belowFloor` is `true` only when `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" … --agent-raised`, run on the item's `deferReason`, prints `digest`, by any rule; it is `false` on `file`, `refused` or any other outcome, and an item with no `deferReason` gets no call and `false`. The agent never judges the floor from prose (#5931). A `digested` ledger row's `accepted` Resolution is the one `_shared/materiality-floor.md`'s digest-label table gives the printed `rule` (#5933).
   - An insight writes no ledger row; a carried insight needs nothing more.
   - A staged `filed` item that later fails to create takes `--set-item … carried --ledger`, never `--converge` again.
 - **Red flags:**
@@ -88,4 +91,5 @@ files:
 ## Origin
 - Created during the build of #4620 (run `2026-11-16T000749-record-4620`): `console-resolve.js --ceiling`, `--set-item … carried`, `--converge` and `--memory-write`, `lib/console/decision-facts.js`, `lib/console/residue-convergence.js`, `lib/console/memory-write.js`, and the control-mode branches in `wrap-up/review-console.md` and `_shared/ledger-format.md`.
 - Updated during the build of #5694 (run `2026-11-16T094458-record-5694`): Step 4 names the printed revert command, now read from `MEMORY_REVERT_COMMAND` in `lib/console/memory-write.js`, with `core.autocrlf` off.
+- Updated at the wrap-up of #5930-#5933: step 3 says how `belowFloor` is set (a `deferral-route.js` `digest` verdict, any rule) and that a digested row's Resolution follows the digest-label table; `files:` gains `plugin/bin/deferral-route.js` and `plugin/skills/_shared/materiality-floor.md`.
 - Related journeys: `recover-a-queue-write-the-unattended-console-could-not-file-4170.md` covers the non-control-mode `keep-staged` rewrite this route replaces. `accept-built-work-via-demo.md` covers the acceptance verdict itself.

@@ -56,7 +56,10 @@ test('AC2.1 AC2.2: a fixture repo made in a runner child and in a bare node --te
   const script = `const fs = require('fs'); const os = require('os'); const path = require('path');
 const { initRepo, gitRepo } = require(${JSON.stringify(fixtures)});
 const a = initRepo(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-gt-ac2-')), { name: 't', email: 't@example.test' });
-process.stdout.write(JSON.stringify([a, gitRepo()]));`;
+// gitRepo() removes its repository when this process exits, so what the test asserts is read here, not after.
+const look = (repo) => ({ repo, hooksIsDir: fs.statSync(path.join(repo, '.git', 'hooks')).isDirectory(), samples: fs.readdirSync(path.join(repo, '.git', 'hooks')).filter((n) => n.endsWith('.sample')), infoIsDir: fs.statSync(path.join(repo, '.git', 'info')).isDirectory() });
+process.stdout.write(JSON.stringify([a, gitRepo()].map(look)));
+fs.rmSync(a, { recursive: true, force: true });`;
   const runnerEnv = runnerChildEnv(base, { runRoot: mk('ct-gt-ac2-run-'), templateDir: writeGitTemplateDir(path.join(mk('ct-gt-ac2-tpl-'), 't'), base) });
   assert.strictEqual(typeof runnerEnv.GIT_TEMPLATE_DIR, 'string', 'the runner child has a template');
   const bareEnv = { ...base };
@@ -66,11 +69,11 @@ process.stdout.write(JSON.stringify([a, gitRepo()]));`;
     const r = spawnSync(process.execPath, ['-e', script], { env, encoding: 'utf8', windowsHide: true, timeout: FIXTURE_TIMEOUT_MS });
     assert.strictEqual(r.status, 0, `${label}: ${r.stderr}`);
     const repos = JSON.parse(r.stdout);
-    scratch.push(...repos);
     assert.strictEqual(repos.length, 2, label);
-    for (const repo of repos) {
-      assert.deepStrictEqual(samplesIn(path.join(repo, '.git')), [], `${label}: ${repo}`);
-      assert.ok(fs.statSync(path.join(repo, '.git', 'info')).isDirectory(), `${label}: ${repo}/.git/info is a directory`);
+    for (const { repo, hooksIsDir, samples, infoIsDir } of repos) {
+      assert.ok(hooksIsDir, `${repo}/.git/hooks is a directory`);
+      assert.deepStrictEqual(samples, [], `${label}: ${repo}`);
+      assert.ok(infoIsDir, `${label}: ${repo}/.git/info is a directory`);
     }
   }
 });

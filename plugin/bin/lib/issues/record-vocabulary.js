@@ -43,6 +43,7 @@ const LABELS = {
   ACCEPT_CHANGES_REQUESTED: 'accept:changes-requested',
   PARENT_ISSUE: 'parent-issue',
   SHAPED_HEADLESS: 'shaped:headless',
+  RELEASE_BLOCK: 'release-block',
 };
 
 // F8 from the program promise register — type:* label descriptions home

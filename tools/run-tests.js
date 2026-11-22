@@ -62,7 +62,10 @@
 // takes a cross-process slot, runs `node --test` with a bounded `--test-concurrency` and a private
 // TMPDIR under `<tmpdir>/ct-test-runs/` (removed on exit; roots orphaned by a killed run are swept
 // from that directory on the next one), and forwards SIGINT/SIGTERM/SIGHUP to the child so a
-// signalled runner frees its slot and root promptly instead of after the suite. Env knobs:
+// signalled runner frees its slot and root promptly instead of after the suite. Before it removes the root, it
+// counts what the suite left at the root's top level and prints one stderr warning naming the biggest name prefixes
+// (never a failure): the same entries a direct `node --test` run leaves in the real tmpdir, where they once piled
+// up to 597,912 (2026-11-18). tests/helpers/tmp-dir.js is how a test avoids leaving any. Env knobs:
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
@@ -322,6 +325,45 @@ function subsetFallbackReason(execPath, args, { platform }) {
 // their TMPDIR, so one run's leaked temp dirs are removable together and attributable to a pid.
 function createRunRoot(realTmp, pid) {
   return fs.mkdtempSync(path.join(realTmp, 'ct-testrun-' + pid + '-'));
+}
+
+// What the runner itself puts at the top of a run root (the git template and the repo-info store); every other
+// top-level entry there was left by a test or by code a test ran. Sorted.
+const RUN_ROOT_OWN_ENTRIES = Object.freeze(['git-template', 'repo-info-cache.json']);
+
+// The top-level entries a finished run left in its TMPDIR `runRoot`, sorted: the same entries a direct
+// `node --test` run would leave in the real tmpdir, where they pile up (597,912 entries on one dev machine,
+// 2026-11-18). A missing or unreadable root has none to report.
+function leftoverEntries(runRoot, { readdirSync = fs.readdirSync } = {}) {
+  let names;
+  try {
+    names = readdirSync(runRoot);
+  } catch (_) {
+    return [];
+  }
+  return names.filter((n) => !RUN_ROOT_OWN_ENTRIES.includes(n)).sort();
+}
+
+// `names` grouped by name prefix, most entries first: `fs.mkdtemp` appends six random characters, so a name
+// of seven or more characters loses its last six, and anything shorter groups under its whole name. Returns
+// `[{ prefix, count }]`, ties in prefix order.
+function summarizeLeftovers(names) {
+  const counts = new Map();
+  for (const name of names) {
+    const prefix = name.length > 6 ? name.slice(0, -6) : name;
+    counts.set(prefix, (counts.get(prefix) || 0) + 1);
+  }
+  return [...counts].map(([prefix, count]) => ({ prefix, count })).sort((a, b) => b.count - a.count || (a.prefix < b.prefix ? -1 : 1));
+}
+
+// The one stderr line a run prints when it left entries behind, or null when it left none. `limit` caps the
+// prefixes named so one badly leaking suite stays a single readable line.
+function leftoverWarning(names, { limit = 12 } = {}) {
+  if (names.length === 0) return null;
+  const groups = summarizeLeftovers(names);
+  const shown = groups.slice(0, limit).map((g) => `${g.prefix}* x${g.count}`).join(', ');
+  const more = groups.length > limit ? `, and ${groups.length - limit} more prefixes` : '';
+  return `run-tests.js: warning: the run left ${names.length} top-level entries in its TMPDIR (removed now; a direct node --test run would leave them in the real tmpdir): ${shown}${more}`;
 }
 
 // Removes `ct-testrun-<pid>-*` roots in `dir` whose pid is no longer alive (a killed run never
@@ -705,15 +747,21 @@ function writeGitTemplateDir(dir, env, { git = (args, opts) => execFileSync('git
 }
 
 // The env the runner hands its `node --test` child: `env` with maintenance off, the run's template
-// (when one was built), TMPDIR/TMP/TEMP and the repo-info store inside `runRoot`, and the slot-held mark.
+// (when one was built), TMPDIR/TMP/TEMP and the repo-info store inside `runRoot`, the slot-held mark, and the
+// factory policy file relocated to a path inside `runRoot` that is never created.
 function runnerChildEnv(env, { runRoot, templateDir }) {
-  return { ...gitFixtureConfigEnv(env), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json') };
+  // The factory layer (#6006) is the machine's own policy: a test run never inherits its variable, and
+  // CT_FACTORY_POLICY_FILE moves its file off ~/.claude-tweaks/factory-policy.yml, so a suite cannot pass or
+  // fail on the developer's own factory setup.
+  const { CLAUDE_TWEAKS_FACTORY_POLICY: _factory, ...inherited } = env;
+  return { ...gitFixtureConfigEnv(inherited), ...(templateDir ? { GIT_TEMPLATE_DIR: templateDir } : {}), TMPDIR: runRoot, TMP: runRoot, TEMP: runRoot, CT_TEST_SUITE_SLOT_HELD: '1', CT_HOOKS_REPO_INFO_STORE: path.join(runRoot, 'repo-info-cache.json'), CT_FACTORY_POLICY_FILE: path.join(runRoot, 'factory-policy.absent.yml') };
 }
 
 module.exports = {
   gitFixtureConfigEnv, appendGitConfigEnv, writeGitTemplateDir, isTemplateSampleHook, GIT_TEMPLATE_CONFIG, runnerChildEnv,
   listTestFiles, buildTestArgs, resolveConcurrency, resolveSlots, subsetFallbackReason, WIN32_COMMAND_LINE_MAX,
   isPidAlive, ensureOwnDir, acquireSlot, releaseSlot, createRunRoot, sweepStaleRoots, readFileList, slotLane,
+  leftoverEntries, summarizeLeftovers, leftoverWarning, RUN_ROOT_OWN_ENTRIES,
   parseShard, readDurations, assignShards, extractRunFlags, durationsPartialPath, finishRecording,
   resolveRunMode, selectChangedTests, realSelectionDeps, planDefaultRun, applyDefaultSelection,
   DURATIONS_FILE, PER_FILE_OVERHEAD_MS, DEFAULT_FILE_MS, NODE_TEST_VALUE_FLAGS, parseRunnerOperands, canonicalPath,
@@ -978,6 +1026,10 @@ if (require.main === module) {
     throw err;
   });
   child.on('exit', (code, signal) => {
+    // Read the run root before cleanup removes it: what the suite left at its top level is the leak a direct run
+    // would put in the real tmpdir. A warning only, never a failure.
+    const leftWarning = runRoot ? leftoverWarning(leftoverEntries(runRoot)) : null;
+    if (leftWarning) console.error(leftWarning);
     cleanup();
     if (recordDurations !== null) {
       console.error(finishRecording(recordDurations, process.pid, { signalled: Boolean(forwarded || signal) }));

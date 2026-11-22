@@ -61,6 +61,7 @@
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -71,7 +72,7 @@ const {
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
-  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, fakeRun, fakeSpawnCli,
+  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, fakeRun, fakeSpawnCli,
 } = require('./queue-pull-fixtures');
 const { PASSES, SESSION_FILES, sessionPaths, makeContext, runPasses } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
@@ -118,7 +119,7 @@ const CLOSING_BODY = (tpath, ref) => `Closing: the named target ${tpath} no long
 // Runs the staged `gh issue comment <num> ...` line under bash with stub gh (logs its argv) and stub id
 // (drops a marker): the argv gh received, and whether anything but the quoted word ran `id`.
 function runStagedComment(proposalText, num) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-5317-'));
+  const dir = scratchDir('qp-5317-');
   try {
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
@@ -322,6 +323,13 @@ const FAULT_EXPECT = {
     stdout: [],
     drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
   },
+  'F-headunknown': {
+    // #5863: `HEAD branch: (unknown)` skips only the target-missing pass. The unlanded-blocker pass still gets `(unknown)`: its
+    // compare call 404s, so it keeps #9011 with one `undetermined` line (read from a baseline run), where F-intbranch's empty branch skips the pass.
+    status: 0, stderr: [TARGET_MISSING_SKIPPED, 'AUTO — dispatch: #9006 excluded, shipped by merged PR #5006', 'AUTO — dispatch: #9011 kept — blocker #8001 landing undetermined (via probe-failed)'],
+    stdout: [],
+    drops: ['target-missing:9006', 'target-missing:9009', 'unlanded-blocker:9011'], adds: ['shipped:9006'],
+  },
   'F-prview': { status: 0, stderr: [PR_VIEW_FAILED(5016, 9016).trimEnd()], drops: [] },
   'F-landing': { status: 0, stderr: [LANDING_EXITED], drops: ['unlanded-blocker:9011'] },
   'F-inflight': { status: 0, stderr: [IN_FLIGHT_POOL_AUTO], drops: ['neighbour-in-flight:9013'] },
@@ -345,7 +353,7 @@ const FILES_EXPECT = {
   'files-queueRaw-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-depFreshness-missing': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-malformed': { status: 1, stderr: [STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-missing-cold': { status: 0, stderr: [], drops: [] },
+  'files-depFreshness-missing-cold': { status: 0, base: 'files-opendeps', stderr: [], drops: [] },
   'files-openNumbers-missing': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   'files-openNumbers-malformed': { status: 1, stderr: [STOP_LINE.grouping], entries: [] },
   // #5311: #8001 (the unresolved dependency of #9011) counts as open too, so #9011 is held as blocked.
@@ -360,7 +368,7 @@ const FILES_EXPECT = {
   'files-queueRaw-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-queueRaw-string/dispatch-queue-raw.json is not a JSON array — treated as a failed read', STOP_LINE.grouping], entries: [] },
   'files-depFreshness-wrapper': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
   'files-depFreshness-string': { status: 1, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-string/dispatch-dep-freshness.json is not a JSON array — treated as a failed read', STOP_LINE.cacheHit], entries: [] },
-  'files-depFreshness-wrapper-cold': { status: 0, stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
+  'files-depFreshness-wrapper-cold': { status: 0, base: 'files-opendeps', stderr: ['Warning: <SCR>/tmp/run-1/ct-session-qp-files-depFreshness-wrapper-cold/dispatch-dep-freshness.json is not a JSON array — treated as a failed read'], drops: [] },
   'files-inFlightRaw-empty': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-empty': { status: 0, stderr: [CLAIM_READ_FAILED_7001], drops: ['neighbour-in-flight:9013'] },
   'files-inFlightClaims-string': { status: 0, stderr: [], drops: ['neighbour-in-flight:9013'] },
@@ -410,13 +418,13 @@ function assertFailOpenPostures(pool, family, t) {
 }
 
 // A row's default base, and the fault pool's bases: the matrix configs themselves (one
-// definition of each base), the live-dependency scenario the matrix does not run, and S1-gh-hit,
+// definition of each base), the live-dependency and open-dependency scenarios the matrix does not run, and S1-gh-hit,
 // F-depfresh's un-faulted warm control on the same miss origin.
 const MATRIX_CFG = Object.fromEntries(MATRIX.map((c) => [c.name, c]));
 const BASE = { gh: 'S1-gh-miss', files: 'S1-files-miss' };
 const FAULT_BASES = [
   MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
-  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' },
+  MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' }, { name: 'files-opendeps', scenario: S1OpenDeps(), transport: 'files' },
 ];
 
 // The fault pool's pair configs for the transports it runs: their bases, then each transport's rows (a
@@ -565,7 +573,7 @@ function registerParityCleanup() {
 
 // Runs fn with TMPDIR (and the win32 spellings) pointed at a test-owned dir, never the host one.
 function inOwnTmp(fn) {
-  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'qp-t2-'));
+  const own = scratchDir('qp-t2-');
   const keys = ['TMPDIR', 'TEMP', 'TMP'];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) process.env[k] = own;

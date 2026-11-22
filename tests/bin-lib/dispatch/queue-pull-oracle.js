@@ -22,6 +22,7 @@
 // tracer still sees the children. Every run sits inside withEscapeGuard on this checkout.
 // The gh fallback re-enters this module through shimMain(), so keep its top level cheap.
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -133,7 +134,7 @@ function filesOracleScript(fence, mcpText) {
       holds: 'gh issue list --search',
     }, [`  ${agentWrite('dispatch-dep-freshness.json', 'DISPATCH_DEP_FRESHNESS')}`]);
   }
-  replaceSpan(lines, { first: ': > "$DISPATCH_VERIFIED_OPEN_DEPS"', through: 'done', holds: 'gh issue view "$DEP"' },
+  replaceSpan(lines, { first: 'rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"', through: 'done', holds: 'gh issue view "$DEP"' },
     [agentWrite('dispatch-verified-open-deps.txt', 'DISPATCH_VERIFIED_OPEN_DEPS')]);
   replaceSpan(lines, {
     first: 'if ! gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then',
@@ -607,7 +608,7 @@ function ghShimScript({ shimDir, table }) {
 function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox', agent = {} } = {}) {
   installExitHooks();
   const table = shimTable(scenario);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-oracle-')));
+  const root = fs.realpathSync(scratchDir('qp-oracle-'));
   liveRoots.add(root);
   const cleanup = () => {
     fs.rmSync(root, { recursive: true, force: true });
@@ -640,6 +641,9 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     if (origin) fs.cpSync(origin, originDir, { recursive: true });
     else seedOrigin(originDir, scenario.origin, git, scenario.headBranch);
     git(['clone', '-q', originDir, proj]);
+    // #5863: origin's HEAD dangles only after the clone (a dangling HEAD before it clones with no checkout), so the
+    // clone checks out main and only the live `git remote show origin` prints `HEAD branch: (unknown)`.
+    if (scenario.danglingHead) git(['-C', originDir, 'symbolic-ref', 'HEAD', 'refs/heads/no-such-head']);
 
     const policy = Object.entries(scenario.policy || {}).map(([k, v]) => `${k}: ${v}\n`).join('');
     fs.mkdirSync(path.join(proj, '.claude-tweaks'), { recursive: true });

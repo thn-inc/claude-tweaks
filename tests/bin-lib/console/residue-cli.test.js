@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -31,7 +32,7 @@ const CONSOLE_2821 = {
 const RUN_2821 = '2026-10-16T210949-spec-2821';
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rescli-'));
+  const root = scratchDir('rescli-');
   const main = path.join(root, 'main');
   fs.mkdirSync(path.join(main, '.git'), { recursive: true });
   const archive = path.join(main, '.claude-tweaks', 'pipelines', 'archive');

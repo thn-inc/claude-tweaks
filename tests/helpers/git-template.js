@@ -24,11 +24,19 @@
 // freshly built repo did, because some tests order worktrees by mtime. Git
 // rehashes copied files anyway, since their inode and ctime differ from the
 // ones recorded in the copied index.
+//
+// Where a builder's warm-call test belongs: in a test file that already builds
+// that template (calls the builder with arguments giving the same key), never in
+// tests/helpers-git-template.test.js. Templates are cached per process, so a
+// "second call starts no git process" test costs nothing where the template is
+// built anyway and costs a whole build in a file that would not otherwise build
+// it. The check itself is `warmCallStartsNoGit` in tests/helpers/git-trace.js.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { gitFixtureConfigEnv, writeGitTemplateDir } = require('../../tools/run-tests');
+const { scratchDir } = require('./tmp-dir');
 
 // #5294: repoInfo remembers answers in a per-user store (~/.claude-tweaks/repo-info-cache.json).
 // tools/run-tests.js points CT_HOOKS_REPO_INFO_STORE into its run root before any suite loads;
@@ -228,7 +236,9 @@ function fromTemplateSet(key, build, layout) {
   try {
     for (const n of names) {
       const { parent = os.tmpdir(), prefix, realpath = false } = layout[n];
-      let dir = fs.mkdtempSync(path.join(parent, prefix));
+      // scratchDir: the copy is removed when the test process exits, so a caller that never removes its
+      // fixture leaves nothing behind in the real tmpdir under a direct `node --test`.
+      let dir = scratchDir(prefix, { parent });
       out[n] = dir;
       fs.cpSync(tpl.dirs[n], dir, { recursive: true, preserveTimestamps: false, verbatimSymlinks: true });
       if (realpath) out[n] = dir = fs.realpathSync(dir);

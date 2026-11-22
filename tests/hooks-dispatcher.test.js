@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readRunState } = require('../plugin/bin/lib/hooks/context');
@@ -23,7 +24,7 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-disp-sandbox-');
 
 // #5377: runs hooks.js in-process through runHookCli. hookEnv carries what the old spawn spread over
 // process.env: #1130's `PIPELINE_RUN_DIR: ''` (an ambient run-dir env var cannot resolve a run for a
@@ -36,7 +37,7 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {}, deps, f
 }
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-'));
+  const dir = scratchDir('ct-disp-');
   // #790: an explicit --run must resolve under a real git checkout (see
   // bin/hooks.js's resolveRunArg anchoring check) — a bare, non-git tmp dir
   // no longer counts as a valid anchor for any run dir nested under it.
@@ -52,7 +53,7 @@ function tmpProject() {
 }
 
 function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-repo-'));
+  const dir = scratchDir('ct-disp-repo-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   return fs.realpathSync(dir);
 }
@@ -65,7 +66,7 @@ function writeWorktreeAlwaysPolicy(project) {
 test('invariant: every event exits 0 on garbage stdin, no stdout noise', async () => {
   // session-start starts a detached background child and reads the home dir: it gets a fake starter
   // (no real child) and a fixture home.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-home-'));
+  const home = scratchDir('ct-disp-home-');
   const fakeSpawn = () => ({ on() {}, unref() {} });
   for (const ev of ['session-start', 'session-end', 'pre-compact', 'pre-tool-use', 'post-tool-use', 'post-tool-use-failure', 'subagent-stop', 'user-prompt-submit']) {
     const r = await runHook([ev], { input: '%%%not json%%%', env: fixtureHomeEnv(home, {}), deps: ev === 'session-start' ? { spawn: fakeSpawn } : undefined });
@@ -306,7 +307,7 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
 // guess at, so this no-run-dir-at-all case hits the same guard as every other
 // omitted---run invocation, not a distinct "nothing found" message.
 test('record-worktree without --run and with no resolvable run dir anywhere still refuses (not "no pipeline run dir found")', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   const result = await runHook(['record-worktree', '/tmp/wt'], { cwd: bare });
   assert.notStrictEqual(result.code, 0);
   assert.match(result.stdout, /record-worktree requires --run/);
@@ -422,6 +423,18 @@ test('record-pr, spec-status, close-run, teardown-run, check-resume-freshness, c
   }
 });
 
+// #5903: the run-dir mint now writes manifest.json, but it is not one of the
+// three initialization markers — a dir holding only it is still uninitialized.
+test('close-run rejects a --run target whose only file is manifest.json (#5903: manifest.json is not run initialization)', async () => {
+  const project = gitRepo();
+  const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(run, 'manifest.json'), '{}\n');
+  const result = await runHook(['close-run', '--run', run], { cwd: project });
+  assert.strictEqual(result.code, 1);
+  assert.match(result.stdout, /--run path rejected: .*not an initialized run dir/);
+});
+
 test('close-run with a non-existent --run path fails loudly instead of falling back', async () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -521,7 +534,7 @@ test('record-worktree with a resolvable run dir but no worktree argument prints 
 // and resolveRunDir's own fallback also found nothing) — that case also
 // printed nothing and exited 0.
 test('close-run with no resolvable run dir and no --run given prints a not-closed notice instead of silent success', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   const result = await runHook(['close-run'], { cwd: bare });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.trim().length > 0, 'expected a diagnostic message, not silent success');
@@ -794,7 +807,7 @@ test('AC5.1: dispatcher: an Agent prompt that differs from the rendered file is 
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-11-01T181353-record-4589');
   fs.mkdirSync(run, { recursive: true });
   assert.strictEqual((await runHook(['record-worktree', '--run', run, '/tmp/wt-4589', '--dispatch'], { cwd: project, env: { CLAUDE_CODE_SESSION_ID: 'S' } })).code, 0);
-  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-dpg-')), 'first.md');
+  const out = path.join(scratchDir('ct-disp-dpg-'), 'first.md');
   let err = '';
   const code = renderPrompt(['--call', 'first', '--run', run, '--issues', '4589', '--out', out], {
     cwd: () => project,
@@ -820,7 +833,7 @@ test('AC5.1: dispatcher: an Agent prompt that differs from the rendered file is 
 });
 
 test('dispatcher: AskUserQuestion with no owned run exits 0 with no deny', async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-disp-ask-'));
+  const cwd = scratchDir('ct-disp-ask-');
   const result = await runHook(['pre-tool-use'], {
     input: JSON.stringify({
       tool_name: 'AskUserQuestion',
@@ -1240,7 +1253,7 @@ function frozenSnippet(root, dir) {
 
 test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredoc body) is NOT denied', async () => {
   const { project } = policyRepoWithRun();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
+  const tmp = scratchDir('ct-3989-queue-');
   const result = await runBashPreToolUse(frozenSnippet(path.join(tmp, 'plugin'), tmp), project);
   assert.strictEqual(result.code, 0);
   assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/, 'the body is not a redirection; its only write target is under the temp dir');
@@ -1248,7 +1261,7 @@ test('#3989 AC1: the frozen queue-pull grouping snippet (a `>` inside its heredo
 
 test('#3989 AC2: the same snippet with a real top-level redirect into the repo after the delimiter IS denied', async () => {
   const { project } = policyRepoWithRun();
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-3989-queue-'));
+  const tmp = scratchDir('ct-3989-queue-');
   const command = `${frozenSnippet(path.join(tmp, 'plugin'), tmp)}\necho x > ${shellQuote(path.join(project, 'tracked-file.js'))}`;
   const result = await runBashPreToolUse(command, project);
   assert.strictEqual(result.code, 0);
@@ -1455,7 +1468,7 @@ test('record-pr with a non-existent --run path fails loudly instead of falling b
 });
 
 test('record-pr with no resolvable run dir prints a not-recorded notice instead of silent success', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   const result = await runHook(['record-pr', '7', 'https://github.com/o/r/pull/7'], { cwd: bare });
   assert.strictEqual(result.code, 0);
   assert.ok(result.stdout.trim().length > 0, 'expected a diagnostic message, not silent success');

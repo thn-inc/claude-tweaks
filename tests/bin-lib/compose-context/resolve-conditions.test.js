@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { resolveConditions } = require('../../../plugin/bin/lib/compose-context/resolve-conditions');
@@ -9,7 +10,7 @@ const { resolveConditions } = require('../../../plugin/bin/lib/compose-context/r
 // Fixture: a fake main checkout (repoRoot) and a run dir under it. Files are
 // written only when the test needs them, so "absent" cases are real absences.
 function fixture({ policy, config, claudeMd } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-rc-'));
+  const root = scratchDir('compose-rc-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-spec-1');
   fs.mkdirSync(runDir, { recursive: true });
   if (policy != null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);

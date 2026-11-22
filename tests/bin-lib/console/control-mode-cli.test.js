@@ -5,6 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -18,7 +19,7 @@ const { appendRow } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'stage-ite
 const { initRepo } = require('../../helpers/git-fixtures');
 
 function mainCheckoutWithRun({ autonomy = 'unattended', staged = {}, decisions = '', policyExtra = '', writePolicy = true, runConfig = null, consoleJson = null } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-cli-')));
+  const root = fs.realpathSync(scratchDir('console-resolve-cm-cli-'));
   const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   initRepo(root, { name: 't', email: 't@example.invalid', cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); git('commit', '-q', '--allow-empty', '-m', 'init');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
@@ -184,7 +185,7 @@ test('a rewritten ledger-record item settles its row and the AUTO line says so',
 
 test('--ledger names a path that must clear the ledger containment guard: refused paths exit 5 and write nothing', async () => {
   const fx = controlFixture({ consoleJson: consoleOf([ledgerItem()]) });
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-outside-')));
+  const outside = fs.realpathSync(scratchDir('console-resolve-cm-outside-'));
   const outsideLedger = path.join(outside, 'ledger.md');
   fs.writeFileSync(outsideLedger, `${LEDGER_HEAD}| 1 | build | a finding | deferred | → backlog, staged/ledger-record-1.md |\n`);
   const notALedger = path.join(fx.root, 'notes.md');
@@ -600,7 +601,7 @@ test('--converge takes no other flag, --dry-run included', async () => {
 
 test('--converge: an unanchored --run exits 3 and writes nothing', async () => {
   const fx = controlFixture();
-  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'console-resolve-cm-elsewhere-')));
+  const elsewhere = fs.realpathSync(scratchDir('console-resolve-cm-elsewhere-'));
   const b = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', elsewhere, '--converge', itemsFile(fx, RESIDUE)], b.d), 3);
   assert.strictEqual(b.out(), '');

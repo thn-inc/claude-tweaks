@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -15,7 +16,7 @@ const CLI_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', '
 const SERVER_LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'visual-decide', 'server.js');
 
 function mkTmp(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return scratchDir(prefix);
 }
 
 async function run(args, { cwd, env, deps } = {}) {
