@@ -11,7 +11,7 @@
 // body line carried in `body`, never a `facets` key, because record-risk-flags.js's
 // parseRiskFlags reads it from the body for both backends (so is the tripwire's
 // `Risk-flags-added-by-tripwire:` line, read by parseTripwireFlags); so is `Acceptance-target:`
-// (record-acceptance-target.js's parseAcceptanceTarget). No network calls.
+// (record-acceptance-target.js's parseAcceptanceTarget); so is `Plan:` (plan-line.js's parsePlanLine). No network calls.
 'use strict';
 
 const fs = require('fs');
