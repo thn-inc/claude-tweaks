@@ -111,7 +111,7 @@ function issuesFromRecordsJson(raw, numbers, flag = '--records-json') {
   return { ok };
 }
 
-// fetchNativeDependencies({ numbers, owner, repo, runner }) -> Map<number,
+// fetchNativeDependencies({ numbers, owner, repo, runner, onSnapshot }) -> Map<number,
 // {blockedBy: number[], openBlocker: boolean, openBlockerIds: number[],
 // crossRepoBlockers?: [{number, repository, state}]}> (crossRepoBlockers only
 // when a blocker lives in another repository, #4793).
@@ -126,10 +126,10 @@ function issuesFromRecordsJson(raw, numbers, flag = '--records-json') {
 // does; native-dependencies.js itself takes no default so its behavior stays
 // fully injectable for every caller.
 function fetchNativeDependencies({
-  numbers, owner, repo, host, runner = defaultRunner,
+  numbers, owner, repo, host, runner = defaultRunner, onSnapshot,
 } = {}) {
   return sharedFetchNativeDependencies({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   });
 }
 

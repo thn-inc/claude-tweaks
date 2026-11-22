@@ -23,7 +23,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { isPathContained } = require('../shared-primitives');
+const sharedPrimitives = require('../shared-primitives');
+const { isPathContained } = sharedPrimitives;
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const {
   ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions, gateOriginRepo, ghHostIn, injectedGhDeps,
@@ -34,6 +35,7 @@ const { dispositionState } = require('../issues/acceptance');
 const { LABELS, parseParent } = require('../issues/record');
 const { GhFailure, ghCaller, gatherGateFacts, evaluateParentGate, onHost } = require('../issues/parent-gate');
 const { resolvePolicyKeys } = require('../policy-schema');
+const { locatePolicyFile } = require('../policy-file');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
 const { readPacket } = require('./packet-gather');
@@ -47,20 +49,27 @@ const { learnedSkillsDelivered } = require('../learned-skills/delivered');
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
 // had) -- one options object, reused by construction. `wrap` transforms that
 // object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+// `boundOf` is required and read per call: every runner names its bound on purpose, since a
+// silent default is the hard-coded literal #4856 removed. The gh bound follows the gh-timeout-ms
+// ladder (the shared GH_TIMEOUT_MS: a GitHub Enterprise Server project raises it, since its gh
+// calls are slower); git is local and keeps its own GIT_BOUND_MS.
 // `ctx` is the caller's injected process context, `{ env, stderr, homeDir }`, each optional (#5379): an
 // `env` becomes the child's environment and reaches ghOptions' host lookup; absent, the child inherits
-// the real one.
-function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
+// the real one. A `ctx.env` does NOT reach the gh bound: GH_TIMEOUT_MS is the process-wide memoized
+// getter (process env, the process cwd's policy) — the #4856 plan-review ruling, which rejected
+// threading the injected env and cwd through `ghTimeoutMsAt(cwd, { env })`.
+function makeDefaultRunner(cmd, boundOf, wrap = (_args, o) => o) {
   return function run(args, cwd, ctx = {}) {
     return execFileSync(cmd, args, wrap(args, {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true,
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: boundOf(), windowsHide: true,
       ...(ctx.env ? { env: ctx.env } : {}),
     }, injectedGhDeps(ctx)));
   };
 }
 
-const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh', ghOptions);
+const GIT_BOUND_MS = 5000;
+const defaultGit = makeDefaultRunner('git', () => GIT_BOUND_MS);
+const defaultGh = makeDefaultRunner('gh', () => sharedPrimitives.GH_TIMEOUT_MS, ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -779,7 +788,7 @@ function resolveCheckRepo(deps, cwd) {
 function readParentGatePolicy(repoRoot, keys) {
   let policyRaw = null;
   try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    policyRaw = fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch (err) {
     if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) {
       return { ok: false, error: `cannot read .claude-tweaks/policy.yml: ${err && err.message}` };
@@ -1084,7 +1093,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // label a verdict outranks does not gate the record, and says so on its own line.
     if (dispositionState(labelNames) !== 'pending') {
       failing.push(carriesPending
-        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:accept #${target}`
         : `#${target}: missing ${LABELS.DEMO_PENDING} or ${LABELS.ACCEPT_PENDING} label`);
       continue;
     }

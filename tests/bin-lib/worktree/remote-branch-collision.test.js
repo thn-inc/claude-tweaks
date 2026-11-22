@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { originWithTwoClones } = require('../../helpers/git-fixtures');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 const { isValidBranchName } = require('../../../plugin/bin/lib/branch-name');
 const {
   checkAdoptedBranch,
@@ -503,4 +504,10 @@ test('AC1.1: checkAdoptedBranch looks up the prior attempt only for foreign', ()
   assert.equal(result.state, 'unreachable');
   assert.equal(typeof result.card, 'string');
   assert.equal('pr' in result, false);
+});
+
+// #5846: originWithTwoClones sits on a template (#5297), keyed without the prefix; this file's own
+// real-git tests build the same unseeded template, so the warm-call check lives here.
+test('originWithTwoClones: a second call starts no git process', (t) => {
+  warmCallStartsNoGit(() => originWithTwoClones('ct-gt-otc-'), { track: (r) => t.after(() => fs.rmSync(r.root, { recursive: true, force: true })) });
 });

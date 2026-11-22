@@ -5,11 +5,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { capture, stageEntry, readManifest, realDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
+const { execFileSync } = require('node:child_process');
+const { capture, stageEntry, readManifest, realDeps, withReadCache } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 const {
   X, sh, write, read, lf, fixture, status, args, baseDeps, diffOf, TOP, BOTTOM,
 } = require('../../helpers/learned-skills-capture.js');
+const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 function recorder() {
   const calls = [];
@@ -1008,4 +1010,190 @@ test('core.autocrlf=true: a reset by reverse-apply leaves no residue when the in
   assert.equal(status(f.repo, X), '');
   assert.equal(read(f.repo, X), body);
   assert.equal(sh(f.repo, ['diff', '--cached', '--name-only']), '', 'nothing is staged');
+});
+
+// --- withReadCache (#5790): one capture() call reuses an unchanged read-only git answer ------------
+// A fake git that records argv and returns a fresh answer per call, so a reused answer is visible.
+const CACHE_TARGET = '/wt/.claude/skills/x/SKILL.md';
+const DIFF = ['-C', '/wt', 'diff', '--binary', 'HEAD', '--', '.claude/skills/x/SKILL.md'];
+function fakeGit({ throwFirst = false } = {}) {
+  const calls = [];
+  const git = (a, o = {}) => {
+    calls.push(a);
+    if (throwFirst && calls.length === 1) throw new Error('simulated read failure');
+    const answer = `answer ${calls.length}`;
+    return o.encoding === 'buffer' ? Buffer.from(answer) : answer;
+  };
+  const count = (argv) => calls.filter((a) => JSON.stringify(a) === JSON.stringify(argv)).length;
+  return { count, git };
+}
+
+for (const sub of [['apply', '-'], ['checkout', 'HEAD', '--', 'x'], ['add', '--', 'x'], ['rm', '--cached', '--quiet', '--', 'x']]) {
+  test(`AC3.1: withReadCache discards a cached answer after git ${sub[0]}`, () => {
+    const fake = fakeGit();
+    const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+    const first = d.git(DIFF);
+    assert.equal(d.git(DIFF), first, 'an unchanged ask reuses the answer');
+    assert.equal(fake.count(DIFF), 1);
+    d.git(['-C', '/wt', ...sub]);
+    assert.notEqual(d.git(DIFF), first, 'the ask after the state change reads git again');
+    assert.equal(fake.count(DIFF), 2);
+  });
+}
+
+test('withReadCache: apply --check, rev-parse and cat-file between two asks keep the answer', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  const REV = ['-C', '/wt', 'rev-parse', '--short', 'HEAD'];
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'apply', '--check', '/run/staged/wrap-up-skill-1.md']);
+  d.git(REV);
+  d.git(['-C', '/wt', 'cat-file', '-e', 'HEAD:.claude/skills/x/SKILL.md']);
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 1);
+  // A pass-through read is never cached itself.
+  d.git(REV);
+  assert.equal(fake.count(REV), 2);
+});
+
+test('withReadCache: a path after -- named --check is not an option: that apply discards', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'apply', '--', '--check']);
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: an argument after --end-of-options named --check is not an option: that apply discards', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'apply', '--end-of-options', '--check']);
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: hash-object -w is a write and discards; a -w after -- is a path and the ask is cached', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF);
+  d.git(['-C', '/wt', 'hash-object', '-w', '--stdin'], { input: Buffer.from('A') });
+  d.git(DIFF);
+  assert.equal(fake.count(DIFF), 2);
+  const PATH_W = ['-C', '/wt', 'hash-object', '--stdin', '--', '-w'];
+  d.git(PATH_W, { input: Buffer.from('A') });
+  d.git(PATH_W, { input: Buffer.from('A') });
+  assert.equal(fake.count(PATH_W), 1);
+});
+
+test('withReadCache: an omitted encoding and utf8 share one answer; another cwd asks again', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  const first = d.git(DIFF);
+  assert.equal(d.git(DIFF, { encoding: 'utf8' }), first);
+  assert.equal(fake.count(DIFF), 1);
+  d.git(DIFF, { cwd: '/elsewhere' });
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: a failed read is asked again', () => {
+  const fake = fakeGit({ throwFirst: true });
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  assert.throws(() => d.git(DIFF), /simulated read failure/);
+  assert.equal(d.git(DIFF), 'answer 2');
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: a cached Buffer answer is a copy', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  const first = d.git(DIFF, { encoding: 'buffer' });
+  const original = Buffer.from(first);
+  first.fill(0);
+  const second = d.git(DIFF, { encoding: 'buffer' });
+  assert.equal(fake.count(DIFF), 1);
+  assert.deepEqual(second, original);
+  second.fill(1);
+  assert.deepEqual(d.git(DIFF, { encoding: 'buffer' }), original);
+});
+
+test('withReadCache: an env-carrying call is never cached', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  d.git(DIFF, { env: {} });
+  d.git(DIFF, { env: {} });
+  assert.equal(fake.count(DIFF), 2);
+});
+
+test('withReadCache: hash-object keys on the input bytes', () => {
+  const fake = fakeGit();
+  const d = withReadCache({ git: fake.git }, CACHE_TARGET);
+  const HASH = ['-C', '/wt', '-c', 'core.safecrlf=false', 'hash-object', '--stdin', '--path=.claude/skills/x/SKILL.md'];
+  const a = d.git(HASH, { input: Buffer.from('A') });
+  const b = d.git(HASH, { input: Buffer.from('B') });
+  assert.notEqual(a, b);
+  assert.equal(d.git(HASH, { input: Buffer.from('A') }), a);
+  assert.equal(fake.count(HASH), 2);
+});
+
+test('withReadCache: a write naming the target discards the answers; a write elsewhere does not', () => {
+  const fake = fakeGit();
+  const seen = [];
+  const seam = (name) => (...xs) => { seen.push([name, ...xs]); };
+  const d = withReadCache({
+    git: fake.git, unlink: seam('unlink'), writeFile: seam('writeFile'), writeFileExclusive: seam('writeFileExclusive'),
+    rename: seam('rename'), rmdir: seam('rmdir'),
+  }, CACHE_TARGET);
+  // How many times DIFF reached git across ask, fn(), ask.
+  const asks = (fn) => { const n = fake.count(DIFF); d.git(DIFF); fn(); d.git(DIFF); return fake.count(DIFF) - n; };
+  d.git(DIFF);
+  assert.equal(asks(() => d.unlink(CACHE_TARGET)), 1, 'unlink of the target');
+  assert.equal(asks(() => d.unlink('/run/learned-skills/1.patch')), 0, 'unlink elsewhere');
+  assert.equal(asks(() => d.rmdir('/wt/.claude/skills/x')), 1, 'rmdir of an ancestor');
+  assert.equal(asks(() => d.rmdir('/wt/.claude/skills/y')), 0, 'rmdir elsewhere');
+  assert.equal(asks(() => d.writeFile(CACHE_TARGET, 'x')), 1, 'writeFile of the target');
+  assert.equal(asks(() => d.writeFile('/run/staged/wrap-up-skill-1.md', 'x')), 0, 'writeFile elsewhere');
+  assert.equal(asks(() => d.writeFileExclusive(CACHE_TARGET, 'x')), 1, 'writeFileExclusive of the target');
+  assert.equal(asks(() => d.writeFileExclusive('/run/learned-skills/1.pending.patch', 'x')), 0, 'writeFileExclusive elsewhere');
+  assert.equal(asks(() => d.rename('/run/learned-skills/1.pending.patch', CACHE_TARGET)), 1, 'rename onto the target');
+  assert.equal(asks(() => d.rename(CACHE_TARGET, '/run/elsewhere')), 1, 'rename of the target');
+  assert.equal(asks(() => d.rename('/run/learned-skills/1.pending.patch', '/run/learned-skills/1.patch')), 0, 'rename elsewhere');
+  // Every wrapped seam still ran, with its arguments.
+  assert.equal(seen.length, 11);
+  assert.deepEqual(seen[0], ['unlink', CACHE_TARGET]);
+  assert.deepEqual(seen[8], ['rename', '/run/learned-skills/1.pending.patch', CACHE_TARGET]);
+});
+
+test('AC1.1: one resetToHead() on a tree already at HEAD runs diff HEAD -- <rel> once', (t) => {
+  const f = fixture(t);
+  const original = read(f.repo, X);
+  write(f.repo, X, original + 'will be staged\n');
+  let after = false; // set once the promote rename has failed: resetToHead runs next
+  const diffs = [];
+  const res = capture(args(f, X), {
+    now: () => Date.UTC(2026, 10, 13, 12, 0, 0),
+    git: (a, o) => { if (after && a.includes('diff') && a.includes('--binary')) diffs.push(a); return realDeps.git(a, o); },
+    rename: () => { after = true; throw new Error('simulated promote failure'); },
+  });
+  // The checkout ran before the failed rename, so the tree is at HEAD when resetToHead runs.
+  assert.equal(res.route, 'staged');
+  assert.equal(status(f.repo, X), '');
+  assert.equal(read(f.repo, X), original);
+  assert.equal(diffs.length, 1);
+});
+
+// #5846: the capture fixture is a template (#5770) — a warm call starts no git process. The test lives
+// here because this file's own tests already build both variants.
+test('AC3.1: learned-skills capture fixture(): a warm copy starts no git process', (t) => {
+  const { traced: [a, b] } = warmCallStartsNoGit(() => [fixture(t), fixture(t, {}, { autocrlf: 'true' })]);
+  assert.notStrictEqual(a.repo, b.repo);
+  assert.ok(fs.statSync(a.runDir).isDirectory());
+  assert.strictEqual(a.mergeBase.length, 40);
+  // Which variant is which: { autocrlf: 'true' } is a CRLF checkout; the default follows the host.
+  const skill = '.claude/skills/x/SKILL.md';
+  let host = ''; // what the fixture pinned in the copy itself (the trace window is closed here)
+  try { host = execFileSync('git', ['-C', a.repo, 'config', '--get', 'core.autocrlf'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { /* unset */ }
+  assert.ok(fs.readFileSync(path.join(b.repo, skill), 'utf8').includes('\r\n'));
+  if (host !== 'true') assert.ok(!fs.readFileSync(path.join(a.repo, skill), 'utf8').includes('\r\n'));
 });

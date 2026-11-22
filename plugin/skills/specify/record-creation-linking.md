@@ -36,7 +36,7 @@ Branches on driver, then — for `github-issues` — on `work-links`.
   node "${CLAUDE_PLUGIN_ROOT}/bin/link-records.js" --parent $PARENT_NUM --subs $SUB_ISSUE_NUMS \
     --blocked-by "$DEP_EDGES"
   # Prints one JSON envelope to stdout (do not redirect it away — read it from the tool result).
-  # Owner/repo resolve from `origin`; pass --repo owner/name to override.
+  # Owner/repo resolve from `origin`; pass --repo [host/]owner/name to override.
   ```
 
   Read the envelope's `subIssues.failed` and `blockedBy.failed` — a non-empty `failed` list is the

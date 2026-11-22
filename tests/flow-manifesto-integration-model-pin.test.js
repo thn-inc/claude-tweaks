@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../plugin/bin/set-config');
@@ -40,7 +41,7 @@ function writeMechanismParagraph(manifesto) {
 }
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'impin-'));
+  const root = scratchDir('impin-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-19T090000-spec-3350');
   fs.mkdirSync(runDir, { recursive: true });

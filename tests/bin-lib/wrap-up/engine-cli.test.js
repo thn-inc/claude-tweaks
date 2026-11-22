@@ -10,10 +10,11 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnCli, runCliSync } = require('../../helpers/run-cli');
-const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 
@@ -30,10 +31,8 @@ function run(args, { cwd, input } = {}) {
 }
 
 before(() => {
-  repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-engine-cli-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  repoDir = scratchDir('wrapup-engine-cli-');
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com', cwd: repoDir, encoding: 'utf8' });
 
   fs.writeFileSync(
     path.join(repoDir, 'CLAUDE.md'),
@@ -172,13 +171,11 @@ test('plan run from a subdirectory of the checkout still sees the root docs/jour
 // repo-fact root must be the worktree's own --show-toplevel. Each test builds
 // its own fixture (the shared repoDir above stays untouched).
 function withLinkedWorktree(fn) {
-  const mainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-wt-main-'));
-  const wtParent = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-wt-'));
+  const mainDir = scratchDir('wrapup-wt-main-');
+  const wtParent = scratchDir('wrapup-wt-');
   const wtDir = path.join(wtParent, 'wt');
   try {
-    git(['init', '-q'], mainDir);
-    git(['config', 'user.email', 'test@example.com'], mainDir);
-    git(['config', 'user.name', 'Test'], mainDir);
+    initRepo(mainDir, { name: 'Test', email: 'test@example.com', cwd: mainDir, encoding: 'utf8' });
     fs.writeFileSync(path.join(mainDir, 'CLAUDE.md'), '# Test project\n');
     fs.mkdirSync(path.join(mainDir, 'docs', 'journeys'), { recursive: true });
     fs.writeFileSync(
@@ -355,7 +352,7 @@ test('record rejects a payload that fails engine-record validation with exit 1',
 // --- #2546: record --batch <file> ---
 
 function writeBatchFile(entries) {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-batch-')), 'batch.json');
+  const file = path.join(scratchDir('wrapup-batch-'), 'batch.json');
   fs.writeFileSync(file, JSON.stringify(entries));
   return file;
 }
@@ -411,7 +408,7 @@ test('record --batch pointing at a nonexistent file exits 1 naming the path, not
 
 test('record --batch with malformed JSON content exits 1 naming the parse failure', () => {
   const runDir = planFreshRunDir();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-batch-bad-'));
+  const dir = scratchDir('wrapup-batch-bad-');
   const file = path.join(dir, 'batch.json');
   fs.writeFileSync(file, 'not json');
   const r = run(['record', '--run-dir', runDir, '--batch', file, '--dry-run']);
@@ -640,11 +637,9 @@ test('render against a run dir with no engine-state.json exits 2', () => {
 // gone; render must resolve the archived copy itself (same fallback verify
 // uses) so the report renders identically from either path.
 test('render --section trace --strict with the original run dir path renders identically after the run is archived', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'wrapup-render-archive-'));
+  const repo = scratchDir('wrapup-render-archive-');
   try {
-    git(['init', '-q'], repo);
-    git(['config', 'user.email', 'test@example.com'], repo);
-    git(['config', 'user.name', 'Test'], repo);
+    initRepo(repo, { name: 'Test', email: 'test@example.com', cwd: repo, encoding: 'utf8' });
     fs.writeFileSync(path.join(repo, 'README.md'), '# Archive fixture\n');
     git(['add', '.'], repo);
     git(['commit', '-q', '-m', 'base'], repo);

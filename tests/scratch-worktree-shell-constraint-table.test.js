@@ -52,7 +52,7 @@ test('every row carries a closed-vocabulary verdict and a dated, record-tagged l
     const cells = splitRow(row);
     assert.strictEqual(cells.length, 6, `row needs 6 cells: ${row}`);
     assert.ok(['refused', 'passes', 'permission-rule'].includes(cells[2]), `bad verdict "${cells[2]}": ${row}`);
-    assert.match(cells[5], /^\d{4}-\d{2}-\d{2} \(#\d+\)/, `bad last-verified: ${row}`);
+    assert.match(cells[5], /^\d{4}-\d{2}-\d{2} \(#\d+[;)]/, `bad last-verified: ${row}`);
   }
 });
 

@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -12,21 +13,21 @@ const { readText } = require('../../helpers/read-skill');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-'));
+  const dir = scratchDir('ct-prbk-');
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }
 
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-wtparent-'));
+  const parent = scratchDir('ct-prbk-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
 }
 
 function makeRunDir(id) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-run-'));
+  const project = scratchDir('ct-prbk-run-');
   const runDir = path.join(project, '.claude-tweaks', 'pipelines', id);
   fs.mkdirSync(runDir, { recursive: true });
   return runDir;
@@ -337,7 +338,7 @@ test('checkPrBookkeepingPrecondition (#2664): a spec-* dir whose parent is NOT r
   // Not a multi-spec child (same rule as pre-tool-use.js's perSpecPathspec),
   // so its materialize path is the ordinary single-record one rooted at spec-7.
   commitMaterializeFile(wt, 'spec-7');
-  const notARun = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-notarun-'));
+  const notARun = scratchDir('ct-prbk-notarun-');
   writeRunState(notARun, { status: 'active', worktree: wt, pr: { number: 1, url: 'https://example.com/1' } });
   const runDir = path.join(notARun, 'spec-7');
   fs.mkdirSync(runDir, { recursive: true });

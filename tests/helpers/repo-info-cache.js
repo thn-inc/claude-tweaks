@@ -5,6 +5,7 @@
 // would otherwise stand in for the fake — and the store would carry the fake's
 // answer into other tests and processes.
 const fs = require('fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('os');
 const path = require('path');
 const { resetMemo } = require('../../plugin/bin/lib/hooks/repo-info-cache');
@@ -18,7 +19,7 @@ const DISCOVERY_ENV_NAMES = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_
 // discovery variables, clears the memo, and restores the env (and removes the
 // temp dir) when the test ends.
 function isolateRepoInfoCache(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ric-iso-'));
+  const dir = scratchDir('ct-ric-iso-');
   const names = ['CT_HOOKS_REPO_INFO_STORE', ...DISCOVERY_ENV_NAMES];
   const prior = Object.fromEntries(names.map((n) => [n, process.env[n]]));
   process.env.CT_HOOKS_REPO_INFO_STORE = path.join(dir, 'store.json');

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run, renderManifestoFyi } = require('../../../plugin/bin/set-config');
@@ -11,7 +12,7 @@ const { readText } = require('../../helpers/read-skill');
 // fake main checkout (.git directory) holding the real run dir, plus a
 // worktree-local shadow copy (.git FILE) that must be refused.
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sccli-'));
+  const root = scratchDir('sccli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
@@ -422,4 +423,91 @@ test('AC3.1: a failed append keeps exit 0 and stdout unchanged, adding one stder
   assert.match(err[0], /^set-config\.js: could not append the decisions\.md entry .*disk full\n$/);
   assert.ok(err[0].includes(`levers written to ${file}`), 'the stderr line names the entry to hand-log');
   assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')));
+});
+
+// --- run manifest fill (#5903): a Manifesto batch fills lane, any ceremony-profile write fills ceremonyProfile ---
+
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+
+test('manifest: a full 13-lever --set batch with mode=hybrid (the confirm/hybrid Manifesto) fills lane standard and ceremonyProfile', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const batch = FULL_MANIFESTO_BATCH_AUTO.replace('mode=auto', 'mode=hybrid');
+  assert.equal(run(['--run', runDir, '--set', batch], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.lane, 'standard');
+  assert.equal(m.ceremonyProfile, 'standard');
+});
+
+test('manifest: a full 13-lever mode=auto batch plus the run pins fills lane standard too', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO + ',integration-model=pr-first,spec=12'], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'standard');
+});
+
+test('manifest: a partial --set batch with only ceremony-profile=standard fills ceremonyProfile and leaves lane unknown', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', 'ceremony-profile=standard'], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.ceremonyProfile, 'standard');
+  assert.equal(m.lane, 'unknown');
+});
+
+test('manifest: the express five-key configSet fills ceremonyProfile fast-lane and leaves lane untouched', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const configSet = 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=5903';
+  assert.equal(run(['--run', runDir, '--set', configSet], deps), 0);
+  const m = readManifest(runDir);
+  assert.equal(m.ceremonyProfile, 'fast-lane');
+  assert.equal(m.lane, 'unknown');
+});
+
+test('manifest: a 13-entry batch missing one lever (plus the pin) fills no lane', () => {
+  const { main, runDir } = fixture();
+  const { deps } = fakeDeps(main);
+  const batch = FULL_MANIFESTO_BATCH_AUTO.replace(',merge-authorization=ask', '') + ',integration-model=pr-first';
+  assert.equal(run(['--run', runDir, '--set', batch], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'unknown');
+});
+
+test('manifest: a full batch never overwrites an already-known lane', () => {
+  const { main, runDir } = fixture();
+  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({ v: 1, runId: path.basename(runDir), lane: 'express', ceremonyProfile: null }));
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 0);
+  assert.equal(readManifest(runDir).lane, 'express');
+});
+
+test('manifest: a failing full --set batch (exit 3) fills no lane', () => {
+  const { main, runDir } = fixture();
+  fs.rmSync(path.join(runDir, 'config.yml'));
+  fs.mkdirSync(path.join(runDir, 'config.yml'));
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), 3);
+  assert.ok(!fs.existsSync(path.join(runDir, 'manifest.json')), 'a failed batch fills no lane, and creates no manifest');
+});
+
+test('manifest: a fill failure leaves the --set batch output, exit code and config.yml unchanged', () => {
+  const { mock } = require('node:test');
+  const runManifest = require('../../../plugin/bin/lib/run-manifest/write');
+  const base = fixture();
+  const ref = fakeDeps(base.main);
+  const refCode = run(['--run', base.runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], ref.deps);
+  const refConfig = fs.readFileSync(path.join(base.runDir, 'config.yml'), 'utf8');
+
+  const { main, runDir } = fixture();
+  const { deps, out, err } = fakeDeps(main);
+  const fill = mock.method(runManifest, 'fillRunManifest', () => { throw new Error('manifest writer exploded'); });
+  try {
+    assert.equal(run(['--run', runDir, '--set', FULL_MANIFESTO_BATCH_AUTO], deps), refCode);
+  } finally {
+    fill.mock.restore();
+  }
+  assert.ok(fill.mock.callCount() >= 2, 'both the ceremony-profile hook and the lane fill were attempted');
+  assert.equal(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'), refConfig);
+  assert.equal(out.join('').split(runDir).join('<run>'), ref.out.join('').split(base.runDir).join('<run>'));
+  assert.deepEqual(err, []);
 });

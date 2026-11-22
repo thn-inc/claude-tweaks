@@ -2,12 +2,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 const { STUB_SKIP } = require('../../helpers/path-stub');
 const { CLI } = require('./cli-helpers');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 // The complete environment the CLI sees: its git and npm children need PATH, and HOME keeps a global
 // git config reachable. SystemRoot and USERPROFILE are what a Windows child needs to start.
@@ -40,10 +42,9 @@ function git(cwd, ...args) {
 }
 
 function initRepo(prefix, branch = 'main') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const root = scratchDir(prefix);
   git(root, 'init', '-q', '-b', branch);
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
+  writeIdentity(root, { name: 'Test', email: 'test@example.com' });
   git(root, 'commit', '--allow-empty', '-q', '-m', 'init');
   return root;
 }
@@ -191,11 +192,11 @@ function ghHostRun(configEnv) {
   const a = initRepo('residue-cli-gh-a-');
   const b = initRepo('residue-cli-gh-b-');
   git(b, 'remote', 'add', 'origin', 'https://ghe.example.test/o/r.git');
-  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-stub-'));
+  const stubDir = scratchDir('residue-cli-gh-stub-');
   const marker = path.join(stubDir, 'host.txt');
   fs.writeFileSync(path.join(stubDir, 'gh'), `#!/bin/sh\nprintf '%s' "$GH_HOST" > "${marker}"\necho '[]'\n`);
   fs.chmodSync(path.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
-  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-gh-cfg-'));
+  const cfg = scratchDir('residue-cli-gh-cfg-');
   const runner = (argv, opts) => (argv[1] === 'ls-remote' ? null : realDeps.runner(argv, opts));
   const env = { ...CLI_ENV, PATH: stubDir + path.delimiter + CLI_ENV.PATH, GIT_DIR: path.join(b, '.git'), ...configEnv(cfg) };
   const r = run(['--base', 'HEAD', '--no-suite', '--json'], { cwd: a, env, deps: { runner } });
@@ -227,7 +228,7 @@ test('AC9.1: the gh config dir falls back to the injected home', { skip: STUB_SK
 // env makes an untracked-only worktree read clean: `dirty: false` only if that child got the env.
 test('AC9.1: the worktree dirty check gets the injected env', () => {
   const root = initRepo('residue-cli-dirty-');
-  const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'residue-cli-dirty-wt-')), 'side');
+  const wt = path.join(scratchDir('residue-cli-dirty-wt-'), 'side');
   git(root, 'worktree', 'add', '-q', '-b', 'side', wt);
   fs.writeFileSync(path.join(wt, 'untracked.txt'), 'x');
   const env = {

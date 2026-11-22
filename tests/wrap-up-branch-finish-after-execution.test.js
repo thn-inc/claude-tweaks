@@ -155,7 +155,8 @@ test('the finish is reached when the execution step has nothing else to do', () 
   const at = skill.indexOf('### Execute approved actions');
   const section = skill.slice(at, skill.indexOf('### The phase-trace report', at));
   assert.ok(section.includes('still read the file for its Branch finish'), 'the No-actions skip must still run the pr-first Branch finish');
-  assert.ok(section.includes('first runs the Phase exit call'), 'the No-actions path runs the Phase exit push before the Branch finish');
+  // #3976: the archive-header move runs first so the Phase exit push carries its commit.
+  assert.ok(section.includes('first runs the archive-header move, then the Phase exit call'), 'the No-actions path runs the header move, then the Phase exit push, before the Branch finish');
   const fastPath = read('wrap-up/review-console.md');
   const fp = fastPath.slice(fastPath.indexOf('## Empty-console fast path'));
   assert.ok(fp.includes('Branch finish'), 'the empty-console fast path names the Branch finish it still reaches');

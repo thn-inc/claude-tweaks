@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { classifyOwnership } = require('../../../plugin/bin/lib/hooks/context');
@@ -92,7 +93,7 @@ test('indeterminate: recorded worktree deleted from disk — fail-open, never fo
 test('indeterminate: caller cwd in a non-git directory, binding recorded', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
-  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-clown-nongit-'));
+  const nonGit = scratchDir('ct-clown-nongit-');
   assert.strictEqual(
     classifyOwnership({ sessionId: 's', cwd: nonGit }, { sessionId: 's', worktree: wt }),
     'indeterminate',
@@ -102,7 +103,7 @@ test('indeterminate: caller cwd in a non-git directory, binding recorded', () =>
 test('mine: caller cwd given as a symlink to the recorded worktree', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
-  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-clown-link-')), 'wt-link');
+  const link = path.join(scratchDir('ct-clown-link-'), 'wt-link');
   fs.symlinkSync(wt, link);
   assert.strictEqual(
     classifyOwnership({ sessionId: 's', cwd: link }, { sessionId: 's', worktree: wt }),
@@ -174,7 +175,7 @@ test('indeterminate: binding exists on disk but is a regular file, not a directo
 // F3 (#1098 final review): equal ids, no binding, caller outside any git
 // repo at all — the outside-any-repo fallback branch.
 test('indeterminate: equal ids, no binding, caller outside any git repo', () => {
-  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-clown-nongit-'));
+  const nonGit = scratchDir('ct-clown-nongit-');
   assert.strictEqual(
     classifyOwnership({ sessionId: 's', cwd: nonGit }, { sessionId: 's' }),
     'indeterminate',

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
@@ -13,7 +14,7 @@ const { STUB_SKIP } = require('../../helpers/path-stub');
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'calibration-report.js');
 
 function makeFixtureRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-cli-'));
+  const root = scratchDir('calib-cli-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -82,7 +83,7 @@ test('CLI renders a named Failed writes bucket, not silent other', () => {
 });
 
 test('missing TSV exits 0 with an explicit "no telemetry yet" line', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-empty-'));
+  const root = scratchDir('calib-empty-');
   const out = run([], root);
   assert.match(out, /no telemetry yet/);
 });
@@ -93,7 +94,7 @@ test('#917: a partially-pruned archive still reports the TSV row whose runId has
   // fully-empty-archive case synthesized a stub row — a partial prune left
   // run-1 permanently and silently stuck at "no runs in window" even though
   // run-2 (a real archived run) was loaded fine.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-partial-'));
+  const root = scratchDir('calib-partial-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -117,7 +118,7 @@ test('#917: a partially-pruned archive still reports the TSV row whose runId has
 
 test('a TSV-only run with a live run dir contributes its decisions', () => {
   // A finished run awaiting archival has a TSV row and a live dir (no archive dir yet).
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-live-'));
+  const root = scratchDir('calib-live-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -141,7 +142,7 @@ test('a TSV-only run id with a path separator never reads outside the pipelines 
   // The dated prefix lets runIdTimestamp accept the id into the window; the
   // `../..` tail makes path.join(pipelines, runId) resolve outside pipelines/.
   const escapeId = '2026-08-04T000000-x/../../outside';
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-escape-'));
+  const root = scratchDir('calib-escape-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -167,7 +168,7 @@ test('a TSV-only run id with a backslash never reads a live dir of that literal 
   // On POSIX a backslash is an ordinary filename character, so only the guard
   // keeps this id from being read as a live dir; on Windows it is a separator.
   const backslashId = '2026-08-05T000000-x\\..\\..\\outside';
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-backslash-'));
+  const root = scratchDir('calib-backslash-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -186,7 +187,7 @@ test('a TSV-only run id with a backslash never reads a live dir of that literal 
 });
 
 test('a symlinked live run dir is not read', { skip: process.platform === 'win32' }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-symlink-'));
+  const root = scratchDir('calib-symlink-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -196,7 +197,7 @@ test('a symlinked live run dir is not read', { skip: process.platform === 'win32
   const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
   fs.mkdirSync(archived, { recursive: true });
   fs.writeFileSync(path.join(archived, 'decisions.md'), decision);
-  const target = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-symlink-target-'));
+  const target = scratchDir('calib-symlink-target-');
   fs.writeFileSync(path.join(target, 'decisions.md'), decision);
   fs.symlinkSync(target, path.join(root, '.claude-tweaks', 'pipelines', '2026-08-06T000000-link-1'), 'dir');
   const jsonOut = JSON.parse(run(['--json'], root));
@@ -205,7 +206,7 @@ test('a symlinked live run dir is not read', { skip: process.platform === 'win32
 });
 
 test('a TSV-only run with a live dir is read before any archive dir exists', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-live-noarchive-'));
+  const root = scratchDir('calib-live-noarchive-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -225,7 +226,7 @@ test('header carries no excluded note when every run id is dated', () => {
 });
 
 test('header names how many undated run ids were excluded', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-excluded-'));
+  const root = scratchDir('calib-excluded-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(
     path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'),
@@ -242,7 +243,7 @@ test('header names how many undated run ids were excluded', () => {
 });
 
 test('header with only undated entries reports an empty window and exits 0', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-undated-'));
+  const root = scratchDir('calib-undated-');
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'unresolved-provenance'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   const out = run([], root);
@@ -251,7 +252,7 @@ test('header with only undated entries reports an empty window and exits 0', () 
 });
 
 test('no archive dir is stated explicitly', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-noarchive-'));
+  const root = scratchDir('calib-noarchive-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   const out = run([], root);
@@ -298,7 +299,7 @@ test('--root as the last argument with no value exits 2 naming the flag, not an 
 });
 
 test('autonomy-raising signal fires at 100% approve-all over >=10 stops under the schema-default (supervised) ceiling', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-ceiling-'));
+  const root = scratchDir('calib-ceiling-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive');
@@ -317,7 +318,7 @@ test('autonomy-raising signal fires at 100% approve-all over >=10 stops under th
 });
 
 test('narrowing signal renders with a paste-ready command on its own line at >=10 appearances', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-narrow-'));
+  const root = scratchDir('calib-narrow-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   const lines = [];
   for (let i = 1; i <= 10; i++) lines.push(`2026-08-${String(i).padStart(2, '0')}\t2026-08-${String(i).padStart(2, '0')}T000000-run-${i}\tskills\tclosed\t0\tna`);
@@ -351,7 +352,7 @@ test('auto-decision-log.md lists bin/lib/calibration/ as a consumer', () => {
 });
 
 test('AC1.1: calibration-report counts only the real gate-denial when a run also holds a test:true one (#4186)', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-testdenial-'));
+  const root = scratchDir('calib-testdenial-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '2026-08-01\t2026-08-01T000000-run-1\tskills\tclosed\t0\tna\n');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', '2026-08-01T000000-run-1');
@@ -367,7 +368,7 @@ test('AC1.1: calibration-report counts only the real gate-denial when a run also
 
 // Ten approve-all console stops (the ceiling suggestion's floor) and a policy.yml.
 function makeCeilingRoot(policy) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-autonomy-'));
+  const root = scratchDir('calib-autonomy-');
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'wrap-up-outcomes.tsv'), '');
   if (policy !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
@@ -381,7 +382,7 @@ function makeCeilingRoot(policy) {
 
 // A `node` shim that records being started: the marker file exists only if something ran `node`.
 function makeNodeStub() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-node-stub-'));
+  const dir = scratchDir('calib-node-stub-');
   fs.writeFileSync(path.join(dir, 'node'), '#!/bin/sh\ntouch "$MARKER"\nexit 1\n');
   fs.chmodSync(path.join(dir, 'node'), 0o755); // root-safe: exec-bit stub, not a denial simulation
   return { dir, marker: path.join(dir, 'marker') };
@@ -511,7 +512,7 @@ test('AC9.1: no --root reads the injected cwd', () => {
 });
 
 test('a relative --root resolves against the injected cwd and prints as given', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-rel-'));
+  const parent = scratchDir('calib-rel-');
   fs.mkdirSync(path.join(parent, 'r'));
   const r = runRaw(['--root', 'r'], { cwd: parent });
   assert.strictEqual(r.code, 0);
@@ -526,7 +527,7 @@ test('AC9.1: the injected env reaches the policy core (a GIT_DIR in env redirect
   // The fixture's own policy.yml says supervised; the repo GIT_DIR/GIT_WORK_TREE point at says trusted.
   // Only an env handed to the core's git can make the core read the second one.
   const root = makeCeilingRoot('autonomy: supervised\n');
-  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'calib-other-repo-'));
+  const other = scratchDir('calib-other-repo-');
   const gitEnv = { ...process.env };
   for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete gitEnv[key];
   const init = spawnSync('git', ['init', '-q', other], { env: gitEnv, encoding: 'utf8', windowsHide: true });

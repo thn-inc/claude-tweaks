@@ -13,7 +13,7 @@
 // single-command escape hatch for the work-links: native blocked-by check
 // (#538). Zero runtime npm deps.
 //
-// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]
+// Usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces, mirroring this codebase's existing
 // multi-spec-number convention — see flow/materialize.md's `#A,#B` form)
 // batches every number into the ONE aliased GraphQL call
@@ -43,21 +43,36 @@
 
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
+const { appendStationEvent } = require('./lib/station-events/emit');
+const { snapshotSinkOf } = require('./lib/station-events/blockers');
 
-const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
-const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
+const {
+  run: runNumberList, parseArgs, parseNumbers, realDeps: numberListDeps,
+} = makeNumberListCli({
   name: 'resolve-blockers.js',
   usage: USAGE,
   ghRequiredNote: '(work-links: native)',
   fetch: ({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }) => fetchNativeDependencies({
-    numbers, owner, repo, host, runner,
+    numbers, owner, repo, host, runner, onSnapshot,
   }),
   mapResult: (n, byNumber) => byNumber.get(n),
 });
 
-module.exports = { run, parseArgs, parseNumbers, parseRepo: require('./lib/repo-resolve').parseRepo };
+// #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
+const realDeps = { ...numberListDeps, stationEvent: (e) => appendStationEvent(e) };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// A `blockers` station event per fetched number: with no explicit `onSnapshot`, the
+// sink is built from `deps.stationEvent`; neither present = no emission.
+function run(argv, deps = realDeps) {
+  return runNumberList(argv, { ...deps, onSnapshot: snapshotSinkOf(deps) });
+}
+
+module.exports = { run, parseArgs, parseNumbers, realDeps, parseRepo: require('./lib/repo-resolve').parseRepo };
+
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
+}

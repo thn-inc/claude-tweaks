@@ -4,7 +4,7 @@ Impeccable records a **direction contract** under a `## Direction contract` head
 relevant **surface brief**, before the code — never in the artifact it builds. This file is the
 single procedure for finding that section and reading it back. It is cited by
 `/claude-tweaks:design-wrapper`'s `review` mode (which extracts the seed key and records it) and
-by `/claude-tweaks:demo` (which renders the blocks to a human). Both cite it; neither restates it.
+by `/claude-tweaks:accept` (which renders the blocks to a human). Both cite it; neither restates it.
 
 ## What this repo does and does not own
 
@@ -138,7 +138,7 @@ so "the contract did not carry one" and "we wrote an empty one" can never be con
 | Skill | Uses |
 |---|---|
 | `/claude-tweaks:design-wrapper` `review` mode | Step 3.6 — runs this on the changed UI files it already resolved, then writes `seed` onto the work record as its `Design-seed:` body-metadata line |
-| `/claude-tweaks:demo` | Step 2 — runs this on the changed-path list Step 1 already produced, and renders `blocks` under `### The design contract this was built against` (rendering rules in `demo/design-contract-section.md`, read only when a contract resolves or parses malformed) |
+| `/claude-tweaks:accept` | Step 2 — runs this on the changed-path list Step 1 already produced, and renders `blocks` under `### The design contract this was built against` (rendering rules in `accept/design-contract-section.md`, read only when a contract resolves or parses malformed) |
 
 `/demo` re-reads the live surface brief rather than a copy captured at build time. That is
 deliberate: the acceptance gate should show the contract that is actually in the brief as it

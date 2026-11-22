@@ -6,11 +6,17 @@
 // Since #5230 dispatch runs this module (bin/queue-pull.js), not the fence: the module is the
 // live queue pull, and the retained fence is its revert path and parity oracle until #5231
 // removes it. Fix a defect here and mirror the change into the fence, never the other way round.
+// Two rules are module-only by decision and are not mirrored, both in the blocked pass's `files`
+// block: #5408's omitted-dependency check and #5865's `unreadable` freshness entry, which warns and
+// keeps the queue-order cache unwritten (search `#5408`, `#5865`). The fence cannot see either,
+// because it never gets the agent's raw dependency-freshness text there. They stay divergences
+// until #5231 deletes the fence.
 //
 // R6, step-for-step port: each fence step is one function. A throw inside a step is caught and
 // printed to stderr as `queue-pull: <step>: <message>`, and the run then continues or stops
 // exactly where the fence has an RC check or a `grep -q 'appendExclusion:'` check. Stop and
-// Warning texts match the fence byte for byte, and the two must keep the same behavior.
+// Warning texts match the fence byte for byte, and the two must keep the same behavior, except for
+// the #5408 and #5865 rules named above.
 //   The fence's own calls are unbounded; the default deps bound every one (shared-primitives.js),
 // so a call that hangs, or outlasts its bound, is where the two can differ. GH_BATCH_TIMEOUT_MS
 // bounds an aliased GraphQL batch and every paginated list call (`issue list` / `pr list` with
@@ -33,37 +39,35 @@
 //   It is the strictest posture across all of the pass's fetches and across BOTH transports.
 //   A consumer cannot read fail-closed from failOpen alone: `blocked` is 'open', yet an unreadable
 //   foreign state excludes its record. Each fetch's exclusion effect is pinned by the fault rows
-//   (queue-pull.test.js AC4.1 and AC7.2), and each value here is asserted from those oracle runs
-//   (AC4.2), never from the spec.
+//   (queue-pull-parity-ac4.test.js AC4.1 and queue-pull-parity-ac7.test.js AC7.2), and each value
+//   here is asserted from those oracle runs (AC4.2, one test per transport: AC4.2 [gh] in
+//   queue-pull-parity-ac4.test.js and AC4.2 [files] in queue-pull-parity-ac7.test.js), never from
+//   the spec.
 // `malformed-blocker` and `unlanded-blocker` share `id: 'blocker-landing'`, because one
 // dispatch-unlanded-blockers.js call writes both; they carry one identical failOpen. A shared id
 // runs once, at its first entry.
 //
 // `omit` (queuePull option) takes reasons or ids and removes that pass's own filtering and
 // appends and nothing else, with one exception: omitting either blocker-landing reason skips the
-// shared call, so both reasons. runPasses ALWAYS calls every pass's runner and exposes the omit
-// set as `ctx.omit` (a Set of ids); each runner skips only its own filtering and appends when
-// `ctx.omit.has(<its id>)` and runs its shared steps regardless (for example `oversized` owns the
-// grouping block that writes dispatch-groups.json and the `blocked` appends, and `target-missing`
-// owns the integration-branch and run-dir resolution). Omitting a setup pass, or naming an
-// unknown reason or id, throws TypeError. Omit is a test-only contract (no shipped caller passes
-// it); because an omitted pass leaves groups the cache blob would then misdescribe, the write-back
-// pass writes nothing (no writeOrder call) whenever the omit set is non-empty.
+// shared call, so both reasons; the eligibility screen for non-array labels always runs, and its
+// `malformed-blocker` append follows `blocker-landing`'s omit. runPasses ALWAYS calls every pass's
+// runner and exposes the omit set as `ctx.omit` (a Set of ids); each runner skips only its own
+// filtering and appends when `ctx.omit.has(<its id>)` and runs its shared steps regardless (for
+// example `oversized` owns the grouping block that writes dispatch-groups.json and the `blocked`
+// appends, and `target-missing` owns the integration-branch and run-dir resolution). Omitting a
+// setup pass, or naming an unknown reason or id, throws TypeError. Omit is a test-only contract
+// (no shipped caller passes it); because an omitted pass leaves groups the cache blob would then
+// misdescribe, the write-back pass writes nothing (no writeOrder call) whenever the omit set is
+// non-empty.
 //
 // failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose
 // gh fetch fails open (neighbour-in-flight): on `files`, a missing or malformed in-flight or
 // claims file stops the pull.
 //
-// Test-only seam: when QP_TMPNAME_COUNTER_FILE is set, defaultDeps().tmpName reads that file's
-// integer (a missing file is 0; a non-integer or negative value is refused, as the oracle's
-// mktemp shim refuses it), creates `tmp.qp<8-digit counter+1>` exclusively, and only then writes
-// the counter back, so a failed create does not advance it. The parity CLI is
-// a subprocess and cannot take an injected function, and the oracle's mktemp shim implements the
-// same format over the same variable, so both sides emit identical names. Production never sets it.
-//
 // Test seams beyond `deps` (no shipped caller uses them; a refactor keeps them or updates the
-// tests in queue-pull.test.js that read them): `makeContext(options, deps)` is exported, and tests
-// run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
+// tests that read them: queue-pull.test.js, and the shared `pull` harness in queue-pull-helpers.js
+// that it and queue-pull-oracle-checks.test.js run): `makeContext(options, deps)` is exported,
+// and tests run passes over its context and then assert on `ctx.state.cacheHit`, `.workLinks`,
 // `.groupSizeGuard`, `.integrationBranch`, `.integrationRef` and `.files` (the effective input
 // paths); `runPasses` takes `ctx.runners` ({ [id]: fn }) in place of the real runners; and
 // `defaultDeps({ execFileSync, spawnSync })` replaces the two child_process calls the default
@@ -72,23 +76,24 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
 
 const { readExclusions, appendExclusion, groupIsExcluded } = require('./exclusions');
 const { writeReleaseTimes, readReleaseTimes } = require('./shipped-releases');
+const { GRAPHQL_INT_MAX } = require('./unlanded-blockers');
 const { buildFreshnessSignal, cacheUsable, composeOrderBlob } = require('./queue-order');
 const { aliasMcpTimestamps } = require('../issues/mcp-issue-shape');
 const { parseRecordFacets, parseDependencies, partitionByOpenBodyBlockers, openBlockerRefs } = require('../issues/record');
 const { bodyForeignBlockers } = require('../issues/cross-repo-states');
 const { shapeGate } = require('../issues/materialize-format');
 const { namedTarget } = require('../issues/named-target');
-const { classifyShipped, predatesClaimRelease } = require('../issues/shipped-candidate');
+const { classifyShipped, predatesClaimRelease, downgradedAfterMerge } = require('../issues/shipped-candidate');
 const { extractKeyFiles, expectsKeyFilesSection, buildDispatchGroups, partitionGroupsBySizeGuard, detectCrossPRFileOverlap } = require('../issues/grouping');
 const { neighbourInFlightExclusions, claimReaderFromMap } = require('./in-flight-neighbours');
 const { nearDuplicatePairsAcrossGroups } = require('./near-dup-pairs');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { sessionTmpPath } = require('../session-tmp');
+const { sessionTmpPath, envTmpdir } = require('../session-tmp');
+const { resolveBuildAuthority, formatAuthorityLine } = require('../issues/build-authority');
 const { ghOptions } = require('../repo-resolve');
 const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
@@ -157,6 +162,18 @@ const SESSION_FILES = deepFreeze([
   'dispatch-next-pick.json',
 ]);
 
+// The session files written only after their step's fallible work (#5409): removed at pull start.
+// The fence's `rm -f` line carries the same set. A new session file written that way joins both;
+// every other SESSION_FILES entry is reset before its step's fallible work, removed by its own step
+// (ELIGIBILITY_FILES), or an agent input. The #5409 partition test names each one's class.
+const END_WRITTEN_FILES = deepFreeze([
+  'dispatch-named-targets.json',
+  'dispatch-shipped-probe-prs.json',
+  'dispatch-shipped-releases.json',
+  'dispatch-crosspr-overlap.json',
+  'dispatch-near-dup-pairs.json',
+]);
+
 // sessionId -> { [name]: absolute path }; with no session id each falls back to os.tmpdir()/name.
 function sessionPaths(sessionId) {
   const out = {};
@@ -173,9 +190,13 @@ class QueuePullStopped extends Error {
   }
 }
 
-// Fence lines 50-55. The only direct write to the exclusions file; every later pass appends
+// Fence lines 44 and 46-51. The only direct write to the exclusions file; every later pass appends
 // through appendExclusion. Keeps only the 'firing' entries (firing-exclusion.md).
 function runTruncate(ctx) {
+  // #5409 (fence 44): each of these files is written after its step's fallible work, so a step that
+  // throws first would leave an earlier pull's copy for the pass or reader after it; the agent
+  // inputs and the exclusions file are not in the set. One step per file, like `rm -f`'s operands.
+  for (const name of END_WRITTEN_FILES) step(ctx, 'rm-end-written', () => fs.rmSync(ctx.paths[name], { force: true }));
   const file = ctx.paths['dispatch-exclusions.json'];
   try {
     const kept = readExclusions(file).filter((e) => e.reason === 'firing');
@@ -191,7 +212,7 @@ const QUEUE_ARGV = ['issue', 'list', '--label', 'auto:build', '--state', 'open',
   'number,title,body,labels,createdAt,updatedAt,state', '--limit', '500'];
 const OPEN_NUMBERS_ARGV = ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '200'];
 
-// fence line 75, byte for byte
+// fence line 72, byte for byte
 const QUEUE_CAP_WARNING = 'Warning: the auto:build queue pull returned exactly the --limit cap (500) — this repo may have more open auto:build records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST same-priority ones, exactly what next\'s own oldest-first tie-break (Step 3) exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the queue down.';
 
 const CACHE_HIT_MESSAGE = 'Queue-order cache hit — using persisted groups/excluded, skipping dependency verification and native blocker query (#1571).';
@@ -241,18 +262,35 @@ function readPolicy(ctx, key) {
 // A fence redirect or echo that fails does not stop the fence (R6): the write is a step.
 const put = (ctx, file, content) => step(ctx, `write ${path.basename(file)}`, () => fs.writeFileSync(file, content));
 
-// alias_mcp_timestamps (fence 61-69): the camelCase keys added in place. D3: a non-array file is
-// silently rewritten as [].
+// alias_mcp_timestamps (fence 56-66): the camelCase keys added in place. D3 (#5307): a non-array
+// file is a failed read -- a Warning, the file left as the agent wrote it, and a not-ok step no caller
+// checks: the reads that follow fail on their own array checks (readArray).
 function aliasFile(ctx, name, file) {
-  return step(ctx, name, () => fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(readJson(file)))));
+  const parsed = step(ctx, name, () => readJson(file));
+  if (!parsed.ok) return parsed;
+  if (!Array.isArray(parsed.value)) {
+    ctx.deps.stderr(`Warning: ${file} is not a JSON array — treated as a failed read\n`);
+    return { ok: false };
+  }
+  return step(ctx, name, () => fs.writeFileSync(file, JSON.stringify(aliasMcpTimestamps(parsed.value))));
 }
 
-// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence 104, 275):
-// stderr dropped, any failure writes [].
-function fetchDepFreshness(ctx, numbersCsv, file) {
+// The queue or dependency-freshness session file read as the list it must be. Any other JSON value
+// throws: a string would otherwise be spread character by character into the freshness signal (D3, #5307).
+const readArray = (file) => {
+  const value = readJson(file);
+  if (!Array.isArray(value)) throw new TypeError(`${path.basename(file)} is not a JSON array`);
+  return value;
+};
+
+// The `gh issue list --search "#a #b" --state all ...` dependency-freshness fetch (fence: the cache check and the
+// write-back): a failure writes [] and prints one Warning naming the consequence (#5310).
+function fetchDepFreshness(ctx, numbersCsv, file, consequence) {
   const search = numbersCsv.split(',').join(' ').replace(/[0-9]+/g, '#$&');
   const r = ghRun(ctx, ['issue', 'list', '--search', search, '--state', 'all', '--json', 'number,updatedAt,state', '--limit', '500'], { quiet: true });
   put(ctx, file, r.ok ? r.stdout : '[]');
+  if (!r.ok) ctx.deps.stderr(`Warning: dependency-freshness search failed — queue-order cache not ${consequence} this run\n`);
+  return r.ok;
 }
 
 // On `files` the agent's dependency-freshness file stands where the fence's `gh issue list --search`
@@ -265,9 +303,49 @@ function agentDepFreshness(ctx, file) {
   else put(ctx, file, text);
 }
 
+// #5311: a dependency number the blocked pass checks, 1..GRAPHQL_INT_MAX. Anything else belongs to the
+// blocker-landing pass's malformed-blocker exclusion (unlanded-blockers.js malformedRecords, the exact
+// complement, hence the shared constant) and is never live-checked.
+function inLiveCheckRange(dep) {
+  return dep > 0 && dep <= GRAPHQL_INT_MAX;
+}
+
+// The valid entries of the agent's dependency-freshness text: an unparseable value, a non-array, or an
+// entry without an integer `number` and a string `state` yields none.
+function validFreshnessEntries(text) {
+  let entries;
+  try {
+    entries = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(entries)) return [];
+  return entries.filter((e) => e && Number.isInteger(e.number) && typeof e.state === 'string');
+}
+
+// The numbers the agent's dependency-freshness text shows closed (#5408). A number counts closed
+// only when every valid entry for it says so: two contradictory entries are untrusted input that
+// must fail closed, not open.
+function closedDependencyNumbers(text) {
+  const valid = validFreshnessEntries(text);
+  const isClosed = (e) => e.state.toLowerCase() === 'closed';
+  const contested = new Set(valid.filter((e) => !isClosed(e)).map((e) => e.number));
+  return new Set(valid.filter(isClosed).map((e) => e.number).filter((n) => !contested.has(n)));
+}
+
+// The numbers the agent's dependency-freshness text marks `unreadable` (#5865): ascending and
+// de-duplicated, under the same validity test. Never closed, whatever else the file says about the
+// same number.
+function unreadableDependencyNumbers(text) {
+  const numbers = validFreshnessEntries(text)
+    .filter((e) => e.state.toLowerCase() === 'unreadable')
+    .map((e) => e.number);
+  return [...new Set(numbers)].sort((a, b) => a - b);
+}
+
 // On `files` the agent's queue file stands where the fence's queue pull stands, as the agent's Write
 // does: copied into the session file, which is the one aliased and read from then on, so the
-// caller's own file is never rewritten (D3 turns a non-array into [] in the session copy only). A
+// caller's own file is never rewritten (a non-array session copy is a failed read, #5307). A
 // queue file the agent never wrote removes the session file, so an earlier pull's queue is not read.
 function agentQueueRaw(ctx, input, file) {
   const text = step(ctx, 'queue-input', () => readTextOrNull(input)).value ?? null;
@@ -328,8 +406,17 @@ function makeContext(options = {}, deps = {}) {
     groupSizeGuard: '',
     bundleCap: '',
     foreignStates: inputs.foreignStates || env.DISPATCH_FOREIGN_STATES,
+    shippedUnreadable: [], // #5304: '#N (cause)' claims the shipped pass could not read; the neighbour pass reports them
+    claimLineReported: false, // #5304: set when reportClaimReadFailures runs; a stop before it flushes the shipped list
+    neighbourUnreadable: [], // #5304: the neighbour pass's unreadable claims, kept before its appends so a throwing append still reports them
+    claimReader: null, // #5304: the pull's one claim reader, built on its first read (claimReader(ctx))
     depFreshnessInput: null, // files only: the agent's dependency-freshness text, read by the fetch pass
+    nativeUnreadable: false, // #5309: the native-blockers query failed closed; every eligible record is excluded
+    depUnreadable: false, // #5311: a dependency view or the verified-open-deps file failed closed; nothing is written back
+    depFreshFailed: false, // #5310: the write-back's dependency-freshness search failed, or #5865: the files freshness text marks a dependency unreadable; nothing is written back
+    labelsSkipped: false, // #5315: a record with non-array labels was excluded at eligibility; nothing is written back
     standaloneDir: '',
+    typedNumbers: new Set(), // #5584: the named records admitted on a typed command (fetch pass)
     integrationBranch: '',
     integrationRef: '',
     files: {
@@ -344,7 +431,112 @@ function makeContext(options = {}, deps = {}) {
   return { options, deps: merged, paths, omit, state };
 }
 
-// Fence 71-151, then line 155 and the policy reads of 156-158 on a miss: the queue pull, the
+// #5584: `--named` (options.named, record numbers a person typed after /claude-tweaks:dispatch).
+// Runs between the pool fetch and its aliasing, before any pass, so the passes and their registry
+// are untouched: a named record already in the pool is left alone (no fetch, no line); any other is
+// fetched and judged by the one build-authority rule. A record the rule answers `typed` for is
+// appended to the queue file and to state.typedNumbers, which the blocked pass's grant filter
+// accepts; every later pass then judges it as it judges a granted record. Each fetched record prints
+// exactly one line on stdout:
+//   - not OPEN: the open-records-only line, printed before the rule runs;
+//   - `none`: formatAuthorityLine's refusal, naming the rule's reason words;
+//   - `label` (carries auto:build, yet the pool fetch missed it): the not-in-this-pull's-queue line;
+//   - `typed` but carrying bot:in-progress: the already-claimed line, no AUTO line (the eligibility
+//     filter would drop it);
+//   - `typed`, AUTO line written to options.runDir's decisions.md: the admit line, and the record is
+//     admitted (only once that line is written);
+//   - `typed`, AUTO write failed: the not-admitted line (the cause goes to stderr);
+//   - `typed` and admitted, but the queue-file write that makes it real failed: a second not-admitted
+//     line and a corrective decisions.md line, and the record leaves state.typedNumbers.
+// Nothing here writes a label. Under the files transport nothing is fetched: one line per named
+// number says the label is required.
+function admitNamed(ctx, queueFile) {
+  const { deps, state } = ctx;
+  const named = ctx.options.named || [];
+  if (named.length === 0) return;
+  if (ctx.options.transport === 'files') {
+    for (const number of named) deps.stdout(`#${number}: --named admits nothing under --transport files; the auto:build label is required\n`);
+    return;
+  }
+  // A pool that does not read as an array admits nothing: the pull stops at group-building on it.
+  const pool = step(ctx, 'named-pool', () => readJson(queueFile));
+  if (!pool.ok || !Array.isArray(pool.value)) return;
+  const pooled = new Set(pool.value.map((i) => i && i.number));
+  const env = optionEnv(ctx);
+  const admitted = [];
+  for (const number of named) {
+    if (pooled.has(number)) continue;
+    const raw = fetchNamed(ctx, number);
+    let result;
+    if (raw === null) {
+      result = { authority: 'none', reasons: ['labels-unreadable'] };
+    } else if (raw.state !== 'OPEN') {
+      deps.stdout(`#${number} is ${raw.state.toLowerCase()} — not built: the queue pull takes open records only\n`);
+      continue;
+    } else {
+      result = deps.buildAuthority({
+        number,
+        labels: raw.labels,
+        named: true,
+        env,
+        typedCommand: () => deps.readTypedCommand({ number, env, now: deps.now(), tmpdir: ctx.options.tmpdir || envTmpdir(env) }),
+        // Never the terminal route: only drive.js is run with a person at a terminal, so outside a
+        // session the pull answers none (not-a-terminal) by design (build-authority.js header).
+        stdinIsTTY: false,
+      });
+    }
+    if (result.authority === 'typed') {
+      // The blocked pass's eligibility filter drops a claimed record, granted or typed: refuse it here,
+      // before an AUTO line could record a build that will not happen. Checked only on `typed`, so a
+      // refusal the rule names (held, not-ready, ...) keeps its own words. A typed answer means the
+      // labels read as an array.
+      if (parseRecordFacets(raw.labels).bot.inProgress) {
+        deps.stdout(`#${number} is already claimed (bot:in-progress) — not built this firing\n`);
+        continue;
+      }
+      const text = `#${number} admitted on a typed /claude-tweaks:dispatch command (no auto:build label)`;
+      if (!step(ctx, `named #${number}`, () => deps.appendDecision({ runDir: ctx.options.runDir, text, now: deps.now() })).ok) {
+        deps.stdout(`#${number} not admitted: the decisions.md audit line could not be written\n`);
+        continue;
+      }
+      admitted.push(raw);
+      state.typedNumbers.add(number);
+    }
+    // A `label` answer here means the record carries auto:build yet the pool fetch did not return it.
+    const line = result.authority === 'label'
+      ? `#${number} carries auto:build but is not in this pull's queue — not built this firing`
+      : formatAuthorityLine(number, result);
+    deps.stdout(`${line}\n`);
+  }
+  if (admitted.length === 0) return;
+  // The admit line and AUTO line above were written before this write: a failed write must not leave
+  // a record reported admitted that never reaches the queue, so each is un-admitted and says so.
+  if (put(ctx, queueFile, JSON.stringify([...pool.value, ...admitted])).ok) return;
+  for (const raw of admitted) {
+    state.typedNumbers.delete(raw.number);
+    deps.stdout(`#${raw.number} not admitted: the queue file could not be written\n`);
+    step(ctx, `named #${raw.number} rollback`, () => deps.appendDecision({
+      runDir: ctx.options.runDir, text: `#${raw.number} not admitted after all: the queue file could not be written`, now: deps.now(),
+    }));
+  }
+}
+
+// One named record as `gh issue view` returns it, or null when the fetch failed or its answer is not
+// that record (another number, or no string state).
+function fetchNamed(ctx, number) {
+  let raw;
+  try {
+    raw = ctx.deps.fetchRecord(ctx, number);
+  } catch {
+    return null;
+  }
+  if (raw === null || typeof raw !== 'object' || raw.number !== number || typeof raw.state !== 'string') return null;
+  return raw;
+}
+
+const NAMED_FIELDS = 'number,title,body,labels,createdAt,updatedAt,state';
+
+// Fence 68-137, then line 141 and the policy reads of 142-144 on a miss: the queue pull, the
 // aliasing, the 500-cap Warning, the dependency-freshness fetch and the cache check. On a hit it
 // has written dispatch-groups.json; the blocked and oversized passes replay the rest.
 function runFetch(ctx) {
@@ -357,12 +549,20 @@ function runFetch(ctx) {
   if (!onGh) state.depFreshnessInput = step(ctx, 'dep-freshness-input', () => readTextOrNull(f.depFreshness)).value ?? null;
   if (onGh) put(ctx, queueFile, ghRun(ctx, QUEUE_ARGV).stdout);
   else agentQueueRaw(ctx, f.queueRaw, queueFile);
+  admitNamed(ctx, queueFile);
   aliasFile(ctx, 'alias-queue', queueFile);
-  const count = step(ctx, 'queue-count', () => readJson(queueFile).length);
+  // The cap is the auto:build list's own --limit: the records admitted above are not counted.
+  const count = step(ctx, 'queue-count', () => {
+    const queue = readJson(queueFile);
+    return Array.isArray(queue) ? queue.length - state.typedNumbers.size : 0;
+  });
   if (count.ok && count.value >= 500) deps.stderr(`${QUEUE_CAP_WARNING}\n`);
+  // A pull that admitted a typed record never reads the cache (Deliverable 5): a hit reuses stored
+  // groups, which either drop this pull's typed record or (once written) hand it to a later drain.
+  const readOrder = () => (state.typedNumbers.size > 0 ? null : deps.queueOrder.readOrder(rootOf(ctx)));
 
   const depNumbers = step(ctx, 'dep-numbers', () => {
-    const persisted = deps.queueOrder.readOrder(rootOf(ctx));
+    const persisted = readOrder();
     if (!persisted) return '';
     const autoBuildNumbers = new Set(readJson(queueFile).map((i) => i.number));
     const depOnly = (persisted.freshnessSignal.issues || []).filter((i) => !autoBuildNumbers.has(i.number));
@@ -371,18 +571,20 @@ function runFetch(ctx) {
   put(ctx, depFile, '[]');
   put(ctx, paths['dispatch-fastlane-bundles.json'], '[]');
   if (depNumbers) {
-    if (onGh) fetchDepFreshness(ctx, depNumbers, depFile);
+    if (onGh) fetchDepFreshness(ctx, depNumbers, depFile, 'used'); // its [] is always a miss: the numbers are the persisted signal's extra issues
     else agentDepFreshness(ctx, depFile);
   }
   aliasFile(ctx, 'alias-dep-freshness', depFile);
 
-  // The size guard is read for the cache check whether or not a blob exists (fence line 107).
+  // The size guard is read for the cache check whether or not a blob exists (fence line 97).
   state.groupSizeGuard = readPolicy(ctx, 'dispatch-group-size-guard');
   try {
-    const persisted = deps.queueOrder.readOrder(rootOf(ctx));
+    const persisted = readOrder();
     if (persisted) {
-      const current = buildFreshnessSignal([...readJson(queueFile), ...readJson(depFile)]);
-      if (cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
+      const autoBuild = readArray(queueFile);
+      const current = buildFreshnessSignal([...autoBuild, ...readArray(depFile)]);
+      // #5314 (fence 109): an empty queue never reuses the earlier pull's groups.
+      if (autoBuild.length > 0 && cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
         state.persisted = persisted;
@@ -399,8 +601,32 @@ function runFetch(ctx) {
   state.bundleCap = readPolicy(ctx, 'dispatch-fastlane-bundle-cap');
 }
 
-// Fence 159-205 on a miss (the eligible list, the unresolved-dependency check, the body-text and
-// native blocker filtering); on a hit the persisted `excluded` entries replayed as 'blocked'.
+// #5304: the CLI lookup's Warning when gh is absent (resolve-foreign-blockers.js's exit 2), the one
+// foreign-states Warning the dispatch layer drops after an ignored states file. Matches the fence's test.
+const GH_ABSENT_LOOKUP = /^Warning: foreign blocker state lookup failed \(exit 2: [^)]*gh[^)]* is required\)/;
+
+// #5309: the blockedBy entry every eligible record carries when the native query failed closed.
+const NATIVE_UNREADABLE = 'native blockers (state unreadable)';
+
+// #5314: the eligibility files the miss path computes, removed before it does.
+const ELIGIBILITY_FILES = ['dispatch-eligible-pre-dep.json', 'dispatch-unresolved-deps.json', 'dispatch-eligible.json', 'dispatch-blocked-excluded-body.json'];
+
+// #5309: a failed native-blockers call. On gh every failure fails closed: the Warning names the
+// call and the consequence, and the grouping block excludes every eligible record. On files only
+// exit 3 fails closed (exit 2 is gh absent, the normal files result); any other failure keeps the
+// gh-absent fallback and its Warning. Module and fence print the same bytes.
+function nativeQueryFailed(ctx, r) {
+  if (ctx.options.transport === 'files' && r.status !== 3) {
+    ctx.deps.stderr(`Warning: native dependency query failed — falling back to no native filtering this run: ${trimNl(r.stderr)}\n`);
+    return;
+  }
+  ctx.state.nativeUnreadable = true;
+  ctx.deps.stderr(`Warning: native dependency query failed — every candidate excluded as blocked (native blockers unreadable, fail closed) this run: ${trimNl(r.stderr)}\n`);
+}
+
+// Fence 145-208 on a miss (the removal of an earlier pull's eligibility files, the eligible list, the
+// unresolved-dependency check, the body-text and native blocker filtering); on a hit the persisted
+// `excluded` entries replayed as 'blocked'.
 function runBlocked(ctx) {
   const { deps, paths, omit, state } = ctx;
   const f = state.files;
@@ -417,26 +643,57 @@ function runBlocked(ctx) {
     return;
   }
 
+  // #5314 (fence 145-146): this pull's eligibility files are computed below; an earlier pull's
+  // never stand in for them when a read below fails, so a failed step stops at group-building.
+  step(ctx, 'rm-eligibility', () => {
+    for (const name of ELIGIBILITY_FILES) fs.rmSync(paths[name], { force: true });
+  });
+
   step(ctx, 'eligible-pre-dep', () => {
-    const issues = readJson(paths['dispatch-queue-raw.json']);
+    const queued = readJson(paths['dispatch-queue-raw.json']);
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
+    // #5315 (fence 151-152, 160): a non-array labels value is excluded on its own; the pull writes no cache.
+    const issues = queued.filter((i) => {
+      if (i.labels == null || Array.isArray(i.labels)) return true;
+      if (!omit.has('blocker-landing')) appendExclusion(paths['dispatch-exclusions.json'], { reason: 'malformed-blocker', records: [i.number], detail: { cause: 'its labels are not an array' } });
+      deps.stderr(`Warning: #${i.number} excluded — its labels are not an array\n`);
+      state.labelsSkipped = true;
+      return false;
+    });
     const eligiblePreDep = issues
       .map((i) => ({ ...i, facets: parseRecordFacets(i.labels) }))
-      .filter((i) => i.facets.grants.build && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
+      .filter((i) => (i.facets.grants.build || state.typedNumbers.has(i.number)) && !i.facets.bot.inProgress && !i.facets.bot.blocked && !i.facets.bot.parked);
     // '--limit 200' can truncate the open-issues pull: a dependency absent from it is
-    // unresolved, not closed, and is checked live below.
-    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => !openNumbers.has(dep)))];
+    // unresolved, not closed, and is checked live below. #5311: a number outside inLiveCheckRange
+    // is never live-checked; live-checking it would fail closed as a spurious `blocked` with a
+    // Warning every pull.
+    const unresolved = [...new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter((dep) => inLiveCheckRange(dep) && !openNumbers.has(dep)))];
     fs.writeFileSync(paths['dispatch-eligible-pre-dep.json'], JSON.stringify(eligiblePreDep));
     fs.writeFileSync(paths['dispatch-unresolved-deps.json'], JSON.stringify(unresolved));
   });
 
   if (!skip && ctx.options.transport !== 'files') {
     step(ctx, 'verified-open-deps', () => {
-      fs.writeFileSync(f.verifiedOpenDeps, '');
+      // #5879: removed, never truncated (rationale: queue-pull-notes.md).
+      fs.rmSync(f.verifiedOpenDeps, { force: true });
+      const open = [];
       const unresolved = readJson(paths['dispatch-unresolved-deps.json']).join(' ').split(/\s+/).filter(Boolean);
       for (const dep of unresolved) {
         const r = ghRun(ctx, ['issue', 'view', dep, '--json', 'state', '-q', '.state'], { quiet: true });
-        if (trimNl(r.stdout) === 'OPEN') fs.appendFileSync(f.verifiedOpenDeps, `${dep}\n`);
+        // #5311: a failed view fails closed.
+        if (!r.ok) {
+          deps.stderr(`Warning: gh issue view ${dep} failed — dependency #${dep} treated as open (fail closed) this run\n`);
+          state.depUnreadable = true;
+        }
+        if (!r.ok || trimNl(r.stdout) === 'OPEN') open.push(`${dep}\n`);
+      }
+      // #5311: one write after the loop; a failed write removes the file, so the blocked pass below
+      // fails closed on a missing file rather than reading a partial or empty one as "none open".
+      try {
+        fs.writeFileSync(f.verifiedOpenDeps, open.join(''));
+      } catch (err) {
+        try { fs.rmSync(f.verifiedOpenDeps, { force: true }); } catch { /* the step's error stands */ }
+        throw err;
       }
     });
   }
@@ -449,19 +706,64 @@ function runBlocked(ctx) {
       return;
     }
     const openNumbers = new Set(readJson(f.openNumbers).map((i) => i.number));
-    let verifiedOpen = [];
+    let lines = null;
     try {
-      verifiedOpen = fs.readFileSync(f.verifiedOpenDeps, 'utf8').trim().split('\n').filter(Boolean).map(Number);
+      lines = fs.readFileSync(f.verifiedOpenDeps, 'utf8').trim().split('\n').filter(Boolean);
     } catch (err) {
       if (!err || err.code !== 'ENOENT') throw err;
     }
+    // #5311: a missing or malformed file fails closed: every unresolved dependency counts as open.
+    const bad = lines === null || lines.some((l) => !/^\d+$/.test(l.trim()));
+    const unresolved = bad ? readJson(paths['dispatch-unresolved-deps.json']) : [];
+    if (bad && unresolved.length) {
+      deps.stderr('Warning: verified-open-deps file missing or malformed — every unresolved dependency treated as open (fail closed) this run\n');
+      state.depUnreadable = true;
+    }
+    const verifiedOpen = bad ? unresolved.map(Number) : lines.map(Number);
     for (const dep of verifiedOpen) openNumbers.add(dep);
+    // #5408: on `files` the agent writes the verified-open list, so it is not complete by construction
+    // as the CLI's is. An unresolved dependency it omits counts as closed only when the agent's own
+    // dependency-freshness text shows it closed; otherwise it counts as open (fail closed).
+    // Module-only: the fence has no twin of this block, by the plan-review decision, until #5231
+    // deletes the fence. Do not mirror it, and do not remove it to restore parity.
+    // #5865: a number the freshness file marks `unreadable` (the agent's issue_read failed on it) is
+    // never closed: the one Warning below names it in place of the omitted-dependency Warning, and
+    // depFreshFailed keeps the queue-order cache unwritten. Checked whether or not the file was `bad`.
+    // Only an in-range dependency of an eligible record counts: `Blocked by #0` or a number above
+    // GRAPHQL_INT_MAX is the blocker-landing pass's malformed-blocker case (#5311, inLiveCheckRange).
+    if (ctx.options.transport === 'files') {
+      const depended = new Set(eligiblePreDep.flatMap((i) => parseDependencies(i.body)).filter(inLiveCheckRange));
+      const unreadable = unreadableDependencyNumbers(state.depFreshnessInput).filter((n) => depended.has(n));
+      if (!bad) {
+        const closed = closedDependencyNumbers(state.depFreshnessInput);
+        const unreadableSet = new Set(unreadable);
+        for (const dep of readJson(paths['dispatch-unresolved-deps.json'])) {
+          if (verifiedOpen.includes(dep) || closed.has(dep)) continue;
+          openNumbers.add(dep);
+          if (!unreadableSet.has(dep)) deps.stderr(`Warning: verified-open-deps file omits #${dep}, which the dependency-freshness file does not show closed — treated as open (fail closed) this run\n`);
+          state.depUnreadable = true;
+        }
+      }
+      if (unreadable.length) {
+        deps.stderr(`Warning: dependency-freshness file marks ${unreadable.map((n) => `#${n}`).join(', ')} unreadable — treated as open (fail closed), queue-order cache not written this run\n`);
+        state.depFreshFailed = true;
+      }
+    }
     // #4793: a supplied states file (either transport) answers the foreign refs; the rest go to
     // resolve-foreign-blockers.js through the library's own bounded spawn (tests inject
     // deps.foreignDeps.spawn).
+    // #5304: after an ignored states file, the CLI lookup's gh-absent Warning is dropped (the states
+    // file's stays); a lookup that fails for another cause keeps its Warning. Keyed on the text, the
+    // same test the fence applies. The library is unchanged.
+    let statesIgnored = false;
+    const foreignStderr = (line) => {
+      if (line.startsWith('Warning: foreign blocker states file ')) statesIgnored = true;
+      else if (statesIgnored && GH_ABSENT_LOOKUP.test(line)) return;
+      deps.stderr(line);
+    };
     const foreign = bodyForeignBlockers(eligiblePreDep, {
       statesFile: state.foreignStates,
-      stderr: deps.stderr,
+      stderr: foreignStderr,
       ...deps.foreignDeps,
     });
     const { eligible, excluded } = partitionByOpenBodyBlockers(eligiblePreDep, openNumbers, foreign);
@@ -472,21 +774,28 @@ function runBlocked(ctx) {
   put(ctx, paths['dispatch-native-deps.json'], '{}');
   if (!skip && state.workLinks === 'native') {
     step(ctx, 'native-deps', () => {
+      // A failed read of the eligible list keeps step()'s line, as the fence's does (#5309's
+      // fail-closed Warning covers only a failed query and its own writes, below).
       const nativeNums = readJson(paths['dispatch-eligible.json']).map((i) => i.number).join(',');
       if (!nativeNums) return;
-      const r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
-      fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
-      fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');
-      if (r.status === 0) {
-        fs.renameSync(paths['dispatch-native-deps.tmp.json'], paths['dispatch-native-deps.json']);
-      } else {
-        deps.stderr(`Warning: native dependency query failed — falling back to no native filtering this run: ${trimNl(r.stderr)}\n`);
+      // #5309: a throw from the call or its writes is a failed query with no step line: the one
+      // Warning carries the message, and the transport rule applies.
+      let r;
+      try {
+        r = deps.spawnCli('resolve-blockers.js', [nativeNums], cliOpts(ctx));
+        fs.writeFileSync(paths['dispatch-native-deps.tmp.json'], r.stdout || '');
+        fs.writeFileSync(paths['dispatch-native-deps.err'], r.stderr || '');
+        if (r.status === 0) fs.renameSync(paths['dispatch-native-deps.tmp.json'], paths['dispatch-native-deps.json']);
+      } catch (err) {
+        nativeQueryFailed(ctx, { status: null, stderr: errText(err) });
+        return;
       }
+      if (r.status !== 0) nativeQueryFailed(ctx, r);
     });
   }
 }
 
-// Fence 206-258 on a miss: the grouping block, which writes dispatch-groups.json, then the
+// Fence 209-255 on a miss: the grouping block, which writes dispatch-groups.json, then the
 // bundles, then the 'blocked' appends, then the 'oversized' appends. On a hit it runs the size
 // guard over the persisted groups and keeps the persisted bundles.
 function runOversized(ctx) {
@@ -513,7 +822,9 @@ function runOversized(ctx) {
     const excludedNative = [];
     for (const c of eligible) {
       const dep = nativeDeps[c.number];
-      const refs = dep ? openBlockerRefs(dep) : [];
+      let refs = [];
+      if (state.nativeUnreadable) refs = [NATIVE_UNREADABLE];
+      else if (dep) refs = openBlockerRefs(dep);
       if (refs.length > 0) excludedNative.push({ number: c.number, blockedBy: refs });
       else finalEligible.push(c);
     }
@@ -541,7 +852,7 @@ function runOversized(ctx) {
   }
 }
 
-// Fence 266-303, the cache-miss path only: the dependency-freshness refetch over every eligible
+// Fence 257-296, the cache-miss path only: the dependency-freshness refetch over every eligible
 // record's dependencies, then the best-effort write-back of the queue-order blob.
 function runWriteBack(ctx) {
   const { deps, paths, state } = ctx;
@@ -555,16 +866,21 @@ function runWriteBack(ctx) {
   }).value || '';
   put(ctx, depFile, '[]');
   if (allDeps) {
-    if (onGh) fetchDepFreshness(ctx, allDeps, depFile);
+    if (onGh) state.depFreshFailed = !fetchDepFreshness(ctx, allDeps, depFile, 'written');
     else agentDepFreshness(ctx, depFile);
   }
   aliasFile(ctx, 'alias-dep-freshness', depFile);
 
   if (ctx.omit.size > 0) return; // an omitted pass leaves groups the blob would misdescribe
+  if (state.nativeUnreadable) return; // #5309: a failed native read is never persisted as a verdict
+  if (state.depUnreadable) return; // #5311: nor is a fail-closed dependency verdict
+  if (state.depFreshFailed) return; // #5310: nor a freshness signal missing its dependencies
+  if (state.labelsSkipped) return; // #5315: nor a pull that excluded a non-array-labels record
+  if (state.typedNumbers.size > 0) return; // a typed record must not reach a later drain's cache hit (#5584)
   step(ctx, 'write-back', () => {
     const root = rootOf(ctx);
-    const autoBuild = readJson(paths['dispatch-queue-raw.json']);
-    const depFreshness = readJson(depFile);
+    const autoBuild = readArray(paths['dispatch-queue-raw.json']);
+    const depFreshness = readArray(depFile);
     const groups = readJson(paths['dispatch-groups.json']);
     // The disk cache keeps its pre-#1752 {number, blockedBy}[] `excluded` shape: reshape the
     // unified 'blocked' entries back at the one place the schemas meet (Q28).
@@ -584,7 +900,7 @@ function runWriteBack(ctx) {
   });
 }
 
-// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 307-580) ---------------------
+// ---- not-spec-shaped, open-pr, target-missing and shipped (fence 300-566) ---------------------
 
 // The text this module quotes where the fence prints `$(cat $ERR_FILE)`. The fence's file holds
 // Node's uncaught-exception report: a header (a throw-site file:line, or a node:internal loader
@@ -629,8 +945,8 @@ function rewriteGroups(ctx, makeKeep) {
   fs.writeFileSync(file, `${JSON.stringify(finalGroups)}\n`);
 }
 
-// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 308,
-// 352): the file keeps the failure text. Returns the failure text, or null on success.
+// The node block of an exclusion pass whose stderr the fence redirects into `errFile` (fence 301,
+// 344): the file keeps the failure text. Returns the failure text, or null on success.
 function runRedirectedBlock(ctx, errFile, fn) {
   try {
     fn();
@@ -643,7 +959,7 @@ function runRedirectedBlock(ctx, errFile, fn) {
   }
 }
 
-// Fence 307-336. Keeps a candidate only when its cached body passes the Materialization gate.
+// Fence 300-328. Keeps a candidate only when its cached body passes the Materialization gate.
 function runNotSpecShaped(ctx) {
   const { deps, paths, omit } = ctx;
   const skip = omit.has('not-spec-shaped');
@@ -664,7 +980,7 @@ function runNotSpecShaped(ctx) {
   deps.stderr(`Warning: not-spec-shaped pass skipped — ${trimNl(failure)}\n`);
 }
 
-// Fence 338-382. The linked-PR query is shared setup (the shipped pass reads its mentions); only the
+// Fence 330-374. The linked-PR query is shared setup (the shipped pass reads its mentions); only the
 // exclusion filtering is this pass's own.
 function runOpenPr(ctx) {
   const { deps, paths, omit } = ctx;
@@ -677,7 +993,7 @@ function runOpenPr(ctx) {
     put(ctx, linkedFile, r.stdout);
     put(ctx, errFile, r.stderr);
     if (r.status !== 0) {
-      deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR exclusion this run: ${trimNl(r.stderr)}\n`);
+      deps.stderr(`Warning: linked-PR query failed — falling back to no open-PR or shipped-candidate exclusion this run: ${trimNl(r.stderr)}\n`);
       put(ctx, linkedFile, '{}\n');
     }
   }
@@ -701,7 +1017,7 @@ function runOpenPr(ctx) {
   deps.stderr(`Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: ${trimNl(failure)}\n`);
 }
 
-// `git remote show origin | sed -n '/HEAD branch/s/.*: //p'` (fence 393): a failed git still hands
+// `git remote show origin | sed -n '/HEAD branch/s/.*: //p'` (fence 382): a failed git still hands
 // over whatever it printed.
 function remoteHeadBranch(ctx) {
   let out;
@@ -713,6 +1029,9 @@ function remoteHeadBranch(ctx) {
   return trimNl(out.split('\n').filter((l) => /HEAD branch/.test(l) && /: /.test(l)).map((l) => l.replace(/^.*: /, '')).join('\n'));
 }
 
+// POSIX single-quoting, the rule of the fence's node quoter in the comment echo (#5317) and of queue-pull-oracle.js's shQuote.
+const shQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+
 // The staged Close (GitHub) body of a target-missing exclusion: the fence's echo lines.
 function targetMissingProposal(num, tpath, ref) {
   return [
@@ -723,23 +1042,40 @@ function targetMissingProposal(num, tpath, ref) {
     `**Proposed:** Close #${num} as not planned — named target deleted, nothing left to fix.`,
     '',
     '**Commands:**',
-    `gh issue comment ${num} --body "Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull)."`,
+    `gh issue comment ${num} --body ${shQuote(`Closing: the named target ${tpath} no longer exists at ${ref} — this record's Acceptance Criteria has no remaining target. Filed by /claude-tweaks:dispatch (queue pull).`)}`,
     `gh issue close ${num} --reason "not planned"`,
   ].map((l) => `${l}\n`).join('');
 }
 
-// Fence 384-466. The run-dir and integration-branch resolution (385-395) is shared setup and
+// #5863: whether `ref` (origin/{branch}) names a commit here. `git remote show origin` prints
+// `HEAD branch: (unknown)` for a dangling origin HEAD, and a policy key can name a deleted branch.
+function originRefResolves(ctx, ref) {
+  try {
+    ctx.deps.run('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], runOpts(ctx, { stdio: 'pipe' }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// #5305, #5863: the Warning printed in place of the target-missing pass when the integration branch is empty
+// or its origin/ ref does not resolve (fence 394-395).
+const TARGET_MISSING_SKIPPED = 'Warning: target-missing pass skipped — no resolvable integration branch';
+
+// Fence 376-459. The run-dir and integration-branch resolution (377-384) is shared setup and
 // runs whether or not this pass is omitted; later passes read state.integrationBranch.
 function runTargetMissing(ctx) {
   const { deps, paths, omit, state } = ctx;
-  // Fence 385: `$(node hooks.js resolve-run-dir ...)` captures stdout; its stderr stays on the terminal.
+  // Fence 377: `$(node hooks.js resolve-run-dir ...)` captures stdout; its stderr stays on the terminal.
   const runDirCall = spawnCli(ctx, 'hooks.js', ['resolve-run-dir', '--spec-slug', 'dispatch-standalone']);
   forward(ctx, runDirCall, { stdout: false });
   state.standaloneDir = trimNl(runDirCall.stdout);
   let branch = readPolicy(ctx, 'integration-branch');
   if (!branch) branch = remoteHeadBranch(ctx);
   state.integrationBranch = branch;
-  const ref = `origin/${branch}`;
+  // #5305: an empty or unresolvable branch (#5863) composes no usable origin/ ref; the pass that compares against it is skipped.
+  // Only this pass skips: the shared branch and ref stay as resolved for the unlanded-blocker pass, which checks landing through the GitHub API.
+  const ref = branch ? `origin/${branch}` : '';
   state.integrationRef = ref;
   const exclusions = paths['dispatch-exclusions.json'];
 
@@ -750,22 +1086,27 @@ function runTargetMissing(ctx) {
         .filter((c) => c.target);
       fs.writeFileSync(paths['dispatch-named-targets.json'], JSON.stringify(named));
     });
-    const probe = step(ctx, 'target-missing', () => {
-      const named = readJson(paths['dispatch-named-targets.json']);
-      const missing = named.filter(({ target }) => {
-        try {
-          deps.run('git', ['cat-file', '-e', `${ref}:${target.path}`], runOpts(ctx, { stdio: 'pipe' }));
-          return false;
-        } catch {
-          return true;
+    // The probe runs only when this pass does, as in the fence; an empty branch never reaches it.
+    if (!branch || !originRefResolves(ctx, ref)) {
+      deps.stderr(`${TARGET_MISSING_SKIPPED}\n`);
+    } else {
+      const probe = step(ctx, 'target-missing', () => {
+        const named = readJson(paths['dispatch-named-targets.json']);
+        const missing = named.filter(({ target }) => {
+          try {
+            deps.run('git', ['cat-file', '-e', `${ref}:${target.path}`], runOpts(ctx, { stdio: 'pipe' }));
+            return false;
+          } catch {
+            return true;
+          }
+        });
+        for (const { number, target } of missing) {
+          appendExclusion(exclusions, { reason: 'target-missing', records: [number], detail: { path: target.path } });
         }
       });
-      for (const { number, target } of missing) {
-        appendExclusion(exclusions, { reason: 'target-missing', records: [number], detail: { path: target.path } });
-      }
-    });
-    // #3110: stop rather than continue with a partial exclusion list.
-    if (!probe.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit 1); see error above.');
+      // #3110: stop rather than continue with a partial exclusion list.
+      if (!probe.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- target-missing exclusion pass failed (exit 1); see error above.');
+    }
   }
 
   step(ctx, 'target-missing-filter', () => rewriteGroups(ctx, () => {
@@ -779,21 +1120,25 @@ function runTargetMissing(ctx) {
   for (const { number, path: tpath } of rows) {
     forward(ctx, spawnCli(ctx, 'log-decision.js', ['--run', state.standaloneDir, '--status', 'AUTO',
       '--text', `dispatch: #${number} excluded, named target ${tpath} absent at ${ref}`, '--reversibility', 'n/a']));
-    // The mktemp file is extensionless, so stage-item.js names the staged item after its random
-    // suffix (ledger row 2). Reproduced, never normalized.
-    const tmp = step(ctx, 'mktemp', () => deps.tmpName());
-    if (tmp.ok) put(ctx, tmp.value, targetMissingProposal(number, tpath, ref));
-    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', tmp.ok ? tmp.value : '']));
+    // Fence 444: beside dispatch-exclusions.json, as the shipped pass's proposals are;
+    // the .md names the staged item (#5316).
+    const file = path.join(path.dirname(exclusions), `target-missing-proposal-${number}.md`);
+    if (!put(ctx, file, targetMissingProposal(number, tpath, ref)).ok) continue;
+    forward(ctx, spawnCli(ctx, 'stage-item.js', ['--run', state.standaloneDir, '--id', `dispatch-target-missing-${number}`, '--file', file]));
   }
 }
 
-// The claim reader writeReleaseTimes asks for, built only when a candidate has a merged mention.
-function lazyClaimReader(ctx) {
-  let reader = null;
-  return { read: (n) => { if (!reader) reader = ctx.deps.createClaimReader(); return reader.read(n); } };
+// The one claim reader of a pull, shared by the shipped and neighbour-in-flight passes; built on its first read.
+function claimReader(ctx) {
+  return {
+    read: (n) => {
+      if (!ctx.state.claimReader) ctx.state.claimReader = ctx.deps.createClaimReader();
+      return ctx.state.claimReader.read(n);
+    },
+  };
 }
 
-// Fence 551-580: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
+// Fence 539-566: one Close proposal per strong-tier exclusion, staged into the firing's own run dir.
 // The run-dir call is `2>/dev/null || true`: its stderr is dropped and a spawn throw is silent.
 function stageShippedProposals(ctx) {
   const { paths } = ctx;
@@ -821,7 +1166,7 @@ function stageShippedProposals(ctx) {
   }
 }
 
-// Fence 468-580. Omitting the pass skips its classification, probes, exclusions and staging.
+// Fence 466-566. Omitting the pass skips its classification, probes, exclusions and staging.
 function runShipped(ctx) {
   const { deps, paths, omit } = ctx;
   if (omit.has('shipped')) {
@@ -833,19 +1178,20 @@ function runShipped(ctx) {
   const prFilesFile = paths['dispatch-shipped-pr-files.jsonl'];
   const releasesFile = paths['dispatch-shipped-releases.json'];
 
-  // First pass: title-only classification; only a `weak` result not predating the claim release is
-  // probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull.
+  // First pass: title-only classification; only a `weak` result not downgraded after the merge (claim release
+  // or shaping, #5722) is probed for the files-based upgrade, capped at 5 live `gh pr view` calls per pull. The mentions come
+  // from `dispatch-linked-prs.json`, already fetched, so this pass makes no second round trip for them.
   step(ctx, 'shipped-probe', () => {
     const groups = readJson(paths['dispatch-groups.json']);
     const linkedPRs = readJson(linkedFile);
-    const releases = writeReleaseTimes(releasesFile, groups.flat(), linkedPRs, { log: (line) => deps.stderr(`${line}\n`), reader: lazyClaimReader(ctx) });
+    const releases = writeReleaseTimes(releasesFile, groups.flat(), linkedPRs, { log: (line) => deps.stderr(`${line}\n`), reader: claimReader(ctx), unreadable: ctx.state.shippedUnreadable });
     const toProbe = [];
     for (const c of groups.flat()) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) continue;
-      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-      if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
+      const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
+      if (result.tier === 'weak' && !downgradedAfterMerge(result)) toProbe.push(result.pr);
     }
     fs.writeFileSync(probeFile, JSON.stringify([...new Set(toProbe)].slice(0, 5)));
   });
@@ -853,9 +1199,9 @@ function runShipped(ctx) {
   put(ctx, prFilesFile, '');
   const probePrs = step(ctx, 'shipped-probe-list', () => readJson(probeFile).join(' ').split(/\s+/).filter(Boolean)).value || [];
   for (const pr of probePrs) {
-    // `2>/dev/null || echo '[]'`: a failed fetch prints nothing and reads as [].
+    // `2>/dev/null || FILES_JSON=null`: a failed fetch prints nothing (stderr ignored) and reads as null.
     const r = ghRun(ctx, ['pr', 'view', pr, '--json', 'files', '-q', '[.files[].path]'], { quiet: true });
-    const filesJson = trimNl(r.ok ? r.stdout : `${r.stdout}[]\n`);
+    const filesJson = r.ok ? trimNl(r.stdout) : 'null';
     step(ctx, 'shipped-pr-files', () => fs.appendFileSync(prFilesFile, `${JSON.stringify({ pr: Number(pr), files: JSON.parse(filesJson) })}\n`));
   }
 
@@ -875,16 +1221,23 @@ function runShipped(ctx) {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number], lastShapedAt: entry.lastShapedAt });
       if (result.tier === 'strong') {
         appendExclusion(paths['dispatch-exclusions.json'], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         deps.stderr(`AUTO — dispatch: #${c.number} excluded, shipped by merged PR #${result.pr} (${result.signals.join(', ')})\n`);
         return false;
       }
       if (result.tier === 'weak') {
-        deps.stderr(`AUTO — dispatch: #${c.number}${predatesClaimRelease(result)
-          ? ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`
-          : ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`}\n`);
+        let keptDetail;
+        if (predatesClaimRelease(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates claim release at ${releases[c.number]} — remaining work assumed`;
+        } else if (downgradedAfterMerge(result)) {
+          keptDetail = ` kept: merged PR #${result.pr} predates ready/auto:build labeling at ${entry.lastShapedAt} — remaining work assumed`;
+        } else {
+          keptDetail = ` mentioned by merged PR #${result.pr} without a closing keyword; dispatching anyway`;
+        }
+        deps.stderr(`AUTO — dispatch: #${c.number}${keptDetail}\n`);
+        if (!downgradedAfterMerge(result) && prFiles.get(result.pr) === null) deps.stderr(`Warning: gh pr view ${result.pr} failed — #${c.number} kept as a weak shipped candidate (files unprobed) this run\n`);
       }
       return true;
     };
@@ -895,9 +1248,9 @@ function runShipped(ctx) {
   stageShippedProposals(ctx);
 }
 
-// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 582-671) --
+// ---- blocker-landing, neighbour-in-flight, cross-PR overlap and near-duplicate (fence 568-648) --
 
-// Fence 582-589. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
+// Fence 568-576. One dispatch-unlanded-blockers.js call writes both the unlanded-blocker and the
 // malformed-blocker entries, so omitting either reason skips the whole call (R7). `--work-links`
 // is the value the fetch pass stored: on a queue-order cache hit the fence never sets WORK_LINKS,
 // so "$WORK_LINKS" is the empty string and the CLI accepts it.
@@ -929,10 +1282,22 @@ function runBlockerLanding(ctx) {
 
 const IN_FLIGHT_ARGV = ['issue', 'list', '--label', 'bot:in-progress', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '200'];
 const IN_FLIGHT_POOL_AUTO = 'AUTO — dispatch: neighbour-in-flight pool fetch failed; no neighbour-in-flight exclusions this pull';
-// fence 595, byte for byte
+// fence 587, byte for byte
 const IN_FLIGHT_CAP_WARNING = 'Warning: the bot:in-progress pull for the neighbour-in-flight pass (#3278) returned exactly the --limit cap (200) — in-flight records beyond the cap are not checked as neighbours. Informational only; never blocks dispatch.';
 
-// Fence 591-618 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
+// #5304: one AUTO line per pull for the claims the two claim-reading passes could not read. The
+// shipped pass's list waits in state.shippedUnreadable for this pass, which runs after it on both
+// transports and prints the single line, also when omitted (the shipped list is then all there is).
+function reportClaimReadFailures(ctx, neighbourUnreadable) {
+  ctx.state.claimLineReported = true;
+  const shipped = ctx.state.shippedUnreadable;
+  const neighbour = neighbourUnreadable.map((n) => `#${n}`);
+  if (shipped.length && neighbour.length) ctx.deps.stderr(`AUTO — dispatch: claim read failed for ${[...shipped, ...neighbour].join(', ')}; shipped-candidate release time unknown, no downgrade; neighbour-in-flight treated as not in flight\n`);
+  else if (neighbour.length) ctx.deps.stderr(`AUTO — dispatch: neighbour-in-flight claim read failed for ${neighbour.join(', ')}; treated as not in flight\n`);
+  else if (shipped.length) ctx.deps.stderr(`AUTO — dispatch: shipped-candidate claim read failed for ${shipped.join(', ')}; release time unknown, no downgrade\n`);
+}
+
+// Fence 578-614 on `gh`; on `files` mcp-transport.md's Step 2 four-step replacement, whose agent-
 // written pool and claim-map FILES this pass reads (steps 1-3 are the agent's). Only the compute
 // is this pass's own: omitting the pass skips it (and so its appends and AUTO line), while the pool
 // fetch and its cap Warning are shared setup. A missing or malformed pool or claim-map file throws
@@ -956,25 +1321,29 @@ function runNeighbourInFlight(ctx) {
     const count = step(ctx, 'in-flight-count', () => readJson(f.inFlightRaw).length);
     if (count.ok && count.value >= 200) deps.stderr(`${IN_FLIGHT_CAP_WARNING}\n`);
   }
-  if (omit.has('neighbour-in-flight')) return;
-  const computed = step(ctx, 'neighbour-in-flight', () => {
-    const candidates = readJson(paths['dispatch-groups.json']).flat();
-    const inFlight = readJson(f.inFlightRaw);
-    const readClaimContent = onGh ? deps.createClaimReader().read : claimReaderFromMap(readJson(f.inFlightClaims));
-    const { exclusions, unreadable } = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
-    for (const e of exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
-    if (unreadable.length) deps.stderr(`AUTO — dispatch: neighbour-in-flight claim read failed for #${unreadable.join(', #')}; treated as not in flight\n`);
-  });
-  if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
+  if (!omit.has('neighbour-in-flight')) {
+    const computed = step(ctx, 'neighbour-in-flight', () => {
+      const candidates = readJson(paths['dispatch-groups.json']).flat();
+      const inFlight = readJson(f.inFlightRaw);
+      const readClaimContent = onGh ? claimReader(ctx).read : claimReaderFromMap(readJson(f.inFlightClaims));
+      const result = neighbourInFlightExclusions({ candidates, inFlight, readClaimContent, now: deps.now().getTime() });
+      state.neighbourUnreadable = result.unreadable;
+      for (const e of result.exclusions) appendExclusion(paths['dispatch-exclusions.json'], e);
+    });
+    if (!computed.ok) throw new QueuePullStopped('dispatch: queue-pull stopped -- neighbour-in-flight exclusion pass failed (exit 1); see error above.');
+  }
+  reportClaimReadFailures(ctx, state.neighbourUnreadable);
 }
 
 const OPEN_PRS_ARGV = ['pr', 'list', '--state', 'open', '--json', 'number,files,closingIssuesReferences', '--limit', '100'];
-// fence 645, byte for byte
+// fence 623, byte for byte
 const OPEN_PR_CAP_WARNING = 'Warning: the open-PR pull for the cross-PR overlap report (#1579) returned exactly the --limit cap (100) — overlap detection may be missing older open PRs. Informational only; never blocks dispatch.';
+// fence 620's failure branch, byte for byte (#5312)
+const OPEN_PR_FAIL_WARNING = 'Warning: open-PR pull failed — cross-PR overlap not checked this run';
 
-// Fence 620-652, informational. On `files` mcp-transport.md skips the fetch and has the agent write
-// `[]`; the module does the same and makes no gh call. On `gh` the open-PR fetch fails silently
-// (`2>/dev/null || echo '[]'`) and a compute failure is a step error the fence does not stop on.
+// Fence 616-637, informational. On `files` mcp-transport.md skips the fetch and has the agent write
+// `[]`; the module does the same and makes no gh call. On `gh` a failed open-PR fetch writes [] and
+// prints one Warning (#5312), and a compute failure is a step error the fence does not stop on.
 function runCrossPrOverlap(ctx) {
   const { deps, paths, omit } = ctx;
   const out = paths['dispatch-crosspr-overlap.json'];
@@ -986,6 +1355,7 @@ function runCrossPrOverlap(ctx) {
   const prsFile = paths['dispatch-open-prs.json'];
   const r = ghRun(ctx, OPEN_PRS_ARGV, { quiet: true });
   put(ctx, prsFile, r.ok ? r.stdout : '[]\n');
+  if (!r.ok) deps.stderr(`${OPEN_PR_FAIL_WARNING}\n`);
   const count = step(ctx, 'open-pr-count', () => readJson(prsFile).length);
   if (count.ok && count.value >= 100) deps.stderr(`${OPEN_PR_CAP_WARNING}\n`);
   if (skip) return;
@@ -1002,7 +1372,7 @@ function runCrossPrOverlap(ctx) {
   });
 }
 
-// Fence 654-671, informational: every cross-group pair gets an AUTO line, and only the strong ones
+// Fence 639-648, informational: every cross-group pair gets an AUTO line, and only the strong ones
 // reach dispatch-near-dup-pairs.json (always written, [] when there are none).
 function runNearDupPairs(ctx) {
   if (ctx.omit.has('near-dup-pairs')) return;
@@ -1041,35 +1411,20 @@ function runPasses(passes, ctx) {
   const runners = ctx.runners || RUNNERS;
   const passCtx = { ...ctx, omit: ctx.omit ?? new Set() };
   const seen = new Set();
-  for (const pass of passes) {
-    if (seen.has(pass.id)) continue;
-    seen.add(pass.id);
-    const runner = runners[pass.id];
-    if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
-    if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
-    runner(passCtx);
+  try {
+    for (const pass of passes) {
+      if (seen.has(pass.id)) continue;
+      seen.add(pass.id);
+      const runner = runners[pass.id];
+      if (typeof runner !== 'function') throw new Error(`queue-pull: pass not implemented: ${pass.id}`);
+      if (ctx.deps.onPass) ctx.deps.onPass(pass.id);
+      runner(passCtx);
+    }
+  } catch (err) {
+    // #5304: a stop before the claim line prints (the neighbour pass stops before it, or never ran) still prints the shipped claims read so far, once.
+    if (ctx.state && !ctx.state.claimLineReported) reportClaimReadFailures(ctx, ctx.state.neighbourUnreadable);
+    throw err;
   }
-}
-
-function tmpName() {
-  const counterFile = process.env.QP_TMPNAME_COUNTER_FILE;
-  let next = null;
-  let base;
-  if (counterFile) {
-    let stored = null;
-    try { stored = fs.readFileSync(counterFile, 'utf8'); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
-    const n = stored === null ? 0 : Number(stored);
-    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`queue-pull: tmpName: counter file holds ${JSON.stringify(stored)}`);
-    next = n + 1;
-    base = `tmp.qp${String(next).padStart(8, '0')}`;
-  } else {
-    const alnum = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    base = 'tmp.' + Array.from(crypto.randomBytes(10), (b) => alnum[b % alnum.length]).join('');
-  }
-  const file = path.join(os.tmpdir(), base);
-  fs.writeFileSync(file, '', { flag: 'wx', mode: 0o600 });
-  if (next !== null) fs.writeFileSync(counterFile, String(next)); // only after a successful create
-  return file;
 }
 
 // A gh call bounded by GH_BATCH_TIMEOUT_MS rather than GH_TIMEOUT_MS: an aliased GraphQL batch, or
@@ -1116,13 +1471,24 @@ function defaultDeps(seams = {}) {
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
     now: () => new Date(),
-    tmpName,
     queueOrder: {
       readOrder: (...a) => require('./queue-order').readOrder(...a),
       writeOrder: (...a) => require('./queue-order').writeOrder(...a),
     },
     createClaimReader: (...a) => require('../issues/claim-store').createClaimReader(...a),
     expressQueuePolicy: (...a) => require('../express/queue').expressQueuePolicy(...a),
+    // #5584, the named path (admitNamed). A failed or unparseable fetch reads as null.
+    fetchRecord(ctx, number) {
+      const r = ghRun(ctx, ['issue', 'view', String(number), '--json', NAMED_FIELDS], { quiet: true });
+      if (!r.ok) return null;
+      try { return JSON.parse(r.stdout); } catch { return null; }
+    },
+    buildAuthority: resolveBuildAuthority,
+    readTypedCommand: (...a) => require('../issues/typed-command').readTypedCommand(...a),
+    appendDecision({ runDir, text, now = new Date() }) {
+      const { appendEntry, formatEntry } = require('../log-decision/append');
+      appendEntry({ runDir, section: '/dispatch', entry: formatEntry({ status: 'AUTO', now, step: 'queue pull', text, reversibility: 'n/a' }) });
+    },
     foreignDeps: {},
     onPass: null,
   };
@@ -1184,6 +1550,6 @@ function rankFromFiles({ sessionId, priority } = {}) {
 }
 
 module.exports = {
-  PASSES, PASS_FIELD_VALUES, SESSION_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
-  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS,
+  PASSES, PASS_FIELD_VALUES, SESSION_FILES, END_WRITTEN_FILES, sessionPaths, QueuePullStopped, runPasses, resolveOmit, defaultDeps, makeContext, queuePull, rankNext, rankFromFiles,
+  STAYING_EXCLUSION_REASONS, RANK_SKIP_REASONS, closedDependencyNumbers,
 };

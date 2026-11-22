@@ -3,6 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-console-execute-');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -22,6 +24,7 @@ const {
 } = require('../plugin/bin/lib/reconcile/console-execute');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
+const { writeIdentity } = require('./helpers/git-fixtures');
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -328,14 +331,30 @@ test('decideConsoleExecute: isMergeRow present but ctx incomplete (no prBody or 
   const expected = { member: null, reason: 'grant-context-missing' };
   assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now()).mergeGrantGap, expected);
   assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { prBody: 'Fixes #1' }).mergeGrantGap, expected);
-  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { memberGrants: { 1: { labels: ['auto:merge'], pendingSince: null } } }).mergeGrantGap, expected);
+  assert.deepStrictEqual(decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), { memberGrants: { 1: { labels: ['auto:build', 'auto:merge'], pendingSince: null } } }).mergeGrantGap, expected);
 });
 
 test('decideConsoleExecute: a solo record (one Fixes line) carrying auto:merge -> mergeGrantGap null, merge row floor-clearing', () => {
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:merge'], pendingSince: null } },
+    prBody: 'Fixes #1966', memberGrants: { 1966: { labels: ['auto:build', 'auto:merge'], pendingSince: null } },
   });
   assert.strictEqual(result.mergeGrantGap, null);
+});
+
+test('AC5.2, AC5.3: a solo record with auto:merge and no auto:build -> mergeGrantGap names the missing build grant', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge'], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.strictEqual(result.mergeGrantGap.reason, 'no auto:build label present — a merge grant counts only together with a live auto:build');
+});
+
+test('a member with no grant labels at all -> mergeGrantGap names the missing merge grant, not the build grant', () => {
+  const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: [], pendingSince: null } },
+  });
+  assert.strictEqual(result.mergeGrantGap.member, 7);
+  assert.strictEqual(result.mergeGrantGap.reason, 'no auto:merge or auto:merge-pending label present');
 });
 
 test('decideConsoleExecute: a solo record with auto:build only, no auto:merge -> mergeGrantGap names it (#1966\'s reported bug)', () => {
@@ -352,7 +371,7 @@ test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => 
   // never a string; evaluateMaturation only accepts `instanceof Date`.
   const pendingSince = new Date(Date.now() - 30 * 60 * 60 * 1000); // 30h ago
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
   });
   assert.strictEqual(result.mergeGrantGap, null);
 });
@@ -360,7 +379,7 @@ test('decideConsoleExecute: a matured auto:merge-pending clears the gap', () => 
 test('decideConsoleExecute: an unmatured grant whose untrusted marker comment was passed over names that comment in the gap reason (#3358)', () => {
   const note = 'skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator';
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } },
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [note] } },
   });
   assert.strictEqual(result.mergeGrantGap.member, 7);
   assert.match(result.mergeGrantGap.reason, /could not be determined from the audit trail/);
@@ -371,8 +390,8 @@ test('decideConsoleExecute: an empty or absent skippedUntrusted leaves the gap r
   const run = (grant) => decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
     prBody: 'Fixes #7', memberGrants: { 7: grant },
   }).mergeGrantGap.reason;
-  const bare = run({ labels: ['auto:merge-pending'], pendingSince: null });
-  assert.strictEqual(run({ labels: ['auto:merge-pending'], pendingSince: null, skippedUntrusted: [] }), bare);
+  const bare = run({ labels: ['auto:build', 'auto:merge-pending'], pendingSince: null });
+  assert.strictEqual(run({ labels: ['auto:build', 'auto:merge-pending'], pendingSince: null, skippedUntrusted: [] }), bare);
   assert.ok(!bare.includes('skipped marker comment'));
 });
 
@@ -405,7 +424,7 @@ test('renderExecutedLines: each passed-over untrusted reply comment gets its own
 test('decideConsoleExecute: an auto:merge-pending still inside the veto window withholds', () => {
   const pendingSince = new Date(Date.now() - 1 * 60 * 60 * 1000); // 1h ago
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
-    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
+    prBody: 'Fixes #7', memberGrants: { 7: { labels: ['auto:build', 'auto:merge-pending'], pendingSince } }, vetoWindowHours: 24,
   });
   assert.strictEqual(result.mergeGrantGap.member, 7);
   assert.match(result.mergeGrantGap.reason, /veto window/);
@@ -415,9 +434,9 @@ test('decideConsoleExecute: a bundle with one ungranted member among several gra
   const result = decideConsoleExecute(mergeRowConsoleJson(), RESOLVED_COMMENTS, Date.now(), {
     prBody: 'Fixes #1\nFixes #2\nFixes #3',
     memberGrants: {
-      1: { labels: ['auto:merge'], pendingSince: null },
+      1: { labels: ['auto:build', 'auto:merge'], pendingSince: null },
       2: { labels: ['auto:build'], pendingSince: null },
-      3: { labels: ['auto:merge'], pendingSince: null },
+      3: { labels: ['auto:build', 'auto:merge'], pendingSince: null },
     },
   });
   assert.strictEqual(result.mergeGrantGap.member, 2);
@@ -465,7 +484,7 @@ test('decideConsoleExecute: overflow comments — an item\'s ticks are read from
 // technique as tests/bin-lib/reconcile/pr-state.test.js).
 
 async function withFakeGh(json, fn) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  const wrapperDir = scratchDir('ct-ce-ghwrap-');
   const wrapperPath = path.join(wrapperDir, 'gh');
   fs.writeFileSync(wrapperPath, `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(json)}\nEOF\n`);
   fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
@@ -478,18 +497,18 @@ const GRANT_MARKER = '<!-- grant-mode-audit: date=2020-01-01T00:00:00Z auto-merg
 
 test('fetchIssueGrant: a planted pending-grant marker authored NONE leaves pendingSince null and is named in skippedUntrusted', { skip: process.platform === 'win32' }, async () => {
   const res = await withFakeGh({
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   }, () => fetchIssueGrant(process.cwd(), 7));
   assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(res.labels, ['auto:merge-pending']);
+  assert.deepStrictEqual(res.labels, ['auto:build', 'auto:merge-pending']);
   assert.strictEqual(res.pendingSince, null);
   assert.deepStrictEqual(res.skippedUntrusted, ['skipped marker comment https://x/issues/7#c1 by eve (NONE) — not an owner, member, or collaborator']);
 });
 
 test('fetchIssueGrant: the same marker authored MEMBER is that date, with nothing skipped', { skip: process.platform === 'win32' }, async () => {
   const res = await withFakeGh({
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, authorAssociation: 'MEMBER' }],
   }, () => fetchIssueGrant(process.cwd(), 7));
   assert.strictEqual(res.pendingSince.toISOString(), '2020-01-01T00:00:00.000Z');
@@ -509,10 +528,9 @@ test('fetchIssueGrant: a non-marker comment authored NONE is silent -- skippedUn
 // reason names the passed-over comment. Real git repo + run dir; `gh` is a PATH wrapper that answers
 // `pr view` and `issue view` with fixed JSON.
 test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-grant comment it passed over', { skip: process.platform === 'win32' }, async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-grant-')));
+  const dir = fs.realpathSync(scratchDir('ct-ce-grant-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -523,10 +541,10 @@ test('consoleExecuteDetect: a withheld merge grant names the untrusted pending-g
 
   const pr = { comments: RESOLVED_COMMENTS, body: 'Fixes #7' };
   const issue = {
-    labels: [{ name: 'auto:merge-pending' }],
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
     comments: [{ body: GRANT_MARKER, url: 'https://x/issues/7#c1', author: { login: 'eve' }, authorAssociation: 'NONE' }],
   };
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  const wrapperDir = scratchDir('ct-ce-ghwrap-');
   fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
   fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
@@ -650,10 +668,9 @@ test('AC2.1: decideConsoleExecute leaves every other valid Defer-reason ruling f
 });
 
 function makeRulingRepo(items, stagedFiles) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ruling-')));
+  const dir = fs.realpathSync(scratchDir('ct-ce-ruling-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -670,7 +687,7 @@ function makeRulingRepo(items, stagedFiles) {
 }
 
 async function detectWithFakePr(dir, pr) {
-  const wrapperDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-ghwrap-'));
+  const wrapperDir = scratchDir('ct-ce-ghwrap-');
   fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n`);
   fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
   const originalPath = process.env.PATH;
@@ -710,7 +727,7 @@ test('AC1.1: consoleExecuteDetect reads a needs-human-decision ruling row\'s sta
 });
 
 test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes the run dir (../, absolute, non-string) -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-outside-'));
+  const outside = scratchDir('ct-ce-outside-');
   const absFile = path.join(outside, 'abs.md');
   fs.writeFileSync(absFile, RULING_TEXT_DEFERS_NO);
   const items = [
@@ -732,7 +749,7 @@ test('AC3.1 AC3.2: consoleExecuteDetect never reads a stagedPath that escapes th
 });
 
 test('readRulingTexts: reads only ruling rows, and names why each unreadable stagedPath failed (no platform skip -- no fs setup beyond the run dir)', () => {
-  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-')));
+  const runDir = fs.realpathSync(scratchDir('ct-ce-rrt-'));
   fs.mkdirSync(path.join(runDir, 'staged'));
   fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
   const result = readRulingTexts(runDir, [
@@ -752,7 +769,7 @@ test('readRulingTexts: reads only ruling rows, and names why each unreadable sta
 });
 
 test('AC3.4: readRulingTexts: a run dir that cannot be canonicalized is read-failed for every ruling item with a valid relative stagedPath (injected realpath)', () => {
-  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-root-')));
+  const runDir = fs.realpathSync(scratchDir('ct-ce-rrt-root-'));
   fs.mkdirSync(path.join(runDir, 'staged'));
   fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-1.md'), RULING_TEXT_DEFERS_NO);
   fs.writeFileSync(path.join(runDir, 'staged', 'sdd-ruling-2.md'), RULING_TEXT_DEFERS_NO);
@@ -765,7 +782,7 @@ test('AC3.4: readRulingTexts: a run dir that cannot be canonicalized is read-fai
 });
 
 test('AC3.4: readRulingTexts: a leaf that exists but will not resolve is read-failed, not not-found (injected realpath and lstat)', () => {
-  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-rrt-leaf-')));
+  const runDir = fs.realpathSync(scratchDir('ct-ce-rrt-leaf-'));
   fs.mkdirSync(path.join(runDir, 'staged'));
   const leafPath = path.join(runDir, 'staged', 'sdd-ruling-1.md');
   fs.writeFileSync(leafPath, RULING_TEXT_DEFERS_NO);
@@ -782,7 +799,7 @@ test('AC3.4: readRulingTexts: a leaf that exists but will not resolve is read-fa
 });
 
 test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or directory segment) pointing outside the run dir -> unreadable gap', { skip: process.platform === 'win32' }, async () => {
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-symout-')));
+  const outside = fs.realpathSync(scratchDir('ct-ce-symout-'));
   fs.writeFileSync(path.join(outside, 'safe.md'), RULING_TEXT_DEFERS_NO);
   const items = [
     { id: 'staged-1', kind: 'staged', summary: 'leaf link', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
@@ -803,7 +820,7 @@ test('AC3.2: consoleExecuteDetect never follows a stagedPath symlink (leaf or di
 });
 
 test('AC3.3 AC3.4: a dangling symlink and a dir-symlinked missing file are not-found; a directory at the path is read-failed (#4049)', { skip: process.platform === 'win32' }, async () => {
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-unread-')));
+  const outside = fs.realpathSync(scratchDir('ct-ce-unread-'));
   const items = [
     { id: 'staged-1', kind: 'staged', summary: 'dangling', isRulingRow: true, stagedPath: 'staged/sdd-ruling-1.md' },
     { id: 'staged-2', kind: 'staged', summary: 'dir link, missing leaf', isRulingRow: true, stagedPath: 'linked/missing.md' },
@@ -858,18 +875,18 @@ test('consoleExecuteDetect: a console with no ruling row reports rulingGateGaps 
 // --- readConsoleJson: real temp files, matching archive-merged.js's own convention ---
 
 test('readConsoleJson: absent file reads as null (distinct from unparseable)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-'));
+  const dir = scratchDir('ct-ce-');
   assert.strictEqual(readConsoleJson(dir), null);
 });
 
 test('readConsoleJson: valid JSON parses through', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-'));
+  const dir = scratchDir('ct-ce-');
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: false, prNumber: 7 }));
   assert.deepStrictEqual(readConsoleJson(dir), { resolved: false, prNumber: 7 });
 });
 
 test('readConsoleJson: unparseable content reads as undefined, distinct from absent (fails closed)', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-'));
+  const dir = scratchDir('ct-ce-');
   fs.writeFileSync(path.join(dir, 'console.json'), '{not json');
   assert.strictEqual(readConsoleJson(dir), undefined);
 });
@@ -878,16 +895,15 @@ test('readConsoleJson: unparseable content reads as undefined, distinct from abs
 // pr-state.js's own consumers — no test in this suite hits a real PR) ---
 
 test('consoleExecuteDetect: outside any repo returns empty ready/skipped, never throws', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-norepo-'));
+  const dir = scratchDir('ct-ce-norepo-');
   const result = await consoleExecuteDetect({ cwd: dir });
   assert.deepStrictEqual(result, { ready: [], skipped: [] });
 });
 
 test('consoleExecuteDetect: a run dir with no console.json is reported as no-console, never crashes', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-run-')));
+  const dir = fs.realpathSync(scratchDir('ct-ce-run-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -902,10 +918,9 @@ test('consoleExecuteDetect: a run dir with no console.json is reported as no-con
 });
 
 test('consoleExecuteDetect: a run with console.json but no reachable PR is reported skipped (gh-absent or network-failure), never crashes or reports ready', async () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-run2-')));
+  const dir = fs.realpathSync(scratchDir('ct-ce-run2-'));
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -927,10 +942,9 @@ test('consoleExecuteDetect: a run with console.json but no reachable PR is repor
 // --- Wiring: reconcile()'s new `console` check reaches this module ---
 
 test('reconcile(): the console check is wired in and reachable via ALL_CHECKS on a pr-first project', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-reconcile-'));
+  const dir = scratchDir('ct-ce-reconcile-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\nintegration-branch: main\n');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
@@ -944,7 +958,7 @@ test('reconcile(): the console check is wired in and reachable via ALL_CHECKS on
 });
 
 test('reconcile(): local-merge skips the console check under the same combined skip entry as mirror/release/archive', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ce-lm-'));
+  const dir = scratchDir('ct-ce-lm-');
   git(['init', '-q', '--initial-branch=main'], dir);
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\nintegration-branch: main\n');
@@ -968,4 +982,35 @@ test('sdd-ruling leaf: resolve.js re-exports the same objects (#4060)', () => {
   const resolve = require('../plugin/bin/lib/console/resolve');
   assert.strictEqual(resolve.SDD_RULING_REASONS, leaf.SDD_RULING_REASONS);
   assert.strictEqual(resolve.sddRulingDeferralReason, leaf.sddRulingDeferralReason);
+});
+
+// #6006: the veto window read reaches the factory layer through the injected env (a hook event's
+// context), never the live process env or HOME. The grant is pending for 2h: the 24h default
+// withholds it, a factory `grant-veto-window-hours: 1` (in the injected env only) matures it.
+test('consoleExecuteDetect: grant-veto-window-hours resolves from the injected env\'s factory layer (#6006)', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.realpathSync(scratchDir('ct-ce-veto-'));
+  git(['init', '-q', '--initial-branch=main'], dir);
+  writeIdentity(dir, { name: 'Test', email: 'test@example.com' });
+  fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], dir);
+  git(['commit', '-q', '-m', 'seed'], dir);
+  const runDir = path.join(dir, '.claude-tweaks', 'pipelines', '2026-01-01T000000-test');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify(mergeRowConsoleJson()));
+  const since = new Date(Date.now() - 2 * 3600 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+  const pr = { comments: RESOLVED_COMMENTS, body: 'Fixes #7' };
+  const issue = {
+    labels: [{ name: 'auto:build' }, { name: 'auto:merge-pending' }],
+    comments: [{ body: `<!-- grant-mode-audit: date=${since} auto-merge=pending -->`, url: 'https://x/issues/7#c1', author: { login: 'owner' }, authorAssociation: 'OWNER' }],
+  };
+  const wrapperDir = scratchDir('ct-ce-ghwrap-');
+  fs.writeFileSync(path.join(wrapperDir, 'gh'), `#!/bin/sh\ncase "$1" in\n  pr) cat <<'EOF'\n${JSON.stringify(pr)}\nEOF\n  ;;\n  issue) cat <<'EOF'\n${JSON.stringify(issue)}\nEOF\n  ;;\nesac\n`);
+  fs.chmodSync(path.join(wrapperDir, 'gh'), 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const base = { ...process.env, PATH: `${wrapperDir}${path.delimiter}${process.env.PATH}`, HOME: scratchDir('ct-ce-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  const bare = await consoleExecuteDetect({ cwd: dir, env: base });
+  assert.ok(bare.ready[0].mergeGrantGap, `default 24h window withholds a 2h-old grant: ${JSON.stringify(bare)}`);
+  const withFactory = await consoleExecuteDetect({ cwd: dir, env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'grant-veto-window-hours: 1\n' } });
+  assert.ok(!withFactory.ready[0].mergeGrantGap, `factory 1h window matures it: ${JSON.stringify(withFactory)}`);
 });

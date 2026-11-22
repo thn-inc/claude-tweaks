@@ -770,12 +770,65 @@ test('returns null and does not throw on a malformed command', { timeout: 60000 
 // node-eval-separator must preserve.
 const STUB = path.join(SANDBOX, 'stub');
 fs.mkdirSync(STUB);
-const printArgv = `exec "${process.execPath}" -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"\n`;
-fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${printArgv}`, { mode: 0o755 });
-fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${printArgv}`, { mode: 0o755 });
+// The stubs print their arguments as JSON with shell builtins only: no node or other child per call.
+// ct_print writes JSON.stringify of its arguments, one byte at a time (C-locale bytes; non-ASCII
+// bytes pass through unchanged, as JSON.stringify leaves them). Every character is handled by a
+// builtin: printf, case, parameter expansion, for and while.
+const CT_CTRL = [...Array(32).keys()].filter((i) => i > 0 && ![8, 9, 10, 12, 13].includes(i)).map((i) => `'${String.fromCharCode(i)}'`).join('|');
+const CT_PRINT = `ct_print() {
+  printf '['
+  ct_sep=
+  for ct_a; do
+    printf '%s"' "$ct_sep"
+    ct_rest=$ct_a
+    while [ -n "$ct_rest" ]; do
+      ct_c=\${ct_rest%"\${ct_rest#?}"}
+      ct_rest=\${ct_rest#?}
+      case $ct_c in
+        '\\') printf '%s' '\\\\' ;;
+        '"') printf '%s' '\\"' ;;
+        '
+') printf '%s' '\\n' ;;
+        '	') printf '%s' '\\t' ;;
+        '\r') printf '%s' '\\r' ;;
+        '\b') printf '%s' '\\b' ;;
+        '\f') printf '%s' '\\f' ;;
+        ${CT_CTRL}) printf '\\\\u%04x' "'$ct_c" ;;
+        *) printf '%s' "$ct_c" ;;
+      esac
+    done
+    printf '"'
+    ct_sep=,
+  done
+  printf ']\\n'
+}
+`;
+fs.writeFileSync(path.join(STUB, 'ls'), `#!/bin/sh\n${CT_PRINT}ct_print "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(STUB, 'node'), `#!/bin/sh\ncase "$1" in -e|-p|--eval|--print) exec "${process.execPath}" "$@";; esac\n${CT_PRINT}ct_print "$@"\n`, { mode: 0o755 });
 // git stub: honours leading -C <dir> by cd-ing there, then prints [$PWD, ...argv] as JSON, so a
 // dropped -C that changes the directory shows up in stdout.
-fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\nwhile [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nexec "${process.execPath}" -e 'console.log(JSON.stringify([process.env.PWD, ...process.argv.slice(1)]))' -- "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(STUB, 'git'), `#!/bin/sh\n${CT_PRINT}while [ "$1" = "-C" ]; do cd "$2" || exit 1; shift 2; done\nct_print "$PWD" "$@"\n`, { mode: 0o755 });
+// AC2: each stub prints exactly JSON.stringify of its argument list (git: of [$PWD, ...args]),
+// byte for byte, under the shebang's /bin/sh and under bash and dash by name when present.
+const PRINT_ARGS = ['a b', 'q"q', 'back\\slash', 'line\nbreak', 'é ☃ 🙂', 'tab\there', 'ctl\x01x', '50%s%d', '', '\r\b\f', '\x01\x1f'];
+test('each stub prints JSON.stringify of its argument list, byte for byte, under each interpreter', { skip: process.platform === 'win32' }, (t) => {
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir() };
+  for (const name of ['ls', 'node', 'git']) {
+    const expected = `${JSON.stringify(name === 'git' ? [CWD, ...PRINT_ARGS] : PRINT_ARGS)}\n`;
+    for (const interp of [null, 'bash', 'dash']) {
+      if (interp && spawnSync(interp, ['-c', 'exit 0'], { windowsHide: true }).status !== 0) {
+        t.diagnostic(`${interp} not present — skipped for ${name}`);
+        continue;
+      }
+      const script = path.join(STUB, name);
+      const r = interp ? spawnSync(interp, [script, ...PRINT_ARGS], { cwd: CWD, env, encoding: 'utf8', windowsHide: true })
+        : spawnSync(script, PRINT_ARGS, { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+      assert.strictEqual(r.status, 0, `${name} under ${interp || 'shebang'}: ${r.stderr}`);
+      assert.strictEqual(r.stdout, expected, `${name} under ${interp || 'shebang'}`);
+    }
+  }
+});
+
 const EVAL = "'console.log(JSON.stringify(process.argv.slice(1)))'";
 const POSITIVE = [
   { rule: 'inline-literal-assignment', command: 'P=/x/y; node $P/z.js' },
@@ -799,13 +852,38 @@ const POSITIVE = [
 ];
 const SHELLS = ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0'], { windowsHide: true }).status === 0);
 
+// Every shell child in this file builds its argv here, so the precondition test's fixture-HOME pin covers all of them.
+// --norc/--noprofile: bash sources ~/.bashrc under -c when stdin is a socket (see the precondition test).
+function shellArgs(shell, command) {
+  return shell === 'zsh' ? ['-f', '-c', command] : ['--norc', '--noprofile', '-c', command];
+}
+
 function runIn(shell, command, extraEnv, cwd = CWD) {
   // A's first character is not `-`: see the node-eval-separator divergence test below.
   const env = { PATH: `${STUB}${path.delimiter}${process.env.PATH}`, HOME: process.env.HOME || os.homedir(), A: 'a --flag -x', ...extraEnv };
-  const args = shell === 'zsh' ? ['-f', '-c', command] : ['-c', command];
-  const r = spawnSync(shell, args, { cwd, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(shell, shellArgs(shell, command), { cwd, env, encoding: 'utf8', windowsHide: true });
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
+
+test('the node stub shadows the real node in every tested shell', { skip: process.platform === 'win32' || SHELLS.length === 0 }, () => {
+  // Cause pin (#5881): Node's piped stdio is a socket, which bash takes for rshd and so sources ~/.bashrc
+  // even under -c; on the macOS runner image that file prepends Homebrew dirs ahead of the stub. A fixture
+  // HOME whose startup files prepend a marker dir makes the pin red on any host if runIn reads them.
+  const rcHome = path.join(SANDBOX, 'rc-home');
+  const marker = path.join(rcHome, 'marker-bin');
+  fs.mkdirSync(marker, { recursive: true });
+  for (const rc of ['.bashrc', '.bash_profile', '.profile', '.zshenv', '.zshrc']) {
+    fs.writeFileSync(path.join(rcHome, rc), `PATH="${marker}${path.delimiter}$PATH"; export PATH\n`);
+  }
+  for (const shell of SHELLS) {
+    const { stdout, status } = runIn(shell, 'command -v node', {});
+    assert.strictEqual(status, 0, `${shell} could not resolve node`);
+    assert.strictEqual(stdout.trim(), path.join(STUB, 'node'), `${shell} resolved node to ${stdout.trim()}, not the stub`);
+    const seen = runIn(shell, 'echo "$PATH"', { HOME: rcHome }).stdout.trim();
+    assert.ok(seen.startsWith(`${STUB}${path.delimiter}`), `${shell} rebuilt PATH ahead of the stub: ${seen}`);
+    assert.ok(!seen.split(path.delimiter).includes(marker), `${shell} sourced a startup file from HOME: ${seen}`);
+  }
+});
 
 test('every positive case is argv-identical under bash and zsh', { skip: process.platform === 'win32' || !SHELLS.includes('bash') }, (t) => {
   if (!SHELLS.includes('zsh')) t.diagnostic('zsh not present — bash half only');
@@ -978,9 +1056,8 @@ test('property: every rewrite of a randomly drawn command keeps stdout, stderr a
     }
     rewritten += 1;
     for (const shell of SHELLS) {
-      const args = (c) => (shell === 'zsh' ? ['-f', '-c', c] : ['-c', c]);
       const run = (c) => {
-        const r = spawnSync(shell, args(c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+        const r = spawnSync(shell, shellArgs(shell, c), { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
         // bash echoes the offending source line after a syntax error: that echo is the command text itself,
         // so it differs for any rewrite (the diagnostic above it, and the status, still must match).
         return { stdout: r.stdout, stderr: r.stderr.replace(/^(bash: -c: line \d+: )`.*'$/gm, '$1<source echo>'), status: r.status };

@@ -85,9 +85,9 @@ function matchesRecordRef(entry, recordRef) {
 // worktrees exist". Tests never exercise this path: they inject `run`
 // directly against frozen porcelain fixtures, per [IL-80] — the lock-reason
 // format is git's own unversioned implementation detail.
-function defaultRun(cwd) {
+function defaultRun(cwd, env) {
   return (args) => {
-    const { stdout, failure } = runGit(args, cwd);
+    const { stdout, failure } = runGit(args, cwd, env ? { env } : {});
     return failure ? null : stdout;
   };
 }
@@ -163,11 +163,11 @@ function findSessionOnWorktree({ branch = null, worktreePath = null } = {}, opts
 // The first in-use worktree `matches` accepts that is not the calling session's own.
 function firstForeignInUse(matches, opts) {
   const cwd = opts.cwd || process.cwd();
-  const run = opts.run || defaultRun(cwd);
+  const run = opts.run || defaultRun(cwd, opts.env);
   const listRunDirsWithState = opts.listRunDirsWithState || ctxLib.listRunDirsWithState;
   const sessionId = Object.prototype.hasOwnProperty.call(opts, 'sessionId')
     ? opts.sessionId
-    : process.env.CLAUDE_CODE_SESSION_ID;
+    : (opts.env || process.env).CLAUDE_CODE_SESSION_ID;
 
   const porcelain = run(['worktree', 'list', '--porcelain']);
   if (!porcelain) return null;
@@ -223,7 +223,9 @@ function defaultReadClaim(cwd) {
 //
 // opts: cwd (repo root for the default reader), readClaim ((n:number) =>
 // string|null, injected by tests), sessionId (same idiom and default as
-// `findConflictingSession`), now (epoch ms, for the TTL check).
+// `findConflictingSession`), now (epoch ms, for the TTL check). `env` is read for
+// `CLAUDE_CODE_SESSION_ID` only when `sessionId` is not passed (default: the
+// inherited environment, for the dispatch-resume/stuck-open-prs CLIs).
 //
 // Only a numeric record ref (`77` / `#77`) has a claim blob; a slug ref returns
 // null without reading. Every other non-match — absent, tombstone, stale,
@@ -243,7 +245,7 @@ function findLiveClaim(recordRef, opts = {}) {
   const readClaim = opts.readClaim || defaultReadClaim(cwd);
   const sessionId = Object.prototype.hasOwnProperty.call(opts, 'sessionId')
     ? opts.sessionId
-    : process.env.CLAUDE_CODE_SESSION_ID;
+    : (opts.env || process.env).CLAUDE_CODE_SESSION_ID;
   const now = opts.now || Date.now();
 
   let content;

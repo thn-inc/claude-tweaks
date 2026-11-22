@@ -26,7 +26,20 @@
 //   - the name must be a shipped skill (`skills/<name>/SKILL.md`, resolved from
 //     this module's own location) — a typo is not an invocation.
 //
-// Read-only apart from the one appendEvent. Offline-safe (no network, no git).
+// A second, independent writer (#5584): recordTypedDispatch records the record
+// numbers a `/claude-tweaks:dispatch #N[,#M]` or `… resume #N` first line names,
+// with the payload's `prompt_id`, in the session's pointer file
+// (bin/lib/issues/typed-command.js `writePointer`). It runs first, inside its
+// own try/catch, before and apart from the `skill_invoked` writer and the
+// ownedRun check, so a project with no run still writes. The pointer is a
+// pointer, not a proof: this hook cannot tell who sent a prompt, so a
+// scheduled or delivered line writes it too; authority comes only from the
+// transcript row the prompt id names. The hook runs on every prompt, so the
+// parser and writer modules load lazily, only for a first line that starts
+// with `/claude-tweaks:dispatch` followed by a space or its end.
+//
+// Writes nothing apart from the one appendEvent and that pointer file.
+// Offline-safe (no network, no git).
 // NEVER writes stdout — any stdout would annotate or block the prompt — and
 // never sets `json` or `exit`, so the dispatcher always exits 0.
 'use strict';
@@ -53,7 +66,27 @@ function skillExists(name, { skillsDir = path.resolve(__dirname, '..', '..', '..
   }
 }
 
+const DISPATCH_COMMAND = '/claude-tweaks:dispatch';
+
+// input -> true when the pointer was written. The cheap gate runs before any
+// require; writePointer validates the session and prompt ids itself. The temp
+// directory is `tmpdir`, else the one `env` names (#5377: `run` passes the
+// context's env), which is os.tmpdir() for a real hook process and without `env`.
+function recordTypedDispatch(input, { now = new Date(), tmpdir, env } = {}) {
+  if (!input || typeof input.prompt !== 'string') return false;
+  const firstLine = input.prompt.split('\n', 1)[0].replace(/\r$/, '');
+  if (firstLine !== DISPATCH_COMMAND && !firstLine.startsWith(`${DISPATCH_COMMAND} `)) return false;
+  const numbers = require('../issues/build-authority').parseTypedDispatch(firstLine);
+  if (!numbers) return false;
+  return require('../issues/typed-command').writePointer({
+    sessionId: input.session_id, promptId: input.prompt_id, numbers, now,
+    tmpdir: tmpdir || require('../session-tmp').envTmpdir(env),
+  });
+}
+
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
+  try { recordTypedDispatch(ctx.input, { env: ctx.env }); } catch { /* never breaks a session */ }
   const name = parseTypedSkill(ctx.input && ctx.input.prompt);
   if (!name || !skillExists(name)) return {};
   const ownedRun = ctx.ownedRun || {};
@@ -62,4 +95,4 @@ function run(ctx) {
   return {};
 }
 
-module.exports = { run, TYPED_SKILL_RE, parseTypedSkill, skillExists };
+module.exports = { run, TYPED_SKILL_RE, parseTypedSkill, skillExists, recordTypedDispatch };

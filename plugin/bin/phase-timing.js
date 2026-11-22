@@ -273,12 +273,13 @@ function resolveTranscripts(o, runState, deps) {
 // would build it, writing nothing (efficiency-report.js --recount reads
 // archived runs with it). worktree left undefined reads run-state.json's, as
 // run() does. An unreadable events.jsonl throws an error whose code is
-// EVENTS_UNREADABLE.
+// EVENTS_UNREADABLE. scopeDispatchesTo (optional, #5647): a dispatched run's attributed Task-call
+// agent transcript paths, handed to deriveTiming as at-close does (run-timing.js collectDispatches).
 const EVENTS_UNREADABLE = 'EVENTS_UNREADABLE';
-async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree }) {
+async function buildTiming({ runDir, paths, cwd = process.cwd(), worktree, scopeDispatchesTo }) {
   const base = derivePhaseTiming(runDir);
   if (!base.ok) throw Object.assign(new Error(base.error), { code: EVENTS_UNREADABLE });
-  const r = await deriveTiming(runDir, { transcriptPaths: paths, cwd, wantTokens: true, base, worktree });
+  const r = await deriveTiming(runDir, { transcriptPaths: paths, cwd, wantTokens: true, base, worktree, scopeDispatchesTo });
   return r.timing;
 }
 
@@ -332,10 +333,7 @@ const realDeps = {
   gh: defaultGh,
 };
 
-// Kept for callers that import it. Removal condition: no file under plugin/, tests/, tools/, perf/ or evals/ calls main.
-async function main(argv) { return run(argv, realDeps); }
-
-module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, main, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
+module.exports = { run, buildTiming, EVENTS_UNREADABLE, realDeps, parseArgs, renderMarkdown, renderDispatches, renderCiGate };
 if (require.main === module) {
   run(process.argv.slice(2), realDeps).then((code) => { process.exitCode = code; }).catch((err) => {
     process.stderr.write(`phase-timing.js: ${err && err.message}\n`);

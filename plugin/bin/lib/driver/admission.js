@@ -105,10 +105,13 @@ function reviewerGateReason(facts) {
 }
 
 // { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles,
-//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn } -> { admitted, reasons }.
+//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority } -> { admitted, reasons }.
+// `buildAuthority` is build-authority.js's resolveBuildAuthority answer (#5584): exactly 'typed'
+// lifts the grant gate alone, so a record named by a typed command needs no `auto:build`; any
+// other value, or none, leaves the gate as it was. Every other gate still runs.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn } =
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn, buildAuthority } =
     (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
@@ -119,7 +122,7 @@ function evaluateAdmission(facts) {
   } else {
     const names = normalizeLabelNames(labels);
     const facets = parseRecordFacets(labels);
-    if (!facets.grants.build) reasons.push(R.noBuildGrant);
+    if (!facets.grants.build && buildAuthority !== 'typed') reasons.push(R.noBuildGrant);
     // Raw label, not facets.stage: stage resolves ready > parked, so a record
     // carrying both would read as ready.
     if (names.includes(LABELS.PARKED) || facets.bot.parked) reasons.push(R.parked);
@@ -150,4 +153,4 @@ function evaluateAdmission(facts) {
   return { admitted: reasons.length === 0, reasons };
 }
 
-module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason };
+module.exports = { ADMISSION_REASONS, evaluateAdmission, reviewerGateReason, routingReason };

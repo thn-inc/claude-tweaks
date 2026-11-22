@@ -17,6 +17,7 @@ const { LIVE_WINDOW_MS } = require('../plugin/bin/lib/run-liveness/constants');
 const { gateOriginRepo } = require('../plugin/bin/lib/repo-resolve');
 const { readText } = require('./helpers/read-skill');
 const { fromTemplate } = require('./helpers/git-template');
+const { cleanGitEnv, initRepo } = require('./helpers/git-fixtures');
 
 function git(root, ...args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' });
@@ -39,9 +40,7 @@ function fixtureRepo() {
   return { root, wt, runDir: path.join(root, '.claude-tweaks', 'pipelines', runId), runId };
 }
 function buildFixtureRepo(root) {
-  git(root, 'init', '-q', '-b', 'trunk');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 'T');
+  initRepo(root, { name: 'T', email: 't@example.com', branch: 'trunk', encoding: 'utf8' });
   git(root, 'remote', 'add', 'origin', 'git@github.com:acme/widgets.git');
   fs.writeFileSync(path.join(root, 'a.txt'), 'base\n');
   git(root, 'add', 'a.txt');
@@ -791,7 +790,6 @@ test('#5293: dead owner, merged, branch-recovered worktree locked by a live pid 
 // #5555 Task 4: `hooks.js teardown-run` (and close-run before it) write timing.json before they
 // return. In-process through run(argv, deps); --abandoned keeps the gh seam unreached.
 const { runCli } = require('./helpers/run-cli');
-const { cleanGitEnv } = require('./helpers/git-fixtures');
 const atClose = require('../plugin/bin/lib/timing/at-close');
 const T = require('./helpers/close-timing');
 
@@ -847,6 +845,33 @@ test('AC4.1 teardown-run: writeTimingAtClose stubbed to throw → stdout and exi
   const skips = T.skipLines(thrown.runDir);
   assert.strictEqual(skips.length, 1);
   assert.match(skips[0], /timing at close failed \(boom\)/);
+});
+
+const stepYield = require('../plugin/bin/lib/timing/step-yield');
+
+test('AC6.1: teardown-run leaves step-yield.json', async () => {
+  const fx = timingFixture();
+  T.writeTranscript(fx.cfg, fx.wt);
+  const r = await teardown(fx);
+  assert.strictEqual(r.code, 0);
+  const y = JSON.parse(fs.readFileSync(path.join(fx.runDir, stepYield.STEP_YIELD_FILE), 'utf8'));
+  assert.strictEqual(y.schemaVersion, stepYield.SCHEMA_VERSION);
+  assert.ok(y.steps.some((s) => s.phase === 'build'));
+  assert.deepStrictEqual(T.skipLines(fx.runDir), []);
+});
+
+test('AC6.2: teardown-run with the yield function stubbed to throw → stdout and exit code unchanged, one SKIP line', async () => {
+  const base = timingFixture();
+  const thrown = timingFixture();
+  T.writeTranscript(base.cfg, base.wt);
+  T.writeTranscript(thrown.cfg, thrown.wt);
+  const expected = await teardown(base);
+  const actual = await T.withStub(stepYield, 'deriveStepYield', () => { throw new Error('boom yield'); }, () => teardown(thrown));
+  assert.deepStrictEqual(masked(thrown, actual), masked(base, expected));
+  const skips = T.skipLines(thrown.runDir);
+  assert.strictEqual(skips.length, 1);
+  assert.match(skips[0], /step yield could not be written \(boom yield\)/);
+  assert.strictEqual(fs.existsSync(path.join(thrown.runDir, stepYield.STEP_YIELD_FILE)), false);
 });
 
 test('AC4.2 teardown-run: at-close.js failing at load → stdout and exit code equal the no-op stub\'s (exit 0), one SKIP line', async () => {

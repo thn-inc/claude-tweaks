@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const manifestModule = require('../../../plugin/bin/lib/flow/manifest');
@@ -14,7 +15,7 @@ const {
 } = manifestModule;
 
 function tmpRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-manifest-'));
+  return scratchDir('ct-manifest-');
 }
 
 // The exact live shape found in a real run dir (no baseSha, no startedAt yet)
@@ -47,7 +48,7 @@ test('parseManifestYaml reads the real live shape (id/status/subdir, no baseSha)
 test('parseManifestYaml reads baseSha and trailing comment when present', () => {
   const text = `multispec:
   parent: .claude-tweaks/pipelines/2026-05-16T143207-spec-157-159-160/
-  baseSha: f9b5ec84d6c462050ed6a40d640ae50b67f6ee36   # omitted when MULTISPEC_CURATION_DEFER is unset
+  baseSha: f9b5ec84d6c462050ed6a40d640ae50b67f6ee36   # legacy key, no longer written
   specs:
     - id: 157
       status: complete    # pending | running | complete | failed | not-run
@@ -477,9 +478,24 @@ test('#3035: manifestInit with nothing new does not rewrite the file; bad input 
   assert.equal(fs.readFileSync(file, 'utf8'), 'not a manifest\n', 'a corrupt manifest is never overwritten');
 });
 
-test('#3035: manifestInit preserves a legacy baseSha on an older manifest', () => {
+test('#5542: a legacy baseSha line on an older manifest parses and is dropped on rewrite', () => {
+  const text = 'multispec:\n  parent: x/\n  baseSha: abc123\n  specs:\n    - id: 1\n      status: running\n      subdir: spec-1/\n';
+  const parsed = parseManifestYaml(text);
+  assert.ok(parsed, 'a manifest carrying the legacy key still parses');
+  assert.doesNotMatch(serializeManifestYaml(parsed), /baseSha/);
+
   const dir = tmpRunDir();
-  fs.writeFileSync(path.join(dir, 'manifest.yml'), 'multispec:\n  parent: x/\n  baseSha: f9b5ec84d6c462050ed6a40d640ae50b67f6ee36\n  specs:\n    - id: 1\n      status: pending\n      subdir: spec-1/\n');
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), text);
   manifestInit({ runDir: dir, specs: ['1', '2'] });
-  assert.equal(readManifest(dir).multispec.baseSha, 'f9b5ec84d6c462050ed6a40d640ae50b67f6ee36');
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, 'manifest.yml'), 'utf8'), /baseSha/);
+  const after = readManifest(dir);
+  assert.deepEqual(after.multispec.specs.map((s) => [s.id, s.status]), [[1, 'running'], [2, 'pending']]);
+  assert.equal(after.multispec.parent, 'x/');
+
+  // The other writer: a status write (hooks.js spec-status) drops the line too.
+  const dir2 = tmpRunDir();
+  fs.writeFileSync(path.join(dir2, 'manifest.yml'), text);
+  assert.equal(transitionSpec({ runDir: dir2, specId: 1, status: 'running', phase: 'test', now: new Date('2026-01-01T00:00:00.000Z') }).ok, true);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir2, 'manifest.yml'), 'utf8'), /baseSha/);
+  assert.equal(readManifest(dir2).multispec.specs[0].phase, 'test');
 });

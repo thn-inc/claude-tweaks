@@ -109,6 +109,37 @@ test('--baseline: a file failing only in the full run is flaky — exit 0 with a
   assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/flaky\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+flaky\.test\.js\.log$/m);
 });
 
+// #4424: a file whose node --test child is SIGTERM-killed in the full run (a wholly file-level failure).
+// Base fails `unrelated`; HEAD fixes it, and `works` kills the process once (the marker is the kill-once switch).
+function killedRepo(worksBody) {
+  const r = baselineRepo();
+  fs.writeFileSync(path.join(r.repo, 'tests', 'killed.test.js'), "const t = require('node:test');\nt('unrelated', () => { throw new Error('old'); });\nt('works', () => {});\n");
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'add killed');
+  const baseSha = r.git('rev-parse', 'HEAD').trim();
+  const marker = path.join(tmpDir(), 'kill-once');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'killed.test.js'), `const fs = require('fs');\nconst t = require('node:test');\nt('unrelated', () => {});\nt('works', async () => {\n  if (fs.existsSync(${JSON.stringify(marker)})) { fs.unlinkSync(${JSON.stringify(marker)}); process.kill(process.pid, 'SIGTERM'); await new Promise((res) => { setTimeout(res, 5000); }); }\n${worksBody}});\n`);
+  r.git('add', '.');
+  r.git('commit', '-q', '-m', 'head');
+  fs.writeFileSync(marker, '');
+  return { r, baseSha };
+}
+const KILLED_ARGS = (baseSha) => ['--cmd', 'tests=node --test --test-reporter=tap tests/env.test.js tests/killed.test.js', '--baseline', baseSha, '--baseline-cmd', PER_FILE];
+
+test('--baseline: AC1.2: a test file SIGTERM-killed in the full run and clean in isolation at HEAD exits 0 with a baseline-flaky CAVEAT (#4424)', async () => {
+  const { r, baseSha } = killedRepo('');
+  const { code, stdout } = await runCli(KILLED_ARGS(baseSha), r.opts);
+  assert.strictEqual(code, 0, stdout);
+  assert.match(stdout, /^CAVEAT: baseline-flaky: tests\/killed\.test\.js — failed in the full run, passed in isolation at HEAD; see .*tests-isolated-tests\+killed\.test\.js\.log$/m);
+});
+
+test('--baseline: AC2.1: the same kill with an isolated HEAD failure exits 1 naming the file ATTRIBUTABLE (#4424)', async () => {
+  const { r, baseSha } = killedRepo("  throw new Error('real');\n");
+  const { code, stdout } = await runCli(KILLED_ARGS(baseSha), r.opts);
+  assert.strictEqual(code, 1, stdout);
+  assert.match(stdout, /ATTRIBUTABLE: tests\/killed\.test\.js/);
+});
+
 test('--baseline: a repeatedly baseline-flaky file not on flaky.files accumulates flakyHits across runs and, at the escalation threshold, stages a flaky-allowlist proposal rather than applying one (#3062)', async () => {
   const r = baselineRepo();
   const marker = path.join(tmpDir(), 'flake-repeat-3062');

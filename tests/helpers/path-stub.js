@@ -31,6 +31,7 @@
 // check tests every PATHEXT extension instead: an excluded `gh.CMD` still
 // means gh might resolve through a shell, so that check stays conservative.
 const fs = require('node:fs');
+const { scratchDir } = require('./tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -38,7 +39,7 @@ const STUB_SKIP_REASON = 'win32: execFile resolves only .exe/.com on PATH, so a 
 const STUB_SKIP = process.platform === 'win32' && STUB_SKIP_REASON;
 
 function installStub(name, script) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-stub-'));
+  const dir = scratchDir('ct-stub-');
   const file = path.join(dir, name);
   try {
     fs.writeFileSync(file, script);
@@ -124,7 +125,7 @@ function pathWithOnly(names, { exclude = [], env = process.env, platform = proce
     if (!found) throw new Error(`pathWithOnly: ${name} not found on PATH (searched ${dirs.length} dirs: ${dirs.join(', ') || 'none'})`);
     let dir = path.dirname(found);
     if (excluded(dir)) {
-      if (!linkDir) linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-path-only-'));
+      if (!linkDir) linkDir = scratchDir('ct-path-only-');
       fs.symlinkSync(found, path.join(linkDir, path.basename(found)));
       dir = linkDir;
     }

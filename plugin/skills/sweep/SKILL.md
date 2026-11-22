@@ -6,7 +6,7 @@ argument-hint: "[--budget <n|all>] [--scope <name>[,<name>...]]"
 
 # Sweep — Hands-Off Queue Hygiene Orchestrator
 
-Run everything cheap and frequent that doesn't need a human, in one command: `/claude-tweaks:tidy` (auto mode), `/claude-tweaks:specify` (bare drain), and `/claude-tweaks:backlog refine` (headless posture), in that order, under one shared run directory and one `decisions.md` — closing with `/claude-tweaks:backlog attention`'s render and a recommended `/claude-tweaks:dispatch` line. Sweep never claims, builds, or merges — that boundary is what makes it a legal parent of a grant-writing unit (refine's headless posture) under this codebase's self-authorization rule, and `evals/scenarios/sweep-never-invokes-build-machinery.yaml` pins it.
+Run everything cheap and frequent that doesn't need a human, in one command: `/claude-tweaks:tidy` (auto mode), `/claude-tweaks:specify` (bare drain), and `/claude-tweaks:backlog refine` (headless posture), in that order, under one shared run directory and one `decisions.md` — closing with `/claude-tweaks:backlog attention`'s render and a recommended `/claude-tweaks:dispatch` line. Sweep never claims, builds, or merges — that boundary is what makes it a legal parent of a grant-writing unit (refine's headless posture) under this codebase's self-authorization rule.
 
 Lifecycle: utility — the on-demand, single-session sibling of the cloud fleet's independently scheduled hygiene rows (`routine/fleet.md`); it replaces none of them.
 
@@ -14,7 +14,7 @@ Lifecycle: utility — the on-demand, single-session sibling of the cloud fleet'
 
 - The queue has accumulated hygiene debt — stale records, unshaped-but-eligible records, shaped-but-ungranted records — and you want one command to work through all of it without answering questions
 - Before a dispatch session: run sweep first so `/claude-tweaks:dispatch` sees a tidied, shaped, granted queue
-- NOT for audits — the four health sweeps (code/docs/journey/harness) are deliberate human-triggered audits, not hygiene, and sweep never runs them
+- NOT for audits — the five health sweeps (code/docs/journey/harness/ci) are deliberate human-triggered audits, not hygiene, and sweep never runs them
 - NOT for building — sweep never invokes `/claude-tweaks:flow`, `/claude-tweaks:build`, or `/claude-tweaks:dispatch`; its close-out only recommends the dispatch command
 
 ## Input
@@ -120,7 +120,7 @@ table itself is empty), `/claude-tweaks:dispatch` renders in that slot as shown 
 
 | Pattern | Why It Fails |
 |---------|-------------|
-| Invoking `/claude-tweaks:dispatch`, `/claude-tweaks:flow`, or `/claude-tweaks:build` from sweep | Sweep's legality as a headless parent of the grant chain rests on never claiming, building, or merging — the eval scenario fails CI on this, not just doc review |
+| Invoking `/claude-tweaks:dispatch`, `/claude-tweaks:flow`, or `/claude-tweaks:build` from sweep | Sweep's legality as a headless parent of the grant chain rests on never claiming, building, or merging |
 | Inferring parent invocation from `$PIPELINE_RUN_DIR` in a child | The variable is set by standalone-auto paths too — `--source sweep` is the only parent signal |
 | Restating attention's fetch/merge/rank logic in the close-out | The two surfaces drift apart; call the existing render |
 | Skipping the between-step snapshot invalidations | The next step reads a stale pre-mutation snapshot and re-processes records the previous step already disposed of |

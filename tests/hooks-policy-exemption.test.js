@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { readText } = require('./helpers/read-skill');
 const { shellQuote } = require('./helpers/shell-quote');
+const { initRepo } = require('./helpers/git-fixtures');
 const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ONLY_PUSH_ALLOWLIST } = pre;
 
 // Sibling suites contending for the same machine can push a plain git init/
@@ -38,9 +39,7 @@ function trackTmp(dir) {
 
 function gitRepoWithCommit() {
   const dir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-')));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
+  initRepo(dir, { name: 'Test', email: 'test@example.com' });
   execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
   return fs.realpathSync(dir);
 }
@@ -78,14 +77,14 @@ function assertDenied(out) {
 test('Edit to .claude-tweaks/policy.yml (abs) in a main checkout is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml')), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml')), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
 test('Edit to .claude-tweaks/policy.yml.bak stays denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml.bak')), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml.bak')), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -93,7 +92,7 @@ test('Edit to CLAUDE.md stays denied (spec AC 3)', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   fs.writeFileSync(path.join(repo, 'CLAUDE.md'), '# x\n');
-  const out = pre.run({ input: editInput(path.join(repo, 'CLAUDE.md')), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: editInput(path.join(repo, 'CLAUDE.md')), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -102,7 +101,7 @@ test('a symlink ALIAS to policy.yml resolves to allowed', () => {
   withPolicy(repo, 'worktree-always: true\n');
   const link = path.join(repo, 'link.yml');
   fs.symlinkSync(path.join(repo, '.claude-tweaks', 'policy.yml'), link);
-  const out = pre.run({ input: editInput(link), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: editInput(link), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
@@ -117,7 +116,7 @@ test('policy.yml SWAPPED for a symlink escaping elsewhere resolves to denied', (
   fs.writeFileSync(elsewhere, 'worktree-always: true\n');
   fs.unlinkSync(path.join(repo, '.claude-tweaks', 'policy.yml'));
   fs.symlinkSync(elsewhere, path.join(repo, '.claude-tweaks', 'policy.yml'));
-  const out = pre.run({ input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml')), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: editInput(path.join(repo, '.claude-tweaks', 'policy.yml')), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -127,7 +126,7 @@ test('git commit -m x with only policy.yml staged is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  const out = pre.run({ input: bashInput('git commit -m x', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git commit -m x', repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
@@ -136,7 +135,7 @@ test('the same command with a second staged file is denied', () => {
   withPolicy(repo, 'worktree-always: true\n');
   fs.writeFileSync(path.join(repo, 'other.txt'), 'y\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml', 'other.txt']);
-  const out = pre.run({ input: bashInput('git commit -m x', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git commit -m x', repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -151,7 +150,7 @@ test('a staged rename of policy.yml is not an allowlisted commit (isPolicyOnlyCo
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'add policy', '-q']);
   execFileSync('git', ['-C', repo, 'mv', '.claude-tweaks/policy.yml', '.claude-tweaks/other.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 test('commit shapes that must stay denied: -a, --amend, compound, -C', () => {
@@ -175,7 +174,7 @@ test('commit shapes that must stay denied: -a, --amend, compound, -C', () => {
     'git -C . commit -m x',
   ];
   for (const command of commands) {
-    const out = pre.run({ input: bashInput(command, repo), runDir: null, runState: null, cwd: repo });
+    const out = pre.run({ env: process.env, input: bashInput(command, repo), runDir: null, runState: null, cwd: repo });
     assertDenied(out);
   }
 });
@@ -185,21 +184,21 @@ test('commit shapes that must stay denied: -a, --amend, compound, -C', () => {
 test('git push origin --delete my-branch from a non-isolated checkout is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin --delete my-branch', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin --delete my-branch', repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
 test('git push origin :my-branch (refspec-delete form) from a non-isolated checkout is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin :my-branch', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin :my-branch', repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
 test("#3900 AC1.1: git -C '<repo>' push origin --delete feature-x from a non-isolated checkout is allowed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
@@ -209,21 +208,21 @@ test('#3900 AC1.1: git -C "<repo>" (double-quoted) push origin --delete feature-
     const repo = gitRepoWithCommit();
     withPolicy(repo, 'worktree-always: true\n');
     assert.ok(!/["$`\\]/.test(repo), `fixture path must be double-quote-safe: ${repo}`);
-    const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+    const out = pre.run({ env: process.env, input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
     assertAllowed(out);
   });
 
 test("#3900 AC1.1: git -C '<repo>' push origin feature-x (a content push) stays denied", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
 test("#3900 AC1.1: git -C '<repo>' push origin --delete a && rm -rf x stays denied, fail-closed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput(`git -C ${shellQuote(repo)} push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -231,37 +230,37 @@ test('#3900 AC1.1: the -C target, not the cwd, is the repo — a delete-only pus
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const elsewhere = trackTmp(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-')));
-  const allowed = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const allowed = pre.run({ env: process.env, input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertAllowed(allowed);
-  const denied = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const denied = pre.run({ env: process.env, input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertDenied(denied);
 });
 
 test('an ordinary content push (git push origin main) stays denied', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
 test('a compound command riding on a delete-only push stays denied, fail-closed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin --delete my-branch && rm -rf /', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin --delete my-branch && rm -rf /', repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
 test('a delete-only push with an extra flag stays denied, fail-closed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin --delete my-branch --force', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin --delete my-branch --force', repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
 test('the denied push message names the branch-delete fallback', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: process.env, input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
   const reason = out.json.hookSpecificOutput.permissionDecisionReason;
   assert.ok(reason.includes('gh api -X DELETE'), `deny message must name the gh api fallback: ${reason}`);
@@ -324,10 +323,10 @@ test('a Bash WRITE SHAPE (tee/cp) targeting policy.yml stays denied — the exem
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const abs = path.join(repo, '.claude-tweaks', 'policy.yml');
-  assertDenied(pre.run({ input: bashInput('tee ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
-  assertDenied(pre.run({ input: bashInput('cp /tmp/x ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
+  assertDenied(pre.run({ env: process.env, input: bashInput('tee ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
+  assertDenied(pre.run({ env: process.env, input: bashInput('cp /tmp/x ' + shellQuote(abs), repo), runDir: null, runState: null, cwd: repo }));
   // The file-tool form of the same target is the exemption's whole point:
-  assertAllowed(pre.run({ input: editInput(abs), runDir: null, runState: null, cwd: repo }));
+  assertAllowed(pre.run({ env: process.env, input: editInput(abs), runDir: null, runState: null, cwd: repo }));
 });
 
 test('a staged rename INTO policy.yml is denied even though --name-only would show one path', () => {
@@ -344,21 +343,21 @@ test('a staged rename INTO policy.yml is denied even though --name-only would sh
   execFileSync('git', ['-C', repo, 'mv', '-f', 'payload.yml', '.claude-tweaks/policy.yml']);
   const nameOnly = execFileSync('git', ['-C', repo, 'diff', '--cached', '--name-only'], { encoding: 'utf8' }).trim();
   assert.strictEqual(nameOnly, '.claude-tweaks/policy.yml', 'precondition: --name-only really does collapse the rename to one line');
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 test('a staged Add, Modify, and Delete of policy.yml each still qualify (the three admitted statuses)', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'a: b\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Add');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Add');
   execFileSync('git', ['-C', repo, 'commit', '-m', 'add', '-q']);
   withPolicy(repo, 'a: c\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Modify');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Modify');
   execFileSync('git', ['-C', repo, 'commit', '-m', 'mod', '-q']);
   execFileSync('git', ['-C', repo, 'rm', '-q', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true, 'Delete');
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true, 'Delete');
 });
 
 test('AC1.1: the staged-file read uses -z', () => {
@@ -380,11 +379,11 @@ test('the exemption still fires when HEAD tracks a non-ASCII path (docs/café.md
   execFileSync('git', ['-C', repo, 'commit', '-m', 'baseline', '-q']);
   withPolicy(repo, 'a: c\n');
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), true);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), true);
   // A second staged entry — the non-ASCII path — still defeats the exemption.
   fs.writeFileSync(path.join(repo, 'docs', 'café.md'), 'two\n');
   execFileSync('git', ['-C', repo, 'add', 'docs/café.md']);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', repo, { env: process.env }), false);
 });
 
 // ─── allowlist regex unit cases (pure — no spawn) ──────────────────────────
@@ -427,15 +426,15 @@ test('POLICY_COMMIT_ALLOWLIST matches exactly the admitted shapes', () => {
 
 test('isPolicyOnlyCommit fails closed when git cannot answer (non-repo cwd)', () => {
   const nonRepo = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-')));
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo, { env: process.env }), false);
 });
 
 test('isPolicyOnlyCommit fails closed on non-string / garbage input without throwing', () => {
-  assert.strictEqual(isPolicyOnlyCommit(null, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit(undefined, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit(42, '/tmp'), false);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', null), false);
-  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', undefined), false);
+  assert.strictEqual(isPolicyOnlyCommit(null, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit(undefined, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit(42, '/tmp', { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', null, { env: process.env }), false);
+  assert.strictEqual(isPolicyOnlyCommit('git commit -m x', undefined, { env: process.env }), false);
 });
 
 // ─── every outcome is a returned object, never a throw ─────────────────────
@@ -451,7 +450,7 @@ test('every case above returns an object shape from pre.run (spot re-check acros
     { input: bashInput('git commit -a -m x', repo), cwd: repo },
   ];
   for (const { input, cwd } of cases) {
-    const out = pre.run({ input, runDir: null, runState: null, cwd });
+    const out = pre.run({ env: process.env, input, runDir: null, runState: null, cwd });
     assertRunReturnsObject(out);
   }
 });

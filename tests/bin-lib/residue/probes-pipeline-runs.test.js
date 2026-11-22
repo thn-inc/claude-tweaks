@@ -1,15 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { probePipelineRuns } = require('../../../plugin/bin/lib/residue/probes/pipeline-runs');
 const { archiveRunDir } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { filterResultsByScope } = require('../../../plugin/bin/lib/residue/scope-filter');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 function makeFixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-pipeline-runs-'));
+  const root = scratchDir('residue-pipeline-runs-');
   fs.mkdirSync(path.join(root, '.git')); // mainCheckoutRoot needs a repo marker
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive'), { recursive: true });
@@ -132,7 +134,7 @@ test('the archive/ directory itself is never reported', () => {
 });
 
 test('no .claude-tweaks/pipelines directory at all is a clean run with no findings', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'residue-pipeline-runs-empty-'));
+  const root = scratchDir('residue-pipeline-runs-empty-');
   fs.mkdirSync(path.join(root, '.git'));
   const { ran, findings } = probePipelineRuns({ cwd: root });
   assert.strictEqual(ran, true);
@@ -153,9 +155,7 @@ test('a genuine readdir failure (not ENOENT) reports ran: false, not a clean swe
 
 test('the flagged remedy is mechanically applicable: archiveRunDir moves a flagged dir under archive/', () => {
   const root = makeFixture();
-  execFileSync('git', ['-C', root, 'init', '-q']);
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'Test']);
+  initRepo(root, { name: 'Test', email: 'test@example.com' });
   execFileSync('git', ['-C', root, 'commit', '--allow-empty', '-q', '-m', 'init']);
 
   const dir = writeRun(root, '2026-01-01T000000-spec-9', { status: 'clean' });

@@ -2,6 +2,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
@@ -23,7 +24,7 @@ const RULING = 'Title: keep the guard\nKind: sdd-ruling\nRuling: Ruling: keep th
 const ITEM = 'SDD ruling — keep the guard: ratify or reverse at the Review Console';
 
 function fixture({ ledger = LEDGER_HEAD + PRIOR_ROW, ruling = RULING } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'siledger-'));
+  const root = scratchDir('siledger-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', 'run-a');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', 'run-a');
@@ -424,7 +425,7 @@ after(() => { for (const dir of plainDirs) fs.rmSync(dir, { recursive: true, for
 
 // A ledger in a fresh dir whose `run/` subdir is the runDir.
 function plainFixture(rows = PRIOR_ROW) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'siledger-plain-'));
+  const dir = scratchDir('siledger-plain-');
   plainDirs.push(dir);
   const runDir = path.join(dir, 'run');
   fs.mkdirSync(runDir);

@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { probeArtifacts, ARTIFACT_ROOTS, THIRTY_DAYS_MS } = require('../../../plugin/bin/lib/residue/probes/artifacts');
@@ -25,7 +26,7 @@ const UNPROVEN = () => null;
 const TRACKED = () => 'screenshots/hero/sunset.jpg';
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'artifacts-probe-'));
+  return scratchDir('artifacts-probe-');
 }
 
 function mkFile(p, mtime) {
