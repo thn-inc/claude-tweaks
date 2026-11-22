@@ -684,13 +684,12 @@ function deriveExpressDriverMaxLines(sources) {
   return value;
 }
 
-// The planning-decisions read plan-at-specify's refusal makes (#6056): the first
-// source holding the key wins, run-config skipped (the key is policyOnly), and an
-// invalid value resolves the schema default, never the next source's value, as in
-// the main loop and the two derive helpers above. The factory source is skipped when the key is in
-// FACTORY_REFUSED_KEYS, as the main loop skips it, so this read and the resolver's agree if the key
-// is ever refused. refusedKeys is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS (require
-// cycle with policy-factory.js). Returns 'ask-all' | 'asked-classes'.
+// The planning-decisions read plan-at-specify's refusal makes (#6056): the first source holding
+// the key wins, run-config skipped (the key is policyOnly), and an invalid value resolves the
+// schema default, never the next source's value, as in the main loop and the two derive helpers
+// above. The factory source is skipped when the key is in FACTORY_REFUSED_KEYS, as the main loop
+// skips it. refusedKeys is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS (require cycle
+// with policy-factory.js). Returns 'ask-all' | 'asked-classes'.
 function planningDecisionsFrom(sources, refusedKeys) {
   const schemaEntry = SCHEMA_BY_KEY.get('planning-decisions');
   let value = schemaEntry.default;
