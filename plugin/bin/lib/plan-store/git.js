@@ -27,6 +27,14 @@ function makeGit({ git = defaultGit, root, env } = {}) {
     git(['-C', root, ...args], { cwd: root, env: { ...repoPinnedEnv(env), ...extraEnv }, input, encoding });
 }
 
+// ls-remote and fetch take the remote before any ref and have no end-of-options slot there,
+// so a dash-leading remote would be read as a flag: refuse it without running git.
+function badRemote(remote) {
+  return typeof remote !== 'string' || !remote || remote.startsWith('-')
+    ? { ok: false, reason: `invalid remote name: ${String(remote)}` }
+    : null;
+}
+
 function reasonOf(err) {
   const stderr = err && err.stderr != null ? String(err.stderr).trim() : '';
   return stderr || (err && err.message) || 'git failed';
@@ -52,6 +60,8 @@ function localRef(g, ref) {
 
 // ls-remote prints same-tail refs too (refs/archive/<ref>); keep only the exact ref.
 function lsRemoteRef(g, remote, ref) {
+  const bad = badRemote(remote);
+  if (bad) return bad;
   try {
     const out = String(g(['ls-remote', remote, ref])); // git-path-read: not a path list (ref names)
     for (const line of out.split('\n')) {
@@ -66,6 +76,8 @@ function lsRemoteRef(g, remote, ref) {
 
 // The leading `+` forces the update: a replaced plan is not a fast-forward of the stale local ref.
 function fetchRef(g, remote, ref) {
+  const bad = badRemote(remote);
+  if (bad) return bad;
   try {
     g(['fetch', '-q', '--no-tags', '--no-write-fetch-head', remote, `+${ref}:${ref}`]);
     return { ok: true };

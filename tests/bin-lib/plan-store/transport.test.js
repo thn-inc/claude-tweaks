@@ -40,6 +40,32 @@ test('resolveCommit resolves a commit and refuses the rest', (t) => {
   for (const bad of ['deadbeef', '-evil', tree]) assert.strictEqual(resolveCommit(g, bad), null);
 });
 
+test('resolveCommit and localRef put --verify and --end-of-options directly before the rev', (t) => {
+  const { g, calls } = setup(t);
+  resolveCommit(g, '-evil');
+  localRef(g, '-evil');
+  const rp = calls.filter((a) => a.includes('rev-parse'));
+  assert.strictEqual(rp.length, 2);
+  for (const a of rp) {
+    const i = a.indexOf('--end-of-options');
+    assert.ok(a.includes('--verify') && i > a.indexOf('--verify') && i === a.length - 2, `argv ${JSON.stringify(a)}`);
+  }
+  assert.strictEqual(rp[0][rp[0].length - 1], '-evil^{commit}');
+  assert.strictEqual(rp[1][rp[1].length - 1], '-evil');
+});
+
+test('lsRemoteRef refuses a dash-leading remote without running git', (t) => {
+  const { g, calls } = setup(t);
+  for (const bad of ['--upload-pack=x', '', undefined]) assert.strictEqual(lsRemoteRef(g, bad, 'refs/claude-tweaks/plans/7').ok, false);
+  assert.deepStrictEqual(calls, []);
+});
+
+test('fetchRef refuses a dash-leading remote without running git', (t) => {
+  const { g, calls } = setup(t);
+  for (const bad of ['--upload-pack=x', '', undefined]) assert.strictEqual(fetchRef(g, bad, 'refs/claude-tweaks/plans/7').ok, false);
+  assert.deepStrictEqual(calls, []);
+});
+
 test('lsRemoteRef ignores a same-tail ref', (t) => {
   const { fx, g } = setup(t);
   const ref = 'refs/claude-tweaks/plans/8';
