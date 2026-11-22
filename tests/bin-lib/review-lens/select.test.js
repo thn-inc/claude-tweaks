@@ -74,6 +74,13 @@ test('AC1.1: TIER_LENSES reproduces the tier table', () => {
 test('tuned constants (#6001 build replay)', () => {
   assert.strictEqual(SHARE_FLOOR, 0.4);
   assert.strictEqual(FORCE_EVERY, 3);
+  // The tuned CALLED_FOR clauses: 3b and 3c are called for by any source or test change, never by prose alone.
+  for (const l of ['3b', '3c']) {
+    assert.strictEqual(CALLED_FOR[l](factsOf({ kinds: { source: true } }).facts), true, `${l} source`);
+    assert.strictEqual(CALLED_FOR[l](factsOf({ kinds: { test: true } }).facts), true, `${l} test`);
+    assert.strictEqual(CALLED_FOR[l](proseOnly().facts), false, `${l} prose-only`);
+  }
+  assert.strictEqual(CALLED_FOR['3c'](factsOf({ riskPathTouched: true }).facts), true, '3c risk path');
 });
 
 test('AC2.1: docs-only diff at high with 3d below the floor selects no 3d', () => {

@@ -37,7 +37,10 @@
 //   TIERS, TIER_LENSES — `plugin/skills/review/step3-lens-dispatch.md`'s tier table, verbatim and in its order.
 //   SHARE_FLOOR = 0.4 — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
 //   FORCE_EVERY = 3 — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
-//   APPLIES = Task 2's lists, unchanged — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
+//     A tie-break among equal tuning results (3–8 gave lost 0, 13 skips at floor 0.4), smallest chosen; not exercised
+//     for 3d/3e/3g/3h, which stayed insufficient through the tuning slice.
+//   APPLIES = Task 2's lists, not varied by the replay: over all 280 tuning configurations every lost finding was a
+//     below-floor skip, none a not-applicable one; held-out 23 runs, lost 1 (below floor); evidence lens-replay.txt (#6001 build replay)
 //   CALLED_FOR = Task 2's lists, 3b and 3c also called for by any source or test change — tuned on 69 runs (2026-08-15T220143-record-472…2026-11-01T204931-record-4781), held-out 23 runs, lost 1; evidence lens-replay.txt (#6001 build replay)
 //   The held-out loss (one medium 3d finding, a lens whose history never reached 20 runs in the tuning slice) misses
 //   the zero-loss bar: this repository's opt-in waits for a retune. (3h is always applicable and always called for:

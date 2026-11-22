@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { committedRepo } = require('./helpers/git-fixtures');
+const { chmodDenialSkip } = require('./helpers/root');
 const { SCHEMA_VERSION } = require('../plugin/bin/lib/timing/step-yield');
 const { appendLensDispatch } = require('../plugin/bin/lib/review-lens/dispatch-record');
 const { writeLensSelection } = require('../plugin/bin/lib/review-lens/selection-record');
@@ -93,8 +94,7 @@ test('AC5.1: an unresolvable --base selects the full tier set and logs one AUTO 
   assert.match(lines[0], /^- AUTO .*Step 3 lens selection: .*no-such-ref-xyz/);
 });
 
-test('AC8.2: an unreadable history root or archive selects the full tier set and logs why', (tc) => {
-  if (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) return tc.skip('needs a permission-denied directory');
+test('AC8.2: an unreadable history root or archive selects the full tier set and logs why', chmodDenialSkip('root bypasses mode bits'), () => {
   const w = world();
   seedHistory(w, '3d');
   commitFile(w, 'docs/a.md', 'prose only\n');
