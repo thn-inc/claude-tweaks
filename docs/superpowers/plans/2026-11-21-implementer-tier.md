@@ -54,7 +54,7 @@ This CLI uses the *Payload-1/Invocation-2* family: the spec file and the policy 
 
 ## Review Focus
 
-- A Key Files bullet naming a directory (`plugin/skills/foo/`) on a `size: low` record — must never qualify for Fast (Task 1 test: directory entry).
+- A Key Files bullet naming a directory (`plugin/skills/foo/`) on a `size: low` record — must never qualify for Fast (Task 1 test: directory entry); likewise a glob (`*.md`) or brace-list (`{a,b}`) entry (Task 1 tests: glob, wildcard, brace list).
 - A header `size:` value with trailing whitespace (`size: low  `) — reads as `low`, not as malformed (Task 3 test: trailing whitespace).
 - A `size:` line appearing in the body (below the first `#` heading), not the header — must not be read as the record's size (Task 3 test: body size line ignored).
 - `--run` naming a directory that does not exist (a typo'd run id) — refused, never read as "no run config" (Task 3 test: missing `--run` dir exits 2 via `resolvePolicy`'s existence check).
@@ -90,6 +90,10 @@ const KF = (...items) => `# T\n\n### Key Files\n\n${items.map((i) => `- ${i}`).j
 test('AC10.1: keyFileCount counts a repeated path once', () => assert.strictEqual(keyFileCount(KF('`a.js` — x', '`a.js` — again', '`b.js`')), 2));
 test('AC10.2: keyFileCount is at least 3 for a list naming a directory', () => assert.strictEqual(keyFileCount(KF('`plugin/skills/foo/`')), 3));
 test('keyFileCount: a directory beside four files reports 5, never less than the distinct count', () => assert.strictEqual(keyFileCount(KF('`d/`', '`a`', '`b`', '`c`', '`e`')), 5));
+test('keyFileCount: a glob entry counts like a directory (plan-review clarification)', () => assert.strictEqual(keyFileCount(KF('`plugin/skills/flow/*.md`')), 3));
+test('keyFileCount: a ? wildcard entry counts like a directory', () => assert.strictEqual(keyFileCount(KF('`a/file?.js`')), 3));
+test('keyFileCount: a brace-list entry counts like a directory', () => assert.strictEqual(keyFileCount(KF('`bin/lib/{a,b}-health/x.js`')), 3));
+test('keyFileCount: a lone brace with no comma is a plain path', () => assert.strictEqual(keyFileCount(KF('`a/{x}.js`', '`b.js`')), 2));
 test('keyFileCount: a test file counts like any other path', () => assert.strictEqual(keyFileCount(KF('`tests/x.test.js`', '`a.js`')), 2));
 test('AC10.3: keyFileCount is 0 for a body with no Key Files section', () => assert.strictEqual(keyFileCount('# T\n\n## Overview\n\ntext\n'), 0));
 test('keyFileCount: bullets with no backticked path count 0', () => assert.strictEqual(keyFileCount(KF('plain words', 'more words')), 0));
@@ -118,7 +122,7 @@ Expected: FAIL — `Cannot find module '../../../plugin/bin/lib/model-profiles/i
 - [ ] **Step 3: Implement `plugin/bin/lib/model-profiles/implementer-tier.js`**
 
 Pure module (no fs, no process). Header comment names #5996, the two consumers (#5997 driver, #5999 standard lane) and that a throw is the consumer's to act on (never a fallback).
-- `keyFileCount(body)`: `const paths = new Set(extractKeyFilesSection(body))`; if any path ends in `/`, return `Math.max(paths.size, 3)`, else `paths.size`.
+- `keyFileCount(body)`: `const paths = new Set(extractKeyFilesSection(body))`; if any path names several files — it ends in `/` (a directory), contains `*` or `?` (a glob), or matches `/\{[^}]*,[^}]*\}/` (a brace list; the spec's Plan Review Clarifications) — return `Math.max(paths.size, 3)`, else `paths.size`.
 - `implementerProfile`: validate `rule` ∈ `RULES`, `size` ∈ `SIZES` or `undefined`/`null`, `keyFileCount` a non-negative `Number.isSafeInteger`; each refusal throws an `Error` whose message names the bad value via `JSON.stringify` (e.g. `implementer-tier: unknown rule "sometimes" — expected lane or record`). Under `record`: `size === 'low' && (keyFileCount === 1 || keyFileCount === 2)` → `'fast'`, else `'standard'`. Under `lane`: `{ low: 'fast', medium: 'standard', high: 'capable' }[size]`, `null` when size is missing.
 - `stepUp(profile)`: a local ladder `['fast', 'standard', 'capable']`; `null` and `'frontier'` → `null`; `'capable'` → `null`; any value that is not `null` and not a key of `PROFILES` throws naming it.
 
