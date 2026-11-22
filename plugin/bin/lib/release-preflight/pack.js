@@ -197,8 +197,8 @@ function prepare({ deps, rootArg, runDir, cwd }) {
   const gitForPolicy = rootArg
     ? (args) => (args.join(' ') === 'rev-parse --show-toplevel' ? `${rootArg}\n` : deps.git(args))
     : deps.git;
-  // deps.env (optional, default the inherited environment) locates the factory layer (#6006).
-  const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'], env: deps.env || process.env });
+  // deps.env (optional; resolvePolicyConfig defaults it to the inherited environment) locates the factory layer (#6006).
+  const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'], env: deps.env });
   const branch = policyString(policy['integration-branch']) || resolveDefaultBranch(deps);
   if (!branch) throw new Error('integration branch unresolved: no integration-branch policy key, and origin/HEAD could not be determined');
   let tipRef = `refs/heads/${branch}`;

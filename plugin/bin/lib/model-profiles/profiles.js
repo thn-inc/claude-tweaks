@@ -20,7 +20,7 @@ const PROFILES = {
 
 const EFFORT_SCALE = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// The four policy.yml keys the resolver reads. #219 pins policy-schema.js
+// The four policy keys the resolver reads (from policy.yml or the factory layer, #6006). #219 pins policy-schema.js
 // registration against this export — the names here are authoritative.
 const POLICY_KEYS_READ = ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap'];
 
@@ -105,7 +105,7 @@ function resolve(profile, opts = {}) {
     source = 'cli';
   }
 
-  // Both value sources above are external text (a policy.yml row, a caller's
+  // Both value sources above are external text (a policy.yml or factory-layer row, a caller's
   // override) and neither is schema-checked upstream. An unrecognised effort
   // would otherwise pass through shiftEffort's indexOf as -1 and resolve to the
   // scale's floor — a typo silently downgrading rigor instead of failing.
