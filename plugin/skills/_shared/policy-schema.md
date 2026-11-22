@@ -178,6 +178,7 @@ Registered by #5218, #5222, #5224 and #6018; `bin/drive.js` reads all eight. Ful
 | `express-driver-max-key-files` |
 | `express-driver-max-lines` |
 | `express-driver-max-risk` |
+| `express-driver-protected-paths` |
 
 ## Model profiles
 
