@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { run } = require('../../../plugin/bin/implementer-tier');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'implementer-tier.js');
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
@@ -258,4 +259,31 @@ test('run() calls no fs mutation API, for success, refusal and --run calls', () 
   }
   assert.deepStrictEqual(calls, []);
   assert.deepStrictEqual(codes, [0, 0, 0, 1, 2]);
+});
+
+test('size: wins over effort: when the header carries both', () => {
+  const file = writeSpec(spec({ header: 'size: high\neffort: low\n', keyFiles: ['a.js'] }));
+  const out = ok(['--spec-file', file, '--rule', 'lane']);
+  assert.strictEqual(out.size, 'high');
+  assert.strictEqual(out.profile, 'capable');
+});
+
+test('an invalid effort: value with no size: line exits 1 naming the value', () => {
+  const file = writeSpec(spec({ header: 'effort: huge\n' }));
+  refused(['--spec-file', file, '--rule', 'lane'], 1, 'huge');
+});
+
+test('an absolute readable --spec-file never reads cwd(), so a deleted working directory does not fail it', () => {
+  const file = LOW_TWO();
+  const out = [];
+  const err = [];
+  const deps = {
+    cwd: () => {
+      throw new Error('ENOENT: no such file or directory, uv_cwd');
+    },
+    stdout: (m) => out.push(m),
+    stderr: (m) => err.push(m),
+  };
+  assert.strictEqual(run(['--spec-file', file, '--rule', 'lane'], deps), 0, err.join(''));
+  assert.strictEqual(JSON.parse(out.join('')).profile, 'fast');
 });

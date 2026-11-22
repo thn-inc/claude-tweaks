@@ -34,7 +34,7 @@
 const fs = require('fs');
 const { PROFILES } = require('./lib/model-profiles/profiles');
 const { POLICY_KEY, RULES, SIZES, keyFileCount, implementerProfile, stepUp } = require('./lib/model-profiles/implementer-tier');
-const { resolveAgainst } = require('./lib/health-core/io');
+const { fsPath } = require('./lib/health-core/io');
 const { resolvePolicy, realDeps: policyDeps } = require('./resolve-policy');
 
 const EXIT_OK = 0;
@@ -59,8 +59,9 @@ function headerLines(text) {
 function readSize(text) {
   const lines = headerLines(text);
   for (const field of ['size', 'effort']) {
-    const re = new RegExp(`^${field}:\\s*(.*?)\\s*$`);
-    const values = lines.map((l) => re.exec(l)).filter(Boolean).map((m) => m[1]);
+    // A prefix test plus trim, not `^field:\s*(.*?)\s*$` — that is quadratic on a long whitespace run.
+    const prefix = `${field}:`;
+    const values = lines.filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trim());
     if (values.length === 0) continue;
     if (values.length > 1) return { error: `${field}: given more than once in the spec header` };
     if (!SIZES.includes(values[0])) {
@@ -106,7 +107,7 @@ function run(argv, deps = realDeps) {
 
   let text;
   try {
-    const resolved = resolveAgainst(deps.cwd(), specFile);
+    const resolved = fsPath(deps, specFile);
     try {
       text = fs.readFileSync(resolved, 'utf8');
     } catch (err) {

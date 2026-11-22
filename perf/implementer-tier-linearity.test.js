@@ -10,7 +10,11 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { keyFileCount } = require('../plugin/bin/lib/model-profiles/implementer-tier');
+const { run } = require('../plugin/bin/implementer-tier');
 
 const BUDGET_MS = 750;
 const body = (entry) => `# T\n\n### Key Files\n\n- \`${entry}\`\n`;
@@ -28,3 +32,21 @@ for (const [label, entry, expected] of [
     assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
   });
 }
+
+// The spec-header read matched `^size:\s*(.*?)\s*$`, quadratic on a value of `a`, a long whitespace run, then `b`
+// (40000 spaces about 1.2 s end to end). Header matching is now a prefix test plus trim.
+test('implementer-tier CLI: a header value with a 40000-space run inside stays linear', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'impl-tier-perf-'));
+  try {
+    const file = path.join(dir, 'spec.md');
+    fs.writeFileSync(file, `size: a${' '.repeat(40000)}b\n\n# T\n`);
+    const err = [];
+    const start = performance.now();
+    const code = run(['--spec-file', file, '--rule', 'lane'], { stderr: (m) => err.push(m), stdout: () => {}, cwd: () => dir });
+    const ms = performance.now() - start;
+    assert.strictEqual(code, 1, err.join(''));
+    assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
