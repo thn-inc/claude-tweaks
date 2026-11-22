@@ -16,12 +16,12 @@
 
 - `expressQueuePolicy(deps) → { enabled, grouping, keepSingleton }` keeps its shape. `enabled` stays the express half's flag; with only the driver half on, `enabled` is false and `grouping`/`keepSingleton` are the driver variant, so the frozen disabled value applies only when both halves are off.
 - Policy keys are read with `runDir: null`, in exactly two resolver calls: the first reads `['express-lane', 'express-driver']`; the second, made only when either half is on, reads `['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review']`. With `express-lane` not `true` and `express-driver` `off`, the second call is not made.
-- The driver half is on when `express-driver` resolves `on` or `split` (exactly those two strings), whatever `express-lane` resolves. Any other value (`off`, an unrecognised value) leaves the driver half off.
+- The driver half is on when `express-driver` resolves `on` or `split` (exactly those two strings), whatever `express-lane` resolves; `off` leaves it off. An `express-driver` value other than `on`, `off` or `split` is unreadable policy: `expressQueuePolicy` returns the frozen disabled value for that pull (no record kept, express-eligible ones included; `grouping` `per-record`), makes no second resolver call, and writes one stderr line naming the value — `express-driver: value not recognised ({value}), fast-lane bundling unchanged this pull\n`. This is AC10's literal "with `express-driver` set to a value other than `on`, `off` or `split`, any fast-lane record, are bundled and not kept" (plan review, Common Step 1.6).
 - `split` is read through `routingReason` (`admission.js:75-86`), exported by this record and called as is; never a second copy of the even/odd rule.
 - Import `eligibilityOptions` from `plugin/bin/lib/driver/steps.js` and `preScreen` from `plugin/bin/lib/driver/budget.js`; edit neither. `admission.js` changes only by one added export.
 - Require the driver modules (`../driver/admission`, `../driver/budget`, `../driver/steps`, `../driver/review`) lazily, inside the driver-on branch of `expressQueuePolicy`, never at the top of `queue.js`: a project using neither lane must not load the driver graph on every queue pull, and `budget.js` requires `../dispatch/queue-pull`, the module that calls `expressQueuePolicy`.
 - New stamp values only, never a changed meaning: `groupingMode(false, false)` = `'per-record'`, `groupingMode(true, false)` = `'per-record+express'`, `groupingMode(false, true)` = `'per-record+driver'`, `groupingMode(true, true)` = `'per-record+express+driver'`. `groupingMode(false)` and `groupingMode(true)` keep their current values. `GROUPING_MODE` stays `'per-record'`.
-- An unreadable input never keeps the record: a `keyFiles` that is not an array, a non-integer issue number under `split`, an `express-driver` value other than `on`, `off` or `split` → the driver half answers false (the record is bundled).
+- An unreadable input never keeps the record: a `keyFiles` that is not an array, a non-integer issue number under `split`, → the driver half answers false (the record is bundled); an unrecognised `express-driver` value disables the whole policy for the pull (bullet above).
 - A failed policy read, on either resolver call, makes `expressQueuePolicy` return the frozen disabled value for that pull (`keepSingleton: () => false`, `grouping: 'per-record'`, `enabled: false`) with exactly one stderr line naming the failed read (the keys of the call that threw).
 - A throwing driver-half check for one record answers false for that record, with one stderr line naming `#{number}`, mirroring the express half's existing per-record fallback.
 - Governing project skill `.claude/skills/shared-contract-extraction/SKILL.md`, quoted verbatim: "**A persisted consumer keeps its own schema; convert at the boundary and say so there.** Not every reader of the old shape is in scope. The queue-order disk cache (`bin/lib/dispatch/queue-order.js`) keeps its pre-#1752 `{number, blockedBy}[]` `excluded` field, and `queue-pull-script.md` converts in both directions at exactly the two points the schemas meet — cache-hit materialization and write-back — each with a comment saying that is what it is." This plan changes no blob field; it adds stamp values only. No other project skill under `.claude/skills/` names these files' changed behavior (`blocker-surface-parity`, `dispatch-queue-exclusion-addition` and `claim-targets-stop-addition` name `queue-order.js`/`driver-route.md` for blocker exclusions and claim stops, which this plan does not touch).
@@ -41,6 +41,7 @@
 ### Task 1: `groupingMode`'s driver variant
 
 **Role:** transcription
+**Review risk:** high — the stamp gates `cacheUsable`'s reuse of the persisted queue-order blob, shared state that sessions on older plugin builds also read.
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-order.js:31-35` (the `groupingMode` function and its comment)
@@ -76,7 +77,13 @@ Expected: FAIL after Step 1 — the new AC12.1 test: `groupingMode(false, true)`
 
 - [ ] **Step 3: Implement `groupingMode(expressEnabled, driverEnabled = false)` in `plugin/bin/lib/dispatch/queue-order.js`**
 
-Build the stamp as `GROUPING_MODE` + `'+express'` when `expressEnabled` + `'+driver'` when `driverEnabled`. Extend the comment above it: `#6011: with the driver half on, driver-routable records also stay out of fast-lane bundles; each lane combination stamps its own value, and an existing value never changes meaning.`
+```js
+function groupingMode(expressEnabled, driverEnabled = false) {
+  return GROUPING_MODE + (expressEnabled ? '+express' : '') + (driverEnabled ? '+driver' : '');
+}
+```
+
+Extend the comment above it: `#6011: with the driver half on, driver-routable records also stay out of fast-lane bundles; each lane combination stamps its own value, and an existing value never changes meaning.`
 
 - [ ] **Step 4: Run the file to verify it passes**
 
@@ -201,7 +208,7 @@ test('AC6.1: with the driver half on, grouping differs from per-record and per-r
 });
 
 test('AC7.1: a resolver that throws on the first or the second call disables both halves with exactly one stderr line naming the failed read', () => {
-  for (const [failOn, named] of [[1, /express-driver\b/], [2, /express-driver-review/]]) {
+  for (const [failOn, named, notNamed] of [[1, /\(express-lane, express-driver\)/, /express-driver-review/], [2, /express-driver-review/, /\(express-lane, express-driver\)/]]) {
     let n = 0;
     const resolvePolicy = (keys) => {
       n += 1;
@@ -215,17 +222,25 @@ test('AC7.1: a resolver that throws on the first or the second call disables bot
     assert.equal(p.grouping, 'per-record');
     assert.equal(sink.lines.length, 1);
     assert.match(sink.lines[0], named);
+    assert.doesNotMatch(sink.lines[0], notNamed);
     assert.match(sink.lines[0], /policy\.yml unreadable/);
   }
 });
 
-test('AC10.1: split with a non-integer number, and an unrecognised express-driver value, never keep a driver-only record', () => {
+test('AC10.1: split with a non-integer number never keeps a driver-only record; an unrecognised express-driver value keeps no record at all', () => {
   const split = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': 'split' }).resolvePolicy });
   assert.equal(split.keepSingleton({ ...medium(20), number: '20' }), false);
   assert.equal(split.keepSingleton({ ...medium(20), number: 20.5 }), false);
-  const unknown = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': 'sometimes' }).resolvePolicy });
+  const sink = stderrSink();
+  const recorded = policy({ ...DRIVER_POLICY, 'express-driver': 'sometimes' });
+  const unknown = expressQueuePolicy({ resolvePolicy: recorded.resolvePolicy, stderr: sink.stderr });
   assert.equal(unknown.keepSingleton(medium(20)), false);
-  assert.equal(unknown.grouping, 'per-record+express');
+  assert.equal(unknown.keepSingleton(ELIGIBLE), false, 'an express-eligible record is bundled too');
+  assert.equal(unknown.grouping, 'per-record');
+  assert.equal(unknown.enabled, false);
+  assert.deepStrictEqual(recorded.calls.map((c) => c.keys), [['express-lane', 'express-driver']]);
+  assert.equal(sink.lines.length, 1);
+  assert.match(sink.lines[0], /sometimes/);
 });
 
 test('AC11.1: routingReason is exported from admission.js with its split rule', () => {
@@ -257,7 +272,7 @@ test('a throwing driver check keeps that record bundleable, with one stderr line
 Update the two existing tests whose resolver-call assertions change (the call structure is the spec's):
 - `express-lane false: …` → resolve `{ 'express-lane': false, 'express-driver': 'off', … }`; assert `calls.map((c) => c.keys)` deep-equals `[['express-lane', 'express-driver']]`.
 - `express-lane true + pr-first: …` → add `'express-driver': 'off'` and the three driver keys to its values; assert calls deep-equal `[['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review']]`; `grouping` stays `'per-record+express'`.
-- The other existing tests that pass values without `express-driver` keep passing (an `undefined` `express-driver` is not `on`/`split`, so the driver half is off); add `'express-driver': 'off'` to their values only if a test fails for that reason.
+- The existing `policy(values)` helper answers `'express-driver'` as `'off'` when `values` has no such key (the real resolver always returns a value, default `off`), so the other existing tests keep passing unchanged: an absent key would otherwise read as unrecognised and disable the express half too.
 - Extend `loading queue.js does not load the express CLI module` to also assert no `require.cache` key matches `/driver[\\/](steps|budget|admission|review)\.js$/`.
 
 - [ ] **Step 2: Run tests to verify they fail**
