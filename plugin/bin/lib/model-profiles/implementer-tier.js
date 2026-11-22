@@ -11,6 +11,7 @@
 // default profile on bad input.
 'use strict';
 
+const { inspect } = require('node:util');
 const { extractKeyFilesSection } = require('../issues/grouping');
 const { PROFILES } = require('./profiles');
 
@@ -24,10 +25,12 @@ const LANE_PROFILE = { low: 'fast', medium: 'standard', high: 'capable' };
 const BRACE_LIST_RE = /\{[^{},]*,[^{}]*\}/;
 const MULTI_FILE_FLOOR = 3;
 
-// Names a bad value in a refusal: strings quoted, everything else as String()
-// prints it (NaN, Infinity, 1n, Symbol(x), undefined) — JSON.stringify would
-// print NaN as null and throw on a BigInt.
-const describe = (v) => (typeof v === 'string' ? JSON.stringify(v) : String(v));
+// Names a bad value in a refusal: strings quoted, everything else through
+// util.inspect, which prints NaN, Infinity, 1n, Symbol(x), [ 'lane' ], {} and a
+// null-prototype object as themselves and never throws (JSON.stringify prints
+// NaN as null and throws on a BigInt; String() flattens arrays and throws on a
+// null-prototype object).
+const describe = (v) => (typeof v === 'string' ? JSON.stringify(v) : inspect(v));
 
 function namesSeveralFiles(p) {
   return p.endsWith('/') || p.includes('*') || p.includes('?') || BRACE_LIST_RE.test(p);

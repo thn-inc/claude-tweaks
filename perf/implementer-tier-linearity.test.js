@@ -18,7 +18,7 @@ const body = (entry) => `# T\n\n### Key Files\n\n- \`${entry}\`\n`;
 for (const [label, entry, expected] of [
   ['a "{," run repeated 5000 times with no closing brace', '{,'.repeat(5000), 1],
   ['a "{" followed by 60000 commas with no closing brace', `{${','.repeat(60000)}`, 1],
-  ['a "{" followed by 60000 commas and a closing brace', `a/{${','.repeat(60000)}}/x`, 3],
+  ['verdict stability: a closed brace list of 60000 commas', `a/{${','.repeat(60000)}}/x`, 3],
 ]) {
   test(`keyFileCount: ${label} stays linear`, () => {
     const start = performance.now();

@@ -60,13 +60,18 @@ test('stepUp refuses an inherited object key', () => assert.throws(() => stepUp(
 test('AC5.1: an unknown rule throws naming it', () => assert.throws(() => implementerProfile({ size: 'low', keyFileCount: 1, rule: 'sometimes' }), /sometimes/));
 test('AC5.1: an unknown size throws naming it', () => assert.throws(() => implementerProfile({ size: 'huge', keyFileCount: 1, rule: 'record' }), /huge/));
 test('AC5.1: a negative keyFileCount throws naming it', () => assert.throws(() => implementerProfile({ size: 'low', keyFileCount: -1, rule: 'record' }), /-1/));
-for (const [bad, shown] of [[1.5, /1\.5/], ['2', /"2"/], [NaN, /NaN/], [Infinity, /Infinity/], [1n, /1/], [Number.MAX_SAFE_INTEGER + 1, /9007199254740992/], [undefined, /undefined/]]) {
+for (const [bad, shown] of [[1.5, /1\.5/], ['2', /"2"/], [NaN, /NaN/], [Infinity, /Infinity/], [1n, /keyFileCount 1n/], [Number.MAX_SAFE_INTEGER + 1, /9007199254740992/], [undefined, /undefined/]]) {
   test(`a non-safe-integer keyFileCount (${String(bad)}) throws naming it`, () => {
     assert.throws(() => implementerProfile({ size: 'low', keyFileCount: bad, rule: 'record' }), shown);
   });
 }
 test('stepUp(NaN) throws naming NaN, not null', () => assert.throws(() => stepUp(NaN), /unknown profile NaN/));
 test('a Symbol size throws naming it rather than a TypeError', () => assert.throws(() => implementerProfile({ size: Symbol('x'), keyFileCount: 1, rule: 'record' }), /unknown size Symbol\(x\)/));
+test('an array rule is shown as an array, not flattened', () => assert.throws(() => implementerProfile({ size: 'low', keyFileCount: 1, rule: ['lane'] }), /unknown rule \[ 'lane' \]/));
+test('an object size is shown as an object', () => assert.throws(() => implementerProfile({ size: {}, keyFileCount: 1, rule: 'record' }), /unknown size \{\}/));
+test('a null-prototype size throws the module error, not a TypeError', () => {
+  assert.throws(() => implementerProfile({ size: Object.create(null), keyFileCount: 1, rule: 'record' }), (e) => e instanceof Error && !(e instanceof TypeError) && /unknown size/.test(e.message));
+});
 test('a missing rule throws naming undefined', () => assert.throws(() => implementerProfile({ size: 'low', keyFileCount: 1 }), /unknown rule undefined/));
 
 test('keyFileCount: a nested brace list counts like a directory', () => assert.strictEqual(keyFileCount(KF('`a/{x,{y,z}}.js`')), 3));
