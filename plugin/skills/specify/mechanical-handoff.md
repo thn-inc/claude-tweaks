@@ -75,11 +75,13 @@ BLOCKED).
 ```
 
 <!-- plan-at-specify:start -->
-**Planning at specify (#6057).** Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. When it prints `on`, add this sentence as the last line of the prompt's Task scope:
+**Planning at specify (#6057).** Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. When it prints `on`, add these two lines as the last lines of the prompt's Task scope:
 
 > Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.
+>
+> After your summary, add one line `Resumed: #a, #b` naming every sub-issue Step 3 resumed rather than created, or `Resumed: none`.
 
-With any other output the prompt is unchanged. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs, and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." Any other status plans nothing: each sub-issue the summary lists as created gets a `skipped` row with Detail `handoff {status}`, since its body may not have reached Step 6. The returned summary's own shape is unchanged.
+With any other output, or a failed call, the prompt is unchanged and this paragraph's remaining steps are skipped. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs minus the refs on that `Resumed:` line, and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." A reply with no `Resumed:` line plans nothing and appends the one line `Not planned: the handoff reply carried no Resumed: line.` to that section, so a resumed sub-issue is never planned by mistake. Any other status plans nothing: the appended `### Planning` section, under the same opening line, gets a `skipped` row with Detail `handoff {status}` for each Work Units Created ref minus the `Resumed:` refs, since its body may not have reached Step 6; a reply with no Work Units Created table appends the one line `Not planned: the handoff returned {status} with no Work Units Created table.` The subagent's summary shape is unchanged.
 <!-- plan-at-specify:end -->
 
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.
