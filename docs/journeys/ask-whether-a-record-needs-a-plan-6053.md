@@ -35,7 +35,7 @@ files:
 - **Red flags:** A malformed file that prints a lane.
 
 ### 3. Read the verdict
-- **URL:** `plugin/bin/lib/driver/plan-lane.js` (`needsNoPlan`, `PLAN_LANE_REASONS`); `plugin/bin/lib/driver/lane-bounds.js`
+- **URL:** `plugin/bin/lib/driver/plan-lane.js` (`needsNoPlan`, `PLAN_LANE_REASONS`); `plugin/bin/lib/driver/lane-bounds.js`; `plugin/bin/lib/issues/grouping.js` (`extractKeyFileEntries`, which reads the `### Key Files` section the verdict's key-files reasons come from)
 - **Action:** The maintainer reads `lane` and `reason`. Lanes are tried in precedence order: `driver` (`inside-driver-bounds`), then `express` (`inside-express-bounds`), then `micro-plan` (`passes-micro-plan-gate`). A record inside none reads `null`, `outside-every-lane`.
 - **Should feel:** Trustworthy in the safe direction: when the answer is uncertain, it says `null` and a plan gets written.
 - **Should understand:** The driver lane uses the driver's own admission helpers (`eligibilityOptions`, `evaluateRecordEligibility`, `reviewRequired`, `evaluateAdmission`), with grants, blockers, open PRs, state, escalation and parity neutralised, so a change to the driver's bounds moves this answer with it. `express-driver: off` means the driver lane never matches; `split` reads like `on`. Every input is checked before any lane runs: a missing `### Key Files` section (`key-files-missing`), an unparseable or unfilled-template one (`key-files-unreadable`), a malformed `Risk-flags:` line (`risk-flags-unreadable`), or a policy value resolve-policy marked invalid (`policy-unreadable`) reads `null` and never falls through to a later lane.
