@@ -26,6 +26,7 @@ files:
   - Case 1 reads the record's comments through `planning-hold.js`. Only a trusted, unresolved, newest `needs-decision: specify` comment with the `Held-by` line and a parseable block counts as a hold.
   - A comment that is untrusted, unparseable or ambiguous prints `#N's decision comment is not a usable planning hold ({reason}) — shaping it as before` and the record is shaped as it was before this change.
   - A headless run (`--chained`, a dispatch-bound or Routine run) refuses with `#N is held for planning question(s) — answer them with /claude-tweaks:specify #N where a human can reply`. A comma list naming a held record fails the whole batch.
+  - Without `gh` the answer path writes nothing and stops with `held — answering needs gh (no MCP mapping for the hold-comment edit)`: the hold-comment edit has no MCP mapping, so no plan is stored and no body rewritten before a certain failure.
 - **Red flags:** A held record re-shaped from scratch. A hold comment from a non-member treated as a hold. A headless run blocking on a question.
 
 ### 2. Answer only the held questions — AskUserQuestion
@@ -43,6 +44,7 @@ files:
 - **Should feel:** Faster than planning from scratch. Plan review runs only when an answer actually moved the plan.
 - **Should understand:**
   - `plan-store.js check` verifies the kept `Plan:` line against the held body first. A missing or stale plan is planned again with the decided lines binding it, and plan review then runs.
+  - A hold whose held-questions block is empty (a planning failure lost its questions) is re-planned whatever `check` prints, so plan review re-derives the questions instead of the record going straight to `ready`.
   - Review re-runs only when `surfaceDiff.changed` is true, meaning the plan's file list or an Acceptance Criterion's coverage status changed. The planner's own report never decides it.
 - **Red flags:** Plan review running for an answer that changed nothing. A stale plan amended in place instead of re-planned.
 
