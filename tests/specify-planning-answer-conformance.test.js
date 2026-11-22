@@ -257,6 +257,56 @@ test('writer-reader: planning.md\'s hold template parses as held through plannin
   assert.equal(readPlanningHold(comment(noHeldBy)).reason, 'not-planning');
 });
 
+// Fix round 1: Next Actions splits three ways by outcome. Each bullet is found by its own label;
+// the still-needs:decision bullet names the other comments and recommends no command.
+const NA_FLOW = '`/claude-tweaks:flow #{n}`';
+const NA_SPECIFY = '`/claude-tweaks:specify #{n}`';
+function nextActionsProblems(region) {
+  const bullet = (label) => region.split('\n').filter((l) => l.startsWith(`- **${label}:**`));
+  const problems = [];
+  const one = (label) => {
+    const b = bullet(label);
+    if (b.length !== 1) { problems.push(`bullet count: ${label}`); return ''; }
+    return b[0];
+  };
+  const ready = one('`ready`');
+  const still = one('Still needs:decision');
+  const held = one('Held or failed');
+  if (ready && !(ready.includes('the `answered — …, ready` outcome') && ready.includes(NA_FLOW))) problems.push('ready: flow');
+  if (ready.includes(NA_SPECIFY)) problems.push('ready: specify');
+  if (still && !still.includes('`answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))`')) problems.push('still: outcome');
+  if (still && !still.includes('its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve')) problems.push('still: names comments');
+  if (still && !still.includes('unresolved trusted decision comments other than the one just resolved')) problems.push('still: source');
+  if (still && !still.includes('recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`')) problems.push('still: neither');
+  if (still.includes(NA_SPECIFY) || still.includes(NA_FLOW)) problems.push('still: recommends a command');
+  if (held && !(held.includes('`held — …` or `failed — …`') && held.includes(NA_SPECIFY))) problems.push('held: specify');
+  if (held.includes(NA_FLOW)) problems.push('held: flow');
+  return problems;
+}
+
+test('Fix round 1: Next Actions splits ready → flow, still needs:decision → name the comments, held/failed → specify', () => {
+  const region = sec('## Read-back and outcome');
+  assert.deepEqual(nextActionsProblems(region), []);
+  const lineOf = (label) => region.split('\n').find((l) => l.startsWith(`- **${label}:**`));
+  const still = lineOf('Still needs:decision');
+  const held = lineOf('Held or failed');
+  const ready = lineOf('`ready`');
+  const red = (mutated, expected) => {
+    assert.notEqual(mutated, region);
+    assert.deepEqual(nextActionsProblems(mutated), [expected]);
+  };
+  red(region.replace(still, `${still} Then run ${NA_SPECIFY}.`), 'still: recommends a command');
+  red(region.replace(still, `${still} Then run ${NA_FLOW}.`), 'still: recommends a command');
+  red(region.replace('recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`', 'recommend nothing'), 'still: neither');
+  red(region.replace('its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve', 'for review'), 'still: names comments');
+  red(region.replace('unresolved trusted decision comments other than the one just resolved', 'all comments'), 'still: source');
+  red(region.replace(held, `${held} Or ${NA_FLOW}.`), 'held: flow');
+  red(region.replace(held, held.replace(NA_SPECIFY, 'nothing')), 'held: specify');
+  red(region.replace(ready, `${ready} Or ${NA_SPECIFY}.`), 'ready: specify');
+  red(region.replace(ready, ready.replace(NA_FLOW, 'nothing')), 'ready: flow');
+  red(region.replace(still, ''), 'bullet count: Still needs:decision');
+});
+
 const ANSWER_HEADS = ['## Inputs', '## Ask', '## Kept plan', '## Amend and change test', '## Write', '## Re-hold', '## Read-back and outcome'];
 
 test('planning-answer.md headings appear in order', () => {
