@@ -76,7 +76,7 @@ const R = ADMISSION_REASONS;
 // and a missing or non-integer one is unreadable. `split` exists to compare the
 // driver with the standard path on similar records: the odd half stays on the
 // other paths. It is temporary, dropped for `on` or `off` once each arm has 20
-// merged records (#5216; the `express-driver` row of _shared/policy-schema.md).
+// merged records (#5216; the `express-driver` row of _shared/policy-schema-express-driver.md).
 function routingReason(routing, number) {
   if (routing === 'on') return null;
   if (routing === 'off') return R.routingOff;
