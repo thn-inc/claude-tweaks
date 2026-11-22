@@ -272,3 +272,30 @@ same helper: a reworded template span fails once per shape, and a dropped `{who}
 When a prose template has placeholder shapes, compile it to a regex and run it over the real
 writer's output for every input shape the writer takes; typed-in lines agree with the prose by
 construction.
+
+**Module-header-comment instance (#6053):** the prose twin can be a JS module's own leading comment
+block, once a skill tells the reader to take the rule from there. `plugin/skills/build/micro-plan.md`
+stopped restating the micro-plan gate and now cites `plugin/bin/lib/issues/micro-plan-gate.js`, whose
+header comment `/build` reads for the counting rule. That comment is prose the model follows, and the
+code below it is the twin, so step 1's grep of `plugin/bin/` finds both sides in one file and reads
+like no twin at all. Two pins cover it:
+
+- *The comment against a code constant.* `tests/bin-lib/dispatch/ceremony-derive.test.js`'s "the
+  prose twins name exactly the directories PROMPT_PROSE_DIRS lists" test views only the module's
+  leading `//` block (the lines up to the first non-comment line), joins the `//` continuations,
+  and `includes` a needle built from `PROMPT_PROSE_DIRS`, beside the same check on
+  `wrap-up/ceremony-derivation.md`. Slicing the header matters: a whole-file read could be satisfied
+  by the code, which is not the text the reader follows.
+- *The citing prose against the code's vocabulary.* `tests/build-micro-plan-code-twin.test.js` parses
+  `micro-plan.md`'s numbered gate items row for row against `MICRO_PLAN_CONDITIONS` (each item
+  carries its own id and no other's), requires the module and function names, and asserts the
+  count is not restated in any of its usual spellings, with go-red controls for a restated count,
+  a dropped or swapped id, a dropped item and a renamed function.
+
+The header's other rules are still unpinned: its read-only clause (`read only`/`read-only`, or a
+`no change`/`no changes` ending the note or a clause) is checked against `READ_ONLY_NOTE_RE` only
+through typed notes in `tests/bin-lib/issues/micro-plan-gate.test.js`, never by reading the comment.
+That is the pair that drifted during the build: the comment stated the rule loosely and the regex
+failed open on plurals until `a98be68fc` fixed both. When step 1 greps for a twin, treat any comment
+block a skill tells the reader to read as prose, and walk it rule by rule as the behavior-twin
+instance above does.
