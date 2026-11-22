@@ -31,6 +31,14 @@ Read only the preamble (after an optional frontmatter block, before the first `#
 
 When the line must not be hand-edited, put its writers in the reader's module and pin them with a writer scan over `plugin/bin` (`tests/risk-flags-writer-conformance.test.js`; `bin-source-scan-conformance` covers the scan's shape). Writers normalize `\r\n?` to `\n` on entry and put `\r\n` back when the body was uniformly CRLF. A writer that removes information requires an explicit human-decision argument (`humanConfirmed === true`) and refuses on an unreadable line.
 
+### A companion line that annotates another line
+
+A line that records something about another line's values (`Risk-flags-added-by-tripwire:` names which `Risk-flags:` slugs the diff tripwire added, #4619) lives in the same module with its own reader (`parseTripwireFlags`) and its own wide detection regex (`TRIPWIRE_LINE_RE`), and the main line's reader ignores it. Three rules keep the two lines consistent:
+
+- **It names only values the main line carries.** One shared helper (`writeTripwireLine`) rewrites it, and every writer that narrows the main line calls it: `removeRiskFlag` drops the slug from both lines, and an empty set deletes the companion line.
+- **Every path that composes a fresh body carries it forward.** A writer-only line is never in a composed body, so a re-shape loses it silently unless the compose path copies it over from the prior body. `bin/risk-flags.js`'s `settle` passes `priorBody` to `carryTripwireFlags`, which keeps only the slugs still kept. Pin the carry at the CLI as well as in the module (`tests/risk-flags-cli.test.js`, "a re-shape carries the prior body's tripwire line forward, minus a slug answered remove").
+- **Its key joins the writer scan, and its writers join every scan that names writers.** Widen the sanctioned-writer scan's line-key regex to the companion key (`RISK_LINE` in `tests/risk-flags-writer-conformance.test.js`) and plant a literal of it, flagged outside the writer module and allowed inside. Add the companion's writer functions to any scan that forbids a module from writing the record (`WRITER_REF` in `tests/accept-monotonic-conformance.test.js`).
+
 ## Registration sites
 
 | Site | What it gets |
@@ -40,6 +48,7 @@ When the line must not be hand-edited, put its writers in the reader's module an
 | `plugin/bin/lib/issues/record.js` | The re-export, and the module in the header's sub-module list |
 | `plugin/bin/lib/issues/local-store.js` header | That the line rides in `body`, not `facets` |
 | `docs/plugin-structure.md` | The `plugin/bin/lib/issues/` row |
+| `plugin/bin/lib/issues/plan-line.js`'s `SPEC_HASH_EXCLUDED_PREFIXES` | A decision, not always an entry: a line that can sit inside the spec-hash range (`## Overview` through `## Planning Decisions`) and that a pipeline step rewrites without changing what the spec builds joins the list by its exact prefix, only when the spec says so, or every rewrite marks the record's stored plan stale; any other line stays hashed, since an excluded prefix can hide a real content edit. Export the line's keys from the reader's module and spread them in, as `RISK_FLAG_LINE_KEYS` is, rather than retyping them |
 | Every consumer that gates on the line | A call to the reader, never a regex of its own |
 
 ### A line no code reads
