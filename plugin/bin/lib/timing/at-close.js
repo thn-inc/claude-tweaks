@@ -4,8 +4,8 @@
 // teardown-run, the reconciler's archiveRunDir (writePhaseTimingSync, which
 // never reads a transcript), and bin/timing-at-close.js (the background token
 // pass spawnTokenPass starts). Token totals come from the run's own transcript —
-// {configDir}/projects/{slug of the run's worktree}/{sessionId}.jsonl, never a newest-candidate
-// pick — and, for a `dispatched: true` run, also from the depth-1 Task-call transcripts of its
+// {configDir}/projects/{slug of the run's worktree}/{sessionId}.jsonl (a non-dispatched run with none
+// there: the slug of the checkout holding its run dir), never a newest-candidate pick — and, for a `dispatched: true` run, also from the depth-1 Task-call transcripts of its
 // dispatching and resuming sessions whose dispatch prompt names exactly this run (#5647;
 // transcript.js locateTaskTranscripts, a session-id lookup across every slug); its `dispatches`
 // view is then scoped per subagents directory (run-timing.js scopeDirItems): the attributed Task
@@ -47,13 +47,26 @@ const NOTHING_WRITTEN = 'no timing.json written';
 // paths' own fallback catch); a run dir that is not a directory gets none.
 const { errText, logTimingSkip } = timingSkip;
 
-// runState, { env, homeDir, runId } -> { paths, taskCalls, reason }. paths: the own-slug
+// runDir -> the checkout it lives under ({root}/.claude-tweaks/pipelines/{id}, or its archive twin
+// .../pipelines/archive/{id}), else null.
+function runRootOf(runDir) {
+  let p = path.dirname(path.resolve(runDir));
+  if (path.basename(p) === 'archive') p = path.dirname(p);
+  if (path.basename(p) !== 'pipelines' || path.basename(path.dirname(p)) !== '.claude-tweaks') return null;
+  return path.dirname(path.dirname(p));
+}
+
+// runState, { env, homeDir, runId, runRoot } -> { paths, taskCalls, reason }. paths: the own-slug
 // transcript (if found) followed by taskCalls, the attributed Task-call transcripts (#5647):
 // only for a `dispatched === true` run and a string runId, else []. reason is null when paths is non-empty.
+// A non-dispatched run whose own slug has no {sid}.jsonl falls back to the slug of runRoot: a
+// worktree-always /flow starts in the main checkout and enters its worktree, so its transcript stays
+// under the launch slug (#5647 ledger row 1). Another worktree's slug is never read (AC9.2).
 // homeDir (a function) is called only when env has no CLAUDE_CONFIG_DIR.
 // Guard -> test (tests/bin-lib/timing/at-close.test.js): the `dispatched === true` check is
-// decided by "AC1.1 gate"; the `typeof runId === 'string'` check by "AC1.1 runId guard".
-function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}) {
+// decided by "AC1.1 gate"; the `typeof runId === 'string'` check by "AC1.1 runId guard"; the run-root
+// fallback by "run root: a non-dispatched run ...".
+function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId, runRoot = null } = {}) {
   try {
     const rs = runState && typeof runState === 'object' ? runState : {};
     const worktree = priorWorktree(rs);
@@ -68,12 +81,14 @@ function ownTranscripts(runState, { env = {}, homeDir = os.homedir, runId } = {}
     // Looked up at call time so a test can stub it.
     const transcript = require('./transcript');
     const found = missing ? [] : transcript.locateTranscripts({ cwd: worktree, sessionId: sid, homeDir: null, configDir });
-    const own = found.length ? [found[0].path] : [];
+    const tryRoot = !found.length && !missing && !dispatched && typeof runRoot === 'string' && path.resolve(runRoot) !== path.resolve(worktree);
+    const atRoot = tryRoot ? transcript.locateTranscripts({ cwd: runRoot, sessionId: sid, homeDir: null, configDir }) : [];
+    const own = [...found, ...atRoot].slice(0, 1).map((t) => t.path);
     const sessionIds = [...new Set([rs.dispatchSessionId, rs.sessionId].filter((v) => typeof v === 'string'))];
     const task = dispatched ? transcript.locateTaskTranscripts({ sessionIds, runId, configDir }) : { paths: [], notes: [] };
     const paths = [...own, ...task.paths];
     if (paths.length) return { paths, taskCalls: task.paths, reason: null };
-    const base = missing || `no ${sid}.jsonl under the slug of ${worktree}`;
+    const base = missing || `no ${sid}.jsonl under the slug of ${worktree}${tryRoot ? ` or of its run root ${runRoot}` : ''}`;
     if (!dispatched) return { paths: [], taskCalls: [], reason: base };
     if (!sessionIds.length) return { paths: [], taskCalls: [], reason: `${base}, and no dispatchSessionId or sessionId in run-state.json to look up Task-call transcripts of run ${runId}` };
     const notes = task.notes.length ? ` (${task.notes.join('; ')})` : '';
@@ -297,7 +312,7 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
       result = p.done;
     } else {
       base = p.base;
-      const own = ownTranscripts(p.base.runState, { env, homeDir, runId: path.basename(runDir) });
+      const own = ownTranscripts(p.base.runState, { env, homeDir, runId: path.basename(runDir), runRoot: runRootOf(runDir) });
       const bound = boundMs ?? module.exports.TIMING_BOUND_MS;
       const deadlineAt = Date.now() + bound;
       const d = await deriveTiming(runDir, {
