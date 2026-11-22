@@ -233,7 +233,7 @@ test('a throwing driver check keeps that record bundleable, with one stderr line
 function sensitivePathsReads(...answers) {
   let n = 0;
   const resolvePolicy = (keys) => Object.fromEntries(keys.map((k) => {
-    if (k === 'merge-sensitive-paths' && k in DRIVER_POLICY) {
+    if (k === 'merge-sensitive-paths') {
       return [k, { get value() { const a = answers[Math.min(n, answers.length - 1)]; n += 1; if (a instanceof Error) throw a; return a; }, source: 'policy' }];
     }
     return [k, { value: DRIVER_POLICY[k], source: 'policy' }];
