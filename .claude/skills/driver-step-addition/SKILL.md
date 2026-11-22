@@ -97,6 +97,13 @@ A step that stops before it has started anything returns `noLine: true` with its
 
 A value resolved at launch that an event line must name travels on the thrown error as well as on the result: `launchTracked` resolves `{ envelope, model }`, and a launcher throw after the model resolved carries `err.model`. Every catch of a launch keeps it on the stop it returns (`steps.js`'s `runImplementer` and `workerStep`, `review.js`'s reviewer launch, `judgment-io.js`'s `launchJudge`). #5917's first reviewer and judgment catches dropped it, so those lines lost `model` on a throw, and only the whole-branch review caught it. A refusal thrown before the value resolved carries none.
 
+### A second line under an existing step name
+
+The review fix round's implementer relaunch writes its own `worker` line through `ctx.events.emit`, marked `fix: true` (#5942, `steps.js`'s `fixWorkerLaunch`), just before the `review` line, whose `ms` already spans it. It reuses the step name with a marker field rather than adding a name, because `STEP_NAMES` is pinned and the `worker` row is meant to count every implementer launch. Every reader keyed on the step name now sees two lines, so a second line of an existing name owes three things:
+- **A station-mirror decision.** `plugin/bin/lib/station-events/driver-mirror.js` turns each `worker` line into a work segment and a `session_bound`. Either map the new line to nothing, as the fix line is (the `review` line already binds the fix session through `fixSessionId`), or say which of the first line's events it replaces. Pin it in `tests/bin-lib/station-events/driver-mirror.test.js` with a control line that lacks the marker.
+- **A step-yield reading.** `tools/step-yield-report.js`'s `driverStepsOf` folds every line of a name into one row. State and pin how the new line counts: the fix line counts in the `worker` row (its `ms` and `usage` added), overlapping the `review` row's minutes as merge sub-step lines overlap the `merge` row, and a failed fix launch counts once in each row (`#5942 (fix round): step-yield counts the fix worker line in the worker row`). #5942's plan named only the mirror until plan review raised step-yield.
+- **The baseline captures.** The line shifts `BASE_LINES_FIX`, `BASE_KEYS_FIX` and `BASE_CALLS_FIX` in `run.test.js` by one entry each (its `[step, status]` pair, its key set, and its `appendFile`), while the `*_PLAIN` captures stay as they were. Say both in the commit body.
+
 ## Adding a settle step
 
 A settle call is not a `STEPS` entry; it is a handler in one of `settle.js`'s `SETTLE_ROWS` rows (#5219). The rules for adding one:
