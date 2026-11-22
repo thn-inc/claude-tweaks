@@ -50,12 +50,10 @@ function requireRoot(mainRoot) {
 function rangeOf(text) {
   const t = String(text);
   const range = t.match(/\b([0-9a-f]{7,40})\.\.\.(?:HEAD\b|[0-9a-f]{7,40}\b)/);
-  const baseWord = range ? null : t.match(/\bbase\s+([0-9a-f]{7,40})\b/i);
-  const base = range ? range[1] : baseWord ? baseWord[1] : null;
+  const baseMatch = range || t.match(/\bbase\s+([0-9a-f]{7,40})\b/i);
   const dots = t.match(/\.\.\.([0-9a-f]{7,40})\b/);
-  const headWord = dots ? null : t.match(/\bHEAD(?:\s+at)?\s+([0-9a-f]{7,40})\b/);
-  const head = dots ? dots[1] : headWord ? headWord[1] : null;
-  return { base, head };
+  const headMatch = dots || t.match(/\bHEAD(?:\s+at)?\s+([0-9a-f]{7,40})\b/);
+  return { base: baseMatch ? baseMatch[1] : null, head: headMatch ? headMatch[1] : null };
 }
 
 function originRefsOf(text) {

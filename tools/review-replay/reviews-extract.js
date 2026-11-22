@@ -315,7 +315,8 @@ function extractReviews(opts, deps) {
   const byNewest = [...selected.dirs].sort((a, b) => {
     const x = path.basename(a);
     const y = path.basename(b);
-    return x < y ? 1 : x > y ? -1 : 0;
+    if (x === y) return 0;
+    return x < y ? 1 : -1;
   });
   for (const dir of byNewest) {
     const r = readRun(dir, deps);
