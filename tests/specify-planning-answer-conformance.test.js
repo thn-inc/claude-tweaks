@@ -160,7 +160,7 @@ test('AC1.1: the answer path asks only the held questions and ends ready, needs:
   pinned(sec('## Read-back and outcome'), [
     f('`gh issue view {n} --json labels,body,comments > "{readback-file}"` (`--value specify-answer-readback-{n}.json`'),
     f('`ready` present and `needs:decision` absent'),
-    f('the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment'),
+    f('the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment (`{hold-fresh}`\'s on the `## Write` path, `{hold-file}`\'s on the kept branch and after `## Re-hold`)'),
     f('the body has exactly one `Plan:` line equal to the printed `line`'),
     f('against the re-fetched body and `{base}` prints `{"valid": true}`'),
     f('`answered — {k} planning question(s), ready (Plan: {short commit})`'),
@@ -353,6 +353,8 @@ const NA_FLOW = '`/claude-tweaks:flow #{n}`';
 const NA_SPECIFY = '`/claude-tweaks:specify #{n}`';
 const KEPT_OUTCOME = '`answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`';
 const KEPT_HAND = 'check the record\'s decision comments and remove `needs:decision` by hand once none is unresolved';
+const FAILED_BEFORE = '`failed — …` one that stopped before `## Write` (c) resolved the hold comment';
+const FAILED_AFTER = '`failed — …` one after `## Write` (c) resolved the hold comment (a later step or the read-back)';
 const KEPT_WHY = 'because a re-run would shape the record and resolve another unit\'s comment unanswered';
 function nextActionsProblems(region) {
   const bullet = (label) => region.split('\n').filter((l) => l.startsWith(`- **${label}:**`));
@@ -369,6 +371,8 @@ function nextActionsProblems(region) {
   if (kept && !kept.includes(KEPT_OUTCOME)) problems.push('kept: outcome');
   if (kept && !kept.includes(KEPT_HAND)) problems.push('kept: by hand');
   if (kept && !kept.includes(KEPT_WHY)) problems.push('kept: why');
+  if (kept && !kept.includes(FAILED_AFTER)) problems.push('kept: failed after (c)');
+  if (held.includes(FAILED_AFTER) || kept.includes(FAILED_BEFORE)) problems.push('failed: crossed');
   if (kept.includes(NA_SPECIFY) || kept.includes(NA_FLOW)) problems.push('kept: recommends a command');
   if (ready && !(ready.includes('the `answered — …, ready` outcome') && ready.includes(NA_FLOW))) problems.push('ready: flow');
   if (ready.includes(NA_SPECIFY)) problems.push('ready: specify');
@@ -377,7 +381,7 @@ function nextActionsProblems(region) {
   if (still && !still.includes('unresolved trusted decision comments other than those just resolved')) problems.push('still: source');
   if (still && !still.includes('recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`')) problems.push('still: neither');
   if (still.includes(NA_SPECIFY) || still.includes(NA_FLOW)) problems.push('still: recommends a command');
-  if (held && !(held.includes('`held — …` or `failed — …`') && held.includes(NA_SPECIFY))) problems.push('held: specify');
+  if (held && !(held.includes('after a `held — …` outcome') && held.includes(FAILED_BEFORE) && held.includes(NA_SPECIFY))) problems.push('held: specify');
   if (held.includes(NA_FLOW)) problems.push('held: flow');
   return problems;
 }
@@ -410,6 +414,10 @@ test('Fix round 1: Next Actions splits ready → flow, still needs:decision → 
   red(region.replace(KEPT_HAND, 'look at it'), 'kept: by hand');
   red(region.replace(KEPT_WHY, 'because'), 'kept: why');
   red(region.replace(kept, ''), 'bullet count: Kept needs:decision');
+  // O3: an unqualified failed outcome in the held bullet would send a post-(c) failure back to /specify.
+  red(region.replace(FAILED_BEFORE, '`failed — …` one'), 'held: specify');
+  red(region.replace(FAILED_AFTER, 'a failure'), 'kept: failed after (c)');
+  red(region.replace(held, `${held} Or a ${FAILED_AFTER}.`), 'failed: crossed');
 });
 
 const ANSWER_HEADS = ['## Inputs', '## Ask', '## Kept plan', '## Amend and change test', '## Write', '## Re-hold', '## Read-back and outcome'];

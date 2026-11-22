@@ -1,6 +1,6 @@
 # Specify — Answering a Planning Hold (#6059)
 
-Read only from `SKILL.md`'s Resolve-the-input case 1, on a `held` verdict from `bin/planning-hold.js` in an interactive run under `work-backend: github-issues`. It is shaping mode's alternative for this record: it asks the questions `planning.md`'s `## Hold` held, amends the kept plan, and stamps `ready`. It is passed `{n}`, the fetched body and `{hold-file}`, that verdict's JSON line (`questions`, `comment.id`, `otherUnresolved`, `supersededHolds`). Every step it borrows is `planning.md`'s (this skill's directory), cited by section name, and that file's rule that plan text never enters this session holds here too.
+Read only from `SKILL.md`'s Resolve-the-input case 1, on a `held` verdict from `bin/planning-hold.js` in an interactive run under `work-backend: github-issues`. It is shaping mode's alternative for this record. It is passed `{n}`, the fetched body and `{hold-file}`, that verdict's JSON line (`questions`, `comment.id`, `otherUnresolved`, `supersededHolds`). Every step it borrows is `planning.md`'s (this skill's directory), cited by section name, and that file's rule that plan text never enters this session holds here too.
 
 ## Inputs
 
@@ -16,7 +16,7 @@ Each answer adds one `Decided by the user at planning:` line, in **Asking.**'s f
 
 ## Kept plan
 
-Run `planning.md`'s `## Per-record step` step 2 for `{base}` and `{checkout}`; once this record's answer ends, on every path, remove the checkout as that step says. Write the kept line with the Write tool to `{plan-line-file}` (`--value specify-plan-line-{n}.txt`), then check it against the held body, the one its hash was computed over:
+Run `planning.md`'s `## Per-record step` step 2 for `{base}` and `{checkout}`; once this record's answer ends, on every path, remove the checkout as that step says. Write the kept line with the Write tool to `{plan-line-file}` (`--value specify-plan-line-{n}.txt`), then check it against the held body:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line-file "{plan-line-file}" --spec-file "{held-body}" --base {base}
@@ -34,7 +34,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" "{plan}" --surface-diff "{plan-be
 
 Its verdict is the printed `surfaceDiff.changed` field: `changed: false` → no plan review; `changed: true`, a non-zero exit or no JSON line → `## Per-record step` steps 5-7 (reviewer, routing, amend and audit). The planner's report never decides whether review runs.
 
-Routing that asks again, here or on a re-plan, follows **Asking.**; a `Leave for later` there takes `## Re-hold` with the unanswered rows — never `planning.md`'s `## Hold`, whose write lives in shaping mode's Compose-then-write-once, which this path never runs. A planning failure, as `planning.md` defines it, writes nothing: the outcome is `held — answer failed: {reason}`.
+Routing that asks again, here or on a re-plan, follows **Asking.**; a `Leave for later` there takes `## Re-hold` with the unanswered rows — never `planning.md`'s `## Hold`. A planning failure, as `planning.md` defines it, writes nothing: the outcome is `held — answer failed: {reason}`.
 
 ## Write
 
@@ -49,7 +49,7 @@ With the fresh `otherUnresolved` above 0, stop after the comment edit: `needs:de
 
 ## Re-hold
 
-Answers kept, unanswered questions re-held. One call each, in this order, stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`:
+Answers kept, unanswered questions re-held. One call each, in this order, stopping at the first failure as `## Write` does:
 
 - **(a) Plan.** `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" write --record {n} --plan-file "{plan}" --base {base} --spec-file "{body}"` on the plan amended for the answered rows; as in `## Write` (a), any non-zero exit stops.
 - **(b) Body.** `gh issue edit {n} --body-file "{body}"` as `## Write` (b): its decided lines and the new `Plan:` line (gh absent: `issue_write` (update mode) per `_shared/github-write-transport.md`).
@@ -64,11 +64,11 @@ After a write, re-fetch with `gh issue view {n} --json labels,body,comments > "{
 
 - **Answered:** `ready` present and `needs:decision` absent; with the fresh `otherUnresolved` above 0 or on the kept branch, `needs:decision` present and no `ready`.
 - **Re-held:** `needs:decision` present, no `ready`, and `planning-hold.js --comments-file "{readback-file}"` reads `held` with exactly the re-held questions.
-- **Both:** the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment, the body has exactly one `Plan:` line equal to the printed `line`, and `plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}` of that line against the re-fetched body and `{base}` prints `{"valid": true}`.
+- **Both:** the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment (`{hold-fresh}`'s on the `## Write` path, `{hold-file}`'s on the kept branch and after `## Re-hold`), the body has exactly one `Plan:` line equal to the printed `line`, and `plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}` of that line against the re-fetched body and `{base}` prints `{"valid": true}`.
 
 A failed assertion renders `failed — read-back ({what}); re-run /claude-tweaks:specify #{n}`. Otherwise the outcome is `answered — {k} planning question(s), ready (Plan: {short commit})`, or the `## Write` or `## Re-hold` outcome above; the Detail adds `review re-ran: yes|no` and, on a re-plan, `re-planned: {failed check}`. Logging is per `planning.md`'s **Logging.**, plus one `--status AUTO --reversibility high` entry per decided line with a run dir. Next Actions splits four ways:
 
 - **`ready`:** after the `answered — …, ready` outcome, recommend `/claude-tweaks:flow #{n}`.
 - **Still needs:decision:** after `answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))`, name each remaining decision comment, its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve, taken from the re-fetched comments (unresolved trusted decision comments other than those just resolved); recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because shaping would resolve those comments unanswered and the record is not `ready`.
-- **Kept needs:decision:** after `answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`, tell the user to check the record's decision comments and remove `needs:decision` by hand once none is unresolved; recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because a re-run would shape the record and resolve another unit's comment unanswered.
-- **Held or failed:** after a `held — …` or `failed — …` outcome, recommend `/claude-tweaks:specify #{n}`.
+- **Kept needs:decision:** after `answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`, or a `failed — …` one after `## Write` (c) resolved the hold comment (a later step or the read-back), tell the user to check the record's decision comments and remove `needs:decision` by hand once none is unresolved; recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because a re-run would shape the record and resolve another unit's comment unanswered.
+- **Held or failed:** after a `held — …` outcome, or a `failed — …` one that stopped before `## Write` (c) resolved the hold comment, recommend `/claude-tweaks:specify #{n}`.
