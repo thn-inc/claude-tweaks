@@ -225,7 +225,9 @@ fact. `readUsage` (`plugin/bin/lib/timing/transcript.js`, #1929) kept the first 
 same usage, and #3375 pointed it at subagent transcripts. Those
 (`{sessionId}/subagents/agent-{id}.jsonl`) open each turn with a streaming snapshot (`stop_reason`
 null, a small `output_tokens`) and close it with the settled count, so first-line dedupe
-undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. When code reads more than one
+undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. That rule has one implementation, `mergeUsage`
+in `plugin/bin/lib/timing/transcript.js` (#5967): `readUsage`, `context-gauge.js`, the cost report
+and review replay all fold through it, so a new reader calls it rather than re-deriving the max. When code reads more than one
 producer's transcripts, run step 2 against a real sample of each kind (the main transcript, a
 subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
 date beside the rule, the way `transcript.js`'s header does for the subagent layout.

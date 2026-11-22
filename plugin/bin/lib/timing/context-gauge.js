@@ -35,7 +35,7 @@ const { isPathContained } = require('../shared-primitives');
 const { listHeaderDirs } = require('../run-header');
 const { readManifest } = require('../flow/manifest');
 const { formatRecordSteps } = require('../flow/record-steps');
-const { locateTranscripts, subagentsDirFor, readUsage } = require('./transcript');
+const { locateTranscripts, subagentsDirFor, readUsage, mergeUsage } = require('./transcript');
 
 // #4027's measured latency curve: 5.0 s per turn under 100k context and
 // 12.1 s per turn above 300k, so 200k — the midpoint — is the cap.
@@ -226,31 +226,26 @@ function findAgentTranscript({ runId, sessionId, cwd, configDir, fsImpl = fs } =
 // from the file's last `tailBytes` bytes, or null when that window holds no
 // assistant message (a last turn larger than the window, a transcript with no
 // turn, an unreadable file) — the caller then falls back to readUsage. A turn's
-// lines share a message.id and readUsage keeps the per-field max across them,
-// so this does too; the last turn is the id whose first line comes last.
+// lines share a message.id and mergeUsage keeps the per-field max across them
+// (as readUsage does), so this does too; the last turn is the id whose first
+// line comes last.
 function tailContextTokens(filePath, { fsImpl = fs, tailBytes = GAUGE_TAIL_BYTES } = {}) {
   const lines = tailLines(filePath, { fsImpl, tailBytes });
   if (!lines) return null;
-  const turns = []; // [{ id, input, cacheRead, cacheCreate }] in first-line order
-  const byId = new Map();
+  const turns = []; // one UsageMax per turn, in first-line order
+  const indexById = new Map(); // message.id -> its index in turns
   for (const line of lines) {
     const entry = messageEntry(line);
     if (!entry || entry.message.role !== 'assistant') continue;
     const u = entry.message.usage || {};
-    const usage = {
-      input: Number(u.input_tokens) || 0,
-      cacheRead: Number(u.cache_read_input_tokens) || 0,
-      cacheCreate: Number(u.cache_creation_input_tokens) || 0,
-    };
     const id = typeof entry.message.id === 'string' ? entry.message.id : null;
-    const turn = id !== null ? byId.get(id) : undefined;
-    if (!turn) {
-      const fresh = { ...usage };
-      turns.push(fresh);
-      if (id !== null) byId.set(id, fresh);
-      continue;
+    const at = id !== null ? indexById.get(id) : undefined;
+    if (at === undefined) {
+      if (id !== null) indexById.set(id, turns.length);
+      turns.push(mergeUsage(null, u));
+    } else {
+      turns[at] = mergeUsage(turns[at], u);
     }
-    for (const field of Object.keys(usage)) turn[field] = Math.max(turn[field], usage[field]);
   }
   if (turns.length === 0) return null;
   const last = turns[turns.length - 1];
