@@ -192,3 +192,81 @@ test('AC5.1: plan-reuse.md says a resumed build takes the existing-plan branch a
   const inSection = sectionOf(moved, '## Resumed build');
   assert.throws(() => assert.match(inSection, /never runs again/), /never runs again/);
 });
+
+// ---- Task 2: the SKILL.md pointer, Common Step 1.6 and plan-review.md skip text ----
+const SKILL_FILE = path.join(ROOT, 'plugin', 'skills', 'build', 'SKILL.md');
+const REVIEW_FILE = path.join(ROOT, 'plugin', 'skills', 'build', 'plan-review.md');
+const skill = readText(SKILL_FILE);
+const POINTER_HEAD = '#### Before Spec Step 3: a plan reviewed at specify (#6060)';
+const STEP_2_5 = '### Spec Step 2.5';
+
+// The text from a start marker to the next end marker; both must exist.
+const between = (doc, from, to) => {
+  const start = doc.indexOf(from);
+  assert.notStrictEqual(start, -1, `heading not found: ${from}`);
+  const end = doc.indexOf(to, start + from.length);
+  assert.notStrictEqual(end, -1, `end marker not found: ${to}`);
+  return doc.slice(start, end);
+};
+const pointerOf = (doc) => between(doc, POINTER_HEAD, `\n${STEP_2_5}`);
+const step16Of = (doc) => between(doc, '### Common Step 1.6: Plan Review (Spec Mode only)', '\n### ');
+
+test('AC2.1/AC5.1: SKILL.md points at plan-reuse.md only on the routes to Spec Step 3', () => {
+  const POINTER_FACTS = [
+    [/plan-reuse\.md/, 'names the sub-file'],
+    [/--values plan-at-specify/, 'policy read'],
+    [/prints `on`/, 'on only'],
+    [/Spec Step 3 and Common Step 1\.6/, 'what reuse skips'],
+    [/logs nothing/, 'AC1.1 silence'],
+    [/existing-plan branch/, 'resume never reaches it'],
+  ];
+  const missing = missingFactsOf(POINTER_FACTS);
+  const pointer = pointerOf(skill);
+  assert.deepStrictEqual(missing(pointer), []);
+  assertEachPatternGoesRed(pointer, POINTER_FACTS, missing);
+});
+
+test('AC5.1: the pointer sits after the existing-plan branch and before Spec Step 2.5, and the resume branch is unchanged', () => {
+  const ORDER = ['#### If a plan exists:', '#### If no plan exists:', POINTER_HEAD, STEP_2_5];
+  const requireOrder = (doc) => {
+    let last = -1;
+    for (const marker of ORDER) {
+      const idx = doc.indexOf(`\n${marker}`);
+      assert.notStrictEqual(idx, -1, `marker missing: ${marker}`);
+      assert.ok(idx > last, `${marker} must come after the previous marker`);
+      last = idx;
+    }
+  };
+  requireOrder(skill);
+  const RESUME = 'If the plan is still valid and work remains, resume at Common Step 1.5, not Common Step 2 (#3666)';
+  assert.ok(skill.includes(`- ${RESUME}`), 'resume bullet changed');
+  // Permutation control: the pointer block moved above the existing-plan branch.
+  const block = between(skill, `\n${POINTER_HEAD}`, `\n${STEP_2_5}`);
+  const permuted = skill.replace(block, '').replace('\n#### If a plan exists:', `${block}\n#### If a plan exists:`);
+  assert.notStrictEqual(permuted, skill);
+  assert.throws(() => requireOrder(permuted), /must come after the previous marker/);
+  // Existence control, matched to its own message.
+  const absent = skill.replace(POINTER_HEAD, '#### Something else');
+  assert.notStrictEqual(absent, skill);
+  assert.throws(() => requireOrder(absent), /marker missing/);
+});
+
+test('AC2.2: the Common Step 1.6 stub and plan-review.md name the reuse skip', () => {
+  const STUB = /Spec Step 2 reused a plan reviewed at specify/;
+  const LOG = /\| plan reviewed at specify \(\{commit\}\)/;
+  const review = readText(REVIEW_FILE);
+  assert.match(step16Of(skill), STUB);
+  assert.match(sectionOf(review, '## Skip logging'), LOG);
+  // Move-out controls: the clause moved into a different section no longer satisfies its section check.
+  const stubMoved = skill.replace(/, or Spec Step 2 reused a plan reviewed at specify/, '').replace(POINTER_HEAD, `${POINTER_HEAD}\nSpec Step 2 reused a plan reviewed at specify.`);
+  assert.notStrictEqual(stubMoved, skill);
+  assert.throws(() => assert.match(step16Of(stubMoved), STUB), /did not match/);
+  const logMoved = review.replace(LOG, '').replace('## Skip logging\n', '## Skip logging\n\n## Other\n| plan reviewed at specify ({commit})\n\n## Skip logging 2\n');
+  assert.notStrictEqual(logMoved, review);
+  assert.throws(() => assert.match(sectionOf(logMoved, '## Skip logging'), LOG), /did not match/);
+});
+
+test('AC1.1: the SKILL.md additions keep build/SKILL.md under the Read rail', () => {
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+  assert.ok(Buffer.byteLength(skill) <= RAIL_BYTES, `build/SKILL.md is ${Buffer.byteLength(skill)} B against ${RAIL_BYTES}`);
+});

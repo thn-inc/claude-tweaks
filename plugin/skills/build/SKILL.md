@@ -93,6 +93,10 @@ Search `docs/superpowers/plans/` for a plan matching this spec (by number, topic
 
 Proceed to Spec Step 3.
 
+#### Before Spec Step 3: a plan reviewed at specify (#6060)
+
+When either branch above proceeds to Spec Step 3, first run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, read `plan-reuse.md` in this skill's directory and follow it: a stored plan that still checks valid is committed into the worktree and Spec Step 3 and Common Step 1.6 are skipped; a failed check re-plans at Spec Step 3. Any other output, or a spec with no `Plan:` line, changes nothing and logs nothing. A resumed build whose reused plan is committed takes the existing-plan branch above and never reaches this check.
+
 ### Spec Step 2.5: Classify and Seed Manual Steps
 
 When the spec has a `## Manual Steps` section, or has none but every `## Deliverables` item is operational (#2554) — dispatching a deploy workflow, triggering a job through an API, applying infrastructure, verifying a live result, with no source file changes — read `manual-steps.md` in this skill's directory and follow it: it probes each item for a CLI and credentials, then executes, seeds, or escalates it. Otherwise — no Manual Steps section, and at least one Deliverable touches the codebase — take the skip line below.
@@ -189,7 +193,7 @@ For the full procedure (CLI invocation and JSON envelope, Check A/headroom failu
 
 ### Common Step 1.6: Plan Review (Spec Mode only)
 
-Spec Mode only — design mode has no materialized spec, so this step never runs there. After Common Step 1.5 and before Common Step 1.7 (so plan amendments land before design references are pre-loaded) and Task 1, dispatch one Capable reviewer over the materialized spec and the plan, then route its findings. **Skip this step when** `config.yml`'s `ceremony-profile` is `fast-lane` — roster tag `plan-review`, `_shared/ceremony-profile.md` — or the plan is trivial by Common Step 1.5's own test (fewer than 3 file references and no `Scope keywords:` field); standalone `/build` (no `config.yml`) uses the size test alone. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff. This is the full gate — deciding skip-vs-run never loads the sub-file. Otherwise read `plan-review.md` in this skill's directory.
+Spec Mode only — design mode has no materialized spec, so this step never runs there. After Common Step 1.5 and before Common Step 1.7 (so plan amendments land before design references are pre-loaded) and Task 1, dispatch one Capable reviewer over the materialized spec and the plan, then route its findings. **Skip this step when** `config.yml`'s `ceremony-profile` is `fast-lane` — roster tag `plan-review`, `_shared/ceremony-profile.md` — or the plan is trivial by Common Step 1.5's own test (fewer than 3 file references and no `Scope keywords:` field), or Spec Step 2 reused a plan reviewed at specify (`plan-reuse.md` logs that skip); standalone `/build` (no `config.yml`) uses the size test alone. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff. This is the full gate — deciding skip-vs-run never loads the sub-file. Otherwise read `plan-review.md` in this skill's directory.
 
 ### Common Step 1.7: Design Pre-Build (frontend specs + terminal)
 

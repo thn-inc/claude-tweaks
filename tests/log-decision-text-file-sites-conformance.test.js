@@ -142,7 +142,6 @@ const ALLOW = [
   { file: 'plugin/skills/tidy/actions-github-issues.md', placeholder: 'command', fragment: 'recommended {command}', why: '`{command}` is the recommendation the skill itself composes (`/claude-tweaks:dispatch close-out #{record}` or `/claude-tweaks:accept #{record}`), not git or user text' },
   { file: 'plugin/skills/build/micro-plan.md', placeholder: 'plan-path', fragment: 'micro-plan composed directly at {plan-path}', why: '`{plan-path}` is an agent-composed `docs/superpowers/plans/...` path, not git or user text' },
   { file: 'plugin/skills/build/plan-reuse.md', placeholder: 'reason', fragment: 'condition: plan-reuse failed: {reason}', why: '`{reason}` is the closed seven-value enum the same section lists (ref|hash|base|files|plan-audit|malformed Plan line|premise), never git or user text' },
-  { file: 'plugin/skills/build/plan-review.md', placeholder: 'ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since', fragment: 'ceremony-profile=fast-lane (roster tag plan-review)', why: 'the braces enumerate literal skip conditions the agent picks from, not a substituted value (the placeholder only matches the file pattern through the words "file references")' },
 ];
 
 function listSkillFiles(dir) {

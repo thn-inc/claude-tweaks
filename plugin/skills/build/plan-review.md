@@ -173,12 +173,12 @@ With no `$PIPELINE_RUN_DIR` (no run directory resolves, so no `config.yml`), the
 
 ## Skip logging
 
-When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), or Spec Step 2's resume branch skips a plan already reviewed, write one `SKIP` entry:
+When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), or Spec Step 2's resume branch skips a plan already reviewed, or `plan-reuse.md` reused a plan reviewed at specify, write one `SKIP` entry:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Common Step 1.6 (plan review)" \
-  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since} → fallback: no plan review" --reversibility n/a
+  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since | plan reviewed at specify ({commit})} → fallback: no plan review" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`handoff-template.md`'s inline-skip listing).
