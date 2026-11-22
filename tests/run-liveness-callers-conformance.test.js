@@ -8,9 +8,9 @@ const { readText } = require('./helpers/read-skill');
 
 // #4419-#4421 (under #3979) removed private liveness probes from four plugin/bin
 // callers. Each now answers "is this run live?" through a sanctioned path, not a
-// probe of its own. This scan fails if a retired probe comes back in any of the four.
+// probe of its own. This scan fails if a retired probe comes back in any of the five.
 //
-// Banned, in the four scanned files (SCANNED, in order):
+// Banned, in the five scanned files (SCANNED, in order):
 //   - the names isDeadRunDir, lockVerdict, isPidAlive, lockInUse and lastCommitMs;
 //   - a `process.kill(` call;
 //   - a git commit-recency read: a git argv with `log` plus `-1`, `-n`/`--max-count`,
@@ -47,6 +47,7 @@ const SCANNED = [
   'plugin/bin/lib/hooks/resume-freshness.js',
   'plugin/bin/lib/flow/consolidated-pass.js',
   'plugin/bin/lib/reconcile/archive-merged.js',
+  'plugin/bin/lib/review-lens/history.js',
 ];
 const COMMIT_FORM = 'git commit-recency read';
 const NAMES = /\b(isDeadRunDir|lockVerdict|isPidAlive|lockInUse|lastCommitMs)\b/g;
@@ -245,13 +246,13 @@ function assertNoRetiredProbes(entries) {
   assert.deepEqual(scan(entries), []);
 }
 
-test('AC1.1: no retired liveness probe in the four migrated callers', () => {
+test('AC1.1: no retired liveness probe in the migrated callers', () => {
   assertNoRetiredProbes(readEntries());
 });
 
-test('floor: all four scanned files are read', () => {
+test('floor: all five scanned files are read', () => {
   const entries = readEntries();
-  assert.equal(entries.length, 4, `read ${entries.length} scanned files, expected 4`);
+  assert.equal(entries.length, 5, `read ${entries.length} scanned files, expected 5`);
   for (const { rel, raw } of entries) {
     assert.ok(raw.length > 0, `${rel} read as empty: the scan would pass over nothing`);
   }
@@ -326,7 +327,7 @@ test('AC2.1: a multi-line argv commit-recency read is flagged at its opening lin
   assert.deepEqual(formatHits(bannedHits(planted)), [`2:${COMMIT_FORM}`]);
 });
 
-// The four real files, with `appended` added to the end of the one named `rel`.
+// The real files, with `appended` added to the end of the one named `rel`.
 function inject(rel, appended) {
   return readEntries().map((e) => (e.rel === rel ? { ...e, raw: e.raw + appended } : e));
 }
@@ -449,4 +450,35 @@ test('boundary finder ignores braces inside string literals', () => {
   const blank = stripComments("function f() { const a = '{'; return 1; }\nconst after = 2;", BLANK_LITERALS);
   assert.equal(lineOf(blank, functionSpan(blank, 'f').end), 1);
   assert.equal(functionSpan(blank, 'missing'), null);
+});
+
+// #5998: review-lens/history.js is one more run-liveness consumer; every list of the consumers
+// carries the count word and the route. The frozen constant is the pre-change count the helper rejects.
+const FROZEN_COUNT = 'Four routes consume it';
+function consumerListGaps(text, { count = true } = {}) {
+  const gaps = [];
+  if (count && !text.includes('Five routes consume it')) gaps.push('count word');
+  if (!text.includes('review-lens/history.js')) gaps.push('history route');
+  return gaps;
+}
+
+// The removal condition for the 72-hour legacy route must say history reads unknown and dead alike as closed.
+const FROZEN_REMOVAL = 'After the route is removed, fallback (b) still classifies those owner-less `interrupted` runs as `abandoned-interrupted` at the same 72 hours, so removing it changes no archive decision.';
+const removalClauseGaps = (text) => (text.includes('reads \`unknown\` and \`dead\` alike as closed') ? [] : ['removal-condition clause']);
+
+test('the removal conditions say history reads unknown and dead alike as closed', () => {
+  for (const rel of ['docs/hooks.md', 'docs/reconcile-checks.md']) {
+    assert.deepEqual(removalClauseGaps(readText(path.join(REPO, rel))), [], rel);
+  }
+  assert.deepEqual(removalClauseGaps(FROZEN_REMOVAL), ['removal-condition clause']);
+});
+
+test('every consumer list names review-lens/history.js', () => {
+  for (const rel of ['docs/hooks.md', 'docs/plugin-structure.md']) {
+    assert.deepEqual(consumerListGaps(readText(path.join(REPO, rel))), [], rel);
+  }
+  const index = readText(path.join(REPO, 'plugin/bin/lib/run-liveness/index.js'));
+  const header = index.split('\n').filter((l) => l.startsWith('//')).join('\n');
+  assert.deepEqual(consumerListGaps(header, { count: false }), []);
+  assert.deepEqual(consumerListGaps(`${FROZEN_COUNT}: a, b`), ['count word', 'history route']);
 });

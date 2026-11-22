@@ -143,6 +143,27 @@ test('AC6: a result with permission denials stays ok, and the runner is called e
   assert.strictEqual(calls[0].files['--settings'].text, JSON.stringify(implementerSettings({ testCommand: 'node --test', platform: 'darwin', readPaths: [] }), null, 2));
 });
 
+test('#5942 AC5.1: launchWorker refuses an unknown effort before anything is written or started', async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  const opts = base(t, { effort: 'extreme', settingsDir: path.join(tmp(t), 'not-yet') });
+  await assert.rejects(launchWorker(opts, { runner }), RangeError);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(!fs.existsSync(opts.settingsDir), 'the settings directory was created before the refusal');
+});
+
+test('#5942: launchWorker passes effort through to the argv', async (t) => {
+  const given = fakeRunner(okOut());
+  await launchWorker(base(t, { effort: 'medium' }), { runner: given.runner });
+  const i = given.calls[0].args.indexOf('--effort');
+  assert.notStrictEqual(i, -1);
+  assert.strictEqual(given.calls[0].args[i + 1], 'medium');
+  for (const extra of [{ effort: null }, {}]) {
+    const none = fakeRunner(okOut());
+    await launchWorker(base(t, extra), { runner: none.runner });
+    assert.ok(!none.calls[0].args.includes('--effort'));
+  }
+});
+
 test('AC4.1: with no readPaths the settings file\'s allowRead holds the derived toolchain root, and given readPaths are written exactly', async (t) => {
   const looked = [];
   const toolchain = { lookup: (name) => { looked.push(name); return name === 'node' ? '/h/.nvm/versions/node/v22/bin/node' : null; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
@@ -1113,4 +1134,26 @@ test('AC8.1 (#5917): live probe — every role launches on each distinct default
     }
   }
   assert.deepStrictEqual(failing, []);
+});
+
+test('AC7.1 (#5942): live probe — a launch with --effort low records low, one with medium records medium, one with none records the CLI default', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const prompt = 'Use no tool. Return exactly this structured output and nothing else: ' + JSON.stringify({ findings: [] });
+  const claudeProjectsRoot = path.join(os.homedir(), '.claude', 'projects');
+  const recorded = {};
+  for (const [label, effort] of [['low', 'low'], ['medium', 'medium'], ['none', undefined]]) {
+    const envelope = await launchWorker({ role: 'reviewer', cwd: tmp(t), settingsDir: tmp(t), prompt, schema: REVIEW_RESULT_SCHEMA, model: 'sonnet', ...(effort ? { effort } : {}), ceilings: { wallClockMs: 180000, spendCeiling: 1 } }, { runner: worker.defaultRunner });
+    assert.strictEqual(envelope.status, 'ok', label + ': ' + JSON.stringify(envelope));
+    const projectDir = fs.readdirSync(claudeProjectsRoot).find((entry) => fs.existsSync(path.join(claudeProjectsRoot, entry, envelope.sessionId + '.jsonl')));
+    assert.ok(projectDir, label + ': no transcript found for session ' + envelope.sessionId);
+    const values = new Set();
+    for (const line of fs.readFileSync(path.join(claudeProjectsRoot, projectDir, envelope.sessionId + '.jsonl'), 'utf8').split('\n')) {
+      if (!line.includes('"type":"assistant"')) continue;
+      for (const m of line.matchAll(/"effort":"([^"]+)"/g)) values.add(m[1]);
+    }
+    recorded[label] = [...values].sort();
+  }
+  t.diagnostic('recorded effort values: ' + JSON.stringify(recorded));
+  assert.deepStrictEqual(recorded.low, ['low']);
+  assert.deepStrictEqual(recorded.medium, ['medium']);
+  assert.strictEqual(recorded.none.length, 1, 'the CLI default is a single value, got ' + JSON.stringify(recorded.none));
 });

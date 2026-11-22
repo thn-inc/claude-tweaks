@@ -310,6 +310,28 @@ test('#4359: --recount writes nothing into the archive', async () => {
   }
 });
 
+test('#5647: --recount scopes a run\'s dispatches to its listed Task-call agent files, and passes nothing for a run listing none', async () => {
+  // Red without it: recountRuns' scopeDispatchesTo (the dispatcher's whole subagents/ would be read unscoped).
+  const { root, archive } = recountTree();
+  try {
+    const agent = path.join('transcripts', 's1', 'subagents', 'agent-t1.jsonl');
+    fs.mkdirSync(path.join(root, path.dirname(agent)), { recursive: true });
+    fs.copyFileSync(path.join(root, 'transcripts', 'a.jsonl'), path.join(root, agent));
+    const timingPath = path.join(archive, '2027-02-01T090000-run-a', 'timing.json');
+    const t = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+    t.transcripts.push({ path: agent, rows: 4 });
+    fs.writeFileSync(timingPath, JSON.stringify(t));
+    const seen = {};
+    const spy = async (args) => { seen[path.basename(args.runDir)] = args.scopeDispatchesTo; return realBuildTiming(args); };
+    const { code, errs } = await runCli(['--archive', archive, '--recount', '--json'], { cwd: root, buildTiming: spy });
+    assert.strictEqual(code, 0, errs);
+    assert.deepStrictEqual(seen['2027-02-01T090000-run-a'], [agent]);
+    assert.strictEqual(seen['2027-02-03T090000-run-b'], undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('#4359: --since keeps runs dated on or after the date, in --recount and in the default report', async () => {
   const { root, archive } = recountTree();
   try {

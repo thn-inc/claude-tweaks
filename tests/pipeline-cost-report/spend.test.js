@@ -593,3 +593,42 @@ test('a non-ENOENT error on subagents/workflows is counted unreadable', async ()
   const r = await collectSpend({ roots: [root], ...WINDOW }, { fsImpl: failList });
   assert.strictEqual(r.unreadable, 1);
 });
+
+test('a pluginRoot without transcript.js fails collectSpend loudly instead of counting every transcript unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const emptyPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: emptyPlugin }), /transcript\.js/);
+});
+
+test('a transcript.js under pluginRoot that does not export mergeUsage fails collectSpend with the loader error, not MODULE_NOT_FOUND', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const badPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  const dir = path.join(badPlugin, 'bin', 'lib', 'timing');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'transcript.js'), 'module.exports = {};');
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: badPlugin }), /does not export mergeUsage/);
+});
+
+test('scanTranscript: a Bash drive.js --check call is route evidence; prose and other tools are not', async () => {
+  const bash = (command) => ({ type: 'assistant', timestamp: '2026-11-19T09:00:00Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" --check 5270')]))).reachedRoute, true);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/log-decision.js" --run "/r" --status SKIP --step "Driver route (skipped)" --text x')]))).reachedRoute, true);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/log-decision.js" --run "/r" --status AUTO --step "Step 2.8" --text x')]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" #5270')]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'run `drive.js --check #5270` first' } }]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/x/drive.js --check' } }] } }]))).reachedRoute, false);
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'node "/p/bin/drive.js" --check 5270' } }] } }]))).reachedRoute, false);
+});
+
+test('scanTranscript: pluginVersion is the first claude-tweaks v{X.Y.Z} @ match in the raw text, else null', async () => {
+  const hook = (v) => ({ type: 'attachment', attachment: { content: `rules...\n\nclaude-tweaks v${v} @ /cache/claude-tweaks/${v}` } });
+  assert.strictEqual((await scanTranscript(fixture([hook('6.175.0'), hook('6.170.0')]))).pluginVersion, '6.175.0');
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'user', message: { content: 'claude-tweaks v{X.Y.Z} @' } }]))).pluginVersion, null);
+});
+
+test('scanTranscript: firstTs is the first line carrying a timestamp', async () => {
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'last-prompt' }, { type: 'user', timestamp: '2026-11-15T23:06:00Z', message: { content: 'x' } }, { type: 'user', timestamp: '2026-11-16T00:00:00Z', message: { content: 'y' } }]))).firstTs, '2026-11-15T23:06:00Z');
+  assert.strictEqual((await scanTranscript(fixture([{ type: 'last-prompt' }]))).firstTs, null);
+});

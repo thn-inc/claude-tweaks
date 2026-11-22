@@ -180,6 +180,20 @@ test('groupingMode names the express variant only when express is enabled; GROUP
   assert.equal(GROUPING_MODE, 'per-record');
 });
 
+test('AC12.1, AC6.1: groupingMode maps the four lane combinations to four distinct stamps; cacheUsable accepts a blob only under its exact stamp', () => {
+  assert.equal(groupingMode(false, false), 'per-record');
+  assert.equal(groupingMode(true, false), 'per-record+express');
+  assert.equal(groupingMode(false, true), 'per-record+driver');
+  assert.equal(groupingMode(true, true), 'per-record+express+driver');
+  assert.equal(groupingMode(false), 'per-record');
+  assert.equal(groupingMode(true), 'per-record+express');
+  const stamps = ['per-record', 'per-record+express', 'per-record+driver', 'per-record+express+driver'];
+  for (const stamped of stamps) {
+    const blob = composeOrderBlob({ computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: stamped });
+    for (const mode of stamps) assert.equal(cacheUsable(blob, SIGNAL, mode), stamped === mode, `${stamped} blob under ${mode}`);
+  }
+});
+
 test('composeOrderBlob stamps a passed grouping, and the stamp gates cacheUsable (#4025)', () => {
   const express = composeOrderBlob({
     computedAt: 'x', runId: 'y', freshnessSignal: SIGNAL, groups: [], excluded: [], grouping: 'per-record+express',

@@ -251,17 +251,54 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 7 — Driver admission by risk and path
 
+## Phase 7: Specified
+
+Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review` stop for a widened admission), #6019 (the protected-path mode), #6020 (the protected-path list as an editable policy value) and #6021 (the 20-record trial), under parent #6017.
+
 - **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Decided while specifying:**
+  - The risk ceiling takes `low`, `medium` or `high`. `high` is allowed, unlike `express-driver-max-size`, because every record admitted this way waits for a human merge.
+  - Ceremony relaxes only when `express-driver-review` is set to `on`, so the default `beyond-express` reproduces today without a third key.
+  - The merge stop recomputes the widenings from the record's live labels and stops when the driver's own list is missing, so it fails closed.
+  - Under `reviewer`, the protected paths that act at push or build time keep refusing: CI config, git hooks, `package.json` and agent settings. Only merge-time paths (hook code, shared contracts, `CODEOWNERS`, the policy and verify-scope files) pass behind the reviewer.
+  - The list is fully editable, removals included, and a removal reaches the express lane too. It resolves from the main checkout, so a record cannot widen its own run by editing `policy.yml`.
+  - The trial runs `/claude-tweaks:review` on each driven PR. Guard 1 compares its Critical-or-Important share with the 70% baseline, guard 3 is read 14 days after the last merge, and guard 2 does not apply.
+- **Not covered:** the factory floor for the list, and the stricter-of rule for the risk ceiling. Both wait for Phase 11's factory layer.
 - **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
-- **Waits for:** Phases 2 and 3.
-- **Expected effect:** admission rises from 11% to about 61%.
+- **Waits for:** Phases 2 and 3, both merged.
+- **Expected effect:** admission rises from 11% to about 61%. Keeping the build-time paths refused may land it lower.
 
 ## Phase 8 — Admissible records reach the driver
 
 - **Builds:** the cause of the six-day gap, found and fixed. Dispatch routes each admitted member of a bundle group, not only single-record groups.
 - **Done when:** every record `drive.js --check` admits in a drain is driven or carries a logged reason.
 
+## Phase 8: Specified
+
+Records #6011 (keep driver-routable records out of fast-lane bundles) and #6012 (the cost report shows whether admitted records reached the driver), no parent; #5571 extended with the drain check.
+
+The six-day gap had no code-defect cause. The 12 November driver runs were started by hand (`drive-N` run directories). Dispatch's route (#5232) first shipped in v6.171.0, which was never installed: the plugin cache went from 6.170.0 to 6.172.0 on 17 November. All 18 dispatch sessions from 15 November 23:06 to 17 November 07:27 ran v6.170.0, which has no route. No dispatch firing ran from 17 November 07:27 to 21 November, and no run directory holds a `Driver route (skipped)` line. On 21 November `drive.js --check` admitted 15 of 142 records, and a grouping replay put all 15 in singleton groups.
+
+- **Builds:**
+  - #6011: the queue pull keeps a record the driver would take out of fast-lane bundles, so it reaches the route as a singleton group.
+  - #6012: the cost report's funnel section counts driver runs (dispatch-routed and standalone) and dispatch firings by plugin version, and flags admitted records that nothing routed.
+  - #5571: the live drain must also drive, or log a skip for, every admitted group it selects.
+- **Phase 7 depends on #6011.** Raising `express-driver-max-size` to `medium` without it bundles fast-lane records the driver would take.
+
 ## Phase 9 — Implementer tier from the record
+
+## Phase 9: Specified
+
+Records #5996 (the rule, the step-up, the `implementer-tier` policy value and its CLI), #5997 (the driver launches the record's profile and relaunches once one profile up), #5999 (the standard lane takes its profile from the CLI and escalates once) and #6002 (the effort ladder), under parent #5995. #5997 and #5999 are blocked by #5996; #6002 is blocked by #5941, #5942, #5997 and #5999.
+
+- **Decided while specifying:**
+  - One policy value, `implementer-tier`: `lane`, the default, keeps each lane's current rule; `record` applies this phase's rule in both lanes. This repository opts in. A `size:high` record gets Standard, not Capable.
+  - One Key File counter for both lanes: distinct paths in the record's `### Key Files`; a directory entry rules out Fast.
+  - Driver: only a worker that cannot complete, or red tests, triggers the relaunch; it works on top of what the first attempt left, then commits and re-tests. Ceilings stay per launch, so the worst case is three implementer launches per record.
+  - Standard lane: a `BLOCKED` report, or a failed re-review of a task's first fix round, sends that task to a fresh implementer one profile up, once; `decisions.md` holds the once-per-task count.
+  - Effort ladder: the starting effort follows `risk:` (`low` → `low`, `medium` → `medium`, higher → the profile's own, never above `high`). Red tests or a failed fix round raise the effort one step first; `BLOCKED` or a worker that cannot complete step the profile directly. At most two escalations.
+  - Per-task `**Role:**` markers and the `profile=` token keep overriding the record rule.
+- **Done-when caveat:** tasks started at `low` are `risk:low`, so the `low`-versus-`medium` comparison is made within a size band, adds a fix-rounds-per-task guard, and reads as cost per risk class rather than a pure effort effect.
 
 - **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
   - Once Phase 15 has landed, a step up may be an effort before it is a model: the first attempt runs at the lowest effort the record's labels allow, and a failed verify raises the effort, then the profile. Only an implementer gets this, because a test or a review shows its failure.
@@ -270,6 +307,10 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 - **Expected effect:** Opus implementers, about $3 per run, fall to near zero; mechanical tasks cost at most $0.34.
 
 ## Phase 10 — Lenses chosen per run
+
+## Phase 10: Specified
+
+Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a per-run record of which lenses ran), #6001 (the selection function, its CLI and the `review-lens-selection` key), #6000 (a read-only `lens-reviewer` driver worker role and a launcher) and #6003 (`review-lens-dispatch: worker`), under parent #6005. #6001 is blocked by #5998; #6003 is blocked by #6000 and #6001; all four wait on #5825, and #6000 also on #5942.
 
 - **Builds:**
   - A selection function, in code, from the diff's facts and each lens's confirmed-finding rate in this repository over its last 20 runs. No model chooses.

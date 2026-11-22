@@ -501,6 +501,8 @@ function runDecide(opts, deps, ctx) {
   const { isTrustedComment } = require('./lib/issues/comment-trust');
   const target = resolved['acceptance-target'];
   // Unset is the resolver's `default`; a set but invalid value is invalid, never the schema default.
+  // No factoryRaw reaches the acceptance-target and risk-path-globs reads yet (#6007); a factory value, once
+  // passed, is set like policy.yml's.
   let policyDefault = target.value;
   if (target.invalid) policyDefault = null;
   else if (target.source === 'default') policyDefault = undefined;

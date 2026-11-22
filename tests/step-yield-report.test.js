@@ -493,3 +493,29 @@ test('--window takes a positive integer', () => {
     assert.equal(r.out, '');
   }
 });
+
+test('AC: the per-lens table is byte-identical', () => {
+  const root = setup();
+  const { out } = runCli([root]);
+  const block = [
+    'lens                   raised         both          one tb-confirmed   tb-refuted',
+    '3f                         10            4            6            5            2',
+    '3b                          2            0            2            1            1',
+    '3a                          1            1            0            0            0',
+  ].join('\n');
+  assert.ok(out.includes(block), out);
+});
+
+test('stepRow confirmed is both plus tiebreak confirmed', () => {
+  const root = setup();
+  const r = runCli([root, '--runs', '--json']);
+  const list = JSON.parse(r.out).runs;
+  assert.ok(Array.isArray(list), r.out.slice(0, 400));
+  const confirmedOf = (id) => {
+    const found = list.find((x) => x.runId === id);
+    assert.ok(found, id + ' in ' + r.out.slice(0, 400));
+    return found.steps.find((s) => s.name === 'review').confirmed;
+  };
+  assert.equal(confirmedOf('2026-11-10T090000-record-2'), 9);
+  assert.equal(confirmedOf('2026-11-12T090000-record-1'), 2);
+});

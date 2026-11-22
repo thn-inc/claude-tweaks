@@ -18,7 +18,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
@@ -351,11 +351,12 @@ const POLICY = {
   'express-driver-max-size': 'low',
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
-  // #5917's model keys, in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, and no
-  // model-profiles block or ceiling set.
+  // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
+  // model-profiles block or ceiling set, and model-effort inherit.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
   'model-profiles': null,
   'model-ceiling': null,
+  'model-effort': 'inherit',
 };
 
 function issueFor(n) {
@@ -1536,7 +1537,7 @@ test('the worker step launches the implementer in the worktree with the policy c
   const [opts, d] = workerCall(h).args;
   assert.deepEqual({ ...opts, prompt: typeof opts.prompt }, {
     role: 'implementer', cwd: WT, prompt: 'string', ceilings: { wallClockMs: 20 * 60000, spendCeiling: 2.5 },
-    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env, model: M('standard'),
+    settingsDir: path.join(runDir, 'worker'), platform: 'darwin', env, model: M('standard'), effort: null,
   });
   assert.equal('bin' in opts, false);
   assert.equal(typeof d.runner, 'function');
@@ -1720,6 +1721,7 @@ test('invalid model policy refuses the run before the claim', async () => {
     ['express-driver-models', resolvePolicyKeys(['express-driver-models'], { policyRaw: 'express-driver-models:\n  implementer: turbo\n' })['express-driver-models']],
     ['model-ceiling', resolvePolicyKeys(['model-ceiling'], { policyRaw: 'model-ceiling: huge\n' })['model-ceiling']],
     ['model-profiles', modelProfilesEntry('model-profiles:\n  standard:\n    speed: x\n')],
+    ['model-effort', resolvePolicyKeys(['model-effort'], { policyRaw: 'model-effort: fancy\n' })['model-effort']],
   ];
   for (const [key, entry] of cases) {
     assert.equal(entry.invalid, true, key);
@@ -1729,6 +1731,14 @@ test('invalid model policy refuses the run before the claim', async () => {
     assert.equal(lastLine(h).stop.detail, `driver model policy invalid: ${key}`, key);
     assert.equal(h.calls.filter((c) => c.kind === 'node' && /claim-targets\.js$/.test(c.args[0])).length, 0, key);
   }
+});
+
+test('#5942 AC8: a model-profiles row giving an unknown effort refuses at the policy step, before any worker', async () => {
+  const h = harness({ policy: { 'model-effort': 'profile', 'model-profiles': { standard: { effort: 'extreme' } } } });
+  assert.equal(await run(['#7'], h.deps), 1);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(lastLine(h).stop.step, 'policy');
+  assert.match(lastLine(h).stop.detail, /^no model for driver role implementer: profile standard did not resolve/);
 });
 
 test('a model-profiles row naming a versioned id refuses at the policy step', async () => {
@@ -2031,8 +2041,8 @@ test('(#5415) a launcher throw after which a flag is set reports the flag', asyn
 });
 
 // A launcher throw followed by a HEAD move or a new index flag: the stop's worker line still names the model (#5917).
-async function throwThenStopLine(after) {
-  const h = harness({ script: [[on('worker'), new Error('launch blew up')], after] });
+async function throwThenStopLine(after, policy) {
+  const h = harness({ policy, script: [[on('worker'), new Error('launch blew up')], after] });
   await run(['#7'], h.deps);
   const lines = h.lines().filter((l) => l.step === STEP.worker);
   assert.equal(lines.length, 1);
@@ -2231,7 +2241,7 @@ const BASE_CALLS_FIX = [
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'writeFileExclusive', 'lstatType', 'lstatType', 'lstatType',
   'mkdirSync', 'mkdirSync', 'runner', 'readFile', 'git --no-optional-locks',
-  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'lstatType', 'lstatType',
+  'git --no-optional-locks', 'git rev-parse', 'mkdirSync', 'worker', 'appendFile', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'rmFile', 'lstatType', 'lstatType', 'lstatType', 'lstatType',
   'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'lstatType', 'mkdirSync',
@@ -2255,7 +2265,7 @@ const BASE_LINES_PLAIN = [
 const BASE_LINES_FIX = [
   ['policy', 'ok'], ['fetch', 'ok'], ['eligibility', 'ok'], ['admission', 'ok'], ['claim', 'ok'],
   ['run-dir', 'ok'], ['worktree', 'ok'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'],
-  ['check', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
+  ['check', 'ok'], ['worker', 'ok'], ['review', 'ok'], ['push', 'ok'], ['pr', 'ok'], ['record-pr', 'ok'],
   ['set-config', 'ok'], ['summary', 'ok'], ['ci', 'ok'], ['merge-entry', 'stop'], ['merge', 'ok'],
   ['final', 'ok'],
 ];
@@ -2269,10 +2279,12 @@ const K3 = ['ciWaitMs', 'detail', 'ms', 'record', 'run', 'status', 'step', 'ts']
 const K4 = ['ci', 'costUsd', 'denialCount', 'merge', 'ms', 'msTotal', 'msWithoutCi', 'outcome', 'pr', 'record', 'run', 'settle', 'settleFailed', 'settleRow', 'status', 'step', 'stop', 'ts', 'turns'];
 const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reproduced', 'returned', 'run', 'status', 'step', 'ts', 'turns', 'usage'];
 // The admission line gained `authority` (#5584), the worker line `tests` (#5915) and `model` (#5917), and the review
-// line `model` (#5917): the fields added since the capture.
+// line `model` (#5917), and both lines `effort` (#5942): the fields added since the capture.
 const KA = ['authority', ...K0];
-const KW = [...K1, 'model', 'tests'].sort();
-const K5M = [...K5, 'model'].sort();
+const KW = [...K1, 'effort', 'model', 'tests'].sort();
+const K5M = [...K5, 'effort', 'model'].sort();
+// The review fix round's own worker line (#5942): the worker line's keys plus `fix`.
+const KWF = [...KW, 'fix'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -2281,7 +2293,7 @@ const BASE_KEYS_PLAIN = [
 ];
 const BASE_KEYS_FIX = [
   K0, K0, K0, KA, K0, K0,
-  K0, KW, K2, K2, K0, K5M,
+  K0, KW, K2, K2, K0, KWF, K5M,
   K0, K2, K0, K0, K0, K3,
   K2, K2, K4,
 ];
@@ -3932,8 +3944,9 @@ const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fas
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
-  assert.equal(workerLines(h).length, 1, 'one worker line, so the first is every one');
-  const [line] = workerLines(h);
+  assert.equal(workerLines(h).length, 2, 'the worker step and the fix relaunch (#5942)');
+  const [line, fixLine] = workerLines(h);
+  assert.equal(fixLine.model, implementerCalls(h)[1].args[0].model);
   assert.equal(line.model, M('fast'));
   assert.equal(line.model, implementerCalls(h)[0].args[0].model);
   const reviewerCall = h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
@@ -4008,6 +4021,202 @@ test('old readers tolerate the model field (#5917)', async () => {
     assert.deepEqual(withModel, without, name);
     assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
   }
+});
+
+// --- the effort on the worker and review event lines (#5942, Task 4) ----------------------------
+const PROFILE_EFFORT = { 'model-effort': 'profile' };
+
+test('#5942 AC6.1: under model-effort profile the implementer\'s worker line and the review line carry the level each launch was given', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  const [first] = implementerCalls(h);
+  assert.equal(line.effort, 'high');
+  assert.equal(line.effort, first.args[0].effort);
+  const reviewerCall = h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer');
+  const [review] = reviewLines(h);
+  assert.equal(typeof reviewerCall.args[0].effort, 'string');
+  assert.equal(review.effort, reviewerCall.args[0].effort);
+});
+
+test('#5942 AC6.2: with the key unset the worker line\'s effort is null', async () => {
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  assert.ok('effort' in line, 'the field is present');
+  assert.equal(line.effort, null);
+  assert.equal(line.effort, workerCall(h).args[0].effort);
+});
+
+test('#5942: a launcher throw after resolution keeps effort on the worker line', async () => {
+  const thrown = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const [line] = workerLines(thrown);
+  assert.equal(line.effort, 'high');
+  assert.equal(line.model, M('standard'));
+  const unset = harness({ script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], unset.deps);
+  assert.equal(workerLines(unset)[0].effort, null);
+  assert.ok('effort' in workerLines(unset)[0]);
+  const moved = await throwThenStopLine(nthCall(isHeadRead, 2, `${OTHER_SHA}\n`));
+  assert.ok('effort' in moved && moved.effort === null, 'a moved HEAD after a throw keeps effort');
+  const flagged = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX));
+  assert.ok('effort' in flagged && flagged.effort === null, 'a new index flag after a throw keeps effort');
+  // Under profile the stops carry the level, so `launch.effort = err.effort ?? null` can go red.
+  const movedProfile = await throwThenStopLine(nthCall(isHeadRead, 2, `${OTHER_SHA}\n`), PROFILE_EFFORT);
+  assert.equal(movedProfile.effort, 'high', 'a moved HEAD after a throw names the level');
+  const flaggedProfile = await throwThenStopLine(nthCall(isFlagRead, 2, NEW_FLAG_INDEX), PROFILE_EFFORT);
+  assert.equal(flaggedProfile.effort, 'high', 'a new index flag after a throw names the level');
+});
+
+test('#5942: under model-effort profile a Fast implementer\'s worker line carries effort null', async () => {
+  const h = harness({ policy: { ...PROFILE_EFFORT, 'express-driver-models': FAST_IMPLEMENTER } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [line] = workerLines(h);
+  assert.ok('effort' in line && line.effort === null, 'Fast and inherit are indistinguishable on the line');
+});
+
+test('#5942: a launch that returns no envelope still names its effort', async () => {
+  const h = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), null]] });
+  await run(['#7'], h.deps);
+  assert.equal(workerLines(h)[0].effort, 'high');
+});
+
+test('#5942: old readers tolerate the effort field', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  await run(['#7'], h.deps);
+  const thrown = harness({ policy: PROFILE_EFFORT, script: [[on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], thrown.deps);
+  const readerRows = (lines) => {
+    const dir = tmpDir('effort-field-');
+    fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+    return driverStepsOf(dir, fs);
+  };
+  for (const [name, lines] of [['happy fix run', h.lines()], ['worker throw', thrown.lines()]]) {
+    assert.ok(lines.some((l) => 'effort' in l), `${name}: the run writes the effort field`);
+    const stripped = lines.map(({ effort, ...rest }) => rest);
+    const withEffort = readerRows(lines);
+    const without = readerRows(stripped);
+    assert.equal(withEffort.unparsed, 0, name);
+    assert.deepEqual(withEffort, without, name);
+    assert.deepEqual(lines.at(-1).stop, stripped.at(-1).stop, name);
+  }
+});
+
+// --- the review fix round's own worker line (#5942, Task 5) -------------------------------------
+const MEDIUM_STANDARD = { 'model-profiles': { standard: { effort: 'medium' } } };
+
+test('#5942 AC6.1 (fix round): the fix relaunch writes its own worker line with its own effort', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT, ...MEDIUM_STANDARD } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = h.lines();
+  const workers = lines.filter((l) => l.step === STEP.worker);
+  assert.equal(workers.length, 2, 'the worker step and the fix relaunch');
+  const [first, fix] = workers;
+  assert.ok(!('fix' in first), 'the worker step\'s own line is not marked');
+  assert.equal(fix.fix, true);
+  assert.equal(fix.tests, first.tests);
+  const [call1, call2] = implementerCalls(h);
+  assert.equal(first.effort, 'medium');
+  assert.equal(fix.effort, 'medium');
+  assert.equal(fix.effort, call2.args[0].effort);
+  assert.equal(fix.model, call2.args[0].model);
+  assert.equal(lines[lines.indexOf(fix) + 1].step, STEP.review, 'the fix line sits immediately before the review line');
+  const [review] = reviewLines(h);
+  assert.equal(review.effort, 'high', 'the review line keeps the reviewer\'s own level');
+  assert.notEqual(review.effort, fix.effort);
+  assert.equal(call1.args[0].effort, 'medium');
+});
+
+test('#5942 (fix round): with model-effort unset the fix worker line\'s effort is null', async () => {
+  const h = fixRig();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const fix = workerLines(h)[1];
+  assert.ok('effort' in fix && fix.effort === null);
+  assert.equal(fix.fix, true);
+});
+
+test('#5942 (fix round): a refused fix relaunch writes no worker line', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const refusal = { status: 'fail', noLine: true, code: 'DRIVER_MODEL_REFUSED', detail: 'no model for driver role implementer' };
+  const out = await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => refusal);
+  assert.equal(out, refusal, 'the helper returns the result unchanged');
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): a launcher throw that resolved still writes the fix worker line', async () => {
+  const h = fixRig({
+    policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT, ...MEDIUM_STANDARD },
+    script: [[(c) => isImplementerLaunch(c) && implementerCalls(h).length === 2, new Error('fix launch blew up')]],
+  });
+  await run(['#7'], h.deps);
+  const workers = workerLines(h);
+  assert.equal(workers.length, 2);
+  const fix = workers[1];
+  assert.equal(fix.status, 'fail');
+  assert.equal(fix.fix, true);
+  assert.match(fix.detail, /fix launch blew up/);
+  assert.equal(fix.model, implementerCalls(h)[1].args[0].model);
+  assert.equal(fix.effort, 'medium', 'the level came from the thrown error, not the reviewer\'s default');
+  assert.ok('tests' in fix);
+  const [review] = reviewLines(h);
+  assert.equal(review.status, 'fail');
+  assert.match(review.detail, /^the fix round failed unexpectedly: /);
+  const order = h.lines().map((l) => l.step);
+  assert.equal(order.lastIndexOf(STEP.review), order.lastIndexOf(STEP.worker) + 1, 'the review line follows the fix line');
+});
+
+test('#5942 (fix round): a throw without a resolved model writes no fix worker line and rethrows unchanged', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const boom = new Error('before resolution');
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw boom; }), (e) => e === boom);
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): the throw-path line carries the worker step\'s detail, test-list note included', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', testListNote: 'list not removed' });
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw err; }), (e) => e === err);
+  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', fix: true }]]);
+});
+
+test('#5942 (fix round): an interrupt during the fix launch writes no fix worker line', async () => {
+  const emitted = [];
+  const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
+  const flag = async () => { ctx.shared.interrupted = 'SIGTERM'; return { status: 'ok', extra: { model: 'm', effort: null } }; };
+  await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', flag);
+  const thrown = async () => { ctx.shared.interrupted = 'SIGTERM'; throw Object.assign(new Error('killed'), { model: 'm', effort: 'high' }); };
+  await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', thrown), /killed/);
+  assert.deepEqual(emitted, []);
+});
+
+test('#5942 (fix round): step-yield counts the fix worker line in the worker row', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...PROFILE_EFFORT } });
+  await run(['#7'], h.deps);
+  const dir = tmpDir('fix-worker-row-');
+  const write = (lines) => fs.writeFileSync(path.join(dir, 'driver-events.jsonl'), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  write(h.lines());
+  const row = (name) => driverStepsOf(dir, fs).steps.find((s) => s.name === name);
+  const [first, fix] = workerLines(h);
+  const worker = row(STEP.worker);
+  assert.equal(worker.count, 2);
+  assert.ok(fix.ms >= 0 && fix.usage, 'the fixture\'s fix line carries ms and usage');
+  assert.ok(Math.abs(worker.minutes - (first.ms + fix.ms) / 60000) < 1e-9);
+  const tokens = (l) => Object.values(l.usage).reduce((a, n) => a + (Number.isFinite(n) ? n : 0), 0);
+  assert.equal(worker.tokens, tokens(first) + tokens(fix));
+  assert.equal(worker.failed, 0);
+  // A failed fix launch counts once in the worker row and once in the review row.
+  let seenWorkers = 0;
+  const failedLines = h.lines().map((l) => {
+    if (l.step === STEP.worker) { seenWorkers += 1; return seenWorkers === 2 ? { ...l, status: 'fail' } : l; }
+    return l.step === STEP.review ? { ...l, status: 'fail' } : l;
+  });
+  write(failedLines);
+  assert.equal(row(STEP.worker).failed, 1);
+  assert.equal(row(STEP.review).failed, 1);
 });
 
 test('AC8: one fix round, in order', async () => {
@@ -4733,6 +4942,34 @@ test('docs (#5917): driver.md states the models key, its defaults and the refusa
   assert.ok(redFlags && redFlags.includes('`express-driver-models`'), 'the red-flags list names express-driver-models');
 });
 
+const assertEffortDocs = (docs) => {
+  for (const phrase of ['`--effort`', '`model-effort: profile`', '`launchEffort`', '`worker.js`', '`fix: true`']) {
+    assert.ok(docs.includes(phrase), `driver.md names ${phrase}`);
+  }
+  const { at, end } = effortParagraphBounds(docs);
+  assert.notEqual(at, -1, 'the effort field paragraph exists');
+  const paragraph = docs.slice(at, end);
+  assert.ok(paragraph.includes('`null`'), 'the effort field paragraph names null');
+  for (const step of ['`merge-check`', '`merge-acceptance`']) {
+    assert.ok(paragraph.includes(step), `the effort field paragraph names ${step} as carrying effort`);
+  }
+};
+
+// The effort paragraph's start and end offsets (start -1 when absent).
+const effortParagraphBounds = (docs) => {
+  const at = docs.indexOf('The `effort` field.');
+  const next = at === -1 ? -1 : docs.indexOf('\n', at);
+  return { at, end: next === -1 ? docs.length : next };
+};
+
+test('docs (#5942): driver.md states the effort flag, when it is passed and the effort field', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  assertEffortDocs(docs);
+  const { at, end } = effortParagraphBounds(docs);
+  const without = at === -1 ? docs : docs.slice(0, at) + docs.slice(end);
+  assert.throws(() => assertEffortDocs(without), assert.AssertionError, 'go-red: the text without the paragraph fails the assertions');
+});
+
 // Flag read n (1 = the baseline) is the n-th ls-files read of the run; AC8.1 (#5415) pins the order.
 const flaggedStop = (h, detail) => {
   assert.deepEqual([lastLine(h).stop.step, lastLine(h).status, lastLine(h).stop.class, lastLine(h).outcome], [STEP.review, 'fail', 'pre-push', 'express-escalated']);
@@ -5256,6 +5493,33 @@ test('(#5224) through the real resolver: a malformed express-driver-max-lines fa
   const final = h.lines().at(-1);
   assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
   assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
+});
+
+// #6006: a factory express-driver-max-lines is a set value, exactly as a policy.yml one is.
+const factoryLineReply = (raw, review) => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const reply = resolvePolicyKeys(['express-driver-max-lines'], { factoryRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  assert.strictEqual(reply.source, 'factory', raw);
+  return [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
+};
+
+test('driver steps: a factory express-driver-max-lines bound is explicit', async () => {
+  const huge = harness({ script: [factoryLineReply('9007199254740993', 'on')] });
+  assert.equal(await run(['#7'], huge.deps), 1);
+  const final = huge.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.match(final.stop.detail, /^driver diff bound not an integer of at least 1: express-driver-max-lines/);
+});
+
+test('driver steps: a factory express-driver-max-lines bound reaches check when the reviewer is on', async () => {
+  const reviewed = harness({ script: [factoryLineReply('120', 'on')] });
+  assert.equal(await run(['#7'], reviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(reviewed), [['--max-lines', '120']]);
+  const unreviewed = harness({ script: [factoryLineReply('120', 'off')] });
+  assert.equal(await run(['#7'], unreviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(unreviewed), [null]);
 });
 
 test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
