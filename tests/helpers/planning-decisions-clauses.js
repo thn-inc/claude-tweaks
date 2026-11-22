@@ -12,15 +12,17 @@ const CLASS_CLAUSES = [
   'No reading keeps every Acceptance Criterion and recorded decision intact',
 ];
 
-const collapse = (s) => s.replace(/\s+/g, ' ');
+const normalize = (s) => s.replace(/\s+/g, ' ').toLowerCase();
 
-// files: Map<relPath, text>. Returns every relPath whose whitespace-collapsed text includes any
-// class clause, in the map's order. Collapsing keeps a clause hard-wrapped across lines visible.
+// files: Map<relPath, text>. Returns every relPath whose whitespace-collapsed, lowercased text
+// includes any class clause, in the map's order. Collapsing keeps a clause hard-wrapped across lines
+// visible; lowercasing keeps a restatement that starts mid-sentence ("no reading keeps …") visible.
 function classStatementSites(files) {
+  const clauses = CLASS_CLAUSES.map(normalize);
   const out = [];
   for (const [rel, text] of files) {
-    const flat = collapse(text);
-    if (CLASS_CLAUSES.some((clause) => flat.includes(clause))) out.push(rel);
+    const flat = normalize(text);
+    if (clauses.some((clause) => flat.includes(clause))) out.push(rel);
   }
   return out;
 }

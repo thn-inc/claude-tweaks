@@ -34,23 +34,27 @@ const CLASS_PATTERNS = [
   [lit('The classifier is the build\'s plan review (the controller), never the reviewer.'), 'classifier is the controller'],
   [lit('Every other question is settled: among readings that keep every Acceptance Criterion and recorded decision intact, take the one closer to stated intent (the criterion-as-written reading when the row came from a criterion change).'), 'settled path'],
   [lit('When two readings keep every Acceptance Criterion and recorded decision intact and sit equally close to the stated intent (the record body and its design doc), take the one that changes fewer observable contracts.'), 'tie-break'],
+  [lit('A settled question is never asked in any posture (`auto`, `confirm`, `interactive`, `hybrid`).'), 'settled: never asked in any posture'],
 ];
 
 const DOUBT_PATTERNS = [
   [lit('Class (b) is bounded to the declared categories: the four built-ins (`migrations`, `auth`, `public-contract`, `irreversible-side-effect`) plus policy `risk-categories`.'), 'class (b) bounded to declared categories'],
   [lit('A question that does not plainly fall in one is settled, never asked.'), 'outside the categories: settled, never asked'],
+  [lit('Plainly means the question is about the category\'s own subject: a schema or data migration, who may authenticate or what an unauthenticated caller may reach, an interface outside callers depend on, or a side effect that cannot be reversed. Touching a file that such a subject also touches is not enough.'), 'plainly means the category\'s own subject'],
 ];
 
+// The paragraph pattern anchors on the paragraph's own opening words, just after the label, so
+// stripping one leaves the other, and another paragraph's `public-contract` cannot satisfy it.
 const BORDERLINE_PATTERNS = [
-  [/Doubt example:/, 'Doubt example: label'],
-  [/public-contract/, 'borderline category public-contract'],
-  [/so it is settled/, 'borderline row is settled'],
+  [/\*\*Doubt example:\*\*/, 'Doubt example: label'],
+  [/a question about whether a `decisions\.md` line says `skipped` or `not run`[^\n]*not plainly fall in `public-contract`, so it is settled\./, 'borderline row is settled, not public-contract'],
 ];
 
 const LINE_FORM_PATTERNS = [
   [lit('`Settled at planning: {finding} — chose {reading}; not {other reading}`'), 'Settled at planning form'],
   [lit('`Decided by the user at planning: {finding} — chose {reading}; not {other reading}`'), 'Decided by the user at planning form'],
   [lit('under an additive `## Planning Decisions` section that never edits an existing criterion\'s line'), 'additive ## Planning Decisions section'],
+  [lit('A row an answered round returns gets a `Decided by the user at planning:` line and is never asked again: its `{reading}` is the reading the user\'s recorded decision implies, and the line quotes that decision.'), 'answered round: Decided line, implied reading, never asked again'],
 ];
 
 const ASKING_ORDER_FACT = 'asking order: recommended reading first, then the other, then the stop option';
@@ -63,8 +67,8 @@ const RECOMMENDATION_PATTERNS = [
 ];
 
 const EXAMPLE_PATTERNS = [
-  [/\*\*Settled, #4265\.\*\*[^\n]*`error` string[^\n]*Reading A[^\n]*Reading B[^\n]*Reading A is closer to stated intent/, '#4265 settled with two readings and the chosen one'],
-  [/\*\*Settled, #4786\.\*\*[^\n]*one-sentence pointer[^\n]*Reading A[^\n]*Reading B[^\n]*Reading A changes fewer observable contracts/, '#4786 settled with two readings and the chosen one'],
+  [/\*\*Settled, #4265\.\*\*[^\n]*`error` string[^\n]*Reading A[^\n]*Reading B[^\n]*Neither falls in a category the record flags, and the `releaseFailed` string is read only by the plugin's own skills, so it does not plainly fall in `public-contract`\.[^\n]*Reading A is closer to stated intent/, '#4265 settled: two readings, both category checks, the chosen one'],
+  [/\*\*Settled, #4786\.\*\*[^\n]*does not say which of them carries the one-sentence pointer[^\n]*Reading A[^\n]*Reading B: `plugin\/skills\/dispatch\/task-prompt\.md`[^\n]*Neither falls in a category the record flags, and a pointer sentence is no interface an outside caller depends on, so it does not plainly fall in `public-contract`\.[^\n]*Reading A changes fewer observable contracts[^\n]*chose docs\/hooks\.md; not plugin\/skills\/dispatch\/task-prompt\.md`/, '#4786 settled: two readings, both category checks, the chosen one in full'],
   [/\*\*Asked, migration\.\*\*[^\n]*drops the old column in this release or the next[^\n]*class \(b\), `migrations`/, 'migration question asked as class (b)'],
   [/\*\*Asked, auth\.\*\*[^\n]*unauthenticated caller may read a run's decisions[^\n]*class \(b\), `auth`/, 'auth question asked as class (b)'],
 ];
@@ -111,6 +115,9 @@ test('control: classStatementSites flags a second file stating a class clause, w
   for (const clause of CLASS_CLAUSES.slice(1)) {
     assert.deepEqual(classStatementSites(new Map([[stray, clause]])), [stray], `clause not detected: ${clause}`);
   }
+  const lower = 'Plan review stops when no reading keeps every Acceptance Criterion and recorded decision intact.';
+  assert.ok(!lower.includes(CLASS_CLAUSES[2]), 'the lowercase control must not hold the clause verbatim');
+  assert.deepEqual(classStatementSites(new Map([[stray, lower]])), [stray], 'a lowercase restatement was not detected');
 });
 
 test('AC8.1: the doubt rule bounds class (b) to the declared categories and settles the rest', () => {
@@ -154,4 +161,17 @@ test('worked examples: #4265 and #4786 settled, a migration and an auth question
   const region = section('## Worked examples');
   assertFacts(region, EXAMPLE_PATTERNS, 'worked examples');
   assertEachPatternGoesRed(region, EXAMPLE_PATTERNS, missingFactsOf(EXAMPLE_PATTERNS));
+});
+
+test('control: each settled example goes red when only its unflagged-category check is removed', () => {
+  const region = section('## Worked examples');
+  const checks = [
+    [", and the `releaseFailed` string is read only by the plugin's own skills, so it does not plainly fall in `public-contract`", EXAMPLE_PATTERNS[0][1]],
+    [', and a pointer sentence is no interface an outside caller depends on, so it does not plainly fall in `public-contract`', EXAMPLE_PATTERNS[1][1]],
+  ];
+  for (const [clause, fact] of checks) {
+    const doctored = region.replace(clause, '');
+    assert.notEqual(doctored, region, `clause not found: ${clause}`);
+    assert.deepEqual(missingFactsOf(EXAMPLE_PATTERNS)(doctored), [fact]);
+  }
 });
