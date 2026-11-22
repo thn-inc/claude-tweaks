@@ -603,6 +603,10 @@ function readChanges(base, head, deps) {
 // The console's low-confidence items (none without a run dir), then the settled planning lines of the
 // covered record's spec: its materialized spec in the run dir, else the --spec file. Null only when
 // nothing was listed and the console was not read, so a gather with nothing new stays byte-identical.
+// The run-dir read takes every header location run-header.js resolves (flat or spec-{n}/work, live or
+// archived), so a gather after wrap-up's archive still finds the spec. The --spec fallback covers the
+// packet's own record only: in worktree mode the run dir under $RUN_ROOT holds no work/ until merge,
+// and --spec names the worktree copy of that same record's spec.
 function readLowConfidence(runDir, deps, notes, { record, spec }) {
   let consoleItems = { items: [], findings: [], decisions: '' };
   let consoleRead = false;
@@ -629,6 +633,7 @@ function readLowConfidence(runDir, deps, notes, { record, spec }) {
   try {
     entries = lowConfidenceFindings(consoleItems, readStaged, { records: [record], readSpec });
   } catch {
+    // The console catch above may already have pushed this note; a packet states it once.
     if (!notes.includes(FINDINGS_NOT_READ)) notes.push(FINDINGS_NOT_READ);
     return null;
   }

@@ -407,6 +407,28 @@ test('gather falls back to --spec for the record\'s own spec', (t) => {
   assert.equal(factOf(facts, 'finding:1').text, SETTLED_ONE);
 });
 
+test('gather reads a spec in the multi-spec spec-{n}/work layout', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'spec-7', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('gather reads the archived run dir\'s spec when the live run dir has none', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1', 'work', '7-spec.md'), specWithSettled);
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'finding'), ['finding:1', 'finding:2']);
+});
+
+test('the run dir\'s spec wins over --spec when both carry settled lines', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'work', '7-spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);
+  const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_TWO}\n`);
+  const { facts } = gather(ws, ['--run', ws.runDir, '--spec', spec]);
+  assert.deepEqual(facts.facts.filter((f) => f.kind === 'finding').map((f) => f.text), [SETTLED_ONE]);
+});
+
 test('gather with no run dir reads --spec', (t) => {
   const ws = workspace(t);
   const spec = writeText(ws.file('spec.md'), `${PLANNING}\n${SETTLED_ONE}\n`);

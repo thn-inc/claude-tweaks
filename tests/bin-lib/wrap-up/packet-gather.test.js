@@ -1400,6 +1400,11 @@ test('only column-0 lines, bare or behind "- ", count', () => {
   assert.deepEqual(settledPlanningLines(spec), [SETTLED_A]);
 });
 
+test('a CRLF spec lists the same settled lines', () => {
+  const lf = `## Overview\n\n${PD}\n\n${SETTLED_A}\n- ${SETTLED_B}\n`;
+  assert.deepEqual(settledPlanningLines(lf.replace(/\n/g, '\r\n')), [SETTLED_A, SETTLED_B]);
+});
+
 test('null spec yields nothing', () => {
   assert.deepEqual(settledPlanningLines(null), []);
 });
