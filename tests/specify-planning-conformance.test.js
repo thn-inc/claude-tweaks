@@ -140,6 +140,37 @@ test('Deliverable 5: the no-ref outcome keeps the decisions and writes no Plan: 
   ], 'no-ref');
 });
 
+test('Review finding 1: residual checkE/checkF items go to the reviewer, and an audit with no JSON line fails planning', () => {
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('or an audit that prints no JSON line, means planning failed'),
+    f('`checkE` and `checkF` always report `ok: true`'),
+    f('pass them to the reviewer in step 5 and name them in the Actions Performed Detail'),
+  ], 'audit residue');
+});
+
+test('Review finding 3: the lane path and the planning-failed path remove an existing Plan: line', () => {
+  pinned(sectionOf(planning(), '## Which records are planned'), [
+    f('any `Plan:` line already in `{body}` is removed before the write, whether or not the composition kept it'),
+  ], 'lane path removes Plan:');
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('write no `Plan:` line and remove any `Plan:` line already in `{body}`'),
+  ], 'failed path removes Plan:');
+});
+
+test('Review finding 4: the fallback rules are pinned', () => {
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('drop this pass\'s settled and decided lines'),
+    f('and let the record be written as it would be under `off`'),
+    f('A planning failure never fails the record and never stops a batch.'),
+    f('Any other non-zero exit takes the same fallback.'),
+  ], 'planning failed and store fallback');
+  pinned(sectionOf(planning(), '## Planner prompt'), [
+    f('`NEEDS_CONTEXT` re-dispatches once with the context it names.'),
+    f('`BLOCKED`, no status line, no `PLAN:` line, or a `PLAN:` path outside `{checkout}`, after that one re-dispatch, means planning failed.'),
+    f('followed by the decisions table (finding, class, decision) when routing produced one, and, when step 4 sent one, the audit\'s JSON line.'),
+  ], 'reply rules and amend table');
+});
+
 test('the planner is a Standard, clean-room dispatch that stops writing-plans before its Execution Handoff', () => {
   pinned(fenceAfter(planning(), '## Planner prompt'), [
     f('[Use: Standard]'),
