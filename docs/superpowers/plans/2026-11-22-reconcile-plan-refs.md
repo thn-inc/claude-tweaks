@@ -15,7 +15,8 @@
 - Only refs matching `^refs/claude-tweaks/plans/[0-9]+$` on `origin` are considered; the prefix and parser come from `plugin/bin/lib/plan-store/ref.js` (`PLAN_REF_PREFIX`, `parsePlanRefName`, `DEFAULT_REMOTE`) — never re-typed.
 - A record is closed only on a positive match: its issue `state` reads `CLOSED` from one aliased GraphQL batch (pattern: `plugin/bin/lib/reconcile/pr-state-batch.js`). Open, a null alias, a NOT_FOUND (deleted/transferred) issue and a partial or poisoned response all keep the ref.
 - One `git push` per ref: `git push --force-with-lease=<ref>:<sha> origin :<ref>` (probed 2026-11-22: a stale lease is rejected `(stale info)` and the ref survives; the observed sha deletes).
-- Skipped with a reported reason under `work-backend: local-files`; `no-remote` and `gh`-absent are already reported for the whole pass by `reconcile()`'s own gates (`no-remote`, `preflight-gh-absent`) — the check runs only past them.
+- Skipped with a reported reason under `work-backend: local-files`; `no-remote` is already reported for the whole pass by `reconcile()`'s own gate, and under pr-first so is `gh`-absent (`preflight-gh-absent`). Under `integration-model: local-merge` the check still runs (spec `## Plan Review Clarifications`), dispatched beside `reap`'s fallback before the local-merge early return; that path runs no gh preflight, so the check itself reports a `gh` spawn `ENOENT` as `failure: 'gh-absent'`.
+- Under `--dry-run` the planned deletions are the check's own `would-delete` entries in `result.planRefs`, rendered as their own summary row; nothing goes into `residuePlan` (spec `## Plan Review Clarifications`).
 - `ls-remote` failure aborts the check with a reported row (`failure: 'ls-remote-failed'`).
 - Under `--dry-run`: report planned deletions, push nothing.
 - Never throws: every failure is a reported entry or `failure` string (never-break-a-session).
@@ -33,6 +34,9 @@
 
 ### Task 1: The `plan-refs` check module
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/reconcile/plan-refs.js`
 - Test: `tests/bin-lib/reconcile/plan-refs.test.js`
@@ -45,7 +49,7 @@
   - `buildIssueStateQuery(records: number[]) -> string` — pure; aliases `i{index}: issue(number:{n}){ number state }` under `repository(owner:$owner,name:$name)`, variables typed `String!`; a non-positive-integer record is omitted.
   - `parseIssueStateResponse(stdout: string, records: number[]) -> Map<number, 'OPEN'|'CLOSED'>` — pure; only proven answers present.
   - `decidePlanRef({ record: number, state: 'OPEN'|'CLOSED'|undefined }) -> { action: 'delete'|'skip', reason: 'record-closed'|'record-open'|'state-unreadable' }` — pure.
-  - `planRefs({ cwd, dryRun, git, gh, readBackend } = {}) -> { entries: Array<{ ref, record, action: 'delete'|'would-delete'|'skip', reason, detail? }>, failure: string|null }` — never throws. `git(args) -> stdout` and `gh(args) -> stdout` are injectable runners that throw on non-zero exit (the error may carry `.stdout`/`.stderr`); defaults run `git -C root …` / `gh …` via `execFileSyncTimed` with `windowsHide: true`. `readBackend(root)` defaults to `readWorkBackend`.
+  - `planRefs({ cwd, dryRun, git, gh, readBackend } = {}) -> { entries: Array<{ ref, record, action: 'delete'|'would-delete'|'skip', reason, detail? }>, failure: string|null }` — never throws. `git(args) -> stdout` and `gh(args) -> stdout` are injectable runners that throw on non-zero exit (the error may carry `.stdout`/`.stderr`); defaults run `git -C root …` / `gh …` via `execFileSyncTimed` with `windowsHide: true`. `readBackend(root)` defaults to `readWorkBackend`. `failure` values: `local-files-backend`, `ls-remote-failed`, `origin-unresolvable`, `gh-absent` (a gh runner throw whose `code` is `'ENOENT'`), `unexpected-error`.
 
 - [ ] **Step 1: Write the failing tests (AC1.1, AC2.1, AC3.1, AC5.1, AC5.2, AC5.3)** in `tests/bin-lib/reconcile/plan-refs.test.js`, every runner a fake (no network, no real remote). Required tests and assertions:
   - `listPlanRefs: keeps exact-integer refs only` — input lines `aaa\trefs/claude-tweaks/plans/12`, `bbb\trefs/claude-tweaks/plans/0`, `ccc\trefs/claude-tweaks/plans/007`, `ddd\trefs/claude-tweaks/plans/12abc`, `eee\trefs/claude-tweaks/plans/5/x`, `fff\trefs/claude-tweaks/plans/3^{}`, `ggg\trefs/heads/main`, a CRLF line `hhh\trefs/claude-tweaks/plans/4\r`, blank lines → `[{ref:'refs/claude-tweaks/plans/4', record:4, sha:'hhh'}, {ref:'refs/claude-tweaks/plans/12', record:12, sha:'aaa'}]`.
@@ -64,13 +68,14 @@
   - `planRefs: no plan refs makes no gh call` — empty ls-remote → `{entries: [], failure: null}`, gh never called.
   - `planRefs: an origin that does not parse is a reported failure` — the git fake returns `not a url` for `remote get-url origin` → `failure: 'origin-unresolvable'`, no push.
   - `planRefs: an unexpected throw is a reported failure` — `readBackend` throws → `failure: 'unexpected-error'`, never throws.
+  - `planRefs: an absent gh is a reported failure` — ref 1 listed, the gh fake throws an error with `code: 'ENOENT'` → `{entries: [], failure: 'gh-absent'}`, zero push calls.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/bin-lib/reconcile/plan-refs.test.js`
 Expected: FAIL with `Cannot find module '../../../plugin/bin/lib/reconcile/plan-refs'`
 
-- [ ] **Step 3: Implement `plugin/bin/lib/reconcile/plan-refs.js`** with the Interfaces above. Header comment in the family's style naming #6055, the evidence bar and the lease. Order inside `planRefs`: backend gate → `git ls-remote origin 'refs/claude-tweaks/plans/*'` (built from `PLAN_REF_PREFIX` + `*`, remote `DEFAULT_REMOTE`) → nothing listed ends → `git remote get-url origin` + `parseRepo` (unparseable → `origin-unresolvable`) → state batch, `gh api graphql --hostname {host} -f owner={owner} -f name={repo} -f query={…}` per 50-record chunk (`-f`, never `-F`), a throw's `.stdout` parsed like success → per ref `decidePlanRef` → `dryRun` turns `delete` into `would-delete` with no push → otherwise one push per ref, a throw → `skip/delete-failed` with `detail` = first stderr line. The state read is the batch made in this same call, immediately before the pushes.
+- [ ] **Step 3: Implement `plugin/bin/lib/reconcile/plan-refs.js`** with the Interfaces above. Header comment in the family's style naming #6055, the evidence bar and the lease. Order inside `planRefs`: backend gate → `git ls-remote origin 'refs/claude-tweaks/plans/*'` (built from `PLAN_REF_PREFIX` + `*`, remote `DEFAULT_REMOTE`) → nothing listed ends → `git remote get-url origin` + `parseRepo` (unparseable → `origin-unresolvable`) → state batch, `gh api graphql --hostname {host} -f owner={owner} -f name={repo} -f query={…}` per 50-record chunk (`-f`, never `-F`), a throw's `.stdout` parsed like success, but a throw whose `code` is `'ENOENT'` ends the check with `failure: 'gh-absent'` before any push → per ref `decidePlanRef` → `dryRun` turns `delete` into `would-delete` with no push → otherwise one push per ref, a throw → `skip/delete-failed` with `detail` = first stderr line. The state read is the batch made in this same call, immediately before the pushes.
 
 Source-scan forms (they fail the suite, not review): the default `gh` runner spawns `execFileSyncTimed('gh', args, ghOptions(args, { cwd: root, encoding: 'utf8', timeout, windowsHide: true }))` (`tests/gh-host-seam-conformance.test.js`); every spawn passes `windowsHide: true` (`tests/windows-hide-spawn-conformance.test.js`); the `ls-remote` argv line carries `// git-path-read: not a path list (ref names)` as `plugin/bin/lib/plan-store/git.js` does (`tests/git-path-read-conformance.test.js`); argv arrays only, never a shell string.
 
@@ -98,7 +103,7 @@ git commit -m "Add plan-refs reconcile check — delete a closed record's plan r
 ### Task 2: Register `plan-refs` in reconcile and document it
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/index.js` (require; `ALL_CHECKS`; result literal `planRefs: null`; local-merge skip string; `DISPATCH_ORDER` between `ledger-residue` and `reap`; dispatch block; the `-> {…}` result-shape comment; ordering comment above `ALL_CHECKS`)
+- Modify: `plugin/bin/lib/reconcile/index.js` (require; `ALL_CHECKS`; result literal `planRefs: null`; the local-merge fallback block and its comment; `DISPATCH_ORDER` between `ledger-residue` and `reap`; dispatch block; the `-> {…}` result-shape comment; ordering comment above `ALL_CHECKS`)
 - Modify: `plugin/bin/hooks.js` (`BACKGROUND_CHECKS`, `CLI_DEFERRED_CHECKS`, the `reconcile-threw` fallback literal gains `planRefs: null`)
 - Modify: `plugin/bin/lib/reconcile/format-summary.js` (`CATEGORIES`)
 - Modify: `plugin/skills/tidy/scan-procedures.md` (the Reconcile-first `--checks` list)
@@ -108,7 +113,7 @@ git commit -m "Add plan-refs reconcile check — delete a closed record's plan r
 
 **Interfaces:**
 - Consumes: Task 1's `planRefs({ cwd, dryRun }) -> { entries, failure }`.
-- Produces: `reconcile()` result key `planRefs: null | Array<entry>`; check name `'plan-refs'` in `ALL_CHECKS`, `DISPATCH_ORDER`, `BACKGROUND_CHECKS`, `CLI_DEFERRED_CHECKS`; local-merge skip string becomes `'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,plan-refs,console'`. No `PREREQUISITES` entry (the check lists `origin` itself and reads no state another check produces).
+- Produces: `reconcile()` result key `planRefs: null | Array<entry>`; check name `'plan-refs'` in `ALL_CHECKS`, `DISPATCH_ORDER`, `BACKGROUND_CHECKS`, `CLI_DEFERRED_CHECKS`; under local-merge `plan-refs` runs as a fallback (as `reap` does), so the local-merge skip string stays exactly `'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console'` — `plan-refs` is never added to it. No `PREREQUISITES` entry (the check lists `origin` itself and reads no state another check produces).
 
 Waived AC4.1: the whole suite is /build Common Step 5's verification run over the finished branch, not a per-task step.
 
@@ -116,17 +121,18 @@ Waived AC4.1: the whole suite is /build Common Step 5's verification run over th
   - `index: plan-refs is registered on the background tier, deferred from the unscoped CLI, dispatched between ledger-residue and reap` — `ALL_CHECKS.includes('plan-refs')`; `require('…/plugin/bin/hooks.js').BACKGROUND_CHECKS` and `.CLI_DEFERRED_CHECKS` include it (export `CLI_DEFERRED_CHECKS` from `hooks.js` if not already exported); in `index.js`'s source, `checks.includes('plan-refs')` sits after `checks.includes('ledger-residue')` and before `checks.includes('reap')`.
   - `index: requesting plan-refs under pr-first sets result.planRefs to an array; not requesting it leaves null` — same fixture shape as `ledger-residue.test.js`'s `index: requesting ledger-residue under pr-first…` test (a local bare origin, stubbed preflight), `checks: ['plan-refs']`.
   - `index: a plan-refs failure lands in skipped` — with `CLAUDE.md` declaring `work-backend: local-files` in the fixture, `skipped` contains `{ check: 'plan-refs', reason: 'local-files-backend' }`.
-  - `formatSummary renders plan-refs taken, planned and skipped lines` — `{ planRefs: [{action:'delete'}, {action:'would-delete'}, {action:'skip', reason:'record-open'}] }` → output contains `1 plan ref deleted`, `1 plan ref to delete (dry run)` and a skip line counting `record-open`.
+  - `index: under local-merge plan-refs still runs and stays out of the local-merge skip string` — same fixture, `resolveIntegrationModel: () => 'local-merge'`, `checks: ['plan-refs']` → `Array.isArray(result.planRefs)`; the `skipped` entry whose `reason` is `'local-merge-model'` has `check === 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console'`. And with `checks: ['reap']` under the same stub, `result.planRefs === null` (not requested, not run).
+  - `formatSummary renders plan-refs taken, planned and skipped lines` — `{ planRefs: [{action:'delete'}, {action:'would-delete'}, {action:'skip', reason:'record-open'}] }` → output contains `deleted: 1 plan ref`, `to delete (dry run): 1 plan ref` (the `${verb}: ${n} ${unit}` row shape, `format-summary.js`'s CATEGORIES loop) and a skip line counting `record-open`.
   - `hooks.js reconcile-threw fallback carries planRefs` — `hooks.js` source's fallback literal contains `planRefs: null`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/bin-lib/reconcile/plan-refs.test.js`
-Expected: FAIL — the five new tests fail (`plan-refs` not in `ALL_CHECKS`)
+Expected: FAIL — the six new tests fail (`plan-refs` not in `ALL_CHECKS`)
 
-- [ ] **Step 3: Register the check.** In `index.js`: dispatch block after `ledger-residue`'s, guarded by its own `overBudget(DISPATCH_ORDER.slice(9))` (reap's guard becomes `slice(10)`), `timePhaseSync('plan-refs', () => planRefs({ cwd: root, dryRun }))`, a `failure` → `result.skipped.push({ check: 'plan-refs', reason: r.failure })`, else `result.planRefs = r.entries`. `format-summary.js` rows: `{ key: 'planRefs', unit: 'plan ref', verb: 'deleted', takenActions: ['delete'], skipActions: ['skip'] }` and `{ key: 'planRefs', unit: 'plan ref', verb: 'to delete (dry run)', takenActions: ['would-delete'], skipActions: [] }`. Then update the shape tests' literals listed under Files so the full set matches the new check order.
+- [ ] **Step 3: Register the check.** In `index.js`: dispatch block after `ledger-residue`'s, guarded by its own `overBudget(DISPATCH_ORDER.slice(9))` (reap's guard becomes `slice(10)`), `timePhaseSync('plan-refs', () => planRefs({ cwd: root, dryRun }))`, a `failure` → `result.skipped.push({ check: 'plan-refs', reason: r.failure })`, else `result.planRefs = r.entries`. In the `model !== 'pr-first'` branch, after `reap`'s legacy fallback and before the `local-merge-model` skip push, the same `if (checks.includes('plan-refs'))` block runs (same failure/entries handling); extend that branch's comment to name `plan-refs` beside `reap` as the two checks with a local-merge path, and leave the skip string unchanged. `format-summary.js` rows: `{ key: 'planRefs', unit: 'plan ref', verb: 'deleted', takenActions: ['delete'], skipActions: ['skip'] }` and `{ key: 'planRefs', unit: 'plan ref', verb: 'to delete (dry run)', takenActions: ['would-delete'], skipActions: [] }`. Then update the shape tests' literals listed under Files so the full set matches the new check order.
 
-- [ ] **Step 4: Document it.** `docs/reconcile-checks.md`: add `plan-refs` to the dispatch-order arrow list (between `ledger-residue` and `reap`), the `BACKGROUND_CHECKS` list, the CLI-deferred mention, the gh-absent preflight example lists (lines ~459/462), and a new `## Plan refs (#6055)` section stating the evidence bar, the lease, the skip reasons (`local-files-backend`, `ls-remote-failed`, `origin-unresolvable`, `unexpected-error`; per-entry `record-open`, `state-unreadable`, `delete-failed`) and dry-run's `would-delete`; `docs/hooks.md`'s Background convergence bullet: add "closed-record plan-ref deletion" to both check lists; `docs/plugin-structure.md`'s `plugin/bin/lib/reconcile/` inventory line: one clause for `plan-refs.js`; `plugin/skills/tidy/scan-procedures.md`: add `plan-refs` to its explicit `--checks` list in `ALL_CHECKS` order (`…,ledger-residue,plan-refs,console`) — and nothing else in that file: it is 52,480 B against the 52,500 B `RAIL_BYTES` rail (measured on the merge base), so the 10-byte `,plan-refs` insertion leaves 10 B of headroom; any further wording there must be paid for by a cut in the same file. In `ALL_CHECKS` itself, insert `'plan-refs'` after `'ledger-residue'`.
+- [ ] **Step 4: Document it.** `docs/reconcile-checks.md`: add `plan-refs` to the dispatch-order arrow list (between `ledger-residue` and `reap`), the `BACKGROUND_CHECKS` list, the CLI-deferred mention, the gh-absent preflight example lists (lines ~459/462), and a new `## Plan refs (#6055)` section stating the evidence bar, the lease, the skip reasons (`local-files-backend`, `ls-remote-failed`, `origin-unresolvable`, `gh-absent`, `unexpected-error`; per-entry `record-open`, `state-unreadable`, `delete-failed`), dry-run's `would-delete`, and that it runs under local-merge too (a fallback beside `reap`'s) — and wherever that file says only `reap` has a local-merge path, name `plan-refs` too; `docs/hooks.md`'s Background convergence bullet: add "closed-record plan-ref deletion" to both check lists; `docs/plugin-structure.md`'s `plugin/bin/lib/reconcile/` inventory line: one clause for `plan-refs.js`; `plugin/skills/tidy/scan-procedures.md`: add `plan-refs` to its explicit `--checks` list in `ALL_CHECKS` order (`…,ledger-residue,plan-refs,console`) — and nothing else in that file: it is 52,480 B against the 52,500 B `RAIL_BYTES` rail (measured on the merge base), so the 10-byte `,plan-refs` insertion leaves 10 B of headroom; any further wording there must be paid for by a cut in the same file. In `ALL_CHECKS` itself, insert `'plan-refs'` after `'ledger-residue'`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
