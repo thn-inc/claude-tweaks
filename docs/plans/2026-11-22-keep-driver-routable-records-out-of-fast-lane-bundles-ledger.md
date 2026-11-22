@@ -5,3 +5,4 @@
 | 1 | ops | Pre-flight branch-divergence check: origin/main was 1 commit ahead of the worktree branch | fixed | Caught up by the post-creation merge commit c97e652673 |
 | 2 | build | SDD ruling — T3 discrimination revert-and-restore done by the implementer in its own worktree, not a reviewer: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build | SDD ruling — queue-order cache stamp ignores driver settings, deferred (needs-human-decision): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
+| 4 | build/skill | Governing skills checked (shared-contract-extraction, dispatch-queue-exclusion-addition, blocker-surface-parity): no divergence; the build adds a lazy-require pattern for driver modules in a dispatch-path module, already stated in the module comment | observation | observation only; no skill update proposed |
