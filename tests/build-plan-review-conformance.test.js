@@ -478,6 +478,22 @@ test('fix wave: a failed or empty policy read in step 1 logs one SKIP', () => {
   ]);
 });
 
+// Targeted fix: a failed answered-round add never asks the row again, and answered-round rows
+// ride a blocking branch's early commit as settled rows.
+test('targeted fix: a failed step-2 add writes no Proof line, asks nothing and logs its own SKIP', () => {
+  assertFacts(subText(), [
+    'A failed `add` here writes no `Proof` line and asks nothing',
+    'decision-text-{run-id}-planning-answered-flag-{k}.md',
+    'condition: risk-flags.js add exited {code} ({stderr line}) on an answered row → fallback: answered row settled without the flag',
+  ]);
+});
+
+test('targeted fix: answered-round rows count as settled rows for a blocking branch\'s early commit', () => {
+  assertFacts(subText(), [
+    'Answered-round rows (step 2) count as settled rows for this early commit: their `Decided by the user at planning:` lines and any step-2 flag edit with its `Proof` line ride it.',
+  ]);
+});
+
 test('AC5.1: the sub-file cites the shared rule rather than restating the classes', () => {
   const text = readText(SUB_PATH);
   assert.ok(text.includes('_shared/planning-decisions.md'), 'the sub-file must cite _shared/planning-decisions.md');
