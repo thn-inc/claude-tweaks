@@ -1,6 +1,6 @@
 # The plan is made with the spec — design
 
-Date: 2026-11-21. Status: draft for approval. Phase 12 of `2026-11-18-pipeline-economy-design.md`.
+Date: 2026-11-21. Status: approved by the maintainer on 2026-11-22. Phase 12 of `2026-11-18-pipeline-economy-design.md`.
 
 ## Why
 
