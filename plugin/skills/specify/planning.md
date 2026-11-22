@@ -172,7 +172,7 @@ The block is the contract a later reader parses (#6059); `tests/specify-planning
 - Each held question is one `- Question: ` line followed by exactly two `  Option: ` lines, the recommended reading first, and one `  Recommended: ` line, in the order the questions would have been asked.
 - Every value is one line: a newline inside reviewer text becomes a space. Values quote the body, the plan and the finding with repo-relative paths, never a local absolute path.
 
-**Re-running.** `/claude-tweaks:specify #{n}` re-shapes a held record: `shaping-mode-stamping.md`'s `needs:*` bullet resolves the hold comment and removes the label, and the held questions are asked again unless a `**Decision**` paragraph on the body now answers them (`_shared/planning-decisions.md`'s `## Line forms` answered round).
+**Re-running.** A held record carrying `needs:decision` is answered through `planning-answer.md`, routed from `SKILL.md`'s case 1: it asks the held questions, amends the stored plan and stamps `ready`, without re-shaping. Only a hold whose `needs:decision` label was removed by hand, or whose comment case 1 reads as no usable planning hold, reaches shaping and the held re-review (`## Which records are planned`): `/claude-tweaks:specify #{n}` re-shapes it, `shaping-mode-stamping.md`'s `needs:*` bullet resolves any live hold comment and label, and the held questions are asked again unless a `**Decision**` paragraph on the body now answers them (`_shared/planning-decisions.md`'s `## Line forms` answered round).
 
 ## Batches
 
