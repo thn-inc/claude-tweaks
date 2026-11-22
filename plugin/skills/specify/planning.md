@@ -37,7 +37,7 @@ Run at the point `shaping-mode-stamping.md`'s Compose-then-write-once names: aft
 4. **Audit.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" "{plan}" --spec "{body}" --repo-root "{checkout}"`. When it exits non-zero, or its `checkE.uncovered` or `checkF.unlisted` is non-empty, re-dispatch the planner once with the Amend prompt, passing the audit's JSON line as its findings, and run the audit again; a check whose `ok` is still `false`, or an audit that prints no JSON line, means planning failed. `checkE` and `checkF` always report `ok: true`, so `checkE.uncovered` or `checkF.unlisted` items that survive the re-dispatch do not fail planning: pass them to the reviewer in step 5 and name them in the Actions Performed Detail.
 5. **Reviewer.** Dispatch one reviewer on the Capable profile (`## Reviewer dispatch`).
 6. **Route.** Route its reply (`## Routing`).
-7. **Amend.** When routing produced plan amendments, settled lines, decided lines or flag additions, re-dispatch the planner with the Amend prompt, the decisions table and `{plan}`; it returns the path. Run step 4's audit once more; a failing check here means planning failed.
+7. **Amend.** When routing produced plan amendments, settled lines, decided lines or flag additions, re-dispatch the planner with the Amend prompt, the decisions table and `{plan}`; it returns the path. Run step 4's audit once more; a failing check, or an audit that prints no JSON line, here means planning failed, and residual `checkE.uncovered` or `checkF.unlisted` items join the Actions Performed Detail.
 8. **Store.** From this session's working directory, run `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" write --record {n} --plan-file "{plan}" --base {base} --spec-file "{body}"`. Exit 0 prints `{ref, commit, specHash, line}`: insert `line` verbatim as the last line of `{body}`'s metadata block, above its first `##` heading; `bin/plan-store.js` is the line's one writer, so never type or edit it. Exit 3 is the no-ref outcome: keep every decision line, write no `Plan:` line, and record why — the Detail reads `planned, no Plan: line: plan-store exit {code} ({first stderr line})`, and with a run dir one `SKIP`. Any other non-zero exit takes the same fallback.
 9. **Write.** Return to Compose-then-write-once: its pre-write shape check and its one write follow, with `## Hold`'s label changes for a held record.
 
@@ -77,3 +77,67 @@ End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH
 **Amend prompt.** The same dispatch and block, with steps 1-3 replaced by: `Amend the plan at {plan path} in place: apply every row of the decisions table below, add a Proof({slug}): line for each flag listed, then run every bold-paragraph check in {plugin-root}/skills/build/plan-authoring-checks.md again. Return the same path.`, followed by the decisions table (finding, class, decision) when routing produced one, and, when step 4 sent one, the audit's JSON line.
 
 **Reading the reply.** `NEEDS_CONTEXT` re-dispatches once with the context it names. `BLOCKED`, no status line, no `PLAN:` line, or a `PLAN:` path outside `{checkout}`, after that one re-dispatch, means planning failed.
+
+## Reviewer dispatch
+
+One reviewer on the Capable profile, dispatched as `build/plan-review.md`'s Dispatch section dispatches its own: the model from `resolve-profile.js capable` (with `--run-dir "{run-dir}"` when a run dir resolved), a fresh `general-purpose` agent, never `fork`, `isolation: "worktree"`, and no conversation history. The prompt is that file's Dispatch prompt with the differences `tests/specify-planning-conformance.test.js` names: the Spec is the composed body, the repository is the read-only checkout, the table carries a Recommended reading column, and an Audit residue line carries what step 4 left. Copy this block verbatim, substituting the `{…}` paths and `{effortLine}`; `{audit residue}` is filled from step 4's last audit JSON (its `checkE.uncovered` and `checkF.unlisted` items, or `none`):
+
+```
+[Use: Capable]
+{effortLine}
+
+Task: review one implementation plan against its spec, once, before any task is built. Read-only.
+
+Read:
+- Spec: {absolute path to the composed record body}
+- Plan: {absolute path to the plan file}
+- Audit residue: {the uncovered acceptance clauses and unlisted spec paths plan-audit.js still reports, one per line, or "none"} — treat each as a candidate finding.
+You may also read any file in the repository at {absolute path to the read-only checkout}, read-only, to check what the plan integrates with. Do not create, modify, or delete any file; run no test suite, build, or server; make no git or gh call that writes.
+
+Find five classes of problem, and only these:
+- spec gap — the spec does not decide something the plan must decide (a value, a rule, a precedence, what happens on failure).
+- undecided behaviour — an input class, failure mode, or UI state no task covers. If covering it needs a product decision the spec does not make, report it as a spec gap instead.
+- cross-task contract — one task produces something another consumes (a name, a shape, an order, a file, a flag) and the two disagree or the producer is missing, or a task disagrees with the spec about it.
+- missing-review-risk (#3378) — a task whose own text touches concurrency (locks, queues, async ordering, retries, transactions, shared mutable state), decision logic (branching on computed state such as permissions, eligibility, pricing, or ranking), or rendering-heavy UI (many states, layout, animation), but carries no `**Review risk:** high` line. Evidence names the signal: "touches {signal} without `Review risk: high`".
+- mischaracterized-role (#3378) — a task marked `**Role:** transcription` whose own plan text does not already contain the complete code to write (a signature-plus-tests task, or one left for the implementer to derive, is `integration`, not `transcription` — `build/plan-authoring-checks.md`'s Per-task role/review-risk markers paragraph). Evidence quotes the task's own Step 1/Step 3 text showing the gap.
+
+Do not repeat SDD's pre-flight conflict table. That scan runs later and already checks plan-internal contradictions — a task against the plan's Global Constraints, or a step the plan mandates that the review rubric forbids (example: Global Constraints say "no new dependencies" and Task 4 adds one). Your cross-task class is producer/consumer agreement between tasks, and each task against the spec (example: Task 2 returns `{ok, value}` and Task 5 reads `.result`).
+
+For every spec-gap row, set Resolution:
+- intent-resolvable — only when you can quote a spec sentence that settles it; put that sentence in Evidence. No quotable sentence means needs-human.
+- needs-human — whenever settling it would alter or loosen an existing Acceptance Criterion or an observable contract, or it has two defensible readings.
+Write "—" in Resolution on every other row.
+On a needs-human row, Suggested resolution names both defensible readings: "Reading A: … / Reading B: …" (for a criterion change, Reading A keeps the criterion as written).
+On a needs-human row, set Recommended reading to "Reading A" or "Reading B": the one that keeps every Acceptance Criterion and recorded decision and sits closer to the spec's stated intent, or "Reading A" when neither keeps them all. Write "—" in Recommended reading on every other row.
+
+OUTPUT FORMAT (required):
+Return ONLY a markdown table, no preamble:
+
+| Severity | Class | Resolution | Recommended reading | Path:Line | Finding | Evidence | Suggested resolution |
+|---|---|---|---|---|---|---|---|
+| high | spec gap | intent-resolvable | — | work/42-spec.md:31 | Retry count on a 429 is unset | Spec: "Retries follow the existing gh policy." | Add: "A 429 retries per _shared/github-rate-limit.md." |
+| medium | cross-task contract | — | — | docs/superpowers/plans/{plan}.md:120 | Task 2 returns `{ok, value}`; Task 5 reads `.result` | Task 2 Interfaces vs Task 5 Step 3 | Task 5 reads `.value` |
+
+Class: spec gap / undecided behaviour / cross-task contract / missing-review-risk / mischaracterized-role
+Severity scale: critical / high / medium / low / info
+If no findings: return literal text "No findings."
+Return at most 7 rows, needs-human rows first, then highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
+Do not add narration, headers, or summaries before or after the table.
+
+End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED}
+```
+
+**Reading the reply** follows `build/plan-review.md`'s Reading the reply for `NEEDS_CONTEXT`, an unusable reply, `No findings.`, a `+N more` row, and the rule that promotes a spec-gap row to needs-human, except that an unusable reply after the one re-dispatch means planning failed (`## Per-record step`) and every log line is this file's, never that file's `/build` entries. A table whose header lacks the Recommended reading column is unusable.
+
+## Routing
+
+Route every parsed row by its Class and Resolution, never on Severity:
+
+- **`low` and `info` rows** amend nothing; they are counted in the Detail and logged.
+- **Undecided behaviour, cross-task contract, missing-review-risk and mischaracterized-role rows** become plan amendments for step 7.
+- **An intent-resolvable spec-gap row** whose Evidence sentence appears verbatim in `{body}` adds one line under `## Planning Decisions` quoting that sentence, as `build/plan-review.md`'s intent-resolvable sequence writes its clarification line.
+- **Every needs-human row**, the reviewer's or one promoted, is classified against `_shared/planning-decisions.md`'s `## Asked classes` and `## Doubt rule`. The kept flags are `{body}`'s `Risk-flags:` line; the declared categories are read as `build/plan-review-asked-classes.md`'s Routing step 1 reads them. A row a recorded decision already answers takes `## Line forms`' answered-round rule: a `Decided by the user at planning:` line, never asked. A row outside the asked classes takes `## Settled path`: a `Settled at planning:` line, never asked, in every posture. A class (b) row whose category `{body}` does not flag first gets `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{body}" --add {slug}` and a `Proof({slug}):` amendment for step 7; a non-zero exit still asks the row. A row whose two readings cannot be written from its Suggested resolution and `{body}` is unclassifiable: it is asked, or held when headless.
+
+**Asking.** Headless means no human is reachable, as `shaping-mode-stamping.md`'s `### Risk flags` step 2 defines it: a headless run asks nothing and takes `## Hold` for every asked row. Otherwise render one batch table with columns `Record`, `Finding`, `Class`, `Recommended reading`, then ask per `_shared/planning-decisions.md`'s `## Asking`: one `AskUserQuestion` per question set, at most four questions per call, one call per message, each question's options the recommended reading first, labelled `(Recommended)`, then the other reading, then `Leave for later`. The recommended reading is the one `## Asking` names; the reviewer's Recommended reading cell is its input, never the verdict. Each question is asked once. An answer is written `Decided by the user at planning: {finding} — chose {reading}; not {other reading}`. `Leave for later` on any question, or a call that errors, times out or is auto-answered, takes `## Hold` for every question of that record not yet answered.
+
+**Writing the lines.** Every `Settled at planning:`, `Decided by the user at planning:` and intent-resolvable line goes under one `## Planning Decisions` section of `{body}`, placed as step 1 says; the section never edits an existing criterion's line. A planned record always carries the section: with no line to write, it holds the one line `No planning questions arose.`

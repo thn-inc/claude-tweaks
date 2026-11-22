@@ -210,3 +210,155 @@ test('the Execution Handoff override is pinned in the upstream-drift manifest', 
 test('planning.md never restates the asked classes', () => {
   assert.deepEqual(classStatementSites(new Map([[PLANNING_REL, planning()]])), []);
 });
+
+// The reviewer brief mirrors build/plan-review.md's Dispatch prompt (#6056 Gotchas): every shared
+// line is listed and pinned byte-equal, and every intentional difference is named with its reason.
+const REVIEW_PATH = path.join(ROOT, 'plugin', 'skills', 'build', 'plan-review.md');
+const BRIEF_DIFFERENCES = [
+  { why: 'the spec is the composed record body in a session-tmp file, not a materialized work/ file',
+    from: "- Spec: {absolute path to the worktree's work/{n}-spec.md}",
+    to: '- Spec: {absolute path to the composed record body}' },
+  { why: 'the repository the reviewer may read is the read-only checkout of origin/{integration-branch}',
+    from: 'You may also read any file in the repository at {absolute worktree root}, read-only, to check what the plan integrates with. Do not create, modify, or delete any file; run no test suite, build, or server; make no git or gh call that writes.',
+    to: 'You may also read any file in the repository at {absolute path to the read-only checkout}, read-only, to check what the plan integrates with. Do not create, modify, or delete any file; run no test suite, build, or server; make no git or gh call that writes.' },
+  { why: 'the table carries a Recommended reading column (spec Deliverable 2.5)',
+    from: '| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |',
+    to: '| Severity | Class | Resolution | Recommended reading | Path:Line | Finding | Evidence | Suggested resolution |' },
+  { why: 'the separator row gains the column', from: '|---|---|---|---|---|---|---|', to: '|---|---|---|---|---|---|---|---|' },
+  { why: 'example row 1 gains the column',
+    from: '| high | spec gap | intent-resolvable | work/42-spec.md:31 | Retry count on a 429 is unset | Spec: "Retries follow the existing gh policy." | Add: "A 429 retries per _shared/github-rate-limit.md." |',
+    to: '| high | spec gap | intent-resolvable | — | work/42-spec.md:31 | Retry count on a 429 is unset | Spec: "Retries follow the existing gh policy." | Add: "A 429 retries per _shared/github-rate-limit.md." |' },
+  { why: 'example row 2 gains the column',
+    from: '| medium | cross-task contract | — | docs/superpowers/plans/{plan}.md:120 | Task 2 returns `{ok, value}`; Task 5 reads `.result` | Task 2 Interfaces vs Task 5 Step 3 | Task 5 reads `.value` |',
+    to: '| medium | cross-task contract | — | — | docs/superpowers/plans/{plan}.md:120 | Task 2 returns `{ok, value}`; Task 5 reads `.result` | Task 2 Interfaces vs Task 5 Step 3 | Task 5 reads `.value` |' },
+];
+const BRIEF_INSERTIONS = [
+  { why: 'a needs-human row names the reading the reviewer recommends (spec Deliverable 2.5)',
+    after: 'On a needs-human row, Suggested resolution names both defensible readings: "Reading A: … / Reading B: …" (for a criterion change, Reading A keeps the criterion as written).',
+    line: 'On a needs-human row, set Recommended reading to "Reading A" or "Reading B": the one that keeps every Acceptance Criterion and recorded decision and sits closer to the spec\'s stated intent, or "Reading A" when neither keeps them all. Write "—" in Recommended reading on every other row.' },
+  { why: "step 4 passes plan-audit's surviving Check E/F items to the reviewer (planning.md Per-record step)",
+    after: '- Plan: {absolute path to the plan file}',
+    line: '- Audit residue: {the uncovered acceptance clauses and unlisted spec paths plan-audit.js still reports, one per line, or "none"} — treat each as a candidate finding.' },
+];
+// Every other non-blank line of plan-review.md's block, copied verbatim, in order.
+const BRIEF_SHARED_LINES = [
+  "[Use: Capable]",
+  "{effortLine}",
+  "Task: review one implementation plan against its spec, once, before any task is built. Read-only.",
+  "Read:",
+  "- Plan: {absolute path to the plan file}",
+  "Find five classes of problem, and only these:",
+  "- spec gap — the spec does not decide something the plan must decide (a value, a rule, a precedence, what happens on failure).",
+  "- undecided behaviour — an input class, failure mode, or UI state no task covers. If covering it needs a product decision the spec does not make, report it as a spec gap instead.",
+  "- cross-task contract — one task produces something another consumes (a name, a shape, an order, a file, a flag) and the two disagree or the producer is missing, or a task disagrees with the spec about it.",
+  "- missing-review-risk (#3378) — a task whose own text touches concurrency (locks, queues, async ordering, retries, transactions, shared mutable state), decision logic (branching on computed state such as permissions, eligibility, pricing, or ranking), or rendering-heavy UI (many states, layout, animation), but carries no `**Review risk:** high` line. Evidence names the signal: \"touches {signal} without `Review risk: high`\".",
+  "- mischaracterized-role (#3378) — a task marked `**Role:** transcription` whose own plan text does not already contain the complete code to write (a signature-plus-tests task, or one left for the implementer to derive, is `integration`, not `transcription` — `build/plan-authoring-checks.md`'s Per-task role/review-risk markers paragraph). Evidence quotes the task's own Step 1/Step 3 text showing the gap.",
+  "Do not repeat SDD's pre-flight conflict table. That scan runs later and already checks plan-internal contradictions — a task against the plan's Global Constraints, or a step the plan mandates that the review rubric forbids (example: Global Constraints say \"no new dependencies\" and Task 4 adds one). Your cross-task class is producer/consumer agreement between tasks, and each task against the spec (example: Task 2 returns `{ok, value}` and Task 5 reads `.result`).",
+  "For every spec-gap row, set Resolution:",
+  "- intent-resolvable — only when you can quote a spec sentence that settles it; put that sentence in Evidence. No quotable sentence means needs-human.",
+  "- needs-human — whenever settling it would alter or loosen an existing Acceptance Criterion or an observable contract, or it has two defensible readings.",
+  "Write \"—\" in Resolution on every other row.",
+  "On a needs-human row, Suggested resolution names both defensible readings: \"Reading A: … / Reading B: …\" (for a criterion change, Reading A keeps the criterion as written).",
+  "OUTPUT FORMAT (required):",
+  "Return ONLY a markdown table, no preamble:",
+  "Class: spec gap / undecided behaviour / cross-task contract / missing-review-risk / mischaracterized-role",
+  "Severity scale: critical / high / medium / low / info",
+  "If no findings: return literal text \"No findings.\"",
+  "Return at most 7 rows, needs-human rows first, then highest severity first; if more were found, append a final row reading \"+N more\" with the count in place of N — never omit this row when findings exceed the cap.",
+  "Do not add narration, headers, or summaries before or after the table.",
+  "End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED}",
+];
+
+// The first fenced block after the heading (as build-plan-review-conformance.test.js does).
+function dispatchBlock(text, heading) {
+  return fenceAfter(text, heading);
+}
+
+function toSpecifyBrief(reviewBlock) {
+  const swap = new Map(BRIEF_DIFFERENCES.map((d) => [d.from, d.to]));
+  const after = new Map(BRIEF_INSERTIONS.map((i) => [i.after, i.line]));
+  const out = [];
+  for (const l of reviewBlock.split('\n')) {
+    out.push(swap.has(l) ? swap.get(l) : l);
+    if (after.has(l)) out.push(after.get(l));
+  }
+  return out.join('\n');
+}
+
+function briefProblems(reviewBlock, planningBlock) {
+  const problems = [];
+  const froms = new Set(BRIEF_DIFFERENCES.map((d) => d.from));
+  const lines = (s) => s.split('\n');
+  const count = (s, line) => lines(s).filter((l) => l === line).length;
+  const shared = lines(reviewBlock).filter((l) => l.trim() && !froms.has(l));
+  if (JSON.stringify(shared) !== JSON.stringify(BRIEF_SHARED_LINES)) problems.push('shared list incomplete');
+  for (const l of BRIEF_SHARED_LINES) if (count(planningBlock, l) !== 1) problems.push(`shared line missing: ${l}`);
+  for (const d of BRIEF_DIFFERENCES) if (count(reviewBlock, d.from) !== 1) problems.push(`difference not applied: ${d.from}`);
+  if (toSpecifyBrief(reviewBlock) !== planningBlock) problems.push('brief drifted');
+  return problems;
+}
+
+const reviewBlock = () => dispatchBlock(readText(REVIEW_PATH), '## Dispatch prompt');
+const planningBrief = () => dispatchBlock(planning(), '## Reviewer dispatch');
+
+test('the reviewer brief equals plan-review.md\'s Dispatch prompt with only the named differences', () => {
+  assert.deepEqual(briefProblems(reviewBlock(), planningBrief()), []);
+  for (const d of [...BRIEF_DIFFERENCES, ...BRIEF_INSERTIONS]) assert.ok(d.why && d.why.trim(), 'difference without a why');
+});
+
+test('go-red: a shared line edited in planning.md only is reported', () => {
+  const mutated = planningBrief().replace('Find five classes of problem, and only these:', 'Find six classes of problem, and only these:');
+  assert.notEqual(mutated, planningBrief());
+  const problems = briefProblems(reviewBlock(), mutated);
+  assert.ok(problems.includes('shared line missing: Find five classes of problem, and only these:'), problems.join(' | '));
+  assert.ok(problems.includes('brief drifted'));
+});
+
+test('go-red: an unnamed difference is reported', () => {
+  const mutated = planningBrief().replace(/^Severity scale:.*$/m, (m) => `${m}x`);
+  assert.notEqual(mutated, planningBrief());
+  assert.ok(briefProblems(reviewBlock(), mutated).includes('brief drifted'));
+});
+
+test('the reviewer is dispatched as plan-review.md dispatches it', () => {
+  pinned(sectionOf(planning(), '## Reviewer dispatch'), [
+    f('`isolation: "worktree"`'),
+    f('never `fork`'),
+    f('`resolve-profile.js capable`'),
+    f('A table whose header lacks the Recommended reading column is unusable.'),
+    f('`{audit residue}` is filled from step 4\'s last audit JSON'),
+  ], 'reviewer dispatch');
+});
+
+test('AC2.2 + AC3.1 + AC4.1: routing settles detail rows silently, asks each asked row once, and asks nothing headless', () => {
+  pinned(sectionOf(planning(), '## Routing'), [
+    f('a `Settled at planning:` line, never asked, in every posture'),
+    f('Each question is asked once.'),
+    f('the recommended reading first, labelled `(Recommended)`, then the other reading, then `Leave for later`'),
+    f('at most four questions per call, one call per message'),
+    f('columns `Record`, `Finding`, `Class`, `Recommended reading`'),
+    f('it is asked, or held when headless'),
+    f('as `shaping-mode-stamping.md`\'s `### Risk flags` step 2 defines it'),
+    f('a headless run asks nothing and takes `## Hold` for every asked row'),
+    f('risk-flags.js" add --body-file "{body}" --add {slug}'),
+  ], 'routing');
+});
+
+test('AC2.1: a planned record always carries ## Planning Decisions', () => {
+  pinned(sectionOf(planning(), '## Routing'), [
+    f('A planned record always carries the section'),
+    f('`No planning questions arose.`'),
+  ], 'planning decisions section');
+});
+
+test('the reviewer and planner fences are self-contained', () => {
+  const body = planningBrief();
+  for (const t of ['SKILL.md', ' above', ' below']) assert.ok(!body.includes(t), `reviewer fence contains ${t}`);
+});
+
+test('Review finding B: step 7 fails planning on a failing check or an audit with no JSON line, and keeps residue', () => {
+  pinned(sectionOf(planning(), '## Per-record step'), [
+    f('a failing check, or an audit that prints no JSON line, here means planning failed'),
+    f('residual `checkE.uncovered` or `checkF.unlisted` items join the Actions Performed Detail'),
+  ], 'step 7 audit rule');
+});
