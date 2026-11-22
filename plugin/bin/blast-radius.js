@@ -71,6 +71,7 @@ function run(argv, deps = {}) {
     result = computeBlastRadius(opts, {
       git: (gitArgs) => defaultGit(gitArgs, { cwd, env: d.env }),
       cwd,
+      env: d.env, // the policy read's factory layer (#6006)
     });
   } catch (err) {
     if (err instanceof BlastRadiusError) return fail(err.message, d);

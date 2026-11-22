@@ -100,7 +100,7 @@ the same open-queue set `dispatch/SKILL.md` Step 2 uses (open + no `bot:*`, not 
 `auto:build` here — this is informational, not a selection), then run:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo owner/name]
+node "${CLAUDE_PLUGIN_ROOT}/bin/preflight-records.js" {target} [{target} …] {other-open-issue} [{other-open-issue} …] [--repo [host/]owner/name]
 ```
 
 passing every named target together with that open-queue's issue numbers as positional
@@ -384,7 +384,7 @@ simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
 `config.yml` (never adopted), remove the minted directory immediately — an empty mint left in
 place sorts newest and steals the hook fallback resolver's attribution until the reconciler's
-`isOrphanedMint` sweep catches it (~24h); a dispatch-minted dir (`PIPELINE_RUN_DIR` set on entry)
+`orphaned-mint` sweep catches it (~24h); a dispatch-minted dir (`PIPELINE_RUN_DIR` set on entry)
 belongs to the caller and is left in place. Then stop the pipeline before Step 3 (no worktree,
 nothing else left behind).
 

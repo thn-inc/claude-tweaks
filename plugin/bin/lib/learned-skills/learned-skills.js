@@ -22,6 +22,7 @@
 // Every side effect goes through `deps` (git, now, appendEntries, fs seams) so tests inject fakes.
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -220,9 +221,9 @@ function nextStageNumber(stagedDir, deps) {
 // the spec fixes this artifact's name as staged/wrap-up-skill-{N}.md, so it could never report a
 // verdict against it.
 // entry: { target, summary, patch: Buffer|string, patchFile?: string, findings?: [{ row, summary }] }.
-function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
+function stageEntry({ runDir, worktree, entry, reason, headShort }, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
-  const st = writeStage({ runDir, worktree, entry }, deps);
+  const st = writeStage({ runDir, worktree, entry, headShort }, deps);
   let g;
   try {
     g = gateStage(st, entry, worktree, deps);
@@ -237,20 +238,34 @@ function stageEntry({ runDir, worktree, entry, reason }, overrides = {}) {
   return { stagePath: st.stagePath, gate: g.gate, logFailed };
 }
 
+// A reader for the worktree's short HEAD, for a caller that stages several entries without moving
+// HEAD: asks git on the first call and memoizes only a successful, non-empty answer. A throw or an
+// empty answer yields 'unknown' and is asked again next time.
+function headShortReader(worktree, deps) {
+  let known = null;
+  return () => {
+    if (known !== null) return known;
+    try {
+      const got = String(deps.git(['-C', worktree, 'rev-parse', '--short', 'HEAD'])).trim();
+      if (got) known = got;
+      return got || 'unknown';
+    } catch { return 'unknown'; }
+  };
+}
+
 // Creates staged/wrap-up-skill-{N}.md holding the preamble and entry.patch. Exclusive create, so two
 // writers racing for one N cannot overwrite each other; a create that dies partway is removed.
-function writeStage({ runDir, worktree, entry }, deps) {
+function writeStage({ runDir, worktree, entry, headShort }, deps) {
   const stagedDir = path.join(runDir, 'staged');
   deps.mkdir(stagedDir);
   const target = oneLine(entry.target);
   const summary = oneLine(entry.summary);
-  let headShort = 'unknown';
-  try { headShort = String(deps.git(['-C', worktree, 'rev-parse', '--short', 'HEAD'])).trim() || 'unknown'; } catch { /* kept as unknown */ }
+  const stagedAt = (headShort || headShortReader(worktree, deps))();
   const preamble = [
     `Target: ${target}`,
     `Invariant: ${summary}`,
     `Finding: Skills row — ${summary}`,
-    `Staged-at: ${headShort}`,
+    `Staged-at: ${stagedAt}`,
   ].join('\n') + '\n\n';
   const compose = (patch) => Buffer.concat([Buffer.from(preamble, 'utf8'), toBuffer(patch)]);
   let n = nextStageNumber(stagedDir, deps);
@@ -424,8 +439,67 @@ function addFinding(runDir, manifest, existing, finding, deps) {
   }
 }
 
+// The git subcommand: the first argv element after leading `-C <dir>`, `-c <k=v>` and
+// `--no-optional-locks`, with its options: the arguments after it up to the first `--` or
+// `--end-of-options` (an argument after either named `--check` or `-w` is not an option).
+function gitSubcommand(args) {
+  let i = 0;
+  for (;;) {
+    if (args[i] === '-C' || args[i] === '-c') i += 2;
+    else if (args[i] === '--no-optional-locks') i += 1;
+    else {
+      const rest = args.slice(i + 1);
+      const end = rest.findIndex((a) => a === '--' || a === '--end-of-options');
+      return { sub: args[i], options: end === -1 ? rest : rest.slice(0, end) };
+    }
+  }
+}
+
+// One capture() call's read cache (#5790): capture re-checks state after every step that may change
+// it, so the same read-only question often reaches git again with nothing changed in between. deps
+// is returned with its seams wrapped:
+//   - git: `diff`, `status` and `hash-object` (without -w), with no opts.env, are answered from the
+//     cache when the same argv, encoding, cwd and input bytes were answered since the last discard. Only a
+//     successful answer is kept; a Buffer is kept and returned as a copy, so no caller sees another's
+//     mutation. `apply --check`, `rev-parse` and `cat-file` pass through untouched. Every other call,
+//     and any call carrying opts.env, discards every kept answer before it runs.
+//   - unlink, writeFile, writeFileExclusive, rename (either side) naming `target`, and rmdir of
+//     `target` or a directory above it, discard every kept answer before they run.
+// The worktree has one writer during the call: a write by another process is out of scope.
+function withReadCache(deps, target) {
+  const answers = new Map();
+  const discard = () => answers.clear();
+  const copy = (x) => (Buffer.isBuffer(x) ? Buffer.from(x) : x);
+  const isTarget = (p) => path.resolve(p) === path.resolve(target);
+  const git = (args, opts = {}) => {
+    const { sub, options } = gitSubcommand(args);
+    const read = sub === 'diff' || sub === 'status' || (sub === 'hash-object' && !options.includes('-w'));
+    if (read && !opts.env) {
+      const input = opts.input === undefined ? null : crypto.createHash('sha256').update(opts.input).digest('hex');
+      // encoding defaults as realDeps.git's does, so an omitted one and 'utf8' share one answer.
+      const cwd = opts.cwd === undefined ? null : path.resolve(opts.cwd);
+      const key = JSON.stringify([args, opts.encoding || 'utf8', cwd, input]);
+      if (answers.has(key)) return copy(answers.get(key));
+      const got = deps.git(args, opts);
+      answers.set(key, copy(got));
+      return got;
+    }
+    const passThrough = (sub === 'apply' && options.includes('--check')) || sub === 'rev-parse' || sub === 'cat-file';
+    if (!passThrough || opts.env) discard();
+    return deps.git(args, opts);
+  };
+  return {
+    ...deps,
+    git,
+    unlink: (p) => { if (isTarget(p)) discard(); return deps.unlink(p); },
+    writeFile: (p, data) => { if (isTarget(p)) discard(); return deps.writeFile(p, data); },
+    writeFileExclusive: (p, data) => { if (isTarget(p)) discard(); return deps.writeFileExclusive(p, data); },
+    rename: (from, to) => { if (isTarget(from) || isTarget(to)) discard(); return deps.rename(from, to); },
+    rmdir: (p) => { if (isAncestorOrSelf(path.resolve(p), path.resolve(target))) discard(); return deps.rmdir(p); },
+  };
+}
+
 function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_ROW }, overrides = {}) {
-  const deps = { ...realDeps, ...overrides };
   if (typeof runDir !== 'string' || !runDir) throw new UsageError('runDir is required');
   if (typeof worktree !== 'string' || !worktree) throw new UsageError('worktree is required');
   if (typeof mergeBase !== 'string' || !mergeBase.trim() || mergeBase.startsWith('-')) {
@@ -437,8 +511,10 @@ function capture({ runDir, worktree, mergeBase, target, summary, row = DEFAULT_R
   if (!note) throw new UsageError('summary is required');
   const finding = { row, summary: note };
 
-  const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
   const abs = path.join(worktree, rel);
+  // Every seam below goes through one call's read cache: an unchanged question is asked once.
+  const deps = withReadCache({ ...realDeps, ...overrides }, abs);
+  const git = (args, opts) => deps.git(['-C', worktree, ...args], opts);
 
   // 1. Record-owned: an edit the record's own commits already touched stays on the run branch.
   const owned = splitNul(git(['-c', 'core.quotePath=false', 'diff', '--name-only', '-z', '--end-of-options', mergeBase, 'HEAD', '--']));
@@ -778,5 +854,5 @@ function pruneEmptyParents(abs, worktree, deps) {
 
 module.exports = {
   UsageError, StagingFailure, realDeps, gitEnv, readManifest, writeManifest, manifestPath, nextId, normalizeTarget, skillLabel,
-  stageEntry, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
+  stageEntry, headShortReader, withReadCache, capture, LOG_SECTION, STEP, rowLabel, entryFindings, oneLine, firstStderrLine,
 };

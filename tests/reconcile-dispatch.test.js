@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
@@ -72,7 +73,7 @@ installReconcileGuard();
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-recon-sandbox-');
 
 // hookEnv (tests/helpers/git-fixtures.js) is the whole environment the verb sees (#5376). Its
 // `PIPELINE_RUN_DIR: ''` (#1130) keeps a call that passes no run dir from resolving against a real
@@ -411,7 +412,7 @@ test('reconcile verb: garbage stdin still exits 0 and prints valid JSON with --j
   // module's own fail-safe design (isWorktreeLocked, no-PR skip) made that
   // safe when it happened once during authoring, but a test must not rely
   // on that — it must never reach live state in the first place.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-garbage-'));
+  const dir = scratchDir('ct-recon-garbage-');
   const r = await runHook(['reconcile', '--json'], { input: '%%%not json%%%', cwd: dir });
   assert.strictEqual(r.code, 0);
   assert.doesNotThrow(() => JSON.parse(r.stdout));
@@ -560,6 +561,51 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   };
   const summary = formatSummary(result);
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
+});
+
+test('format-summary prints one archive-stranded-shells line for several shells (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const shell = (n) => ({ runDir: `/r/.claude-tweaks/pipelines/${n}`, action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true });
+  const lines = formatSummary({ runs: [shell('a'), shell('b')], skipped: [] }).split('\n');
+  assert.deepEqual(lines, ['skipped: 2 run dirs (archived-pending-tracked-move 2)', `archive stranded shells: ${cmd}`]);
+});
+
+test('format-summary: the stranded-shells line comes from a shell entry, never a non-clean split state (#3975)', () => {
+  const cmd = 'node "${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js" --root "/r"';
+  const split = { runDir: '/r/.claude-tweaks/pipelines/x', action: 'skipped', reason: 'archived-pending-tracked-move', command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "/r/x"' };
+  const shell = { runDir: '/r/.claude-tweaks/pipelines/y', action: 'skipped', reason: 'archived-pending-tracked-move', command: cmd, shell: true };
+  const mixed = formatSummary({ runs: [split, shell], skipped: [] }).split('\n');
+  assert.deepEqual(mixed.filter((l) => l.startsWith('archive stranded shells')), [`archive stranded shells: ${cmd}`]);
+  assert.ok(!formatSummary({ runs: [split], skipped: [] }).includes('archive stranded shells'));
+});
+
+test('AC1.3: reconcile --dry-run --json --checks archive lists a clean-twin shell as archived-pending-tracked-move (#3975)', { skip: STUB_SKIP }, async () => {
+  const { seedDir, mainDir } = pairedFixture();
+  const id = '2026-09-01T120000-spec-77';
+  writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nworktree-always: true\n');
+  const pipelines = path.join(seedDir, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(path.join(pipelines, id, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, id, 'work', '77-spec.md'), '# 77\n');
+  fs.mkdirSync(path.join(pipelines, 'archive', id), { recursive: true });
+  fs.writeFileSync(path.join(pipelines, 'archive', id, 'run-state.json'), JSON.stringify({ status: 'clean' }));
+  git(['add', '-f', '.claude-tweaks'], seedDir);
+  git(['commit', '-q', '-m', 'shell'], seedDir);
+  git(['push', '-q', 'origin', 'main'], seedDir);
+  git(['pull', '-q', 'origin', 'main'], mainDir);
+  // The preflight probe (`gh api rate_limit`) is the only gh call this path makes.
+  // In-process runCli (#5376): the stub rides in the call's own env, never process.env.PATH.
+  const stubDir = scratchDir('ct-stub-');
+  fs.writeFileSync(path.join(stubDir, 'gh'), '#!/bin/sh\necho 5000\n', { mode: 0o755 });
+  let r;
+  try {
+    r = await runHook(['reconcile', '--dry-run', '--json', '--checks', 'archive'], { cwd: mainDir, env: { PATH: stubDir + path.delimiter + process.env.PATH } });
+  } finally { fs.rmSync(stubDir, { recursive: true, force: true }); }
+  assert.strictEqual(r.code, 0);
+  const entry = JSON.parse(r.stdout).runs.find((e) => path.basename(e.runDir) === id);
+  assert.ok(entry, r.stdout);
+  assert.strictEqual(entry.reason, 'archived-pending-tracked-move');
+  assert.match(entry.command, /archive-tracked-shells\.js" --root /);
+  assert.strictEqual(entry.shell, true);
 });
 
 test('formatSummary: a skipped entry\'s detail renders in parentheses after the reason, ahead of any count/names suffix; no detail renders unchanged (#4933)', () => {
@@ -887,7 +933,7 @@ test('reconcile verb: a post-merge.js load fault still renders the reconcile-thr
   // A child process, so the fault is planted in its module loader only: the child preloads a script that makes any
   // require resolving to reconcile/post-merge.js throw. format-summary.js is required outside hooks.js's try, so a
   // module-level require of post-merge.js there would throw past the fallback and main's catch would exit 0 silently.
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-loadfault-'));
+  const scratch = scratchDir('ct-recon-loadfault-');
   const preload = path.join(scratch, 'fault.js');
   fs.writeFileSync(preload, [
     "const Module = require('module');",

@@ -12,7 +12,9 @@
 const { execFileSync } = require('node:child_process');
 const os = require('node:os');
 const path = require('node:path');
-const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const sharedPrimitives = require('./lib/shared-primitives');
+
+const { LARGE_MAX_BUFFER_BYTES } = sharedPrimitives;
 const { ghOptions, injectedGhDeps } = require('./lib/repo-resolve');
 const { resolveScope } = require('./lib/residue/scope');
 const { hasTestScript } = require('./lib/residue/detect-test-script');
@@ -59,10 +61,12 @@ const USAGE = 'usage: residue.js --base <commit-ish> [--scope repo|blast-radius]
 function runner(argv, opts = {}) {
   // `opts` lets a caller pass extra `execFileSync` options (e.g. `timeout`)
   // for a specific command without changing every other call through this
-  // shared seam — a probe that contacts a remote (today only probeRelease's
-  // `git ls-remote`, #2882; every other probe is local-only) needs a bound; the
-  // existing catch-all below already treats a timeout kill the same as any
-  // other failure (returns null), so no new error handling is needed here.
+  // shared seam. A probe that contacts a remote needs a bound: the forge probe's
+  // `gh pr list` is bounded in `run`'s closure, and probeRelease's `git ls-remote`
+  // (#2882) passes its own timeout. Every other probe is local-only. The catch-all
+  // below returns null for every failure, a timeout kill included, so a timed-out
+  // `gh pr list` reads as probeForge's generic `gh unavailable or not authenticated`
+  // reason, not a distinct timeout reason.
   // `maxBuffer` defaults to 64 MiB (mirrors suiteRun()'s own bound below) —
   // Node's execFileSync default is 1 MiB, and CHANGELOG.md alone (read via
   // `git show HEAD:CHANGELOG.md` in probeRelease) is already a quarter of
@@ -109,7 +113,10 @@ function run(argv, deps = {}) {
   const cwd = d.cwd();
   // Deliberately named `run`, shadowing this function inside its own body, so the probeForge call
   // below keeps the text tests/gh-host-seam-conformance.test.js pins (not quoted here: its mutants edit the first match).
-  const run = (cmd, execOpts) => d.runner(cmd, { cwd, env: d.env, stderr: d.stderr, homeDir: d.homeDir, ...execOpts });
+  // The gh bound is the process-wide memoized GH_TIMEOUT_MS (process env, the process cwd's policy), not
+  // the injected d.env and cwd passed beside it: the #4856 plan-review ruling, which rejected
+  // ghTimeoutMsAt(cwd, { env: d.env }). It sits here rather than in `runner` so an injected runner sees it.
+  const run = (cmd, execOpts) => d.runner(cmd, { cwd, env: d.env, stderr: d.stderr, homeDir: d.homeDir, ...(cmd[0] === 'gh' ? { timeout: sharedPrimitives.GH_TIMEOUT_MS } : {}), ...execOpts });
   const git = (args, execOpts) => run(['git', ...args], execOpts);
   const scope = resolveScope({ base: opts.base, run: git });
 

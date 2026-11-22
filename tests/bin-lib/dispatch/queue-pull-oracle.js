@@ -8,13 +8,11 @@
 //                     dispatch-standalone run dir
 //   <root>/bin        PATH shims (writeShims), each a sh script: gh (the table's exact, effect-free
 //                     answers baked in, never the real gh: ghShimScript), git (exec'ing the real git,
-//                     only inside <root>: gitShimScript), mktemp (counter-file names,
-//                     mktempShimScript) and node (the real node, logging two CLIs' inputs first:
-//                     nodeShim)
+//                     only inside <root>: gitShimScript) and node (the real node, logging two
+//                     CLIs' inputs first: nodeShim)
 //   <root>/shim       not on PATH: gh-fallback (the node gh shim bin/gh execs for graphql, effects and
 //                     misses, answering from QP_SHIM_TABLE)
-//   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS), cli-calls/ and the
-//                     mktemp counter
+//   <root>/logs       gh-argv.nul, git-argv.nul (NUL-framed records: SHIM_LOGS) and cli-calls/
 //   <root>/agent      files transport only: what the agent fetched through MCP (QP_AGENT_DIR), which
 //                     filesOracleScript's agent writes copy from, and DISPATCH_FOREIGN_STATES
 //   <root>/sysbin     files transport only: links to the system tools the fence runs, so the PATH
@@ -24,6 +22,7 @@
 // tracer still sees the children. Every run sits inside withEscapeGuard on this checkout.
 // The gh fallback re-enters this module through shimMain(), so keep its top level cheap.
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
@@ -118,7 +117,8 @@ function replaceSpan(lines, { first, through = first, before = null, holds }, re
 // fetch and compute become `echo '[]'`. Everything else runs as written; the CLIs it spawns find no
 // gh on the files sandbox's PATH (f).
 function filesOracleScript(fence, mcpText) {
-  const lines = fence.replace(/\n$/, '').split('\n');
+  // #5309: the fence's native-failure branch reads DISPATCH_TRANSPORT (the module's options.transport).
+  const lines = ['DISPATCH_TRANSPORT=files', ...fence.replace(/\n$/, '').split('\n')];
   const mcpFence = (firstLine) => extractFence(mcpText, firstLine).replace(/\n$/, '').split('\n');
   replaceSpan(lines, {
     first: 'gh issue list --label auto:build --state open --json number,title,body,labels,createdAt,updatedAt,state --limit 500 > "$DISPATCH_QUEUE_RAW"',
@@ -128,13 +128,13 @@ function filesOracleScript(fence, mcpText) {
     first: 'gh issue list --state open --json number --limit 200 > "$DISPATCH_OPEN_NUMBERS"',
     holds: 'gh issue list --state open',
   }, [agentWrite('dispatch-open-numbers.json', 'DISPATCH_OPEN_NUMBERS')]);
-  for (const v of ['DISPATCH_DEP_NUMBERS', 'DISPATCH_ALL_DEP_NUMBERS']) {
+  for (const [v, consequence, flag] of [['DISPATCH_DEP_NUMBERS', 'used', ''], ['DISPATCH_ALL_DEP_NUMBERS', 'written', ' DEP_FRESH_FAIL=1;']]) {
     replaceSpan(lines, {
-      first: `  gh issue list --search "$(echo "$${v}" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || echo '[]' > "$DISPATCH_DEP_FRESHNESS"`,
+      first: `  gh issue list --search "$(echo "$${v}" | tr ',' ' ' | sed 's/[0-9][0-9]*/#&/g')" --state all --json number,updatedAt,state --limit 500 > "$DISPATCH_DEP_FRESHNESS" 2>/dev/null || { echo '[]' > "$DISPATCH_DEP_FRESHNESS";${flag} echo "Warning: dependency-freshness search failed — queue-order cache not ${consequence} this run" >&2; }`,
       holds: 'gh issue list --search',
     }, [`  ${agentWrite('dispatch-dep-freshness.json', 'DISPATCH_DEP_FRESHNESS')}`]);
   }
-  replaceSpan(lines, { first: ': > "$DISPATCH_VERIFIED_OPEN_DEPS"', through: 'done', holds: 'gh issue view "$DEP"' },
+  replaceSpan(lines, { first: 'rm -f "$DISPATCH_VERIFIED_OPEN_DEPS"', through: 'done', holds: 'gh issue view "$DEP"' },
     [agentWrite('dispatch-verified-open-deps.txt', 'DISPATCH_VERIFIED_OPEN_DEPS')]);
   replaceSpan(lines, {
     first: 'if ! gh issue list --label bot:in-progress --state open --json number,title,body,labels --limit 200 > "$DISPATCH_IN_FLIGHT_RAW" 2>/dev/null; then',
@@ -147,14 +147,14 @@ function filesOracleScript(fence, mcpText) {
     ...mcpFence(MCP_EXCLUSIONS_FIRST_LINE),
   ]);
   replaceSpan(lines, {
-    first: 'gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || echo \'[]\' > "$DISPATCH_OPEN_PRS"',
+    first: 'gh pr list --state open --json number,files,closingIssuesReferences --limit 100 > "$DISPATCH_OPEN_PRS" 2>/dev/null || { echo \'[]\' > "$DISPATCH_OPEN_PRS"; echo "Warning: open-PR pull failed — cross-PR overlap not checked this run" >&2; }',
     through: 'NODE_EVAL_EOF',
     holds: 'detectCrossPRFileOverlap',
   }, ['echo \'[]\' > "$DISPATCH_CROSSPR_OVERLAP"']);
   // The one gh call left as written: the shipped pass's `gh pr view` probe loop, which mcp-transport.md
   // does not replace. It iterates the probe list, which is empty on files: the linked-PR query fails
   // with no gh, so dispatch-linked-prs.json is {} and no candidate has a mention to probe.
-  const kept = new Set(['  FILES_JSON=$(gh pr view "$PR" --json files -q \'[.files[].path]\' 2>/dev/null || echo \'[]\')']);
+  const kept = new Set(['  FILES_JSON=$(gh pr view "$PR" --json files -q \'[.files[].path]\' 2>/dev/null) || FILES_JSON=null']);
   const leftover = lines.find((l) => !kept.has(l) && /(^|[\s(!|;&])gh\s/.test(l.replace(/'[^']*'|"[^"$]*"/g, '')) && !/^\s*#/.test(l));
   if (leftover) throw new Error(`filesOracleScript: a gh call survives the substitutions: ${leftover}`);
   return lines.join('\n') + '\n';
@@ -280,7 +280,7 @@ function writeSystemBin(sysbin) {
 }
 
 // writeShims({ bin, shimDir, root, realGit, table, gh }) writes the PATH shims into `bin`: git
-// (gitShimScript, `table` baked in), mktemp (mktempShimScript), node and, when `gh` is true, gh
+// (gitShimScript, `table` baked in), node and, when `gh` is true, gh
 // (ghShimScript). `shimDir` (<root>/shim, not on PATH) holds what bin/gh needs beside it: the node
 // fallback gh-fallback. createSandbox calls this once and setScenario again for each new table, so
 // the baked values follow the scenario.
@@ -294,62 +294,12 @@ function writeShims({ bin, shimDir, root, realGit, table, gh = true }) {
     fs.writeFileSync(path.join(bin, 'gh'), ghShimScript({ shimDir, table }), { mode: 0o755 });
   }
   fs.writeFileSync(path.join(bin, 'git'), gitShimScript({ root, realGit, table }), { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, 'mktemp'), mktempShimScript(), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'node'), nodeShim(), { mode: 0o755 });
 }
 
 // POSIX single-quoting: the text stands for itself in bash, whatever it holds.
 function shQuote(text) {
   return `'${text.replace(/'/g, `'\\''`)}'`;
-}
-
-// bin/mktemp: a POSIX sh script taking no arguments: <TMPDIR>/tmp.qp<8-digit counter>, the counter
-// read from and written back to QP_TMPNAME_COUNTER_FILE -- the name and counter format deps.tmpName
-// (queue-pull.js) emits under the same env var, which also reads an absent or empty counter as 0.
-// Any other counter must be one or more digits (leading zeros are decimal), at most 15 once those
-// are stripped (the module refuses past Number.MAX_SAFE_INTEGER; shell arithmetic overflows past
-// 18). The file is created exclusively with mode 0600 and the counter written only after that; a
-// counter write that fails refuses too, leaving the created file behind. Refuses (exit 97,
-// `mktemp-shim: refused ({why}): {args}`): an argument, a missing TMPDIR or counter path, a counter
-// that is not digits, a next name that already exists (the old node shim died on EEXIST, exit 1).
-// No forks: no $(...), subshell or pipe; dash and macOS /bin/sh alike.
-function mktempShimScript() {
-  return [
-    '#!/bin/sh',
-    '# Generated by tests/bin-lib/dispatch/queue-pull-oracle.js (mktempShimScript).',
-    "IFS=' '",
-    'qp_refuse() {',
-    '  why=$1; shift',
-    '  printf \'mktemp-shim: refused (%s): %s\\n\' "$why" "$*" >&2',
-    '  exit 97',
-    '}',
-    '[ $# -eq 0 ] || qp_refuse \'arguments are not supported\' "$@"',
-    '[ -n "$TMPDIR" ] && [ -n "$QP_TMPNAME_COUNTER_FILE" ] || qp_refuse \'TMPDIR and QP_TMPNAME_COUNTER_FILE are required\'',
-    'n=',
-    'IFS= read -r n 2>/dev/null < "$QP_TMPNAME_COUNTER_FILE"',
-    "IFS=' '",
-    'case "$n" in',
-    '  *[!0-9]*) qp_refuse "counter file holds \\"$n\\"" ;;',
-    'esac',
-    'while :; do',
-    '  case "$n" in 0?*) n=${n#0} ;; *) break ;; esac',
-    'done',
-    '[ ${#n} -le 15 ] || qp_refuse "counter file holds \\"$n\\""',
-    'n=$((${n:-0} + 1))',
-    'p=$n',
-    'while [ ${#p} -lt 8 ]; do p=0$p; done',
-    'f=$TMPDIR/tmp.qp$p',
-    'umask 077',
-    'set -C',
-    'true 2>/dev/null > "$f" || {',
-    '  if [ -e "$f" ]; then qp_refuse "file exists: $f"; fi',
-    '  qp_refuse "cannot create: $f"',
-    '}',
-    'set +C',
-    'printf \'%s\' "$n" 2>/dev/null > "$QP_TMPNAME_COUNTER_FILE" || qp_refuse "cannot write counter: $QP_TMPNAME_COUNTER_FILE"',
-    'printf \'%s\\n\' "$f"',
-    '',
-  ].join('\n');
 }
 
 // bin/node: the real node, exec'd (same pid, stdin, exit and signals), after logging the two CLI
@@ -658,7 +608,7 @@ function ghShimScript({ shimDir, table }) {
 function createSandbox(scenario, { transport = 'gh', origin = null, name = scenario.name || 'sandbox', agent = {} } = {}) {
   installExitHooks();
   const table = shimTable(scenario);
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'qp-oracle-')));
+  const root = fs.realpathSync(scratchDir('qp-oracle-'));
   liveRoots.add(root);
   const cleanup = () => {
     fs.rmSync(root, { recursive: true, force: true });
@@ -691,6 +641,9 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     if (origin) fs.cpSync(origin, originDir, { recursive: true });
     else seedOrigin(originDir, scenario.origin, git, scenario.headBranch);
     git(['clone', '-q', originDir, proj]);
+    // #5863: origin's HEAD dangles only after the clone (a dangling HEAD before it clones with no checkout), so the
+    // clone checks out main and only the live `git remote show origin` prints `HEAD branch: (unknown)`.
+    if (scenario.danglingHead) git(['-C', originDir, 'symbolic-ref', 'HEAD', 'refs/heads/no-such-head']);
 
     const policy = Object.entries(scenario.policy || {}).map(([k, v]) => `${k}: ${v}\n`).join('');
     fs.mkdirSync(path.join(proj, '.claude-tweaks'), { recursive: true });
@@ -700,12 +653,16 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     fs.writeFileSync(path.join(runDir, 'decisions.md'), '');
 
     const onFiles = transport === 'files';
+    // #5309: a files scenario with `filesGh` holds a gh shim too (the GraphQL-blocked route: gh present, files transport).
+    const ghShim = !onFiles || Boolean(scenario.filesGh);
     const shimDir = dir('shim');
     fs.writeFileSync(tablePath, JSON.stringify(table));
-    writeShims({ bin, shimDir, root, realGit, table, gh: !onFiles });
+    writeShims({ bin, shimDir, root, realGit, table, gh: ghShim });
     const agentDir = dir('agent');
     for (const [file, content] of Object.entries(agent)) fs.writeFileSync(path.join(agentDir, file), content);
     let foreignStates = null;
+    // #5304: foreignEnv puts DISPATCH_FOREIGN_STATES on any transport, naming a file the agent never wrote.
+    if (scenario.foreignEnv) foreignStates = path.join(agentDir, 'foreign-states.json');
     if (onFiles && scenario.foreign !== undefined) {
       foreignStates = path.join(agentDir, 'foreign-states.json');
       // An object is written as JSON, a string as is; null names a file the agent never wrote.
@@ -724,7 +681,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
         CLAUDE_PLUGIN_ROOT: path.join(REPO, 'plugin').split(path.sep).join('/'),
         CLAUDE_CODE_SESSION_ID: sessionId,
         ...gitIsolation,
-        QP_SHIM_TABLE: tablePath, QP_LOG_DIR: logs, QP_TMPNAME_COUNTER_FILE: path.join(logs, 'tmpname-counter'),
+        QP_SHIM_TABLE: tablePath, QP_LOG_DIR: logs,
         NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require ${JSON.stringify(CLOCK_STUB)}`].filter(Boolean).join(' '),
         ...(onFiles ? { QP_AGENT_DIR: agentDir } : {}),
         ...(foreignStates ? { DISPATCH_FOREIGN_STATES: foreignStates } : {}),
@@ -749,7 +706,7 @@ function createSandbox(scenario, { transport = 'gh', origin = null, name = scena
     const setScenario = (next) => {
       const nextTable = shimTable(next);
       fs.writeFileSync(tablePath, JSON.stringify(nextTable));
-      writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: !onFiles });
+      writeShims({ bin, shimDir, root, realGit, table: nextTable, gh: ghShim });
     };
     return {
       name, transport, scenario, root, home, proj, bin, logs, agentDir, origin: originDir, runDir, runs: 0, runEnv, orderBlob, cleanup, setScenario,

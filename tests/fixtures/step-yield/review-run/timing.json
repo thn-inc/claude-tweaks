@@ -1,0 +1,14 @@
+{
+  "runDir": "fixture",
+  "generatedAt": "2026-11-12T09:46:00.000Z",
+  "phases": [
+    { "phase": "build", "start": "2026-11-12T09:00:00.000Z", "end": "2026-11-12T09:10:00.000Z", "minutes": 10, "ownMinutes": 10, "source": "skill_invoked", "verify": [], "tokens": { "input": 100, "output": 10, "cacheRead": 1000, "cacheCreate": 50 }, "subagents": 0 },
+    { "phase": "test", "start": "2026-11-12T09:10:00.000Z", "end": "2026-11-12T09:20:00.000Z", "minutes": 10, "ownMinutes": 10, "source": "skill_invoked", "verify": [], "tokens": { "input": 200, "output": 20, "cacheRead": 2000, "cacheCreate": 60 }, "subagents": 1 },
+    { "phase": "review", "start": "2026-11-12T09:20:00.000Z", "end": "2026-11-12T09:40:00.000Z", "minutes": 20, "ownMinutes": 20, "source": "skill_invoked", "verify": [], "tokens": { "input": 300, "output": 30, "cacheRead": 3000, "cacheCreate": 70 }, "subagents": 3 },
+    { "phase": "wrap-up", "start": "2026-11-12T09:40:00.000Z", "end": "2026-11-12T09:45:00.000Z", "minutes": 5, "ownMinutes": 5, "source": "skill_invoked", "verify": [], "tokens": { "input": 400, "output": 40, "cacheRead": 4000, "cacheCreate": 80 }, "subagents": 0 }
+  ],
+  "totals": { "minutes": 45, "tokens": { "input": 1000, "output": 100, "cacheRead": 10000, "cacheCreate": 260 } },
+  "questions": [
+    { "id": "toolu_q1", "askTs": "2026-11-12T09:21:30.000Z", "answerTs": "2026-11-12T09:25:00.000Z", "questions": ["Merge now?"] }
+  ]
+}

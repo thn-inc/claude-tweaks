@@ -9,7 +9,13 @@
       "minutes": 25,
       "ownMinutes": 1,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:00:00.000Z",
+          "end": "2026-09-05T13:25:00.000Z"
+        }
+      ]
     },
     {
       "phase": "call-2",
@@ -18,7 +24,13 @@
       "minutes": 48,
       "ownMinutes": 24,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:25:00.000Z",
+          "end": "2026-09-05T14:13:00.000Z"
+        }
+      ]
     },
     {
       "phase": "build",
@@ -27,7 +39,13 @@
       "minutes": 22,
       "ownMinutes": 2,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:01:00.000Z",
+          "end": "2026-09-05T13:23:00.000Z"
+        }
+      ]
     },
     {
       "phase": "plan",
@@ -36,7 +54,13 @@
       "minutes": 6,
       "ownMinutes": 6,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:02:00.000Z",
+          "end": "2026-09-05T13:08:00.000Z"
+        }
+      ]
     },
     {
       "phase": "tasks",
@@ -55,6 +79,12 @@
           "pass": true,
           "baselineAdjudicated": null,
           "at": "2026-09-05T13:22:00.000Z"
+        }
+      ],
+      "spans": [
+        {
+          "start": "2026-09-05T13:08:00.000Z",
+          "end": "2026-09-05T13:22:00.000Z"
         }
       ]
     },
@@ -78,6 +108,12 @@
           "baselineAdjudicated": null,
           "at": "2026-09-05T13:23:30.000Z"
         }
+      ],
+      "spans": [
+        {
+          "start": "2026-09-05T13:23:00.000Z",
+          "end": "2026-09-05T13:25:00.000Z"
+        }
       ]
     },
     {
@@ -87,7 +123,13 @@
       "minutes": 8,
       "ownMinutes": 8,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:49:00.000Z",
+          "end": "2026-09-05T13:57:00.000Z"
+        }
+      ]
     },
     {
       "phase": "polish",
@@ -96,7 +138,8 @@
       "minutes": 0,
       "ownMinutes": 0,
       "source": "unattributed",
-      "verify": []
+      "verify": [],
+      "spans": []
     },
     {
       "phase": "wrap-up",
@@ -105,7 +148,13 @@
       "minutes": 15,
       "ownMinutes": 15,
       "source": "skill_invoked",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T13:57:00.000Z",
+          "end": "2026-09-05T14:12:00.000Z"
+        }
+      ]
     },
     {
       "phase": "merge",
@@ -114,7 +163,13 @@
       "minutes": 1,
       "ownMinutes": 1,
       "source": "commit",
-      "verify": []
+      "verify": [],
+      "spans": [
+        {
+          "start": "2026-09-05T14:12:00.000Z",
+          "end": "2026-09-05T14:13:00.000Z"
+        }
+      ]
     }
   ],
   "totals": {

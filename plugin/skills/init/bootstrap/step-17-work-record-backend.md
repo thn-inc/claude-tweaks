@@ -5,7 +5,8 @@
 `/claude-tweaks:capture`, `/claude-tweaks:specify`, `/claude-tweaks:backlog`,
 `/claude-tweaks:dispatch`, `/claude-tweaks:tidy`, and every health skill
 (`/claude-tweaks:code-health`, `/claude-tweaks:harness-health`,
-`/claude-tweaks:journey-health`, `/claude-tweaks:docs-health`) all file, shape, gate, dispatch, or sweep against
+`/claude-tweaks:journey-health`, `/claude-tweaks:docs-health`,
+`/claude-tweaks:ci-health`) all file, shape, gate, dispatch, or sweep against
 the same **work record** — the one durable unit each of them acts on. A work record
 is backed by either a GitHub issue or, under the `local-files` driver, one local
 record file per record (`specs/{id}-{slug}.md`, read and written by

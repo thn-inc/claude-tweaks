@@ -1,8 +1,8 @@
 # Mode: merge-check
 
 **Called from:** `/claude-tweaks:dispatch`'s Auto-merge gate, replacing layers 2-4 (scoring
-eligibility, runtime cleanliness, blast radius) entirely. Layer 1 (authorization — `auto:merge`
-present on every group member) stays a hard binary gate in `dispatch/SKILL.md` itself, unchanged.
+eligibility, runtime cleanliness, blast radius) entirely. Layer 1 (authorization — `auto:build` with `auto:merge`
+or a matured `auto:merge-pending` on every group member) stays a hard binary gate in `dispatch/SKILL.md` itself, unchanged.
 
 ## Step 1: Gather
 

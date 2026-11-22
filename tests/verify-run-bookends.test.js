@@ -517,7 +517,7 @@ test('AC1.1/AC2.1 isSpecCommitted: archived-only header reads as committed', () 
 test('AC3.1 isSpecCommitted on a real repo whose last commit git-mv\'d the header to the archive path', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookends-archived-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull };
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
   const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: root, stdio: 'pipe', env });
   git('init', '-q');
   const liveRel = `.claude-tweaks/pipelines/${RUN_ID}/work/1728-spec.md`;

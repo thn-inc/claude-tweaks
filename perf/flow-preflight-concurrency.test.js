@@ -11,13 +11,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../tests/helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { gatherPreflight } = require('../plugin/bin/lib/flow/preflight');
 
 // A fake main checkout with one run dir under .claude-tweaks/pipelines/.
 function mainRoot() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-'));
+  const root = scratchDir('flow-preflight-');
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-09-06T000000-record-7');
   fs.mkdirSync(runDir, { recursive: true });
   return { root, runDir };

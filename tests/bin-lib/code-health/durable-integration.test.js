@@ -4,12 +4,13 @@ const assert = require('node:assert');
 const { execFileSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
 function tmpRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-health-durable-'));
+  const dir = scratchDir('code-health-durable-');
   fs.writeFileSync(path.join(dir, 'a.js'), 'const x = 1;\n');
   return dir;
 }
@@ -22,7 +23,7 @@ test('retry-queue drain prints [] against a repo with no health-state branch (re
   assert.deepStrictEqual(JSON.parse(out), []);
 });
 
-// Regression: main()'s `retry-queue update` dispatch line rebases args._ via
+// Regression: run()'s `retry-queue update` dispatch line rebases args._ via
 // `args._.slice(1)` before handing it to makeRetryQueueCommands().update(),
 // which reads its results-file path from args._[1] (i.e. args._[0] after the
 // rebase). A typo in that rebase (e.g. `.slice(2)`, or dropping it) would

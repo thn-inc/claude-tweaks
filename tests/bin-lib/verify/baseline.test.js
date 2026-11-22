@@ -2,6 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('../../helpers/tmp-dir');
+isolateTmpdir('ct-iso-baseline-');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
@@ -11,7 +13,7 @@ const {
 } = require('../../../plugin/bin/lib/verify/baseline');
 
 function logFile(text) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-test-'));
+  const dir = scratchDir('baseline-test-');
   const p = path.join(dir, 'tests.log');
   fs.writeFileSync(p, text);
   return { dir, p };
@@ -35,7 +37,7 @@ const kindOf = (name) => (name.endsWith('-base-full') ? 'base-full' : (name.incl
 
 function fakes({ outcomes, existsAtBase = () => true, sameAtBase = () => true, inCheckout = () => true, throwOn = null, logs = {}, repoRoot = '/repo' }) {
   const calls = { runs: [], added: [], removed: [], batchBaseInfo: [] };
-  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-fake-runs-'));
+  const logRoot = scratchDir('baseline-fake-runs-');
   // #5150: the scratch's HEAD is the sha its latest addWorktree call was given.
   let head = 'b'.repeat(40);
   const git = {
@@ -162,7 +164,7 @@ test('Review Focus 3: a base run killed by a signal (exitCode null) never counts
 
 test('#3063 AC2: an isolated run that times out is no evidence — the file stays attributable and is named in r.timedOut', async () => {
   const { p, dir } = logFile(SPEC(['tests/a.test.js']));
-  const logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-timeout-test-'));
+  const logRoot = scratchDir('baseline-timeout-test-');
   const git = {
     repoRoot: () => '/repo',
     batchBaseInfo: (sha, files) => new Map(files.map((f) => [f, { exists: true, same: true }])),
@@ -486,7 +488,7 @@ const fileLevelBoth = (cwd, repoRoot) => fakes({
 });
 
 test('I2: a worktree nested in a checkout whose node_modules sits at an ancestor resolves deps — not baseline (#3043)', async () => {
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-outer-'));
+  const outer = scratchDir('baseline-outer-');
   fs.mkdirSync(path.join(outer, 'node_modules'));
   const wt = path.join(outer, '.claude', 'worktrees', 'rec');
   fs.mkdirSync(wt, { recursive: true });
@@ -507,7 +509,7 @@ test('I2: a set NODE_PATH resolves deps — a file-level failure on both sides i
 });
 
 test('file-level base failure + file-level HEAD failure but the checkout has node_modules: the scratch tree just lacks them, not baseline (#3043)', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-repo-'));
+  const root = scratchDir('baseline-repo-');
   fs.mkdirSync(path.join(root, 'node_modules'));
   const { p, dir } = logFile(FILE_LEVEL('tests/a.test.js'));
   const { git, runOne } = fakes({
@@ -528,8 +530,8 @@ test('file-level base failure + file-level HEAD failure but the checkout has nod
 // the scratch dir is realpath'd first, then reached through one deliberate
 // symlink hop, so the bug reproduces on every platform, not only macOS.
 test('#3167: a base worktree reached through a symlinked parent still classifies a same-site failure as baseline (realpath)', async () => {
-  const outer = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-head-'));
-  const realScratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-real-scratch-')));
+  const outer = scratchDir('baseline-head-');
+  const realScratch = fs.realpathSync(scratchDir('baseline-real-scratch-'));
   const wtDir = path.join(realScratch, 'wt');
   fs.mkdirSync(wtDir);
   const symParent = path.join(os.tmpdir(), `baseline-sym-scratch-${process.pid}-${Date.now()}`);
@@ -633,6 +635,89 @@ test('an isolated run that passes cleanly on the first try never triggers a retr
   const r = await adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git });
   assert.deepStrictEqual(r.flakyPassed, [R]);
   assert.deepStrictEqual(calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
+});
+
+// The full run's spec log when node --test's child for R was killed (SIGTERM under load):
+// the shape probed on Node 20 and 26 — a file-level entry, no signal in the spec text (#4424).
+const KILLED_SPEC = ['✔ other passes (1ms)', `✖ ${R} (6337000.5ms)`, 'ℹ tests 2', 'ℹ suites 0', 'ℹ pass 1', 'ℹ fail 1', 'ℹ cancelled 0',
+  'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 6337001', '', '✖ failing tests:', '', `test at ${R}:1:1`, `✖ ${R} (6337000.5ms)`, "  'test failed'", ''].join('\n');
+// The same kill in a TAP full run (cwd /repo, as fakes() uses).
+const KILLED_TAP = ['TAP version 13', `# Subtest: ${R}`, `not ok 1 - ${R}`, '  ---', '  duration_ms: 6337000.5', "  type: 'test'",
+  `  location: '/repo/${R}:1:1'`, "  failureType: 'testCodeFailure'", '  exitCode: ~', "  signal: 'SIGTERM'", "  error: 'test failed'",
+  "  code: 'ERR_TEST_FAILURE'", '  ...', '1..1', '# tests 1', '# suites 0', '# pass 0', '# fail 1', '# cancelled 0', '# skipped 0', '# todo 0', '# duration_ms 6337001'].join('\n');
+const killedCase = ({ head = KILLED_SPEC, isolatedCode = 0, isolatedLog = PASS_LOG, retryLog, retryCode } = {}) => {
+  const { p, dir } = logFile(head);
+  const { git, runOne, calls } = fakes({
+    outcomes: { [`baseline:${R}`]: 1, [`isolated:${R}`]: isolatedCode, ...(retryCode !== undefined ? { [`isolated-retry:${R}`]: retryCode } : {}) },
+    // Base fails one test unrelated to the kill (the #3064 SIGINT-case shape in #3315's run).
+    logs: { [`baseline:${R}`]: NAMED({ fails: [['unrelated']], passes: ['x'] }), [`isolated:${R}`]: isolatedLog, ...(retryLog !== undefined ? { [`isolated-retry:${R}`]: retryLog } : {}) },
+  });
+  return adjudicate({ checks: [{ name: 'tests', exitCode: 1, logPath: p }], baselineCmds: tmpl, base: 'x', baseSha: 'b'.repeat(40), cwd: '/repo', logDir: dir, runOne, git })
+    .then((r) => ({ ...r, calls }));
+};
+
+test('AC1.1, AC1.2: a SIGTERM-killed file (file-level in the full run) passing cleanly in isolation at HEAD is baseline-flaky though its base run fails an unrelated test (#4424)', async () => {
+  const r = await killedCase();
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.match(r.flakyLogs[R], /tests-isolated-tests\+r\.test\.js\.log$/);
+  assert.deepStrictEqual(r.calls.runs.filter((c) => c.kind === 'isolated-retry'), []);
+});
+
+test('AC2.1: the same killed file whose isolated HEAD run also fails stays ATTRIBUTABLE (#4424)', async () => {
+  const r = await killedCase({ isolatedCode: 1, isolatedLog: NAMED({ fails: [['x']] }), retryCode: 1, retryLog: NAMED({ fails: [['x']] }) });
+  assert.strictEqual(r.verdict, 'fail');
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('TAP SIGTERM block: a killed file in a TAP full run classifies the same way (#4424)', async () => {
+  const r = await killedCase({ head: KILLED_TAP });
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.strictEqual(r.verdict, 'pass');
+});
+
+test('mixed file-level + test-level: a kill beside a real test failure in the same file keeps the per-test rule — attributable (#4424)', async () => {
+  const head = KILLED_SPEC.replace('ℹ fail 1', 'ℹ fail 2').replace(`test at ${R}:1:1`, `test at ${R}:9:3\n✖ works (1ms)\n  AssertionError\n\ntest at ${R}:1:1`);
+  const r = await killedCase({ head });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('mixed file-level + test-level (TAP): a kill beside a real test failure in the same file keeps the per-test rule — attributable (#4424)', async () => {
+  const second = ['not ok 2 - works', '  ---', '  duration_ms: 1', "  type: 'test'", `  location: '/repo/${R}:9:3'`, "  failureType: 'testCodeFailure'",
+    "  error: 'AssertionError'", "  code: 'ERR_ASSERTION'", '  ...'].join('\n');
+  const head = KILLED_TAP.replace('1..1', `${second}\n1..2`).replace('# tests 1', '# tests 2').replace('# fail 1', '# fail 2');
+  const r = await killedCase({ head });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
+});
+
+test('a killed file whose first isolated run fails uncovered but whose retry runs clean is baseline-flaky via the retry (#4424)', async () => {
+  const r = await killedCase({ isolatedCode: 1, isolatedLog: NAMED({ fails: [['x']] }), retryCode: 0, retryLog: PASS_LOG });
+  assert.strictEqual(r.verdict, 'pass');
+  assert.deepStrictEqual(r.flakyPassed, [R]);
+  assert.deepStrictEqual(r.attributable, []);
+  assert.match(r.flakyLogs[R], /tests-isolated-retry-tests\+r\.test\.js\.log$/);
+});
+
+test('isolated cancelled / all-skipped: a killed file is flaky only when its isolated run passes every accounting guard (#4424)', async () => {
+  const cancelled = ['✔ x (1ms)', 'ℹ tests 2', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 1'].join('\n');
+  const allSkipped = ['ℹ tests 1', 'ℹ pass 0', 'ℹ fail 0', 'ℹ cancelled 0'].join('\n');
+  for (const isolatedLog of [cancelled, allSkipped]) {
+    const r = await killedCase({ isolatedCode: 0, isolatedLog });
+    assert.deepStrictEqual(r.attributable, [R]);
+    assert.deepStrictEqual(r.flakyPassed, []);
+  }
+});
+
+test('a killed file whose clean-exiting isolated run has a malformed tree stays attributable — the file-level waiver sits behind the well-formedness guard (#4424)', async () => {
+  const malformed = ['▶ multi', 'line', '  ✔ a (1ms)', '✔ multi', 'line (2ms)', 'ℹ tests 1', 'ℹ suites 1', 'ℹ pass 1', 'ℹ fail 0', 'ℹ cancelled 0',
+    'ℹ skipped 0', 'ℹ todo 0', 'ℹ duration_ms 5'].join('\n');
+  const r = await killedCase({ isolatedCode: 0, isolatedLog: malformed });
+  assert.deepStrictEqual(r.attributable, [R]);
+  assert.deepStrictEqual(r.flakyPassed, []);
 });
 
 test('absence is not a pass: an isolated run cut short (the extra test never ran) or skipping it stays attributable (#3043)', async () => {
@@ -792,9 +877,9 @@ test('passing checks are ignored — only failed ones are adjudicated (#3043)', 
 });
 
 test('M1: a scratch worktree that survives cleanup is named on stderr with the manual removal command (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
-  const scratch = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')), 'wt');
+  const scratch = path.join(scratchDir('ct-verify-base-'), 'wt');
   fs.mkdirSync(scratch);
   const warned = [];
   // `git worktree remove` refuses a non-worktree and the rm is a no-op, so the directory survives.
@@ -816,7 +901,7 @@ test('a working directory outside the repository root as git spells it is never 
 });
 
 test('realGit.resolveCommit reads a flag-shaped ref as a ref, never as a git option (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
@@ -828,7 +913,7 @@ test('realGit.resolveCommit reads a flag-shaped ref as a ref, never as a git opt
 });
 
 test('realGit.addWorktree removes its temp parent when `git worktree add` fails (#3043)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const removed = [];
   const rg = realGit(repo, { rmSync: (dirPath, opts) => { removed.push(dirPath); fs.rmSync(dirPath, opts); } });
@@ -839,7 +924,7 @@ test('realGit.addWorktree removes its temp parent when `git worktree add` fails 
 });
 
 test('realGit.batchBaseInfo: existence and sameness for several files in one pass, root passed in rather than re-resolved (#3070)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.mkdirSync(path.join(repo, 'tests'));
@@ -857,7 +942,7 @@ test('realGit.batchBaseInfo: existence and sameness for several files in one pas
 });
 
 test('realGit.batchBaseInfo: a file present at base but missing from the working tree is same:false, never a thrown batch error (#3070)', () => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-'));
+  const repo = scratchDir('baseline-realgit-');
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   git('init', '-q');
   fs.writeFileSync(path.join(repo, 'a.test.js'), 'one\n');
@@ -960,13 +1045,13 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
   // that `git worktree list` reports already resolved — an unresolved
   // mkdtemp path would spuriously mismatch (same note as cli-helpers.js's own
   // tmpDir() helper).
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-realgit-')));
+  const repo = fs.realpathSync(scratchDir('baseline-realgit-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: repo });
-  const normalWt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-normal-wt-')));
+  const normalWt = fs.realpathSync(scratchDir('baseline-normal-wt-'));
   fs.rmdirSync(normalWt);
   execFileSync('git', ['worktree', 'add', '--detach', normalWt, 'HEAD'], { cwd: repo });
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   const staleWt = path.join(staleParent, 'wt');
   execFileSync('git', ['worktree', 'add', '--detach', staleWt, 'HEAD'], { cwd: repo });
   const rg = realGit(repo);
@@ -983,7 +1068,7 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
 });
 
 test('realGit.listWorktrees returns an empty list rather than throwing outside a git repository (#3064)', () => {
-  const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-not-a-repo-'));
+  const notARepo = scratchDir('baseline-not-a-repo-');
   assert.deepStrictEqual(realGit(notARepo).listWorktrees(), []);
 });
 
@@ -1044,7 +1129,7 @@ test('#3153 finding 2: an unmatched entry naming only a path absent from the che
 });
 
 test('#3153: realGit().inCheckout is true only for a relative path present under the given directory', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-incheckout-'));
+  const root = scratchDir('baseline-incheckout-');
   fs.mkdirSync(path.join(root, 'tests'));
   fs.writeFileSync(path.join(root, 'tests', 'a.test.js'), '');
   const g = realGit(root);
@@ -1495,7 +1580,7 @@ const SYMLINK_POSIX_ONLY = { skip: process.platform === 'win32' && 'symlink fixt
 const fallbackLine = (reason) => `verify.js: baseline scratch: the per-slot path is unavailable (${reason}) — using a fresh ct-verify-base-* path for this run\n`;
 function slotFixture(t) {
   const made = [];
-  const mk = (prefix) => { const d = realp(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); made.push(d); return d; };
+  const mk = (prefix) => { const d = realp(scratchDir(prefix)); made.push(d); return d; };
   const repo = mk('baseline-slot-repo-');
   const tmpdir = mk('baseline-slot-tmp-');
   const S = mk('baseline-slot-lock-');
@@ -1900,4 +1985,46 @@ test('two adjudications on one slot path: the one whose checkout was replaced lo
     if (b !== null) other.removeWorktree(b.dir);
   }
   assert.deepStrictEqual(fx.registered(), [fx.repo]);
+});
+
+// #5773: a `locations` provider answers repoRoot() and the slot's common dir in place of git.
+test('realGit with a locations provider asks it, not git, for the repo root (#5773)', (t) => {
+  const fx = slotFixture(t);
+  const asked = [];
+  const provided = fx.mk('baseline-provided-root-');
+  const rg = realGit(fx.repo, { tmpdir: fx.tmpdir, locations: (d) => { asked.push(d); return { toplevel: provided, commonDir: fx.commonDir }; } });
+  assert.strictEqual(rg.repoRoot(), provided, 'a root that differs from git\'s own answer proves git was not asked');
+  assert.deepStrictEqual(asked, [fx.repo]);
+  // A provider with no toplevel falls back to git, so the failure text is git's own (it reaches the report's adjudication-error reason).
+  const bare = fx.mk('baseline-not-a-repo-');
+  const none = realGit(bare, { tmpdir: fx.tmpdir, locations: () => ({ toplevel: null, commonDir: null }) });
+  assert.throws(() => none.repoRoot(), (err) => /not a git repository/.test(String(err.stderr || err.message)) && !/not a git work tree/.test(err.message));
+});
+
+test('realGit without a provider keeps asking git for the repo root (#5773)', (t) => {
+  const fx = slotFixture(t);
+  assert.strictEqual(fx.rg.repoRoot(), fx.g('rev-parse', '--show-toplevel'));
+});
+
+test('realGit slotWorktree canonicalizes a provider commonDir and keeps the repo key byte-identical (#5773)', SYMLINK_POSIX_ONLY, (t) => {
+  const fx = slotFixture(t);
+  const link = path.join(fx.mk('baseline-link-'), 'common-link');
+  fs.symlinkSync(fx.commonDir, link);
+  const viaGit = fx.rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  fx.rg.removeWorktree(viaGit.dir);
+  const provided = realGit(fx.repo, { tmpdir: fx.tmpdir, warn: (line) => fx.warned.push(line), locations: () => ({ toplevel: fx.repo, commonDir: link }) });
+  const viaProvider = provided.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  t.after(() => provided.removeWorktree(viaProvider.dir));
+  assert.strictEqual(viaProvider.dir, viaGit.dir);
+  assert.strictEqual(viaProvider.dir, fx.at());
+  assert.strictEqual(viaProvider.fallback, undefined);
+});
+
+test('realGit slotWorktree falls back to a fresh path when the provider has no common dir (#5773)', (t) => {
+  const fx = slotFixture(t);
+  const rg = realGit(fx.repo, { tmpdir: fx.tmpdir, warn: (line) => fx.warned.push(line), locations: () => ({ toplevel: fx.repo, commonDir: null }) });
+  const added = rg.addWorktree(fx.sha1, { slot: 0, slotBase: fx.S });
+  t.after(() => rg.removeWorktree(added.dir));
+  assert.strictEqual(added.fallback, 'no-common-dir');
+  assert.deepStrictEqual(fx.warned, [fallbackLine('no-common-dir')]);
 });

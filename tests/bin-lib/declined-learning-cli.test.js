@@ -9,6 +9,7 @@ const { test, beforeEach } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync, spawnCli } = require('../helpers/run-cli');
@@ -30,7 +31,7 @@ const CLI_ENV = {
 let sandbox;
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'declined-learning-cli-'));
+  sandbox = scratchDir('declined-learning-cli-');
   const env = { ...process.env };
   for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[k];
   execFileSync('git', ['init', '-q'], { cwd: sandbox, env, windowsHide: true });
@@ -152,7 +153,7 @@ test('AC9.1: record-decline writes the store under the injected cwd, not this ch
 });
 
 test('record-decline under a non-git injected cwd lands the store there, not under the process cwd', () => {
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'declined-learning-plain-'));
+  const plain = scratchDir('declined-learning-plain-');
   assert.strictEqual(
     mainCheckoutRoot(plain),
     null,

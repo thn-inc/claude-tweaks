@@ -2,8 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  recordPayload, ORIGINS, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
+  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   buildAuthorAssociationQuery,
@@ -65,6 +65,32 @@ test('recordPayload accepts origin: docs-health', () => {
 test('recordPayload accepts origin: dispatch', () => {
   const payload = recordPayload({ title: 'x', body: 'y', type: 'task', origin: 'dispatch' });
   assert.ok(payload.labels.includes('by:dispatch'));
+});
+
+test('AC9.1: the by:ci-health origin is registered beside the six existing origins (expand-only)', () => {
+  const path = require('node:path');
+  const { readText } = require('../../helpers/read-skill');
+  const shared = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared');
+  assert.ok(ORIGINS.includes('ci-health'));
+  assert.deepStrictEqual(ORIGINS.slice(0, 6), ['code-health', 'harness-health', 'journey-health', 'docs-health', 'capture', 'dispatch']);
+  assert.strictEqual(parseRecordFacets(['by:ci-health', 'ready']).origin, 'ci-health');
+  assert.deepStrictEqual(
+    recordPayload({ title: 't', body: 'b', type: 'task', origin: 'ci-health', risk: 'low', size: 'low', ready: true }).labels,
+    ['by:ci-health', 'risk:low', 'size:low', 'ready'],
+  );
+  // The shared contracts carry every origin: label-bootstrap.md registers a by:* label for each,
+  // and work-record.md's Origin row states the matching count and lists each label.
+  const bootstrap = readText(path.join(shared, 'label-bootstrap.md'));
+  const rows = [...bootstrap.matchAll(/^\s*\["(by:[a-z-]+)",\s*"([^"]*)",\s*"([0-9A-F]{6})"\]/gm)].map((m) => ({ name: m[1], description: m[2], color: m[3] }));
+  for (const origin of ORIGINS) {
+    assert.ok(rows.some((r) => r.name === `by:${origin}`), `label-bootstrap.md LABELS_JSON must register by:${origin}`);
+  }
+  const ci = rows.find((r) => r.name === 'by:ci-health');
+  assert.deepStrictEqual(ci && [ci.description, ci.color], ['Origin: filed by the ci-health skill', 'BFD4F2']);
+  const originRow = readText(path.join(shared, 'work-record.md')).split('\n').find((l) => l.startsWith('| Origin ('));
+  assert.ok(originRow, 'work-record.md must carry the Origin family row');
+  assert.ok(originRow.startsWith(`| Origin (${ORIGINS.length}) |`), `Origin row count must equal ORIGINS.length (${ORIGINS.length})`);
+  for (const origin of ORIGINS) assert.ok(originRow.includes(`\`by:${origin}\``), `Origin row must list by:${origin}`);
 });
 
 test('recordPayload throws on unknown risk', () => {
@@ -652,6 +678,12 @@ test('buildLinkedPRQuery also requests the cross-reference timeline, same-repo P
   assert.match(q, /\.\.\. on PullRequest \{ number title state createdAt merged mergedAt/);
 });
 
+test('#5722: buildLinkedPRQuery requests the aliased LABELED_EVENT timeline (last:100) with createdAt and label name', () => {
+  const q = buildLinkedPRQuery([5689]);
+  assert.match(q, /labelEvents:\s*timelineItems\(itemTypes:\[LABELED_EVENT\], last:100\)/);
+  assert.ok(q.includes('... on LabeledEvent { createdAt label { name } }'), q);
+});
+
 test('buildLinkedPRQuery returns null for an empty array', () => {
   assert.strictEqual(buildLinkedPRQuery([]), null);
 });
@@ -1011,6 +1043,59 @@ test('specShapedBody: deferReason alone renders with no Origin line and no stray
   assert.ok(!body.includes('Origin:'));
 });
 
+test('#5933 characterization: a provenance without evidence composes byte-identically', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', deferReason: 'genuinely-larger' } });
+  assert.strictEqual(
+    body,
+    'H\n\nOrigin: o\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nc\n\n## Deliverables\n\nd\n\n## Acceptance Criteria\n\na\n\n## Release Note\n\nr\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
+  );
+});
+
+test('#5933 AC9.1 provenance.evidence renders Evidence: ref:#1234 right after Defer-reason:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence: 'ref:#1234' } });
+  assert.ok(body.includes('Defer-reason: genuinely-larger\n\nEvidence: ref:#1234\n\n## Current State'));
+  assert.strictEqual((body.match(/^Evidence: /gm) || []).length, 1);
+});
+
+test('#5933 evidence with origin and no reason renders after Origin:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', evidence: 'test:tests/a.test.js' } });
+  assert.ok(body.includes('Origin: o\n\nEvidence: test:tests/a.test.js\n\n## Current State'));
+  assert.ok(!body.includes('Defer-reason:'));
+});
+
+test('#5933 empty, null and undefined evidence render no line', () => {
+  for (const evidence of ['', null, undefined]) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence } });
+    assert.ok(!body.includes('Evidence:'), String(evidence));
+  }
+});
+
+test('#5933 a multi-line or non-string evidence throws', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['ref:#1\nref:#2', 'ref:#1\r\nx', 'ref:#1 x', 'ref:#1\u0085x', 'ref:#1 x', 42, ['ref:#1'], { kind: 'ref' }, true]) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      JSON.stringify(evidence),
+    );
+  }
+});
+
+test('#5933 a file-and-line pointer or another kind of evidence throws, never renders', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['src/x.js:10', 'note:x', 'TEST:tests/a.test.js']) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      evidence,
+    );
+  }
+  for (const evidence of ['ref:#1', 'test:tests/a.test.js']) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } });
+    assert.ok(body.includes(`Evidence: ${evidence}\n\n## Current State`), evidence);
+  }
+});
+
 test('specShapedBody: custom footer replaces the default; null omits it entirely', () => {
   const custom = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', footer: '_Filed by `wrap-up leftover routing` via specShapedBody._' });
   assert.ok(custom.endsWith('via specShapedBody._'));
@@ -1311,6 +1396,60 @@ test('recordPayload (#4368): a Defer-reason: line quoted inside a fenced block i
     () => recordPayload({ title: 't', body: 'Defer-reason: genuinely-larger\n\n## Current State\nx', type: 'task', deferReason: 'tangential' }),
     /already carries/,
   );
+});
+
+// --- ownOriginLine (#4502) ---
+test('ownOriginLine: top line read and trimmed; absent and non-string are null', () => {
+  assert.strictEqual(ownOriginLine('Origin: ledger resolve gate  \n\n## Current State'), 'ledger resolve gate');
+  assert.strictEqual(ownOriginLine('Origin:\n## Current State'), '');
+  assert.strictEqual(ownOriginLine('## Current State\nno line'), null);
+  assert.strictEqual(ownOriginLine(''), null);
+  assert.strictEqual(ownOriginLine(undefined), null);
+  assert.strictEqual(ownOriginLine('prose naming Origin: mid-line'), null);
+});
+
+test('AC1.1/AC8.1: ownOriginLine skips a line under an ## Absorbed: section', () => {
+  const body = ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), null);
+});
+
+test('AC2.1/AC8.1: ownOriginLine skips a fenced line (backtick and tilde)', () => {
+  for (const f of ['```', '~~~']) {
+    assert.strictEqual(ownOriginLine(['## Current State', f, 'Origin: quoted', f].join('\n')), null, f);
+  }
+});
+
+test('AC3.1: ownOriginLine reads a line under ## Original request', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', 'x', '## Original request', 'Origin: ledger resolve gate'].join('\n')), 'ledger resolve gate');
+});
+
+test('AC4.1: ownOriginLine prefers the own top line over an absorbed one', () => {
+  const body = ['Origin: wrap-up leftover', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'wrap-up leftover');
+});
+
+test('AC5.1: a line after the absorbed section\'s next ## heading counts again', () => {
+  const body = ['## Absorbed: 2026-10-30 — x', 'Origin: absorbed', '## Original request', 'Origin: own'].join('\n');
+  assert.strictEqual(ownOriginLine(body), 'own');
+});
+
+test('ownOriginLine: ### sub-headings keep an Absorbed section open', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '### Notes', 'Origin: absorbed'].join('\n')), null);
+});
+
+test('ownOriginLine: a fenced ## line neither ends an Absorbed section nor opens one', () => {
+  assert.strictEqual(ownOriginLine(['## Absorbed: d — x', '```', '## Not a heading', '```', 'Origin: absorbed'].join('\n')), null);
+  assert.strictEqual(ownOriginLine(['```', '## Absorbed: quoted', '```', 'Origin: own'].join('\n')), 'own');
+});
+
+test('ownOriginLine: an unclosed fence hides every later line, ## Original request included (same rule as #4368)', () => {
+  assert.strictEqual(ownOriginLine(['## Current State', '```', 'quoted', '## Original request', 'Origin: own'].join('\n')), null);
+});
+
+test('AC7.1: CRLF and lone-CR bodies resolve the same as LF', () => {
+  const lines = ['## Absorbed: d — x', 'Origin: absorbed', '## Original request', 'Origin: own  '];
+  for (const eol of ['\n', '\r\n', '\r']) assert.strictEqual(ownOriginLine(lines.join(eol)), 'own', JSON.stringify(eol));
+  for (const eol of ['\r\n', '\r']) assert.strictEqual(ownOriginLine(['```', 'Origin: quoted', '```'].join(eol)), null, JSON.stringify(eol));
 });
 
 test('parseRecordFacets: breaking label sets facets.breaking to true (presence-only Compatibility axis, #2251)', () => {

@@ -7,6 +7,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-run-tests-shard-');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -17,7 +19,7 @@ const ROOT = path.join(__dirname, '..');
 const RUNNER = path.join(ROOT, 'tools', 'run-tests.js');
 const {
   parseShard, readDurations, assignShards, extractRunFlags, listTestFiles, durationsPartialPath, finishRecording,
-  DURATIONS_FILE, PER_FILE_OVERHEAD_MS,
+  DURATIONS_FILE, PER_FILE_OVERHEAD_MS, durationsCoverageGaps, durationsOverCeiling,
 } = require(RUNNER);
 const reporter = require(path.join(ROOT, 'tools', 'test-durations-reporter.js'));
 
@@ -83,6 +85,47 @@ test('assignShards looks files up by their posix path, so a win32-separated list
   assert.strictEqual(shards[0].unmeasured, 0);
 });
 
+test('durationsCoverageGaps names a file at the floor that has no entry', () => {
+  const sizes = {
+    'a.test.js': 102400,
+    'b.test.js': 102399,
+    'c.test.js': 200000,
+    'gone.test.js': null,
+  };
+  const gaps = durationsCoverageGaps(Object.keys(sizes), new Map([['c.test.js', 5000]]), (f) => sizes[f]);
+  assert.deepStrictEqual(gaps, ['a.test.js']);
+});
+
+test('durationsCoverageGaps matches a win32-separated path to its posix entry', () => {
+  const gaps = durationsCoverageGaps(['tests\\x.test.js'], new Map([['tests/x.test.js', 5000]]), () => 200000);
+  assert.deepStrictEqual(gaps, []);
+});
+
+test('durationsOverCeiling names an entry above the ceiling and not one at it', () => {
+  const over = durationsOverCeiling(new Map([
+    ['tests/over.test.js', 100001],
+    ['tests/at.test.js', 100000],
+  ]));
+  assert.strictEqual(over.length, 1);
+  assert.ok(over[0].startsWith('tests/over.test.js'), over[0]);
+  assert.ok(over[0].includes('100001'), over[0]);
+});
+
+test('durationsCoverageGaps returns the gaps sorted, whatever order the files arrive in', () => {
+  const gaps = durationsCoverageGaps(['tests/z.test.js', 'tests/a.test.js'], new Map(), () => 200000);
+  assert.deepStrictEqual(gaps, ['tests/a.test.js', 'tests/z.test.js']);
+});
+
+test('durationsOverCeiling returns the entries sorted by path, whatever order they arrive in', () => {
+  const over = durationsOverCeiling(new Map([['tests/z.test.js', 150000], ['tests/a.test.js', 160000]]));
+  assert.deepStrictEqual(over, ['tests/a.test.js 160000 ms', 'tests/z.test.js 150000 ms']);
+});
+
+test('durationsOverCeiling takes a custom ceiling: 101 ms is over 100, 100 ms is not', () => {
+  const over = durationsOverCeiling(new Map([['tests/over.test.js', 101], ['tests/at.test.js', 100]]), 100);
+  assert.deepStrictEqual(over, ['tests/over.test.js 101 ms']);
+});
+
 test('readDurations reads the files map and rejects any other shape', () => {
   assert.deepStrictEqual([...readDurations('{"files":{"tests/a.test.js":12}}')], [['tests/a.test.js', 12]]);
   for (const bad of ['[]', '{}', '{"files":[]}', '{"files":{"a":"12"}}', '{"files":{"a":-1}}', 'not json']) {
@@ -96,6 +139,19 @@ test('the committed durations file parses and names only test files that exist',
   assert.ok(durations.size > 0, 'the durations file is empty');
   const stale = [...durations.keys()].filter((f) => !known.has(f));
   assert.deepStrictEqual(stale, [], 'refresh it: node tools/run-tests.js --record-durations tools/test-durations.json');
+});
+
+test('every test file of 100 KB or more has a recorded duration (refresh: node tools/run-tests.js --record-durations tools/test-durations.json)', () => {
+  const durations = readDurations(readText(path.join(ROOT, DURATIONS_FILE)));
+  const testFiles = listTestFiles(ROOT).map((f) => path.relative(ROOT, f).split(path.sep).join('/'));
+  const sizeOf = (file) => fs.statSync(path.join(ROOT, file)).size;
+  const gaps = durationsCoverageGaps(testFiles, durations, sizeOf);
+  assert.deepStrictEqual(gaps, [], `no recorded duration for: ${gaps.join(', ')} — refresh: node tools/run-tests.js --record-durations tools/test-durations.json`);
+});
+
+test('no recorded duration exceeds 100,000 ms', () => {
+  const over = durationsOverCeiling(readDurations(readText(path.join(ROOT, DURATIONS_FILE))));
+  assert.deepStrictEqual(over, [], `over the ceiling: ${over.join(', ')} — split that test file by describe into sibling files`);
 });
 
 test('extractRunFlags pulls --shard and --record-durations out and keeps the roots', () => {
@@ -123,7 +179,7 @@ test('the durations reporter records each test file\'s summary, relative and sor
 // node truncates a reporter destination when the run starts, and the suite itself reads the committed
 // durations file, so a recording lands only when the run ends.
 test('finishRecording replaces the file only for a finished run that wrote something', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-record-'));
+  const tmp = scratchDir('run-tests-record-');
   try {
     const out = path.join(tmp, 'durations.json');
     const partial = durationsPartialPath(out, 4242);
@@ -153,7 +209,7 @@ test('the durations reporter refuses to write an empty file', () => {
 // End to end through the CLI: a fixture root of tiny test files, run as two shards, each writes the
 // name of the file that ran; together they ran every file exactly once.
 test('run-tests.js --shard runs a disjoint slice per shard that together covers the root', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'run-tests-shard-'));
+  const tmp = scratchDir('run-tests-shard-');
   try {
     const root = path.join(tmp, 'suite');
     const out = path.join(tmp, 'ran');

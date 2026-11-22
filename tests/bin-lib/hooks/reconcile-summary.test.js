@@ -3,17 +3,18 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
 const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 function seedRepo(dir) {
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -24,7 +25,7 @@ function seedRepo(dir) {
 // "Reconcile residue line") — verified here rather than by eyeballing a
 // manual run.
 test('reconcile-summary: no background pass yet, no remote — a well-formed line with zero counts, never a throw or non-zero exit', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-summary-'));
+  const dir = scratchDir('ct-recon-summary-');
   seedRepo(dir);
 
   const result = execFileSync('node', [HOOKS, 'reconcile-summary'], { cwd: dir, encoding: 'utf8' });
@@ -32,7 +33,7 @@ test('reconcile-summary: no background pass yet, no remote — a well-formed lin
 });
 
 test('reconcile-summary: reflects a persisted background-status archived count and the residue cache\'s stuck count', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-summary-stuck-'));
+  const dir = scratchDir('ct-recon-summary-stuck-');
   seedRepo(dir);
 
   fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
@@ -48,7 +49,7 @@ test('reconcile-summary: reflects a persisted background-status archived count a
 });
 
 test('reconcile: the raw-JSON subcommand also carries a residueSummary field composed from the same result, on a fully-completed pass', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-raw-summary-'));
+  const dir = scratchDir('ct-recon-raw-summary-');
   seedRepo(dir);
   // Force past the no-remote/local-merge early exits (neither of which
   // reach the bottom of reconcile() where residueSummary is attached — see

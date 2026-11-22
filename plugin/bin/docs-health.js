@@ -31,15 +31,16 @@ const TOOL_NAME = 'docs-health';
 // Mirrors bin/lib/code-health/dedup.js's RISK_RANK shape/direction exactly —
 // --min-confidence's "file when at or above the floor" semantics. Kept local
 // to this CLI (rather than in bin/lib/docs-health/dedup.js, which is a thin
-// re-export of the shared bin/lib/health-core/dedup.js used by three of the
-// four health skills) since the threshold/remember behavior below has no
+// re-export of the shared bin/lib/health-core/dedup.js used by every health
+// skill but code-health) since the threshold/remember behavior below has no
 // equivalent in that shared module — same reason code-health forked its own
 // dedup.js instead of extending the shared one.
 const CONFIDENCE_RANK = { high: 0, med: 1, low: 2 };
 
 // Rejects a --min-confidence value that isn't a CONFIDENCE_RANK key: writes an
 // error to `stderr` and returns { ok: false, code: 2 }; { ok: true } otherwise
-// (an omitted flag included) — mirrors bin/code-health.js's validateRiskArg.
+// (an omitted flag included) — mirrors bin/code-health.js's validateRiskArg, as
+// used for its `--min-risk` check.
 function validateConfidenceArg(value, stderr) {
   if (value == null) return { ok: true };
   if (Object.prototype.hasOwnProperty.call(CONFIDENCE_RANK, value)) return { ok: true };
@@ -414,13 +415,6 @@ const realDeps = {
   lock: acquireLock,
 };
 
-// Removal condition: delete once no file under plugin/, tests/, tools/, perf/ or evals/
-// imports it — callers use run(argv, deps) instead. Returns the exit code; never sets
-// process.exitCode.
-function main(argv) {
-  return run(argv, realDeps);
-}
-
-module.exports = { parseArgs, cmdNextTarget, cmdValidateFindings, cmdWordCount, cmdFindRefs, cmdCheckFreshness, cmdVerifyCommit, deriveDocId, main, run, realDeps };
+module.exports = { parseArgs, cmdNextTarget, cmdValidateFindings, cmdWordCount, cmdFindRefs, cmdCheckFreshness, cmdVerifyCommit, deriveDocId, run, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

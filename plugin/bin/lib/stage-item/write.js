@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
+const { isUnderPipelines } = require('../run-dir-guard');
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -24,7 +25,7 @@ function sanitizeId(id) {
 }
 
 // Anchoring rationale (ADR-0004's two worktree domains, fail-closed-on-unknown,
-// the deliberate `mainRoot: null` opt-out): see `bin/lib/log-decision/append.js`'s
+// the deliberate `mainRoot: null` opt-out, which still gets the pipelines check): see `bin/lib/log-decision/append.js`'s
 // header comment — this predicate is deliberately duplicated for two small
 // sibling files, not extracted.
 // Walk up from `startDir` for the nearest ancestor containing a `.git` entry.
@@ -44,7 +45,8 @@ function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-// { runDir, cwd?, mainRoot? } -> { ok, dir } | { ok:false, reason:'missing'|'not-anchored' }
+// { runDir, cwd?, mainRoot? } -> { ok, dir } | { ok:false, reason:'missing'|'not-anchored'|'not-a-run-dir' }
+// 'not-a-run-dir': anchored, but not strictly inside <checkout>/.claude-tweaks/pipelines/ (#5830).
 function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   const real = safeReal(runDir);
   if (!real || !isDirectory(real)) return { ok: false, reason: 'missing' };
@@ -59,6 +61,7 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
     if (!anchor) return { ok: false, reason: 'not-anchored' };
   }
   if (anchor && (safeReal(anchor) || anchor) !== gitRoot) return { ok: false, reason: 'not-anchored' };
+  if (!isUnderPipelines(real, gitRoot)) return { ok: false, reason: 'not-a-run-dir' };
   return { ok: true, dir: real };
 }
 

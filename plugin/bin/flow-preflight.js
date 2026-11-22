@@ -54,7 +54,7 @@ async function run(argv, deps = {}) {
   }
   const target = resolveTarget({ runDir: o.run, cwd: cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
-    stderr(`flow-preflight.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout'}) — nothing written\n`);
+    stderr(`flow-preflight.js: --run ${o.run} refused (${target.reason === 'missing' ? 'missing' : 'not anchored under the main checkout\'s .claude-tweaks/pipelines'}) — nothing written\n`);
     return 3;
   }
   let file = path.join(target.dir, 'preflight.json');

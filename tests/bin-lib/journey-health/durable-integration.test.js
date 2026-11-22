@@ -4,15 +4,17 @@ const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 
 const { sweepCli } = require('../../helpers/health-sweep-cli');
 const { seedDurableState } = require('../health-core/seed-durable-state');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'journey-health.js');
 
 function tmpRepo() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'journey-health-durable-'));
+  return scratchDir('journey-health-durable-');
 }
 
 // In-process (#5380), with the file-protocol-only git guard — see tests/helpers/health-sweep-cli.js.
@@ -77,10 +79,8 @@ test('retry-queue update <results.json> dispatches correctly against a repo with
 // No --root, and a results-file path relative to the injected cwd: both resolve against it.
 test('retry-queue update without --root resolves the root and a relative results file against the injected cwd', () => {
   const root = tmpRepo();
-  execFileSync('git', ['init', '-q'], { cwd: root });
   // The push the assertion below names is only reached once the state commit is created, which needs an identity.
-  execFileSync('git', ['-C', root, 'config', 'user.email', 'test@example.com']);
-  execFileSync('git', ['-C', root, 'config', 'user.name', 'test']);
+  initRepo(root, { name: 'test', email: 'test@example.com', cwd: root });
   execFileSync('git', ['remote', 'add', 'origin', 'https://example.invalid/nonexistent.git'], { cwd: root });
   fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify([
     { fingerprint: 'journeyhealth-aaaa0001', payload: { title: 'Stale example journey' }, ok: false, error: 'filing failed: 500' },

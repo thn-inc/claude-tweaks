@@ -51,9 +51,10 @@ files:
 - **URL:** a live console holding pre-#4168 reflect files, or `/claude-tweaks:tidy`'s console backfill over archived runs (#3950)
 - **Action:** A reflect observation or convention that has no `**Destination:**` line, because it was staged before the line existed, is digested with `Defer-reason: reflect-no-destination`. This happens both on the live console (`reflect-apply.js`'s `digest` session entry) and in the backfill (`backfill-dispose.js`).
 - **Should feel:** Like the old residue finally clears, not like it was silently dropped. Each file leaves a dated digest line behind.
-- **Should understand:** The digest is a below-the-floor record per `_shared/materiality-floor.md`, not a backlog record. A legacy finding that still matters can be captured from its digest entry.
+- **Should understand:** A digest entry is a line in the rolling container `_shared/materiality-floor.md` describes, not a backlog record. `reflect-no-destination` is one of that file's Console backfill values: an entry-format value, not a `Defer-reason:` and not a floor verdict, so no `deferral-route.js` call routes it. A legacy finding that still matters can be captured from its digest entry.
 - **Red flags:** Legacy reflect files still counted as `pending` after a backfill; a legacy file digested under `console-backfill-unmapped-kind` instead of `reflect-no-destination`.
 
 ## Origin
 - Created during build of #4168 (reflect observation/convention findings get a Destination line, a Skill-updates classification, and the `reflect-apply.js` consumer; split from #3946's Deliverable 3)
+- Step 5 updated at the wrap-up of #5930-#5933: a digest entry is no longer described as below-the-floor, since the container now collects every rule in `_shared/materiality-floor.md`'s digest-label table, and `reflect-no-destination` is an entry-format value that never runs the floor
 - Related journeys: `route-a-declined-reflection-insight` (the declined-learning store a `decline` destination writes to), `settle-every-review-finding-at-the-console-3949` (the sibling settle of review findings at the same console), `review-what-an-unattended-console-left-open-3370` (where residue an unattended console leaves is read back)

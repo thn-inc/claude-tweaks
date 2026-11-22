@@ -35,7 +35,7 @@ files:
 ### 3. No patch to stage — a record proposal (`staged/review-followup-{n}.md`)
 - **URL:** `plugin/skills/review/step3-routing.md`'s "Staging a record proposal" paragraph
 - **Action:** A finding the table routes AUTO or STAGED fails the deferral gate's fix-now criteria with a valid `Defer-reason:`. Its fix is a new work record, not a diff.
-  - **Low or medium, below the materiality floor and not `tangential`:** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`. A `high` finding never takes this branch, so its staged line always carries `high-severity finding`.
+  - **Low or medium, a digest verdict (any rule in `_shared/materiality-floor.md`'s digest-label table):** the finding goes to the digest with the floor's `AUTO … materiality-floor:` line, and its ledger row is written `accepted`. A `high` finding never takes this branch, so its staged line always carries `high-severity finding`.
   - **Otherwise:**
     1. The agent writes the proposal (`Title:`/`Type:`/`Labels:`/`Defer-reason:`/`Finding:` header, a blank line, then the body) to a `.md` scratch path.
     2. It stages the file with `stage-item.js --id review-followup-1 … --allocate`.
@@ -71,4 +71,5 @@ files:
 - Steps 1-2 and 4-5 built in #4488; steps 3 and 6 added in the build of #4484 (the `review-followup-{n}.md` staging name, its roster row, and the auto-mode materiality floor)
 - Updated during the wrap-up of #4772: step 3 notes the spec-qualified Resolution path in a multi-spec run, and that a refused record proposal reopens its ledger row.
 - Updated during the build of #4637: step 2 names `--stack-stderr` in the quoting rule.
+- Updated during the build of #5933: step 3's digest branch covers every rule in `_shared/materiality-floor.md`'s digest-label table, including `no-evidence` and `run-cap`.
 - Related: #4481 (the run whose hand-typed lines carried the doubled prefix and the mis-ordered token), #3792 (git/user text never double-quoted)

@@ -3,7 +3,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-function has(cmd) {
+// `env` is where PATH is read: the SessionStart hook passes its context's (#5377); the standalone
+// CLI (`main`) and every other caller leave it out and get the inherited environment.
+function has(cmd, env = process.env) {
   // This code can only ever execute while a Node process is already
   // running, so shelling out to `node --version` to answer "is node
   // present" spawns a subprocess purely to re-derive a fact this process
@@ -12,11 +14,11 @@ function has(cmd) {
   if (cmd === 'node') return true;
   // A PATH scan, not `execSync('git --version')`: that spawned /bin/sh -c plus git itself on
   // every SessionStart — 2 processes each (#5297).
-  const hit = findOnPath(cmd, { env: process.env, platform: process.platform, cwd: null });
+  const hit = findOnPath(cmd, { env, platform: process.platform, cwd: null });
   if (!hit) return false;
   // /usr/bin/git on macOS is an xcode-select shim that exists even without the Command Line
   // Tools (running it is what used to fail), so a hit there only counts with a real developer dir.
-  if (process.platform === 'darwin' && hit === path.join('/usr/bin', cmd)) return hasAppleDeveloperTool(cmd);
+  if (process.platform === 'darwin' && hit === path.join('/usr/bin', cmd)) return hasAppleDeveloperTool(cmd, { env });
   return true;
 }
 
@@ -39,19 +41,19 @@ function hasAppleDeveloperTool(cmd, { readlink = fs.readlinkSync, exists = fs.ex
   return dirs.some((dir) => exists(path.posix.join(dir, 'usr', 'bin', cmd)));
 }
 
-function detectPackageManager() {
+function detectPackageManager(env = process.env) {
   const platform = os.platform();
   if (platform === 'darwin') {
-    if (has('brew')) return { name: 'brew', needsSudo: false };
+    if (has('brew', env)) return { name: 'brew', needsSudo: false };
   }
   if (platform === 'win32') {
-    if (has('winget')) return { name: 'winget', needsSudo: false };
-    if (has('scoop')) return { name: 'scoop', needsSudo: false };
+    if (has('winget', env)) return { name: 'winget', needsSudo: false };
+    if (has('scoop', env)) return { name: 'scoop', needsSudo: false };
   }
   if (platform === 'linux') {
-    if (has('apt')) return { name: 'apt', needsSudo: true };
-    if (has('dnf')) return { name: 'dnf', needsSudo: true };
-    if (has('pacman')) return { name: 'pacman', needsSudo: true };
+    if (has('apt', env)) return { name: 'apt', needsSudo: true };
+    if (has('dnf', env)) return { name: 'dnf', needsSudo: true };
+    if (has('pacman', env)) return { name: 'pacman', needsSudo: true };
   }
   return null;
 }
@@ -132,13 +134,14 @@ function safeCwd() {
   }
 }
 
-function playwrightCliMessage() {
+// `cwd` and `env` come from the SessionStart hook's context (#5377); left out they are the process's own.
+function playwrightCliMessage({ env = process.env, cwd = safeCwd() } = {}) {
   // A PATH scan, not `npx --no-install playwright-cli --version`: npx boots a
   // whole npm CLI on every SessionStart (~2 CPU-seconds, 30s+ under load).
   const installed = findOnPath('playwright-cli', {
-    env: process.env,
+    env,
     platform: process.platform,
-    cwd: safeCwd(),
+    cwd,
   }) !== null;
   if (!installed) {
     return 'claude-tweaks: Browser features require playwright-cli. Install: npm install -g @playwright/cli. Browser features are optional.';
@@ -165,13 +168,13 @@ function missingMessage(dep, pm, vm) {
   return `claude-tweaks: ${dep} not found. Install: ${url}`;
 }
 
-function collect() {
+function collect({ env = process.env, cwd = safeCwd() } = {}) {
   // The package manager only feeds an install hint, so it is probed only once something is
   // missing — `brew --version` on every SessionStart costs as much as the npx probe did.
-  const missing = ['node', 'git'].filter((dep) => !has(dep));
-  const pm = missing.length ? detectPackageManager() : null;
+  const missing = ['node', 'git'].filter((dep) => !has(dep, env));
+  const pm = missing.length ? detectPackageManager(env) : null;
   const msgs = missing.map((dep) => missingMessage(dep, pm, dep === 'node' ? detectVersionManager() : null));
-  const pw = playwrightCliMessage();
+  const pw = playwrightCliMessage({ env, cwd });
   if (pw) msgs.push(pw);
   return msgs;
 }

@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/driver/judgment-prompts.js
   - plugin/bin/lib/driver/judgments.js
   - plugin/bin/lib/driver/roles.js
+  - plugin/bin/lib/driver/launch.js
 ---
 
 # Re-measure the Merge-Check Judge After a Prompt Change
@@ -36,6 +37,8 @@ files:
 - **Should understand:**
   - The record bodies and check states are as of extraction. The fixture header names that as a divergence.
   - A fixture whose recorded verdict was neither `auto-merge` nor `needs-human` is not in the file; the header's `excluded` list holds it with its reason.
+  - Each judge launches on the `merge-check` role's shipped default model (#5917). The harness hands `launchTracked` (`launch.js`) the `express-driver-models`, `model-profiles`, `model-ceiling` and `model-effort` keys at their schema defaults (`launchPolicy`, which spreads `launch.js`'s `MODEL_POLICY_KEYS`) and reads no `policy.yml`, so the role resolves its default `standard` profile through the shipped profile table. A model change this run measures is one to that default: `DRIVER_ROLE_PROFILES` in `roles.js`, or the `standard` row in `profiles.js`. A `policy.yml` override of the role's profile, or of a `model-profiles` row, is not what it launches.
+  - The judge also launches with no `--effort` (#5942): `model-effort` at its default `inherit` resolves no launch effort, so every judged run takes the CLI's default effort. A project whose `policy.yml` sets `model-effort: profile`, as this repo's does, launches its production merge-check at the role's resolved profile effort instead, so this run's agreement figures do not measure that setting.
 - **Red flags:**
   - The harness passing the judge anything production does not, such as a rationale or a local path.
   - A fixture judged without its own `reviewFindings`.
@@ -60,7 +63,7 @@ files:
 - **URL:** the record numbers in `falseAutoMerge`, and the run's `--out` file for each one's verdicts
 - **Action:** stop the change. Read what each listed record's diff and findings were, and revise the change until the judge holds those records back again. Then re-run step 2 in full.
 - **Should feel:** like a failing test: the change is wrong until the gate is green again.
-- **Should understand:** the gate measures the merge-check judge only. A change to an acceptance prompt source triggers the same re-run rule (`docs/driver.md`), but its own effect is judged in review.
+- **Should understand:** the gate measures the merge-check judge only. A change to an acceptance prompt source triggers the same re-run rule (`docs/driver.md`), but its own effect is judged in review. So does a change to the model the `acceptance` role launches with (#5917): the rule covers every judgment role's model, though this harness launches only `merge-check`.
 - **Red flags:**
   - A fixture deleted or re-labelled to make the list empty.
   - A prompt line softened to raise agreement.
@@ -82,3 +85,5 @@ files:
 ## Origin
 - Created during the build of #5228 (run `2026-11-14T212212-spec-5228`), which added the driver's read-only merge-check and acceptance judgment workers, the committed verdict fixtures and this harness. Its first two real runs, at a65e108 and 81a2e8f, exited 0 with no false auto-merge in 99 judged runs (agreement 87/99, then 86/99).
 - Updated at wrap-up of #5228: after the review's structural defang of the untrusted-record wrap, the harness launches through production's own launch and verdict check (`launchAndValidate` in judgments.js), and a third real run, at 181c6ffc3, exited 0 with no false auto-merge (agreement 87/99).
+- Updated at wrap-up of #5917 (run `2026-11-19T062113-spec-5915-5917`), which launches every driver worker on an explicit model and moved the `merge-check` and `acceptance` roles to the `standard` profile. Step 2 now says the harness measures the role's shipped default model, not a `policy.yml` override, and step 4 says a judgment role's model change triggers the re-run too. That build's re-run exited 0 with `falseAutoMerge: []`, `notJudged: []` and `launchFailures: 0` (agreement 85/96).
+- Updated at wrap-up of #5942 (run `2026-11-21T171056-spec-5941-5942`), which added `model-effort` to the driver's model keys and `--effort` to its launches. Step 2 now lists the fourth key the harness resolves at its default and says the judge therefore launches with no `--effort`, unlike a production merge-check under `model-effort: profile`.

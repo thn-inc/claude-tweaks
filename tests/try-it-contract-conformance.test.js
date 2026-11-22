@@ -132,11 +132,12 @@ test('the producer and both summaries name the same session-scoped try-it file',
   }
 });
 
-test('below the floor: no demo:pending, but the walkthrough still reaches the packet', () => {
+test('below the floor: no pending label, but the walkthrough still reaches the packet', () => {
   const doc = read('wrap-up/verification-brief.md');
   const gate = between(doc, '## Oversight-floor gate', '## Step 1:');
   const below = between(gate, '**`exceeds: false`**', '**`exceeds: true`**');
-  assert.match(below, /no `demo:pending`\s+bootstrap/, 'floor still gates the label');
+  // #4613: the no-parent label is accept:pending now, applied by the automatic entry.
+  assert.match(below, /no acceptance-label\s+bootstrap/, 'floor still gates the label');
   assert.match(below, /walkthrough is not skipped: the Try it block composed above feeds the packet's Test guide/);
   assert.match(below, /posts the packet without `--label`/);
   assert.doesNotMatch(below, /\*\*Posting it alone\*\*/, 'the below-floor post is retired');
@@ -196,7 +197,7 @@ test('pr-run-comments.md registers the try-it kind, spec-qualified under multi-s
 });
 
 test('demo Step 2 renders Try it before the design contract and before Prepare', () => {
-  const doc = read('demo/SKILL.md');
+  const doc = read('accept/SKILL.md');
   const step2 = between(doc, '## Step 2: Per-item walkthrough', '### Verdict');
   const first = paragraphAt(step2, '**Try it first');
   assert.ok(first.start < step2.indexOf('### The design contract'), 'before the design-contract section');
@@ -211,7 +212,7 @@ test('demo Step 2 renders Try it before the design contract and before Prepare',
 });
 
 test('demo entry paths compose a Try it block on both composer branches', () => {
-  const doc = read('demo/entry-paths.md');
+  const doc = read('accept/entry-paths.md');
   const recall = between(doc, '## No arguments: session-recall', '## `#N` given: single-record lookup');
   const recallTryIt = paragraphAt(recall, '- **Try it**').text;
   assert.ok(recallTryIt.includes('_shared/try-it.md'), 'session-recall composes the block per the contract');
@@ -222,7 +223,7 @@ test('demo entry paths compose a Try it block on both composer branches', () => 
 });
 
 test('demo #N lookup reads the walkthrough back from the PR before composing one', () => {
-  const doc = read('demo/entry-paths.md');
+  const doc = read('accept/entry-paths.md');
   const lookup = between(doc, '## `#N` given: single-record lookup', '### Full verification pointer');
   assert.match(lookup, /`Verification Brief\s+posted to PR #\{pr-number\}: \{pr-url\}`/, 'names the pr-first pointer line');
   assert.ok(lookup.includes('<!-- run-comment: try-it -->'), 'names the try-it marker');
