@@ -13,7 +13,17 @@
 // `**Resolved:**`, only a trusted author's comment counts (comment-trust.js; each
 // untrusted decision comment adds its skip note), and the newest unresolved one
 // decides. No timestamp, an unparseable one, or a tie for newest is `ambiguous`:
-// the reader never guesses which of two comments is the hold.
+// the reader never guesses which of two comments is the hold. Option, question
+// and Recommended values are trimmed before they are compared or returned.
+//
+// `otherUnresolved` and `supersededHolds` are meaningful only on a `held`
+// verdict. There, `supersededHolds` lists the other unresolved trusted
+// comments that are themselves specify planning holds (the specify marker and
+// the Held-by line: an older hold a failed re-hold left behind), which the
+// answer path resolves with the newest; `otherUnresolved` counts only the
+// remaining unresolved trusted decision comments (another unit's, or any that
+// is not a planning hold), which keep `needs:decision` on the record. On a `not-held` verdict
+// `supersededHolds` is `[]` and `otherUnresolved` is not a label decision.
 
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
 
@@ -39,7 +49,7 @@ function stamp(comment) {
 }
 
 function notHeld(reason, extra = {}) {
-  return { verdict: 'not-held', reason, comment: null, otherUnresolved: 0, questions: [], skipped: [], ...extra };
+  return { verdict: 'not-held', reason, comment: null, otherUnresolved: 0, supersededHolds: [], questions: [], skipped: [], ...extra };
 }
 
 // The questions in `lines` (the block's interior), or null when any line breaks the schema.
@@ -49,10 +59,10 @@ function parseQuestions(lines) {
   for (let i = 0; i < lines.length; i += 4) {
     const [q, a, b, r] = lines.slice(i, i + 4);
     if (!q.startsWith(QUESTION) || !a.startsWith(OPTION) || !b.startsWith(OPTION) || !r.startsWith(RECOMMENDED)) return null;
-    const question = q.slice(QUESTION.length);
-    const first = a.slice(OPTION.length);
-    const second = b.slice(OPTION.length);
-    const recommended = r.slice(RECOMMENDED.length);
+    const question = q.slice(QUESTION.length).trim();
+    const first = a.slice(OPTION.length).trim();
+    const second = b.slice(OPTION.length).trim();
+    const recommended = r.slice(RECOMMENDED.length).trim();
     if (question === '' || first === '' || second === '' || recommended === '' || recommended !== first) return null;
     questions.push({ question, options: [first, second], recommended });
   }
@@ -75,9 +85,18 @@ function carriesHeldBy(body) {
   return body.split('\n').some((line) => line.trim() === HELD_BY_LINE);
 }
 
+// A specify planning hold: the specify unit's marker and the Held-by line.
+function isSpecifyHold(body) {
+  return carriesHeldBy(body) && body.includes(SPECIFY_MARKER);
+}
+
+function ref(comment) {
+  return { id: comment.node_id ?? comment.id ?? null, url: comment.url ?? comment.html_url ?? null };
+}
+
 // comments: a `gh issue view --json comments` array (camelCase) or a REST/MCP
 // array (snake_case). -> { verdict, reason, comment: { id, url } | null,
-// otherUnresolved, questions, skipped }.
+// otherUnresolved, supersededHolds: [{ id, url }], questions, skipped }.
 function readPlanningHold(comments) {
   const list = Array.isArray(comments) ? comments.filter((c) => c !== null && typeof c === 'object') : [];
   const unresolved = list.filter((c) => bodyOf(c).includes(DECISION_MARKER) && !bodyOf(c).includes(RESOLVED));
@@ -98,15 +117,17 @@ function readPlanningHold(comments) {
   const selected = newest[0];
   const body = bodyOf(selected);
   const otherUnresolved = trusted.length - 1;
-  if (!carriesHeldBy(body) || !body.includes(SPECIFY_MARKER)) return notHeld('not-planning', { skipped, otherUnresolved });
+  if (!isSpecifyHold(body)) return notHeld('not-planning', { skipped, otherUnresolved });
 
   const questions = parseBlock(body);
   if (questions === null) return notHeld('unparseable', { skipped, otherUnresolved });
+  const superseded = trusted.filter((c) => c !== selected && isSpecifyHold(bodyOf(c)));
   return {
     verdict: 'held',
     reason: null,
-    comment: { id: selected.node_id ?? selected.id ?? null, url: selected.url ?? selected.html_url ?? null },
-    otherUnresolved,
+    comment: ref(selected),
+    otherUnresolved: otherUnresolved - superseded.length,
+    supersededHolds: superseded.map(ref),
     questions,
     skipped,
   };

@@ -55,6 +55,7 @@ test('the real planning.md hold template parses as held with one question', () =
   assert.equal(out.questions.length, 1);
   assert.deepEqual(out.questions[0], { question: 'Which store?', options: ['Use the ref', 'Use a file'], recommended: 'Use the ref' });
   assert.equal(out.comment.id, 'IC_a');
+  assert.deepEqual(out.supersededHolds, []);
 });
 
 test('a not-held verdict still exits 0', () => {
@@ -83,7 +84,7 @@ test('not JSON, or not a comments list, exits 1', () => {
 
 test('--comments-file with no value exits 2', () => {
   assert.equal(call(['--comments-file']).code, 2);
-  assert.equal(call(['--comments-file', '--help']).code, 2);
+  assert.equal(call(['--comments-file', '--other']).code, 2);
 });
 
 test('an unknown flag or a missing flag exits 2', () => {
@@ -95,6 +96,15 @@ test('--help exits 0 and prints usage', () => {
   const r = call(['--help']);
   assert.equal(r.code, 0);
   assert.match(r.stdout, /usage: planning-hold\.js/);
+});
+
+test('L3: --help or -h anywhere in argv short-circuits to usage and exit 0', () => {
+  for (const argv of [['--bogus', '--help'], ['--help', '--bogus'], ['--comments-file', '--help'], ['--comments-file', 'x.json', '--comments-file', 'y.json', '-h'], ['-h', '--comments-file']]) {
+    const r = call(argv);
+    assert.equal(r.code, 0, argv.join(' '));
+    assert.match(r.stdout, /usage: planning-hold\.js/, argv.join(' '));
+    assert.equal(r.stderr, '', argv.join(' '));
+  }
 });
 
 test('real process: prints the JSON line and exits 0', () => {

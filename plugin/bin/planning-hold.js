@@ -5,7 +5,9 @@
 // logic lives here. <file> is `gh issue view {n} --json comments` output (`{comments: [...]}`)
 // or an MCP `get_comments` array.
 // Stdout (exit 0, whatever the verdict): one JSON line, readPlanningHold's result —
-// {verdict, reason, comment, otherUnresolved, questions, skipped}.
+// {verdict, reason, comment, otherUnresolved, supersededHolds, questions, skipped}
+// (otherUnresolved and supersededHolds: see the lib module's header). --help or -h anywhere in
+// argv prints usage and exits 0, ahead of every other argv check.
 // Exit vocabulary follows bin/find-run-comment.js: 0 = answered (held or not); 1 = payload
 // failure, the file unreadable, not JSON, or not one of the two shapes; 2 = invocation
 // failure, a malformed argv (unknown flag, missing or repeated value). A relative path resolves
@@ -20,10 +22,10 @@ const { resolveAgainst } = require('./lib/health-core/io');
 const USAGE = 'usage: planning-hold.js --comments-file <file> [--help]\n';
 
 function parseArgs(argv) {
+  if (argv.some((a) => a === '--help' || a === '-h')) return { help: true, commentsFile: null };
   const o = { help: false, commentsFile: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a !== '--comments-file') return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (v === undefined || v === '' || v.startsWith('--')) return { error: `${a} needs a value` };

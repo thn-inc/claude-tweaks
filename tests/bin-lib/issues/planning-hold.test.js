@@ -137,3 +137,55 @@ test('unparseable: an empty value', () => {
   const q = [Q1[0], '  Option: ', Q1[2], '  Recommended: '];
   assert.equal(readPlanningHold([c(hold(q))]).reason, 'unparseable');
 });
+
+test('L1: Held-by under a backlog marker is not-planning (the specify-marker half alone)', () => {
+  const r = readPlanningHold([c(hold(Q1, { marker: '<!-- needs-decision: backlog -->' }))]);
+  assert.equal(r.verdict, 'not-held');
+  assert.equal(r.reason, 'not-planning');
+  // Control: the same body under the specify marker is held.
+  assert.equal(readPlanningHold([c(hold(Q1))]).verdict, 'held');
+});
+
+test('L1: two start markers are unparseable', () => {
+  const body = `${hold(Q1)}\n${HELD_BY_LINE}\n${BLOCK_START}\n${Q2.join('\n')}\n${BLOCK_END}`;
+  assert.equal(readPlanningHold([c(body)]).reason, 'unparseable');
+});
+
+test('L2: values are trimmed before comparing and returning', () => {
+  const q = ['- Question: Which store?  ', '  Option: Use the ref ', '  Option:  Use a file', '  Recommended:  Use the ref'];
+  const r = readPlanningHold([c(hold(q))]);
+  assert.equal(r.verdict, 'held');
+  assert.deepEqual(r.questions, [{ question: 'Which store?', options: ['Use the ref', 'Use a file'], recommended: 'Use the ref' }]);
+  const blank = [Q1[0], '  Option:   ', Q1[2], Q1[3]];
+  assert.equal(readPlanningHold([c(hold(blank))]).reason, 'unparseable');
+});
+
+test('M1: an older unresolved specify planning hold is superseded, not another unit', () => {
+  const old = c(hold(Q2), { id: 'IC_old', url: 'https://x/old', createdAt: at(1) });
+  const grant = c('<!-- needs-decision: backlog -->\n## Decision needed\nHeld', { id: 'IC_g', createdAt: at(2) });
+  const newest = c(hold(), { id: 'IC_new', createdAt: at(3) });
+  const r = readPlanningHold([old, newest]);
+  assert.equal(r.verdict, 'held');
+  assert.equal(r.comment.id, 'IC_new');
+  assert.equal(r.otherUnresolved, 0);
+  assert.deepEqual(r.supersededHolds, [{ id: 'IC_old', url: 'https://x/old' }]);
+
+  const mixed = readPlanningHold([old, grant, newest]);
+  assert.equal(mixed.otherUnresolved, 1);
+  assert.deepEqual(mixed.supersededHolds, [{ id: 'IC_old', url: 'https://x/old' }]);
+});
+
+test('M1: a specify comment without Held-by, or a Held-by under another unit, counts as another unit', () => {
+  const specifyNoHeldBy = c(hold(Q2, { heldBy: null }), { id: 'IC_s', createdAt: at(1) });
+  const backlogHeldBy = c(hold(Q2, { marker: '<!-- needs-decision: backlog -->' }), { id: 'IC_b', createdAt: at(2) });
+  const newest = c(hold(), { id: 'IC_new', createdAt: at(3) });
+  const r = readPlanningHold([specifyNoHeldBy, backlogHeldBy, newest]);
+  assert.equal(r.verdict, 'held');
+  assert.equal(r.otherUnresolved, 2);
+  assert.deepEqual(r.supersededHolds, []);
+});
+
+test('M1: a not-held verdict carries an empty supersededHolds', () => {
+  assert.deepEqual(readPlanningHold([]).supersededHolds, []);
+  assert.deepEqual(readPlanningHold([c(hold(Q1, { heldBy: null }))]).supersededHolds, []);
+});
