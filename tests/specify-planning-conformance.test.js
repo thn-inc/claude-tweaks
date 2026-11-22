@@ -600,6 +600,9 @@ const SHAPING_FILES = {
   'plugin/skills/specify/shaping-mode-stamping.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
   'plugin/skills/specify/shaping-mode-readback.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
 };
+const DECOMPOSITION_FILES = {
+  'plugin/skills/specify/decomposition-mode-closeout.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify` once', 'Any other backend, any other output, or a failed call skips this paragraph and decomposition runs as written.'],
+};
 const GATE_START = '<!-- plan-at-specify:start -->';
 const GATE_END = '<!-- plan-at-specify:end -->';
 const PLANNING_TOKENS = ['plan-at-specify', 'planning.md', 'plan-store', 'Planning Decisions', 'Plan: '];
@@ -629,6 +632,12 @@ test('AC1.1: each shaping file holds one gated plan-at-specify block and no plan
   }
 });
 
+test('AC1.1: each decomposition file holds one gated plan-at-specify block and no planning text outside it', () => {
+  for (const [rel, phrases] of Object.entries(DECOMPOSITION_FILES)) {
+    assert.deepEqual(gateProblems(shapingText(rel), phrases), [], rel);
+  }
+});
+
 test('AC1.1: no other specify file except planning.md names the planning step', () => {
   const fs = require('node:fs');
   const dir = path.join(ROOT, 'plugin/skills/specify');
@@ -641,7 +650,7 @@ test('AC1.1: no other specify file except planning.md names the planning step', 
     }
   })(dir);
   assert.ok(files.length > 20, `directory walk found ${files.length} files`);
-  const skip = new Set([...Object.keys(SHAPING_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
+  const skip = new Set([...Object.keys(SHAPING_FILES), ...Object.keys(DECOMPOSITION_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
   for (const p of files) {
     if (skip.has(p)) continue;
     const text = readText(p);
@@ -795,4 +804,18 @@ test('AC2.1 + Deliverable 4: the outcomes map to Step 9\'s ### Planning table', 
     f('| Record | Outcome | Detail |'),
     f('A planning failure is `skipped`'),
   ], 'decomposition outcomes');
+});
+
+test('AC4.1: the closeout block runs after Step 6, before Step 7, and a delegated subagent skips it', () => {
+  const rel = 'plugin/skills/specify/decomposition-mode-closeout.md';
+  const text = shapingText(rel);
+  const b = text.indexOf(GATE_START);
+  assert.ok(b > text.indexOf('## Step 6: Record Self-Review') && b < text.indexOf('## Step 7:'), 'closeout block position');
+  pinned(blockOf(rel), [
+    f('Only when it prints `on`, and only in specify\'s own session'),
+    f('run its `## Decomposition` entry now, before Step 7'),
+    f('A subagent whose dispatch prompt says its caller plans skips this paragraph'),
+    f('Step 9\'s summary then carries the `### Planning` section'),
+    f('resolve-policy.js" --values plan-at-specify'),
+  ], 'closeout block');
 });
