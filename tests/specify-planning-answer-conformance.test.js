@@ -289,11 +289,43 @@ test('D10: writes run plan, body, comment+label, ready in that order', () => {
   const region = sec('## Write');
   provenOrder(region, ['plan-store.js" write', '--body-file "{body}"', '**Resolved:** answered via', '--remove-label "needs:decision"', '--add-label ready']);
   pinned(region, [
-    f('stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`'),
     f('Any non-zero exit stops: there is no no-ref fallback here'),
     f('Fail closed: a failed comment edit never removes the label'),
     f('Only when the label was removed'),
   ], 'write');
+});
+
+// Fix round 4: a failure before (c) resolved the hold says re-run; one after it points at the by-hand guidance.
+const RERUN = '; re-run /claude-tweaks:specify #{n}`';
+const BYHAND = '; check the decision comments and remove needs:decision by hand once none is unresolved`';
+const swapStrings = (region) => region.split(RERUN).join('\u0000').split(BYHAND).join(RERUN).split('\u0000').join(BYHAND);
+function failureStrings(region, patterns, label) {
+  pinned(region, patterns, label);
+  // Placement: each string is bound to its own qualifier, so swapping them breaks every pattern.
+  const swapped = swapStrings(region);
+  assert.notEqual(swapped, region);
+  assert.deepEqual(missingFactsOf(patterns)(swapped), patterns.map(([, fact]) => fact));
+}
+
+test('Fix round 4: Write stops before (c) resolved the hold say re-run; stops after it say by hand', () => {
+  const region = sec('## Write');
+  failureStrings(region, [
+    f('A stop before (c) resolved the hold comment renders `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('A stop after it (a later (c) edit, the label removal or (d)) renders `failed — {step} ({reason}); check the decision comments and remove needs:decision by hand once none is unresolved`'),
+  ], 'write failures');
+  assert.equal(region.split(RERUN).length - 1, 1, 'Write names the re-run string once');
+});
+
+test('Fix round 4: Re-hold stops always say re-run; the read-back keys its string on the branch', () => {
+  pinned(sec('## Re-hold'), [
+    f('stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`'),
+    f('the fresh hold is posted before (d) resolves the old one, so a re-run reads `held`'),
+  ], 're-hold failures');
+  assert.equal(sec('## Re-hold').split(BYHAND).length - 1, 0, 'Re-hold never names the by-hand string');
+  failureStrings(sec('## Read-back and outcome'), [
+    f('after `## Re-hold`, `failed — read-back ({what}); re-run /claude-tweaks:specify #{n}`'),
+    f('after `## Write`, which resolved the hold comment, `failed — read-back ({what}); check the decision comments and remove needs:decision by hand once none is unresolved`'),
+  ], 'read-back failures');
 });
 
 test('Review Focus 3: another unit\'s open decision comment keeps needs:decision and withholds ready', () => {
@@ -353,8 +385,8 @@ const NA_FLOW = '`/claude-tweaks:flow #{n}`';
 const NA_SPECIFY = '`/claude-tweaks:specify #{n}`';
 const KEPT_OUTCOME = '`answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`';
 const KEPT_HAND = 'check the record\'s decision comments and remove `needs:decision` by hand once none is unresolved';
-const FAILED_BEFORE = '`failed — …` one that stopped before `## Write` (c) resolved the hold comment';
-const FAILED_AFTER = '`failed — …` one after `## Write` (c) resolved the hold comment (a later step or the read-back)';
+const FAILED_BEFORE = 'or a `failed — …` one ending `; re-run /claude-tweaks:specify #{n}`';
+const FAILED_AFTER = 'or a `failed — …` one ending `; check the decision comments and remove needs:decision by hand once none is unresolved`';
 const KEPT_WHY = 'because a re-run would shape the record and resolve another unit\'s comment unanswered';
 function nextActionsProblems(region) {
   const bullet = (label) => region.split('\n').filter((l) => l.startsWith(`- **${label}:**`));
@@ -415,7 +447,7 @@ test('Fix round 1: Next Actions splits ready → flow, still needs:decision → 
   red(region.replace(KEPT_WHY, 'because'), 'kept: why');
   red(region.replace(kept, ''), 'bullet count: Kept needs:decision');
   // O3: an unqualified failed outcome in the held bullet would send a post-(c) failure back to /specify.
-  red(region.replace(FAILED_BEFORE, '`failed — …` one'), 'held: specify');
+  red(region.replace(FAILED_BEFORE, 'or a `failed — …` one'), 'held: specify');
   red(region.replace(FAILED_AFTER, 'a failure'), 'kept: failed after (c)');
   red(region.replace(held, `${held} Or a ${FAILED_AFTER}.`), 'failed: crossed');
 });

@@ -38,7 +38,7 @@ Routing that asks again, here or on a re-plan, follows **Asking.**; a `Leave for
 
 ## Write
 
-One call each, in this order, stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`. Every stop before (c) leaves `needs:decision` and the hold comment in place, so the record stays held.
+One call each, in this order, stopping at the first failure. A stop before (c) resolved the hold comment renders `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`: it leaves `needs:decision` and the hold comment in place, so the record stays held and a re-run reads `held` again. A stop after it (a later (c) edit, the label removal or (d)) renders `failed — {step} ({reason}); check the decision comments and remove needs:decision by hand once none is unresolved`: the hold is already resolved, so a re-run would shape the record and resolve another unit's comment unanswered.
 
 - **(a) Plan.** `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" write --record {n} --plan-file "{plan}" --base {base} --spec-file "{body}"`. Any non-zero exit stops: there is no no-ref fallback here.
 - **(b) Body.** Put the printed `line` in `{body}` as `## Per-record step` step 8 places it, then `gh issue edit {n} --body-file "{body}"` (gh absent: `issue_write` (update mode) per `_shared/github-write-transport.md`).
@@ -49,7 +49,7 @@ With the fresh `otherUnresolved` above 0, stop after the comment edit: `needs:de
 
 ## Re-hold
 
-Answers kept, unanswered questions re-held. One call each, in this order, stopping at the first failure as `## Write` does:
+Answers kept, unanswered questions re-held. One call each, in this order, stopping at the first failure with `failed — {step} ({reason}); re-run /claude-tweaks:specify #{n}`, which is safe at every step: the fresh hold is posted before (d) resolves the old one, so a re-run reads `held`:
 
 - **(a) Plan.** `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" write --record {n} --plan-file "{plan}" --base {base} --spec-file "{body}"` on the plan amended for the answered rows; as in `## Write` (a), any non-zero exit stops.
 - **(b) Body.** `gh issue edit {n} --body-file "{body}"` as `## Write` (b): its decided lines and the new `Plan:` line (gh absent: `issue_write` (update mode) per `_shared/github-write-transport.md`).
@@ -66,9 +66,9 @@ After a write, re-fetch with `gh issue view {n} --json labels,body,comments > "{
 - **Re-held:** `needs:decision` present, no `ready`, and `planning-hold.js --comments-file "{readback-file}"` reads `held` with exactly the re-held questions.
 - **Both:** the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment (`{hold-fresh}`'s on the `## Write` path, `{hold-file}`'s on the kept branch and after `## Re-hold`), the body has exactly one `Plan:` line equal to the printed `line`, and `plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}` of that line against the re-fetched body and `{base}` prints `{"valid": true}`.
 
-A failed assertion renders `failed — read-back ({what}); re-run /claude-tweaks:specify #{n}`. Otherwise the outcome is `answered — {k} planning question(s), ready (Plan: {short commit})`, or the `## Write` or `## Re-hold` outcome above; the Detail adds `review re-ran: yes|no` and, on a re-plan, `re-planned: {failed check}`. Logging is per `planning.md`'s **Logging.**, plus one `--status AUTO --reversibility high` entry per decided line with a run dir. Next Actions splits four ways:
+A failed assertion renders, after `## Re-hold`, `failed — read-back ({what}); re-run /claude-tweaks:specify #{n}`, and after `## Write`, which resolved the hold comment, `failed — read-back ({what}); check the decision comments and remove needs:decision by hand once none is unresolved`. Otherwise the outcome is `answered — {k} planning question(s), ready (Plan: {short commit})`, or the `## Write` or `## Re-hold` outcome above; the Detail adds `review re-ran: yes|no` and, on a re-plan, `re-planned: {failed check}`. Logging is per `planning.md`'s **Logging.**, plus one `--status AUTO --reversibility high` entry per decided line with a run dir. Next Actions splits four ways:
 
 - **`ready`:** after the `answered — …, ready` outcome, recommend `/claude-tweaks:flow #{n}`.
 - **Still needs:decision:** after `answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))`, name each remaining decision comment, its URL and its `<!-- needs-decision: {unit} -->` unit, for its owner to resolve, taken from the re-fetched comments (unresolved trusted decision comments other than those just resolved); recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because shaping would resolve those comments unanswered and the record is not `ready`.
-- **Kept needs:decision:** after `answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`, or a `failed — …` one after `## Write` (c) resolved the hold comment (a later step or the read-back), tell the user to check the record's decision comments and remove `needs:decision` by hand once none is unresolved; recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because a re-run would shape the record and resolve another unit's comment unanswered.
-- **Held or failed:** after a `held — …` outcome, or a `failed — …` one that stopped before `## Write` (c) resolved the hold comment, recommend `/claude-tweaks:specify #{n}`.
+- **Kept needs:decision:** after `answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)`, or a `failed — …` one ending `; check the decision comments and remove needs:decision by hand once none is unresolved`, tell the user to check the record's decision comments and remove `needs:decision` by hand once none is unresolved; recommend neither `/claude-tweaks:specify` nor `/claude-tweaks:flow`, because a re-run would shape the record and resolve another unit's comment unanswered.
+- **Held or failed:** after a `held — …` outcome, or a `failed — …` one ending `; re-run /claude-tweaks:specify #{n}`, recommend `/claude-tweaks:specify #{n}`.
