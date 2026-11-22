@@ -3608,3 +3608,9 @@ test('the widening union lists ctx.widenedBy first, then live-label widenings, w
   const { r } = await assertWidenedStop(widenedLabels('risk:high', 'ceremony:standard'), { ...CTX, widenedBy: ['size', 'risk'] });
   assert.equal(r.detail, 'admitted widened by size, risk, ceremony');
 });
+
+test('the widened stop precedes summary-entry-missing and the integration-model read (#6018)', async () => {
+  const { h } = await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: ['risk'] });
+  assert.ok(!kindsOf(h).includes('policyCore'), 'no policy read before the stop');
+  await assertWidenedStop(widenedLabels('risk:medium'), { ...CTX, summaryLogged: false, widenedBy: [] });
+});
