@@ -40,7 +40,7 @@ Waived AC5.1: `npm test` passing is Common Step 5's verification run, not a task
 
 ### Task 1: Micro-plan gate in code
 
-**Role:** integration · **Review risk:** medium
+**Role:** integration · **Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/grouping.js` (add `extractKeyFileEntries`; `extractKeyFilesSection` becomes a map over it)
@@ -50,7 +50,7 @@ Waived AC5.1: `npm test` passing is Common Step 5's verification run, not a task
 
 **Interfaces:**
 - Produces: `extractKeyFileEntries(body: string) -> {entries: Array<{path: string, note: string}>, unparsed: number} | null` — `null` when `extractSection(body, 'Key Files')` finds no section; otherwise `entries` holds one entry per list item `extractKeyFilesSection` accepts today (same `LIST_ITEM_RE`, first backticked span, placeholder skip), `note` being the item text after that span, trimmed, and `unparsed` counts list items with no backticked span, plus 1 when the section has non-blank text but no list item at all (template-placeholder items are not counted). `extractKeyFilesSection(body)` returns `r ? r.entries.map((e) => e.path) : []`, byte-identical behavior.
-- Produces (`micro-plan-gate.js`): `MICRO_PLAN_CONDITIONS = Object.freeze(['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag'])`; `MAX_IMPLEMENTATION_FILES = 1`; `countImplementationFiles(entries) -> number`; `evaluateMicroPlanGate({labels, keyFileEntries, body}) -> {passes: boolean, failed: string[], unreadable: null|'labels'|'key-files'|'risk-flags'}`.
+- Produces (`micro-plan-gate.js`): `MICRO_PLAN_CONDITIONS = Object.freeze(['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag'])`; `MAX_IMPLEMENTATION_FILES = 1`; `countImplementationFiles(entries) -> number`; `evaluateMicroPlanGate({ceremony, size, keyFileEntries, body}) -> {passes: boolean, failed: string[], unreadable: null|'key-files'|'risk-flags'}` — `ceremony` and `size` are facet strings (or `null`), never labels: the predicate derives them from the record's labels (`parseRecordFacets`), `/build` from the materialized header, whose ceremony can come from a ceremony-check verdict when the record has no `ceremony:*` label (`flow/materialize.md`); a `null` or other value simply fails its condition.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -61,9 +61,9 @@ Waived AC5.1: `npm test` passing is Common Step 5's verification run, not a task
 
 `micro-plan-gate.test.js`:
 - `countImplementationFiles` counts `plugin/bin/x.js` and `plugin/skills/build/a.md` (prompt prose) as 1 each; counts 0 for `tests/x.test.js`, `docs/notes.md`, `docs/plans/diagram.html`, and for an entry whose note matches `read only`, `read-only` or `no change` (any case) — the #3696 shape ``- `bin/check-staged-stack.js` — CLI exit path (read only, no change)``.
-- `evaluateMicroPlanGate` passes for labels `['ceremony:fast-lane', 'size:low']`, one implementation entry plus one test entry, body `Risk-flags: none`; and with zero implementation entries.
-- fails with `failed: ['fast-lane-ceremony']` for `ceremony:standard`; `['low-size']` for `size:medium`; `['implementation-file-limit']` for two implementation entries; `['no-risk-flag']` for `Risk-flags: auth`.
-- `keyFileEntries: null` or `{entries: [...], unparsed: 1}` → `{passes: false, unreadable: 'key-files'}`; `labels` not an array → `unreadable: 'labels'`; a malformed `Risk-flags:` line (`parseRiskFlags(...).status === 'unknown'`) → `unreadable: 'risk-flags'`.
+- `evaluateMicroPlanGate` passes for `ceremony: 'fast-lane', size: 'low'`, one implementation entry plus one test entry, body `Risk-flags: none`; and with zero implementation entries.
+- fails with `failed: ['fast-lane-ceremony']` for `ceremony: 'standard'` (and for `ceremony: null`); `['low-size']` for `size: 'medium'` (and `null`); `['implementation-file-limit']` for two implementation entries; `['no-risk-flag']` for `Risk-flags: auth`.
+- `keyFileEntries: null` or `{entries: [...], unparsed: 1}` → `{passes: false, unreadable: 'key-files'}`; a malformed `Risk-flags:` line (`parseRiskFlags(...).status === 'unknown'`) → `unreadable: 'risk-flags'`.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -72,7 +72,7 @@ Expected: FAIL with "Cannot find module '../../../plugin/bin/lib/issues/micro-pl
 
 - [ ] **Step 3: Implement**
 
-`extractKeyFileEntries` in `grouping.js`, exported beside `extractKeyFilesSection`. `micro-plan-gate.js` reads `size`/`ceremony` via `parseRecordFacets` (`../issues/record`), the count via `computeDiffFacts(paths.map((p) => ({path: p, additions: 0, deletions: 0}))).implFiles` (`../dispatch/ceremony-derive`) after dropping read-only entries (`/\b(read[ -]only|no change)\b/i` on `note`), risk via `parseRiskFlags` (`./record-risk-flags`). Its header comment carries the counting rule and the #3696 read-only story that `micro-plan.md` condition 3 now cites (Task 4). `failed` lists every failing condition id in `MICRO_PLAN_CONDITIONS` order.
+`extractKeyFileEntries` in `grouping.js`, exported beside `extractKeyFilesSection`. `micro-plan-gate.js` takes `ceremony`/`size` as given (no label parsing), the count via `computeDiffFacts(paths.map((p) => ({path: p, additions: 0, deletions: 0}))).implFiles` (`../dispatch/ceremony-derive`) after dropping read-only entries (`/\b(read[ -]only|no change)\b/i` on `note`), risk via `parseRiskFlags` (`./record-risk-flags`). Its header comment carries the counting rule and the #3696 read-only story that `micro-plan.md` condition 3 now cites (Task 4). `failed` lists every failing condition id in `MICRO_PLAN_CONDITIONS` order.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -101,14 +101,14 @@ Waived plugin/bin/lib/express/eligibility.js: read only — Step 3 calls evaluat
 - [ ] **Step 1: Write the failing tests**
 
 Fixture helper: a spec-shaped body (`Surface: infra`, `Risk-flags: none`, the sections `shapeGate` needs, `### Key Files` with N backend paths) plus labels; a policy builder defaulting to `express-driver: on`, `express-driver-max-size: medium`, `express-driver-max-key-files: 5`, `express-driver-review: beyond-express`, `express-lane: true`, `integration-model: pr-first`, `merge-sensitive-paths: []`.
-- AC1.1: a record inside the driver bounds (`risk:low`, `size:medium`, no ceremony label, `type:feature`, 4 Key Files) with `express-driver: on`, no `auto:build`, labels carrying `bot:blocked` → `{lane: 'driver', reason: 'inside-driver-bounds'}`.
+- AC1.1: a record inside the driver bounds (`risk:low`, `size:medium`, no ceremony label, `type:feature`, 4 Key Files) with `express-driver: on`, no `auto:build`, labels carrying `bot:blocked` and a `Blocked by #123` line in the body → `{lane: 'driver', reason: 'inside-driver-bounds'}`.
 - AC6.2: `express-driver: split` gives the same; `express-driver: off` on a record the express lane takes (`ceremony:fast-lane`, `size:low`, 2 Key Files) → `express`.
 - AC2.1: `express-lane: false`, `express-driver: off`, `ceremony:fast-lane`, `size:low`, one implementation Key File + one test → `micro-plan`.
 - AC3.1: `risk:high` record → `{lane: null, reason: 'outside-every-lane'}`.
 - AC6.1 precedence: a record inside driver, express and micro-plan bounds → `driver`; with `express-driver: off` → `express`.
-- AC6.3 fail closed: `keyFiles: null` → `key-files-missing`; `keyFiles: 'x'` or `{entries: [], unparsed: 1}` → `key-files-unreadable`; `labels: null` → `labels-unreadable`; `body: 7` → `body-unreadable`; `express-driver-max-size: 'huge'` or `express-driver-max-key-files: 0` or a missing policy key or `express-driver: 'sometimes'` → `policy-unreadable`; malformed `Risk-flags:` → `risk-flags-unreadable`.
+- AC6.3 fail closed: `keyFiles: null` → `key-files-missing`; `keyFiles: 'x'` or `{entries: [], unparsed: 1}` → `key-files-unreadable`; `labels: null` → `labels-unreadable`; `body: 7` → `body-unreadable`; `express-driver-max-size: 'huge'` or `express-driver-max-key-files: 0` or a missing policy key or `express-driver: 'sometimes'`, or an entry carrying `invalid: true` (resolve-policy's shape for a malformed policy.yml value: `{value: default, source: 'default', invalid: true}`, `policy-schema.js`) or an `error` field, even when its `value` is a valid default → `policy-unreadable` (Plan Review Clarification 1, decided by the user); malformed `Risk-flags:` → `risk-flags-unreadable`.
 - Review Focus 1 (health-origin, no section), 4 (`auto:merge-pending`, `parked` do not change the lane).
-- Parity (spec Deliverable 5): over a matrix of at least 12 records × 3 policies (vary size, ceremony label presence/value, risk, Key File count 1/4/6, a protected path such as `plugin/skills/_shared/x.md`, frontend surface, `express-driver-review` on/off/beyond-express), assert `needsNoPlan(...).lane === 'driver'` iff `evaluateRecordEligibility({body, labels: neutral}, eligibilityOptions(policy)).eligible && evaluateAdmission({state: 'OPEN', labels: neutral, openBlockerRefs: [], openLinkedPRs: [], routing: split→on, driverEscalated: false, keyFiles, bounds: {sizeCeiling, maxKeyFiles}, reviewerOn: reviewRequired(...).on, buildAuthority: 'typed'}).admitted`, computed in the test from the real modules; at least one matrix row must land on each side.
+- Parity (spec Deliverable 5): over a matrix of at least 12 records × 3 policies (vary size, ceremony label presence/value, risk, Key File count 1/4/6, a protected path such as `plugin/skills/_shared/x.md`, frontend surface, `express-driver-review` on/off/beyond-express), assert `needsNoPlan(...).lane === 'driver'` iff `evaluateRecordEligibility({body, labels: neutral}, eligibilityOptions(policy)).eligible && evaluateAdmission({state: 'OPEN', labels: neutral, openBlockerRefs: [], openLinkedPRs: [], routing: split→on, driverEscalated: false, keyFiles: eligibilityVerdict.keyFiles, bounds: {sizeCeiling, maxKeyFiles}, reviewerOn: reviewRequired(...).on, buildAuthority: 'typed'}).admitted`, computed in the test from the real modules; at least one matrix row must land on each side.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -117,7 +117,7 @@ Expected: FAIL with "Cannot find module '../../../plugin/bin/lib/driver/plan-lan
 
 - [ ] **Step 3: Implement `needsNoPlan`**
 
-Order: validate inputs (labels array, body string, keyFiles null → missing / non-array → unreadable, every `POLICY_KEYS` entry an object with `value`, `express-driver` in off/split/on, `express-driver-review` in off/on/beyond-express, `isReadableSizeCeiling`/`isReadableKeyFileLimit` on the two bounds, `express-lane` boolean, `integration-model` non-empty string), then `parseRiskFlags(body).status === 'unknown'` → `risk-flags-unreadable`. Neutral labels: `normalizeLabelNames(labels)` minus `auto:*`, `bot:*` and `LABELS.PARKED`. Driver (skipped when `express-driver` is `off`): eligibility with `{...eligibilityOptions(policy), escalated: false}` and admission as in the parity assertion. Express (skipped when `express-lane` is not `true`): `evaluateRecordEligibility({body, labels: neutral}, {enabled: true, integrationModel, sensitivePaths: sensitivePathsOf(...), escalated: false})`. Micro-plan: `evaluateMicroPlanGate({labels, keyFileEntries: keyFiles, body}).passes`. Header comment states the advisory meaning and why each neutralised fact is ignored.
+Order: validate inputs (labels array, body string, keyFiles `null` → missing; anything not shaped `{entries: Array, unparsed: number}`, or `unparsed > 0` → unreadable; every `POLICY_KEYS` entry an object with `value` and with neither `invalid: true` nor an `error` field, `express-driver` in off/split/on, `express-driver-review` in off/on/beyond-express, `isReadableSizeCeiling`/`isReadableKeyFileLimit` on the two bounds, `express-lane` boolean, `integration-model` non-empty string), then `parseRiskFlags(body).status === 'unknown'` → `risk-flags-unreadable`. Neutral labels: `normalizeLabelNames(labels)` minus `auto:*`, `bot:*` and `LABELS.PARKED`. Driver (skipped when `express-driver` is `off`): eligibility with `{...eligibilityOptions(policy), escalated: false}`, then `reviewRequired` and admission as in the parity assertion, both given the eligibility verdict's own `verdict.keyFiles` path strings (as `steps.js`'s eligibility step does), never Task 1's entries object. Express (skipped when `express-lane` is not `true`): `evaluateRecordEligibility({body, labels: neutral}, {enabled: true, integrationModel, sensitivePaths: sensitivePathsOf(...), escalated: false})`. Micro-plan: `evaluateMicroPlanGate({ceremony: facets.ceremony, size: facets.size, keyFileEntries: keyFiles, body}).passes`, `facets = parseRecordFacets(labels)`. Header comment states the advisory meaning and why each neutralised fact is ignored.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -160,7 +160,7 @@ Expected: PASS
 
 ### Task 4: micro-plan.md cites the code
 
-**Role:** transcription · **Review risk:** medium
+**Role:** integration · **Review risk:** medium
 
 **Files:**
 - Modify: `plugin/skills/build/micro-plan.md` (condition 3, the fall-through paragraph's count, the SKIP log text)
@@ -180,7 +180,7 @@ Expected: PASS
 Run: `node --test tests/build-micro-plan-code-twin.test.js`
 Expected: FAIL
 
-- [ ] **Step 3: Edit the prose.** Condition 3 becomes: the `### Key Files` section names no more implementation files than `MAX_IMPLEMENTATION_FILES`, counted by `countImplementationFiles` in `bin/lib/issues/micro-plan-gate.js`, whose header comment says which entries count; zero still qualifies. Each condition ends with its id. The fall-through paragraph says "more implementation files than condition 3 allows"; the SKIP text reads `implementation-file limit met`. Then edit the three restating lines and the ceremony-derive twin test.
+- [ ] **Step 3: Edit the prose.** Condition 3 becomes: the `### Key Files` section names no more implementation files than `MAX_IMPLEMENTATION_FILES`, counted by `countImplementationFiles` in `bin/lib/issues/micro-plan-gate.js`, whose header comment says which entries count; zero still qualifies. Conditions 1 and 2 keep reading the materialized header and say so (that is the `ceremony`/`size` the gate takes); conditions 3 and 4 cite `micro-plan-gate.js`; each condition ends with its id in parentheses, e.g. ``(`implementation-file-limit`)``. The twin test also asserts the gate section names `evaluateMicroPlanGate` and its `ceremony`, `size` inputs. The fall-through paragraph says "more implementation files than condition 3 allows"; the SKIP text reads `implementation-file limit met`. Then edit the three restating lines and the ceremony-derive twin test.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
