@@ -8,7 +8,7 @@ files:
 
 # Refuse to Shape the Digest Container
 
-**Persona:** A claude-tweaks maintainer working through a list of issue numbers copied from a sweep summary, who runs `/claude-tweaks:specify #3997,#1426,#2724` without noticing that #1426 is the live `digest` container, the rolling issue where below-floor findings collect.
+**Persona:** A claude-tweaks maintainer working through a list of issue numbers copied from a sweep summary, who runs `/claude-tweaks:specify #3997,#1426,#2724` without noticing that #1426 is the live `digest` container, the rolling issue where every finding routed to the digest collects, by any rule in `_shared/materiality-floor.md`'s digest-label table (below the floor, a policy-listed reason, missing evidence, or the run's filed-record cap).
 **Goal:** The digest container is never rewritten into spec shape, scored, or stamped `ready`, so `/dispatch` and `/flow` never see it as buildable. Every other record in the same call still shapes.
 **Entry point:** A Claude Code session at the project checkout, `work-backend: github-issues`, and a `#N` reference (alone, in a comma list, in a range, or matched by title) that resolves to an open issue carrying the `digest` label.
 **Success state:** The container's body is untouched and its labels carry no `ready`/`risk:*`/`size:*`/`ceremony:*`/`solution:unjustified`. The output names the container and cites `_shared/materiality-floor.md`. In a batch, the container has its own `refused — digest container` row and the other records are shaped.
@@ -38,4 +38,5 @@ files:
 
 ## Origin
 - Created for #4142 (digest-container refusal for `/specify`'s explicit-reference shaping entries; incident: `/claude-tweaks:specify #3997,#1426,#2724` on 2026-10-24 resolved the live digest container into the batch unguarded)
+- Persona updated at the wrap-up of #5930-#5933: the container collects every digest rule in `_shared/materiality-floor.md`'s digest-label table, not only below-floor findings
 - Related: #1071 (the parent-record guard this guard sits beside)

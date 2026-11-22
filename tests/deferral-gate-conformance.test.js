@@ -535,6 +535,25 @@ test('both CLAUDE.md copies name the spec-shaped body in the no-implicit-deferra
   }
 });
 
+test("#5932 CLAUDE.md's no-implicit-deferrals bullet names the route command and this repo's digest reasons", () => {
+  const needles = ['bin/deferral-route.js', 'outside its diff', 'ideas a run has go to the digest'];
+  const check = (text) => {
+    const bullet = text.split('\n').find((l) => l.includes('**No implicit deferrals.**'));
+    assert.ok(bullet, 'bullet present');
+    for (const n of needles) assert.ok(bullet.includes(n), n);
+  };
+  const live = read('CLAUDE.md');
+  check(live);
+  for (const n of needles) {
+    // deletion control: the needle is gone from the file
+    assert.throws(() => check(live.split(n).join('')), { message: n });
+    // move-out control: the needle stays in the file, on its own line outside the bullet
+    const moved = live.split('\n').map((l) => (l.includes('**No implicit deferrals.**') ? l.split(n).join('') + '\n' + n : l)).join('\n');
+    assert.ok(moved.includes(n), n);
+    assert.throws(() => check(moved), { message: n });
+  }
+});
+
 test('no Capture pass-through still defers to a not-yet-landed #625 flag', () => {
   const offenders = [];
   const walk = (dir) => {
@@ -575,4 +594,53 @@ test('capture/SKILL.md names --source intake in at least three places, the defer
   assert.ok(c.includes('any `--source`'), 'every non-intake --source value keeps today\'s rule');
   const csc = c.slice(c.indexOf('## Component-Skill Contract'));
   assert.ok(csc.includes('prose-trusted'), 'CSC states the trust boundary');
+});
+
+// --- #5933: the Evidence: line ---
+
+const { sectionOf, lineStartingWith } = require('./helpers/conformance-asserts');
+
+const EVIDENCE_PREFIX = '- **Evidence** (#5933)';
+const EVIDENCE_NEEDLES = [
+  '- **Evidence** (#5933)',
+  '`Evidence: {kind}:{ref}`',
+  'right after `Defer-reason:`',
+  '`provenance.evidence`',
+  '`Evidence: test:{path}`',
+  '`Evidence: ref:{id}`',
+  'A file-and-line pointer (`src/x.js:10`) is neither and is not evidence',
+  '`bin/deferral-route.js --evidence`',
+];
+
+// Lists each needle the one Evidence bullet of "## Where the reason lives" lacks. The bullet
+// is read from its own section's own line, so a copy anywhere else in the file never counts.
+function evidenceProblems(text) {
+  const line = lineStartingWith(sectionOf(text, '## Where the reason lives'), EVIDENCE_PREFIX);
+  if (line === '') return [`lacks the ${EVIDENCE_PREFIX} bullet`];
+  return EVIDENCE_NEEDLES.filter((n) => !line.includes(n)).map((n) => `lacks ${n}`);
+}
+
+test('#5933 deferral-gate names the Evidence line for staged proposals and created records', () => {
+  assert.deepEqual(evidenceProblems(GATE), []);
+});
+
+for (const needle of EVIDENCE_NEEDLES.slice(1)) {
+  test(`#5933 evidence needle ${needle} goes red when cut from the bullet, even if the file still carries it`, () => {
+    const cut = GATE.split('\n').map((l) => (l.startsWith(EVIDENCE_PREFIX) ? l.split(needle).join('') : l)).join('\n');
+    assert.notEqual(cut, GATE);
+    assert.deepEqual(evidenceProblems(cut), [`lacks ${needle}`]);
+    // move-out: the needle stays in the file, below the section
+    const moved = `${cut}\n\n## Elsewhere\n\n${needle}\n`;
+    assert.ok(moved.includes(needle));
+    assert.deepEqual(evidenceProblems(moved), [`lacks ${needle}`]);
+  });
+}
+
+test('#5933 the Evidence bullet goes red when the whole bullet is cut or moved out of its section', () => {
+  const cut = GATE.split('\n').filter((l) => !l.startsWith(EVIDENCE_PREFIX)).join('\n');
+  assert.notEqual(cut, GATE);
+  assert.deepEqual(evidenceProblems(cut), [`lacks the ${EVIDENCE_PREFIX} bullet`]);
+  const line = lineStartingWith(GATE, EVIDENCE_PREFIX);
+  assert.notEqual(line, '');
+  assert.deepEqual(evidenceProblems(`${cut}\n\n## Elsewhere\n\n${line}\n`), [`lacks the ${EVIDENCE_PREFIX} bullet`]);
 });

@@ -162,15 +162,16 @@ locked worktree a live session holds → `blocked-external`; a clean pipeline-ru
 recorded worktree is one of those locks → `blocked-external`; an open PR outside this run's blast
 radius → `blocked-external`; a red suite this run cannot fix → `genuinely-larger`; anything else
 stays `open` for Phase 2's drill, where the human picks the value. A `remedy: record` item that
-reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test: an
-item that fails to clear the materiality floor, with a `Defer-reason:` other than `tangential`, has
-its Step 1 option relabeled `"Digest — below floor"` in place of `"Route to a record"` — so the
-human sees the actual destination before choosing it, never silently substituted after approval;
-choosing it appends a digest entry instead of a record, skipping the composition below for that
-item. This sweep's own end-of-run summary states the digest comment URL and the count routed this
-run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section. For an item
-whose reason the drill itself picks (the "anything else" case above), apply the
-test once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
+reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised`:
+on `digest` its Step 1 option is relabeled the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule` instead of
+`"Route to a record"`, so the human sees the actual destination before choosing it,
+never silently substituted after approval; choosing it appends a digest entry, not a record,
+skipping the composition below. `file` keeps the option; `refused` or any other outcome offers
+neither, naming the command's output. This sweep's own end-of-run summary states the digest comment URL and the count
+routed this run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section.
+For an item whose reason the drill itself picks (the "anything else" case above), run the command
+once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`, the #621 mapping above supplying
 its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the same rules.
 
@@ -178,9 +179,7 @@ its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the sa
 (`ledgerNarrowing` at `trusted`+, `ledgerRouteRemainder` at `unattended`) removes an item whose
 blocker reason passes `clearsFloor` from this phase's remaining set entirely and auto-routes it to
 `Route to a record → Keep (backlog)` — it never reaches the Step 1 option above, so the materiality
-floor is not consulted on that path. `_shared/ledger-format.md` is deliberately not an adopter of
-the floor (#1262's own Current State names it a non-adopter); closing that gap is tracked on #1279
-alongside the digest's other coverage items.
+floor is not consulted on that path; only `_shared/ledger-format.md`'s control mode runs the command.
 
 ## The judgment class — named triggers
 

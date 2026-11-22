@@ -168,14 +168,12 @@ AUTO {time} — Ledger Phase 2: item #{N} auto-routed to backlog (defer-reason: 
 
 **Standalone run (no pipeline run directory resolves — see `_shared/pipeline-run-dir.md`):**
 there is no `staged/` directory or `decisions.md` to write to, and no Review Console to later
-reconcile a staged file into a real record. Note what the reason is **not**: the console is no
-longer mode-gated — it runs in every mode, including interactive and standalone wrap-up. It is
-absent here because this is `/claude-tweaks:ledger resolve` invoked outside any `/flow` or
-`/wrap-up` run at all, so no wrap-up ever executes to render one. Apply Phase 3's standalone
-"create directly instead of staging" behavior inline here instead — create the record now via
+reconcile a staged file into a real record, as this `/claude-tweaks:ledger resolve` runs
+outside any `/flow` or `/wrap-up` run, never because of the mode. Apply Phase 3's standalone
+"create directly instead of staging" behavior inline here — create the record now via
 the same dual-driver contract Phase 3 uses (`gh issue create` / `local-store.js`'s `writeRecord`),
 and surface the auto-routing decision in this run's summary output in place of the `decisions.md`
-entry above, since no run-dir log exists to write it to.
+entry above.
 
 Remove the item from this phase's remaining set — it does not appear in the table below and does
 not get an `AskUserQuestion` drill. Items whose blocker reason returns `false` (ambiguous, or
@@ -205,12 +203,11 @@ AUTO {time} — Ledger Phase 2: item #{N} auto-routed to backlog as {ref} (defer
 
 At `supervised`/`trusted` (this capability locked), and for any item whose blocker reason still
 returns `false` even under this wider check, nothing changes here — the item falls through to the
-unchanged per-item drill below exactly as today. "Nothing stays unresolved" is true at `unattended`
-only; the fail-closed-to-asking rule stays correct wherever a human can actually answer.
+unchanged per-item drill below. "Nothing stays unresolved" holds at `unattended` only.
 
-**Control mode — every remaining item converges (#4620).** When `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"` prints `control-mode on` and `consoleAutoResolve true` (whatever its `source`), no remaining item reaches the drill below. Write every item still `open` as `{ "id": "ledger-{N}", "source": "ledger", "text", "status": "open", "deferReason", "belowFloor" }` to a session-temp JSON file — `belowFloor` judged per `_shared/materiality-floor.md`, `deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when no mapping applies) — and run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --converge "{file}" --run "$PIPELINE_RUN_DIR"`. It writes every carried item's decision fact first, so run it BEFORE writing any `carried` row: the ledger writer refuses that text until its fact exists. Then, per printed `state`:
+**Control mode — every remaining item converges (#4620).** When `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --ceiling --run "$PIPELINE_RUN_DIR"` prints `control-mode on` and `consoleAutoResolve true`, no remaining item reaches the drill below. Write every item still `open` as `{ "id": "ledger-{N}", "source": "ledger", "text", "status": "open", "deferReason", "belowFloor" }` to a session-temp JSON file — `deferReason` per `wrap-up/residue-sweep.md`'s `remedy: record` mapping (omitted when none applies), `belowFloor` (the name is the converge-input contract's; it means the route printed `digest`, whichever `rule` — keep each item's `rule` for the Resolution below) `true` only when `node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} [--severity {severity}] --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised` prints `digest` (`false` on `file`, `refused` or any other outcome; no `deferReason`: no call, `false`), `{severity}` the row's `severity={severity}` token (`review/step3-routing.md`), else `high` for a `review`-phase row, else omitted — and run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --converge "{file}" --run "$PIPELINE_RUN_DIR"`. It writes every carried item's decision fact first, so run it BEFORE writing any `carried` row: the ledger writer refuses that text until its fact exists. Then, per printed `state`:
 - `filed`: stage the printed `proposal` as Phase 3's `Keep` branch does, and write the row `deferred` naming the staged path.
-- `digested`: append the digest entry per `_shared/materiality-floor.md`, and write the row `accepted` with Resolution `below the materiality floor — digested at {digest comment URL | specs/digest.md}`.
+- `digested`: append the digest entry per `_shared/materiality-floor.md`, and write the row `accepted` with the Ledger Resolution `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`.
 - `carried`: write the row `deferred` with Resolution `carried to the acceptance packet as {factId}` — `pack.js`'s `LEDGER_CARRIED_RE`, a complete deferral.
 
 A staged `filed` item is then a `ledger-record-*` console item: refused or failed at create, it takes `--set-item {id} --resolution carried --ledger …` (the console's one carry route), never `--converge` again. `filingFailed: true` is only for an item whose stage-item write failed before any staged file existed. Exit 2, 3 or 6, or any `failed` entry, stops with `flow/failure-cards.md`'s Generic gate failure card naming each item — never a question.

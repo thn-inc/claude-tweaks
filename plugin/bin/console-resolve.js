@@ -130,7 +130,7 @@ const { resolveAll, renderStoredTable } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
-const { resolvePolicyConfig, parseFlatLines } = require('./lib/policy-schema');
+const { resolvePolicyConfig, parseFlatLines, EMPTY_LIST_RE } = require('./lib/policy-schema');
 const { UPSTREAM_FILING_TARGET, ownedOwnersList, ownerContextFromOrigin, parseTargetRepo, upstreamFilingRoute, parseStagedUpstream } = require('./lib/issues/upstream-ownership');
 const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
 const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issues/grant-maturation');
@@ -302,7 +302,6 @@ function readPolicy({ execFile, cwd, runDir, strict = false }) {
 // `{condition} → fallback: {what the resolver does instead}`, that the caller logs as a SKIP line. A bad
 // `owned-owners` entry is ignored on its own (ownedOwnersList), never the whole list.
 const NOTE_TEXT_MAX = 160;
-const EMPTY_LIST_RE = /^\[\s*\]$/;
 
 function oneLineNote(value) {
   const text = String(value).replace(/\s+/g, ' ').trim();

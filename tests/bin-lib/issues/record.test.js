@@ -1043,6 +1043,59 @@ test('specShapedBody: deferReason alone renders with no Origin line and no stray
   assert.ok(!body.includes('Origin:'));
 });
 
+test('#5933 characterization: a provenance without evidence composes byte-identically', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', deferReason: 'genuinely-larger' } });
+  assert.strictEqual(
+    body,
+    'H\n\nOrigin: o\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nc\n\n## Deliverables\n\nd\n\n## Acceptance Criteria\n\na\n\n## Release Note\n\nr\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._',
+  );
+});
+
+test('#5933 AC9.1 provenance.evidence renders Evidence: ref:#1234 right after Defer-reason:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence: 'ref:#1234' } });
+  assert.ok(body.includes('Defer-reason: genuinely-larger\n\nEvidence: ref:#1234\n\n## Current State'));
+  assert.strictEqual((body.match(/^Evidence: /gm) || []).length, 1);
+});
+
+test('#5933 evidence with origin and no reason renders after Origin:', () => {
+  const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { origin: 'o', evidence: 'test:tests/a.test.js' } });
+  assert.ok(body.includes('Origin: o\n\nEvidence: test:tests/a.test.js\n\n## Current State'));
+  assert.ok(!body.includes('Defer-reason:'));
+});
+
+test('#5933 empty, null and undefined evidence render no line', () => {
+  for (const evidence of ['', null, undefined]) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { deferReason: 'genuinely-larger', evidence } });
+    assert.ok(!body.includes('Evidence:'), String(evidence));
+  }
+});
+
+test('#5933 a multi-line or non-string evidence throws', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['ref:#1\nref:#2', 'ref:#1\r\nx', 'ref:#1 x', 'ref:#1\u0085x', 'ref:#1 x', 42, ['ref:#1'], { kind: 'ref' }, true]) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      JSON.stringify(evidence),
+    );
+  }
+});
+
+test('#5933 a file-and-line pointer or another kind of evidence throws, never renders', () => {
+  const message = 'specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}';
+  for (const evidence of ['src/x.js:10', 'note:x', 'TEST:tests/a.test.js']) {
+    assert.throws(
+      () => specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } }),
+      { message },
+      evidence,
+    );
+  }
+  for (const evidence of ['ref:#1', 'test:tests/a.test.js']) {
+    const body = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', provenance: { evidence } });
+    assert.ok(body.includes(`Evidence: ${evidence}\n\n## Current State`), evidence);
+  }
+});
+
 test('specShapedBody: custom footer replaces the default; null omits it entirely', () => {
   const custom = specShapedBody({ header: 'H', ...BASE, acceptanceCriteria: 'a', footer: '_Filed by `wrap-up leftover routing` via specShapedBody._' });
   assert.ok(custom.endsWith('via specShapedBody._'));
@@ -1679,4 +1732,9 @@ test('openNativeBlockerRefs reads a raw node: local OPEN numbers, foreign refs, 
 test('partitionByOpenNativeBlockers names a foreign open blocker by its qualified name (#4793)', () => {
   const { excluded } = partitionByOpenNativeBlockers([{ number: 12 }], { i12: depNode('acme/w', [blk(5, 'other/repo', 'OPEN')]) });
   assert.deepStrictEqual(excluded, [{ number: 12, blockedBy: ['other/repo#5'] }]);
+});
+test('#6052: record.js re-exports the Plan: line API', () => {
+  const record = require('../../../plugin/bin/lib/issues/record');
+  const planLine = require('../../../plugin/bin/lib/issues/plan-line');
+  for (const k of ['parsePlanLine', 'composePlanLine', 'specHash']) assert.strictEqual(record[k], planLine[k], k);
 });

@@ -6,6 +6,7 @@ const path = require('node:path');
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
   BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
 const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
@@ -428,4 +429,124 @@ test('isInsideLaneBounds: a size the ceiling accepts and at most the Key File li
 test('express-driver-max-size accepts exactly the SIZE_CEILINGS keys, so no accepted value refuses every record (#5224)', () => {
   const row = POLICY_KEYS.find((k) => k.key === 'express-driver-max-size');
   assert.deepStrictEqual([...row.values].sort(), Object.keys(SIZE_CEILINGS).sort());
+});
+
+test('express-driver-max-risk accepts exactly the RISK_CEILINGS keys, so no accepted value refuses every record (#6018)', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'express-driver-max-risk');
+  assert.deepStrictEqual([...row.values].sort(), Object.keys(RISK_CEILINGS).sort());
+});
+
+// ---- #6018: the driver risk ceiling, ceremony relaxation and widenings() ----
+const withoutRiskCeremony = ELIGIBLE_LABELS.filter((l) => !l.startsWith('risk:') && !l.startsWith('ceremony:'));
+const RISK_X_CEREMONY = [];
+for (const risk of ['risk:low', 'risk:medium', 'risk:high', null]) {
+  for (const cer of ['ceremony:fast-lane', 'ceremony:standard', null, 'ceremony:fastlane']) {
+    RISK_X_CEREMONY.push([risk, cer, record([...withoutRiskCeremony, ...(risk ? [risk] : []), ...(cer ? [cer] : [])])]);
+  }
+}
+
+test('AC1.1 (#6018): riskCeiling low gives byte-identical verdicts to an absent option over risk x ceremony', () => {
+  for (const [risk, cer, r] of RISK_X_CEREMONY) {
+    const base = evaluateRecordEligibility(r, DRIVER);
+    assert.deepStrictEqual(evaluateRecordEligibility(r, { ...DRIVER, riskCeiling: 'low' }), base, `${risk} ${cer}`);
+    assert.deepStrictEqual(evaluateRecordEligibility(r, { ...DRIVER, riskCeiling: 'low', allowAnyCeremony: false }), base, `${risk} ${cer}`);
+  }
+});
+
+test('AC1.2 (#6018): an express call (no driver options) keeps today\'s reasons over the same matrix', () => {
+  assert.strictEqual(REASONS.risk, 'risk is not low');
+  assert.strictEqual(REASONS.ceremony, 'ceremony is not fast-lane');
+  for (const [risk, cer, r] of RISK_X_CEREMONY) {
+    const { reasons } = evaluateRecordEligibility(r, OPTS);
+    assert.strictEqual(reasons.includes(REASONS.risk), risk !== 'risk:low', `${risk} ${cer}`);
+    assert.strictEqual(reasons.includes(REASONS.ceremony), cer !== 'ceremony:fast-lane', `${risk} ${cer}`);
+  }
+});
+
+test('RISK_CEILINGS and BOUND_REASONS.risk (#6018)', () => {
+  assert.deepStrictEqual(RISK_CEILINGS, { low: ['low'], medium: ['low', 'medium'], high: ['low', 'medium', 'high'] });
+  assert.ok(Object.isFrozen(RISK_CEILINGS) && Object.values(RISK_CEILINGS).every(Object.isFrozen));
+  assert.strictEqual(BOUND_REASONS.risk('low'), 'risk is not low');
+  assert.strictEqual(BOUND_REASONS.risk('medium'), 'risk is not low or medium');
+  assert.strictEqual(BOUND_REASONS.risk('high'), 'risk is not low or medium or high');
+  assert.strictEqual(BOUND_REASONS.risk('toString'), 'risk ceiling unreadable: toString');
+  assert.strictEqual(BOUND_REASONS.riskCeilingUnreadable(null), 'risk ceiling unreadable: null');
+  for (const v of ['low', 'medium', 'high']) assert.strictEqual(isReadableRiskCeiling(v), true);
+  for (const v of ['Medium', 'toString', null, undefined, 1]) assert.strictEqual(isReadableRiskCeiling(v), false);
+});
+
+test('AC2.1, AC2.2 (#6018, eligibility half): riskCeiling medium admits risk:medium, refuses risk:high and an unlabelled risk naming the ceiling', () => {
+  const opts = { ...DRIVER, riskCeiling: 'medium' };
+  const mk = (...extra) => record([...withoutRiskCeremony, 'ceremony:fast-lane', ...extra]);
+  assert.strictEqual(evaluateRecordEligibility(mk('risk:medium'), opts).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(mk('risk:low'), opts).eligible, true);
+  for (const extra of [['risk:high'], []]) {
+    const { reasons } = evaluateRecordEligibility(mk(...extra), opts);
+    assert.ok(reasons.includes('risk is not low or medium'), extra.join());
+    assert.ok(!reasons.includes(REASONS.risk), extra.join());
+  }
+});
+
+test('AC2.3 (#6018): riskCeiling high admits risk:high', () => {
+  const r = record([...withoutRiskCeremony, 'risk:high', 'ceremony:fast-lane']);
+  assert.strictEqual(evaluateRecordEligibility(r, { ...DRIVER, riskCeiling: 'high' }).eligible, true);
+});
+
+test('riskCeiling unreadable refuses with its own reason, never a fallback (#6018)', () => {
+  for (const v of ['Medium', 'critical', null, 'toString']) {
+    const { reasons, eligible } = evaluateRecordEligibility(record(), { ...DRIVER, riskCeiling: v });
+    assert.strictEqual(eligible, false);
+    assert.ok(reasons.includes(`risk ceiling unreadable: ${String(v)}`), String(v));
+  }
+});
+
+test('AC5.1, AC5.3 (#6018, eligibility half): allowAnyCeremony passes a recognised ceremony label; an unrecognised spelling still refuses', () => {
+  const opts = { ...DRIVER, allowAnyCeremony: true };
+  const mk = (...cer) => record([...withoutRiskCeremony, 'risk:low', ...cer]);
+  assert.strictEqual(evaluateRecordEligibility(mk('ceremony:standard'), opts).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(mk('ceremony:fast-lane'), opts).eligible, true);
+  for (const cer of [['ceremony:fastlane'], ['Ceremony:standard'], ['ceremony:standard', 'ceremony:fastlane']]) {
+    assert.ok(evaluateRecordEligibility(mk(...cer), opts).reasons.includes(REASONS.ceremony), cer.join());
+  }
+  // No ceremony label at all: allowAnyCeremony alone does not relax it (no allowAbsentCeremony here).
+  assert.ok(evaluateRecordEligibility(mk(), { ...OPTS, allowAnyCeremony: true }).reasons.includes(REASONS.ceremony));
+  for (const v of ['true', 1]) {
+    assert.ok(evaluateRecordEligibility(mk('ceremony:standard'), { ...DRIVER, allowAnyCeremony: v }).reasons.includes(REASONS.ceremony), String(v));
+  }
+});
+
+test('a dual-risk-labelled record clears the ceiling on its last risk label but widens in either order (#6018)', () => {
+  // Eligibility reads the parsed facet (last match), so the label order decides the ceiling verdict;
+  // widenings() scans every label, so the record always carries the risk widening and takes the
+  // reviewer plus the pending-review merge stop whichever order the labels came in.
+  for (const labels of [['risk:high', 'risk:low'], ['risk:low', 'risk:high'], ['risk:medium', 'risk:low'], ['risk:low', 'risk:medium']]) {
+    const r = record([...withoutRiskCeremony, ...labels, 'ceremony:fast-lane']);
+    for (const riskCeiling of ['low', 'medium']) {
+      const { reasons } = evaluateRecordEligibility(r, { ...DRIVER, riskCeiling });
+      const lastRisk = labels[labels.length - 1].slice('risk:'.length);
+      assert.strictEqual(reasons.includes(BOUND_REASONS.risk(riskCeiling)), !RISK_CEILINGS[riskCeiling].includes(lastRisk), `${labels} ${riskCeiling}`);
+      assert.ok(widenings({ labels: r.labels, riskCeiling }).includes('risk'), `${labels} ${riskCeiling}`);
+    }
+  }
+});
+
+test('widenings (#6018)', () => {
+  const w = (labels, extra) => widenings({ labels, ...extra });
+  assert.deepStrictEqual(w(['risk:medium'], { riskCeiling: 'medium' }), ['risk']);
+  assert.deepStrictEqual(w(['risk:low'], { riskCeiling: 'medium' }), []);
+  assert.deepStrictEqual(w(['risk:high'], { riskCeiling: 'high' }), ['risk']);
+  for (const labels of [['risk:low', 'risk:medium'], ['risk:medium', 'risk:low']]) {
+    for (const riskCeiling of ['medium', 'low']) assert.deepStrictEqual(w(labels, { riskCeiling }), ['risk'], `${labels} ${riskCeiling}`);
+  }
+  assert.deepStrictEqual(w(['risk:low', 'ceremony:standard'], { anyCeremony: true }), ['ceremony']);
+  assert.deepStrictEqual(w(['risk:low', 'ceremony:standard'], { anyCeremony: false }), []);
+  assert.deepStrictEqual(w(['risk:low', 'ceremony:standard'], {}), []);
+  assert.deepStrictEqual(w(['ceremony:fast-lane'], { anyCeremony: true }), []);
+  assert.deepStrictEqual(w(['ceremony:standard', 'ceremony:fast-lane'], { anyCeremony: true }), ['ceremony']);
+  assert.deepStrictEqual(w(['ceremony:fast-lane', 'ceremony:standard'], { anyCeremony: true }), ['ceremony']);
+  assert.deepStrictEqual(w(['risk:low'], { anyCeremony: true }), []);
+  assert.deepStrictEqual(w(['risk:medium', 'ceremony:standard'], { riskCeiling: 'medium', anyCeremony: true }), ['risk', 'ceremony']);
+  assert.deepStrictEqual(w([{ name: 'risk:medium' }, { name: 'ceremony:standard' }], { riskCeiling: 'medium', anyCeremony: true }), ['risk', 'ceremony']);
+  assert.deepStrictEqual(w([{ name: 'risk:low' }, { name: 'risk:medium' }], { riskCeiling: 'low' }), ['risk']);
+  for (const riskCeiling of ['Medium', null, 'toString', undefined]) assert.deepStrictEqual(w(['risk:high'], { riskCeiling }), [], String(riskCeiling));
 });

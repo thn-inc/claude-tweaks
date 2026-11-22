@@ -10,6 +10,7 @@
 const nodePath = require('node:path');
 const { ORIGINS, TYPES, TIERS, CEREMONY_TIERS, PRIORITIES, LABELS } = require('./record-vocabulary');
 const { unfencedText, fencedLineMask } = require('../markdown-blocks');
+const { EVIDENCE_KINDS } = require('../deferral-route/evidence');
 
 // The closed Defer-reason: vocabulary — the code twin of
 // skills/_shared/deferral-gate.md's "Defer-reason: vocabulary" section
@@ -244,12 +245,16 @@ function keyFilePathProblem(filePath) {
   return null;
 }
 
+// The kinds a provenance Evidence: line may carry (#5933), built from the one vocabulary
+// `deferral-route/evidence.js` checks; the text before the first colon.
+const EVIDENCE_KIND_RE = new RegExp(`^(?:${EVIDENCE_KINDS.join('|')}):`);
+
 function isRepoRelativeKeyFilePath(filePath) {
   return keyFilePathProblem(filePath) === null;
 }
 
 // { header?, currentState, deliverables, acceptanceCriteria?, openQuestion?, filedBy,
-//   provenance?: { origin?, deferReason? }, footer?: string | null, verifiedAsOf?: string,
+//   provenance?: { origin?, deferReason?, evidence? }, footer?: string | null, verifiedAsOf?: string,
 //   keyFiles?: Array<{ path, change? }> } -> body string.
 // Additive over the original shape: a call passing none of provenance/footer/openQuestion/
 // verifiedAsOf (and a non-empty header) composes byte-identical output — the four health-suite
@@ -257,8 +262,11 @@ function isRepoRelativeKeyFilePath(filePath) {
 // of acceptanceCriteria/openQuestion must be supplied: openQuestion is the composer's
 // needs:definition variant, rendering `## Open Question` in place of Acceptance
 // Criteria so a needs-you record never carries placeholder AC. Provenance lines
-// (Origin:, then Defer-reason: — validated against DEFER_REASONS) render between
-// header and `## Current State`, where ownOriginLine (above) reads them. footer: a
+// (Origin:, then Defer-reason: — validated against DEFER_REASONS — then Evidence:) render
+// between header and `## Current State`, where ownOriginLine (above) reads them. evidence
+// (#5933, optional) is a single-line `test:{path}` or `ref:{id}`: only the kind before the
+// first colon is checked here (the path/id form is bin/deferral-route.js's to judge), so a
+// file-and-line pointer such as `src/x.js:10` throws instead of filling the slot. footer: a
 // string replaces the default health-suite sentence, null omits
 // it; exhaust producers pass `_Filed by \`{producer}\` via specShapedBody._` — the
 // machine-visible marker _shared/work-record.md's born-shaped matrix rows key on.
@@ -365,8 +373,11 @@ function specShapedBody({
     }
     return `- \`${filePath}\` — ${change}`;
   });
-  const { origin, deferReason } = provenance || {};
+  const { origin, deferReason, evidence } = provenance || {};
   if (deferReason !== undefined) oneOf('deferReason', deferReason, DEFER_REASONS);
+  if (!isEmpty(evidence) && (typeof evidence !== 'string' || KEY_FILE_LINE_BREAK_RE.test(evidence) || !EVIDENCE_KIND_RE.test(evidence))) {
+    throw new Error('specShapedBody: provenance.evidence must be a single-line test:{path} or ref:{id}');
+  }
   const block = (v) => (Array.isArray(v) ? v.join('\n\n') : v);
   const parts = [];
   if (!isEmpty(header)) parts.push(header);
@@ -375,6 +386,7 @@ function specShapedBody({
   if (!isEmpty(templateStamp)) parts.push(`Template: ${templateStamp}`);
   if (!isEmpty(origin)) parts.push(`Origin: ${origin}`);
   if (deferReason !== undefined) parts.push(`Defer-reason: ${deferReason}`);
+  if (!isEmpty(evidence)) parts.push(`Evidence: ${evidence}`);
   parts.push('## Current State', block(currentState), '## Deliverables', block(deliverables));
   if (hasOQ) parts.push('## Open Question', block(openQuestion));
   else parts.push('## Acceptance Criteria', block(acceptanceCriteria));

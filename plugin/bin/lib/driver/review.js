@@ -75,10 +75,13 @@
 // On or off (reviewRequired): policy `off` and `on` decide alone; any other value is the beyond
 // rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
 // not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
-// beyond) exceed EXPRESS_MAX_KEY_FILES. The run asks it once
-// per record, in the eligibility step (ctx.reviewer, #5224), and admission, the check flag and
-// reviewRecord all read that one answer; reviewRecord never calls it, and fails closed (a
-// pre-push `fail`) when ctx.reviewer is not an object with a boolean `on`.
+// beyond) exceed EXPRESS_MAX_KEY_FILES. A record inside those bounds is also on when the caller
+// passes a non-empty `widenedBy` (#6018: admitted above low risk or a non-fast-lane ceremony,
+// eligibility.js's widenings()), and on when `widenedBy` is neither absent nor an array of strings
+// (admission.js's isReadableWidenedBy); an absent or empty one keeps the inside-bounds off answer.
+// The run asks it once per record, in the eligibility step (ctx.reviewer, #5224), and admission, the
+// check flag and reviewRecord all read that one answer; reviewRecord never calls it, and fails closed
+// (a pre-push `fail`) when ctx.reviewer is not an object with a boolean `on`.
 //
 // The reviewer's result is untrusted, and an evidence path names a file the driver writes into the
 // worktree, so every rule here fails closed and no reason string echoes reviewer text.
@@ -232,6 +235,7 @@ const { STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { fenceFor } = require('../markdown-blocks');
 const { REVIEW_RESULT_SCHEMA } = require('./roles');
 const { sensitivePathsOf } = require('../express/policy');
+const { isReadableWidenedBy } = require('./admission');
 
 const MAX_FINDINGS = 5;
 const EVIDENCE_PATH_MAX_CHARS = 200;
@@ -314,11 +318,14 @@ function classifyEvidenceRun({ code, timedOut, tap }) {
 
 // Whether the reviewer runs for this record. keyFiles is the eligibility verdict's own
 // extractKeyFiles result (ctx.keyFiles).
-function reviewRequired({ issue, keyFiles, policyValue } = {}) {
+// widenedBy is eligibility.js's widenings() answer; absent reads as none.
+function reviewRequired({ issue, keyFiles, policyValue, widenedBy } = {}) {
   if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
   const { size } = parseRecordFacets((issue && issue.labels) || []);
   if (!isBeyondExpressBounds({ size, keyFiles })) {
+    if (!isReadableWidenedBy(widenedBy)) return { on: true, reason: 'widening facts unreadable' };
+    if (widenedBy !== undefined && widenedBy.length > 0) return { on: true, reason: `admitted widened by ${widenedBy.join(', ')}` };
     return { on: false, reason: `size:low and ${keyFiles.length} Key Files are inside the express bounds` };
   }
   // Beyond: the reason names the first rule the record breaks.
@@ -782,9 +789,9 @@ async function launchReviewer(ctx, deps, diff) {
   } catch (err) {
     // The launcher's or the runner's own message can name a path: fixed text and at most the code.
     // A throw after the model resolved carries it (launchTracked), so the stop's line can still name it.
-    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model } : {}) };
+    return { stop: `reviewer launch failed${codeSuffix(err)}`, ...(typeof err?.model === 'string' ? { model: err.model, effort: err.effort ?? null } : {}) };
   }
-  return { envelope: launched.envelope, model: launched.model, minutes, dollars };
+  return { envelope: launched.envelope, model: launched.model, effort: launched.effort ?? null, minutes, dollars };
 }
 
 // The reviewer launch and the review pass (see the header). `result` is a StepResult only for a
@@ -800,8 +807,10 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
   let costUsd = null;
   let turns = null;
   // The reviewer's model, named once its launch returned (#5917); a line from before that keeps its keys.
+  // `effort` (#5942) rides with it: a level, or null when no flag was passed.
   let model = null;
-  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model } : {}) });
+  let effort = null;
+  const extraOf = () => ({ ...counts, usage, denials, costUsd, turns, ...(model !== null ? { model, effort } : {}) });
   // The file written for the finding being judged, until it is kept or removed.
   let current = null;
   // Best effort: a removal that fails leaves the file for settle, and never replaces the stop's detail.
@@ -834,7 +843,10 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
       return stop(`git diff failed${codeSuffix(err)}`);
     }
     const launch = await launchReviewer(ctx, deps, diff);
-    if (launch.model) model = launch.model;
+    if (launch.model) {
+      model = launch.model;
+      effort = launch.effort ?? null;
+    }
     if (shared.interrupted) return interrupted();
     if (launch.stop) return stop(launch.stop);
     const { envelope, minutes, dollars } = launch;

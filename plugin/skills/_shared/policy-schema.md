@@ -35,6 +35,7 @@ The three human-facing fields every `POLICY_KEYS` row carries — `summary`, `ca
 | Auto-mode levers | `pipeline-behavior` |
 | Model profiles | `models` |
 | Efficiency budgets | `housekeeping` |
+| Deferral routing | `pipeline-behavior` |
 | Additional levers | `housekeeping` |
 
 ## Key naming
@@ -87,13 +88,6 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `dispatch-fastlane-bundle-cap` | `policy.yml` | `/claude-tweaks:dispatch` | `3` | Caps how many non-overlapping `ceremony:fast-lane` singleton groups `queue-pull-script.md` folds into one multi-spec group, sharing one preflight/wrap-up tail across the bundle instead of paying it per record — `0` turns bundling off, leaving every record its own group |
 | `express-lane` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `false` | Opts a project into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent instead of the full `/flow` frame |
 | `express-review-sample-every` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:flow` (`_shared/express-lane.md`) | `5` | Every Nth express-lane merge is sent through the normal review lenses after it lands, and what they find is filed as records. `0` and negative values are schema-invalid (`min: 1`) |
-| `express-driver` | `policy.yml` | `bin/drive.js` (#5218) | `off` | Routes records to the pipeline driver: `off`, `split` (even record numbers only — a cheap split, not an unbiased one; numbers cluster by filing batch) or `on`. Unset or malformed (`invalid: true`) gives `off`. `policyOnly`: it routes records to autonomous machinery, so a `--run` config never switches it. `split` is temporary — dropped for `on` or `off` once each arm has 20 merged records (Phase 4 parent record) |
-| `express-driver-wall-clock-minutes` | `policy.yml` | `bin/drive.js` (#5218) | `30` | Minutes each driver worker launch may take, not the record: when the review step runs, a record can launch three (reviewer, implementer, fix implementer). Unset or malformed gives `30`; `0` is never unlimited (`min: 1`). `policyOnly`: ceilings bound autonomous spend, so a `--run` config never sets it |
-| `express-driver-spend-ceiling-dollars` | `policy.yml` | `bin/drive.js` (#5218) | `10` | Whole dollars each driver worker launch may spend, not the record (up to three launches when the review step runs). Unset or malformed gives `10`; `0` is never unlimited (`min: 1`). `policyOnly`: it bounds autonomous spend, so a `--run` config never raises it |
-| `express-driver-review` | `policy.yml` | `bin/drive.js` (#5222) | `beyond-express` | The driver's read-only reviewer step: `off`, `on`, or `beyond-express`, which reviews only a record whose size label is missing or not `low`, or with more than `EXPRESS_MAX_KEY_FILES` Key Files. Unset or malformed (`invalid: true`) gives `beyond-express`. `policyOnly`: it decides whether autonomous machinery runs, so a `--run` config never switches it |
-| `express-driver-max-size` | `policy.yml` | `bin/drive.js` (#5224) | `low` | The largest size label the driver admits: `low` or `medium` (`size:high` is never admitted). Unset or malformed (`invalid: true`, e.g. `high`, `Medium`) gives `low`. `policyOnly`: it bounds what autonomous machinery may take on, so a `--run` config never widens it. A record beyond the express bounds is admitted only with the reviewer step on |
-| `express-driver-max-key-files` | `policy.yml` | `bin/drive.js` (#5224) | `3` | The most Key Files a record may list for the driver to admit it; an integer of at least 1. Unset or malformed (`invalid: true`, e.g. `0`, `2.5`) gives `3`, the express limit (`EXPRESS_MAX_KEY_FILES`). `policyOnly`, for the same reason. A record beyond the express bounds is admitted only with the reviewer step on |
-| `express-driver-max-lines` | `policy.yml` | `bin/drive.js` (#5224) | effective `auto-merge-max-lines` | The driver's diff-line bound; an integer of at least 1. A Shape B derived default: unset or malformed (`invalid: true`) resolves the effective `auto-merge-max-lines` value with `source: default`, the driver then passes no `--max-lines`, and `check` applies `auto-merge-max-lines`. The driver's bound applies only when the key is set and the reviewer is on for the record. `policyOnly`, for the same reason |
 | `auto-merge-max-lines` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `40` | Auto-merge blast-radius guideline (lines) — a weighted input to the `merge-check` verdict, not a hard cutoff |
 | `auto-merge-max-files` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `2` | Auto-merge blast-radius guideline (files) — same weighted treatment |
 | `merge-sensitive-paths` | `policy.yml` | `/claude-tweaks:assess-agent-autonomy`, `/claude-tweaks:review` | `[]` (empty) | Comma-separated path globs forcing a hard needs-human floor in the `merge-check` verdict, and feeding `/review`'s diff-heuristic risk proxy |
@@ -170,9 +164,24 @@ These resolve from `policy.yml`. `/claude-tweaks:init` does not generate them in
 | `tidy-aggressiveness` | `policy.yml` | `/claude-tweaks:tidy` | `moderate` | `conservative`/`moderate`/`aggressive` |
 | `superpowers-plans-retention` | `policy.yml` | `/claude-tweaks:wrap-up`'s cleanup-planning item 1 (`cleanup-procedures.md`) and `/claude-tweaks:tidy` Step 4 (`tidy/scan-procedures.md`) | `keep-forever` | `keep-forever` (wrap-up never deletes `docs/superpowers/plans/*.md`; tidy keeps them, staging one bulk prune only once enough uncited plans pass Step 4's Plan retention cutoff and threshold — ADR-0007) / `prune-after-wrapup` (delete this spec's own plan/spec file(s) as part of cleanup; tidy deletes Step 4's would-be-Delete plans) / `ask` (stage the decision — the Wrap-Up Review Console, or tidy's Approve section) |
 
+## Express driver
+
+Registered by #5218, #5222, #5224 and #6018; `bin/drive.js` reads all eight. Full canonical-home/owner-skill/default/meaning table: `policy-schema-express-driver.md` (split out per IL-70 for Read-rail headroom).
+
+| Key |
+|---|
+| `express-driver` |
+| `express-driver-wall-clock-minutes` |
+| `express-driver-spend-ceiling-dollars` |
+| `express-driver-review` |
+| `express-driver-max-size` |
+| `express-driver-max-key-files` |
+| `express-driver-max-lines` |
+| `express-driver-max-risk` |
+
 ## Model profiles
 
-Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve()`), reads four of these six (`model-stance`, `frontier-run-cap`, `model-ceiling`, `model-profiles`); `express-driver-models` (#5917) picks the profile each pipeline driver worker role resolves through it; `research-mode` is unrelated to it. Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
+Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve()`), reads five of these eight (`model-stance`, `frontier-run-cap`, `model-ceiling`, `model-profiles`, `model-effort`); `express-driver-models` (#5917) picks the profile each pipeline driver worker role resolves through it; `implementer-tier` (#5996) chooses whether a build's implementer profile comes from the record's size and Key Files or from size alone; `research-mode` is unrelated to it. Full canonical-home/owner-skill/default/meaning table: `policy-schema-model-profiles.md` (split out per IL-70 — merged branch content pushed this file over its ceiling).
 
 | Key |
 |---|
@@ -180,7 +189,9 @@ Registered by #219; the resolver, `bin/lib/model-profiles/profiles.js` (`resolve
 | `frontier-run-cap` |
 | `model-ceiling` |
 | `model-profiles` |
+| `model-effort` |
 | `express-driver-models` |
+| `implementer-tier` |
 | `research-mode` |
 
 ## Efficiency budgets
@@ -195,6 +206,16 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 | `standard-run-round-trip-ceiling` |
 | `standard-run-procedure-kb-ceiling` |
 | `standard-run-verify-minutes-ceiling` |
+
+## Deferral routing
+
+Registered by #5932 and #5933; read by `bin/deferral-route.js`. Full rows: `policy-schema-deferral-routing.md`.
+
+| Key |
+|---|
+| `deferral-digest-reasons` |
+| `filed-record-evidence` |
+| `run-filed-record-cap` |
 
 ## Control mode
 

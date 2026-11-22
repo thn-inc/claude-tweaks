@@ -26,6 +26,7 @@ const SITE_PATHS = [
   'wrap-up/nothing-left-behind.md',
   'wrap-up/residue-sweep.md',
   'wrap-up/refused-proposals.md',
+  'wrap-up/leftover-routing.md',
 ];
 
 // The Writer section's literal anchors: the command, the lock, the worktree-guard clause, the text-transport

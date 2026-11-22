@@ -40,7 +40,12 @@ When the line must not be hand-edited, put its writers in the reader's module an
 | `plugin/bin/lib/issues/record.js` | The re-export, and the module in the header's sub-module list |
 | `plugin/bin/lib/issues/local-store.js` header | That the line rides in `body`, not `facets` |
 | `docs/plugin-structure.md` | The `plugin/bin/lib/issues/` row |
+| `plugin/bin/lib/issues/plan-line.js`'s `SPEC_HASH_EXCLUDED_PREFIXES` | A decision, not always an entry: a line that can sit inside the spec-hash range (`## Overview` through `## Planning Decisions`) and that a pipeline step rewrites without changing what the spec builds joins the list by its exact prefix, only when the spec says so, or every rewrite marks the record's stored plan stale; any other line stays hashed, since an excluded prefix can hide a real content edit. Export the line's keys from the reader's module and spread them in, as `RISK_FLAG_LINE_KEYS` is, rather than retyping them |
 | Every consumer that gates on the line | A call to the reader, never a regex of its own |
+
+### A line no code reads
+
+A provenance line written for the person reading the record, and for skill prose that finds it by key, can have no reader in `plugin/bin` at all. #5933's `Evidence:` (`specShapedBody`'s `provenance.evidence`) is one: nothing parses it back out of a record body. The table's reader rows (the `record-*.js` reader, the re-export from `record.js`, each consumer's call) then have nothing to register, and `spec-template.md` applies only to a line a spec author writes by hand. The line still owes four things. The writer validates it, because no reader will: `specShapedBody` throws on a multi-line value or a kind outside `EVIDENCE_KINDS`, which it imports from `plugin/bin/lib/deferral-route/evidence.js` (the module that judges the value) rather than retyping, and leaves the rest of the grammar to that module. The writer's header comment names the line and its place in the provenance order. The contract that gives the line its meaning names it (`_shared/deferral-gate.md`'s Evidence bullet). And the composer's tests pin its placement, the absent case and each refusal (`tests/bin-lib/issues/record.test.js`'s `#5933` cases). The first code reader that gates on the line brings the whole table back.
 
 ## Anti-Patterns
 

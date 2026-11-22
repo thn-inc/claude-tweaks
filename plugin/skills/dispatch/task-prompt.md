@@ -126,13 +126,13 @@ composed-bytes scanner expands each `--phase` line into the phase's registered b
 two lines are measured call sites; if the compose command is unavailable or exits non-zero, read the named source files directly — which, for the dispatched agent, each template citation's own fallback already says.
 
 **Log each group's resolved first-call model (#3212).** This is a dispatching-session step, not
-part of `{context-pack}`. Keep the `model` and `source` of the first call's `dispatch-prompt.js`
+part of `{context-pack}`. Keep the `model`, `launchEffort` and `source` of the first call's `dispatch-prompt.js`
 envelope `profile`; after the first call returns — never before it is dispatched — write one
 line per group to that group's `{minted-run-dir}/decisions.md` by running
-`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} (source: {source})" --reversibility n/a`,
+`node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO --step "Dispatch group {group}" --text "first-call model resolved to {model} at effort {launchEffort} (source: {source})" --reversibility n/a`,
 which produces, per `_shared/auto-decision-log.md`'s canonical entry schema:
-`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`
-where `{model}` and `{source}` are that `profile`'s fields, and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
+`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} at effort {launchEffort} (source: {source}). Reversibility: n/a.`
+where `{model}`, `{launchEffort}` and `{source}` are that `profile`'s fields (a `null` `launchEffort` is written as `inherit`), and `{group}` is the group's comma-joined issue list in brackets (e.g. `[42]` or
 `[42,43]`). The timing matters: before the first call, the minted directory's `decisions.md` may
 hold only `/flow` Step 2.8's claim-log lines, and any other line makes `/flow` Step 3 treat the
 directory as a recovery (adoption case 3, `bin/lib/flow/preflight.js` via
@@ -267,6 +267,8 @@ DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED.
 pipeline's own steps still select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" capable` (contract § Model Selection).
 ```
+
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
 
 **The `model-ceiling` clamp (#3212).** `[Use: Capable]` above does not guarantee Opus: a project
 `model-ceiling: standard` policy value clamps `capable` back to `sonnet`
@@ -473,6 +475,8 @@ how long the PR has already existed.
 pipeline's own steps select their own models as usual. Resolve via
 `node "{plugin-root}/bin/resolve-profile.js" standard` (contract § Model Selection).
 ```
+
+Set the Agent tool's `effort` parameter on this call to the envelope's `profile.launchEffort` when it is not `null`, and leave it unset when it is.
 
 Same mechanical status-line check applies to this call. The Auto-merge gate's `merge-check`
 clause this call runs (`settle-and-merge.md`'s Content judgment step) is backed by its own

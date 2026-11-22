@@ -251,17 +251,54 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 7 — Driver admission by risk and path
 
+## Phase 7: Specified
+
+Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review` stop for a widened admission), #6019 (the protected-path mode), #6020 (the protected-path list as an editable policy value) and #6021 (the 20-record trial), under parent #6017.
+
 - **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Decided while specifying:**
+  - The risk ceiling takes `low`, `medium` or `high`. `high` is allowed, unlike `express-driver-max-size`, because every record admitted this way waits for a human merge.
+  - Ceremony relaxes only when `express-driver-review` is set to `on`, so the default `beyond-express` reproduces today without a third key.
+  - The merge stop recomputes the widenings from the record's live labels and stops when the driver's own list is missing, so it fails closed.
+  - Under `reviewer`, the protected paths that act at push or build time keep refusing: CI config, git hooks, `package.json` and agent settings. Only merge-time paths (hook code, shared contracts, `CODEOWNERS`, the policy and verify-scope files) pass behind the reviewer.
+  - The list is fully editable, removals included, and a removal reaches the express lane too. It resolves from the main checkout, so a record cannot widen its own run by editing `policy.yml`.
+  - The trial runs `/claude-tweaks:review` on each driven PR. Guard 1 compares its Critical-or-Important share with the 70% baseline, guard 3 is read 14 days after the last merge, and guard 2 does not apply.
+- **Not covered:** the factory floor for the list, and the stricter-of rule for the risk ceiling. Both wait for Phase 11's factory layer.
 - **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
-- **Waits for:** Phases 2 and 3.
-- **Expected effect:** admission rises from 11% to about 61%.
+- **Waits for:** Phases 2 and 3, both merged.
+- **Expected effect:** admission rises from 11% to about 61%. Keeping the build-time paths refused may land it lower.
 
 ## Phase 8 — Admissible records reach the driver
 
 - **Builds:** the cause of the six-day gap, found and fixed. Dispatch routes each admitted member of a bundle group, not only single-record groups.
 - **Done when:** every record `drive.js --check` admits in a drain is driven or carries a logged reason.
 
+## Phase 8: Specified
+
+Records #6011 (keep driver-routable records out of fast-lane bundles) and #6012 (the cost report shows whether admitted records reached the driver), no parent; #5571 extended with the drain check.
+
+The six-day gap had no code-defect cause. The 12 November driver runs were started by hand (`drive-N` run directories). Dispatch's route (#5232) first shipped in v6.171.0, which was never installed: the plugin cache went from 6.170.0 to 6.172.0 on 17 November. All 18 dispatch sessions from 15 November 23:06 to 17 November 07:27 ran v6.170.0, which has no route. No dispatch firing ran from 17 November 07:27 to 21 November, and no run directory holds a `Driver route (skipped)` line. On 21 November `drive.js --check` admitted 15 of 142 records, and a grouping replay put all 15 in singleton groups.
+
+- **Builds:**
+  - #6011: the queue pull keeps a record the driver would take out of fast-lane bundles, so it reaches the route as a singleton group.
+  - #6012: the cost report's funnel section counts driver runs (dispatch-routed and standalone) and dispatch firings by plugin version, and flags admitted records that nothing routed.
+  - #5571: the live drain must also drive, or log a skip for, every admitted group it selects.
+- **Phase 7 depends on #6011.** Raising `express-driver-max-size` to `medium` without it bundles fast-lane records the driver would take.
+
 ## Phase 9 — Implementer tier from the record
+
+## Phase 9: Specified
+
+Records #5996 (the rule, the step-up, the `implementer-tier` policy value and its CLI), #5997 (the driver launches the record's profile and relaunches once one profile up), #5999 (the standard lane takes its profile from the CLI and escalates once) and #6002 (the effort ladder), under parent #5995. #5997 and #5999 are blocked by #5996; #6002 is blocked by #5941, #5942, #5997 and #5999.
+
+- **Decided while specifying:**
+  - One policy value, `implementer-tier`: `lane`, the default, keeps each lane's current rule; `record` applies this phase's rule in both lanes. This repository opts in. A `size:high` record gets Standard, not Capable.
+  - One Key File counter for both lanes: distinct paths in the record's `### Key Files`; a directory entry rules out Fast.
+  - Driver: only a worker that cannot complete, or red tests, triggers the relaunch; it works on top of what the first attempt left, then commits and re-tests. Ceilings stay per launch, so the worst case is three implementer launches per record.
+  - Standard lane: a `BLOCKED` report, or a failed re-review of a task's first fix round, sends that task to a fresh implementer one profile up, once; `decisions.md` holds the once-per-task count.
+  - Effort ladder: the starting effort follows `risk:` (`low` → `low`, `medium` → `medium`, higher → the profile's own, never above `high`). Red tests or a failed fix round raise the effort one step first; `BLOCKED` or a worker that cannot complete step the profile directly. At most two escalations.
+  - Per-task `**Role:**` markers and the `profile=` token keep overriding the record rule.
+- **Done-when caveat:** tasks started at `low` are `risk:low`, so the `low`-versus-`medium` comparison is made within a size band, adds a fix-rounds-per-task guard, and reads as cost per risk class rather than a pure effort effect.
 
 - **Builds:** the implementer's profile comes from the record's labels in code: low size with one or two Key Files gets Fast, everything else Standard. A failed verify or a blocked report moves it up one profile, once. Applies to the driver, and to the standard lane's task loop through the run's config.
   - Once Phase 15 has landed, a step up may be an effort before it is a model: the first attempt runs at the lowest effort the record's labels allow, and a failed verify raises the effort, then the profile. Only an implementer gets this, because a test or a review shows its failure.
@@ -270,6 +307,10 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 - **Expected effect:** Opus implementers, about $3 per run, fall to near zero; mechanical tasks cost at most $0.34.
 
 ## Phase 10 — Lenses chosen per run
+
+## Phase 10: Specified
+
+Records #5998 (each lens's confirmed-finding rate over its last 20 runs, and a per-run record of which lenses ran), #6001 (the selection function, its CLI and the `review-lens-selection` key), #6000 (a read-only `lens-reviewer` driver worker role and a launcher) and #6003 (`review-lens-dispatch: worker`), under parent #6005. #6001 is blocked by #5998; #6003 is blocked by #6000 and #6001; all four wait on #5825, and #6000 also on #5942.
 
 - **Builds:**
   - A selection function, in code, from the diff's facts and each lens's confirmed-finding rate in this repository over its last 20 runs. No model chooses.
@@ -280,6 +321,17 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 11 — Factory layer and run facts
 
+## Phase 11: Specified
+
+Records #6006 (the factory layer in the resolver), #6007 (every other policy reader sees it), #6008 (the ceiling rule), #6009 (tokens by model, list-price cost and minutes in the run manifest) and #6010 (model and effort per role in the run manifest), under parent #6004. #6007 is blocked by #6006, #6008 by #6006 and #6007, #6009 by #5647 and #5967, and #6010 by #6009 and #5647.
+
+- **Decided while specifying:**
+  - The factory layer is the variable `CLAUDE_TWEAKS_FACTORY_POLICY`, carrying text in `policy.yml`'s own format, and the file `~/.claude-tweaks/factory-policy.yml`. The variable wins over the file per key, and block keys merge per row.
+  - The factory layer may not set `merge-authorization`, `control-mode` or `deploy-command`. Every other key is settable, `autonomy` and the trust lists included.
+  - A ceiling bounds repository and run-config values, never the schema default: a factory value above the default is a deliberate override of the default.
+  - The manifest stays at `v: 1`, because its Compatibility rule adds fields without a bump. Cost re-reads the transcripts' per-request rows and leaves `timing.json` unchanged. A partial cost may be replaced once by a complete one.
+- **Not covered:** Dispatch reading the cost fields. Its manifest parser stores nine named fields and ignores the rest (thn-inc/dispatch #1958), so that half of the done-when is a change in thn-inc/dispatch.
+
 - **Builds:** the layer and the ceiling rule in `## Policy model`; and in the run manifest (#5903): lane, model and effort per role, tokens by model, list-price cost, minutes and a hash of the resolved policy.
 - **Done when:** a value set only in the factory layer resolves in a repository that does not set it, and Dispatch reads a run's cost from its manifest.
 
@@ -288,8 +340,15 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 ## Phase 12 — The plan is made with the spec
 
 - **Builds:** `/claude-tweaks:specify` writes the task list and runs the plan review while a human is present. A record that carries a reviewed plan skips the build's plan step.
-- **Needs:** its own design.
 - **Expected effect:** the plan step (12 minutes, 11.7M tokens) and the 43 mid-run stops leave the build.
+
+## Phase 12: Specified
+
+Records #6051 (the asked-classes split: `_shared/planning-decisions.md`, the `planning-decisions` policy value and build-time plan review routing), #6052 (the plan store: `plan-store.js`, the `Plan:` body line, the spec hash and the staleness verdict), #6053 (the plan-less lane predicate), #6054 (the acceptance packet lists every `Settled at planning:` call), #6055 (reconcile deletes a closed record's plan ref), #6056 (specify plans and reviews in shaping mode under `plan-at-specify`), #6057 (the same in decomposition mode), #6059 (an interactive `/specify` answers a record held for a planning question) and #6060 (`/build` reuses a valid specify-time plan), under parent #6050, which supersedes #5292. #6054 is blocked by #6051; #6055 by #6052; #6056 by #6051, #6052, #6053 and #4702; #6057 and #6059 by #6056; #6060 by #6052 and #6056. #6052 and #6060 carry an unresolved fail-closed finding and are not `ready` until it is settled.
+
+- **Builds:** two policy values, `planning-decisions: ask-all | asked-classes` and `plan-at-specify: off | on`, both defaulting to today's behaviour. Plan review asks the human only design-level, hard-to-undo (a flagged risk category) or contradictory questions and settles the rest, listing each call at acceptance. Specify writes and reviews the plan with dispatched agents, stores it on `refs/claude-tweaks/plans/{n}`, and `/build` reuses it when a mechanical check says it is still valid.
+- **Done when:** over the first 20 records built with `plan-at-specify: on`, no build stopped at plan review on a question outside the asked classes, the build's median minutes fell by at least 10, the three quality guards are no worse, and the share of specify-time plans the build reused is recorded (under 50% means the design is revisited before the default changes).
+- **Waits for:** #4702, which edits `shaping-mode.md`.
 
 ## Phase 13 — The driver is the drain
 
@@ -298,6 +357,18 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 - **Expected effect:** the main session's share of cost, 41% today, goes to zero for driver records.
 
 ## Phase 14 — Review replay
+
+## Phase 14: Specified
+
+Records #5990 (an effort key on a replay arm, and a refusal to score an agent that ran at another effort), #5991 (the lens reviewers, replayed across tiers and efforts) and #5992 (the task and whole-branch reviewers, and the task-versus-branch counterfactual), under parent #5989. #5991 is blocked by #5990 and #5992 by #5991.
+
+- **Decided while specifying:**
+  - A replay sends the archived reviewer's own prompt, rewritten to a clean two-commit repository, not a prompt rebuilt from today's templates, so an arm differs from the archive only in model and effort.
+  - Findings are matched by location (same path, lines within 5), not by a model judge; a finding with no location is reported as unlocated.
+  - The effort an arm asks for is checked against the effort the agent's transcript recorded, and a slot at another effort counts as not judged.
+  - The live replay run is not a record: it runs from an interactive session after #5992, as #5630 does for the tiebreak replay.
+- **Not covered:** choosing each review's tier and effort, which is that live run.
+- **Open:** #5991 and #5992 each carry a staged question, a control arm that shows how far a replay at the archived tier reproduces the archive, and their `ready` label is cleared until it is answered.
 
 - **Builds:** `tools/review-replay.js` arms that answer three questions on archived runs: what task reviews catch that the whole-branch review would not, how each lens performs on Haiku, Sonnet and Opus, and what each review finds at `low`, `medium` and `high` effort.
 - **Why reviews get no retry:** a review that misses a finding looks like a clean review, so nothing would trigger a second attempt. A review gets one fixed effort, chosen from the replay.

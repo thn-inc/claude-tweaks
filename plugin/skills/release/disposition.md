@@ -55,14 +55,14 @@ The Recommended column is what the batch table below pre-fills for each row.
 
 | Finding | Recommended disposition |
 |---|---|
-| A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first — a `high` or `critical` finding clears it by that file's severity override: a finding that fails the floor is `Digest — below floor`, appended only once the row is approved, after the dedup check. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
+| A `confirmed` file, any severity | Defer per `review/step3-routing.md`'s Defer bullet: compose the body with `specShapedBody`, file it with `recordPayload`, born-ready. Apply that bullet's materiality-floor test (`_shared/materiality-floor.md`) first, passing the finding's `--severity`: `digest` is the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule`, appended only once the row is approved, after the dedup check; `refused` or any other outcome is a `file` failure (below) naming what the command printed. Use `Defer-reason: pre-existing-outside-diff` — a release reviews already-merged history and has no diff of its own — and `provenance.origin: /claude-tweaks:release v{version} release-gate review (run {run-id})`. |
 | An `unconfirmed` entry at critical/high | The same Defer |
 | A `contested` file at critical/high in either verdict | The same Defer, both verdicts quoted in the body |
 | An `unconfirmed` entry at medium/low/info | `declined (unconfirmed: one reproduction agent of the pair)` |
 | A `contested` file, otherwise | `declined (contested: {verdicts})` |
 | A `decisions.md`-only `STAGED` line at critical/high | The same Defer |
 | A `decisions.md`-only `STAGED` line, otherwise | `declined (unconfirmed: {the line's own reason, e.g. not reproduced})` |
-| A file on a `proposal` roster row | The same Defer path and Defer-reason, so the materiality floor routes a small one to the digest. Severity is read from the file when it carries one, else treated as medium for the floor test. A `review-followup-` file already holds a composed record, so after the floor test it is filed as written, under its own `Title:`, `Labels:` and `Defer-reason:` header and its own body, never recomposed with `specShapedBody` |
+| A file on a `proposal` roster row | The same Defer path and Defer-reason. Severity is read from the file when it carries one, else treated as medium for the floor test. A `review-followup-` file already holds a composed record, so after the floor test it is filed as written, under its own `Title:`, `Labels:` and `Defer-reason:` header and its own body, never recomposed with `specShapedBody` |
 | Any other staged file | No route: a failure (below), never archived unread |
 | An open record already covering the same file and defect, found by searching open records for the finding's path | `declined (covered by #{n})` |
 
