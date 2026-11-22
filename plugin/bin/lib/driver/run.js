@@ -218,7 +218,7 @@ function newCtx(record, shared, { named = false } = {}) {
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     workerTestCommand: undefined, workerTestMode: undefined,
     eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
-    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null,
+    summaryLogged: false, merge: null, events: null, eventsStdoutOnly: false, reviewer: null, widenedBy: null,
     shared,
   };
 }
@@ -527,7 +527,7 @@ async function checkRecord(n, shared, deps, steps = CHECK_STEPS) {
   }
   // A refused typed command's words follow the admission reasons as one more string (#5584).
   const typedNote = typeof ctx.typedCommandNote === 'string' ? [ctx.typedCommandNote] : [];
-  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons, ...typedNote] })}\n`);
+  deps.stdout(`${JSON.stringify({ record: n, admitted, reasons: [...ctx.eligibilityReasons, ...ctx.admissionReasons, ...typedNote], widenedBy: Array.isArray(ctx.widenedBy) ? ctx.widenedBy : [] })}\n`);
   return 0;
 }
 

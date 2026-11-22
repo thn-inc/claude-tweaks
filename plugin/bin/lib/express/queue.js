@@ -5,14 +5,14 @@
 // mode, so a blob computed under another mode is never reused.
 'use strict';
 
-const { evaluateRecordEligibility } = require('./eligibility');
+const { evaluateRecordEligibility, widenings } = require('./eligibility');
 const { defaultResolvePolicy, sensitivePathsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
 
 const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
 
 const FIRST_KEYS = ['express-lane', 'express-driver'];
-const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review'];
+const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review'];
 const ROUTINGS = ['on', 'off', 'split'];
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
@@ -26,7 +26,8 @@ const oneLine = (err) => collapse(err && err.message);
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
 // the express half's flag; the driver half is on for `express-driver` `on` or
 // `split`, and keeps a record the driver would route (routing, eligibility and
-// reviewer rules, the driver modules loaded only then). A failed resolution, or an
+// reviewer rules, a risk- or ceremony-widened record needing the reviewer on, the
+// driver modules loaded only then). A failed resolution, or an
 // `express-driver` value that is not on/off/split, behaves as disabled for the
 // whole pull (fail toward bundling, the pre-#4025 behavior) with one stderr line;
 // so does a throwing check, for that one record in that half.
@@ -69,13 +70,13 @@ function expressQueuePolicy(deps = {}) {
     try {
       // Lazy: a project using neither lane must not load the driver graph, and budget.js
       // requires dispatch/queue-pull, the module that calls this one.
-      const { routingReason, reviewerGateReason } = require('../driver/admission');
+      const { routingReason, reviewerGateReason, widenedReviewerReason } = require('../driver/admission');
       const { preScreen } = require('../driver/budget');
       const { eligibilityOptions } = require('../driver/steps');
       const { reviewRequired } = require('../driver/review');
       const { extractKeyFiles } = require('../issues/grouping');
       driver = {
-        routingReason, reviewerGateReason, preScreen, reviewRequired, extractKeyFiles,
+        routingReason, reviewerGateReason, widenedReviewerReason, preScreen, reviewRequired, extractKeyFiles,
         eligibility: eligibilityOptions(policy),
         bounds: { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value },
         reviewPolicy: policy['express-driver-review'].value,
@@ -92,8 +93,10 @@ function expressQueuePolicy(deps = {}) {
     if (driver.preScreen(issue, driver.eligibility, { evaluateRecordEligibility }).verdict !== 'pass') return false;
     const keyFiles = driver.extractKeyFiles(issue);
     if (!Array.isArray(keyFiles)) return false;
-    const reviewerOn = driver.reviewRequired({ issue, keyFiles, policyValue: driver.reviewPolicy }).on;
-    return driver.reviewerGateReason({ labels: issue.labels, keyFiles, bounds: driver.bounds, reviewerOn }) === null;
+    const widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony });
+    const reviewerOn = driver.reviewRequired({ issue, keyFiles, policyValue: driver.reviewPolicy, widenedBy }).on;
+    return driver.reviewerGateReason({ labels: issue.labels, keyFiles, bounds: driver.bounds, reviewerOn }) === null
+      && driver.widenedReviewerReason({ widenedBy, reviewerOn }) === null;
   };
 
   return {
