@@ -158,8 +158,8 @@ const FACTS = [
   [/ASSUMPTION — verify at build:/, 'premise probes still run'],
   [/logs nothing/, 'absent line logs nothing (AC1.1)'],
   [/Common Step 1\.5 runs as today/, 'plan audit still runs'],
-  [/infrastructure fault[^\n]*log no reuse verdict/, 'non-zero probe exit stops, logs no verdict'],
-  [/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\{n\}-spec\.md/, 'spec path is the worktree run-dir copy'],
+  [/infrastructure fault[^\n]*a BLOCKED stop[^\n]*log no reuse verdict/, 'non-zero probe exit is a BLOCKED stop, logs no verdict'],
+  [/copy of `\{run-dir\}\/work\/\{n\}-spec\.md`[^\n]*`spec-\{N\}\/`/, 'spec path is the worktree copy of the run-dir file, multi-spec aware'],
   [/`\{worktree\}` is the worktree root/, 'worktree defined'],
   [/neither re-probes nor re-logs/, 'premise probes not repeated at Spec Step 3'],
 ];

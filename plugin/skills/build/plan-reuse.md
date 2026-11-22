@@ -1,6 +1,6 @@
 # Spec Step 2 — Reuse a Plan Reviewed at Specify (#6060)
 
-Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify` prints `on`. `{worktree}` is the worktree root (the project root under current-branch), `{n}` the record, and `{spec}` the worktree's committed materialize file, `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{n}-spec.md` — never the main checkout's run directory.
+Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify` prints `on`. `{worktree}` is the worktree root (the project root under current-branch), `{n}` the record, and `{spec}` the worktree's copy of `{run-dir}/work/{n}-spec.md` as `build/SKILL.md` defines it (`{run-dir}` is `$PIPELINE_RUN_DIR`, which a multi-spec run sets to its `spec-{N}/` subdirectory), that run-dir-relative path under `{worktree}` — never the main checkout's copy.
 
 ## Probe
 
@@ -15,7 +15,7 @@ Outcomes:
 - `{"plan":"absent"}` — return to Spec Step 3 as written; this file logs nothing (AC1.1).
 - `ok: false` — failed `malformed Plan line` (the only parse failure).
 - `ok: true` but `record` is not `{n}` (the line names another record's plan) — failed `ref`.
-- A non-zero exit, or output that is none of the three JSON shapes above, is an infrastructure fault (the spec could not be read or the line file not written), not a verdict on the plan: stop, report the error, and log no reuse verdict; Spec Step 3 is not entered from here.
+- A non-zero exit, or output that is none of the three JSON shapes above, is an infrastructure fault (an unreadable spec or an unwritable session temp, right after Spec Step 1 read the spec), not a verdict on the plan: a BLOCKED stop — report the error and log no reuse verdict; Spec Step 3 is not entered from here.
 
 ## Checks
 
