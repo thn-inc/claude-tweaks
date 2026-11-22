@@ -1,6 +1,6 @@
 # Spec Step 2 — Reuse a Plan Reviewed at Specify (#6060)
 
-Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify` prints `on`. `{spec}` is the worktree's `work/{n}-spec.md` (never `"$PIPELINE_RUN_DIR"/work/…`, `[IL-127]`), `{n}` the record.
+Read only from `build/SKILL.md`'s "Before Spec Step 3" pointer, once `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify` prints `on`. `{worktree}` is the worktree root (the project root under current-branch), `{n}` the record, and `{spec}` the worktree's committed materialize file, `{worktree}/.claude-tweaks/pipelines/{run-id}/work/{n}-spec.md` — never the main checkout's run directory.
 
 ## Probe
 
@@ -13,15 +13,15 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e 'const fs=require("fs");const {parse
 Outcomes:
 
 - `{"plan":"absent"}` — return to Spec Step 3 as written; this file logs nothing (AC1.1).
-- `ok: false` — failed `malformed Plan line`.
+- `ok: false` — failed `malformed Plan line` (the only parse failure).
 - `ok: true` but `record` is not `{n}` (the line names another record's plan) — failed `ref`.
-- Any other output, or a non-zero exit — failed `malformed Plan line`.
+- A non-zero exit, or output that is none of the three JSON shapes above, is an infrastructure fault (the spec could not be read or the line file not written), not a verdict on the plan: stop, report the error, and log no reuse verdict; Spec Step 3 is not entered from here.
 
 ## Checks
 
 In order, the first failure wins, each its own plain call from the worktree:
 
-1. Resolve `{integration-branch}` per `_shared/integration-branch.md`; `git merge-base HEAD origin/{integration-branch}` prints `{base}`, the base the worktree was branched from (no fetch: Common Step 1's catch-up already merged it). Run once at plan time: printed `639b48d5…`. A failed call is failed `base`.
+1. Resolve `{integration-branch}` per `_shared/integration-branch.md`; `git merge-base HEAD origin/{integration-branch}` prints `{base}`, the newest integration-branch commit HEAD contains (no fetch: Common Step 1's catch-up already merged it). Run once at plan time: printed `639b48d5…`. A failed call is failed `base`.
 2. `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line-file "{line-file}" --spec-file "{spec}" --base {base}` — `{"valid": true}` (exit 0) passes; otherwise the reason is the JSON line's `failed` value (`ref`, `hash`, `base` or `files`); no JSON line is `ref`.
 3. Resolve `{read-dir}` with `session-tmp-resolve.js --value plan-reuse-{n}`; `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" read --record {n} --commit {commit} --out "{read-dir}"` prints `{path}`, the `{read-path}`. Non-zero is `ref`.
 4. `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" "{read-path}" --spec "{spec}" --repo-root "{worktree}"` — exit 0 passes; anything else is `plan-audit`.
@@ -39,7 +39,7 @@ Standalone (no run dir): list the three in the Step 7 handoff. Continue at Spec 
 
 ## A check failed
 
-Log `--status SKIP --step "Spec Step 2 (plan reuse)" --text "condition: plan-reuse failed: {reason} → fallback: new plan written at Spec Step 3" --reversibility n/a`, `{reason}` one of `ref`, `hash`, `base`, `files`, `plan-audit`, `malformed Plan line`, `premise`. Remove nothing from the worktree (nothing was written there). Spec Step 3 then runs as written, and its `/superpowers:writing-plans` context names every `Settled at planning:` and `Decided by the user at planning:` line in the spec's `## Planning Decisions` as a decided input. A new plan that departs from one logs it: write `planning decision departed: {line} → {plan behavior}` with the Write tool to the path `session-tmp-resolve.js --value plan-reuse-departure-{n}-{k}.md` prints, then `log-decision.js --status AUTO --section "/build" --step "Spec Step 3" --text-file "{text-file}" --reversibility high`.
+Log `--status SKIP --step "Spec Step 2 (plan reuse)" --text "condition: plan-reuse failed: {reason} → fallback: new plan written at Spec Step 3" --reversibility n/a`, `{reason}` one of `ref`, `hash`, `base`, `files`, `plan-audit`, `malformed Plan line`, `premise`. Remove nothing from the worktree (nothing was written there). When Check 5 ran, it already logged every probe outcome, so Spec Step 3 reuses those outcomes and neither re-probes nor re-logs them. Spec Step 3 then runs as written, and its `/superpowers:writing-plans` context names every `Settled at planning:` and `Decided by the user at planning:` line in the spec's `## Planning Decisions` as a decided input. A new plan that departs from one logs it: write `planning decision departed: {line} → {plan behavior}` with the Write tool to the path `session-tmp-resolve.js --value plan-reuse-departure-{n}-{k}.md` prints, then `log-decision.js --status AUTO --section "/build" --step "Spec Step 3" --text-file "{text-file}" --reversibility high`.
 
 ## Resumed build
 

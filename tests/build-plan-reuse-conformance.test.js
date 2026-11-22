@@ -65,7 +65,9 @@ test('AC1.1: the probe reports absent for a spec with no Plan: line, or one only
   assert.strictEqual(none.out, '{"plan":"absent"}');
   assert.ok(!fs.existsSync(none.lineFile), 'line file must not be created');
   const quoted = probeOf(t, fileWith(metaBody([], `## Current State\n${LINE}\n\n${SPEC}`)));
+  assert.strictEqual(quoted.r.status, 0, quoted.r.stderr);
   assert.strictEqual(quoted.out, '{"plan":"absent"}');
+  assert.ok(!fs.existsSync(quoted.lineFile), 'line file must not be created');
 });
 
 test('AC2.1: the probe writes the Plan: line to the line file and prints its record and commit', (t) => {
@@ -156,6 +158,10 @@ const FACTS = [
   [/ASSUMPTION — verify at build:/, 'premise probes still run'],
   [/logs nothing/, 'absent line logs nothing (AC1.1)'],
   [/Common Step 1\.5 runs as today/, 'plan audit still runs'],
+  [/infrastructure fault[^\n]*log no reuse verdict/, 'non-zero probe exit stops, logs no verdict'],
+  [/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\{n\}-spec\.md/, 'spec path is the worktree run-dir copy'],
+  [/`\{worktree\}` is the worktree root/, 'worktree defined'],
+  [/neither re-probes nor re-logs/, 'premise probes not repeated at Spec Step 3'],
 ];
 
 test('AC2.2/AC3.1: plan-reuse.md states every check, log line and failure reason', () => {
