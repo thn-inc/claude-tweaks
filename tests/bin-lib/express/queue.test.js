@@ -316,3 +316,8 @@ test('#6018: an any-ceremony widened record follows the same reviewer rule', () 
   const off = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'off' }).resolvePolicy });
   assert.equal(off.keepSingleton(SLOW), false);
 });
+
+test('#6018: under beyond-express a risk-widened record turns the reviewer on and stays driver-routable', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'beyond-express' }).resolvePolicy });
+  assert.equal(p.keepSingleton(MEDIUM_RISK), true);
+});
