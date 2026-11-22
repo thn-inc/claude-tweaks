@@ -30,7 +30,6 @@
 // log(line), err(line), pluginRoot.
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { readRun, selectRuns, matchVerdicts } = require('./review-replay/archive.js');
@@ -62,7 +61,8 @@ function makeWriteRepo(sourceCwd) {
   const FIXED = { GIT_AUTHOR_NAME: 'review-replay', GIT_AUTHOR_EMAIL: 'review-replay@localhost', GIT_COMMITTER_NAME: 'review-replay', GIT_COMMITTER_EMAIL: 'review-replay@localhost', GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z' };
   return (base, head, dest, { originRefs = [] } = {}) => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
-    Object.assign(env, FIXED, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull });
+    // The literal '/dev/null', not os.devNull: git cannot open Windows' "\\.\nul" as a config path (#5666).
+    Object.assign(env, FIXED, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' });
     const git = (args) => String(execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dest, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })).trim();
     const extractTree = (rev) => {
       const archive = execFileSync('git', ['archive', rev, '--', '.', `:(exclude)${RUN_RECORDS_DIR}`], { cwd: sourceCwd, maxBuffer: 1 << 30, windowsHide: true });
