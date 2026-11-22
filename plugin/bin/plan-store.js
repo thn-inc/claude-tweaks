@@ -109,9 +109,11 @@ const realDeps = {
 
 const detail = (err) => (err && err.message) || String(err);
 
-// The git root of `root` and the transport choice read from its CLAUDE.md, or {error}.
-function openRepo(deps, root) {
+// The git root of `getRoot()` and the transport choice read from its CLAUDE.md, or {error}. The getter
+// runs inside the try: a deleted working directory is an {error}, never a throw out of `run`.
+function openRepo(deps, getRoot) {
   try {
+    const root = getRoot();
     const top = String(makeGit({ git: deps.git, root, env: deps.env })(['rev-parse', '--show-toplevel'])).trim();
     if (!top) return { error: 'git rev-parse --show-toplevel printed nothing' };
     const push = readWorkBackend(top) !== 'local-files';
@@ -134,7 +136,7 @@ function runWrite(v, deps) {
   }
   let hash;
   try { hash = specHash(spec); } catch (err) { return fail(1, `--spec-file ${v.specFile}: ${detail(err)}`); }
-  const repo = openRepo(deps, deps.cwd());
+  const repo = openRepo(deps, () => deps.cwd());
   if (repo.error) return fail(EXIT_NO_REF, `not a usable git repository: ${repo.error}`);
   const record = Number(v.record);
   const res = writePlan({ g: repo.g, push: repo.push, record, basename: path.basename(v.planFile), planBytes, base: v.base });
@@ -148,7 +150,7 @@ function runWrite(v, deps) {
 
 function runRead(v, deps) {
   const fail = (msg) => { deps.stderr(`${NAME}: ${msg}\n`); return 1; };
-  const repo = openRepo(deps, deps.cwd());
+  const repo = openRepo(deps, () => deps.cwd());
   if (repo.error) return fail(`not a usable git repository: ${repo.error}`);
   const res = readPlan({ g: repo.g, fetch: repo.push, record: Number(v.record), commit: v.commit });
   if (!res.ok) return fail(res.reason);
@@ -164,12 +166,7 @@ function runRead(v, deps) {
 
 function runCheck(v, deps, line) {
   const print = (verdict, code) => { deps.stdout(`${JSON.stringify(verdict)}\n`); return code; };
-  let root;
-  try { root = v.repoRoot === undefined ? deps.cwd() : path.resolve(deps.cwd(), v.repoRoot); } catch (err) {
-    deps.stderr(`${NAME}: could not resolve the working directory: ${detail(err)}\n`);
-    return print({ valid: false, failed: 'ref' }, 1);
-  }
-  const repo = openRepo(deps, root);
+  const repo = openRepo(deps, () => (v.repoRoot === undefined ? deps.cwd() : path.resolve(deps.cwd(), v.repoRoot)));
   if (repo.error) {
     deps.stderr(`${NAME}: not a usable git repository: ${repo.error}\n`);
     return print({ valid: false, failed: 'ref' }, 1);

@@ -18,7 +18,6 @@ const SPEC = [
   '## Non-Goals', 'Nothing else.', '',
   '## Planning Decisions', 'Option A.', '',
 ].join('\n');
-const SEEN = new Set();
 
 function setup(t) {
   const fx = originWithTwoClones('ct-plan-store-');
@@ -30,9 +29,7 @@ function setup(t) {
     fs.writeFileSync(path.join(dir, 'spec.md'), SPEC);
   }
   const cli = (cwd, argv) => {
-    const r = runCliSync(CLI, argv, { cwd, env });
-    SEEN.add(r.code);
-    return r;
+    return runCliSync(CLI, argv, { cwd, env });
   };
   const write = (extra = []) => cli(fx.work, ['write', '--record', '7', '--plan-file', `p/${BASENAME}`, '--base', 'HEAD', '--spec-file', 'spec.md', ...extra]);
   const written = () => {
@@ -105,15 +102,49 @@ test('read of a commit the ref does not name exits 1', (t) => {
   assert.match(r.stderr, /plan-store\.js:/);
 });
 
-test('AC4.1 a push failure exits EXIT_NO_REF and prints no Plan: line', (t) => {
-  const { fx, write } = setup(t);
-  const hook = path.join(fx.root, 'origin.git', 'hooks', 'pre-receive');
-  fs.mkdirSync(path.dirname(hook), { recursive: true });
-  fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const r = write();
+// One memoized push-failure write (a pre-receive hook rejects the push): AC4.1 and the public-contract
+// test both read it, and each passes alone under --test-name-pattern.
+let noRefMemo;
+function noRefRun() {
+  if (noRefMemo) return noRefMemo;
+  const fx = originWithTwoClones('ct-plan-store-');
+  try {
+    const env = cleanGitEnv(fx.env);
+    fs.mkdirSync(path.join(fx.work, 'p'), { recursive: true });
+    fs.writeFileSync(path.join(fx.work, 'p', BASENAME), PLAN);
+    fs.writeFileSync(path.join(fx.work, 'spec.md'), SPEC);
+    const hook = path.join(fx.root, 'origin.git', 'hooks', 'pre-receive');
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    fs.writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const r = runCliSync(CLI, ['write', '--record', '7', '--plan-file', `p/${BASENAME}`, '--base', 'HEAD', '--spec-file', 'spec.md'], { cwd: fx.work, env });
+    noRefMemo = { code: r.code, stdout: r.stdout, stderr: r.stderr };
+  } finally {
+    fs.rmSync(fx.root, { recursive: true, force: true });
+  }
+  return noRefMemo;
+}
+
+test('AC4.1 a push failure exits EXIT_NO_REF and prints no Plan: line', () => {
+  const r = noRefRun();
   assert.strictEqual(r.code, require(CLI).EXIT_NO_REF);
   assert.strictEqual(r.stdout, '');
   assert.ok(r.stderr.length > 0);
+});
+
+test('an unreadable working directory returns a code instead of throwing', (t) => {
+  const { fx, env, written } = setup(t);
+  const w = written();
+  const dead = { cwd: () => { throw new Error('ENOENT'); } };
+  const call = (argv) => runCliSync(CLI, argv, { cwd: fx.work, env, deps: dead });
+  const abs = (p) => path.join(fx.work, p);
+  const wr = call(['write', '--record', '7', '--plan-file', abs(`p/${BASENAME}`), '--base', 'HEAD', '--spec-file', abs('spec.md')]);
+  assert.strictEqual(wr.code, 3);
+  assert.strictEqual(wr.stdout, '');
+  const rd = call(['read', '--record', '7', '--commit', w.commit, '--out', abs('out')]);
+  assert.strictEqual(rd.code, 1);
+  const ck = call(['check', '--line', w.line, '--spec-file', abs('spec.md'), '--base', 'HEAD']);
+  assert.strictEqual(ck.code, 1);
+  assert.deepStrictEqual(verdict(ck), { valid: false, failed: 'ref' });
 });
 
 test('a local ref failure after a successful push exits 0 with a warning', (t) => {
@@ -244,6 +275,7 @@ test('public contract: Plan: line grammar, exit codes and verdict shape', (t) =>
   for (const v of verdicts) assert.deepStrictEqual(Object.keys(verdict(v)), ['valid', 'failed']);
   assert.strictEqual(require(CLI).EXIT_NO_REF, 3);
   assert.match(require(CLI).USAGE, /\b3\b.*no-ref/i);
-  // Every exit code this file observed (the no-ref one included, from the push-failure test).
-  assert.deepStrictEqual([...SEEN].sort(), [0, 1, 2, 3]);
+  // The code set from this test's own calls plus the memoized push-failure write.
+  const codes = new Set([...verdicts.map((v) => v.code), noRefRun().code]);
+  assert.deepStrictEqual([...codes].sort(), [0, 1, 2, 3]);
 });
