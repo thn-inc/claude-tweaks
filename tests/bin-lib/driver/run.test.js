@@ -6600,6 +6600,8 @@ test('the eligibility event names widenedBy only for a widened record (#6018)', 
 });
 
 test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
+  // A widened record now stops at merge's entry before the supplier; the stop's detail proves the
+  // array arrived (a missing handoff reads "widening list missing or unreadable" instead).
   const seen = [];
   const h = mergeHarness({
     policy: MEDIUM_ON,
@@ -6607,8 +6609,11 @@ test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
     script: [widenIssue(['risk:medium', 'ceremony:fast-lane', 'auto:merge', ...WIDEN_LABELS]), ...REAL_GATES],
     reconcile: archiveRunDir,
   });
-  await driveRecord(7, newShared(), h.deps, STEPS);
-  assert.deepStrictEqual(seen, [['risk']]);
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.deepStrictEqual(seen, []);
+  assert.equal(final.merge.reason, 'widened-admission');
+  const stop = h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop');
+  assert.equal(stop.detail, 'widened-admission: admitted widened by risk');
 });
 
 // --- --budget through run() (record #5229) ----------------------------------------------------
