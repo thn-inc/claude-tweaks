@@ -6,6 +6,7 @@
 //   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]
 //   node bin/review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>
 //   node bin/review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]
+//   node bin/review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
@@ -92,10 +93,16 @@
 // JSON line {settled, needsSession, violations, overflow, skipped}; --run/--only/--hold append each settled lens's
 // pair lines as categorise-reproduction --run --lens does (settled items then carry entries and logged), --hold
 // entries being {lens, ...finding}. Every refusal is one stderr line, exit 2, before anything is written.
+// record-lens-dispatch (#5998) is the one sanctioned writer of the run dir's lens-dispatch.json (lib/review-lens/
+// dispatch-record.js documents the file): it appends {lens, reviewers, path, round, status} (--round defaults to 1) under a
+// fail-closed lock and prints {path, entry, duplicate}. An identical entry already present is not appended again
+// (duplicate: true, exit 0). Exit 2 for any malformed flag or value, before the run dir is anchored; exit 3 for an
+// unanchored or missing run dir, or when the append failed (a lock not taken in time, a malformed existing file, which is
+// never overwritten), with one stderr line. It writes no decisions.md line.
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
-// categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run), or missing (write-findings,
-// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run).
+// categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or missing (write-findings,
+// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included).
 'use strict';
 
 const fs = require('node:fs');
@@ -118,12 +125,14 @@ const { FINDING_LENS_CLASS } = require('./lib/console/finding-path');
 const { pairEntries, holdKey, absenceRefuted, vacuityDowngraded, vacuityReconfirmed, JUDGMENT_KINDS } = require('./lib/reproduction-log');
 const { classifyPairLine } = require('./lib/timing/pair-lines');
 const { parseLensReply } = require('./lib/lens-reply');
+const { entryProblem, appendLensDispatch } = require('./lib/review-lens/dispatch-record');
 const { resolvePrinted } = require('./session-tmp-resolve');
 
 const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
   '       review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>\n' +
   '       review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
+  '       review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
@@ -602,6 +611,41 @@ function settleLensReplies(rest, deps) {
   return 0;
 }
 
+// record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>] (#5998).
+// Every flag refusal (exit 2) precedes the run dir anchoring (exit 3), which precedes the write.
+function recordLensDispatch(rest, deps) {
+  const parsedFlags = parseValueFlags(rest, ['--run', '--lens', '--reviewers', '--path', '--status', '--round'], deps, { brief: true });
+  if (parsedFlags.exitCode !== undefined) return parsedFlags.exitCode;
+  const { flags, positional } = parsedFlags;
+  const refuse = (message) => { deps.stderr(`review-coordination.js: ${message}\n`); return 2; };
+  if (positional.length !== 0) return refuse('record-lens-dispatch takes no positional argument');
+  for (const name of ['run', 'lens', 'reviewers', 'path', 'status']) {
+    if (flags[name] === undefined) return refuse(`record-lens-dispatch needs --${name}`);
+  }
+  if (flags.round !== undefined && !/^[1-9][0-9]*$/.test(flags.round)) return refuse(`--round must be a positive integer, got ${JSON.stringify(flags.round)}`);
+  const entry = {
+    lens: flags.lens,
+    reviewers: /^[12]$/.test(flags.reviewers) ? Number(flags.reviewers) : flags.reviewers,
+    path: flags.path,
+    round: flags.round === undefined ? 1 : Number(flags.round),
+    status: flags.status,
+  };
+  const problem = entryProblem(entry);
+  if (problem) return refuse(problem);
+  const anchored = anchorRunDir(flags.run, deps, 3);
+  if (anchored.exitCode !== undefined) return anchored.exitCode;
+  let result;
+  try {
+    result = appendLensDispatch({ runDir: anchored.dir, entry, env: deps.env });
+  } catch (err) {
+    const message = String((err && err.message) || err).replace(/[\r\n]+/g, ' ');
+    deps.stderr(`review-coordination.js: could not record lens-dispatch.json (${message})\n`);
+    return 3;
+  }
+  deps.stdout(JSON.stringify({ path: result.file, entry, duplicate: result.duplicate }) + '\n');
+  return 0;
+}
+
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const [command, ...rest] = argv;
@@ -680,6 +724,7 @@ function run(argv, overrides = {}) {
   }
   if (command === 'log-reproduction-judgment') return logReproductionJudgment(rest, deps);
   if (command === 'settle-lens-replies') return settleLensReplies(rest, deps);
+  if (command === 'record-lens-dispatch') return recordLensDispatch(rest, deps);
   if (command === 'detect-overlap') {
     if (rest.length !== 1) {
       deps.stderr('review-coordination.js: detect-overlap takes exactly 1 JSON file path\n' + USAGE);

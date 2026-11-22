@@ -251,10 +251,22 @@ Added on 2026-11-19. It sits in Tier 1 and keeps the next free number so no othe
 
 ## Phase 7 — Driver admission by risk and path
 
+## Phase 7: Specified
+
+Records #6018 (the risk ceiling, the ceremony relaxation and the `pending-review` stop for a widened admission), #6019 (the protected-path mode), #6020 (the protected-path list as an editable policy value) and #6021 (the 20-record trial), under parent #6017.
+
 - **Builds:** two policy values: the highest risk label the driver admits, and whether a protected path refuses or requires the reviewer. With the reviewer on, a ceremony label other than fast-lane no longer refuses. A record admitted by any of these always ends at `pending-review` for a human merge. The protected-path list becomes a default a project can edit, with the factory able to set a floor.
+- **Decided while specifying:**
+  - The risk ceiling takes `low`, `medium` or `high`. `high` is allowed, unlike `express-driver-max-size`, because every record admitted this way waits for a human merge.
+  - Ceremony relaxes only when `express-driver-review` is set to `on`, so the default `beyond-express` reproduces today without a third key.
+  - The merge stop recomputes the widenings from the record's live labels and stops when the driver's own list is missing, so it fails closed.
+  - Under `reviewer`, the protected paths that act at push or build time keep refusing: CI config, git hooks, `package.json` and agent settings. Only merge-time paths (hook code, shared contracts, `CODEOWNERS`, the policy and verify-scope files) pass behind the reviewer.
+  - The list is fully editable, removals included, and a removal reaches the express lane too. It resolves from the main checkout, so a record cannot widen its own run by editing `policy.yml`.
+  - The trial runs `/claude-tweaks:review` on each driven PR. Guard 1 compares its Critical-or-Important share with the 70% baseline, guard 3 is read 14 days after the last merge, and guard 2 does not apply.
+- **Not covered:** the factory floor for the list, and the stricter-of rule for the risk ceiling. Both wait for Phase 11's factory layer.
 - **Done when:** a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium` and a raised `express-driver-max-key-files`, and the guards are no worse than the same records' lane today.
-- **Waits for:** Phases 2 and 3.
-- **Expected effect:** admission rises from 11% to about 61%.
+- **Waits for:** Phases 2 and 3, both merged.
+- **Expected effect:** admission rises from 11% to about 61%. Keeping the build-time paths refused may land it lower.
 
 ## Phase 8 — Admissible records reach the driver
 
