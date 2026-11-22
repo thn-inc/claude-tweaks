@@ -25,7 +25,8 @@
 const { execFileSyncTimed } = require('./timing');
 const shared = require('../shared-primitives');
 const { readWorkBackend } = require('../work-backend');
-const { gateOriginRepo, ghOptions, ghAvailable } = require('../repo-resolve');
+const repoResolve = require('../repo-resolve'); // ghAvailable is read off the module at call time, so a test can stub the probe
+const { gateOriginRepo, ghOptions, normalizeHost } = repoResolve;
 const { repoPinnedEnv } = require('../hooks/git-exec');
 const { PLAN_REF_PREFIX, DEFAULT_REMOTE, parsePlanRefName } = require('../plan-store/ref');
 
@@ -33,7 +34,8 @@ const PLAN_REFS_BATCH_CHUNK = 50; // aliases per query — one rate-limit point
 
 const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/; // a non-hex sha is never leased on or pushed
 const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
-const toRecord = (n) => (typeof n === 'number' && Number.isSafeInteger(n) && POSITIVE_INTEGER_RE.test(String(n)) ? n : null);
+const MAX_GRAPHQL_INT = 2147483647; // issue(number:) is a 32-bit Int: one larger number makes GraphQL reject the whole chunk
+const toRecord = (n) => (typeof n === 'number' && Number.isSafeInteger(n) && n <= MAX_GRAPHQL_INT && POSITIVE_INTEGER_RE.test(String(n)) ? n : null);
 
 // Pure. ls-remote stdout -> one entry per distinct exact-integer plan ref, sorted by record.
 function listPlanRefs(lsRemoteStdout) {
@@ -131,7 +133,7 @@ function planRefs({ cwd, dryRun, git, gh, readBackend, ghAvailableFn } = {}) {
 
     // gh first: without it the pass could only list and probe origin over the network for nothing.
     // An injected gh runner is its own availability answer (hermetic tests).
-    const haveGh = ghAvailableFn || (gh ? () => true : () => ghAvailable({ cwd: root }));
+    const haveGh = ghAvailableFn || (gh ? () => true : () => repoResolve.ghAvailable({ cwd: root }));
     if (!haveGh()) return { entries: [], failure: 'gh-absent' };
 
     let listing;
@@ -157,13 +159,15 @@ function planRefs({ cwd, dryRun, git, gh, readBackend, ghAvailableFn } = {}) {
     }
     if (!origin) return { entries: [], failure: 'origin-unresolvable' };
 
+    // --hostname right after `graphql`, omitted for github.com or no host (gh-api-module-pattern)
+    const hostArgs = origin.host && normalizeHost(origin.host) !== 'github.com' ? ['--hostname', origin.host] : [];
     const states = new Map();
     for (let at = 0; at < refs.length; at += PLAN_REFS_BATCH_CHUNK) {
       const records = refs.slice(at, at + PLAN_REFS_BATCH_CHUNK).map((r) => r.record);
       let stdout;
       try {
         // -f, never -F: String! variables must not be type-coerced
-        stdout = runGh(['api', 'graphql', '--hostname', origin.host, '-f', `owner=${origin.owner}`, '-f', `name=${origin.repo}`, '-f', `query=${buildIssueStateQuery(records)}`]);
+        stdout = runGh(['api', 'graphql', ...hostArgs, '-f', `owner=${origin.owner}`, '-f', `name=${origin.repo}`, '-f', `query=${buildIssueStateQuery(records)}`]);
       } catch (e) {
         if (e && e.code === 'ENOENT') return { entries: [], failure: 'gh-absent' };
         stdout = e && typeof e.stdout === 'string' ? e.stdout : '';

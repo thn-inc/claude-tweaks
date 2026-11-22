@@ -214,6 +214,52 @@ test('planRefs: gh missing is answered before any network call', () => {
   assert.equal(f.calls.gh.length, 0);
 });
 
+test('planRefs: a GHE origin routes the GraphQL call to its host with its owner/name; github.com passes no --hostname', () => {
+  const savedHost = process.env.GH_HOST;
+  delete process.env.GH_HOST;
+  try {
+    const run = (url) => {
+      const f = makeFakes({ refs: [1], states: { 1: 'CLOSED' } });
+      const git = (args) => (args[0] === 'remote' ? url : f.git(args));
+      const r = planRefs({ cwd: '/x', git, gh: f.gh, readBackend: noLocal });
+      assert.equal(r.failure, null);
+      return f.calls.gh[0];
+    };
+    const ghe = run('https://acme.ghe.com/o/r.git');
+    assert.deepEqual(ghe.slice(0, 4), ['api', 'graphql', '--hostname', 'acme.ghe.com']);
+    assert.equal(ghe.filter((a) => a === '--hostname').length, 1);
+    assert.ok(ghe.includes('owner=o') && ghe.includes('name=r'), ghe.join(' '));
+    const dotcom = run(URL);
+    assert.ok(!dotcom.includes('--hostname'), dotcom.join(' '));
+    assert.equal(dotcom[1], 'graphql');
+    assert.ok(dotcom.includes('owner=thn-inc') && dotcom.includes('name=claude-tweaks'), dotcom.join(' '));
+  } finally {
+    if (savedHost === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = savedHost;
+  }
+});
+
+test('planRefs: a number past the GraphQL 32-bit Int is left out of the query, so it cannot poison its chunk', () => {
+  const huge = 2147483648;
+  assert.doesNotMatch(buildIssueStateQuery([huge]), /issue\(number/);
+  assert.match(buildIssueStateQuery([2147483647]), /issue\(number:2147483647\)/);
+  const f = makeFakes({ refs: [5, huge], states: { 5: 'CLOSED' } });
+  const okGh = f.gh;
+  // A fake gh that rejects the whole query (a non-NOT_FOUND error) when it names an out-of-range number.
+  const gh = (args) => {
+    const q = args.find((a) => a.startsWith('query='));
+    if ([...q.matchAll(/issue\(number:(\d+)\)/g)].some((m) => Number(m[1]) > 2147483647)) {
+      return JSON.stringify({ errors: [{ type: 'INVALID', message: 'Int cannot represent non 32-bit signed integer value' }] });
+    }
+    return okGh(args);
+  };
+  const r = planRefs({ cwd: '/x', git: f.git, gh, readBackend: noLocal });
+  assert.deepEqual(r.entries.map((e) => [e.record, e.action, e.reason]), [
+    [5, 'delete', 'record-closed'], [huge, 'skip', 'state-unreadable'],
+  ]);
+  assert.equal(f.calls.pushes.length, 1);
+});
+
 test('planRefs: the GraphQL batch runs under the batch timeout, not the 5 s one', () => {
   const shared = require('../../../plugin/bin/lib/shared-primitives');
   const cp = require('child_process');
@@ -275,6 +321,18 @@ async function withGhHealthy(fn) {
   }
 }
 
+// Stub the gh presence probe plan-refs reads at call time (repo-resolve's ghAvailable), so a host without gh stays hermetic.
+async function withGhAvailable(fn) {
+  const repoResolve = require('../../../plugin/bin/lib/repo-resolve');
+  const original = repoResolve.ghAvailable;
+  repoResolve.ghAvailable = () => true;
+  try {
+    return await fn();
+  } finally {
+    repoResolve.ghAvailable = original;
+  }
+}
+
 test('index: plan-refs is registered on the background tier, deferred from the unscoped CLI, dispatched between ledger-residue and reap', () => {
   const hooks = require('../../../plugin/bin/hooks');
   assert.ok(ALL_CHECKS.includes('plan-refs'));
@@ -289,12 +347,12 @@ test('index: plan-refs is registered on the background tier, deferred from the u
 
 test('index: requesting plan-refs under pr-first sets result.planRefs to an array; not requesting it leaves null', async () => {
   const { dir } = makeRepo();
-  await withGhHealthy(async () => {
+  await withGhAvailable(() => withGhHealthy(async () => {
     const withDispatch = await reconcile({ cwd: dir, checks: ['plan-refs'] });
     assert.ok(Array.isArray(withDispatch.planRefs), 'plan-refs requested under pr-first must set planRefs to an array, not stay null');
     const withoutDispatch = await reconcile({ cwd: dir, checks: ['mirror'] });
     assert.strictEqual(withoutDispatch.planRefs, null, 'plan-refs not requested must leave planRefs null');
-  });
+  }));
 });
 
 test('index: a plan-refs failure lands in skipped', async () => {
@@ -309,13 +367,15 @@ test('index: a plan-refs failure lands in skipped', async () => {
 test('index: under local-merge plan-refs still runs and stays out of the local-merge skip string', async () => {
   const { dir } = makeRepo();
   const localMerge = () => 'local-merge';
-  const r = await reconcile({ cwd: dir, checks: ['plan-refs'], resolveIntegrationModel: localMerge });
-  assert.ok(Array.isArray(r.planRefs), 'plan-refs must run as a local-merge fallback');
-  const skip = r.skipped.find((s) => s.reason === 'local-merge-model');
-  assert.ok(skip, 'the local-merge skip entry must be present');
-  assert.strictEqual(skip.check, 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console');
-  const reaped = await reconcile({ cwd: dir, checks: ['reap'], resolveIntegrationModel: localMerge });
-  assert.strictEqual(reaped.planRefs, null, 'reap alone under local-merge must leave planRefs null');
+  await withGhAvailable(async () => {
+    const r = await reconcile({ cwd: dir, checks: ['plan-refs'], resolveIntegrationModel: localMerge });
+    assert.ok(Array.isArray(r.planRefs), 'plan-refs must run as a local-merge fallback');
+    const skip = r.skipped.find((s) => s.reason === 'local-merge-model');
+    assert.ok(skip, 'the local-merge skip entry must be present');
+    assert.strictEqual(skip.check, 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console');
+    const reaped = await reconcile({ cwd: dir, checks: ['reap'], resolveIntegrationModel: localMerge });
+    assert.strictEqual(reaped.planRefs, null, 'reap alone under local-merge must leave planRefs null');
+  });
 });
 
 test('formatSummary renders plan-refs taken, planned and skipped lines', () => {
@@ -364,4 +424,28 @@ test('planRefs: a real delete removes the closed record ref from the bare origin
   const left = gitIn(dir, 'ls-remote', origin, `${P}*`);
   assert.doesNotMatch(left, new RegExp(`${P}5\\b`));
   assert.match(left, new RegExp(`${P}6\\b`));
+});
+
+test('planRefs: a plan ref re-written between the listing and the push survives the lease (real git)', () => {
+  const { dir, origin } = makeRepo();
+  const head = gitIn(dir, 'rev-parse', 'HEAD').trim();
+  gitIn(dir, 'push', 'origin', `${head}:${P}5`);
+  gitIn(dir, 'commit', '--allow-empty', '-m', 'rewritten plan');
+  const newSha = gitIn(dir, 'rev-parse', 'HEAD').trim();
+  assert.notEqual(newSha, head);
+  const realGit = (args) => (args[0] === 'remote' ? URL : gitIn(dir, ...args));
+  // The injected gh runs after ls-remote and before the push: it re-writes the ref on origin, then answers CLOSED.
+  const gh = (args) => {
+    gitIn(dir, 'push', '--force', 'origin', `${newSha}:${P}5`);
+    const q = args.find((a) => a.startsWith('query=')).slice('query='.length);
+    const repo = {};
+    for (const m of q.matchAll(/(i\d+): issue\(number:(\d+)\)/g)) repo[m[1]] = { number: Number(m[2]), state: 'CLOSED' };
+    return JSON.stringify({ data: { repository: repo } });
+  };
+  const r = planRefs({ cwd: dir, git: realGit, gh, readBackend: noLocal });
+  assert.equal(r.failure, null);
+  assert.equal(r.entries.length, 1);
+  assert.deepEqual([r.entries[0].action, r.entries[0].reason], ['skip', 'delete-failed']);
+  assert.match(r.entries[0].detail, /stale info/);
+  assert.match(gitIn(dir, 'ls-remote', origin, `${P}5`), new RegExp(`^${newSha}\\t${P}5`));
 });
