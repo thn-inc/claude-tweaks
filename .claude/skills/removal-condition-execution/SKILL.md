@@ -15,6 +15,10 @@ This repo records a removal condition beside every deprecated behavior (CLAUDE.m
 
 A condition usually names a check. #3847's was `find . -path "*/.claude/worktrees/*/.claude-tweaks/pipelines/*" -maxdepth 6 -type d`, run from the main checkout. Run it and put the result in the PR. Past a sunset the removal proceeds regardless, so a hit is reported as abandoned state, not a blocker. Raw output can exceed GitHub's 65,536-character PR-body limit (#3847's was 15,008 lines): quote the exact command plus a hit/miss count, and say that is what you did.
 
+### A condition that names an issue is proved by caller searches, not by the issue
+
+A condition may name a trigger issue whose text never mentions the code it gates. #5535's comment tied the `resolve-refutation` verb to issue 3950 closing, and that issue's body names neither the verb nor its function. Read the issue's state, then prove the removal from caller searches for the verb, its function and every export, and put both results in the PR. Say in the PR that the issue does not name the code, so a reader does not take its closing as the proof.
+
 ### Delete the step; never renumber the survivors
 
 Other files cite steps by number. #3847 deleted `3.5.` from `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section C and left 3.6 onward alone.
@@ -37,6 +41,8 @@ Identifiers (the date, the step number, the guard's name) are what acceptance gr
 
 When a sentence covered the removed step and a survivor together, deleting the step can leave the survivor with a qualifier it never had. #3847's `wrap-up/flags.md` ended up saying step 3.6's close-run runs **unconditionally**, but 3.6 runs only when a run dir was established. Review caught it, and `b40271381` reworded it to "never skipped by `cleanup-only` … conditions included". Read each re-pointed sentence against the survivor's own conditions.
 
+A name-replacement table has the same hazard at scale. #5544 removed test-only wrappers from `plugin/bin/lib/reconcile/archive-merged.js` and reworded about 40 sentences by a table mapping each removed name to its replacement. Four of them then credited `decideArchiveCore` with behavior it does not have: a no-worktree/no-branch skip and a live-worktree precondition, both of which belong to the main loop. A grep that the old name is gone passed all four. A Task 4 review and the whole-branch review caught them; the whole-branch review's three now say "the merged-PR path". For each sentence the table rewrites, read the replacement's code and check that it does what the sentence now says.
+
 ### Re-anchor an absence sentinel built from the removed text
 
 A test that proves a section is excluded by asserting the removed text is absent passes vacuously once that text is deleted. `tests/bin-lib/wrap-up/engine-cli.test.js`'s appendix-exclusion check used the sunset sentence. #3847 replaced it with a string found only in the appendix (`producing **no merge commit at all**`), checked with `grep -c -F` against both the appendix and the head file.
@@ -53,13 +59,17 @@ A test asserting that a file the removed code used to write is left untouched ca
 
 `checkPipelineShadowGuard` in `plugin/bin/lib/hooks/pre-tool-use.js` still allows writes into a run dir that already exists in a worktree. Its comment had justified that by the copy-out guard. It now rests on its own ground: a write into an existing directory creates no new shadow. Decide for each such behavior whether it goes with the removed thing or stays with a rewritten rationale, and say which in the spec.
 
+### Give each of the removed thing's tests a verdict: deleted, already pinned, or retargeted
+
+A removed function's tests mix assertions about the function itself with assertions about code it wrapped. Delete the first kind with it. For each of the second kind, cite the surviving test that already pins that behavior, or move the assertion onto the survivor and show it go red. #5542's `listClaimNames` had three tests in `tests/bin-lib/issues/claim-store.test.js`, asserting three things: the name mapping was its own behavior (deleted); the `recursive=1` path and no-`-f` rule were already pinned by `listClaimEntries`' tests (deleted, with those tests cited in the plan); the `gh-absent` failure passthrough had no other pin, so it moved onto `listClaimEntries` and was shown red with the passthrough line removed. #5535's three pins in `tests/review-tiebreak-step-conformance.test.js` read the retired verb's own comment and docs line, so they went with that text. This is the per-assertion inventory `skill-prose-conformance-tests` asks for when retargeting pins.
+
 ## Decision Framework
 
 | A hit on the retired vocabulary in… | Verdict |
 |---|---|
 | live skill prose, `docs/donts.md`, `docs/skill-graph.md`, `docs/plugin-structure.md`, `.claude/skills/` | rewrite or delete |
 | a code comment, a test title, a test comment | rewrite; behavior unchanged unless the record says otherwise |
-| a test assertion | re-anchor (a sentinel) or retarget (a pin), never only delete |
+| a test assertion | re-anchor (a sentinel) or retarget (a pin); delete it outright only when what it pins was deleted too, or a surviving test you cite already pins it |
 | `docs/incident-log.md`, `CHANGELOG.md`, archived run `work/*.md`, `docs/superpowers/plans/*` | leave: history, not live guidance |
 | an accepted decision record in `docs/decisions/`, a `docs/plans/*-ledger.md` | leave: a decision record is superseded rather than edited (ADR-0013); a new decision record states the removal (#5561 left 0012 and 0015 and added 0035) |
 | an unrelated step with the same number (Step 3.5 also exists in review, backlog refine, journeys, docs-health, routine status, attention mode) | leave |

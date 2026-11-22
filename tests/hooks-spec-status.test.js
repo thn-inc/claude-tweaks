@@ -7,6 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { readManifest } = require('../plugin/bin/lib/flow/manifest');
@@ -21,7 +22,7 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 // .claude-tweaks/pipelines/ from there write fixture events into REAL run
 // dirs (the #657 pollution incident). Calls that don't care about cwd get an
 // isolated, non-git sandbox instead.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-sandbox-'));
+const HOOK_SANDBOX = scratchDir('ct-specstatus-sandbox-');
 
 // Runs the verb in-process (#5376); the script entry has its own smoke test below.
 async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
@@ -30,7 +31,7 @@ async function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) 
 }
 
 function runDirWithManifest(specs) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-'));
+  const project = scratchDir('ct-specstatus-');
   // #790: --run must resolve under a real git checkout (see bin/hooks.js's
   // resolveRunArg anchoring check) — every runHook() call below passes
   // { cwd: run } so the in-process call's injected cwd resolves this same checkout.
@@ -82,7 +83,7 @@ test('a phase transition without the banner is not reachable through spec-status
   // resolveRunArg now requires an initialized target for spec-status, so
   // this needs a marker file to isolate "no manifest.yml" from "uninitialized
   // --run", which is a separate rejection covered in hooks-dispatcher.test.js).
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-bare-'));
+  const bareDir = scratchDir('ct-specstatus-bare-');
   execFileSync('git', ['-C', bareDir, 'init', '-q']); // #790: --run must resolve under a real git checkout
   fs.writeFileSync(path.join(bareDir, 'decisions.md'), '');
   const rMissing = await runHook(['spec-status', '--run', bareDir, '--spec', '1', '--status', 'running', '--phase', 'build'], { cwd: bareDir });
@@ -155,7 +156,7 @@ test('#3035: manifest-init refuses without --specs or with a bad id, writing not
 });
 
 test('spec-status without a resolvable run dir exits 0 and prints a not-recorded notice', async () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-specstatus-norun-'));
+  const bare = scratchDir('ct-specstatus-norun-');
   const result = await runHook(['spec-status', '--spec', '1', '--status', 'running', '--phase', 'build'], { cwd: bare });
   assert.equal(result.code, 0);
   assert.match(result.stdout, /no pipeline run dir found — spec status not recorded/);

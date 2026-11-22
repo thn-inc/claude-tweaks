@@ -11,13 +11,15 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawnSync } = require('child_process');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const { encodeImpactMap, DEFAULT_MAP_NAME } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'impact.js'));
 const { substituteFile } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'file-template.js'));
 const { derivePhases } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'timing', 'derive.js'));
 const { slotEnv } = require('../../helpers/suite-slot-env');
+const { readGitCalls } = require('../../helpers/git-call-recorder');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const TMP_DIRS = [];
 after(() => { for (const d of TMP_DIRS) fs.rmSync(d, { recursive: true, force: true }); });
@@ -77,10 +79,8 @@ function declOf(impact = {}, overrides = {}) {
 function impactRepo(decl = declOf(), extraFiles = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   git('symbolic-ref', 'HEAD', 'refs/heads/main');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
   const files = {
     ...SCRIPTS,
     'src/x.js': 'x\n',
@@ -638,4 +638,42 @@ test('AC2.2: under the key --local runs the full command here when selection fal
   assert.strictEqual(run.code, 0, run.stderr + run.stdout);
   assert.strictEqual(r.marker(), 'FULL');
   assert.strictEqual(r.report().scope.impact.fallback, 'map-missing');
+});
+
+// #5773: with an impact declaration impact.fetch and the list write can change the tree between the changed-file read and the
+// generated-path read, so that read still asks git: changed files, start exemption, end.
+test('an impact-declared run with a generated glob and a dirty tree still reads the working tree for the exemption at the start, as well as for the changed files and after the suites (#5773)', () => {
+  const r = impactRepo(declOf({}, { generated: ['dist/**'], rules: [...RULES, { match: 'dist/**', suites: '*', static: false }] }), { 'dist/bundle.js': 'v1' });
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  fs.writeFileSync(path.join(r.repo, 'dist', 'bundle.js'), 'v2-regenerated');
+  const traceDir = tmpDir('verify-impact-trace-');
+  const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS], {
+    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+  });
+  assert.strictEqual(run.status, 0, run.stderr + run.stdout);
+  assert.ok(r.report().scope.impact, 'the run went through impact selection');
+  const zStatus = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git' && e.args.includes('status') && e.args.includes('-z'));
+  assert.strictEqual(zStatus.length, 3, JSON.stringify(zStatus.map((e) => e.args)));
+});
+
+// #5773: the stamp anchor is proved an ancestor of HEAD before selection; a map pinned to that same commit reuses the answer
+// (only git reads run in between), so the ancestry question for that commit is asked once per run.
+test('a map pinned to the stamp anchor asks whether the anchor is an ancestor of HEAD once (#5773)', async () => {
+  const r = impactRepo();
+  const first = await runCli([...ARGS, '--local'], r.repo);
+  assert.strictEqual(first.code, 0, first.stderr + first.stdout);
+  const anchor = r.stamp().fullSha;
+  assert.match(anchor, /^[0-9a-f]{40}$/, 'the first full run left an anchor');
+  writeMap(r, anchor);
+  commitFile(r, 'src/x.js', 'x2\n');
+  const traceDir = tmpDir('verify-impact-trace-');
+  const run = spawnSync(process.execPath, ['--require', path.join(__dirname, '..', '..', 'helpers', 'git-call-recorder.js'), CLI, ...ARGS, '--local'], {
+    cwd: r.repo, encoding: 'utf8', timeout: 60000, killSignal: 'SIGKILL', env: { ...process.env, CT_TEST_SUITE_SLOT_HELD: '1', CT_TEST_GIT_CALL_LOG: traceDir },
+  });
+  assert.strictEqual(run.status, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.report().scope.impact.fallback, null, 'the map was read and trusted');
+  const asked = readGitCalls(traceDir).flatMap((p) => p.events)
+    .filter((e) => e.kind === 'git' && e.args.includes('--is-ancestor') && e.args.includes(anchor));
+  assert.strictEqual(asked.length, 1, JSON.stringify(asked.map((e) => e.args)));
 });

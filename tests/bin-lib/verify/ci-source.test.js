@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -11,7 +12,7 @@ const { fetchCiVerdict, normalizeCiLog, LOG_TIMEOUT_MS } = require('../../../plu
 const SHA = 'a'.repeat(40);
 const SOURCE = { workflow: 'test.yml', job: 'test', waitSeconds: 60, pollSeconds: 20 };
 
-function tmpDir() { return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-ci-source-')); }
+function tmpDir() { return scratchDir('ct-ci-source-'); }
 
 // A fake gh: `routes` maps an endpoint matcher to a response (string → JSON
 // body, function → called per hit, Error → thrown). Unknown calls throw loudly.

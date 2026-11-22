@@ -225,10 +225,27 @@ fact. `readUsage` (`plugin/bin/lib/timing/transcript.js`, #1929) kept the first 
 same usage, and #3375 pointed it at subagent transcripts. Those
 (`{sessionId}/subagents/agent-{id}.jsonl`) open each turn with a streaming snapshot (`stop_reason`
 null, a small `output_tokens`) and close it with the settled count, so first-line dedupe
-undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. When code reads more than one
+undercounted subagent output 8-9x and the cost baseline had to be re-run (`a662004f9`). `6de93fc03` takes the max per `message.id` instead. That rule has one implementation, `mergeUsage`
+in `plugin/bin/lib/timing/transcript.js` (#5967): `readUsage`, `context-gauge.js`, the cost report
+and review replay all fold through it, so a new reader calls it rather than re-deriving the max. When code reads more than one
 producer's transcripts, run step 2 against a real sample of each kind (the main transcript, a
 subagent transcript, and any path a caller passes with `--transcript`), and keep the observation
 date beside the rule, the way `transcript.js`'s header does for the subagent layout.
+
+**Not every assistant line is a model call (#5914).** Claude Code records an API error, such as
+a usage or rate limit, as an `assistant` line with `message.model: "<synthetic>"`,
+`isApiErrorMessage: true` and every usage field at zero (observed on 2.1.302 with
+`error: "rate_limit"`). Zero usage leaves token sums unchanged, so a reader that only adds tokens
+never notices the line. A reader that compares each call with the previous one does: with
+`<synthetic>` lines kept in the previous-call chain as a model of their own, the pipeline-economy
+baseline's main-session model-switch cut came to 170 requests and $621.72, against 17 requests and
+$50.92 with them left out. `tools/pipeline-cost-report/spend.js` (`SYNTHETIC_MODEL`) keeps such a
+line in its request list at zero cost, never lets it act as the previous call for the model-switch
+or idle-gap check, and never lets it use up a pending compaction marker;
+`tests/pipeline-cost-report/spend.test.js` pins each case. `transcriptModelOf` in
+`plugin/bin/lib/timing/transcript.js` skips the same line when naming a transcript's model. Before
+chaining on "the previous call", or counting calls, grep a real store for `"model":"<synthetic>"`
+and decide which tallies such a line belongs in.
 
 ## One Claude Code version does not speak for another
 
@@ -249,12 +266,24 @@ So before writing a parser for an event that has a carrier: `grep -l` the event'
 `<task-notification>`) across `{store}/projects/*/*/subagents/*.jsonl`, group the matches by the
 `version` field on each line, and read one line per distinct version and per distinct `type`.
 Build fixtures from those verbatim lines (long values truncated with `…`) and name the source file
-and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js` returns an
-indeterminate result when `<task-notification>` or `<fork-boilerplate>` shows up in any other entry
-shape, and its tests pin both the recognized carriers and that fallback. A test that asserts only the
-fail-closed outcome (`block`) passes whether the carrier is recognized or not, so also assert the
-parsed value (a count of `0`, not `null`). Keep the versions you observed beside the rule, as
-`subagent-stop.js`'s header comment does.
+and line beside each. Fail closed on a carrier you did not recognize: `subagent-stop.js`'s gate
+count (`countPendingDispatches`) returns an indeterminate result when `<task-notification>` or
+`<fork-boilerplate>` shows up in any other entry shape, and its tests pin both the recognized
+carriers and that fallback. A test that asserts only the fail-closed outcome (`block`) passes whether
+the carrier is recognized or not, so also assert the parsed value (a count of `0`, not `null`). Keep
+the versions you observed beside the rule, as `subagent-stop.js`'s header comment does.
+
+**Pick each reader's indeterminate rule by what its wrong answer costs.** One scan can feed two
+readers whose failures cost different things. Record #5706 is the instance: `scanPendingDispatches`
+returns `{ gate, marker }` from one pass. The gate count decides whether a reply is blocked, so it
+still returns `null` on any unrecognized carrier. The stop-marker count only decides when
+`wait-for.js agents` returns, and a `null` there is a wait that never sees a finished child. So the
+marker skips a `<task-notification>` found in the agent's first user message (its own prompt), a
+`toolUseResult` line or an assistant line, and keeps counting; any other shape still nulls both
+counts. Before loosening one reader, show that no shape it skips can ever be a completion, so its
+count never falls below the true pending count, and leave the stricter reader alone unless
+something measured says it is wrong. Measure the skipped shapes on real transcripts first (#5706
+tallied 31,980 final stops across 2.1.283 to 2.1.325) and record that range beside the rule.
 
 A new carrier must reach every reader of the event, not only the one that surfaced it. #3015
 taught `countPendingDispatches` the `queued_command` shape while `isAsyncWaitSignal` (#2041), which
@@ -323,5 +352,6 @@ Three probe write-ups share one shape: `docs/reference/pretooluse-updatedinput-w
 ## Origin
 
 Surfaced during #452 (Add a Friction reflect lens fed by hook-denial and AskUserQuestion events) —
-see that record's final review and `evals/NOTES.md`'s "AskUserQuestion input/output shapes"
-section's Correction for the concrete incident this skill generalizes from.
+see that record's final review and `docs/reference/agent-sdk-payload-notes.md`'s
+"AskUserQuestion input/output shapes" section's Correction for the concrete incident this skill
+generalizes from.

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -10,7 +11,7 @@ const {
 const { readText } = require('../../helpers/read-skill');
 
 function tmpFile() {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exclusions-test-')), 'dispatch-exclusions.json');
+  return path.join(scratchDir('exclusions-test-'), 'dispatch-exclusions.json');
 }
 
 test('readExclusions: absent file returns []', () => {

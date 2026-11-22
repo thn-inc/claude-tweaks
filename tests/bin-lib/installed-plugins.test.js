@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { selectEntry, readInstalledPlugins, canonicalGitRoot } = require('../../plugin/bin/lib/installed-plugins');
@@ -13,7 +14,7 @@ const { readText } = require('../helpers/read-skill');
 // same code path the resolvers use.
 
 function tmpRoot() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'installed-plugins-test-')));
+  return fs.realpathSync(scratchDir('installed-plugins-test-'));
 }
 
 function mkdirs(...dirs) {

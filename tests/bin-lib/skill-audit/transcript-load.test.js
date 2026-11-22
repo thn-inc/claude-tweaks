@@ -7,6 +7,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -47,7 +48,7 @@ function readResult(toolId, bytes, extra = {}) {
 }
 
 function writeTranscript(lines) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'transcript-load-'));
+  const dir = scratchDir('transcript-load-');
   const file = path.join(dir, 't.jsonl');
   fs.writeFileSync(file, lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n');
   return file;

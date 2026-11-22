@@ -18,9 +18,9 @@ test('EFFORT_SCALE is the ordered five-level ladder', () => {
   assert.deepStrictEqual(EFFORT_SCALE, ['low', 'medium', 'high', 'xhigh', 'max']);
 });
 
-test('POLICY_KEYS_READ names exactly the four policy keys', () => {
+test('POLICY_KEYS_READ names exactly the five policy keys', () => {
   assert.deepStrictEqual(POLICY_KEYS_READ,
-    ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap']);
+    ['model-profiles', 'model-stance', 'model-ceiling', 'frontier-run-cap', 'model-effort']);
 });
 
 test('effortLine renders the pinned template, empty for null', () => {

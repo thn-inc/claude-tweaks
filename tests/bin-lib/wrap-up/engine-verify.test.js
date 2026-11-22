@@ -12,6 +12,7 @@ const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf, cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
 const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
 const { readText } = require('../../helpers/read-skill');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 
 // Every tmp root this file creates is registered here and removed once, after the
 // file's last test: the per-test try/finally removals cover only some call sites,
@@ -1908,7 +1909,7 @@ test('AC3.1: engine-verify agrees on mixed labels', () => {
   for (const labels of [['demo:pending', 'demo:changes-requested'], ['accept:pending', 'demo:changes-requested'], ['demo:pending', 'accept:changes-requested']]) {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
     assert.strictEqual(row.result, 'fail', labels.join('+'));
-    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
+    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:accept #900/, labels.join('+'));
     assert.doesNotMatch(row.detail, /missing demo:pending or accept:pending label/, labels.join('+'));
   }
 
@@ -2333,7 +2334,7 @@ test('#4805 a resolved parent still carrying a pending label fails as outranked,
       const label = `${parentLabels.join('+')} at ${risk}`;
       const { row } = parentGateRow({ records: [900], parentLabels, subIssues: closedSubs3508(risk) });
       assert.strictEqual(row.result, 'fail', `${label}: ${row.detail}`);
-      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:demo #898/, label);
+      assert.match(row.detail, /#898: pending label outranked by a verdict — run \/claude-tweaks:accept #898/, label);
       assert.doesNotMatch(row.detail, /already dispositioned/, label);
       assert.doesNotMatch(row.detail, /below oversight floor/, label);
     }
@@ -3731,7 +3732,7 @@ test('wrap-up-engine.js verify prints a check table for a real, anchored run dir
 // child_process.execFileSync (a fresh require.cache entry so the spy is
 // captured by the module's own top-level destructure) to inspect the real
 // options object each function passes, rather than asserting on source text.
-test('#1230: defaultGit\'s execFileSync call carries a timeout matching defaultGh\'s', () => {
+test('#1230: defaultGit and defaultGh both carry a timeout; git\'s is its own 5000 bound', () => {
   const cp = require('node:child_process');
   const originalExecFileSync = cp.execFileSync;
   const calls = [];
@@ -3740,24 +3741,47 @@ test('#1230: defaultGit\'s execFileSync call carries a timeout matching defaultG
     return '';
   };
   const modPath = require.resolve('../../../plugin/bin/lib/wrap-up/engine-verify');
+  const primitivesPath = require.resolve('../../../plugin/bin/lib/shared-primitives');
+  const ENV_KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const hadEnv = Object.prototype.hasOwnProperty.call(process.env, ENV_KEY);
+  const origEnv = process.env[ENV_KEY];
   delete require.cache[modPath];
+  delete require.cache[primitivesPath];
   let fresh;
   try {
+    process.env[ENV_KEY] = '12000';
     // eslint-disable-next-line global-require
     fresh = require('../../../plugin/bin/lib/wrap-up/engine-verify');
     fresh.defaultGit(['status'], '/tmp/does-not-matter');
     fresh.defaultGh(['--version'], '/tmp/does-not-matter');
   } finally {
     cp.execFileSync = originalExecFileSync;
+    if (hadEnv) process.env[ENV_KEY] = origEnv; else delete process.env[ENV_KEY];
     delete require.cache[modPath];
+    delete require.cache[primitivesPath];
   }
   assert.strictEqual(calls.length, 2);
   const [gitCall, ghCall] = calls;
   assert.strictEqual(gitCall[0], 'git');
   assert.strictEqual(ghCall[0], 'gh');
   assert.notStrictEqual(gitCall[2].timeout, undefined, 'defaultGit must set a timeout option');
-  assert.strictEqual(gitCall[2].timeout, ghCall[2].timeout, "defaultGit's timeout must match defaultGh's");
-  assert.strictEqual(gitCall[2].timeout, 5000);
+  assert.notStrictEqual(ghCall[2].timeout, undefined, 'defaultGh must set a timeout option');
+  assert.strictEqual(gitCall[2].timeout, 5000, 'git keeps its own local bound regardless of GH_TIMEOUT_MS');
+  assert.strictEqual(ghCall[2].timeout, 12000, 'gh follows CLAUDE_TWEAKS_GH_TIMEOUT_MS');
+});
+
+test('#4856: defaultGh passes timeout 12000 under CLAUDE_TWEAKS_GH_TIMEOUT_MS=12000', () => {
+  const modulePaths = [require.resolve('../../../plugin/bin/lib/wrap-up/engine-verify')];
+  const seen = captureGhTimeout({
+    envValue: '12000',
+    modulePaths,
+    exercise: (setEnv) => {
+      setEnv();
+      // eslint-disable-next-line global-require
+      require('../../../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['--version'], process.cwd());
+    },
+  });
+  assert.strictEqual(seen, 12000);
 });
 
 // ---- #1477: the eleven remaining process.cwd() sites now thread the injected

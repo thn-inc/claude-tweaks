@@ -3,6 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir, isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-count-node-procs-');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
@@ -167,7 +169,7 @@ test('formatTable prints the floor note, one row per file and a total', () => {
 });
 
 test('AC10.1: run passes the list through, returns the test run\'s exit code and writes --json', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const outPath = path.join(tmp, 'out.json');
     let calls = 0;
@@ -189,7 +191,7 @@ test('AC10.1: run passes the list through, returns the test run\'s exit code and
 });
 
 test('run reports an unwritable --json path and keeps the test run\'s exit code', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const bad = path.join(tmp, 'no-such-dir', 'out.json');
     for (const [status, expected] of [[0, 1], [5, 5]]) {
@@ -203,7 +205,7 @@ test('run reports an unwritable --json path and keeps the test run\'s exit code'
 });
 
 test('run with no arguments names both default roots', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const { deps } = fakeDeps((cmd, args) => {
       assert.deepStrictEqual(args.slice(1), ['tests', path.join('tools', 'upstream-drift', 'tests')]);
@@ -224,7 +226,7 @@ test('run rejects an unknown flag with exit 2', () => {
 });
 
 test('the preload logs a start and an exit line and prints nothing', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const logFile = path.join(tmp, 'log.jsonl');
     const r = spawnSync(process.execPath, ['-e', '0'], {
@@ -246,7 +248,7 @@ test('the preload logs a start and an exit line and prints nothing', () => {
 });
 
 test('the preload logs one start and one exit line for a process that creates a worker thread', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const logFile = path.join(tmp, 'log.jsonl');
     const script = "const { Worker } = require('worker_threads'); new Worker('0', { eval: true });";
@@ -264,11 +266,11 @@ test('the preload logs one start and one exit line for a process that creates a 
 });
 
 test('AC10.1: one real run prints a row for the listed test file', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cnp-test-'));
+  const tmp = scratchDir('cnp-test-');
   try {
     const listFile = path.join(tmp, 'list.txt');
     const outPath = path.join(tmp, 'out.json');
-    fs.writeFileSync(listFile, 'tests/helpers-git-template.test.js\n');
+    fs.writeFileSync(listFile, 'tools/count-node-procs-fixture/sample.test.js\n');
     const r = spawnSync(process.execPath, [toolPath, '--files-from', listFile, '--json', outPath], {
       cwd: repoRoot,
       env: slotEnv(tmp, { CT_TEST_SUITE_SLOT_HELD: '1' }),
@@ -280,11 +282,12 @@ test('AC10.1: one real run prints a row for the listed test file', () => {
     assert.strictEqual(r.status, 0, `${r.stdout}\n${r.stderr}`);
     const rows = JSON.parse(fs.readFileSync(outPath, 'utf8'));
     assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].file, 'tests/helpers-git-template.test.js');
-    // exactly the test file's own process: its helpers start git (not node), and the `node --test`
-    // runner and tools/run-tests.js above it are unattributed
-    assert.strictEqual(rows[0].nodeProcs, 1);
-    assert.deepStrictEqual(rows[0].cliProcs, {});
+    assert.strictEqual(rows[0].file, 'tools/count-node-procs-fixture/sample.test.js');
+    // the fixture's own process plus its one child node process (plugin/bin/compose-record.js --help,
+    // a side-effect-free CLI); the fixture's `git --version` starts git, not node, so it is not counted.
+    // The `node --test` runner and tools/run-tests.js above it are unattributed.
+    assert.strictEqual(rows[0].nodeProcs, 2);
+    assert.deepStrictEqual(rows[0].cliProcs, { 'compose-record.js': 1 });
     assert.strictEqual(typeof rows[0].wallMs, 'number');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

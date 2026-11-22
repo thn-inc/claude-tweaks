@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -9,7 +10,7 @@ const { classifyArea } = require('../../../plugin/bin/lib/code-health/area-type'
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-at-')); }
+function tmp() { return scratchDir('codehealth-at-'); }
 
 test('unknown dir with no signals returns empty types', () => {
   const d = tmp();

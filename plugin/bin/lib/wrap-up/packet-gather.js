@@ -12,6 +12,7 @@ const {
   COMMANDS_ONLY_SURFACES,
   encodeFactKey,
   NEGATIVE_ID_PREFIX,
+  isDeployRef,
 } = require('./packet-contract');
 const {
   BEARER_SEGMENT_REASON, checkLink, findCredentialInText, hasBearerUrl,
@@ -449,7 +450,10 @@ function deployFact(deploy) {
   const { target, live } = deploy ?? { target: 'local', live: null };
   let text = `target: ${target}`;
   if (target === 'dev') text += live === true ? ', confirmed live' : ', not confirmed live';
-  return { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  const fact = { id: 'deploy:status', kind: 'deploy', status: 'passed', source: 'deploy', text, target, live };
+  // The deployed commit, which a later /accept refresh compares against (#4613).
+  if (isDeployRef(deploy?.ref)) fact.ref = deploy.ref;
+  return fact;
 }
 
 // A pass-through record may already spell its id with the kind. The status and reason come

@@ -22,7 +22,7 @@ it lands, the section's empty line stands in.
 6. **Least confident** — claims citing `finding` facts. Empty: `not applicable: no low-confidence review findings`.
 7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Lists kept proofs, then `planned, not verified` lines, then `- {slug}: no proof shown` for a kept flag no surviving claim cites (a note, never omitted, followed by ` — {text}` when the flag fact carries why it was widened; `proofs not read (the --proofs input did not read)` in place of `no proof shown` when `--proofs` is in `partial`, as when `risk-flags.js facts` read no plan), with `(flag unconfirmed)` after any line citing an unconfirmed flag. Empty: `not applicable: no kept risk flags`, or, when `--flags` is in `partial`, `risk flags not read: the --flags input did not read, so kept flags are unknown`.
 8. **Decisions left for you** — owner: the control-mode records. One line per `decision` fact, omitted when empty, heading included.
-9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`.
+9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`. A park adds the diff tripwire's `tripwire…` lines after its four park lines (`bin/lib/accept/tripwire.js`).
 
 Any other section left empty states why in its one line; a heading is never empty. Recording,
 Decisions left for you and Deploy status render facts directly and are never narrated claims. Above the
@@ -30,7 +30,7 @@ sections sit the marker, the `## Acceptance packet — #{N}` title, the partial-
 gather has one, the dropped line, and the screened line when an entry was screened.
 
 **The observation plan**, when given in `_shared/observation-plan.md`'s grammar, follows Deploy status
-as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:demo`: a first-line plan
+as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:accept`: a first-line plan
 heading is dropped so it is not doubled, each line keeps its list marker and its whole backtick spans,
 and each keeps its indentation up to three columns past the open list item's content, so a sub-bullet
 stays under its parent and no line becomes an indented code block. What follows the marker is free text
@@ -116,7 +116,7 @@ records extend the schema only by adding rows to the table.
 
 ## Decision facts
 
-A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`.
+A control-mode run's Review Console writes one entry per item it could not resolve to `{run-dir}/packet-facts/decisions.json` (a JSON array, deduplicated by `id`), and `gather` reads that file when no `--decision-items` is passed. Each entry renders one line under Decisions left for you, from its `text`. Code twin: `bin/lib/console/decision-facts.js`. An `upstream` fact is built by `bin/lib/console/decision-facts.js`'s `upstreamDecisionFact`, its `evidenceRef` the staged draft; its `text` also carries the draft inline, except a `scrub-hit` fact's, which carries it by `evidenceRef` only.
 
 | Field | Value |
 |---|---|
@@ -366,7 +366,7 @@ stays. A packet still over the cap is not posted (`## Pipeline`).
 | The ask | What changed |
 | What shipped | What changed |
 | Confirmed | Test guide and Tried to break |
-| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:demo` walks) |
+| Observation plan | Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:accept` walks) |
 | The Try it block | Test guide |
 
 ## Failure contract

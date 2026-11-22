@@ -8,7 +8,7 @@
 // contract's whole purpose (reducing issue volume for low-materiality findings).
 //
 // Pure — no I/O, no gh calls, no network. The routing skill (review/step3-routing.md,
-// wrap-up/residue-sweep.md, the four health sweeps, ...) calls isMaterialityDuplicate before
+// wrap-up/residue-sweep.md, the five health sweeps, ...) calls isMaterialityDuplicate before
 // appending a new entry, and materialityEntryLine to compose the line it appends. Dedup reads
 // only trusted fingerprint sources (#3766): a github-issues caller passes comment objects, and
 // only OWNER/MEMBER/COLLABORATOR comments (issues/comment-trust.js) can suppress a finding.

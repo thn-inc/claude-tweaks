@@ -162,7 +162,14 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 const { runAcceptance, renderTryIt, renderParentBrief, renderObservationPlan } = require(path.join(LIB, 'driver', 'acceptance'));
 const { renderPacket } = require(path.join(LIB, 'wrap-up', 'packet-render'));
-const { ACCEPTANCE_RESULT_SCHEMA } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ACCEPTANCE_RESULT_SCHEMA, DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
+const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
+const LAUNCH_POLICY = { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 }, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' }) };
+test('the fixture policy carries the model keys a launch needs (#5917)', () => {
+  assert.strictEqual(roleModel('acceptance', LAUNCH_POLICY), PROFILES[DRIVER_ROLE_PROFILES.acceptance].model);
+});
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -277,7 +284,7 @@ function harness(route, over = {}) {
     platform: 'linux',
     env: { H: '1' },
   };
-  const shared = { activeWorker: null, policy: { 'express-driver-wall-clock-minutes': { value: 30 }, 'express-driver-spend-ceiling-dollars': { value: 5 } } };
+  const shared = { activeWorker: null, policy: { ...LAUNCH_POLICY } };
   const ctx = { record: 7, pr: 70, repo: 'o/r', branch: 'drive-7', base: 'main', head: 'drive-7', runDir, runRoot: root, mainCheckout: root, worktree };
   const env = { deps, shared, readFile: spec.readFile || ((p) => fs.readFileSync(p, 'utf8')) };
   const isForgeWrite = (c) => (c.kind === 'gh' && ((c.args[0] === 'issue' && ['comment', 'edit'].includes(c.args[1])) || (c.args[0] === 'pr' && c.args[1] === 'comment')
@@ -390,7 +397,7 @@ describe('renderers', () => {
     assert.strictEqual(text, [
       '## Verification Brief', '', '### The ask', 'Why', '', '### What shipped', 'This', '',
       renderTryIt(brief.tryItEndToEnd, '### Try it — end to end'), '',
-      '### Confirmed', 'F1: x', '', '---', '', '_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:demo`._',
+      '### Confirmed', 'F1: x', '', '---', '', '_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:accept`._',
     ].join('\n'));
   });
 
@@ -518,7 +525,7 @@ describe('runAcceptance: parent routes', () => {
     assert.ok(w[1].bodyText.startsWith('## Verification Brief\n'));
     assert.ok(w[1].bodyText.includes('### Try it — end to end'));
     assert.match(w[1].bodyText, /### Confirmed\nF1: .*getStatus/);
-    assert.ok(w[1].bodyText.trimEnd().endsWith('_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:demo`._'));
+    assert.ok(w[1].bodyText.trimEnd().endsWith('_Posted by `plugin/bin/drive.js`. Resolve with `/claude-tweaks:accept`._'));
     assert.deepStrictEqual(w[2].args, ['issue', 'edit', '42', '--repo', 'o/r', '--add-label', 'accept:pending']);
     assert.ok(w[3].bodyText.startsWith('<!-- run-comment: try-it -->'));
   });
@@ -891,15 +898,49 @@ describe('runAcceptance: failures and bounds', () => {
     assert.strictEqual(h.events.length, 1);
     assert.strictEqual(h.events[0].step, 'merge-acceptance');
     assert.strictEqual(h.events[0].status, 'ok');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: null });
     assert.strictEqual(r.detail, h.events[0].detail);
   });
 
-  test('a failure after the route is known still reports the route', async () => {
+  test('a failure after the launch reports the route and the model (#5917)', async () => {
     const h = harness('no-parent-gated', { exit: { post: 4 } });
     const r = await h.run();
     assert.strictEqual(r.route, 'no-parent-gated');
-    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated' });
+    assert.deepStrictEqual(h.events[0].extra, { route: 'no-parent-gated', model: PROFILES.standard.model, effort: null });
+  });
+
+  test('the due-exceeds route reports its route and the model (#5917)', async () => {
+    const h = harness('due-exceeds', { existingLabels: ['accept:pending'] });
+    const r = await h.run();
+    assert.strictEqual(r.completed, true);
+    assert.deepStrictEqual(h.events[0].extra, { route: 'due-exceeds', model: PROFILES.standard.model, effort: null });
+  });
+
+  test('a worker launch that throws after the model resolved still names it on the line (#5917)', async () => {
+    const h = harness('try-it-only', { envelope: new Error('spawn') });
+    await h.run();
+    assert.strictEqual(h.events[0].status, 'stop');
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: null });
+  });
+
+  test('#5942: the merge-acceptance line carries effort on the happy path and after a launcher throw that resolved', async () => {
+    const profile = { ...LAUNCH_POLICY, ...resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: 'model-effort: profile\n' }) };
+    const ok = harness('try-it-only');
+    ok.env.shared.policy = profile;
+    await ok.run();
+    assert.strictEqual(ok.events[0].extra.effort, 'high');
+    assert.strictEqual(ok.events[0].extra.effort, ok.launches()[0].opts.effort);
+    const boom = harness('try-it-only', { envelope: new Error('spawn') });
+    boom.env.shared.policy = profile;
+    await boom.run();
+    assert.deepStrictEqual(boom.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: 'high' });
+  });
+
+  test('a run stopped before any launch carries no model key (#5917)', async () => {
+    const h = harness('try-it-only', { nodeThrows: 'resolve-policy.js' });
+    await h.run();
+    assert.strictEqual(h.launches().length, 0);
+    assert.deepStrictEqual(h.events[0].extra, { route: null });
   });
 
   test('the launch is the acceptance role with its own settings dir, the result schema and the ceilings', async () => {

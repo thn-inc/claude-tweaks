@@ -135,7 +135,8 @@ const REFINE_PINS = [
   ['sub-file Write', 'sub', writeSec, '`logFailures`'],
   ['sub-file Write', 'sub', writeSec, "`--site backlog` logs under `/backlog`'s `Refine risk flags` step"],
   // Final review residual: a non-zero log-removals exit falls back to comments; the local-files no-run-dir bullet rides step 4's write.
-  ['sub-file Write', 'sub', writeSec, "A non-zero `log-removals` exit falls back to a comment for every `removed` slug and does not change the record's outcome"],
+  ['sub-file Write', 'sub', writeSec, "A non-zero `log-removals` exit does not change the record's outcome"],
+  ['sub-file Write', 'sub', writeSec, 'Under `github-issues` that step 5 always posts the comments, so a `logged: false` or a non-zero exit needs no fallback'],
   ['sub-file Write', 'sub', writeSec, "when no run dir resolved first append each `removed` slug's `## Gotchas` bullet (step 6) to `{tmp-risk-body}`, then `writeRecord`"],
   ['sub-file Write', 'sub', writeSec, 'step 4 already added it to the body file before its write'],
 ];

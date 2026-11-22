@@ -111,7 +111,7 @@ function buildNativeSubIssuesQuery(numbers) {
 // Probed live on this repo 2026-08-24: issue(number:$n){ parent{ number title state } }
 // returns { number, parent: { number, title, state } } for a sub-issue, and
 // parent: null for a parentless record. Same alias/null conventions as
-// buildNativeSubIssuesQuery above. Caller: demo/entry-paths.md's Full verification
+// buildNativeSubIssuesQuery above. Caller: accept/entry-paths.md's Full verification
 // pointer sub-procedure. review/cross-spec-promise-check.md performs the equivalent
 // native parent-resolution query independently — it does not call this function.
 function buildNativeParentQuery(numbers) {
@@ -326,8 +326,17 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // (linked-prs.js) passes it through as `issueState` on each Map entry, so
 // wrap-up's carrier-commit fallback can read whether the issue is CLOSED
 // from this one batched call instead of a per-issue `gh issue view`.
+//
+// #5722: each alias also selects the issue's label timeline, under the alias
+// `labelEvents` (the unaliased `timelineItems` above takes different
+// arguments, so GraphQL would reject two with the same response name). It
+// answers "when did this record last gain `ready` or `auto:build`" inside this
+// same batch, with no per-record call — linked-prs.js reduces it to
+// `lastShapedAt`, which classifyShipped reads to downgrade a mention the
+// record was shaped or granted after. `last:100` takes the most recent events,
+// the same newest-matters reasoning as `last:20` above (#2449).
 function buildLinkedPRQuery(numbers) {
-  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`);
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } labelEvents: timelineItems(itemTypes:[LABELED_EVENT], last:100){ nodes{ ... on LabeledEvent { createdAt label { name } } } } }`);
 }
 
 // candidates[] (each with .number), repoData: the linked-PR GraphQL response's

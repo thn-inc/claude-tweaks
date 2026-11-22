@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { runCliSync } = require('../../helpers/run-cli');
-const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+const { cleanGitEnv, committedRepo, initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'wrap-up-engine.js');
 const { runVerify } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'engine-verify'));
@@ -41,9 +41,7 @@ function run(args, { cwd, input, env, deps } = {}) {
 
 before(() => {
   repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-cli-'));
-  git(['init', '-q'], repoDir);
-  git(['config', 'user.email', 'test@example.com'], repoDir);
-  git(['config', 'user.name', 'Test'], repoDir);
+  initRepo(repoDir, { name: 'Test', email: 'test@example.com', cwd: repoDir, encoding: 'utf8' });
   fs.writeFileSync(path.join(repoDir, 'a.txt'), 'one\n');
   git(['add', '.'], repoDir);
   git(['commit', '-q', '-m', 'base'], repoDir);
@@ -516,10 +514,8 @@ const PREFLIGHT_PAYLOAD = JSON.stringify({
 function makeScratchRepo(t, branch) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finish-console-scratch-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  git(['init', '-q'], dir);
+  initRepo(dir, { name: 'Test', email: 'test@example.com', cwd: dir, encoding: 'utf8' });
   git(['checkout', '-q', '-b', branch], dir);
-  git(['config', 'user.email', 'test@example.com'], dir);
-  git(['config', 'user.name', 'Test'], dir);
   fs.writeFileSync(path.join(dir, 'a.txt'), 'one\n');
   git(['add', '.'], dir);
   git(['commit', '-q', '-m', 'base'], dir);

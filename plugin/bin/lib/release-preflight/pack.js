@@ -18,12 +18,15 @@ const { splitNul } = require('../git-z');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
 const { ghOptions } = require('../repo-resolve.js');
+const { execTimeoutMsFor } = require('../shared-primitives');
 
 const PROBE_NAMES = ['engine', 'lastTag', 'unreleased', 'proposedVersion', 'releasePr', 'ciTip', 'openReleasePrConflict', 'hook'];
 const PROBE_TIMEOUT_MS = 60000;
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+// maxBuffer only: the wall-clock `timeout` is added per spawn through
+// execTimeoutMsFor(cmd) (the sync `git` and async execFileAsync runners below).
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024 };
 const ENGINES = new Set(['pr-first', 'local-merge']);
-const CONFIG_SOURCES = new Set(['policy', 'run-config']);
+const CONFIG_SOURCES = new Set(['policy', 'run-config', 'factory']);
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 const PR_LIST_LIMIT = 200;
 // Only genuine path absence at a ref reads as "no version here" — the same
@@ -106,12 +109,12 @@ function workflowPublishesRelease(text) {
 function defaultDeps(cwd) {
   const execFileAsync = promisify(execFileCb);
   return {
-    // EXEC_OPTS here too, not only on the async runner: `git log --first-parent`
+    // EXEC_OPTS' maxBuffer here too, not only on the async runner: `git log --first-parent`
     // over a whole untagged history is the one call that outgrows execFileSync's
     // 1 MB default (this repo's own is ~1.02 MB at 6.121.0), and an ENOBUFS
     // there degrades unreleased, proposedVersion and lastTag together.
-    git: (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
+    git: (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, timeout: execTimeoutMsFor('git'), windowsHide: true }),
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, timeout: execTimeoutMsFor(cmd), ...opts, windowsHide: true })).stdout,
     readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null; throw e; } },
     readdir: (p) => { try { return fs.readdirSync(p); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return []; throw e; } },
     now: () => Date.now(),
@@ -194,15 +197,17 @@ function prepare({ deps, rootArg, runDir, cwd }) {
   const gitForPolicy = rootArg
     ? (args) => (args.join(' ') === 'rev-parse --show-toplevel' ? `${rootArg}\n` : deps.git(args))
     : deps.git;
-  const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'] });
+  // deps.env (optional; resolvePolicyConfig defaults it to the inherited environment) locates the factory layer (#6006).
+  const { root, result: policy } = resolvePolicyConfig({ git: gitForPolicy, readFile: deps.readFile, runDir, keys: ['integration-model', 'integration-branch', 'release-hook'], env: deps.env });
   const branch = policyString(policy['integration-branch']) || resolveDefaultBranch(deps);
   if (!branch) throw new Error('integration branch unresolved: no integration-branch policy key, and origin/HEAD could not be determined');
   let tipRef = `refs/heads/${branch}`;
   try { deps.git(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]); tipRef = `origin/${branch}`; } catch { /* no remote-tracking ref: read the local branch */ }
 
   // Ruling 2: an explicitly configured value only — a guessed engine is exactly
-  // what AC 6 forbids. Either config source counts: a run's pinned config.yml
-  // is as explicit as policy.yml, and it is what the rest of the run obeys.
+  // what AC 6 forbids. Any of the three config sources counts: a run's pinned
+  // config.yml is as explicit as policy.yml, and it is what the rest of the run
+  // obeys; a factory pin (#6006) is configured too, only below the repository's.
   const engineEntry = policy['integration-model'];
   const engine = engineEntry && CONFIG_SOURCES.has(engineEntry.source) && ENGINES.has(engineEntry.value) ? engineEntry.value : null;
   const needEngine = () => { if (!engine) throw new Error('engine unresolved'); return engine; };

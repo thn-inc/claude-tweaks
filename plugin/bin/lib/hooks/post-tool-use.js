@@ -1,4 +1,4 @@
-// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
+// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + worktree hold stamp/clear on EnterWorktree/ExitWorktree (log tier, see ./worktree-hold.js) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -7,6 +7,7 @@ const ctxLib = require('./context');
 const runDirResolve = require('./run-dir-resolve');
 const skillInvocation = require('./skill-invocation');
 const wtDetect = require('./worktree-detect');
+const holdLib = require('./worktree-hold');
 // Reused, not reimplemented (#703): the same teardown-target resolution
 // pre-tool-use.js's own checkTeardownGate relies on. Safe to require here —
 // pre-tool-use.js never requires this file back.
@@ -24,7 +25,7 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 const { resolveIntegrationBranch, bareIntegrationName, parseWorktreeList } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
-const { sessionTmpPath } = require('../session-tmp');
+const { sessionTmpPath, envTmpdir } = require('../session-tmp');
 
 // Field/record separators for recentCommits' combined --format string below.
 // ASCII 0x1f/0x1e (unit/record separator) — practically never appear in a
@@ -42,9 +43,9 @@ const REC_SEP = '\x1e';
 // commit for every one of them, so only the last of several real commits
 // was ever actually evaluated. Returns newest-first (git log's own order),
 // each entry `{ hash, ts, message }` (ts null if unparseable).
-function recentCommits(dir, count) {
+function recentCommits(dir, count, env) {
   if (count <= 0) return [];
-  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir);
+  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir, { env });
   if (out === null) return [];
   return out
     .split(REC_SEP)
@@ -235,7 +236,8 @@ function extractToolResponseText(toolResponse) {
 // worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
 // backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
-  return ctxLib.listedWorktreeForCwd(ctx.cwd, deps);
+  ctxLib.requireEnv(ctx);
+  return ctxLib.listedWorktreeForCwd(ctx.cwd, { env: ctx.env, ...deps });
 }
 
 function resolveCreatedWorktreePath(ctx) {
@@ -295,7 +297,7 @@ function stampAdHocRunDir(ctx) {
     if (isEnterWorktree) {
       worktreePath = resolveCreatedWorktreePath(ctx);
     } else {
-      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER);
+      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER, { tmpdir: envTmpdir(ctx.env) });
       if (markerPath && fs.existsSync(markerPath)) return; // already checked (or ruled out) this session — skip the git call entirely
       // #1864: the porcelain lookup shells out `git -C ctx.cwd worktree list --porcelain`,
       // which is guaranteed to fail when ctx.cwd no longer exists on disk — the shape produced
@@ -327,8 +329,8 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) };
-    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId));
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(ctx.env) };
+    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId, { env: ctx.env }), { env: ctx.env });
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
@@ -381,7 +383,7 @@ function checkWindowsLongpaths(ctx) {
     // Read-only: `--get` never writes. A non-zero exit (key unset) and an
     // explicit `false` are both treated as "not enabled" — only a literal
     // `true` skips the nudge.
-    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
+    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath, { env: ctx.env });
     // An unset key is a definitive answer from git itself (`config --get`
     // exits 1 with no output) — classified 'git-error', not indeterminate.
     // Only a real check failure (timeout/spawn/no-git — the question was
@@ -424,7 +426,7 @@ function checkWorktreeStaleness(ctx) {
     // name — `branch` is both the remote-side fetch target below (a remote
     // has no `origin/`-prefixed branches of its own) and re-prefixed with
     // `origin/` again for the rev-list comparison — so normalize immediately.
-    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath));
+    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath, undefined, { env: ctx.env }));
     if (!branch) return null; // no integration branch resolved — nothing to compare against
 
     // `--` guards against argument injection: `branch` traces back to
@@ -436,13 +438,13 @@ function checkWorktreeStaleness(ctx) {
     // which warns and ignores it, but not every consumer of this plugin uses
     // https remotes). `--` forces everything after it to be read as a
     // positional refspec regardless of leading characters.
-    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS });
+    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS, env: ctx.env });
     if (fetch.failure) {
       logWorktreeStalenessEvent(ctx, { worktree: worktreePath, branch, result: 'check-failed', reason: fetch.failure });
       return null;
     }
 
-    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath);
+    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath, { env: ctx.env });
     if (revList.failure || revList.stdout === null) {
       logWorktreeStalenessEvent(ctx, {
         worktree: worktreePath, branch, result: 'check-failed', reason: revList.failure || 'unparseable-count',
@@ -526,7 +528,7 @@ function checkPostTeardownReanchor(ctx) {
     // `toplevel()` above) it still resolves correctly even though that exact
     // directory is now gone. Fails closed to null (skip silently) rather
     // than guessing when the walk-up can't find a `.git` at all.
-    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd());
+    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd);
     const reanchor = runRoot
       ? `Re-anchor there (\`cd ${runRoot}\`) before issuing any further git-dependent command.`
       : 'Re-anchor to this project\'s main checkout before issuing any further git-dependent command ' +
@@ -554,20 +556,20 @@ function checkPostTeardownReanchor(ctx) {
 // `tool_input` — reliable, SDK-typed. What's logged as `response` does NOT
 // come from the SDK's structured `AskUserQuestionOutput` shape
 // (`{questions, answers}`) an earlier version of this function assumed —
-// real captured transcripts (see evals/NOTES.md's "AskUserQuestion
-// input/output shapes" section's Correction) show `tool_response` for
-// this tool is always a plain natural-language string (e.g. `Your questions
-// have been answered: "..."="...". You can now continue with these answers
-// in mind.`) with a varying prefix/suffix, and the embedded question text can
-// contain unescaped nested double quotes — not safely regex-parseable into a
-// structured per-question answer map. So there is no per-question `answer`
-// field; instead ONE raw `response` string for the whole event, extracted via
-// this file's own `extractToolResponseText` (reused, not reimplemented — see
-// that function's header comment, which already documents this exact class
-// of `tool_response`-shape problem for other tools). Never throws — a
-// malformed tool_input/tool_response degrades to an empty questions array
-// and/or a null response rather than breaking the session, per CLAUDE.md's
-// Hooks section ("Never break a session").
+// real captured transcripts (see docs/reference/agent-sdk-payload-notes.md's
+// "AskUserQuestion input/output shapes" section's Correction) show
+// `tool_response` for this tool is always a plain natural-language string
+// (e.g. `Your questions have been answered: "..."="...". You can now
+// continue with these answers in mind.`) with a varying prefix/suffix, and
+// the embedded question text can contain unescaped nested double quotes —
+// not safely regex-parseable into a structured per-question answer map. So
+// there is no per-question `answer` field; instead ONE raw `response` string
+// for the whole event, extracted via this file's own `extractToolResponseText`
+// (reused, not reimplemented — see that function's header comment, which
+// already documents this exact class of `tool_response`-shape problem for
+// other tools). Never throws — a malformed tool_input/tool_response degrades
+// to an empty questions array and/or a null response rather than breaking the
+// session, per CLAUDE.md's Hooks section ("Never break a session").
 function logAskUserQuestion(ctx) {
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return {};
@@ -583,7 +585,9 @@ function logAskUserQuestion(ctx) {
         : [],
     }));
     const response = extractToolResponseText(ctx.input.tool_response);
-    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response }, ownedRun.attribution);
+    // tool_use_id is a hook-envelope field the transcript cannot confirm: null when absent (#5556).
+    const toolUseId = typeof ctx.input.tool_use_id === 'string' ? ctx.input.tool_use_id : null;
+    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response, toolUseId }, ownedRun.attribution);
   } catch {
     /* best-effort — never break the session over a log-tier event */
   }
@@ -591,6 +595,7 @@ function logAskUserQuestion(ctx) {
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   if (ctx.input.tool_name === 'Skill') return skillInvocation.run(ctx);
   if (ctx.input.tool_name === 'AskUserQuestion') return logAskUserQuestion(ctx);
 
@@ -613,7 +618,7 @@ function run(ctx) {
   const checkoutsByMain = new Map();
   const checkoutsOf = (main) => {
     if (!checkoutsByMain.has(main)) {
-      const listed = runGit(['worktree', 'list', '--porcelain'], main).stdout;
+      const listed = runGit(['worktree', 'list', '--porcelain'], main, { env: ctx.env }).stdout;
       checkoutsByMain.set(main, [main, ...parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => e.path)]);
     }
     return checkoutsByMain.get(main);
@@ -644,7 +649,7 @@ function run(ctx) {
     commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
   }
   const recentByDir = new Map();
-  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
+  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count, ctx.env).reverse());
   const dirCursor = new Map();
   function nextCommitFor(dir) {
     const list = recentByDir.get(dir) || [];
@@ -671,7 +676,7 @@ function run(ctx) {
     const offers = new Map();
     const offerOf = (dir) => {
       if (!offers.has(dir)) {
-        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length);
+        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length, ctx.env);
         offers.set(dir, recent.filter((c) => c.hash && isFresh(c) && !held.has(c.hash)).reverse());
       }
       return offers.get(dir);
@@ -705,7 +710,7 @@ function run(ctx) {
   const pushHeadByDir = new Map();
   function headHashFor(dir) {
     if (!pushHeadByDir.has(dir)) {
-      const head = recentCommits(dir, 1);
+      const head = recentCommits(dir, 1, ctx.env);
       pushHeadByDir.set(dir, head.length ? head[0].hash : null);
     }
     return pushHeadByDir.get(dir);
@@ -765,6 +770,22 @@ function run(ctx) {
   // Deferred-subproject capture nudge (warn tier) — deliberately NOT gated on ctx.runDir.
   const designDocNudge = checkDesignDocWrite(ctx);
   if (designDocNudge) return designDocNudge;
+
+  // Worktree hold (#4960, log tier): record that this session now stands in the entered
+  // worktree (or has left it) so the reapers skip it. No early return lies between here and
+  // the run-dir stamp below, and the only earlier returns (closing-keyword, design-doc) fire
+  // on Bash/Write calls, so an EnterWorktree/ExitWorktree call always reaches it; it also runs
+  // ahead of the later nudges that return. Never changes this hook's answer.
+  try {
+    const holdOutcome = holdLib.syncHoldForToolUse(ctx.input, {
+      cwd: ctx.cwd, env: ctx.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
+    });
+    // A failed write leaves the session standing in the worktree unheld: leave a trace (owned run only).
+    const ownedRun = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && ownedRun.dir) {
+      ctxLib.appendEvent(ownedRun.dir, 'worktree-hold-failed', { tool: ctx.input.tool_name }, ownedRun.attribution);
+    }
+  } catch { /* log tier: never break a session */ }
 
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no
   // message). Runs before the staleness check below so a formal pipeline's

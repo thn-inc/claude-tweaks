@@ -1,7 +1,9 @@
 # Wrap-Up — Acceptance Packet Procedure
 
 Canonical procedure for the acceptance-labeling action: posting the acceptance packet
-(`_shared/acceptance-packet.md`) and applying `demo:pending`. Record mode only (a record is identified for this run, per
+(`_shared/acceptance-packet.md`) and applying the pending label: `accept:pending` through
+`/accept`'s automatic entry on the no-parent path (Step 4), `demo:pending` on a parent through the
+Parent-Gate Procedure. Record mode only (a record is identified for this run, per
 `/claude-tweaks:wrap-up` Phase 1 — a materialized header is not required) — conversation-based
 work has no work record to label, so this procedure does not run for it.
 
@@ -22,7 +24,7 @@ wrong by omission). Six call sites exist today:
 
 **Whatever invoked this file: if the record in hand has a resolvable parent, run the
 Parent-Gate Procedure below in place of — not alongside — Steps 1-4.** A decomposed sub-issue
-never carries its own `demo:pending`; its parent carries one gate for all of them. This
+never carries its own pending label; its parent carries one gate for all of them. This
 holds on every path equally, including the two that bypass Phase 4's execution step entirely: an `auto:merge`'d
 sub-issue is precisely the population `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope
 exists to catch, so giving it its own gate here would both defeat the parent acceptance gate and
@@ -31,7 +33,8 @@ change the unit of acceptance.
 
 **Otherwise — no resolvable parent** (a record human-filed or `/capture`d directly, not
 produced by a `/specify` decomposition) — run the **Oversight-floor gate** below, then Steps 1-4,
-applying `demo:pending` to the record itself only when the gate says the record clears the floor.
+applying `accept:pending` to the record itself (through `/accept`'s automatic entry, Step 4) only
+when the gate says the record clears the floor.
 The post-merge Step 4.0b entry is the exception, per `verification-brief-parent-gate.md`'s
 **Resolve the parent** no-parent branch.
 
@@ -91,7 +94,7 @@ Self-inclusion rule, Run the gate CLI, Evaluate the gate (including its own Over
 parent below the floor, Compose the parent brief, and Apply the gate.
 
 **No parent resolvable** — run the Oversight-floor gate and Steps 1-4 below: the record itself
-gets a packet, with `demo:pending` only above the floor (Decision Q5).
+gets a packet, with `accept:pending` only above the floor (Decision Q5).
 
 ## Oversight-floor gate (non-parent path only)
 
@@ -112,11 +115,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor size-floo
 Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloor, sizeFloor })`.
 
 - **`exceeds: false`** — this record does not clear the oversight floor. Skip Step 1
-  (no `demo:pending` bootstrap) and Step 2.5 (the visual-review safety net is ceremony), and run Steps
-  2, 3 and 4: Step 4 posts the packet without `--label` (Decision Q5,
+  (no acceptance-label bootstrap) and Step 2.5 (the visual-review safety net is ceremony), and run Steps
+  2, 3 and 4: Step 4's automatic entry posts the packet without `--label` (Decision Q5,
   `_shared/acceptance-packet.md`). The walkthrough is not skipped: the Try it block composed above feeds the packet's Test guide, and the Pipeline Summary renders it. The record closes with no acceptance label and no ceremony (this is the *not required*
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
-  request: `/claude-tweaks:demo #N` reads its packet, whatever its labels.
+  request: `/claude-tweaks:accept #N` reads its packet, whatever its labels.
 
   Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
   this record was deliberately skipped, not silently missed: add `N` to
@@ -137,7 +140,7 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
 
 Log the outcome to `decisions.md` either way (`_shared/auto-decision-log.md`): `AUTO` status,
 rationale = the `reason` field (or `null` on a pass), reversibility = high (the closing-commit
-fallback covers a skipped gate; a human can still `/demo #N` it).
+fallback covers a skipped gate; a human can still `/claude-tweaks:accept #N` it).
 
 ## Step 1: Bootstrap the Acceptance labels
 
@@ -145,7 +148,7 @@ Run the check-then-create loop from `_shared/label-bootstrap.md` with:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:accept", "006B75"],
   ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
   ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
   ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
@@ -153,9 +156,10 @@ LABELS_JSON = [
 ]
 ```
 
-`/wrap-up` applies only `demo:pending` — it never applies the approved or changes-requested
-acceptance labels (see `_shared/work-record.md`'s permission matrix). The `accept:*` rows only
-create the labels in the repo (`_shared/label-bootstrap.md`, below its canonical array).
+On this path `/wrap-up` applies only `accept:pending`, through `/accept`'s automatic entry in
+Step 4 — it never applies the approved or changes-requested acceptance labels (see
+`_shared/work-record.md`'s permission matrix). The other rows only create the labels in the repo
+(`_shared/label-bootstrap.md`, below its canonical array).
 
 ## Step 2: Author the observation plan
 
@@ -214,7 +218,7 @@ severity floors `_shared/criteria-review-quality.md` defines: **high/critical** 
 accessibility barrier, functional defect) blocks — dispatch a fix the same way `/review`'s Step 3
 Routing does, then re-run the walk until clean. **Medium/low** findings (polish, consistency
 suggestions) are not blocking; they carry into Step 4's narrative as context, not a gate. Never apply
-`demo:pending` until any high/critical finding is fixed and reverified clean.
+`accept:pending` until any high/critical finding is fixed and reverified clean.
 
 **Browser-unavailable fallback** (`Skipped — browser tools not configured`, or the trigger above
 itself hits this status when it runs `/visual-review`): not a bug-found case — there is nothing to
@@ -315,7 +319,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out 
 Several pasted values come from text the plugin did not write — the record body, a git branch name, project config — and inside double quotes `$(…)` or a backtick still runs (`docs/skill-authoring.md`'s untrusted-text rule). Paste a value only when it matches its grammar; otherwise omit its flag and say so in the summary, as for any absent input. `{N}` and `{pr-number}`: digits only. `{surface}`: exactly one of `web`, `mobile`, `desktop`, `backend`, `infra`, `terminal`. `{integration-branch}` and `{head}`: letters, digits and `.` `_` `/` `-` only. `{local-url}`: an `http://` or `https://` URL with no `"`, backtick, `$`, `\` or whitespace. Every path (`{run-dir}`, `{spec}`, `{report}`, `{qa-report}`, `{stories-dir}`, and Post's `{record-file}`): none of `"`, backtick, `$`, `\` or a line break, since a space is safe between the quotes.
 
 - `--run` — `{run-dir}`, `$PIPELINE_RUN_DIR` or `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once cleanup item 8 archived it (`_shared/timing-render.md`'s archive-path rule). It supplies `decisions.md`, the Review Console's finding set, and the `packet-inputs/` snapshot wrap-up Phase 1 took. The automatic recording arrives through the snapshot, with no flag. Omitted when no run directory resolves.
-- `--spec` — the first that exists: the current checkout's `work/{N}-spec.md` at the run dir's relative path, then `{run-dir}/work/{N}-spec.md`, else the record body written with the Write tool to `{SPEC}` (read with `gh issue view {N} --json body`, or MCP `issue_read`), or under `work-backend: local-files` the record file itself, since a record body carries the same `## Acceptance Criteria`.
+- `--spec` — the first that exists: the current checkout's `work/{N}-spec.md` at the run dir's relative path, then `{run-dir}/work/{N}-spec.md`, then the current checkout's archived `.claude-tweaks/pipelines/archive/{run-id}/work/{N}-spec.md` (#3976), else the record body written with the Write tool to `{SPEC}` (read with `gh issue view {N} --json body`, or MCP `issue_read`), or under `work-backend: local-files` the record file itself, since a record body carries the same `## Acceptance Criteria`.
 - `--report` and `--story-results` — only when the current branch is not the integration branch (the run's own checkout). `--report` is `{git-dir}/claude-tweaks-verify/report.json`, with `{git-dir}` from `git rev-parse --git-dir` as its own call. `--story-results` is the QA run's `report.json` (the QA stamp's `reportPath`, else the newest `.claude-tweaks/artifacts/screenshots/qa/*/report.json`), whose `stories[]` is the set `/test` selected, passed only when QA ran. From the main checkout both are omitted, because its files belong to other runs, and gather reads the snapshot.
 - `--stories-dir` always — the project's stories directory (`STORIES_DIR`, else `stories/`). Without it a tag-only negative story reads as a routine pass. It supplies negative flags only (Decision Q13), and a missing directory is a project with no stories.
 - `--ac-results` — Step 3's `{AC_RESULTS}`, omitted with no review table.
@@ -349,34 +353,22 @@ outward-facing (posted as a GitHub comment, or embedded in a local record body),
 `/dispatch`-posted packet claiming `/wrap-up` posted it would be wrong: that path never reached
 `/wrap-up`'s Phase 4 execution step.
 
-**Post.** `work-backend: github-issues`, as its own Bash call, with `--pr` only when `run-state.json` carries a `pr` object and `--label` omitted below the floor (Decision Q5):
+**Post.** Read `automatic-entry.md` in the `/claude-tweaks:accept` skill's directory (`accept/automatic-entry.md`) and follow it, handing it `{N}`, the rendered `{PACKET}`, `{pr-number}`, this record's Oversight-floor gate result and the work backend. It reads the record's labels and its existing packet, posts `{PACKET}` only when the record has no packet yet, with `--pr` only when `run-state.json` carries a `pr` object and `--label` omitted below the floor (Decision Q5) or on a record already holding an acceptance label, and otherwise only ensures `accept:pending`. It never prompts, and returns here in the same turn. This paragraph and the two below it are the Post paragraph that file cites: they route its `post` and `local` calls' exit codes and define `{record-file}`.
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {N} --body-file "{PACKET}" --label demo:pending --pr {pr-number}
-```
-
-`post` posts or edits the packet before it adds the label, so a reader reacting to the label never sees `demo:pending` without a packet attached. Acceptance labeling stays on the record either way. Route on its exit code, and on the one JSON result line it prints:
+`post` posts or edits the packet before it adds the label, so a reader reacting to the label never sees `accept:pending` without a packet attached. Acceptance labeling stays on the record either way. Route on its exit code, and on the one JSON result line it prints:
 
 - **Exit 0** — the packet landed. Report a result `prLink` with `ok: false`, and any `extras` or `skipped`, in the summary: none of them fails the publish.
-- **Exit 1** — the label is not applied. With no result JSON, `--body-file` would not read and nothing ran. Otherwise report the result's `error`, and `stalePacket` when it names one, in the summary and log it, stating what `labelRemoval` reports and never more:
+- **Exit 1** — the label is not applied. With no result JSON, `--body-file` would not read and nothing ran. Otherwise report the result's `error`, and `stalePacket` when it names one, in the summary (the automatic entry logs it), stating what `labelRemoval` reports and never more:
   - `labelRemoval: 'removed'` — the post or edit failed and the pending label was removed.
   - `labelRemoval: 'absent'` — the post or edit failed and no pending label was there to remove.
   - `labelRemoval: 'failed'` — the post or edit failed and so did the removal: add a needs-human line naming the pending label still on the record, and `stalePacket` when it names one.
   - `labelRemoval: null` — nothing was cleared. A failed comment read or an unreadable existing packet made no write at all, so any pending label is still there: say so. A result carrying a `url` is the other case: the packet landed and the label failed to apply (`labelApplied: false`), so report that packet's url.
 - **Exit 2** — a malformed call, or a `--body-file` with no marker on its first line. Nothing ran: report it, post nothing, apply no label. This is never the MCP path.
-- **Exit 4** — `gh` is absent: the contract's MCP transport (Decision Q4). Read the record's comments through `issue_read` (`get_comments`) and run `readPacket`'s rules by hand (`## Canonical copy and lookup`).
-  - A failed read or an `unreadable` packet: report it, write nothing, post nothing, apply no label (`## Failure contract`).
-  - An existing packet: report the failed edit naming that packet's url, post nothing, apply no label, and clear the pending label.
-  - None: post `{PACKET}`'s text with `add_issue_comment`, per `_shared/github-write-transport.md`'s Marker comments on the MCP path; a failure there is reported and followed by the same clearing. Then, above the floor only, apply the label through `issue_write`'s read-merge-write. Then, when the run has a PR, read its body with `pull_request_read` and link the packet through MCP `update_pull_request`, matching `publishPacket`'s `replacePacketLine`: replace this record's existing `Acceptance packet:` line (a single url on the same `/issues/{N}#`; another record's line stays) with `Acceptance packet: {comment url}`, append that line after a blank line when the body has none, and write nothing when the body already reads that way. A failed label write leaves the packet in place and skips the PR line, reported as the `gh` path's `labelApplied: false` is. A failed PR-line write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is.
-  - Clearing the label is `issue_read` (`get_labels`) immediately before the write, then, only when `demo:pending` or `accept:pending` is present, `issue_write` with the complete array `mergeLabelNames` computes, per `_shared/github-write-transport.md`'s Full-replace hazard, and no write when neither is present. A failed clearing gets the same needs-human line.
+- **Exit 4** — `gh` is absent, reached only when `_shared/github-write-transport.md`'s Detection was missed before the automatic entry started. Nothing was written: run the automatic entry again on its **`gh` absent** MCP transport (`accept/automatic-entry.md`, Decision Q4), which owns every MCP-path write and its outcomes.
 
-`work-backend: local-files` — run `local` as its own Bash call, with `--pending` omitted below the floor (Decision Q5). `{record-file}` is the record file itself, the `.path` of its entry in a combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing, since the record may have closed by now. A non-zero exit means the record is unchanged: report it in the summary and log it.
+`work-backend: local-files` — the automatic entry runs `local` in place of `post`, with `--pending` omitted below the floor (Decision Q5). `{record-file}` is the record file itself, the `.path` of its entry in a combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing, since the record may have closed by now. A non-zero exit means the record is unchanged: report it in the summary (the automatic entry logs it).
 
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending
-```
-
-**Log a stop or a failure** when a run directory resolves, as its own Bash call, with `{text-file}` holding one line, `condition: packet {risk facts | gather | render | post | local} failed ({stderr line}) → fallback: {what happened to the packet and the label}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph:
+**Log a stop or a failure** when a run directory resolves, as its own Bash call, with `{text-file}` holding one line, `condition: packet {risk facts | gather | render} failed ({stderr line}) → fallback: {what happened to the packet and the label}` (a failed `post`, `local` or label write is logged once, by the automatic entry's step 5 through this same call, in its own text), written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/wrap-up" --status SKIP --step "Acceptance packet Step 4" --reversibility n/a --text-file "{text-file}"

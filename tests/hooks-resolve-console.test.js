@@ -9,6 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { runCli, spawnCli } = require('./helpers/run-cli');
@@ -24,7 +25,7 @@ function ghStubEnv(binDir) {
 // Runs the verb in-process (#5376); the script entry has its own tests below.
 function runHook(args, { cwd, env } = {}) {
   return runCli(HOOKS, args, {
-    cwd: cwd || fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cli-')),
+    cwd: cwd || scratchDir('ct-resolve-console-cli-'),
     env: hookEnv(env),
   });
 }
@@ -46,7 +47,7 @@ test('resolve-console accepts --filing-failed as a declared flag', async () => {
 
 // #3949: --filing-failed names only a finding row (console.json's findingItem); the CLI renders the refusal.
 test('resolve-console --filing-failed on a non-finding item is refused by the CLI with the not-finding-items message', { skip: process.platform === 'win32' }, async () => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-ff-')));
+  const repo = fs.realpathSync(scratchDir('ct-resolve-console-ff-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-10-24T000000-ff');
   fs.mkdirSync(runDir, { recursive: true });
@@ -66,7 +67,7 @@ test('resolve-console --filing-failed on a non-finding item is refused by the CL
 
 // #4679: --digested refusals name --digested, never --filing-failed.
 function runRefusal(slug, items, flags) {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `ct-resolve-console-${slug}-`)));
+  const repo = fs.realpathSync(scratchDir(`ct-resolve-console-${slug}-`));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', `2026-11-16T000000-${slug}`);
   fs.mkdirSync(runDir, { recursive: true });
@@ -115,7 +116,7 @@ test('resolve-console naming a finding row in both --digested and --filing-faile
 
 // #3942: a ruling id named in both --reverse-failed and --filing-failed; the CLI renders the refusal.
 test('resolve-console naming one ruling in both --reverse-failed and --filing-failed is refused by the CLI with the conflicting-failure-ids message', { skip: process.platform === 'win32' }, async () => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cf-')));
+  const repo = fs.realpathSync(scratchDir('ct-resolve-console-cf-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-03T000000-cf');
   fs.mkdirSync(runDir, { recursive: true });
@@ -145,7 +146,7 @@ test('resolve-console accepts --reverse-failed as a declared flag', async () => 
 // read; the refusal returns before any write, so no other gh call is ever made.
 // Skipped on win32: a bare executable stub is not a launchable `gh` there.
 test('resolve-console --reverse-failed on an unflagged item is refused by the CLI with the not-ruling-items message', { skip: process.platform === 'win32' }, async () => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-rf-')));
+  const repo = fs.realpathSync(scratchDir('ct-resolve-console-rf-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-10-20T000000-rf');
   fs.mkdirSync(runDir, { recursive: true });
@@ -164,7 +165,7 @@ test('resolve-console --reverse-failed on an unflagged item is refused by the CL
 });
 
 test('resolve-console without --run exits non-zero with a usage message, performs zero writes', async () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-norun-'));
+  const runDir = scratchDir('ct-resolve-console-norun-');
   const result = await runHook(['resolve-console', '--approve', '1'], { cwd: runDir });
   assert.equal(result.code, 1);
   assert.match(result.stdout, /--run is required/);
@@ -179,7 +180,7 @@ test('resolve-console without --run exits non-zero with a usage message, perform
 // lines written by the spawned `node hooks.js`, with stdout empty.
 test('AC5.1: resolve-console with an unknown flag exits 1 with the usage line on stderr through the script entry', () => {
   const result = spawnCli(HOOKS, ['resolve-console', '--run', '/tmp', '--bogus', 'x'], {
-    cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cli-')), env: hookEnv(),
+    cwd: scratchDir('ct-resolve-console-cli-'), env: hookEnv(),
   });
   assert.equal(result.code, 1);
   assert.equal(result.stdout, '');
@@ -196,7 +197,7 @@ test('resolve-console with a --run path that is not a real directory is rejected
 // finds its stub. A verb reading process.cwd() would reject the relative path; one reading process.env
 // would start the real gh, so the stub's canned comment would never be read and the refusal never reached.
 test('AC6.1: resolve-console resolves a relative --run against the injected cwd and starts gh from the injected env PATH', { skip: process.platform === 'win32' }, async () => {
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-inj-')));
+  const repo = fs.realpathSync(scratchDir('ct-resolve-console-inj-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const runRel = path.join('.claude-tweaks', 'pipelines', '2026-11-15T000000-inj');
   const runDir = path.join(repo, runRel);
@@ -223,7 +224,7 @@ test('AC6.1: resolve-console resolves a relative --run against the injected cwd 
 // own gh config is read, the host is unknown, and the stub is started with no GH_HOST.
 test('F2: resolve-console starts gh with the GH_HOST inferred from the injected env\'s gh config dir', { skip: process.platform === 'win32' }, async () => {
   const host = 'ghe.fixture.invalid';
-  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-ghhost-')));
+  const repo = fs.realpathSync(scratchDir('ct-resolve-console-ghhost-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['remote', 'add', 'origin', `https://${host}/acme/widgets.git`], { cwd: repo });
   const configDir = path.join(repo, 'gh-config');
@@ -252,7 +253,7 @@ test('F2: resolve-console starts gh with the GH_HOST inferred from the injected 
 // real process: the script entry's help path (AC5.1) — the usage text and exit code of a spawned
 // `node hooks.js resolve-console --help` equal the in-process call's, under the identical explicit env.
 test('AC5.1: resolve-console --help through runCli and spawnCli prints the same usage, exit 0', async () => {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resolve-console-cli-'));
+  const cwd = scratchDir('ct-resolve-console-cli-');
   const inProcess = await runHook(['resolve-console', '--help'], { cwd });
   const spawned = spawnCli(HOOKS, ['resolve-console', '--help'], { cwd, env: hookEnv() });
   assert.deepEqual({ code: spawned.code, stdout: spawned.stdout }, { code: inProcess.code, stdout: inProcess.stdout });

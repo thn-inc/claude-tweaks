@@ -76,6 +76,7 @@ test('envTmpdir resolves the way os.tmpdir does, per platform', () => {
   assert.equal(envTmpdir({}, 'linux'), '/tmp');
   assert.equal(envTmpdir({ TMPDIR: '/' }, 'linux'), '/', 'a root is not stripped');
   assert.equal(envTmpdir(undefined, 'linux'), os.tmpdir());
+  assert.equal(envTmpdir(process.env), os.tmpdir(), 'the process environment names the directory os.tmpdir() returns');
 });
 
 test('a throw inside build maps to exit 1 with a build-review-context.js: stderr line', (t) => {

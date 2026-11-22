@@ -10,16 +10,18 @@ const assert = require('node:assert');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 
 const { slotEnv } = require('../../helpers/suite-slot-env');
 const { anchoredRunDir } = require('./cli-helpers');
 const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
+const { initRepo } = require('../../helpers/git-fixtures');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
 
-function tmpDir() { return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'verify-ci-test-'))); }
+function tmpDir() { return fs.realpathSync(scratchDir('verify-ci-test-')); }
 
 const FAKE_GH = `#!/usr/bin/env node
 const fs = require('fs');
@@ -74,9 +76,7 @@ function runCli(args, { cwd, env }) {
 function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
   const repo = tmpDir();
   const git = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  git('init', '-q');
-  git('config', 'user.email', 'verify-test@example.invalid');
-  git('config', 'user.name', 'verify test');
+  initRepo(repo, { name: 'verify test', email: 'verify-test@example.invalid', cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   fs.mkdirSync(path.join(repo, 'tests'));
   fs.writeFileSync(path.join(repo, 'tests', 'env.test.js'), "require('node:test')('env', () => { throw new Error('env-specific'); });\n");
   fs.writeFileSync(path.join(repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {});\n");
@@ -518,7 +518,7 @@ test('under the key a red CI suite\'s flaky retry runs after every suite answere
 test('under the key a stale baseline worktree warning is printed after the no-verdict lines, never before (#5369)', { skip: SKIP }, async () => {
   const r = repoWith({ declExtra: KEY });
   const { env } = fakeGhEnv('unpushed', '');
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
   const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
@@ -530,7 +530,7 @@ test('under the key a stale baseline worktree warning is printed after the no-ve
 test('without the key the stale baseline worktree warning is still stderr line 1 of a CI-declared --scope run (#5369 AC4)', { skip: SKIP }, async () => {
   const r = repoWith();
   const { env } = fakeGhEnv('unpushed', '');
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
   const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
@@ -540,7 +540,7 @@ test('without the key the stale baseline worktree warning is still stderr line 1
 test('without the key the stale baseline warning precedes a --scope usage error and one from an unreadable declaration (#5369 AC4)', { skip: SKIP }, async () => {
   const r = repoWith();
   const { env } = fakeGhEnv('unpushed', '');
-  const staleParent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verify-base-')));
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
   const base = ['--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}'];
   const stale = /^verify\.js: a stale baseline scratch worktree is registered at /;

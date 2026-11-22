@@ -9,3 +9,5 @@ tests/fixtures/verify-dialects/** -text
 tests/bin-lib/release-local/fixtures/release-please-*.md -text
 # The traced test-impact fixture asserts a copied file's exact bytes (a.fixture.js's recursive copy, #4134).
 tests/fixtures/test-impact/docs/copied/** -text
+# Sourced by the hook's sh on every Bash call (#5794): a CRLF checkout would be a syntax error in every line.
+tools/direct-test-run-guard.sh text eol=lf

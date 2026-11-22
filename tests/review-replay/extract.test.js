@@ -448,3 +448,65 @@ test('a --dispatch-core without discipline lines is a runtime failure that names
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('#5990 AC1.1: an arm with effort=low writes model opus and effort low', async () => {
+  const x = await extractInto([], { arms: ['--arm', 'name=lo,chunk=1,profile=capable,repeat=1,effort=low'] });
+  try {
+    assert.equal(x.code, 0, x.deps.errs.join('\n'));
+    const arm = x.json(schema.MANIFEST_FILE).arms.find((a) => a.name === 'lo');
+    assert.equal(arm.model, PROFILES.capable.model);
+    assert.equal(arm.model, 'opus');
+    assert.equal(arm.effort, 'low');
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('#5990 AC2.1: effort=fast exits 2 and stderr names fast; every real effort is accepted', async () => {
+  const bad = await extractInto([], { arms: ['--arm', 'name=x,profile=capable,effort=fast'] });
+  try {
+    assert.equal(bad.code, 2);
+    assert.match(bad.deps.errs.join('\n'), /effort must be one of [^:]*: "fast"/);
+  } finally {
+    bad.cleanup();
+  }
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    const ok = await extractInto([], { arms: ['--arm', `name=x,profile=capable,effort=${effort}`] });
+    try {
+      assert.equal(ok.code, 0, `${effort}: ${ok.deps.errs.join('\n')}`);
+    } finally {
+      ok.cleanup();
+    }
+  }
+});
+
+test('#5990 AC3.1: an arm without effort= writes the same manifest arm as before', async () => {
+  const x = await extractInto([], { arms: ['--arm', 'name=s,chunk=1,profile=standard,repeat=1'] });
+  try {
+    assert.equal(x.code, 0, x.deps.errs.join('\n'));
+    const { prompts, ...rest } = x.json(schema.MANIFEST_FILE).arms[0];
+    assert.equal(JSON.stringify(rest), JSON.stringify({ name: 's', chunk: 1, profile: 'standard', model: PROFILES.standard.model, effort: PROFILES.standard.effort, repeat: 1 }));
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('an empty effort= exits 2 and stderr shows the empty value', async () => {
+  const x = await extractInto([], { arms: ['--arm', 'name=x,profile=capable,effort='] });
+  try {
+    assert.equal(x.code, 2);
+    assert.match(x.deps.errs.join('\n'), /: ""/);
+  } finally {
+    x.cleanup();
+  }
+});
+
+test('effort= on a fast arm overrides its null effort', async () => {
+  const x = await extractInto([], { arms: ['--arm', 'name=f,profile=fast,effort=medium'] });
+  try {
+    assert.equal(x.code, 0, x.deps.errs.join('\n'));
+    assert.equal(x.json(schema.MANIFEST_FILE).arms[0].effort, 'medium');
+  } finally {
+    x.cleanup();
+  }
+});

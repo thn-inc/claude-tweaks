@@ -134,5 +134,5 @@ test('final review: both "identical execution" claims name the labeling-guard ex
 test('final review: the no-run-dir hold names a reachable path, not bare close-out', () => {
   assert.match(arm, /close-out #\{record\}/);
   assert.match(arm, /close-out stops on the same missing run dir/);
-  assert.match(arm, /\/claude-tweaks:demo #\{record\}/);
+  assert.match(arm, /\/claude-tweaks:accept #\{record\}/);
 });

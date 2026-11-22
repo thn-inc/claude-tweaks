@@ -6,9 +6,9 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 `release/execute.md` Step 5.
 
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
-arms only when the forge holds it) → `gh pr merge --auto` (arm) → degrade to immediate merge →
-degrade to ready+comment. `gh pr merge` needs no local checkout, so the same cwd-pinned Task call that
-already holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
+arms only when the forge holds it) → local acceptance park (Step 2.9) → `gh pr merge --auto` (arm) → degrade to immediate merge →
+degrade to ready+comment. `gh pr merge` needs no local checkout, so the cwd-pinned Task call that
+holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
 `close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
 conflict procedure.
 
@@ -39,22 +39,20 @@ Before marking the PR ready, confirm Phase 2's curation-engine apply work has ac
 
 Skip this guard entirely when `$PIPELINE_RUN_DIR/engine-state.json` does not exist — Phase 2 had
 nothing open (every registry row closed), or the run took `curation-engine.md` section 6's prose
-fallback (which writes no `engine-state.json` and commits inline, in the same single thread that
-reaches this step). Otherwise:
+fallback (which writes no `engine-state.json`). Otherwise:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" render --run-dir "$PIPELINE_RUN_DIR" --section trace --strict >/dev/null
 ```
 
-Exit `0` → continue to Step 2: every worklist row Phase 2 opened has a recorded result (why that suffices: `pr-first-merge-appendix.md`'s "Rationale notes").
+Exit `0` → continue to Step 2: every worklist row Phase 2 opened has a recorded result.
 
-**Exit `2`** (a worklist row has no recorded result) — fail loud, per this issue's own Gotcha (a
-defensive assertion that fires must abort/report, never silently retry or prompt mid-flow): STOP
+**Exit `2`** (a worklist row has no recorded result) — fail loud: STOP
 this procedure before Step 2, log `AUTO {time} — Curation-apply completeness guard: worklist row(s)
 unrecorded in engine-state.json — Phase 2 has not finished; merge blocked.`, and surface it to
 this run's caller the same way any other HARD-GATE failure here is surfaced (no merge attempted,
 no PR undrafted). Re-running Phase 2's own Step 2 (`wrap-up-engine.js record`) for the missing
-row(s) is the remedy — this guard only detects the gap, it does not repair it.
+row(s) is the remedy, never run here.
 
 ## Step 2: Mark the PR ready
 
@@ -63,8 +61,7 @@ an unconditional `AUTO` step, never a stop — so the title and phase checklist 
 the merge attempt below.
 
 The PR was opened as a draft at run start (`_shared/pr-early-run-lifecycle.md`), but a re-entry
-onto an already-undrafted PR (a retried merge attempt, or a second caller reaching this step for
-the same run) must not re-issue the undraft call blind. Read state first:
+onto an already-undrafted PR must not re-issue the undraft call blind. Read state first:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json isDraft -q .isDraft
@@ -106,15 +103,13 @@ overlay applied to another's merge.
 
 <!-- when: transport=mcp -->
 `gh` absent → the lever is unenforceable; proceed as `off` and disclose at **warn** tier per
-`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section. Under
-pr-first this is near-unreachable: no `gh` means no PR, so this procedure's own precondition
-already fails.
+`_shared/pr-checklist-refresh.md`'s "Merge-time gh-absent degrade" section.
 <!-- /when -->
 
 `$MERGE_VERIFICATION` empty or not one of the three values (an invalid `policy.yml` value prints an
 empty `--values` line — `invalid: true`, never silently re-derived; or a resolver error) → treat it
 as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") — proceeding as wait`.
-Never as `off`: an unreadable lever must not become the one value that skips the wait.
+Never as `off`: an unreadable lever must not skip the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
 and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`
@@ -152,7 +147,7 @@ Classify from the three reads, in this order:
 
 - The command failed, or its output is not parseable JSON with those five fields → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
-  not read (the same posture the bounded watch takes for an unknown `gh pr checks` exit). A read
+  not read. A read
   failure is not "no CI".
 - `state` not `OPEN` → report (`pending-review`, reason `pr-not-open`) and stop; never merge — and
   never *park* — a closed or already-merged PR, whatever stale conclusions its rollup still carries.
@@ -188,7 +183,7 @@ Then, per resolved value:
 
 | Value | Green | Pending | Red |
 |---|---|---|---|
-| `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
+| `merge-when-green` | Step 3 as written — arm/merge | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
 | `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) | **Bounded watch** below | Red path |
 | `off` | Step 3 as written (today's behavior, unchanged) | Derived `off` → **Bounded watch** below, logged `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): derived off with pending checks on PR #{n} — bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]` Explicit `off` → Step 3 as written | Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |
 
@@ -233,8 +228,7 @@ done
 The head runs are counted from the saved file, never through a `gh … --jq` program: the worktree
 guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` §7).
 
-- `RC=0` → **green** — every reported check passed **and** every head run completed (the `0)` branch
-  breaks only at zero pending head runs). Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
+- `RC=0` → **green** — every reported check passed **and** every head run completed. Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
   and the head runs and ready run (the same reads as above): if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
@@ -245,7 +239,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
   the `fail` rows of `{pr-checks-path}`).
 - `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`) → **Red path**, reason from `{pr-ready-path}`: `check-failed:{names}` or `draft-skip-without-ready-trigger:{files}`.
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
-  reserved strictly for checks, head runs or an awaited ready run still pending at the bound, never for a check that failed.
+  reserved for checks, head runs or an awaited ready run still pending at the bound.
 - `RC=2` (unknown `gh` exit) → report `pending-review`, reason `checks-read-failed`; never merge on
   a state this gate could not read.
 
@@ -292,11 +286,17 @@ required checks the forge is enforcing) — is the forge enforcing a stricter po
 (Step 3's own call — the merge lands when the forge is satisfied), and stop: never retry-loop,
 never suggest bypassing protection.
 
-**Signatures (Task 0 captures (a)-(f)):** the literal captured outputs behind the classification above live in `pr-first-merge-appendix.md`'s Signatures section — read them when a merge outcome needs its evidence.
+**Signatures:** `pr-first-merge-appendix.md`'s Signatures section holds the literal captured outputs.
 
-**Resume-to-merge is one-shot.** `dispatch/resume-confirmation.md` applies this gate once, as a read-then-decide with no bounded watch — the rule lives in `pr-first-merge-appendix.md`'s "Resume-to-merge".
+**Resume-to-merge is one-shot.** `dispatch/resume-confirmation.md` applies this gate once, with no bounded watch — the rule lives in `pr-first-merge-appendix.md`'s "Resume-to-merge".
+
+## Step 2.9: Local acceptance park (control mode)
+
+Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n} --run "$PIPELINE_RUN_DIR"`, then `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --run "$PIPELINE_RUN_DIR" --record {n}[,{m}…] --head {headRefOid} [--classification {file}]`; `--run` follows Step 2.5's per-merged-run rule; classify first per `_shared/tripwire-classification.md`. Unless `parked` exits 5 and `decide` exits 0 with `park:false`: never run Step 3; report `pending-review` and read `_shared/local-acceptance-park.md`.
 
 ## Step 3: Attempt auto-merge, degrading on specific failure signatures
+
+No fence below runs until Step 2.9 lets the merge through, whichever Step 2.5 route led here. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
 **Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
 
@@ -309,22 +309,22 @@ gh pr merge {pr-number} --repo {owner}/{repo} --auto --squash -t {title-arg} --b
 ```
 
 `{tag}` is `auto-merge` for the dispatch/headless path (`dispatch/settle-and-merge.md`'s Auto-merge
-gate), `fast-lane` for the interactive single-record short-circuit triggered by a live `auto:merge`
-label, or `manifesto-authorized` for the same short-circuit triggered instead by the
-`merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
-`wrap-up/manifesto-authorized-merge.md`) — preserving all three tags' meanings — `/help`'s
+gate), `fast-lane` for the interactive single-record short-circuit triggered by live
+`auto:merge` and `auto:build` labels, or `manifesto-authorized` for the same short-circuit
+triggered by the `merge-authorization` Manifesto lever with no label present
+(`wrap-up/review-console.md`, `wrap-up/manifesto-authorized-merge.md`) — `/help`'s
 auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` item 3) keys on all
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
-resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind the `--pr` above — no local branch or checkout needed, so `dispatch/close-out.md`'s and `tidy`'s later-session callers compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
+resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed, so later callers such as `dispatch/close-out.md` and `tidy` compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
 omit `--keep-open {keep-open}` when none. (Why the `Fixes` lines are restated: `pr-first-merge-appendix.md`'s "Rationale notes".)
 `--squash` keeps one conventional commit per PR.
 
-When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
+When the caller supplies an expected head sha (`dispatch/close-out.md` after an update; `/claude-tweaks:accept`), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge or an arm is accepted only against the head the caller verified; callers that supply none are unchanged.
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
@@ -453,7 +453,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
   resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
   caller keeps the stop-at-markers bullet above.
 
-**Sequential multi-branch merges** are serialized one at a time (`flow/worktree-merge.md`'s reconciliation) — why each later branch's update-from-base sees real current state: `pr-first-merge-appendix.md`'s "Rationale notes".
+**Sequential multi-branch merges** are serialized one at a time (`flow/worktree-merge.md`'s reconciliation; why: `pr-first-merge-appendix.md`'s "Rationale notes").
 
 ## Outcome vocabulary
 
@@ -464,7 +464,7 @@ exists from run start).
 |---|---|---|
 | `merged` | Confirmed synchronously via `gh pr view` | Step 4's reconcile call |
 | `armed` | `--auto` armed, checks still pending | None — reconciler completes it later |
-| `pending-review` | Checks red, conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
+| `pending-review` | Checks red, `awaiting-local-acceptance`, `already-parked`, `park-state-unknown`, `supplier-failed` or `park-failed` (Step 2.9), conflict unresolvable headlessly, permission denied, or an unrecognized error, checks red or still pending at Step 2.5's bound (parked with bot:parked, reason check-failed:{names}, checks-pending-timeout or draft-skip-without-ready-trigger:{files}), pr-not-open, moving-target | None — PR stays ready, human decides |
 | `failed` | This run never reached the merge attempt at all (upstream HARD-GATE) | Handled entirely by Settle, before this procedure is ever invoked |
 
 ## Comment ordering

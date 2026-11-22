@@ -158,6 +158,19 @@ test('AC 6: integration-model unset → engine, releasePr and hook all degrade n
   assert.strictEqual(bad.engine.ok, false);
 });
 
+// #6006: the factory layer reaches the pack through deps.env (no HOME, so no factory file is read).
+test('release-preflight: a factory integration-model pin is a configured engine', async () => {
+  const factoryEnv = { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' };
+  const pinned = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: factoryEnv } });
+  assert.deepStrictEqual([pinned.engine.ok, pinned.engine.value, pinned.ciTip.value], [true, 'local-merge', 'n/a']);
+  // policy.yml still beats the factory pin.
+  const repo = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps().deps, env: factoryEnv } });
+  assert.strictEqual(repo.engine.value, 'pr-first');
+  // An invalid factory value is not a configured engine.
+  const bad = await gatherReleasePreflight({ cwd: ROOT, deps: { ...fakeDeps({ policy: '' }).deps, env: { CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: gitlab\n' } } });
+  assert.match(bad.engine.error, /integration-model unresolved/);
+});
+
 test('ruling 3: without origin/{branch} the tip is refs/heads/{branch}; integration-branch policy renames it', async () => {
   const { deps, calls } = fakeDeps({ noOriginRef: true, policy: 'integration-model: local-merge\nintegration-branch: develop\n' });
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps });
@@ -516,4 +529,48 @@ test('AC7.2: the unreleased probe returns two empty lists for a commit with neit
   const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Fixes #10', ''] }).deps });
   const plain = pack.unreleased.value.commits[1];
   assert.deepStrictEqual([plain.fixes, plain.refs], [[], []]);
+});
+
+// default exec bounds (#5050): each runner's spawn is recorded by command, in order. The async runner is
+// started inside exercise (so it sees the stubs) and awaited after the probe returns.
+const PACK_MOD = require.resolve('../../../plugin/bin/lib/release-preflight/pack.js');
+const execBounds = async (cmd, env) => {
+  const { captureExecTimeouts } = require('../../helpers/gh-timeout-probe');
+  const pending = [];
+  const seen = captureExecTimeouts({
+    env,
+    modulePaths: [PACK_MOD],
+    exercise: (setEnv) => {
+      setEnv();
+      const deps = require(PACK_MOD).defaultDeps(process.cwd());
+      if (cmd === 'git') deps.git(['--version']);
+      else pending.push(deps.execFileAsync(cmd, ['--version']));
+    },
+  });
+  await Promise.all(pending);
+  return seen;
+};
+
+test('default exec bounds (#5050): the sync git runner follows CLAUDE_TWEAKS_GIT_TIMEOUT_MS above the floor', async () => {
+  const seen = await execBounds('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: '90000' });
+  assert.strictEqual(seen.git[0], 90000);
+  assert.deepStrictEqual(seen.node, []);
+});
+
+test('default exec bounds (#5050): the sync git runner keeps the 30000 default when the env is unset', async () => {
+  const seen = await execBounds('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined });
+  assert.strictEqual(seen.git[0], 30000);
+});
+
+test('default exec bounds (#5050): the async gh runner follows CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor', async () => {
+  const seen = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '45000' });
+  assert.strictEqual(seen.gh[0], 45000);
+  assert.deepStrictEqual(seen.node, []);
+});
+
+test('default exec bounds (#5050): the async gh runner keeps the 30000 default when the env is unset or below the floor', async () => {
+  const unset = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: undefined });
+  assert.strictEqual(unset.gh[0], 30000, 'unset');
+  const low = await execBounds('gh', { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '10000' });
+  assert.strictEqual(low.gh[0], 30000, '10000');
 });

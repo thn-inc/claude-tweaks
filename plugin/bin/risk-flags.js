@@ -19,8 +19,9 @@
 //           categories plus the policy extras (the slugs `--add` may name).
 // settle    Computes the kept set — the prior body's flags, the body's own flags, the floor
 //           and `--add` (an unreadable line contributes its widened list) — and rewrites
-//           --body-file in place. `--headless` removes nothing and marks a non-empty set
-//           unconfirmed. `--answers-file` ({ "<slug>": "keep" | "remove" }) applies a
+//           --body-file in place, carrying the prior body's tripwire line forward
+//           (carryTripwireFlags: only slugs still kept). `--headless` removes nothing and
+//           marks a non-empty set unconfirmed. `--answers-file` ({ "<slug>": "keep" | "remove" }) applies a
 //           human's answers; a flag with no valid answer stays kept and the marker stays.
 // confirm   The human batch for /backlog refine: answers apply to the body's existing
 //           flags only, no classifier runs, nothing is added. A body with no flag line stays
@@ -38,6 +39,8 @@
 //           Refine risk flags step). Prints { logged, logFailures }: `logged` is null when
 //           --removed names nothing (nothing is written), true when every line was written,
 //           false when one failed (`logFailures` names the slugs). A failed log is exit 0.
+//           It is the audit line only: under github-issues the skill always posts the record
+//           comment too, because the record is the removal log the diff tripwire reads (#4619).
 // An empty kept set writes the none line and no marker, but a hand-written unconfirmed marker
 // already on the body survives a headless settle: clearing it would need humanConfirmed with
 // no human, the marker is the cautious side, and the next human confirm clears it.
@@ -294,7 +297,7 @@ const unansweredNote = (flags) => (flags.length > 0 ? `no keep or remove answer 
 
 // The settle body, one place for both the Reading A refusals and the answer application.
 // -> { next, status, removed, remaining, refused, problem }
-function settleBody({ body, kept, entry, raw, answersFile, deps, extraCategories }) {
+function settleBody({ body, priorBody, kept, entry, raw, answersFile, deps, extraCategories }) {
   const seeded = record.addRiskFlags(body, kept, { unconfirmed: kept.length > 0, extraCategories });
   const out = { next: seeded, status: entry.status, removed: [], remaining: kept, refused: null, problem: null };
   if (answersFile !== null) {
@@ -316,6 +319,8 @@ function settleBody({ body, kept, entry, raw, answersFile, deps, extraCategories
     }
   }
   out.next = record.appendRiskProofGotcha(out.next, out.remaining);
+  // A composed body never carries the tripwire line: the prior body's goes forward, minus any slug dropped.
+  if (priorBody !== null) out.next = record.carryTripwireFlags(out.next, priorBody, { extraCategories });
   return out;
 }
 
@@ -545,7 +550,7 @@ function run(argv, overrides = {}) {
   let shaped;
   if (o.verb === 'settle') {
     const { kept, entry, raw } = keptSet({ body, priorBody, add: o.add, floor: floor.flags, extraCategories });
-    shaped = settleBody({ body, kept, entry, raw, answersFile: o.answersFile, deps, extraCategories });
+    shaped = settleBody({ body, priorBody, kept, entry, raw, answersFile: o.answersFile, deps, extraCategories });
   } else {
     shaped = confirmBody({ body, answersFile: o.answersFile, deps, extraCategories });
   }

@@ -2,10 +2,12 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { contentHash, sliceRecursive } = require('../../../plugin/bin/lib/code-health/scope');
 const { sweepCli } = require('../../helpers/health-sweep-cli');
+const { spawnCli } = require('../../helpers/run-cli');
 const { cleanGitEnv } = require('../../helpers/git-fixtures');
 
 // Every setup git call runs without an inherited GIT_DIR and friends, so they cannot land in another repo.
@@ -13,7 +15,7 @@ const GIT_OPTS = { env: cleanGitEnv(process.env) };
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'code-health.js');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-')); }
+function tmp() { return scratchDir('codehealth-ns-'); }
 // In-process (#5381), with the file-protocol-only git guard and a throwaway real cwd — see tests/helpers/health-sweep-cli.js.
 function runNextSlice(args, root) {
   const res = sweepCli(CLI, ['next-slice', '--root', root, ...args]);
@@ -29,9 +31,9 @@ function runNextSlice(args, root) {
 // `origin` remote at it. Only the WRITE path (gh api blob/tree/commit/ref
 // calls) requires live GitHub credentials — this helper never touches it.
 function seedDurableCursors(root, cursors) {
-  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-bare-'));
+  const bareDir = scratchDir('codehealth-ns-bare-');
   execFileSync('git', ['init', '--bare', '-q', bareDir], GIT_OPTS);
-  const seedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-ns-seed-'));
+  const seedDir = scratchDir('codehealth-ns-seed-');
   execFileSync('git', ['init', '-q', seedDir], GIT_OPTS);
   execFileSync('git', ['-C', seedDir, 'checkout', '-q', '-b', 'health-state'], GIT_OPTS);
   fs.mkdirSync(path.join(seedDir, 'code-health'), { recursive: true });
@@ -154,4 +156,16 @@ test('next-slice: a change inside a subdirectory does not make the "." slice loo
   // actually changed) is picked.
   assert.ok(result !== null, 'the changed "sub" slice should still be picked');
   assert.strictEqual(result.id, 'sub', 'a change inside "sub" must not make "." look changed instead');
+});
+
+// Real-process pin of the script entry (#5381): an unknown command exits 2 with empty stdout and
+// the usage text on stderr.
+test('AC2.1, AC2.2: code-health.js no-such-command exits 2 with the usage text on stderr, naming no removed command (real process)', () => {
+  const r = spawnCli(CLI, ['no-such-command'], { env: { ...process.env }, cwd: tmp() });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.strictEqual(
+    r.stderr,
+    'usage: code-health.js <command> [options]\ncommands: validate-findings [--slice <id>], classify, next-slice, status, churn-report, retry-queue drain, retry-queue update <results.json>\n',
+  );
 });

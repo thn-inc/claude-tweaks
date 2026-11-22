@@ -36,16 +36,14 @@
 // direction, accepted.
 //
 // This module reads that axis. It never writes one, and never extends ORIGINS.
-const { ORIGINS } = require('./record.js');
+//
+// The Origin line is the record's OWN line (record-payload.js's ownOriginLine,
+// #4502): a line inside a fenced block or under a `## Absorbed: …` heading is
+// someone else's text and never counts; one under `## Original request` does.
+const { ORIGINS, ownOriginLine } = require('./record.js');
 const { TRUSTED_AUTHOR_ASSOCIATIONS, commentAssociation } = require('./comment-trust.js');
 
 const BY_LABEL = /^by:(.+)$/;
-// Anchored to line start so prose describing the convention is not mistaken
-// for a provenance claim. The capture is `.*?`, not `.+?`, so a bare `Origin:`
-// line with nothing after it still enters the branch below and resolves to the
-// ungradable bucket — an empty marker is malformed provenance, not the absent
-// marker that means human-filed.
-const ORIGIN_LINE = /^Origin:[ \t]*(.*?)[ \t]*$/m;
 // A trailing source reference makes the context per-record unique, which would
 // explode the class count and give every cell a sample size of one. This is
 // stripped AFTER clause truncation so that trailing punctuation doesn't defeat
@@ -100,11 +98,16 @@ function resolveProvenance({ labels, body, authorTrust } = {}) {
     }
   }
 
-  const line = authorTrust === 'untrusted' ? null : ORIGIN_LINE.exec(typeof body === 'string' ? body : '');
-  if (line) {
+  // ownOriginLine anchors to line start so prose describing the convention is
+  // not mistaken for a provenance claim, and its capture is `.*?`, not `.+?`, so
+  // a bare `Origin:` line (returned as '') still enters the branch below and
+  // resolves to the ungradable bucket — an empty marker is malformed provenance,
+  // not the absent marker (null) that means human-filed.
+  const line = authorTrust === 'untrusted' ? null : ownOriginLine(body);
+  if (line !== null) {
     // Truncate at clause boundaries first (before stripping trailing source),
     // so that punctuation after "from #N" doesn't prevent the pattern from matching.
-    let source = truncateAtClauseBoundary(line[1]).trim();
+    let source = truncateAtClauseBoundary(line).trim();
     // Then strip the trailing source reference.
     source = source.replace(TRAILING_SOURCE, '').trim();
     // Lowercase and check length. If still exceeds MAX_SOURCE_LENGTH, return
@@ -128,11 +131,11 @@ function resolveProvenance({ labels, body, authorTrust } = {}) {
   return { kind: 'human', source: 'human' };
 }
 
-// True when the body carries an `Origin:` line by the same ORIGIN_LINE rule
+// True when the body carries an own `Origin:` line by the same ownOriginLine rule
 // resolveProvenance reads, so callers that select records for an author-trust
 // lookup (author-association.js) select exactly the ones the gate will judge.
 function hasOriginLine(body) {
-  return typeof body === 'string' && ORIGIN_LINE.test(body);
+  return ownOriginLine(body) !== null;
 }
 
 module.exports = { resolveProvenance, issueAuthorTrust, hasOriginLine, PRODUCERS: ORIGINS };

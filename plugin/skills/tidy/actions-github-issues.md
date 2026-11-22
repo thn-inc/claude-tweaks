@@ -36,7 +36,7 @@ using the **parent-side** entry shape that section documents (`$PARENT_NUM` is a
 and the parent's labels fresh, and re-run **Evaluate the gate** — do not reuse the scan's own
 snapshot, since time has passed since Step 4.8 ran). If the re-verified gate no longer reads
 `due` (another process already gated the parent, or a sub-issue reopened), this is a silent no-op —
-skip it, don't error, and don't recommend `/claude-tweaks:demo #{n}` for it in the applied-report
+skip it, don't error, and don't recommend `/claude-tweaks:accept #{n}` for it in the applied-report
 either. If it still reads `due` and **Evaluate the gate** reads `exceeds: false` (below the
 oversight floor), run that procedure's **Close the parent below the floor** instead of composing a
 brief: it comments and closes the parent, writes no `demo:*` label, and a parent already closed is
@@ -59,9 +59,9 @@ closes the parent and asserts every sub-issue is complete. `_shared/auto-mode-co
 Never-reversible list states that exception's scope.
 
 This action never applies `demo:approved` or `demo:changes-requested` — those two labels stay
-exclusively `/claude-tweaks:demo`'s job, applied only after an explicit human verdict. Opening
+exclusively `/claude-tweaks:accept`'s job, applied only after an explicit human verdict. Opening
 the gate is the precondition for that verdict, not the verdict itself, which is why
-an above-floor recommendation still ends with `/claude-tweaks:demo #{n}` even once the gate is
+an above-floor recommendation still ends with `/claude-tweaks:accept #{n}` even once the gate is
 open. The below-floor close has no verdict to await, so its row does not end with it.
 
 ## Arm ready PR
@@ -77,7 +77,7 @@ acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier ga
 4.8 ran: re-fetch the PR's `isDraft`, `statusCheckRollup`, `autoMergeRequest`, and unresolved
 thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md` Step 2.5's
 `gh run list --commit {headRefOid}` read — a head run not yet `completed` is not green), and
-re-check the grant (every linked record still carries `auto:merge`, or
+re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
 `housekeeping-auto-merge` is still set) before doing anything. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as
@@ -87,6 +87,8 @@ When judging `statusCheckRollup`, use the same non-blocking conclusion set
 `_shared/github-pr-scan.md` item 9 defines (`SUCCESS`, `SKIPPED`, `NEUTRAL` — a `SUCCESS`-only
 check treats a job whose own `if:` condition is false, e.g. a default-branch-only cleanup job,
 as a permanent regression); do not re-derive it.
+
+**Parked for local acceptance — record-linked flavor only, first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" parked --record {n}` on each `Fixes` record, never with `--run` (the repo-root policy is the sweep's authority). Any exit but 5 — hold, not armed: never run Step 3, never run the labeling guard below. Report `Held (not armed): PR #{n} — parked awaiting local acceptance` for exit 0 and `Held (not armed): PR #{n} — park state not confirmed (exit {code})` otherwise, and recommend `/claude-tweaks:accept #{record}`. Every `parked` exit 5: run `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-park.js" decide --record {n}[,{m}…] --head {headRefOid}` over every `Fixes` record (the PR's head oid), also never with `--run` (control mode off prints `consulted:false` and reads no record; under control mode `decide` may append a tripwire flag to the record and fetches the head by oid when it is not local). Only exit 0 with `park:false` continues; `park:true` holds the same way, reporting `Held (not armed): PR #{n} — local acceptance target, never parked; recommend /claude-tweaks:accept #{record}` followed, when the decision's `tripwire.lines` is non-empty, by those lines verbatim (the tripwire's reason; the sweep posts no packet, so this report is where the maintainer reads it), and a non-zero exit holds as `park state not confirmed (exit {code})`. This pair is the record-linked arm's Step 2.9 gate.
 
 **Acceptance labeling — record-linked flavor only, before Step 3.** Green says nothing about whether
 acceptance labeling (`demo:pending`, the Try it walkthrough) landed, and the merge closes every `Fixes`
@@ -103,7 +105,7 @@ contract's not-landed outcome (`verify.json missing`, `acceptance-labeling: {res
 `_shared/pr-first-merge.md` Step 1 before it merges. When no run dir resolved, close-out stops on the same
 missing run dir (whatever `{reason}` reports), so the recommendation instead names running that command from the checkout that holds
 run `{run-id}` when a validated marker names one, or, when none does, a human acceptance pass via
-`/claude-tweaks:demo #{record}` before merging by hand. Never put an unvalidated marker value or a
+`/claude-tweaks:accept #{record}` before merging by hand. Never put an unvalidated marker value or a
 `verify.json` string that is not a bare word into the report or the logged text. Log the hold to this
 tidy run's `decisions.md` whenever the run has one (`_shared/auto-decision-log.md`'s degrade-trace
 `SKIP` — the arm was not performed, and the hold stays open for a human), with `{command}` the

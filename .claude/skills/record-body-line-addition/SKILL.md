@@ -25,7 +25,7 @@ The test for "this is the line" must be wider than the exact grammar, or a varia
 
 ### Preamble only, fences ignored
 
-Read only the preamble (after an optional frontmatter block, before the first `## ` heading) and skip fenced lines, so a quoted example is never the record's own line. Use `plugin/bin/lib/markdown-blocks.js`'s fence helpers: `parseRiskFlags` uses `fencedLineMask`, and `extractPremiseCheck`, `extractVerifiedAsOf` and `extractTemplateStamp` in `record-payload.js` read through `unfencedText`.
+Read only the preamble (after an optional frontmatter block, before the first `## ` heading) and skip fenced lines, so a quoted example is never the record's own line. Use `plugin/bin/lib/markdown-blocks.js`'s fence helpers: `parseRiskFlags` uses `fencedLineMask`, and `extractPremiseCheck`, `extractVerifiedAsOf` and `extractTemplateStamp` in `record-payload.js` read through `unfencedText`. The one deliberate whole-body exception is `ownOriginLine` in `record-payload.js`: it scans the whole body, skipping fenced lines and lines under a `## Absorbed: …` section, and a line under `## Original request` still counts, since for 170 records it is the only `Origin:` line (#4502).
 
 ### Sanctioned writers
 
@@ -42,13 +42,17 @@ When the line must not be hand-edited, put its writers in the reader's module an
 | `docs/plugin-structure.md` | The `plugin/bin/lib/issues/` row |
 | Every consumer that gates on the line | A call to the reader, never a regex of its own |
 
+### A line no code reads
+
+A provenance line written for the person reading the record, and for skill prose that finds it by key, can have no reader in `plugin/bin` at all. #5933's `Evidence:` (`specShapedBody`'s `provenance.evidence`) is one: nothing parses it back out of a record body. The table's reader rows (the `record-*.js` reader, the re-export from `record.js`, each consumer's call) then have nothing to register, and `spec-template.md` applies only to a line a spec author writes by hand. The line still owes four things. The writer validates it, because no reader will: `specShapedBody` throws on a multi-line value or a kind outside `EVIDENCE_KINDS`, which it imports from `plugin/bin/lib/deferral-route/evidence.js` (the module that judges the value) rather than retyping, and leaves the rest of the grammar to that module. The writer's header comment names the line and its place in the provenance order. The contract that gives the line its meaning names it (`_shared/deferral-gate.md`'s Evidence bullet). And the composer's tests pin its placement, the absent case and each refusal (`tests/bin-lib/issues/record.test.js`'s `#5933` cases). The first code reader that gates on the line brings the whole table back.
+
 ## Anti-Patterns
 
 | Pattern | Why it fails here |
 |---|---|
 | A consumer matching the line with its own regex | Its detection drifts from the reader's, so a variant the reader reads as malformed reads as absent there |
 | Reading a malformed value or an unknown slug as empty | A misspelling silently drops what the line asserts; `parseRiskFlags` reads one as every built-in category flagged |
-| Scanning the whole body for the line | A later mention in prose or a fenced example reads as the record's own; the line is a header line by contract (#4618 review accepted the preamble-only scan) |
+| Scanning the whole body for the line | A later mention in prose or a fenced example reads as the record's own; the line is a header line by contract (#4618 review accepted the preamble-only scan); the one whole-body exception is `ownOriginLine` (see Preamble only, fences ignored) |
 
 ## Reference
 

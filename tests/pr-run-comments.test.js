@@ -17,7 +17,7 @@ const COMMENTS = read('plugin', 'skills', '_shared', 'pr-run-comments.md');
 const LIFECYCLE = read('plugin', 'skills', '_shared', 'pr-early-run-lifecycle.md');
 const SETTLE = read('plugin', 'skills', 'dispatch', 'settle-and-merge.md');
 const BRIEF = read('plugin', 'skills', 'wrap-up', 'verification-brief.md');
-const DEMO = read('plugin', 'skills', 'demo', 'entry-paths.md');
+const DEMO = read('plugin', 'skills', 'accept', 'entry-paths.md');
 // /review's Step 7 (verdict comment) lives in the code-mode-steps.md sub-file since the
 // #887 dispatcher split — concatenate so this asserts against the documented text wherever
 // it currently lives, same pattern as multi-agent-coordination.test.js's REVIEW_SKILL.
