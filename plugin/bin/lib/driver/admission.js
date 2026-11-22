@@ -33,6 +33,11 @@
 //   beyond the express bounds and the reviewer on      admitted by this rule
 //   beyond the express bounds and the reviewer not on  refused, reviewerOff
 //   inside the express bounds                          the rule does not apply
+// A widened record (#6018) is one the caller admitted above low risk or a non-fast-lane ceremony;
+// `widenedBy` is eligibility.js's widenings() answer, computed by the caller (absent reads as none):
+//   widened and the reviewer on                        admitted by this rule
+//   widened and the reviewer not on                    refused, reviewerOffWidened
+//   `widenedBy` not an array of strings                refused, widenedUnreadable
 // A record beyond the driver's bounds adds nothing here: eligibility owns that refusal. A
 // `reviewerOn` that is not a boolean, unreadable bounds (not an object, a ceiling that is not a
 // SIZE_CEILINGS key, a limit that is not a safe integer of at least 1) and a `keyFiles` that is
@@ -64,7 +69,9 @@ const ADMISSION_REASONS = Object.freeze({
   commentsUnreadable: 'record comments unreadable',
   routingUnknown: (value) => `express-driver value not recognised: ${value}`,
   reviewerOff: 'record is beyond the express bounds and the reviewer step is off for it',
+  reviewerOffWidened: 'record is admitted beyond low risk or fast-lane ceremony and the reviewer step is off for it',
   reviewerUnreadable: 'reviewer-on answer unreadable',
+  widenedUnreadable: 'record widening facts unreadable',
   boundsUnreadable: 'lane bounds unreadable',
   keyFilesUnreadable: 'record Key Files unreadable',
 });
@@ -105,13 +112,13 @@ function reviewerGateReason(facts) {
 }
 
 // { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles,
-//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority } -> { admitted, reasons }.
+//   bounds: { sizeCeiling, maxKeyFiles }, reviewerOn, buildAuthority, widenedBy } -> { admitted, reasons }.
 // `buildAuthority` is build-authority.js's resolveBuildAuthority answer (#5584): exactly 'typed'
 // lifts the grant gate alone, so a record named by a typed command needs no `auto:build`; any
 // other value, or none, leaves the gate as it was. Every other gate still runs.
 function evaluateAdmission(facts) {
   // A null or non-object argument reads as no facts at all: every unreadable reason fires.
-  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn, buildAuthority } =
+  const { number, state, labels, openBlockerRefs, openLinkedPRs, routing, driverEscalated, keyFiles, bounds, reviewerOn, buildAuthority, widenedBy } =
     (facts && typeof facts === 'object') ? facts : {};
   const reasons = [];
 
@@ -149,6 +156,10 @@ function evaluateAdmission(facts) {
   if (!Array.isArray(keyFiles)) reasons.push(R.keyFilesUnreadable);
   const reviewer = reviewerGateReason({ labels, keyFiles, bounds, reviewerOn });
   if (reviewer) reasons.push(reviewer);
+  // undefined is a caller from before #6018: no widening.
+  const widened = widenedBy === undefined ? [] : widenedBy;
+  if (!Array.isArray(widened) || !widened.every((w) => typeof w === 'string')) reasons.push(R.widenedUnreadable);
+  else if (widened.length > 0 && reviewerOn === false) reasons.push(R.reviewerOffWidened);
 
   return { admitted: reasons.length === 0, reasons };
 }

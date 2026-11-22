@@ -76,7 +76,10 @@ test('AC3.7: ADMISSION_REASONS exports exactly the documented keys', () => {
     'noBuildGrant', 'parked', 'blocked', 'openBlocker', 'openPR', 'notOpen', 'blockerFactsUnreadable',
     'prFactsUnreadable', 'stateUnreadable', 'labelsUnreadable', 'routingOff', 'splitOdd', 'splitUnreadable', 'routingUnknown',
     'escalatedByDriver', 'commentsUnreadable', 'reviewerOff', 'reviewerUnreadable', 'boundsUnreadable', 'keyFilesUnreadable',
+    'reviewerOffWidened', 'widenedUnreadable',
   ].sort());
+  assert.strictEqual(R.reviewerOffWidened, 'record is admitted beyond low risk or fast-lane ceremony and the reviewer step is off for it');
+  assert.strictEqual(R.widenedUnreadable, 'record widening facts unreadable');
   assert.ok(Object.isFrozen(R));
   assert.strictEqual(R.noBuildGrant, 'record lacks auto:build');
   assert.strictEqual(R.parked, 'record is parked');
@@ -447,4 +450,38 @@ test('Review Focus 2 (#5224): a limit below the express limit narrows', () => {
     assert.deepStrictEqual(laneVerdict(three, { maxKeyFiles: 2, review }).reasons, ['more than 2 Key Files'], `review=${review}`);
   }
   assert.deepStrictEqual(laneVerdict(record({ size: 'low', keyFileCount: 2 }), { maxKeyFiles: 2, review: 'beyond-express' }), { admitted: true, reasons: [] });
+});
+
+test('AC1.1 (#6018): widenedBy absent and widenedBy [] give the base verdicts', () => {
+  const fixtures = [
+    {}, { labels: ['ready'] }, { labels: ['auto:build', 'parked'] }, { labels: ['auto:build', 'ready', 'bot:blocked'] },
+    { openBlockerRefs: [4816] }, { openLinkedPRs: [5247] }, { state: 'CLOSED' }, { driverEscalated: true },
+    { routing: 'off' }, { reviewerOn: 'yes' }, { labels: ['auto:build', 'ready', 'size:medium'], reviewerOn: false },
+    { labels: ['auto:build', 'ready', 'size:medium'], reviewerOn: true, bounds: { sizeCeiling: 'medium', maxKeyFiles: 3 } },
+    { bounds: null }, { keyFiles: 'a.js' }, { labels: 'ready' },
+  ];
+  for (const overrides of fixtures) {
+    const facts = { ...ADMIT, ...overrides };
+    assert.deepStrictEqual(evaluateAdmission({ ...facts, widenedBy: [] }), evaluateAdmission(facts), JSON.stringify(overrides));
+    assert.deepStrictEqual(evaluateAdmission({ ...facts, widenedBy: undefined }), evaluateAdmission(facts), JSON.stringify(overrides));
+  }
+});
+
+test('AC3.1 (#6018): a widened record with the reviewer off is refused with the widened reason', () => {
+  assert.deepStrictEqual(reasonsFor({ widenedBy: ['risk'], reviewerOn: false }), [R.reviewerOffWidened]);
+  assert.deepStrictEqual(reasonsFor({ widenedBy: ['ceremony'], reviewerOn: false }), [R.reviewerOffWidened]);
+  assert.deepStrictEqual(reasonsFor({ widenedBy: ['risk', 'ceremony'], reviewerOn: false }), [R.reviewerOffWidened]);
+  assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, widenedBy: ['risk'], reviewerOn: true }), { admitted: true, reasons: [] });
+  assert.deepStrictEqual(evaluateAdmission({ ...ADMIT, widenedBy: [], reviewerOn: false }), { admitted: true, reasons: [] });
+  // A non-boolean reviewerOn is the unreadable reason alone, not also the widened refusal.
+  assert.deepStrictEqual(reasonsFor({ widenedBy: ['risk'], reviewerOn: null }), [R.reviewerUnreadable]);
+  // Both rules apply to a beyond-express widened record with the reviewer off, in push order.
+  assert.deepStrictEqual(reasonsFor({ labels: ['auto:build', 'ready', 'size:medium'], bounds: { sizeCeiling: 'medium', maxKeyFiles: 3 }, widenedBy: ['risk'], reviewerOn: false }), [R.reviewerOff, R.reviewerOffWidened]);
+});
+
+test('widenedBy unreadable refuses with its own reason (#6018)', () => {
+  for (const widenedBy of ['risk', null, {}, 3, true]) {
+    assert.deepStrictEqual(reasonsFor({ widenedBy }), [R.widenedUnreadable], JSON.stringify(widenedBy));
+  }
+  assert.ok(evaluateAdmission({ ...ADMIT, widenedBy: 'risk', reviewerOn: false }).reasons.includes(R.widenedUnreadable));
 });
