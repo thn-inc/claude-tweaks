@@ -405,6 +405,9 @@ test('score requires tiebreak.js through deps.pluginRoot', async () => {
   try {
     fs.mkdirSync(path.join(stubRoot, 'bin', 'lib'), { recursive: true });
     fs.writeFileSync(path.join(stubRoot, 'bin', 'lib', 'tiebreak.js'), "exports.resolveTiebreak = () => ({ outcome: 'drop', reason: 'stub' });\nexports.splitChunkReply = (text, ids) => ({ status: null, blocks: new Map(ids.map((id) => [id, { state: 'ok', text }])) });\n");
+    fs.mkdirSync(path.join(stubRoot, 'bin', 'lib', 'timing'), { recursive: true });
+    const realTranscriptPath = path.join(__dirname, '..', '..', 'plugin', 'bin', 'lib', 'timing', 'transcript.js');
+    fs.writeFileSync(path.join(stubRoot, 'bin', 'lib', 'timing', 'transcript.js'), `module.exports = require(${JSON.stringify(realTranscriptPath)});\n`);
     fullSet(s);
     const r = await s.score([], { pluginRoot: stubRoot });
     assert.equal(r.code, 0, r.deps.errs.join('\n'));
@@ -431,6 +434,22 @@ test('vsReference compares each repeat with every reference repeat for that find
     assert.equal(r.code, 0, r.deps.errs.join('\n'));
     // Repeat 1 agrees with the reference on 1 of 4 findings, repeat 2 on 4 of 4; neither repeat drops out.
     assert.deepEqual(r.json.arms.eight.vsReference, { agree: 5, n: 8 });
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('a streamed partial written after its final entry never lowers the id\'s counted usage', async () => {
+  const s = await setup();
+  try {
+    fullSet(s);
+    const file = path.join(s.transcripts, 'agent-ag-1.jsonl');
+    const late = { type: 'assistant', timestamp: '2026-01-01T00:00:01.000Z', message: { id: 'm1', usage: { output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } };
+    fs.appendFileSync(file, `${JSON.stringify(late)}\n`);
+    const r = await s.score();
+    assert.equal(r.json.arms.one.cost.requests, 8);
+    assert.equal(r.json.arms.one.cost.output, 60, 'the late partial of output 1 never replaces the larger earlier count');
+    assert.equal(r.json.arms.one.cost.cacheRead, 1200);
   } finally {
     s.cleanup();
   }
