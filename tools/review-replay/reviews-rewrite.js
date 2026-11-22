@@ -9,7 +9,11 @@ const { toPosix } = require('./schema.js');
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const PATH_END = '[^\\s"\'`)]';
 const PIPELINES = '.claude-tweaks/pipelines/';
-const WORKTREE_NAME = '[A-Za-z0-9._+-]+';
+// A worktree name never ends in '.', so a sentence's full stop stays outside the match.
+const WORKTREE_NAME = '[A-Za-z0-9._+-]*[A-Za-z0-9_+-]';
+const PATH_END_LOOKAHEAD = '(?=[\\s"\'`)]|$)';
+// Forward slashes, no trailing slash: `M/` would build `M//` and blind every scan.
+const normRoot = (p) => toPosix(p).replace(/\/+$/, '');
 
 function rangeOf(text) {
   const t = String(text);
@@ -31,17 +35,18 @@ function originRefsOf(text) {
 }
 
 function classify(rel) {
+  if (rel.split('/').includes('..')) return null;
   if (/^(?:review-ctx|delta-ctx)\/context\.md$/.test(rel)) return 'bundle';
   if (/^work\/[^/]+\.md$/.test(rel)) return 'spec';
   if (/^context\/[^/]+\.md$/.test(rel)) return 'procedure';
-  if (/^(?:review-ctx|delta-ctx)\/agent-scratch\/[^/]+(?:\/.*)?$/.test(rel)) return 'scratch';
+  if (/^(?:review-ctx|delta-ctx)\/agent-scratch\/[^/,]+(?:\/[^,]*)?$/.test(rel)) return 'scratch';
   return null;
 }
 
 // Optional prefix: mainRoot, or a worktree under it. Group 1 = prefix presence
 // is read from the matched text, group 2 = seg, group 3 = rest.
 function runInputsOf(text, { mainRoot, runName, copy = false }) {
-  const root = escapeRe(toPosix(mainRoot));
+  const root = escapeRe(normRoot(mainRoot));
   const re = new RegExp(
     `(?:${root}/(?:\\.claude/worktrees/${WORKTREE_NAME}/)?)?\\.claude-tweaks/pipelines/([^/\\s"'\`)]+)/(${PATH_END}*)`,
     'g'
@@ -74,13 +79,13 @@ function runInputsOf(text, { mainRoot, runName, copy = false }) {
 }
 
 function stripEffortLines(text) {
-  return String(text).replace(/^\[Effort: (?:low|medium|high|xhigh|max) — [^\]]*\]\s*$\n?/gm, '');
+  return String(text).replace(/^\[Effort: (?:low|medium|high|xhigh|max) — [^\]]*\][ \t\r]*$\n?/gm, '');
 }
 
 function rewriteShas(text, map) {
   const keys = Object.keys(map || {});
   if (!keys.length) return String(text);
-  return String(text).replace(/\b[0-9a-f]{7,40}\b/g, (tok) => {
+  return String(text).replace(/(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])/g, (tok) => {
     const key = keys.find((k) => k.startsWith(tok));
     return key ? String(map[key]).slice(0, tok.length) : tok;
   });
@@ -94,26 +99,31 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
   for (const match of matches) {
     if (Object.prototype.hasOwnProperty.call(replacements, match)) out = out.split(match).join(replacements[match]);
   }
-  const wt = new RegExp(`${escapeRe(toPosix(mainRoot))}/\\.claude/worktrees/${WORKTREE_NAME}`, 'g');
-  out = out.replace(wt, () => repoPath);
+  const root = escapeRe(normRoot(mainRoot));
+  out = out.replace(new RegExp(`${root}/\\.claude/worktrees/${WORKTREE_NAME}`, 'g'), () => repoPath);
+  out = out.replace(new RegExp(`${root}${PATH_END_LOOKAHEAD}`, 'g'), () => repoPath);
   return rewriteShas(out, shaMap);
 }
 
 function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
   const t = String(text);
+  const root = normRoot(mainRoot);
+  const out = outDir ? normRoot(outDir) : '';
+  // The output directory is exempt only when it lies strictly under the main checkout; an
+  // outDir equal to or containing mainRoot would hide every leak, so it fails closed.
   const skip = [];
-  if (outDir) {
-    for (const m of t.matchAll(new RegExp(`${escapeRe(toPosix(outDir))}/${PATH_END}*`, 'g'))) {
-      skip.push([m.index, m.index + m[0].length]);
-    }
+  if (out && out.startsWith(root + '/')) {
+    const spans = new RegExp(`${escapeRe(out)}(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`, 'g');
+    for (const m of t.matchAll(spans)) skip.push([m.index, m.index + m[0].length]);
   }
-  const re = new RegExp(`(?:${escapeRe(toPosix(mainRoot))}/|${escapeRe(PIPELINES + runName)}/)${PATH_END}*`, 'g');
-  const out = [];
+  const re = new RegExp(
+    `(?:${escapeRe(root)}|${escapeRe(PIPELINES + runName)})(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`, 'g');
+  const found = [];
   for (const m of t.matchAll(re)) {
     if (skip.some(([a, b]) => m.index >= a && m.index < b)) continue;
-    out.push(m[0]);
+    found.push(m[0]);
   }
-  return out;
+  return found;
 }
 
 module.exports = { rangeOf, originRefsOf, runInputsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };

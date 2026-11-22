@@ -109,3 +109,59 @@ test('stripEffortLines removes only the resolver line', () => {
   assert.strictEqual(rw.stripEffortLines('see [Effort: high] above'), 'see [Effort: high] above');
   assert.strictEqual(rw.stripEffortLines('tail [Effort: high — x.]'), 'tail [Effort: high — x.]');
 });
+
+const full = { mainRoot, runName: 'R', repoPath: '/out/repos/k/repo', replacements: {}, shaMap: {} };
+
+test('a bare main-checkout path is rewritten and detected', () => {
+  assert.strictEqual(rw.rewriteText('RUN_ROOT="' + main + '" cd ' + main, full), 'RUN_ROOT="/out/repos/k/repo" cd /out/repos/k/repo');
+  assert.strictEqual(rw.rewriteText(main + '-other/x', full), main + '-other/x');
+  assert.deepStrictEqual(rw.unrewrittenPaths('cd "' + main + '" && git diff', { mainRoot, runName: 'R', outDir: '/out' }), [main]);
+  assert.deepStrictEqual(rw.unrewrittenPaths('x ' + main, { mainRoot, runName: 'R', outDir: '/out' }), [main]);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '-other/x', { mainRoot, runName: 'R', outDir: '/out' }), []);
+});
+
+test('a relative run directory without a trailing slash is detected', () => {
+  const o = { mainRoot, runName: 'R', outDir: '/out' };
+  assert.deepStrictEqual(rw.unrewrittenPaths('see `.claude-tweaks/pipelines/R`', o), ['.claude-tweaks/pipelines/R']);
+  assert.deepStrictEqual(rw.unrewrittenPaths('.claude-tweaks/pipelines/RR/x', o), []);
+});
+
+test('an outDir equal to or containing mainRoot does not blind the barrier', () => {
+  const text = main + '/src/a.js ' + main + '/.claude-tweaks/pipelines/R/decisions.md';
+  assert.strictEqual(rw.unrewrittenPaths(text, { mainRoot, runName: 'R', outDir: mainRoot }).length, 2);
+  assert.strictEqual(rw.unrewrittenPaths(text, { mainRoot, runName: 'R', outDir: '/m' }).length, 2);
+  assert.strictEqual(rw.unrewrittenPaths(main + '/out', { mainRoot, runName: 'R', outDir: main + '/out' }).length, 0);
+});
+
+test('a trailing slash on mainRoot or outDir is normalised', () => {
+  const o = { mainRoot: main + '/', runName: 'R', outDir: main + '/out/' };
+  assert.strictEqual(rw.unrewrittenPaths(main + '/src/a.js', o).length, 1);
+  assert.strictEqual(rw.unrewrittenPaths(main + '/out/x', o).length, 0);
+  assert.strictEqual(rw.rewriteText('git -C ' + main + '/.claude/worktrees/w diff', { ...full, mainRoot: main + '/' }), 'git -C /out/repos/k/repo diff');
+  assert.strictEqual(rw.runInputsOf(main + '/.claude-tweaks/pipelines/R/review-ctx/context.md', { mainRoot: main + '/', runName: 'R' }).inputs.length, 1);
+});
+
+test('a scratch tail with .. or a comma is unknown', () => {
+  const base = main + '/.claude-tweaks/pipelines/R/review-ctx/agent-scratch/';
+  const up = rw.runInputsOf(base + 'x/../../decisions.md', opts);
+  assert.deepStrictEqual(up.inputs, []);
+  assert.strictEqual(up.unknown.length, 1);
+  const joined = rw.runInputsOf(base + '3a,' + main + '/.claude-tweaks/pipelines/R/decisions.md', opts);
+  assert.deepStrictEqual(joined.inputs, []);
+  assert.strictEqual(joined.unknown.length, 2);
+  assert.strictEqual(rw.runInputsOf(base + '3a/sub/f.md', opts).inputs[0].kind, 'scratch');
+});
+
+test('sha rewrite treats an underscore as a separator', () => {
+  assert.strictEqual(rw.rewriteShas('tmp_' + B.slice(0, 7) + '_x', { [B]: RB }), 'tmp_' + RB.slice(0, 7) + '_x');
+  assert.strictEqual(rw.rewriteShas('x' + B.slice(0, 7), { [B]: RB }), 'x' + B.slice(0, 7));
+});
+
+test('a worktree name does not eat a sentence full stop', () => {
+  assert.strictEqual(rw.rewriteText('in ' + main + '/.claude/worktrees/w.', full), 'in /out/repos/k/repo.');
+  assert.strictEqual(rw.rewriteText(main + '/.claude/worktrees/flow-1.2', full), '/out/repos/k/repo');
+});
+
+test('stripEffortLines keeps a following blank line', () => {
+  assert.strictEqual(rw.stripEffortLines('a\n[Effort: low — x.]\n\nb'), 'a\n\nb');
+});
