@@ -3,6 +3,7 @@ files:
   - plugin/bin/lib/policy-schema.js
   - plugin/bin/resolve-policy.js
   - plugin/skills/specify/planning.md
+  - plugin/skills/specify/planning-answer.md
   - plugin/skills/specify/shaping-mode.md
   - plugin/skills/specify/shaping-mode-stamping.md
   - plugin/skills/specify/shaping-mode-readback.md
@@ -57,12 +58,12 @@ files:
 
 ### 5. Pick up a held record later — slash command
 - **URL:** `/claude-tweaks:specify #N` (the `Command:` in the decision comment)
-- **Action:** Re-shape the held record once you can answer its questions.
-- **Should feel:** Like resuming, not restarting. The valid stored plan is reused, and only the review and routing run again.
+- **Action:** Run the command once you can answer the held questions.
+- **Should feel:** Like resuming, not restarting. A record carrying `needs:decision` and the hold comment is answered, not re-shaped: only the held questions are asked and the kept plan is amended (`answer-a-record-held-for-planning-questions-6059.md`).
 - **Should understand:**
-  - Either signal marks the record held: the `needs:decision` label, or an unresolved `Held-by: specify-planning` comment. A hold-state read that fails counts as held, so the plan is reviewed again rather than reused unchecked.
+  - A hold whose `needs:decision` label was removed by hand still leaves its unresolved `Held-by: specify-planning` comment, so shaping re-reviews the stored plan and asks the held questions again before `ready`. A hold-state read that fails counts as held, so the plan is reviewed again rather than reused unchecked.
   - Once every question is answered, the record loses `needs:decision` and gains `ready`.
-- **Red flags:** A held record stamped `ready` without a fresh review. The stored plan regenerated from scratch while `check` still calls it valid. `Held-by` missing from the hold comment.
+- **Red flags:** A held record re-shaped while it still carries `needs:decision` and its hold comment. A held record shaped to `ready` without a fresh review. The stored plan regenerated from scratch while `check` still calls it valid. `Held-by` missing from the hold comment.
 
 ## Origin
 
