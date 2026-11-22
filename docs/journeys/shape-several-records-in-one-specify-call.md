@@ -74,7 +74,7 @@ files:
 - **URL:** `/claude-tweaks:specify #3997,#1426,#2724` (where `#1426` carries the `digest` label — the materiality-floor container)
 - **Action:** Include the digest container as one batch element.
 - **Should feel:** Step 7's opposite — only the container is turned away; `#3997` and `#2724` shape normally, and the table shows `#1426` as its own `refused — digest container` row.
-- **Should understand:** The case-1 digest-container guard is the one per-element stop in the batch branch: the container resolves fine, so it never joins the fail-all set that an unresolvable, `needs:definition`, or parent element triggers. Its mis-shape residue is still stripped and named. It renders as a refused row, not a skipped one — the table still has no `skipped` outcome — and a batch of only digest containers shapes nothing. Full single-record behavior: `refuse-to-shape-the-digest-container-4142.md`.
+- **Should understand:** The case-1 digest-container guard is the one per-element stop in the batch branch: the container resolves fine, so it never joins the fail-all set that an unresolvable, `needs:definition`, planning-held, or parent element triggers. A planning-held element (`needs:decision` plus a trusted `Held-by: specify-planning` hold) fails the batch with `'{element}' is held for planning question(s) — run /claude-tweaks:specify #{element} on its own to answer them, then re-run the batch without it`. Its mis-shape residue is still stripped and named. It renders as a refused row, not a skipped one — the table still has no `skipped` outcome — and a batch of only digest containers shapes nothing. Full single-record behavior: `refuse-to-shape-the-digest-container-4142.md`.
 - **Red flags:** The whole batch aborted over the container; the container shaped or stamped `ready`; its row missing or reading `skipped`.
 
 ## Origin
@@ -90,6 +90,7 @@ files:
 - Step 4 updated for #4703 (Next Actions Blocker check: a record with an open blocker outside the batch drops out of the bolded `/claude-tweaks:flow`; an all-blocked batch recommends the blocker step instead)
 - Step 7 added for #1071 (parent-record guard: batch fail-all, tier-2 refuse-without-prompt, reported residue strip)
 - Step 8 added for #4142 (digest-container guard: per-element refusal, `refused — digest container` row, reported residue strip)
+- Step 8 updated for #6059 (a planning-held element joins the fail-all set; answer it alone with `/claude-tweaks:specify #N`, `answer-a-record-held-for-planning-questions-6059.md`)
 - Steps 1 and 3 updated for #705 (range-form input, mandatory read-back verification after each write)
 - Steps 1-3 updated for #357 (UI-stack decision point — batch table gains a `Ui-stack: —` column alongside `Design-intent:`, resolved by the same single batch decision)
 - Persona/Entry point updated for #822 (folded the `/tidy` Yours-group-head paste path in from the retired sibling journey `shape-several-records-in-one-paste.md`, whose Steps 1-4 covered the same batch mechanic under a different entry-point framing and no unique behavior — `shaping-mode.md` explicitly documents "no `skipped` outcome" for the batch table, which is what that sibling had gone stale on)

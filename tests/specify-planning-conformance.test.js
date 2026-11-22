@@ -652,7 +652,7 @@ test('AC1.1: no other specify file except planning.md names the planning step', 
     }
   })(dir);
   assert.ok(files.length > 20, `directory walk found ${files.length} files`);
-  const skip = new Set([...Object.keys(SHAPING_FILES), ...Object.keys(DECOMPOSITION_FILES), PLANNING_REL].map((r) => path.join(ROOT, r)));
+  const skip = new Set([...Object.keys(SHAPING_FILES), ...Object.keys(DECOMPOSITION_FILES), PLANNING_REL, 'plugin/skills/specify/planning-answer.md'].map((r) => path.join(ROOT, r)));
   for (const p of files) {
     if (skip.has(p)) continue;
     const text = readText(p);

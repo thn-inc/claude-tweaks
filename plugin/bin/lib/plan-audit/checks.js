@@ -1,7 +1,8 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
 // the warn-only Checks E (#3099) and F (#3602), the gating Check G (#4618, a
 // kept risk flag needs a Proof line), and the warn-only per-task
-// marker check (checkTaskMarkers, #3378) for bin/plan-audit.js (#903).
+// marker check (checkTaskMarkers, #3378), and surfaceDiff (#6059, the read-only
+// --surface-diff verb's before/after comparison) for bin/plan-audit.js (#903).
 // Mechanizes plan-audit.md's prose checks; policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
 'use strict';
@@ -654,6 +655,40 @@ function checkE(specText, planText) {
   };
 }
 
+// ── surfaceDiff (#6059) ────────────────────────────────────────────────────
+// Did an amend change the plan's file list or its AC coverage? `changed` gates whether plan
+// review re-runs. Files compare the sets of `path` values extractFileEntries finds (LF text,
+// normalizeRepoPath on both sides, as Check F lists them); coverage compares each spec
+// clause's checkE status (covered | waived | uncovered) before vs after.
+function surfaceDiff(specText, beforePlanText, afterPlanText) {
+  const paths = (text) => new Set(
+    extractFileEntries(text.replace(/\r\n?/g, '\n')).map((e) => normalizeRepoPath(e.path)),
+  );
+  const before = paths(beforePlanText);
+  const after = paths(afterPlanText);
+  const added = [...after].filter((p) => !before.has(p)).sort();
+  const removed = [...before].filter((p) => !after.has(p)).sort();
+  const statuses = (planText) => {
+    const r = checkE(specText, planText);
+    const m = new Map();
+    for (const c of r.covered) m.set(c.id, 'covered');
+    for (const c of r.waived) m.set(c.id, 'waived');
+    for (const c of r.uncovered) m.set(c.id, 'uncovered');
+    return m;
+  };
+  const was = statuses(beforePlanText);
+  const now = statuses(afterPlanText);
+  const acCoverage = [];
+  for (const [id, prev] of was) {
+    if (now.get(id) !== prev) acCoverage.push({ id, before: prev, after: now.get(id) });
+  }
+  return {
+    changed: added.length > 0 || removed.length > 0 || acCoverage.length > 0,
+    files: { added, removed },
+    acCoverage,
+  };
+}
+
 // ── Check: unknown per-task marker value (#3378) ───────────────────────────
 // Warn-only, like Check E: `ok` reports whether any finding exists, but
 // `--task-markers` (bin/plan-audit.js) never turns this into an exit-code
@@ -779,5 +814,5 @@ function checkG(specText, planText, { extraCategories = [], planPath = null } = 
 
 module.exports = {
   checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, looksPassing, isGovernedMdPath,
-  refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
+  refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers, surfaceDiff,
 };
