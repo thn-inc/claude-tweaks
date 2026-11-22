@@ -81,7 +81,7 @@ test('AC5.1: a record a plan-less lane takes gets no plan and no Plan: line, log
 test('Deliverable 8: a stored plan is reused only when plan-store.js check says valid', () => {
   pinned(sectionOf(planning(), '## Which records are planned'), [
     f('plan-store.js" check --line'),
-    f('`{"valid": true}` (exit 0) keeps that line'),
+    f('`{"valid": true}` (exit 0) keeps that line: skip steps 3-8, remove the checkout, and carry the line into the write'),
     f('Any other verdict or exit re-plans'),
   ], 'reuse');
 });
@@ -511,7 +511,7 @@ test('Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out
     f('one batch table and the chunked questions covering every record\'s asked rows together'),
     f('A hold is per record; the rest of the batch proceeds.'),
     f('run the lane predicate per record, then the reuse check per record (`## Which records are planned`)'),
-    f('a record with a valid stored plan skips the planner fan-out, and a held one joins the reviewer fan-out'),
+    f('a record with a valid stored plan skips the planner fan-out, and a held one has its stored plan fetched (`## Which records are planned`) and joins the reviewer fan-out'),
     f('`SKILL.md`\'s "a loop never a fan-out" still governs the record writes'),
   ], 'batches');
 });
@@ -519,7 +519,7 @@ test('Deliverable 3 + 10: a batch defers writes, fans planners and reviewers out
 test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outcome words', () => {
   pinned(sectionOf(planning(), '## Read-back and outcome'), [
     f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed, or to the kept line when a valid stored plan was reused without a write; a record planned with the no-ref outcome (exit 3 or any other non-zero exit, per step 8) carries no `Plan:` line'),
-    f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, or to the kept line when a valid stored plan was reused without a write, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
+    f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
     f('in place of that file\'s `ready`-present and no-`needs:*` assertions (its scoring-label assertions still apply)'),
     f('`held — needs:decision ({k} planning question(s))`'),
     f('the hold comment is posted before this read-back runs'),
