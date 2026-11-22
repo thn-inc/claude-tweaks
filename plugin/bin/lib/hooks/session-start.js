@@ -33,7 +33,7 @@ function advisoryBanner(header, lines, trailer) {
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
 // write-only and janitorial (release/post-merge/archive/archive-branches/remote-prune/
-// ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
+// ledger-residue/plan-refs/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
 // This corrects the original issue's premise (hooks.json's `async: true`
@@ -271,7 +271,7 @@ async function run(ctx) {
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
     // write-only janitorial checks (release/post-merge/archive/archive-branches/
-    // remote-prune/ledger-residue/reap) run in a detached background process instead (see
+    // remote-prune/ledger-residue/plan-refs/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
     // D8, corrected).
@@ -420,6 +420,8 @@ async function run(ctx) {
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);
+        if (s.planRefsDeleted) lines.push(`${s.planRefsDeleted} closed record plan ref(s) deleted on origin`);
+        if (s.planRefsDeleteFailed) lines.push(`${s.planRefsDeleteFailed} plan ref deletion(s) failed on origin — tell the user once; the command is theirs to run, never run it yourself: node "${pluginRootEnv || '${CLAUDE_PLUGIN_ROOT}'}/bin/hooks.js" reconcile --checks plan-refs`);
         if (s.ledgerResiduePrOpened) lines.push(`${s.ledgerResiduePrOpened} residue-ledger removal PR(s) opened on origin`);
         // Residue ledgers left on the integration branch and why — pre-filtered
         // by the background CLI through ledger-residue.js's QUIET_SKIP_REASONS.
