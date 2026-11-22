@@ -7,6 +7,7 @@ files:
   - plugin/bin/phase-timing.js
   - plugin/bin/lib/timing/run-timing.js
   - plugin/bin/lib/timing/at-close.js
+  - plugin/bin/lib/timing/transcript.js
   - plugin/bin/timing-at-close.js
   - plugin/bin/hooks.js
   - plugin/bin/lib/reconcile/archive-merged.js
@@ -59,8 +60,8 @@ files:
 - **URL:** `{run-dir}/timing.json` (or `pipelines/archive/{run-id}/timing.json`) after `hooks.js close-run`, `hooks.js teardown-run`, or the reconciler's archive of a run that was not closed yet
 - **Action:** Nothing to type. Every run that closes gets its `timing.json` in code, whether or not a summary step ever ran Step 3's command (#5555).
 - **Should feel:** A run that stopped early, closed without a wrap-up, or was dispatched still has its per-phase table to read. A file that already has token totals is left byte-identical.
-- **Should understand:** `close-run` and `teardown-run` write the whole file before they return, token totals included, within a 60-second bound. The archive writes the phase rows first, then a detached `timing-at-close.js` fills in the token totals. Tokens come only from the run's own `{sessionId}.jsonl` under its own worktree slug (`worktreeAtClose` once the run is closed), and are clipped to the run's lifetime, so two runs of one session never share totals. When the transcript can't be established, the file keeps its phase rows with no `totals.tokens`. A failure never stops the close; it leaves one `SKIP` line in `decisions.md`.
-- **Red flags:** a closed run with no `timing.json` and no timing `SKIP` line. A `SKIP` reading `no {sessionId}.jsonl under the slug of {worktree}` on most dispatched runs: the session wrote its transcript under the main checkout's slug, and own-slug lookup won't find it (ledgered for a human decision on #5555).
+- **Should understand:** `close-run` and `teardown-run` write the whole file before they return, token totals included, within a 60-second bound. The archive writes the phase rows first, then a detached `timing-at-close.js` fills in the token totals. Tokens come from the run's own `{sessionId}.jsonl` under its own worktree slug (`worktreeAtClose` once the run is closed), or, for a non-dispatched run with none there, under the slug of the checkout that holds its run dir (where a worktree-always `/flow` session starts before it enters its worktree), and, for a dispatched run, from the depth-1 Task-call transcripts of its dispatching and resuming sessions whose prompt names exactly that run (its `dispatches` view then keeps only those calls' descendants); they are clipped to the run's lifetime and attributed by run id, so two runs of one session never share totals. When the transcript can't be established, the file keeps its phase rows with no `totals.tokens`. A failure never stops the close; it leaves one `SKIP` line in `decisions.md`.
+- **Red flags:** a closed run with no `timing.json` and no timing `SKIP` line. A `SKIP` reading `no {sessionId}.jsonl under the slug of {worktree} or of its run root {checkout}` on a non-dispatched run: the session's transcript is under neither slug (for example under another worktree's slug, which is never read). A dispatched run's `SKIP` also says no Task-call transcript of its session names the run (#5647).
 
 ### 5. Trust the contract-violation count again
 - **URL:** `events.jsonl`, `type: "contract-violation"`
