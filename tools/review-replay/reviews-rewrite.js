@@ -11,11 +11,18 @@ const PATH_END = '[^\\s"\'`)]';
 const PIPELINES = '.claude-tweaks/pipelines/';
 // A worktree name never ends in '.', so a sentence's full stop stays outside the match.
 const WORKTREE_NAME = '[A-Za-z0-9._+-]*[A-Za-z0-9_+-]';
-// A path ends at whitespace, a quote, a backtick, `)` or end of text, with sentence
-// punctuation (`.,;:`) allowed in between, as runInputsOf already strips it.
-const PATH_END_LOOKAHEAD = '(?=[.,;:]*(?:[\\s"\'`)]|$))';
+// A mention of a root is a whole path unless a path-continuation character follows: a name
+// character, or a dot that starts one. Any other character (space, quote, `:` or `,` in a
+// path list, sentence punctuation) ends it, so no separator can hide a leak.
+const PATH_END_LOOKAHEAD = '(?![A-Za-z0-9_+-]|\\.[A-Za-z0-9_+-])';
 // Forward slashes, no trailing slash: `M/` would build `M//` and blind every scan.
 const normRoot = (p) => toPosix(p).replace(/\/+$/, '');
+// Trailing `.,;:` removed by a backward scan: a `[.,;:]+$` regex is quadratic on a long dot run.
+function trimPunct(s) {
+  let end = s.length;
+  while (end > 0 && '.,;:'.includes(s[end - 1])) end--;
+  return s.slice(0, end);
+}
 // A root that normalises to '' (the filesystem root) would match everywhere.
 function requireRoot(mainRoot) {
   const root = normRoot(mainRoot);
@@ -63,7 +70,7 @@ function runInputsOf(text, { mainRoot, runName, copy = false }) {
   const unknown = [];
   const seen = new Set();
   for (const m of String(text).matchAll(re)) {
-    const stripped = m[2].replace(/[.,;:]+$/, '');
+    const stripped = trimPunct(m[2]);
     const match = m[0].slice(0, m[0].length - (m[2].length - stripped.length));
     const prefixed = !match.startsWith(PIPELINES);
     if (m[1] !== runName) {
@@ -128,7 +135,10 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
     `(?:${escapeRe(root)}|${escapeRe(PIPELINES + runName)})(?:/${PATH_END}*|${PATH_END_LOOKAHEAD})`, 'g');
   const found = [];
   for (const m of t.matchAll(re)) {
-    if (skip.some(([a, b]) => m.index >= a && m.index < b)) continue;
+    // Exempt only a mention that lies wholly inside an outDir span (sentence punctuation
+    // aside), so `{outDir}:/etc` or a list joining another path is still flagged.
+    const end = m.index + trimPunct(m[0]).length;
+    if (skip.some(([a, b]) => m.index >= a && end <= b)) continue;
     found.push(m[0]);
   }
   return found;

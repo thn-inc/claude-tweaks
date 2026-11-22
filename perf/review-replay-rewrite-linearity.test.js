@@ -25,6 +25,9 @@ test('reviews-rewrite scans stay linear on adversarial input', () => {
   rw.unrewrittenPaths(`${mainRoot}/`.repeat(20000), { mainRoot, runName: 'R', outDir: '/out' });
   rw.unrewrittenPaths(`${mainRoot}${'.'.repeat(200000)}x`, { mainRoot, runName: 'R', outDir: '/out' });
   rw.rewriteText(`${mainRoot}${'.'.repeat(200000)}x`, { mainRoot, runName: 'R', repoPath: '/r', replacements: {}, shaMap: {} });
+  rw.unrewrittenPaths(`${mainRoot}${'a'.repeat(200000)}`, { mainRoot, runName: 'R', outDir: '/out' });
+  rw.unrewrittenPaths(`${mainRoot}/${'.'.repeat(200000)}x`, { mainRoot, runName: 'R', outDir: `${mainRoot}/out` });
+  rw.runInputsOf(`${mainRoot}/.claude-tweaks/pipelines/R/work/${'.'.repeat(200000)}x`, { mainRoot, runName: 'R' });
   rw.stripEffortLines(`[Effort: high — x]${' '.repeat(200000)}y`);
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 1000, `scans took ${elapsed.toFixed(0)}ms — a regex here must not backtrack`);

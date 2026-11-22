@@ -179,6 +179,25 @@ test('a dotted continuation is not a bare root or run dir', () => {
   assert.deepStrictEqual(rw.unrewrittenPaths('.claude-tweaks/pipelines/R.x/y', o), []);
 });
 
+test('a path-list separator ends a root mention', () => {
+  const o = { mainRoot, runName: 'R', outDir: '/out' };
+  const list = 'PATH=' + main + ':/b and ' + main + ',' + main + '2 x ' + main + '."';
+  assert.strictEqual(rw.rewriteText(list, full), 'PATH=/out/repos/k/repo:/b and /out/repos/k/repo,' + main + '2 x /out/repos/k/repo."');
+  assert.deepStrictEqual(rw.unrewrittenPaths('PATH=' + main + ':/b', o), [main]);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + ',' + main + '2', o), [main]);
+  assert.deepStrictEqual(rw.unrewrittenPaths('x .claude-tweaks/pipelines/R:/b', o), ['.claude-tweaks/pipelines/R']);
+  assert.deepStrictEqual(rw.unrewrittenPaths('.claude-tweaks/pipelines/RR. .claude-tweaks/pipelines/R.x', o), []);
+});
+
+test('the outDir exemption covers only a mention wholly inside outDir', () => {
+  const o = { mainRoot, runName: 'R', outDir: main + '/out' };
+  assert.deepStrictEqual(rw.unrewrittenPaths('see ' + main + '/out. ok', o), []);
+  assert.deepStrictEqual(rw.unrewrittenPaths('see ' + main + '/out/a, ' + main + '/out/b;', o), []);
+  assert.strictEqual(rw.unrewrittenPaths(main + '/out:' + main + '/src', o).length, 1);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out:/etc', o), [main + '/out:/etc']);
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/outside/x', o), [main + '/outside/x']);
+});
+
 test('an empty or filesystem-root mainRoot is rejected', () => {
   for (const bad of ['/', '', '//']) {
     assert.throws(() => rw.rewriteText('a b', { ...full, mainRoot: bad }), /mainRoot/);
