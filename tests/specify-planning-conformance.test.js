@@ -513,7 +513,7 @@ test('AC2.1 + AC5.1: read-back asserts the Plan: line or the hold, and the outco
   pinned(sectionOf(planning(), '## Read-back and outcome'), [
     f('exactly one `Plan:` line, equal to the `line` `plan-store.js write` printed'),
     f('The re-fetched body carries `## Overview` and `## Planning Decisions`, and exactly one `Plan:` line equal to the `line` `plan-store.js write` printed, except that it carries no `Plan:` line when `plan-store.js` took the no-ref outcome (exit 3 or any other non-zero exit, per step 8)'),
-    f('in place of that file\'s `ready` and no-`needs:*` assertions'),
+    f('in place of that file\'s `ready`-present and no-`needs:*` assertions (its scoring-label assertions still apply)'),
     f('`held — needs:decision ({k} planning question(s))`'),
     f('the hold comment is posted before this read-back runs'),
     f('`gh issue view {n} --json labels,body,comments`'),
@@ -555,7 +555,7 @@ test('Ruling A + B: Routing keeps the plan-review answered forms, limits the sub
 // shaping files sits inside one marker block whose instruction is the gate; nothing outside the
 // blocks, and nothing in any other specify file but planning.md, names the planning step.
 const SHAPING_FILES = {
-  'plugin/skills/specify/shaping-mode.md': ['Only when it prints `on` under `work-backend: github-issues`', 'Any other output, or a failed call, skips every `plan-at-specify` block and shaping runs as written.'],
+  'plugin/skills/specify/shaping-mode.md': ['Under `work-backend: github-issues` only, resolve `plan-at-specify`', 'Any other backend, any other output, or a failed call skips every `plan-at-specify` block and shaping runs as written.'],
   'plugin/skills/specify/shaping-mode-stamping.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
   'plugin/skills/specify/shaping-mode-readback.md': ['When `shaping-mode.md`\'s Planning at specify paragraph read `planning.md`', 'Otherwise skip this paragraph.'],
 };
@@ -646,20 +646,32 @@ test('Deliverable 3: a planned record\'s check and write read its own body file,
 
 test('Deliverable 9: the shaping-mode block resolves the key once, read-only of --run, and relays the conflict warning', () => {
   pinned(blockOf('plugin/skills/specify/shaping-mode.md'), [
-    f('Resolve `plan-at-specify` once per invocation, before the first record'),
+    f('Under `work-backend: github-issues` only, resolve `plan-at-specify` once per invocation, before the first record'),
+    f('Only when it prints `on`, read `planning.md`'),
     f('resolve-policy.js" --values plan-at-specify'),
     f('Relay a stderr warning the call prints'),
   ], 'shaping-mode block');
 });
 
-test('Carry A: planning reads the hold state from the fetched record, before the needs:* resolve', () => {
+test('Carry A: planning captures the hold state with its own call before the needs:* resolve', () => {
   pinned(sectionOf(planning(), '## Which records are planned'), [
-    f('reads both from the record as fetched, before `shaping-mode-stamping.md`\'s `needs:*` bullet and live-comment resolution run'),
+    f('**Capture the hold state per record, before the `needs:*` bullet runs.**'),
+    f('for each record, before that bullet runs, make one call: `gh issue view {n} --json labels,comments`'),
+    f('whether the record carries `needs:decision`, and whether the newest unresolved decision comment from a trusted author (selected by the same trusted-author and unresolved rule as that bullet\'s queries) has a body carrying `Held-by: specify-planning`'),
+    f('The held re-review above uses these captured facts, never a re-fetch after the resolve.'),
+    f('A failed capture call counts as not held, so the record re-plans normally rather than reusing a plan silently.'),
+    f('When the record\'s captured hold state (below) says it carries `needs:decision`'),
   ], 'held read order');
 });
 
 test('Carry B: a bare-drain hold also asserts shaped:headless at read-back', () => {
   pinned(sectionOf(planning(), '## Read-back and outcome'), [
-    f('hold entered via bare drain also carries `shaped:headless`'),
+    f('hold entered via bare drain also carries `shaped:headless`, which `## Hold` stamps and that file\'s first bullet still asserts'),
   ], 'held headless');
+});
+
+test('Fix 2: the readback block replaces only the ready-present and no-needs:* assertions for a held record', () => {
+  pinned(blockOf('plugin/skills/specify/shaping-mode-readback.md'), [
+    f('for a held record its assertions replace only the `ready`-present assertion in the first bullet below and the no-`needs:*` bullet (the first bullet\'s scoring-label and `shaped:headless` assertions still apply)'),
+  ], 'readback block');
 });

@@ -67,7 +67,7 @@ Immediately after each record's write lands — the `gh issue edit`/`writeRecord
 - **`work-backend: local-files`:** `readRecord(path)` (`bin/lib/issues/local-store.js`), re-reading from disk.
 
 <!-- plan-at-specify:start -->
-When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, apply its `## Read-back and outcome` to this record too: for a held record its assertions replace the `ready` and no-`needs:*` bullets below, and its outcome words join Actions Performed's and Next Actions'. Otherwise skip this paragraph.
+When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, apply its `## Read-back and outcome` to this record too: for a held record its assertions replace only the `ready`-present assertion in the first bullet below and the no-`needs:*` bullet (the first bullet's scoring-label and `shaped:headless` assertions still apply), and its outcome words join Actions Performed's and Next Actions'. Otherwise skip this paragraph.
 <!-- plan-at-specify:end -->
 
 Assert, against the re-fetched result:
