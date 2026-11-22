@@ -12,3 +12,5 @@
 | 8 | build | SDD ruling — final-review declined item: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 9 | build | SDD ruling — final-review declined items accepted as the code stands: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 10 | build | SDD ruling — the 3 residuals get /build's one targeted fix dispatch plus one scoped re-review rather than deferral: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 11 | build/skill | policy-key-addition diverges: its key-count site names only the POLICY_KEYS.length pin, but tests/policy-schema.test.js:48 also pins the unique-key count (new Set(...).size), which #5996 had to bump too | observation | Skill observation for wrap-up's Skills curation row |
+| 12 | build/skill | regex-scan-linearity extends: a brace-list matcher with two overlapping negated classes around a literal separator (\{[^}]*,[^}]*\}) is polynomial on an unclosed token; #5996 fixed it by excluding the separator from the first class (\{[^{},]*,[^{}]*\}) — a shape the skill does not list | observation | Skill observation for wrap-up's Skills curation row |
