@@ -14,7 +14,7 @@ const { parseArm, positiveInt, isEmptyOrAbsent, writeJson } = require('./extract
 const { parseFindings, lastAssistantText, indexTranscripts } = require('./counterfactual.js');
 const { stripTree, transcriptEffort, parseLines, messageText } = require('./score.js');
 const {
-  rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteText, unrewrittenPaths,
+  scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteText, unrewrittenPaths,
 } = require('./reviews-rewrite.js');
 const { parseLensReport, lensIdOf } = require('../pipeline-cost-report/reviews.js');
 const { bump } = require('./util.js');
@@ -148,9 +148,10 @@ function promptOf(transcriptText) {
 }
 
 // The archived reply's rows with every worktree path the prompt names, then the main checkout, stripped from the
-// paths they cite, so a row cited by absolute path is stored repo-relative.
+// paths they cite, so a row cited by absolute path is stored repo-relative. Read through scanView, as the worktree
+// paths are, so a win32 citation spelled with `\` strips too and its row path is `/`-separated.
 function archivedRows(reply, prompt, mainRoot) {
-  const stripped = [...worktreePathsOf(prompt, { mainRoot }), mainRoot].reduce((t, root) => stripTree(t, root), reply);
+  const stripped = [...worktreePathsOf(prompt, { mainRoot }), mainRoot].reduce((t, root) => stripTree(t, root), scanView(reply));
   const parsed = parseFindings(stripped);
   return parsed ? parsed.rows.map(({ sev, path: p, line }) => ({ sev, path: p, line })) : [];
 }

@@ -32,6 +32,10 @@ const ROOT_MARKERS = ['/.claude/worktrees/', '/.claude-tweaks/pipelines/'];
 const HARD_SEP = '\n\r"\'`(),;|=<>:';
 const isSpace = (ch) => ch === ' ' || ch === '\t' || ch === '\f' || ch === '\v';
 const SHA_TOKEN = '(?<![0-9A-Za-z])[0-9a-f]{7,40}(?![0-9A-Za-z])';
+// On win32 a path may be spelled with `\`, `/` or both (`D:\a\repo/.claude/worktrees/w`). Every scan runs on this view
+// of the text, each `\` turned into `/`: it has the original's length, so a match's offsets index the original too, and
+// rewriteText stitches its output from the original, so a backslash outside a rewritten path survives.
+const scanView = (text, platform = process.platform) => (platform === 'win32' ? String(text).replace(/\\/g, '/') : String(text));
 // Forward slashes, no trailing slash: `M/` would build `M//` and blind every scan.
 const normRoot = (p) => toPosix(p).replace(/\/+$/, '');
 // Trailing `.,;:` removed by a backward scan: a `[.,;:]+$` regex is quadratic on a long dot run.
@@ -75,7 +79,7 @@ function classify(rel) {
 
 // Optional prefix: mainRoot, or a worktree under it. Group 1 = prefix presence
 // is read from the matched text, group 2 = seg, group 3 = rest.
-function runInputsOf(text, { mainRoot, runName, copy = false }) {
+function runInputsOf(text, { mainRoot, runName, copy = false, platform }) {
   const root = escapeRe(normRoot(mainRoot));
   const re = new RegExp(
     `(?:${root}/(?:\\.claude/worktrees/${WORKTREE_NAME}/)?)?\\.claude-tweaks/pipelines/([^/\\s"'\`)]+)/(${PATH_END}*)`,
@@ -84,7 +88,7 @@ function runInputsOf(text, { mainRoot, runName, copy = false }) {
   const inputs = [];
   const unknown = [];
   const seen = new Set();
-  for (const m of String(text).matchAll(re)) {
+  for (const m of scanView(text, platform).matchAll(re)) {
     const stripped = trimPunct(m[2]);
     const match = m[0].slice(0, m[0].length - (m[2].length - stripped.length));
     const prefixed = !match.startsWith(PIPELINES);
@@ -109,9 +113,9 @@ function runInputsOf(text, { mainRoot, runName, copy = false }) {
 }
 
 // The distinct worktree paths `{mainRoot}/.claude/worktrees/{name}` the text names, in text order.
-function worktreePathsOf(text, { mainRoot }) {
+function worktreePathsOf(text, { mainRoot, platform }) {
   const re = new RegExp(`${escapeRe(requireRoot(mainRoot))}/\\.claude/worktrees/${WORKTREE_NAME}`, 'g');
-  return [...new Set([...String(text).matchAll(re)].map((m) => m[0]))];
+  return [...new Set([...scanView(text, platform).matchAll(re)].map((m) => m[0]))];
 }
 
 function stripEffortLines(text) {
@@ -134,10 +138,11 @@ function rewriteShas(text, map) {
   return String(text).replace(new RegExp(SHA_TOKEN, 'g'), (tok) => mapSha(tok));
 }
 
-function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, shaMap = {} }) {
+function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, shaMap = {}, platform }) {
   const t = String(text);
+  const view = scanView(t, platform);
   const root = escapeRe(requireRoot(mainRoot));
-  const { inputs, unknown } = runInputsOf(t, { mainRoot, runName });
+  const { inputs, unknown } = runInputsOf(view, { mainRoot, runName });
   // Any run-directory path the scan finds may be replaced, an unknown one included; the literal alternative runs
   // first, so a replaced worktree-prefixed path never loses its prefix to the worktree rewrite.
   // Longest match first so a path never loses its tail to a shorter one.
@@ -155,11 +160,15 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
     `${root}${BARE_END}`,
     mapSha ? `(${SHA_TOKEN})` : never,
   ].join('|'), 'g');
-  return t.replace(re, (m, lit, sha) => {
-    if (lit !== undefined) return String(replacements[lit]);
-    if (sha !== undefined) return mapSha(sha);
-    return repoPath;
-  });
+  let out = '';
+  let last = 0;
+  for (const m of view.matchAll(re)) {
+    const [, lit, sha] = m;
+    const sub = lit !== undefined ? String(replacements[lit]) : sha !== undefined ? mapSha(sha) : repoPath;
+    out += t.slice(last, m.index) + sub;
+    last = m.index + m[0].length;
+  }
+  return out + t.slice(last);
 }
 
 // Longer than any real path (Linux PATH_MAX), so a prefix this long cannot exist on disk.
@@ -205,8 +214,8 @@ function foreignRootPaths(t, root, skip, exists) {
 
 // `exists(prefix)`, optional: whether a foreign checkout prefix exists on disk. Without it every
 // foreign worktree or run-directory path is flagged.
-function unrewrittenPaths(text, { mainRoot, runName, outDir, exists }) {
-  const t = String(text);
+function unrewrittenPaths(text, { mainRoot, runName, outDir, exists, platform }) {
+  const t = scanView(text, platform);
   const root = requireRoot(mainRoot);
   const out = outDir ? normRoot(outDir) : '';
   // An outDir equal to or containing mainRoot would hide every leak, so it fails closed. A span
@@ -239,4 +248,4 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir, exists }) {
   return [...found, ...foreignRootPaths(t, root, skip, exists)];
 }
 
-module.exports = { rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };
+module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };

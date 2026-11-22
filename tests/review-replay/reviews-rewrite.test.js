@@ -358,3 +358,35 @@ test('an own-run mention inside the output directory is still flagged', () => {
   assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/.claude-tweaks/pipelines/RR/x', o), []);
   assert.deepStrictEqual(rw.unrewrittenPaths(main + '/out/repos/k/repo/src/a.js', o), []);
 });
+
+// A win32 archived prompt spells the checkout natively, often joined to a `/` tail (`D:\a\repo/.claude/…`).
+const winRoot = 'D:\\a\\main checkout\\repo';
+const winText = [
+  'git -C "' + winRoot + '/.claude/worktrees/flow-spec-9" status',
+  'WORKTREE: ' + winRoot + '\\.claude\\worktrees\\flow-spec-9',
+  'Bundle: ' + winRoot + '\\.claude-tweaks\\pipelines\\R\\review-ctx\\context.md',
+  "code: split('\\n')",
+].join('\n');
+const winBundle = 'D:/a/main checkout/repo/.claude-tweaks/pipelines/R/review-ctx/context.md';
+
+test('win32: a native or mixed-separator checkout path is read, rewritten and stitched from the original', () => {
+  const w = { mainRoot: winRoot, runName: 'R', platform: 'win32' };
+  assert.deepStrictEqual(rw.runInputsOf(winText, w).inputs, [{ match: winBundle, member: null, rel: 'review-ctx/context.md', kind: 'bundle' }]);
+  assert.deepStrictEqual(rw.worktreePathsOf(winText, w), ['D:/a/main checkout/repo/.claude/worktrees/flow-spec-9']);
+  const out = rw.rewriteText(winText, { ...w, repoPath: '/r/repo', replacements: { [winBundle]: '/out/ctx.md' } });
+  assert.strictEqual(out, 'git -C "/r/repo" status\nWORKTREE: /r/repo\nBundle: /out/ctx.md\ncode: split(\'\\n\')');
+  assert.deepStrictEqual(rw.unrewrittenPaths(out, { ...w, outDir: '/out' }), []);
+  // Off win32 a backslash is a name character, so the same text names no input and nothing is rewritten.
+  const l = { ...w, platform: 'linux' };
+  assert.deepStrictEqual(rw.runInputsOf(winText, l).inputs, []);
+  assert.strictEqual(rw.rewriteText(winText, { ...l, repoPath: '/r/repo' }), winText);
+});
+
+test('win32: the leak barrier flags a native main-checkout path and a native foreign worktree path', () => {
+  const text = 'Notes: ' + winRoot + '\\notes\\review.md\nOther: E:\\x\\repo\\.claude\\worktrees\\w\\src';
+  assert.deepStrictEqual(rw.unrewrittenPaths(text, { mainRoot: winRoot, runName: 'R', platform: 'win32' }), [
+    'D:/a/main checkout/repo/notes/review.md',
+    'E:/x/repo/.claude/worktrees/w/src',
+  ]);
+  assert.deepStrictEqual(rw.unrewrittenPaths(text, { mainRoot: winRoot, runName: 'R', platform: 'linux' }), []);
+});
