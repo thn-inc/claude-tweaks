@@ -45,6 +45,12 @@ test('reviews-rewrite scans stay linear on adversarial input', () => {
   rw.unrewrittenPaths(`/x ${'a/.claude-tweaks/pipelines/ '.repeat(8000)}`, other);
   rw.unrewrittenPaths(`/out/${'/.claude/worktrees/'.repeat(10000)}`, other);
   rw.unrewrittenPaths('/'.repeat(200000), other);
+  // With an exists predicate the scan slices each marker's prefix: capped at MAX_PATH, so a long
+  // space-joined stretch of markers stays linear.
+  const asked = new Map();
+  const exists = (p) => (asked.has(p) ? asked.get(p) : (asked.set(p, true), true));
+  rw.unrewrittenPaths(`/x ${'a/.claude-tweaks/pipelines/ '.repeat(8000)}`, { ...other, exists });
+  rw.unrewrittenPaths(`/x/.claude/worktrees/w `.repeat(10000), { ...other, exists });
   const elapsed = performance.now() - start;
   assert.ok(elapsed < 1000, `scans took ${elapsed.toFixed(0)}ms — a regex here must not backtrack`);
 });

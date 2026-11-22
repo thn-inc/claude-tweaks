@@ -52,7 +52,8 @@ function lensPrompt({ mainRoot, worktree, run, lens, scratch, B, H, extra = [], 
 //              recorded effort (e-high), a spec-2 member whose own timing.json holds one slot (e-m2), and a spec-10
 //              member with no decisions.md of its own (e-m10)
 //   twin:      with edges, e-m10 reviews lens 3g side A as e-m2 does, in its own unit
-function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false, twin = false } = {}) {
+//   lead:      an excluded first dispatch before l3a-a (l3a-a0, report-unparsed) and before l3b-a (l3b-a0, no-transcript)
+function buildReviewsFixture(root, { decisions = false, gone = false, repeat = false, edges = false, twin = false, lead = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -70,6 +71,8 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   git('add', '-A');
   git('commit', '-q', '-m', 'H');
   const H = git('rev-parse', 'HEAD');
+  // The worktree the prompts name exists on disk, as an archived run's worktrees directory does.
+  fs.mkdirSync(worktree, { recursive: true });
 
   // The run directory: written after both commits, so neither commit holds it.
   const runDir = path.join(runsRoot, RUN);
@@ -106,6 +109,10 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   };
   const table = (...rows) => ['| Severity | Path:Line | Finding | Evidence |', '|---|---|---|---|', ...rows].join('\n');
 
+  if (lead) {
+    dispatch(items, { agentId: 'l3a-a0', description: 'Review lens 3a correctness A', lens: '3a', scratch: '3a-a0', reply: 'I looked around.' });
+    dispatch(items, { agentId: 'l3b-a0', description: 'Review lens 3b security A', lens: '3b', scratch: '3b-a0', reply: '', transcript: false });
+  }
   dispatch(items, { agentId: 'l3a-a', description: 'Review lens 3a correctness A', lens: '3a', scratch: '3a-a', reply: table('| high | src/a.js:10 | archived-row-alpha | e |') });
   dispatch(items, { agentId: 'l3a-b', description: 'Review lens 3a correctness B', lens: '3a', scratch: '3a-b', reply: 'No findings.' });
   dispatch(items, { agentId: 'l3b-a', description: 'Review lens 3b security A', lens: '3b', scratch: '3b-a', reply: table(`| medium | ${worktree}/src/b.js:4 | archived-row-beta | e |`) });

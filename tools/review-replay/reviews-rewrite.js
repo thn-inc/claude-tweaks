@@ -164,11 +164,16 @@ function rewriteText(text, { mainRoot, runName, repoPath, replacements = {}, sha
   });
 }
 
+// Longer than any real path (Linux PATH_MAX), so a prefix this long cannot exist on disk.
+const MAX_PATH = 4096;
+
 // Every absolute path (starting `/`, `~/` or `X:/`) naming a worktree or a run directory that does
 // not start at `root` and does not lie in a `skip` span, so the barrier holds when mainRoot is not the
-// archived checkout's (a moved --runs). One forward walk: the absolute path a marker belongs to is the
-// last one started since a separator.
-function foreignRootPaths(t, root, skip) {
+// archived checkout's (a moved --runs). With `exists`, only a path whose prefix up to and including
+// the marker directory (`…/.claude/worktrees`) exists is flagged: a dead path in test-fixture or
+// comment text names nothing a reviewer could read. One forward walk: the absolute path a marker
+// belongs to is the last one started since a separator.
+function foreignRootPaths(t, root, skip, exists) {
   const found = [];
   let absAt = -1; // where the current absolute path starts, -1 for none since the last separator
   let j = 0;
@@ -186,18 +191,23 @@ function foreignRootPaths(t, root, skip) {
     }
     const driveSlash = absAt === i - 2 && t[i - 1] === ':';
     if (atStart && !driveSlash && (ch === '/' || (ch === '~' && t[i + 1] === '/'))) absAt = i;
-    if (ch !== '/' || absAt < 0 || !ROOT_MARKERS.some((mk) => t.startsWith(mk, i))) continue;
+    const marker = ch === '/' && absAt >= 0 ? ROOT_MARKERS.find((mk) => t.startsWith(mk, i)) : undefined;
+    if (marker === undefined) continue;
     let end = i + 1;
     while (end < t.length && !isSpace(t[end]) && !HARD_SEP.includes(t[end])) end++;
     while (j < skip.length && skip[j][1] <= i) j++;
     const exempt = t.startsWith(root + '/', absAt) || (j < skip.length && skip[j][0] <= i);
-    if (!exempt) found.push(trimPunct(t.slice(absAt, end)));
+    const prefixEnd = i + marker.length - 1;
+    const live = () => !exists || (prefixEnd - absAt <= MAX_PATH && exists(t.slice(absAt, prefixEnd)));
+    if (!exempt && live()) found.push(trimPunct(t.slice(absAt, end)));
     i = end - 1; // nothing up to `end` is a separator or a path start
   }
   return found;
 }
 
-function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
+// `exists(prefix)`, optional: whether a foreign checkout prefix exists on disk. Without it every
+// foreign worktree or run-directory path is flagged.
+function unrewrittenPaths(text, { mainRoot, runName, outDir, exists }) {
   const t = String(text);
   const root = requireRoot(mainRoot);
   const out = outDir ? normRoot(outDir) : '';
@@ -228,7 +238,7 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir }) {
     }
     found.push(m[0]);
   }
-  return [...found, ...foreignRootPaths(t, root, skip)];
+  return [...found, ...foreignRootPaths(t, root, skip, exists)];
 }
 
 module.exports = { rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };

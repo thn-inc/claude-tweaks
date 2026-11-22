@@ -7,6 +7,7 @@
 // the tier and effort they were archived at. No archived reply text or decisions.md verdict line reaches a prompt, a
 // repository or a copy; archived-reports.json keeps only each row's severity, path and line.
 
+const os = require('os');
 const path = require('path');
 const { readRun, selectRuns, parseDecisions, LENS_ID, LENS_RE, SIDE_RE } = require('./archive.js');
 const { parseArm, positiveInt, isEmptyOrAbsent, writeJson } = require('./extract.js');
@@ -70,6 +71,25 @@ function parseReviewsOptions(opts, profiles, efforts) {
   return { role: ROLES[opts.role], arms, requested };
 }
 
+// The barrier's `exists` predicate: whether a checkout prefix a text names (`/…/.claude/worktrees`, `~/…`) exists on
+// this machine, memoised per prefix since every slot of a run carries the same paths.
+function existsOnDisk(fs) {
+  const seen = new Map();
+  return (prefix) => {
+    if (!seen.has(prefix)) {
+      const p = prefix.startsWith('~/') ? path.join(os.homedir(), prefix.slice(2)) : prefix;
+      let found = true;
+      try {
+        fs.statSync(p);
+      } catch {
+        found = false;
+      }
+      seen.set(prefix, found);
+    }
+    return seen.get(prefix);
+  };
+}
+
 function readJsonOrNull(fs, file) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -78,7 +98,8 @@ function readJsonOrNull(fs, file) {
   }
 }
 
-// The run's dispatches: its own timing.json items, then each spec-* member's, deduplicated by agentId in file order.
+// The run's dispatches as { item, member }: its own timing.json items (member null), then each spec-* member's,
+// deduplicated by agentId in file order.
 function dispatchesOf(dir, fs) {
   let members = [];
   try {
@@ -90,8 +111,8 @@ function dispatchesOf(dir, fs) {
   }
   const seen = new Set();
   const out = [];
-  for (const file of [path.join(dir, 'timing.json'), ...members.map((m) => path.join(dir, m, 'timing.json'))]) {
-    const timing = readJsonOrNull(fs, file);
+  for (const member of [null, ...members]) {
+    const timing = readJsonOrNull(fs, path.join(dir, member || '', 'timing.json'));
     const items = timing && timing.dispatches && Array.isArray(timing.dispatches.items) ? timing.dispatches.items : [];
     for (const item of items) {
       if (item === null || typeof item !== 'object') continue;
@@ -99,7 +120,7 @@ function dispatchesOf(dir, fs) {
         if (seen.has(item.agentId)) continue;
         seen.add(item.agentId);
       }
-      out.push(item);
+      out.push({ item, member });
     }
   }
   return out;
@@ -194,13 +215,16 @@ function renderSlot(s, { mainRoot, out, repoDir, shaMap, arms }) {
 }
 
 // One lens dispatch of a run -> { reason } (the first check it fails) or { slot }. `rows` is set once its archived
-// reply parses (check 4), whatever happens to the dispatch after.
-function examineDispatch(r, item, c, deps) {
+// reply parses (check 4), whatever happens to the dispatch after. `unitKey`, set with `slot`, is the unit the
+// dispatch reviewed: the one its prompt's run-directory paths name, else the spec-{N} member (`member`) whose
+// timing.json listed it, else the run.
+function examineDispatch(r, item, c, deps, member) {
   const fs = deps.fs;
   const slot = c.role.slotOf(item);
   if (!slot) return { reason: 'unlabelled-dispatch' };
+  let unitKey = member ? `${r.run}/${member}` : r.run;
   const tier = item.tier;
-  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { slot, reason: 'no-archived-tier' };
+  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { slot, unitKey, reason: 'no-archived-tier' };
   const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
   let transcript = null;
   try {
@@ -209,36 +233,38 @@ function examineDispatch(r, item, c, deps) {
     transcript = null;
   }
   const prompt = transcript === null ? null : promptOf(transcript);
-  if (prompt === null) return { slot, reason: 'no-transcript' };
+  if (prompt === null) return { slot, unitKey, reason: 'no-transcript' };
+  const { inputs, unknown } = runInputsOf(prompt, { mainRoot: c.mainRoot, runName: r.run });
+  unitKey = unitOf(r, inputs).key;
   const reply = lastAssistantText(file, fs);
   const counts = reply === null ? null : parseLensReport(reply);
-  if (counts === null) return { slot, reason: 'report-unparsed' };
+  if (counts === null) return { slot, unitKey, reason: 'report-unparsed' };
   const rows = archivedRows(reply, prompt, c.mainRoot);
 
   const range = rangeOf(prompt);
   const sides = [range.base || r.base, range.head || r.head];
-  if (sides.some((s) => !s)) return { slot, rows, reason: 'no-sha-range' };
+  if (sides.some((s) => !s)) return { slot, unitKey, rows, reason: 'no-sha-range' };
   const resolved = [];
   for (const sha of sides) {
     try {
       resolved.push(String(deps.git(['rev-parse', '--verify', `${sha}^{commit}`])).trim());
     } catch {
-      return { slot, rows, reason: 'commit-not-in-clone' };
+      return { slot, unitKey, rows, reason: 'commit-not-in-clone' };
     }
   }
-  const { inputs, unknown } = runInputsOf(prompt, { mainRoot: c.mainRoot, runName: r.run });
-  if (unknown.length > 0) return { slot, rows, reason: 'unknown-run-input' };
+  if (unknown.length > 0) return { slot, unitKey, rows, reason: 'unknown-run-input' };
   for (const i of inputs) {
     if (i.kind === 'scratch') continue;
     try {
       i.source = fs.readFileSync(path.join(r.dir, i.member || '', i.rel), 'utf8');
     } catch {
-      return { slot, rows, reason: 'run-input-gone' };
+      return { slot, unitKey, rows, reason: 'run-input-gone' };
     }
   }
   const effort = transcriptEffort(transcript).effort;
   return {
     slot,
+    unitKey,
     rows,
     candidate: {
       ...slot, run: r, agentId: item.agentId, prompt, inputs, counts, rows,
@@ -275,11 +301,15 @@ function extractReviews(opts, deps) {
 
   // The runs root is {main checkout}/.claude-tweaks/pipelines.
   const out = path.resolve(opts.out);
-  const c = { role, PROFILES, EFFORT_SCALE, mainRoot: path.resolve(opts.runs, '..', '..'), transcripts: indexTranscripts(opts.transcripts, fs).files };
+  const c = {
+    role, PROFILES, EFFORT_SCALE, mainRoot: path.resolve(opts.runs, '..', '..'), transcripts: indexTranscripts(opts.transcripts, fs).files,
+    exists: existsOnDisk(fs),
+  };
   const excluded = [];
   const runRows = {};
   const passed = [];
-  // Per (unit, lens, side), how many slots passed so far: a slot after the first is a re-review of a later head.
+  // Per (unit, lens, side), how many labelled dispatches so far, excluded ones included: a dispatch after the first
+  // is a re-review of a later head.
   const ordinals = new Map();
   // Newest run first, by name in code-unit order, whatever order --select named them in.
   const byNewest = [...selected.dirs].sort((a, b) => {
@@ -294,9 +324,15 @@ function extractReviews(opts, deps) {
       continue;
     }
     const names = new Map();
-    for (const item of dispatchesOf(dir, fs).filter(role.isDispatch)) {
-      const x = examineDispatch(r, item, c, deps);
+    for (const { item, member } of dispatchesOf(dir, fs).filter((d) => role.isDispatch(d.item))) {
+      const x = examineDispatch(r, item, c, deps, member);
       if (x.rows) (runRows[r.run] || (runRows[r.run] = [])).push(...x.rows.map((row) => ({ lens: x.slot.lens, path: row.path, line: row.line })));
+      let ordinal = null;
+      if (x.slot) {
+        const unitSide = `${x.unitKey}\0${x.slot.lens}-${x.slot.side}`;
+        ordinal = (ordinals.get(unitSide) || 0) + 1;
+        ordinals.set(unitSide, ordinal);
+      }
       let reason = x.reason;
       if (!reason) {
         const s = x.candidate;
@@ -306,12 +342,10 @@ function extractReviews(opts, deps) {
         // Check 8 on the texts as they will be written, but for the archived shas (the replay shas do not exist yet).
         const texts = renderSlot(s, { mainRoot: c.mainRoot, out, repoDir: path.join(out, 'repos', `${r.run}--r0`), shaMap: {}, arms });
         const all = [...texts.copies, ...texts.prompts];
-        if (all.some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: out }).length > 0)) reason = 'unrewritten-path';
+        if (all.some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: out, exists: c.exists }).length > 0)) reason = 'unrewritten-path';
         else {
           names.set(key, k);
-          const unitSide = `${unitOf(r, s.inputs).key}\0${key}`;
-          s.ordinal = (ordinals.get(unitSide) || 0) + 1;
-          ordinals.set(unitSide, s.ordinal);
+          s.ordinal = ordinal;
           passed.push(s);
         }
       }
@@ -398,7 +432,7 @@ function writeOutputs(w, deps) {
     const texts = renderSlot(s, { mainRoot: c.mainRoot, out, repoDir: s.repo.dir, shaMap, arms: slotArms });
     // Check 8 ran before the replay shas existed: the texts as written must pass it too, or nothing more is written.
     for (const t of [...texts.copies, ...texts.prompts]) {
-      const left = unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: s.run.run, outDir: out });
+      const left = unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: s.run.run, outDir: out, exists: c.exists });
       if (left.length > 0) throw new Error(`${t.file} still names ${left[0]} after its shas were mapped`);
     }
     for (const copy of texts.copies) fs.writeFileSync(copy.file, copy.text);

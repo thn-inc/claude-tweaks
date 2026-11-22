@@ -289,6 +289,28 @@ test('an absolute worktree or run-directory path under another root is flagged w
   assert.deepStrictEqual(rw.unrewrittenPaths(main + '/.claude/worktrees/w', { mainRoot, runName: 'R', outDir: '/out' }), [main + '/.claude/worktrees/w']);
 });
 
+test('with an exists predicate, a foreign path is flagged only when its checkout prefix exists', () => {
+  const live = '/Users/x/Code Workspaces/repo/.claude/worktrees';
+  const asked = [];
+  const exists = (p) => {
+    asked.push(p);
+    return p === live;
+  };
+  const o = { mainRoot: '/Volumes/backup/repo', runName: 'R', outDir: '/out', exists };
+  const wt = live + '/flow-spec-9';
+  assert.deepStrictEqual(rw.unrewrittenPaths('WORKTREE: ' + wt, o), [wt]);
+  assert.deepStrictEqual(rw.unrewrittenPaths("+  root: '/p/.claude-tweaks/pipelines/r1'", o), []);
+  assert.deepStrictEqual(asked, [live, '/p/.claude-tweaks/pipelines']);
+  // The predicate never widens the barrier past the existing checks, and is not asked about them.
+  asked.length = 0;
+  assert.deepStrictEqual(rw.unrewrittenPaths(main + '/.claude/worktrees/w', { mainRoot, runName: 'R', outDir: '/out', exists }), [main + '/.claude/worktrees/w']);
+  assert.deepStrictEqual(asked, []);
+  // A prefix longer than any real path cannot exist, so the predicate is not asked.
+  assert.deepStrictEqual(rw.unrewrittenPaths('/' + 'a'.repeat(5000) + '/.claude/worktrees/w', { ...o, exists: () => true }), []);
+  // Without a predicate every foreign mention is flagged.
+  assert.deepStrictEqual(rw.unrewrittenPaths("root: '/p/.claude-tweaks/pipelines/r1'", { ...o, exists: undefined }), ['/p/.claude-tweaks/pipelines/r1']);
+});
+
 test('a rewritten path with brackets, @, ~, = or non-ASCII stays inside the outDir span', () => {
   const o = { mainRoot, runName: 'R', outDir: main + '/out' };
   for (const tail of ['app/[slug]/page.tsx', 'node_modules/@types/x.d.ts', 'src/~tmp', 'src/a=b.js', 'docs/café.md']) {

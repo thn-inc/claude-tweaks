@@ -289,6 +289,36 @@ test('with --runs moved away from the archived checkout, every slot is excluded 
   assert.ok(!fs.existsSync(out), 'no prompt is written');
 });
 
+test('a dead fixture-style checkout path in diff text does not exclude a slot', async () => {
+  const dRoot = scratchDir('rr-reviews-dead-');
+  const dx = buildReviewsFixture(dRoot);
+  const line = "+  root: '/p/.claude-tweaks/pipelines/r1'";
+  fs.appendFileSync(path.join(dx.runsRoot, RUN, 'review-ctx', 'context.md'), `${line}\n`);
+  const out = path.join(dRoot, 'out');
+  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: dx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(dx.mainRoot) };
+  const code = await run({ argv: ['extract-reviews', '--runs', dx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', dx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
+  assert.deepEqual(fixture.excluded.filter((e) => e.reason === 'unrewritten-path'), []);
+  assert.deepEqual(fixture.slots.map((s) => s.agentId), ['l3a-a', 'l3a-b', 'l3b-a']);
+  assert.ok(read(path.join(out, 'repos', `${RUN}--r1`, '3a-a--context.md')).includes(`${line}\n`), 'the diff line is kept as text');
+});
+
+test('a slot ordinal counts every labelled dispatch, excluded ones included', async () => {
+  const lRoot = scratchDir('rr-reviews-lead-');
+  const lx = buildReviewsFixture(lRoot, { lead: true });
+  const out = path.join(lRoot, 'out');
+  const deps = { ...makeDeps(), git: (args) => execFileSync('git', args, { cwd: lx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }), writeRepo: makeWriteRepo(lx.mainRoot) };
+  const code = await run({ argv: ['extract-reviews', '--runs', lx.runsRoot, '--out', out, '--role', 'lens', '--transcripts', lx.transcripts, '--arm', 'name=haiku,profile=fast'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const fixture = JSON.parse(read(path.join(out, schema.REVIEWS_FIXTURE_FILE)));
+  const reasons = Object.fromEntries(fixture.excluded.map((e) => [e.agentId, e.reason]));
+  assert.equal(reasons['l3a-a0'], 'report-unparsed');
+  assert.equal(reasons['l3b-a0'], 'no-transcript');
+  // Each first dispatch was excluded, so the slot after it is that lens side's second review: a re-review.
+  assert.deepEqual(fixture.slots.map((s) => [s.name, s.ordinal]), [[`${RUN}/3a-a`, 2], [`${RUN}/3a-b`, 1], [`${RUN}/3b-a`, 2]]);
+});
+
 test('AC7.1: the workflow launches one agent per arm × repeat × prompt', async () => {
   const x = await extractReviews({ arms: ['--arm', 'name=haiku,profile=fast,repeat=2', '--arm', 'name=sonnet,profile=standard,effort=low'] });
   ok(x);

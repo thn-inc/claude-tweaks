@@ -30,16 +30,18 @@
 // paths in a prompt are rewritten to the replay's; a path to another run's directory in a prompt or a copy is replaced
 // with [run-directory path removed] (a relative mention of another run in diff text stays), and an archived worktree,
 // main-checkout or own-run path left after rewriting excludes the slot as `unrewritten-path`, as does any absolute path
-// naming a `.claude/worktrees/` or `.claude-tweaks/pipelines/` directory outside --out, so a --runs moved away from the
-// archived checkout (the main checkout is taken as --runs/../..) excludes every slot rather than leaking. No archived reply text or
+// naming a `.claude/worktrees/` or `.claude-tweaks/pipelines/` directory outside --out that exists on this machine, so a
+// --runs moved away from a checkout still present (the main checkout is taken as --runs/../..) excludes every slot rather
+// than leaking; a dead path, such as one in test-fixture or comment text of the diff, stays as text. No archived reply text or
 // decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
 // slots at the tier and effort they were archived at: `control` when every selected slot shares one (tier, effort),
 // otherwise `control.{tier}.{effort|none}` per group. A user arm named `control` or `control.*` exits 2.
 //
 // score-reviews: reads the Workflow's replies from --transcripts and, per arm and lens, prints the confirmed findings the
-// replay reviewers raised (recall, per slot and summed, over first passes only: a slot after the first for its unit,
-// lens and side, its `ordinal` in reviews-fixture.json above 1 (name suffix `.k`), re-reviews a later head where the
-// confirmed findings may already be fixed, and is tallied apart in `confirmedRereview`; a slot whose
+// replay reviewers raised (recall, per slot and summed, over first passes only: a slot whose `ordinal` in
+// reviews-fixture.json is above 1, i.e. not the first labelled dispatch of its unit, lens and side, excluded dispatches
+// counted, re-reviews a later head where the confirmed findings may already be fixed, and is tallied apart in
+// `confirmedRereview`; a slot whose
 // unit has no decisions.md adds to `confirmedMissingSource`, not to the recall; `rowsUnlocated` counts severity rows with
 // no path:line, which cannot raise a finding), the archived reviewers' rows they raised, the rows no archived reviewer
 // raised (`new`) and the reference arm's rows they also raised. `fidelity` per lens aggregates every control arm's recall of
