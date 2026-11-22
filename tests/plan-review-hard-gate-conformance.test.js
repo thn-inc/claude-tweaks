@@ -96,6 +96,17 @@ test('AC5.2: the consumer list is complete', () => {
   }
 });
 
+const ASKED_CLASSES_CLAUSE = '; under `planning-decisions: asked-classes`, only a row `_shared/planning-decisions.md` asks, #6051)';
+const NARROWING_MSG = 'the HARD-GATE row lacks the asked-classes narrowing clause (#6051)';
+const narrowsUnderAskedClasses = (row) => row.includes(ASKED_CLASSES_CLAUSE.slice(2));
+
+test('the HARD-GATE row narrows the plan-review gate under asked-classes by pointing at _shared/planning-decisions.md (#6051)', () => {
+  assert.ok(narrowsUnderAskedClasses(contractRow()), NARROWING_MSG);
+  // control: the row with the clause removed fails the same assertion with its own message.
+  const doctored = contractRow().split(ASKED_CLASSES_CLAUSE).join(')');
+  assert.throws(() => assert.ok(narrowsUnderAskedClasses(doctored), NARROWING_MSG), { message: NARROWING_MSG });
+});
+
 test('go-red: rowProblems flags each removed anchor', () => {
   const row = contractRow();
   for (const anchor of ANCHORS) {

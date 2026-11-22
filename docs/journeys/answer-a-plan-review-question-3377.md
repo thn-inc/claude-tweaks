@@ -35,6 +35,7 @@ files:
 - **Should feel:** Like a decision only the user can make, asked once, before any code exists — not a mid-build interruption over something the spec already said.
 - **Should understand:** The pick becomes a clarification attributed `Decided by the user at plan review:` in the in-run spec and in one record comment; the build then continues. `Stop the build` ends the run with the HARD-GATE `plan-review-needs-human`, and the failure card offers the claim release rather than taking it.
 - **Should understand:** A `parallel`-wave member of a multi-spec `/claude-tweaks:flow` run gets no prompt — it runs inside a subagent that cannot ask. It posts the same `<!-- plan-review-question -->` comment as step 3 and stops with `plan-review-needs-human`; the orchestrating `/flow` shows that stop on its failure card, and the answer goes on the record body as in step 3.
+- **Should understand:** Under `planning-decisions: asked-classes`, only a design-level, hard-to-undo or contradictory gap is asked; every other one is settled with a `Settled at planning:` line under `## Planning Decisions` (`_shared/planning-decisions.md`).
 - **Red flags:** A question whose two readings are not both defensible; one prompt per finding instead of one batched prompt; the claim released without the card offering it.
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
