@@ -431,6 +431,11 @@ test('express-driver-max-size accepts exactly the SIZE_CEILINGS keys, so no acce
   assert.deepStrictEqual([...row.values].sort(), Object.keys(SIZE_CEILINGS).sort());
 });
 
+test('express-driver-max-risk accepts exactly the RISK_CEILINGS keys, so no accepted value refuses every record (#6018)', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'express-driver-max-risk');
+  assert.deepStrictEqual([...row.values].sort(), Object.keys(RISK_CEILINGS).sort());
+});
+
 // ---- #6018: the driver risk ceiling, ceremony relaxation and widenings() ----
 const withoutRiskCeremony = ELIGIBLE_LABELS.filter((l) => !l.startsWith('risk:') && !l.startsWith('ceremony:'));
 const RISK_X_CEREMONY = [];
@@ -507,6 +512,21 @@ test('AC5.1, AC5.3 (#6018, eligibility half): allowAnyCeremony passes a recognis
   assert.ok(evaluateRecordEligibility(mk(), { ...OPTS, allowAnyCeremony: true }).reasons.includes(REASONS.ceremony));
   for (const v of ['true', 1]) {
     assert.ok(evaluateRecordEligibility(mk('ceremony:standard'), { ...DRIVER, allowAnyCeremony: v }).reasons.includes(REASONS.ceremony), String(v));
+  }
+});
+
+test('a dual-risk-labelled record clears the ceiling on its last risk label but widens in either order (#6018)', () => {
+  // Eligibility reads the parsed facet (last match), so the label order decides the ceiling verdict;
+  // widenings() scans every label, so the record always carries the risk widening and takes the
+  // reviewer plus the pending-review merge stop whichever order the labels came in.
+  for (const labels of [['risk:high', 'risk:low'], ['risk:low', 'risk:high'], ['risk:medium', 'risk:low'], ['risk:low', 'risk:medium']]) {
+    const r = record([...withoutRiskCeremony, ...labels, 'ceremony:fast-lane']);
+    for (const riskCeiling of ['low', 'medium']) {
+      const { reasons } = evaluateRecordEligibility(r, { ...DRIVER, riskCeiling });
+      const lastRisk = labels[labels.length - 1].slice('risk:'.length);
+      assert.strictEqual(reasons.includes(BOUND_REASONS.risk(riskCeiling)), !RISK_CEILINGS[riskCeiling].includes(lastRisk), `${labels} ${riskCeiling}`);
+      assert.ok(widenings({ labels: r.labels, riskCeiling }).includes('risk'), `${labels} ${riskCeiling}`);
+    }
   }
 });
 

@@ -288,6 +288,8 @@ function eligibilityOptions(policy) {
     sizeCeiling: bounds.sizeCeiling,
     maxKeyFiles: bounds.maxKeyFiles,
     riskCeiling: policy['express-driver-max-risk'].value,
+    // Ceremony widening is allowed only with the reviewer forced on (#6018's Decision Rationale: the
+    // default beyond-express must reproduce today, and a ceremony-widened record needs the reviewer).
     allowAnyCeremony: policy['express-driver-review'].value === 'on',
   };
 }
