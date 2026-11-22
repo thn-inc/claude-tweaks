@@ -15,7 +15,8 @@ const FIRST_KEYS = ['express-lane', 'express-driver'];
 const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review'];
 const ROUTINGS = ['on', 'off', 'split'];
 
-const oneLine = (err) => String(err && err.message).replace(/\s+/g, ' ');
+const collapse = (value) => String(value).replace(/\s+/g, ' ');
+const oneLine = (err) => collapse(err && err.message);
 
 // deps: { resolvePolicy?, stderr? } -> { enabled, grouping, keepSingleton }.
 // Two resolver calls, project policy only (no run dir exists at queue-pull time).
@@ -47,20 +48,25 @@ function expressQueuePolicy(deps = {}) {
     return readFailed(FIRST_KEYS, err);
   }
   if (!ROUTINGS.includes(routing)) {
-    stderr(`express-driver: value not recognised (${routing}), fast-lane bundling unchanged this pull\n`);
+    stderr(`express-driver: value not recognised (${collapse(routing)}), fast-lane bundling unchanged this pull\n`);
     return DISABLED;
   }
   const driverOn = routing !== 'off';
   if (!expressOn && !driverOn) return DISABLED;
 
   let expressOpts;
-  let driver;
+  let policy;
   try {
-    const policy = resolvePolicy(SECOND_KEYS, { runDir: null });
+    policy = resolvePolicy(SECOND_KEYS, { runDir: null });
     if (expressOn) {
       expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
     }
-    if (driverOn) {
+  } catch (err) {
+    return readFailed(SECOND_KEYS, err);
+  }
+  let driver;
+  if (driverOn) {
+    try {
       // Lazy: a project using neither lane must not load the driver graph, and budget.js
       // requires dispatch/queue-pull, the module that calls this one.
       const { routingReason, reviewerGateReason } = require('../driver/admission');
@@ -74,12 +80,13 @@ function expressQueuePolicy(deps = {}) {
         bounds: { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value },
         reviewPolicy: policy['express-driver-review'].value,
       };
+    } catch (err) {
+      stderr(`express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
+      return DISABLED;
     }
-  } catch (err) {
-    return readFailed(SECOND_KEYS, err);
   }
 
-  // The driver's own rules, in its order; any failure answers false.
+  // The driver's own rules; any failure answers false.
   const driverRoutable = (issue) => {
     if (driver.routingReason(routing, issue.number) !== null) return false;
     if (driver.preScreen(issue, driver.eligibility, { evaluateRecordEligibility }).verdict !== 'pass') return false;

@@ -228,6 +228,51 @@ test('a throwing driver check keeps that record bundleable, with one stderr line
   assert.match(sink.lines[0], /#8/);
 });
 
+// A resolver whose `merge-sensitive-paths` entry answers differently per read of `.value`: the express
+// half reads it first (setup), the driver's eligibilityOptions second.
+function sensitivePathsReads(...answers) {
+  let n = 0;
+  const resolvePolicy = (keys) => Object.fromEntries(keys.map((k) => {
+    if (k === 'merge-sensitive-paths' && k in DRIVER_POLICY) {
+      return [k, { get value() { const a = answers[Math.min(n, answers.length - 1)]; n += 1; if (a instanceof Error) throw a; return a; }, source: 'policy' }];
+    }
+    return [k, { value: DRIVER_POLICY[k], source: 'policy' }];
+  }));
+  return resolvePolicy;
+}
+
+test('a driver module load failure is named as such, not as a policy read, with one stderr line', () => {
+  const sink = stderrSink();
+  const resolvePolicy = (keys) => Object.fromEntries(keys.map((k) => [k, k === 'merge-sensitive-paths'
+    ? { get value() { throw new Error('sensitive paths\nunreadable'); }, source: 'policy' }
+    : { value: { ...DRIVER_POLICY, 'express-lane': false }[k], source: 'policy' }]));
+  const p = expressQueuePolicy({ resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.grouping, 'per-record');
+  assert.equal(p.keepSingleton(medium(20)), false);
+  assert.equal(sink.lines.length, 1);
+  assert.match(sink.lines[0], /^express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: sensitive paths unreadable\n$/);
+  assert.doesNotMatch(sink.lines[0], /policy read failed/);
+});
+
+test('an unrecognised express-driver value is collapsed to one stderr line', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': 'some\nvalue' }).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.grouping, 'per-record');
+  assert.equal(sink.lines.length, 1);
+  assert.match(sink.lines[0], /some value/);
+  assert.equal(sink.lines[0].indexOf('\n'), sink.lines[0].length - 1);
+});
+
+test('a throwing express check still lets the driver half keep the record, with one express-lane stderr line', () => {
+  const sink = stderrSink();
+  const throwing = new Proxy([], { get() { throw new Error('sensitive paths unusable'); } });
+  const p = expressQueuePolicy({ resolvePolicy: sensitivePathsReads(throwing, []), stderr: sink.stderr });
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+  assert.equal(sink.lines.length, 1);
+  assert.match(sink.lines[0], /^express-lane: eligibility check failed for #1/);
+  assert.match(sink.lines[0], /sensitive paths unusable/);
+});
+
 // #5230: the queue pull's three consumers of expressQueuePolicy() (the cache check's grouping, the
 // grouping pass's keepSingleton and the write-back blob's grouping) are pinned through an injected
 // recording policy in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 express: …").
