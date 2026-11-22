@@ -731,7 +731,9 @@ function mergeBlockSides(key, repo, factory, onInvalid) {
 
 // A merged block's entry. repoInvalid is additive and appears only beside factory rows, so an entry with no
 // factory side keeps exactly { value, source }.
-const blockEntry = (value, merged) => ({ value, source: merged.source, ...(merged.repoInvalid ? { repoInvalid: true } : {}) });
+function blockEntry(value, merged) {
+  return { value, source: merged.source, ...(merged.repoInvalid ? { repoInvalid: true } : {}) };
+}
 
 // The text whose risk-categories widens risk-path-globs' allowed slugs: any non-empty risk-categories line in policy.yml decides
 // alone (an invalid one leaves the built-ins, as it always did), and the factory's applies only when policy.yml has

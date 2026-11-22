@@ -72,14 +72,14 @@ function byCanonicalKey(text) {
   return map;
 }
 
-// A variable's map block that would not parse is dropped for the file's. risk-path-globs
-// is never judged here: its rows are checked against risk-categories, which only the
-// resolver can see.
 function isMapKey(key) {
   const entry = POLICY_KEYS.find((candidate) => candidate.key === key);
   return Boolean(entry) && entry.type === 'map';
 }
 
+// A variable's map block that would not parse is dropped for the file's. risk-path-globs
+// is never judged here: its rows are checked against risk-categories, which only the
+// resolver can see.
 function isMalformedMapBlock(key, chunks) {
   if (!isMapKey(key)) return false;
   const text = chunks.map((chunk) => chunk.text).join('\n');
