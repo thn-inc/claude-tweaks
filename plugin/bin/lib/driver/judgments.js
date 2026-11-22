@@ -21,9 +21,10 @@ const { verdictText, VERDICT_STEPS, confirmFromFile } = require('../dispatch/mer
 const { runAcceptance: defaultRunAcceptance } = require('./acceptance');
 const { codeSuffix, DIFF_PROMPT_MAX_BYTES, truncateUtf8 } = require('./review');
 
-// One merge-check event. `model` is the model the judge launch ran on (#5917); absent when no launch returned.
-function emitEvent(deps, startedAt, verdict, floor, detail, model) {
-  emitStep(deps, 'merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', startedAt, detail, { verdict, floor, ...(model ? { model } : {}) });
+// One merge-check event. `model` is the model the judge launch ran on (#5917), `effort` the level it was
+// launched at or null (#5942); both absent when no launch returned.
+function emitEvent(deps, startedAt, verdict, floor, detail, model, effort) {
+  emitStep(deps, 'merge-check', verdict === 'auto-merge' ? 'ok' : 'stop', startedAt, detail, { verdict, floor, ...(model ? { model, effort: effort ?? null } : {}) });
 }
 
 // Step 1: the blast radius, run as the CLI. { floor, detail, summary }; floor is null when neither floor fires.
@@ -93,13 +94,13 @@ async function launchAndValidate({ deps, shared }, ctx, prompt) {
     role: 'merge-check', dir: 'merge-check', label: 'merge-check', prompt, schema: MERGE_CHECK_RESULT_SCHEMA,
   });
   if (launched.stop) return launched;
-  const { envelope, model } = launched;
+  const { envelope, model, effort } = launched;
   const result = envelope && envelope.status === 'ok' ? envelope.result : undefined;
   if (!isPlainObject(result) || typeof result.verdict !== 'string'
     || (result.verdict !== 'auto-merge' && result.verdict !== 'needs-human')) {
-    return { stop: 'merge-check returned no valid verdict', model };
+    return { stop: 'merge-check returned no valid verdict', model, effort };
   }
-  return { verdict: result.verdict, rationale: typeof result.rationale === 'string' ? result.rationale : '', model };
+  return { verdict: result.verdict, rationale: typeof result.rationale === 'string' ? result.rationale : '', model, effort };
 }
 
 // Step 6: the one logged line, no --section (`latestVerdicts` reads file order). True on exit 0.
@@ -118,6 +119,7 @@ async function judgeMergeCheck(env, ctx) {
   let floor = 'none';
   let detail = '';
   let model;
+  let effort;
   try {
     deps = env.deps;
     const { readFile } = env;
@@ -144,6 +146,7 @@ async function judgeMergeCheck(env, ctx) {
       });
       const judged = await launchAndValidate(env, ctx, prompt);
       model = judged.model;
+      effort = judged.effort;
       // A signal during the launch was already reported by run.js's handler: log nothing, emit nothing.
       if (isInterrupted(deps)) return { verdict: 'unconfirmed', floor, detail: 'interrupted' };
       if (judged.stop) {
@@ -154,16 +157,16 @@ async function judgeMergeCheck(env, ctx) {
         detail = judged.rationale ? reduceDetail(judged.rationale) : '';
       }
     }
-    return finish(deps, startedAt, ctx, env, reached, floor, detail, model);
+    return finish(deps, startedAt, ctx, env, reached, floor, detail, model, effort);
   } catch (err) {
     const failed = `merge-check failed unexpectedly${codeSuffix(err)}`;
-    emitEvent(deps, startedAt, verdict, floor, failed, model);
+    emitEvent(deps, startedAt, verdict, floor, failed, model, effort);
     return { verdict, floor, detail: failed };
   }
 }
 
 // Steps 6 to 8 for a verdict reached: log it, confirm an auto-merge from decisions.md, emit once.
-function finish(deps, startedAt, ctx, env, reached, floor, detail, model) {
+function finish(deps, startedAt, ctx, env, reached, floor, detail, model, effort) {
   let verdict = reached;
   let logged;
   try {
@@ -187,7 +190,7 @@ function finish(deps, startedAt, ctx, env, reached, floor, detail, model) {
       detail = 'the logged verdict could not be confirmed';
     }
   }
-  emitEvent(deps, startedAt, verdict, floor, detail, model);
+  emitEvent(deps, startedAt, verdict, floor, detail, model, effort);
   return { verdict, floor, detail: cleanDetail(detail) };
 }
 

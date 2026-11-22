@@ -234,7 +234,8 @@ argument still holds there.
   resolved path inside any git checkout must be anchored under the main checkout resolved from
   cwd; a path outside any checkout is accepted as-is, no flag needed. Rejection exits 1, these
   CLIs' documented invocation-failure code — a deliberate, stated deviation from the family's
-  exit 2.
+  exit 2. `bin/implementer-tier.js` (#5996) delegates its `--run` to `resolvePolicy`'s same guard
+  and existence check but keeps the family's exit 2 on a refusal.
 
 - **Sanctioned-write CLIs** — `bin/log-decision.js`, `bin/stage-item.js`, `bin/set-config.js`
   (`--run`, refs #1376), `bin/set-verify-expectations.js` (`--run`, refs #2764), and `bin/write-run-artifact.js` (`--run`, refs #3044) — the run-dir writers a worktree-isolated session invokes when tool-level

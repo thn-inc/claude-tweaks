@@ -6,9 +6,9 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const lib = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { roleModel, modelPolicyRefusal, launchTracked, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
+const { roleModel, roleLaunch, modelPolicyRefusal, launchTracked, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
 const { DRIVER_ROLE_PROFILES } = require(path.join(lib, 'driver', 'roles'));
-const { PROFILES } = require(path.join(lib, 'model-profiles', 'profiles'));
+const { PROFILES, resolve } = require(path.join(lib, 'model-profiles', 'profiles'));
 const { resolvePolicyKeys } = require(path.join(lib, 'policy-schema'));
 const { launchWorker } = require(path.join(lib, 'driver', 'worker'));
 const { scratchDir } = require('../../helpers/tmp-dir');
@@ -160,6 +160,99 @@ test('launchTracked: the resolved model wins over a model in the caller opts', a
   const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
   await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', model: 'caller-model', prompt: 'p' });
   assert.strictEqual(got.model, M('standard'));
+});
+
+// #5942: the launch effort each role resolves, composed as --effort.
+const argEffort = (args) => (args.includes('--effort') ? args[args.indexOf('--effort') + 1] : null);
+
+test('#5942 AC1.1: with model-effort unset no role composes --effort', async () => {
+  for (const role of Object.keys(DRIVER_ROLE_PROFILES)) {
+    assert.strictEqual(argEffort(await composedArgs(role, '')), null, role);
+  }
+});
+
+test('#5942 AC2.1: model-effort profile composes resolve().launchEffort for implementer and reviewer', async () => {
+  for (const role of ['implementer', 'reviewer']) {
+    const want = resolve(FOUR[role], { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
+    assert.strictEqual(argEffort(await composedArgs(role, 'model-effort: profile\n')), want, role);
+  }
+});
+
+test('#5942 AC2.2: with the shipped table that is high for both', async () => {
+  for (const role of ['implementer', 'reviewer']) {
+    assert.strictEqual(argEffort(await composedArgs(role, 'model-effort: profile\n')), 'high', role);
+  }
+});
+
+test('#5942 AC3.1: a model-profiles row giving standard medium composes --effort medium for the implementer', async () => {
+  const raw = 'model-effort: profile\nmodel-profiles:\n  standard:\n    effort: medium\n';
+  assert.strictEqual(argEffort(await composedArgs('implementer', raw)), 'medium');
+});
+
+test('#5942 AC4.1: an implementer mapped to fast composes no --effort', async () => {
+  const args = await composedArgs('implementer', 'model-effort: profile\nexpress-driver-models:\n  implementer: fast\n');
+  assert.strictEqual(argEffort(args), null);
+  assert.strictEqual(argModel(args), M('fast'));
+});
+
+test('#5942 AC8.1: an unknown effort in a model-profiles row refuses before any launch', async () => {
+  const raw = 'model-effort: profile\nmodel-profiles:\n  standard:\n    effort: extreme\n';
+  assert.match(modelPolicyRefusal(policyFrom(raw)), /implementer/);
+  let launches = 0;
+  let runs = 0;
+  const shared = { activeWorker: null, policy: policyFrom(raw) };
+  const deps = { platform: 'linux', env: {}, runner: () => { runs += 1; }, launchWorker: () => { launches += 1; } };
+  await assert.rejects(() => launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', prompt: 'p' }),
+    (e) => e.code === MODEL_REFUSED_CODE);
+  assert.deepStrictEqual([launches, runs, shared.activeWorker], [0, 0, null]);
+});
+
+test('#5942: launchTracked resolves { envelope, model, effort } and a throw carries err.effort', async () => {
+  const opts = { role: 'implementer', prompt: 'p' };
+  const limits = { minutes: 1, dollars: 1 };
+  const boom = new Error('boom');
+  for (const [raw, effort] of [['model-effort: profile\n', 'high'], ['', null]]) {
+    const shared = { activeWorker: null, policy: policyFrom(raw) };
+    const ok = await launchTracked(shared, { platform: 'linux', env: {}, runner: () => {}, launchWorker: async () => 'env' }, limits, opts);
+    assert.deepStrictEqual(ok, { envelope: 'env', model: M('standard'), effort });
+    const err = await launchTracked(shared, { platform: 'linux', env: {}, runner: () => {}, launchWorker: async () => { throw boom; } }, limits, opts).then(() => null, (e) => e);
+    assert.strictEqual(err.effort, effort);
+    assert.strictEqual(err.model, M('standard'));
+  }
+});
+
+test('#5942: the resolved effort wins over an effort in the caller opts', async () => {
+  const shared = { activeWorker: null, policy: policyFrom('') };
+  let got = null;
+  const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', effort: 'max', prompt: 'p' });
+  assert.strictEqual(got.effort, null);
+});
+
+test("#5942: model-ceiling standard clamps the reviewer's effort with its model", async () => {
+  // A capable row of effort max, so a clamped (high) and an unclamped (max) effort differ.
+  const args = await composedArgs('reviewer', 'model-effort: profile\nmodel-ceiling: standard\nmodel-profiles:\n  capable:\n    effort: max\n');
+  const want = resolve(FOUR.reviewer, {
+    policy: { 'model-effort': 'profile', 'model-ceiling': 'standard', 'model-profiles': { capable: { effort: 'max' } } },
+    unattended: true,
+  }).launchEffort;
+  assert.strictEqual(argModel(args), M('standard'));
+  assert.strictEqual(want, 'high');
+  assert.strictEqual(argEffort(args), want);
+});
+
+test('#5942: an explorer under model-effort profile resolves resolve().launchEffort as its launch effort', () => {
+  const policy = policyFrom('model-effort: profile\n');
+  const want = resolve('standard', { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
+  assert.strictEqual(typeof want, 'string');
+  assert.strictEqual(roleLaunch('explorer', policy).effort, want);
+});
+
+test('#5942: an invalid model-effort refuses every role', () => {
+  const policy = policyFrom('model-effort: fancy\n');
+  assert.strictEqual(policy['model-effort'].invalid, true);
+  assert.strictEqual(modelPolicyRefusal(policy), 'driver model policy invalid: model-effort');
+  assert.throws(() => roleLaunch('implementer', policy), refused('implementer', 'driver model policy invalid: model-effort'));
 });
 
 test('roleModel: a profile name that does not resolve reaches the refusal neutralized (one line, no mention)', () => {

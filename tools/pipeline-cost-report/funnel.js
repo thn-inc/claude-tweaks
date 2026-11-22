@@ -9,10 +9,22 @@
 //
 // `checked` is every listed record. A check that threw, timed out or printed no `{admitted, reasons}` verdict is
 // `unreadable`: counted in `checked`, but in neither `admitted` nor `reasons`.
+//
+// Two window-scoped activity figures sit beside the point-in-time verdicts (#6012), each with its own `unreadable`
+// (a run directory, transcript or manifest that could not be read; the scan goes on):
+//   driverRuns      — run directories dated in the window that hold `driver-events.jsonl`. `dispatchRouted` are those
+//                     whose manifest.json says `lane: "driver"`; everything else is `standalone` — a `-drive-N` run
+//                     name, a missing manifest, an unreadable manifest, or any other lane. Standalone is the default
+//                     so the flag errs toward speaking. `last` is the latest such run's date.
+//   dispatchFirings — main transcripts ({root}/{slug}/*.jsonl, never subagent files) whose first skill is
+//                     /claude-tweaks:dispatch and whose first timestamped line falls in the window; `reachedRoute`
+//                     counts those that reached the driver route, `byPluginVersion` the plugin version each ran.
 
 const fs = require('fs');
 const path = require('path');
 const { execFile, execFileSync } = require('child_process');
+const { scanTranscript, transcriptScope } = require('./spend');
+const { MANIFEST_FILE } = require('../../plugin/bin/lib/run-manifest/write.js');
 
 const CHECK_CONCURRENCY = 4;
 const CHECK_TIMEOUT_MS = 120000;
@@ -66,7 +78,95 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-async function collectFunnel({ repo, simulate = [] }, { gh, check, now, pluginVersion }) {
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STANDALONE_NAME_RE = /-drive-\d+$/;
+
+// runs: listRuns(...).runs; since/until: YYYY-MM-DD, both inclusive.
+function collectDriverRuns({ runs, since, until }, { fsImpl = fs } = {}) {
+  const res = { total: 0, dispatchRouted: 0, standalone: 0, last: null, unreadable: 0 };
+  for (const run of runs) {
+    if (!(run.date >= since && run.date <= until)) continue;
+    let entries;
+    try {
+      entries = fsImpl.readdirSync(run.dir);
+    } catch {
+      res.unreadable += 1;
+      continue;
+    }
+    if (!entries.includes('driver-events.jsonl')) continue;
+    res.total += 1;
+    if (res.last === null || run.date > res.last) res.last = run.date;
+    let routed = false;
+    if (!STANDALONE_NAME_RE.test(run.name) && entries.includes(MANIFEST_FILE)) {
+      try {
+        routed = JSON.parse(fsImpl.readFileSync(path.join(run.dir, MANIFEST_FILE), 'utf8')).lane === 'driver';
+      } catch {
+        res.unreadable += 1;
+      }
+    }
+    if (routed) res.dispatchRouted += 1;
+    else res.standalone += 1;
+  }
+  return res;
+}
+
+async function collectDispatchFirings({ roots, since, until, match = null, root: scopeRoot = null }, { fsImpl = fs, transcriptCache = null } = {}) {
+  const startMs = Date.parse(since + 'T00:00:00Z');
+  const endMs = Date.parse(until + 'T00:00:00Z') + DAY_MS;
+  const res = { total: 0, reachedRoute: 0, byPluginVersion: {}, unreadable: 0 };
+  const list = (dir) => {
+    try {
+      return fsImpl.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      res.unreadable += 1;
+      return [];
+    }
+  };
+  const wanted = transcriptScope({ match, root: scopeRoot });
+  for (const root of roots) {
+    for (const slugEntry of list(root)) {
+      if (!slugEntry.isDirectory()) continue;
+      const slug = slugEntry.name;
+      const slugDir = path.join(root, slug);
+      for (const e of list(slugDir)) {
+        if (!e.isFile() || !e.name.endsWith('.jsonl')) continue;
+        const file = path.join(slugDir, e.name);
+        try {
+          if (fsImpl.statSync(file).mtimeMs < startMs) continue;
+        } catch {
+          res.unreadable += 1;
+          continue;
+        }
+        let t = transcriptCache?.get(file);
+        if (!t) {
+          try {
+            const { cwd, firstSkill, firstTs, pluginVersion, reachedRoute } = await scanTranscript(file, { fsImpl });
+            t = { cwd, firstSkill, firstTs, pluginVersion, reachedRoute };
+          } catch {
+            t = { error: true };
+          }
+          transcriptCache?.set(file, t);
+        }
+        if (t.error) {
+          res.unreadable += 1;
+          continue;
+        }
+        const ts = Date.parse(t.firstTs);
+        if (t.firstSkill !== 'dispatch' || !(ts >= startMs && ts < endMs) || !wanted(t.cwd, slug)) continue;
+        res.total += 1;
+        if (t.reachedRoute === true) res.reachedRoute += 1;
+        const version = t.pluginVersion || 'unknown';
+        res.byPluginVersion[version] = (res.byPluginVersion[version] || 0) + 1;
+      }
+    }
+  }
+  return res;
+}
+
+async function collectFunnel(
+  { repo, simulate = [], runs = { runs: [] }, roots = [], since, until, match = null, root = null, scopeError = null },
+  { gh, check, now, pluginVersion, fsImpl = fs, transcriptCache = null },
+) {
   const listed = JSON.parse(gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', 'ready', '--label', 'auto:build', '--limit', '1000', '--json', 'number']));
   const numbers = listed.map((r) => r.number);
 
@@ -89,14 +189,19 @@ async function collectFunnel({ repo, simulate = [] }, { gh, check, now, pluginVe
     return { set, unseen: set.filter((k) => !(k in reasons)), admitted };
   });
 
+  const runDate = now().toISOString().slice(0, 10);
+  const from = since || runDate;
+  const to = until || runDate;
   return {
     checked: verdicts.length,
     admitted: readable.filter((v) => v.admitted).length,
     unreadable: verdicts.length - readable.length,
     reasons,
     simulations,
-    runDate: now().toISOString().slice(0, 10),
+    runDate,
     pluginVersion,
+    driverRuns: runs.error ? { error: runs.error } : collectDriverRuns({ runs: runs.runs, since: from, until: to }, { fsImpl }),
+    dispatchFirings: scopeError ? { error: scopeError } : await collectDispatchFirings({ roots, since: from, until: to, match, root }, { fsImpl, transcriptCache }),
   };
 }
 
@@ -122,4 +227,4 @@ function defaultCheck(pluginRoot, repoRoot) {
     });
 }
 
-module.exports = { reasonKey, collectFunnel, readPluginVersion, defaultGh, defaultCheck, CHECK_CONCURRENCY };
+module.exports = { reasonKey, collectFunnel, collectDriverRuns, collectDispatchFirings, readPluginVersion, defaultGh, defaultCheck, CHECK_CONCURRENCY };
