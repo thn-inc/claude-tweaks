@@ -30,7 +30,8 @@
 // paths in a prompt are rewritten to the replay's; a path to another run's directory in a prompt or a copy is replaced
 // with [run-directory path removed] (a relative mention of another run in diff text stays), and an archived worktree,
 // main-checkout or own-run path left after rewriting excludes the slot as `unrewritten-path`, as does any absolute path
-// naming a `.claude/worktrees/` or `.claude-tweaks/pipelines/` directory outside --out that exists on this machine, so a
+// naming a `.claude/worktrees/` or `.claude-tweaks/pipelines/` directory outside --out that exists on this machine (or
+// cannot be checked: only ENOENT/ENOTDIR count as absent), so a
 // --runs moved away from a checkout still present (the main checkout is taken as --runs/../..) excludes every slot rather
 // than leaking; a dead path, such as one in test-fixture or comment text of the diff, stays as text. No archived reply text or
 // decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
