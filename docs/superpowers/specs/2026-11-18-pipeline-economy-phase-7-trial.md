@@ -1,6 +1,6 @@
 # Pipeline economy — Phase 7 driver admission trial
 
-Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: verdict rule committed; trial not started.
+Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: verdict rule committed; trial values on `main`; candidate list frozen; no record driven yet.
 
 ## Verdict rule
 
@@ -22,13 +22,13 @@ This is the same instrument the 70% was measured with. `/claude-tweaks:review` a
 
 ## Trial settings
 
-Set in `.claude-tweaks/policy.yml` by a policy-only PR, after this file and before the first driven record:
+Set in `.claude-tweaks/policy.yml` by the policy-only PR #6141 (merge commit `c0bbfa519c`, merged 2026-11-23T15:40:46Z, 13 seconds before this file's own PR #6140), before the first driven record:
 
 | Key | Value | Why |
 |---|---|---|
 | `express-driver-review` | `on` | The reviewer step runs on every driven record. |
 | `express-driver-max-size` | `medium` | |
-| `express-driver-max-key-files` | `4` | The smallest limit that admits every record the pre-trial funnel refused only for the Key File limit: #3835, #3902, #4004, #4259 and #4357, each with 4 Key Files. |
+| `express-driver-max-key-files` | `11` | The smallest limit that admits every record refused only for the Key File limit once the other four values apply. On 2026-11-23, with those four set in a scratch clone of `main` at `a2863c1a75`, `drive.js --check` refused 27 of 153 records for "more than 3 Key Files" and nothing else; stepping the limit up left 16 at 4, 14 at 5, 10 at 6, 8 at 7, 5 at 8, 2 at 9, 1 at 10 and none at 11 (#4366 lists 11). This row first read `4`, counted under the pre-trial settings (5 records, each with 4 Key Files); #6141 had already merged with 11, and 11 is the value the trial runs under (see Operating notes). |
 | `express-driver-max-risk` | `high` | |
 | `express-driver-protected-paths` | `reviewer` | |
 
@@ -84,7 +84,151 @@ Admitted share before: 14 of 152 (9%). The design expected about 11%.
 
 ## Funnel after the policy change
 
-Pending: the same command, run on `origin/main` once the policy PR has merged and before the first driven record. Its admitted set, in queue order, is the frozen candidate list. An estimate from each record's refusal reasons under the five values gives about 65 of 151 (43%); the design expected about 61%.
+`node tools/pipeline-cost-report.js --section funnel --repo thn-inc/claude-tweaks`, run 2026-11-23 from 15:48:54Z on `main` at `ccfef6d5f3`, with the five trial values set and before any record was driven. `express-driver-max-lines` was at its default for both funnels.
+
+```
+Driver admission, run 2026-11-23, plugin 6.177.0.
+
+Checked: 160; admitted: 85; unreadable: 0.
+
+Driver runs: 1 (1 dispatch-routed, 0 standalone); last 2026-11-23; unreadable: 0.
+Dispatch firings: 21; reached the driver route: 14; by plugin version: 6.170.0 1, 6.175.0 8, 6.176.0 7, 6.177.0 5; unreadable: 0.
+
+| Refusal reason | Records |
+|---|---|
+| record has an open blocker | 24 |
+| record has an open PR | 19 |
+| no Key Files | 18 |
+| size is not low or medium | 14 |
+| record carries a kept risk flag | 6 |
+| frontend surface | 5 |
+| auto:merge-pending grant matures only on the normal path | 3 |
+| no type:* label | 2 |
+| more than 11 Key Files | 1 |
+| protected path | 1 |
+
+| If these stopped refusing | Admitted |
+|---|---|
+| record has an open PR | 101 |
+| record has an open blocker | 99 |
+| no Key Files | 98 |
+| frontend surface | 90 |
+| auto:merge-pending grant matures only on the normal path | 88 |
+| size is not low or medium | 88 |
+| no type:* label | 87 |
+| protected path | 86 |
+| more than 11 Key Files | 85 |
+| record carries a kept risk flag | 85 |
+
+Runs: 224 in the window; 11 undated.
+Unreadable: 0
+```
+
+Admitted share after: 85 of 160 (53%), against 14 of 152 (9%) before. The design expected about 61%. Between the two funnels the open `ready` + `auto:build` set grew by eight records.
+
+### Frozen candidate list
+
+The 85 records that run admitted, in queue order: the order dispatch's `next` ranking gives (`rankNext` in `plugin/bin/lib/dispatch/queue-pull.js`), priority high, medium, low, none, then oldest created first. Each verdict is the `drive.js --check` answer the tool itself tallied, saved per record from the same run. Labels are as read at the freeze. The trial takes records from the top; the first 20 driven to a PR are the sample.
+
+| # | Record | Priority | Created | Size | Risk | Ceremony | auto:merge | Widened by |
+|---|---|---|---|---|---|---|---|---|
+| 1 | #4617 | high | 2026-10-30 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 2 | #6143 | high | 2026-11-23 | medium | medium | none | yes | risk, protected-path |
+| 3 | #6145 | high | 2026-11-23 | medium | low | standard | yes | ceremony |
+| 4 | #6146 | high | 2026-11-23 | medium | low | standard | yes | ceremony |
+| 5 | #3822 | medium | 2026-10-20 | low | low | fast-lane | no | protected-path |
+| 6 | #3835 | medium | 2026-10-20 | low | low | fast-lane | no | none |
+| 7 | #3875 | medium | 2026-10-21 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 8 | #3995 | medium | 2026-10-23 | low | low | fast-lane | yes | none |
+| 9 | #4004 | medium | 2026-10-24 | low | low | fast-lane | no | none |
+| 10 | #4108 | medium | 2026-10-24 | medium | medium | standard | no | risk, ceremony |
+| 11 | #4244 | medium | 2026-10-25 | low | medium | fast-lane | no | risk, protected-path |
+| 12 | #4309 | medium | 2026-10-25 | low | medium | none | no | risk, protected-path |
+| 13 | #4310 | medium | 2026-10-25 | medium | medium | none | no | risk, protected-path |
+| 14 | #4365 | medium | 2026-10-26 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 15 | #4366 | medium | 2026-10-26 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 16 | #4429 | medium | 2026-10-26 | medium | low | standard | no | ceremony |
+| 17 | #4431 | medium | 2026-10-26 | medium | medium | standard | no | risk, ceremony |
+| 18 | #4442 | medium | 2026-10-26 | low | low | fast-lane | no | protected-path |
+| 19 | #4443 | medium | 2026-10-26 | medium | medium | standard | no | risk, ceremony |
+| 20 | #4451 | medium | 2026-10-26 | low | medium | none | no | risk, protected-path |
+| 21 | #4452 | medium | 2026-10-26 | medium | medium | none | no | risk, protected-path |
+| 22 | #4460 | medium | 2026-10-27 | low | medium | none | no | risk, protected-path |
+| 23 | #4461 | medium | 2026-10-27 | medium | medium | none | no | risk |
+| 24 | #4462 | medium | 2026-10-27 | medium | medium | none | no | risk |
+| 25 | #4463 | medium | 2026-10-27 | medium | medium | none | no | risk |
+| 26 | #4472 | medium | 2026-10-27 | low | low | fast-lane | no | protected-path |
+| 27 | #4493 | medium | 2026-10-28 | low | low | fast-lane | no | protected-path |
+| 28 | #4496 | medium | 2026-10-28 | medium | medium | standard | no | risk, ceremony |
+| 29 | #4531 | medium | 2026-10-28 | low | low | none | yes | none |
+| 30 | #4664 | medium | 2026-10-31 | low | low | standard | no | ceremony |
+| 31 | #4725 | medium | 2026-10-31 | low | low | fast-lane | no | protected-path |
+| 32 | #4741 | medium | 2026-10-31 | low | low | standard | no | ceremony |
+| 33 | #4764 | medium | 2026-10-31 | low | low | fast-lane | no | none |
+| 34 | #4831 | medium | 2026-11-01 | medium | low | standard | no | ceremony |
+| 35 | #4895 | medium | 2026-11-01 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 36 | #6142 | medium | 2026-11-23 | medium | medium | none | yes | risk |
+| 37 | #2724 | low | 2026-09-21 | low | low | fast-lane | no | none |
+| 38 | #3731 | low | 2026-10-20 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 39 | #3788 | low | 2026-10-20 | low | low | fast-lane | no | protected-path |
+| 40 | #3831 | low | 2026-10-20 | low | low | fast-lane | no | none |
+| 41 | #3878 | low | 2026-10-21 | medium | medium | standard | no | risk, ceremony |
+| 42 | #3901 | low | 2026-10-21 | low | low | fast-lane | no | none |
+| 43 | #3902 | low | 2026-10-21 | low | low | fast-lane | yes | none |
+| 44 | #3905 | low | 2026-10-21 | low | low | fast-lane | no | protected-path |
+| 45 | #3914 | low | 2026-10-21 | low | low | fast-lane | no | protected-path |
+| 46 | #3963 | low | 2026-10-22 | low | low | none | no | protected-path |
+| 47 | #3986 | low | 2026-10-23 | low | low | none | no | none |
+| 48 | #4162 | low | 2026-10-24 | low | low | fast-lane | yes | none |
+| 49 | #4163 | low | 2026-10-24 | medium | medium | standard | no | risk, ceremony |
+| 50 | #4191 | low | 2026-10-24 | medium | low | none | no | none |
+| 51 | #4209 | low | 2026-10-24 | low | low | standard | yes | ceremony |
+| 52 | #4211 | low | 2026-10-24 | low | low | none | no | protected-path |
+| 53 | #4243 | low | 2026-10-25 | low | low | fast-lane | no | protected-path |
+| 54 | #4245 | low | 2026-10-25 | low | low | fast-lane | yes | protected-path |
+| 55 | #4247 | low | 2026-10-25 | medium | medium | none | no | risk, protected-path |
+| 56 | #4248 | low | 2026-10-25 | low | low | none | no | protected-path |
+| 57 | #4259 | low | 2026-10-25 | low | low | none | yes | none |
+| 58 | #4264 | low | 2026-10-25 | low | low | none | no | none |
+| 59 | #4269 | low | 2026-10-25 | low | low | none | no | none |
+| 60 | #4271 | low | 2026-10-25 | low | low | fast-lane | yes | protected-path |
+| 61 | #4284 | low | 2026-10-25 | low | low | none | yes | protected-path |
+| 62 | #4312 | low | 2026-10-25 | low | low | none | no | none |
+| 63 | #4330 | low | 2026-10-25 | low | low | none | no | none |
+| 64 | #4337 | low | 2026-10-25 | low | low | none | no | none |
+| 65 | #4353 | low | 2026-10-25 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 66 | #4357 | low | 2026-10-25 | low | low | none | no | none |
+| 67 | #4364 | low | 2026-10-26 | medium | low | none | no | protected-path |
+| 68 | #4433 | low | 2026-10-26 | medium | low | none | yes | none |
+| 69 | #4447 | low | 2026-10-26 | low | low | none | no | protected-path |
+| 70 | #4471 | low | 2026-10-27 | low | medium | none | no | risk, protected-path |
+| 71 | #4501 | low | 2026-10-28 | medium | medium | none | no | risk |
+| 72 | #4521 | low | 2026-10-28 | low | low | none | yes | protected-path |
+| 73 | #4522 | low | 2026-10-28 | medium | medium | none | no | risk, protected-path |
+| 74 | #4523 | low | 2026-10-28 | low | low | none | yes | protected-path |
+| 75 | #4524 | low | 2026-10-28 | low | low | none | yes | protected-path |
+| 76 | #4525 | low | 2026-10-28 | low | low | none | no | protected-path |
+| 77 | #4526 | low | 2026-10-28 | medium | low | none | no | none |
+| 78 | #4552 | low | 2026-10-29 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 79 | #4671 | low | 2026-10-31 | low | low | fast-lane | no | protected-path |
+| 80 | #4672 | low | 2026-10-31 | low | low | none | no | none |
+| 81 | #4861 | low | 2026-11-01 | medium | medium | standard | no | risk, ceremony, protected-path |
+| 82 | #4931 | low | 2026-11-02 | medium | low | standard | no | ceremony, protected-path |
+| 83 | #4946 | low | 2026-11-02 | low | low | fast-lane | no | protected-path |
+| 84 | #4990 | low | 2026-11-02 | low | low | standard | no | ceremony |
+| 85 | #5070 | low | 2026-11-03 | medium | low | fast-lane | no | none |
+
+62 of the 85 are widened (by risk, ceremony or a protected path) and stop at `pending-review` by construction. 23 are not.
+
+## Operating notes
+
+Written before the first driven record. None of this changes the verdict rule above.
+
+- **One owner.** Two sessions started this trial on 2026-11-23. `specify-p7` wrote this file's first version (PR #6140) and has stopped; `trial-6021` set the policy values (PR #6141) and runs the trial from here.
+- **Two maintainer decisions amend the record body.** The guard 1 instrument and the guard 3 baseline window in the verdict rule were each chosen by the maintainer in the `specify-p7` session on 2026-11-23. The record body's own guard 1 wording (count `/claude-tweaks:review` reports with `parseReviewCounts`) cannot work: that report grades findings low, medium and high in a table with no Critical, Important or Minor heading, so the counter returns null for it.
+- **A not-widened record that carries `auto:merge`.** Six of the 85 are not widened and carry `auto:merge` (#3995, #4531, #3902, #4162, #4259, #4433). The driver may merge such a record itself once its judgment workers clear it, as it did before the trial. That is not the merge-stop defect the record names. If it happens, the row says so, both reviews run on the merged PR, and the merge gate could not apply to it. A widened record that merges by itself stops the trial and is filed.
+- **Skips.** A frozen record that is no longer admitted when its turn comes (an open PR appeared, a blocker opened, a claim is contested, its labels changed) is listed under Replaced with the reason `drive.js` gave, and the next record on the list takes its place. Other sessions' dispatch drains run under the same policy and may take frozen records first.
+- **Review reports.** Each driven PR's two reports are saved under `docs/superpowers/specs/phase-7-trial-reviews/` as the verdict rule names them.
 
 ## Driven records
 
