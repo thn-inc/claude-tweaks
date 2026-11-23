@@ -11,6 +11,7 @@ files:
   - plugin/bin/lib/driver/merge.js
   - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/express/queue.js
+  - plugin/bin/lib/dispatch/queue-order.js
 ---
 
 # Route a Dispatch Singleton Through the Driver
@@ -37,11 +38,12 @@ files:
 - **Should understand:**
   - The route needs only `express-driver`, not `express-lane`. With `express-lane` off, a refused record takes the normal two-call path.
   - Bundle groups never consult the route.
-  - With `split` or `on`, the queue pull keeps a fast-lane record the driver would take out of fast-lane bundles (`bin/lib/express/queue.js`'s `keepSingleton` asks the driver's routing, eligibility and reviewer rules), so it arrives as a singleton. The queue-order cache is stamped `per-record+driver` (or `per-record+express+driver` with `express-lane` on), so an order computed without the driver half is never reused.
+  - With `split` or `on`, the queue pull keeps a fast-lane record the driver would take out of fast-lane bundles (`bin/lib/express/queue.js`'s `keepSingleton` asks the driver's routing, eligibility and reviewer rules), so it arrives as a singleton. The queue-order cache is stamped `per-record+driver` (or `per-record+express+driver` with `express-lane` on), so an order computed without the driver half is never reused. The cache also carries a settings fingerprint over every grouping input (`express-driver`, its size, key-file, risk and review bounds, the express settings, `dispatch-fastlane-bundle-cap` and `work-links`), so switching `split` to `on` or raising a bound with an unchanged queue recomputes the groups instead of replaying the old ones (#6062).
 - **Red flags:**
   - A `drive.js` call under `express-driver: off`.
   - A bundle group routed to the driver.
   - A fast-lane bundle holding a record that `drive.js --check` would admit.
+  - The first pull after raising `express-driver-max-size` (or any other grouping setting) with an unchanged queue reports a queue-order cache hit and dispatches the old groups.
 
 ### 2. Ask the driver — `drive.js --check`
 - **URL:** `node plugin/bin/drive.js --check #N`, which prints one line: `{"record":N,"admitted":bool,"reasons":[…]}`
@@ -110,4 +112,5 @@ files:
 ## Origin
 - Created during the build of #5232 (run `2026-11-15T173500-spec-5232`). That build added the dispatch side of the pipeline driver: `drive.js --check`, `--run` adoption, the `--in-flight-prs`/`--near-dup-pairs` merge hold, and `plugin/skills/dispatch/driver-route.md` behind one conditional pointer in `dispatch/SKILL.md`.
 - Updated during the build of #6011 (run `2026-11-22T083032-record-6011`): the queue pull keeps driver-routable fast-lane records out of bundles, with the `per-record+driver` and `per-record+express+driver` grouping stamps.
+- Updated during the build of #6062 (run `2026-11-23T065346-record-6062`): the queue-order cache is also keyed on a settings fingerprint, so a grouping-setting change with an unchanged queue recomputes the groups.
 - The driver's own steps are journey `drive-a-named-record-to-a-draft-pr-5218`. Its settle is `find-a-stopped-driver-run-already-settled-5219`. The prose express lane this route falls back to is `ship-a-small-record-on-the-express-lane-4025`.

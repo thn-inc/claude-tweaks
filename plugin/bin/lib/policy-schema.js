@@ -148,6 +148,8 @@ const POLICY_KEYS = [
   // ceiling — trusted/unattended derive true (#580; was opt-in-only, #414).
   // See deriveHousekeepingAutoMerge below and tidy/SKILL.md Step 7.
   { key: 'housekeeping-auto-merge', type: 'boolean', default: false, summary: "Lets routine cleanup pull requests merge themselves once green, instead of waiting for a person to arm them.", category: 'merge-safety', tier: 'core' },
+  // #6109: lets wrap-up's learned-skill update PRs merge on green CI with no human review, reversing #5290's human-review floor on instruction changes. Who may set it (policy-key-addition): policyOnly, so a --run overlay never switches it on (a run's own agent writes that run's config.yml, the reason #5830 made control-mode policy-only); factory-settable (not in FACTORY_REFUSED_KEYS), since a user-wide factory default is the maintainer's own standing consent, as for housekeeping-auto-merge. The row default (false) is the base only: the EFFECTIVE unset default is derived in resolvePolicyKeys by deriveLearnedSkillsAutoMerge (true only at autonomy unattended without control-mode on). Not yet used: the `drain` sub-issue wires the reader and drops the marker and the NOT_YET_USED entry.
+  { key: 'learned-skills-auto-merge', type: 'boolean', default: false, policyOnly: true, summary: "Not yet used. Lets wrap-up's learned-skill update PRs merge themselves once CI is green, instead of waiting for a person.", category: 'merge-safety', tier: 'advanced' },
   { key: 'work-links', type: 'enum', values: ['native', 'body-text'], default: 'body-text', summary: "Chooses whether related records link through native issue relationships or a plain-text reference in the body.", category: 'housekeeping', tier: 'advanced' },
   { key: 'review-effort-floor', type: 'enum', values: ['low', 'medium', 'high', 'xhigh', 'max'], summary: "Sets a minimum thoroughness level a code review is never allowed to fall below, even for a small-looking diff.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'harness-health-scoped-rule-budget', type: 'integer', default: 30, summary: "Caps how many lines a path-scoped rule file may hold before a health sweep flags it as too long.", category: 'health-sweeps', tier: 'advanced' },
@@ -677,6 +679,28 @@ function deriveHousekeepingAutoMerge(sources) {
   return autonomy === 'trusted' || autonomy === 'unattended';
 }
 
+// learned-skills-auto-merge's effective default (#6109, Shape B): true only
+// at autonomy `unattended` with control-mode not `on`. Invariants: (1)
+// positive-list on `unattended` — trusted and any future enum value derive
+// false, unlike housekeeping; (2) neither input is read from a run config
+// (autonomy skips run-config; control-mode is policyOnly), so no run config
+// can turn the key on directly or indirectly; the factory source is skipped
+// for a key in refusedKeys (control-mode is, so a factory `control-mode: on`
+// never vetoes); (3) the derived entry keeps source: 'default'. refusedKeys
+// is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS. (4) Fail closed:
+// a present-but-invalid control-mode (`On`, `yes`) vetoes the derivation and
+// derives false — checked directly here, not through firstSourceValue's
+// invalid -> schema-default ('off') mapping, which would fail open.
+function deriveLearnedSkillsAutoMerge(sources, refusedKeys) {
+  const skipFor = (key) => (s) => s.name === 'run-config' || (s.name === 'factory' && refusedKeys.includes(key));
+  if (firstSourceValue(sources, 'autonomy', skipFor('autonomy')) !== 'unattended') return false;
+  const skipControlMode = skipFor('control-mode');
+  const modeSource = sources.find((s) => !skipControlMode(s) && hasOwn(s.values, 'control-mode'));
+  if (!modeSource) return true;
+  const raw = modeSource.values['control-mode'];
+  return isValidValue(SCHEMA_BY_KEY.get('control-mode'), raw) && resolveValue('control-mode', raw) !== 'on';
+}
+
 // The one first-source-wins read the derived keys share (#6056 review): the first source holding
 // `key` (after `skip`) wins, and an invalid value resolves the key's schema default, never the next
 // source's value, mirroring the main loop's invalid handling.
@@ -895,6 +919,10 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
     // same set-but-invalid posture resolveIntegrationModel documents.
     if (canonical === 'housekeeping-auto-merge' && resolved.source === 'default') {
       resolved = { ...resolved, value: deriveHousekeepingAutoMerge(sources) };
+    }
+    // Derived default (#6109): same set-but-invalid posture as above.
+    if (canonical === 'learned-skills-auto-merge' && resolved.source === 'default') {
+      resolved = { ...resolved, value: deriveLearnedSkillsAutoMerge(sources, FACTORY_REFUSED_KEYS) };
     }
     // Shape B derived default (#5224): unset and set-but-invalid both take the
     // auto-merge-max-lines value; source stays 'default' (the driver's signal

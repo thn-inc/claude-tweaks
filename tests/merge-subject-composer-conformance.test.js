@@ -228,3 +228,17 @@ test('AC1.1 go-red: the same sweep flags a frozen pre-#3522 eval fence, indented
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 });
+
+test('AC1.1: every housekeeping arm site composes with the record-less --housekeeping form', () => {
+  const HK_CALL = 'compose-subject.js" --housekeeping --pr {pr-number} --out-dir "{subject-dir}"';
+  const text = read(PR_FIRST);
+  const start = text.indexOf('## Step 3:');
+  const step3 = text.slice(start, text.indexOf('\n## ', start + 1));
+  assert.match(step3, /--housekeeping/, 'pr-first-merge.md Step 3 documents the record-less form');
+  assert.match(step3, /--housekeeping[^\n]*branch 1|branch 1[^\n]*--housekeeping/, "the record-less form covers every composer fence, branch 1's immediate-merge degrade included");
+  assert.ok(read('plugin/skills/tidy/step-7-5-worktree-always.md').includes(HK_CALL), 'tidy Step 7.5 carries the full record-less command');
+  assert.match(read('plugin/skills/tidy/actions-github-issues.md'), /housekeeping-marker flavor composes with Step 3's record-less `--housekeeping` form/, 'Arm ready PR splits the flavors: marker flavor composes record-less');
+  const sweep = read('plugin/skills/wrap-up/residue-sweep.md');
+  assert.match(sweep, /record-less `--housekeeping` form[^\n]*Step 3 branch 1's degrade/, "residue-sweep composes record-less and runs Step 3 branch 1's degrade");
+  assert.doesNotMatch(sweep, /not its degrade chain/, "residue-sweep runs Step 3 branch 1's immediate-merge degrade (record Decision)");
+});

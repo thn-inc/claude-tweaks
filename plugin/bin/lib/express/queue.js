@@ -2,25 +2,68 @@
 // queue-pull policy: dispatch's queue-pull-script.md keeps express-eligible and
 // driver-routable fast-lane records out of bundles (buildDispatchGroups's
 // keepSingleton) and stamps the queue-order cache with the matching grouping
-// mode, so a blob computed under another mode is never reused.
+// mode, so a blob computed under another mode is never reused. expressQueuePolicy
+// also returns the settings `fingerprint` (groupingFingerprint over GROUPING_INPUTS)
+// that keys the queue-order cache beside the stamp (#6062).
 'use strict';
 
 const { evaluateRecordEligibility, widenedByFor } = require('./eligibility');
 const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
+const crypto = require('node:crypto');
 
-const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
-
-const FIRST_KEYS = ['express-lane', 'express-driver'];
+const FIRST_KEYS = ['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'];
 const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths'];
 const ROUTINGS = ['on', 'off', 'split'];
+const UNREADABLE = '<unreadable>';
+
+// The one list of policy keys that decide how the queue is grouped: every key this
+// module requests. The queue-order cache's settings fingerprint hashes exactly these.
+const GROUPING_INPUTS = Object.freeze([...FIRST_KEYS, ...SECOND_KEYS]);
+
+// values: { [key]: raw resolved value } -> 16 hex chars. Only own keys of GROUPING_INPUTS count,
+// in list order; the sensitive-path list is normalized, sorted and deduped so a reordered
+// or comma-string spelling of the same set hashes alike; undefined hashes as null.
+function groupingFingerprint(values) {
+  const pairs = GROUPING_INPUTS.filter((key) => Object.prototype.hasOwnProperty.call(values, key)).map((key) => {
+    let value = values[key];
+    if (key === 'merge-sensitive-paths') {
+      // An unreadable list must not throw out of the policy read; it hashes as a sentinel no real list equals.
+      try { value = [...new Set(sensitivePathsOf({ value }))].sort(); } catch { value = UNREADABLE; }
+    }
+    return [key, value === undefined ? null : value];
+  });
+  return crypto.createHash('sha256').update(JSON.stringify(pairs)).digest('hex').slice(0, 16);
+}
+
+// The disabled shape (fail toward bundling), carrying the fingerprint of whatever was read.
+const disabled = (fingerprint) => Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint, keepSingleton: () => false });
+const DISABLED = disabled(groupingFingerprint({}));
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
 const oneLine = (err) => collapse(err && err.message);
 
-// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, keepSingleton }.
+// The raw resolved value of each requested key, so a key added to FIRST_KEYS or SECOND_KEYS
+// reaches the fingerprint with no further edit.
+// With `failed` given (the second call) a throwing read records its error there (the caller rethrows it where
+// the old code did) and hashes as a sentinel, and a missing entry reads as undefined; without it, either throws.
+const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
+  try { return [k, failed ? (result[k] && result[k].value) : result[k].value]; } catch (err) {
+    if (!failed) throw err;
+    failed[k] = err;
+    return [k, UNREADABLE];
+  }
+}));
+
+// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, fingerprint, keepSingleton }.
+// `fingerprint` is groupingFingerprint over every value the resolver calls returned, the
+// queue-order cache's key beside the `grouping` stamp (#6062): a policy change that leaves
+// the queue unchanged must not replay a stale order. Only a throwing resolver call carries
+// groupingFingerprint({}); every path past a successful first call (an unrecognised
+// `express-driver`, lanes off, driver modules failing to load) carries the fingerprint of the
+// values read, since queue-pull still uses `work-links` and the bundle cap in those states.
 // Two resolver calls, project policy only (no run dir exists at queue-pull time).
-// The first reads `express-lane` and `express-driver`; the second, made only when
+// The first reads `express-lane`, `express-driver`, `dispatch-fastlane-bundle-cap` and `work-links`; the second, made only when
 // either half is on, reads the keys the halves need: the lanes are opt-in, and an
 // unpinned `integration-model` costs a `gh repo view` probe that a queue pull (up
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
@@ -41,26 +84,37 @@ function expressQueuePolicy(deps = {}) {
 
   let expressOn;
   let routing;
+  let read;
   try {
     const first = resolvePolicy(FIRST_KEYS, { runDir: null });
-    expressOn = first['express-lane'].value === true;
-    routing = first['express-driver'].value;
+    read = valuesOf(FIRST_KEYS, first);
+    expressOn = read['express-lane'] === true;
+    routing = read['express-driver'];
   } catch (err) {
     return readFailed(FIRST_KEYS, err);
   }
   if (!ROUTINGS.includes(routing)) {
     stderr(`express-driver: value not recognised (${collapse(routing)}), fast-lane bundling unchanged this pull\n`);
-    return DISABLED;
+    return disabled(groupingFingerprint(read));
   }
   const driverOn = routing !== 'off';
-  if (!expressOn && !driverOn) return DISABLED;
+  if (!expressOn && !driverOn) return disabled(groupingFingerprint(read));
 
   let expressOpts;
   let policy;
+  const failed = {};
+  // A second-call value read once up front; a throwing or missing entry fails here as a direct read would.
+  const need = (key) => {
+    if (key in failed) throw failed[key];
+    if (!policy[key]) throw new TypeError(`policy entry ${key} missing`);
+    return read[key];
+  };
   try {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
+    Object.assign(read, valuesOf(SECOND_KEYS, policy, failed));
     if (expressOn) {
-      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
+      if ('merge-sensitive-paths' in failed) throw failed['merge-sensitive-paths'];
+      expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);
@@ -78,12 +132,12 @@ function expressQueuePolicy(deps = {}) {
       driver = {
         routingReason, reviewerGateReason, widenedReviewerReason, preScreen, reviewRequired, extractKeyFiles,
         eligibility: eligibilityOptions(policy),
-        bounds: { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value },
-        reviewPolicy: policy['express-driver-review'].value,
+        bounds: { sizeCeiling: need('express-driver-max-size'), maxKeyFiles: need('express-driver-max-key-files') },
+        reviewPolicy: need('express-driver-review'),
       };
     } catch (err) {
       stderr(`express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
-      return DISABLED;
+      return disabled(groupingFingerprint(read));
     }
   }
 
@@ -102,6 +156,7 @@ function expressQueuePolicy(deps = {}) {
   return {
     enabled: expressOn,
     grouping: groupingMode(expressOn, driverOn),
+    fingerprint: groupingFingerprint(read),
     keepSingleton: (issue) => {
       if (expressOn) {
         try {
@@ -122,4 +177,4 @@ function expressQueuePolicy(deps = {}) {
   };
 }
 
-module.exports = { expressQueuePolicy };
+module.exports = { expressQueuePolicy, GROUPING_INPUTS, groupingFingerprint };
