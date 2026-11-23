@@ -1,12 +1,12 @@
 'use strict';
 
-const path = require('path');
-
 // Pure: the mechanical half of assess-agent-autonomy's merge-check verdict mode. Classifies a
 // diff's files (test vs. implementation, sensitive vs. not) and reduces that to the summary the
 // merge-check verdict weighs as one input alongside review findings and diff content — never a pass/fail gate on its
 // own. Was docs/superpowers/specs/2026-08-03-mechanical-vs-substantive-merge-judgment-design.md
 // — deleted (d83f0720).
+
+const nodePath = require('path');
 
 // Recognizes multiple ecosystems' test-path conventions, since
 // classifyDiffFiles/blastRadiusSummary judge diffs from arbitrary downstream
@@ -164,7 +164,7 @@ function blastRadiusSummary(classifiedFiles) {
 // A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
 // as the file it names; git's own paths are already in this form.
 function canonicalPath(p) {
-  const posix = path.posix.normalize(String(p).replace(/\\/g, '/'));
+  const posix = nodePath.posix.normalize(String(p).replace(/\\/g, '/'));
   return posix.startsWith('./') ? posix.slice(2) : posix;
 }
 
