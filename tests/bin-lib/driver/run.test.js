@@ -5506,6 +5506,21 @@ test('(#5454) docs/driver.md names the test-step tree stop beside the index-flag
   assert.ok(!bullet.includes("run's own"), "the tree bullet does not call the pipelines paths the run's own");
 });
 
+test('#5997: docs/driver.md documents the record profile, the one relaunch and the new event fields', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const section = (heading) => {
+    const start = docs.indexOf(`\n## ${heading}`);
+    assert.notEqual(start, -1, `the ${heading} section exists`);
+    return docs.slice(start, docs.indexOf('\n## ', start + 1));
+  };
+  const models = section('Worker models');
+  for (const part of ['implementer-tier', '`record`', 'stepUp', 'cannot-complete', 'red-tests', 'escalatedFrom', 'attempt', 'noRelaunch', 'three implementer launches', 'model-ceiling']) {
+    assert.ok(models.includes(part), `Worker models names ${part}`);
+  }
+  const events = section('Event lines');
+  for (const part of ['`profile`', '`attempt`']) assert.ok(events.includes(part), `Event lines names ${part}`);
+});
+
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
   // A TAP destination the run cannot use: fixed text, never the error's own words.
   const thrown = fixRig({ script: [[(c) => c.kind === 'lstatType' && String(c.args[0]).endsWith('fix-evidence-0.tap'), { type: 'file', code: null }]] });
