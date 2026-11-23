@@ -115,6 +115,19 @@ lines, and it pins `KEYS.length` to a literal `6`, which is what lets an added o
 red. Import the scanner. Keep the expected count, list, or threshold a literal; a test-local
 constant is fine.
 
+**Retire a stand-in parser once the shipped one lands.** A record that writes a format before any
+code reads it may pin that format with a parser of its own inside the test. When a later record
+ships the real reader, the stand-in becomes a second recognizer, and the two can disagree. #6056
+pinned `specify/planning.md`'s held-questions schema with a hand-typed `HELD_QUESTIONS` and its own
+`parseHeldQuestions` in `tests/specify-planning-conformance.test.js`. #6059 then shipped
+`plugin/bin/lib/issues/planning-hold.js`'s `readPlanningHold` and a writer-reader pin in
+`tests/specify-planning-answer-conformance.test.js`, but left the stand-in in place. They disagree
+on an empty block: the stand-in's test asserts it is malformed, while `readPlanningHold` returns
+`held` with zero questions (the "Review Focus 4" test in `tests/bin-lib/issues/planning-hold.test.js`).
+When you ship the reader, grep `tests/` for the format's marker strings
+(`grep -rn 'held-questions:start' tests/`), move every assertion the stand-in makes onto the real
+reader, and delete the stand-in.
+
 ### An allowlist entry owes a stale-check of its own — lazy-loaded
 
 When a sweep ships with an exemption list, read `advanced-proof-patterns.md`'s "An allowlist entry owes a stale-check of its own" before writing it: every entry needs a stale-check, proved by doctoring the entry both ways, whose failure says *shrink the list*.
