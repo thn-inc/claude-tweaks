@@ -122,7 +122,7 @@ test('AC11.2: --from replaces the step-up base', () => {
 
 test('no size and no effort: lane gives nulls, record gives standard', () => {
   const file = writeSpec(spec({ header: '', keyFiles: ['a.js'] }));
-  assert.deepStrictEqual(ok(['--spec-file', file, '--rule', 'lane']), { profile: null, stepUp: null, rule: 'lane', size: null, keyFileCount: 1 });
+  assert.deepStrictEqual(ok(['--spec-file', file, '--rule', 'lane']), { profile: null, stepUp: null, rule: 'lane', size: null, keyFileCount: 1, startEffort: null, next: null, ladder: false });
   assert.strictEqual(ok(['--spec-file', file, '--rule', 'record']).profile, 'standard');
 });
 
@@ -233,7 +233,7 @@ test('script entry: exact stdout bytes, exit 0, empty stderr', () => {
   const res = spawnCli(CLI, ['--spec-file', LOW_TWO(), '--rule', 'lane'], { env: ENV, cwd: tmpDir() });
   assert.strictEqual(res.code, 0);
   assert.strictEqual(res.stderr, '');
-  assert.strictEqual(res.stdout, '{"profile":"fast","stepUp":"standard","rule":"lane","size":"low","keyFileCount":2}\n');
+  assert.strictEqual(res.stdout, '{"profile":"fast","stepUp":"standard","rule":"lane","size":"low","keyFileCount":2,"startEffort":null,"next":null,"ladder":false}\n');
 });
 
 test('run() calls no fs mutation API, for success, refusal and --run calls', () => {
@@ -296,4 +296,96 @@ test('an absolute readable --spec-file never reads cwd(), so a deleted working d
   };
   assert.strictEqual(run(['--spec-file', file, '--rule', 'lane'], deps), 0, err.join(''));
   assert.strictEqual(JSON.parse(out.join('')).profile, 'fast');
+});
+
+// ---- #6002: the effort ladder (startEffort, next, ladder) ----
+const PROFILE_POLICY = 'model-effort: profile\nmodel-profiles:\n  standard:\n    effort: medium\n';
+const MED_THREE = (risk) => writeSpec(spec({ header: `${risk === undefined ? '' : `risk: ${risk}\n`}size: medium\n`, keyFiles: ['a.js', 'b.js', 'c.js'] }));
+const ATTEMPT = (profile, effort, escalations, trigger) => ['--attempt-profile', profile, '--attempt-effort', effort, '--escalations', String(escalations), '--trigger', trigger];
+
+test('AC1.1 (CLI): startEffort under model-effort profile follows risk', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  assert.strictEqual(ok(['--spec-file', MED_THREE('low'), '--rule', 'record'], project).startEffort, 'low');
+  assert.strictEqual(ok(['--spec-file', MED_THREE('medium'), '--rule', 'record'], project).startEffort, 'medium');
+  assert.strictEqual(ok(['--spec-file', MED_THREE(), '--rule', 'record'], project).startEffort, 'medium');
+});
+
+test('risk: an unreadable header value never errors, it reads as missing', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const bad = writeSpec(spec({ header: 'risk: huge\nsize: medium\n', keyFiles: ['a.js', 'b.js', 'c.js'] }));
+  assert.strictEqual(ok(['--spec-file', bad, '--rule', 'record'], project).startEffort, 'medium');
+  const twice = writeSpec(spec({ header: 'risk: low\nrisk: low\nsize: medium\n', keyFiles: ['a.js', 'b.js', 'c.js'] }));
+  assert.strictEqual(ok(['--spec-file', twice, '--rule', 'record'], project).startEffort, 'medium');
+});
+
+test('AC1.2 (CLI): model-effort inherit gives null startEffort and null next, the rest unchanged', () => {
+  const project = scratchProject('model-profiles:\n  standard:\n    effort: medium\n');
+  const out = ok(['--spec-file', MED_THREE('low'), '--rule', 'record', ...ATTEMPT('standard', 'low', 0, 'red-tests')], project);
+  assert.deepStrictEqual(out, { profile: 'standard', stepUp: 'capable', rule: 'record', size: 'medium', keyFileCount: 3, startEffort: null, next: null, ladder: false });
+});
+
+test('ladder is true for a Fast build under record + profile', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const file = writeSpec(spec({ header: 'size: low\n', keyFiles: ['a.js'] }));
+  const out = ok(['--spec-file', file, '--rule', 'record'], project);
+  assert.strictEqual(out.profile, 'fast');
+  assert.strictEqual(out.startEffort, null);
+  assert.strictEqual(out.ladder, true);
+  assert.strictEqual(out.next, null);
+  const next = ok(['--spec-file', file, '--rule', 'record', ...ATTEMPT('fast', 'inherit', 0, 'red-tests')], project);
+  assert.deepStrictEqual(next.next, { profile: 'standard', effort: 'medium', escalations: 1 });
+  assert.strictEqual(ok(['--spec-file', file, '--rule', 'lane'], project).ladder, false);
+});
+
+test('AC2.1 (CLI): next takes the effort rung', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record', ...ATTEMPT('standard', 'low', 0, 'red-tests')], project);
+  assert.deepStrictEqual(out.next, { profile: 'standard', effort: 'medium', escalations: 1 });
+});
+
+test('AC3.1 (CLI): next for blocked is the profile step', () => {
+  // The target profile starts at its own resolved effort: capable's, set here to medium.
+  const project = scratchProject(`${PROFILE_POLICY}  capable:\n    effort: medium\n`);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record', ...ATTEMPT('standard', 'low', 0, 'blocked')], project);
+  assert.deepStrictEqual(out.next, { profile: 'capable', effort: 'medium', escalations: 1 });
+});
+
+test('Decision Q1 (Reading A, CLI): --from sets the profile startEffort is computed against', () => {
+  const policy = `${PROFILE_POLICY}  capable:\n    effort: high\n`;
+  const project = scratchProject(policy);
+  const base = ['--rule', 'record'];
+  const low = MED_THREE('low');
+  const fast = ok(['--spec-file', low, ...base, '--from', 'fast'], project);
+  assert.strictEqual(fast.startEffort, null);
+  const plain = ok(['--spec-file', low, ...base], project);
+  assert.strictEqual(fast.profile, plain.profile);
+  assert.strictEqual(fast.keyFileCount, plain.keyFileCount);
+  assert.strictEqual(ok(['--spec-file', MED_THREE('medium'), ...base, '--from', 'capable'], project).startEffort, 'medium');
+  assert.strictEqual(ok(['--spec-file', MED_THREE('high'), ...base, '--from', 'capable'], project).startEffort, 'high');
+});
+
+test('public-contract: the five existing keys keep their order and values', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record'], project);
+  const keys = Object.keys(out);
+  assert.deepStrictEqual(keys.slice(0, 5), ['profile', 'stepUp', 'rule', 'size', 'keyFileCount']);
+  assert.deepStrictEqual(keys.slice(-3), ['startEffort', 'next', 'ladder']);
+  assert.strictEqual(keys.length, 8);
+});
+
+test('the attempt flags are all-or-none', () => {
+  const file = MED_THREE();
+  const all = ATTEMPT('standard', 'low', 0, 'red-tests');
+  refused(['--spec-file', file, '--rule', 'record', ...all.slice(0, 6)], 2, '--trigger');
+  refused(['--spec-file', file, '--rule', 'record', ...ATTEMPT('standard', 'low', 3, 'red-tests')], 2, '--escalations');
+  refused(['--spec-file', file, '--rule', 'record', ...ATTEMPT('standard', 'xhigh', 0, 'red-tests')], 2, '--attempt-effort');
+  refused(['--spec-file', file, '--rule', 'record', ...ATTEMPT('huge', 'low', 0, 'red-tests')], 2, '--attempt-profile');
+  refused(['--spec-file', file, '--rule', 'record', ...ATTEMPT('standard', 'low', 0, 'sad')], 2, '--trigger');
+});
+
+test('a malformed policy.yml exits 1 naming the parse message; a missing one is an empty policy', () => {
+  const project = scratchProject('frontier-run-cap: lots\n');
+  refused(['--spec-file', MED_THREE(), '--rule', 'record'], 1, 'frontier-run-cap', project);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record'], tmpDir());
+  assert.strictEqual(out.ladder, false);
 });

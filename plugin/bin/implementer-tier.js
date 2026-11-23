@@ -9,10 +9,21 @@
 // header parse and the rule resolution. Zero runtime npm deps.
 //
 // Usage: implementer-tier.js --spec-file <path> [--rule lane|record] [--run <dir>] [--from <profile>]
-// Output: one stdout line, JSON.stringify({ profile, stepUp, rule, size, keyFileCount })
+//          [--attempt-profile <profile> --attempt-effort <low|medium|high|inherit> --escalations <0|1|2>
+//           --trigger <red-tests|fix-round-failed|blocked|cannot-complete>]
+// Output: one stdout line, JSON.stringify({ profile, stepUp, rule, size, keyFileCount,
+//   startEffort, next, ladder })
 // — `size` null when the header has neither line, `profile` null under `lane`
 // then, `stepUp` one profile up from --from (else the computed profile), null
-// from capable, frontier or null.
+// from capable, frontier or null. #6002's effort ladder: `ladder` is true
+// exactly when the rule is `record` and policy.yml's `model-effort` is
+// `profile`; `startEffort` is the first attempt's effort (the spec header's
+// `risk:` against the resolved launch effort of --from's profile, else the
+// computed one; null when that profile is null or `model-effort` is not
+// `profile`, so also null for a Fast profile under an active ladder); `next`
+// is the following attempt `{ profile, effort, escalations }` from the four
+// attempt flags (all or none), null without them, when the ladder is off, or
+// when the ladder is spent.
 //
 // Rule: --rule, else the run's config.yml via --run, else policy.yml, else the
 // schema default (lane). --run is validated even when --rule is passed (a
@@ -24,16 +35,20 @@
 //   0  the line was printed
 //   1  the invocation was well-formed but its payload was not: an unreadable
 //      spec file, a malformed header (a size:/effort: value outside
-//      low/medium/high, or the line given twice), or an invalid resolved
-//      implementer-tier value from policy.yml or the run's config.yml
+//      low/medium/high, or the line given twice), an invalid resolved
+//      implementer-tier value from policy.yml or the run's config.yml, or a
+//      malformed policy.yml (a missing one is an empty policy)
 //   2  malformed invocation: no --spec-file, an unknown flag, a flag without a
-//      value, a flag given twice, an invalid --rule or --from, or a --run that
+//      value, a flag given twice, an invalid --rule or --from, an attempt flag
+//      given without the other three or with an invalid value, or a --run that
 //      resolvePolicy refuses (anchored-or-outside guard, missing directory)
 // Nothing is written to disk.
 'use strict';
 const fs = require('fs');
-const { PROFILES } = require('./lib/model-profiles/profiles');
-const { POLICY_KEY, RULES, SIZES, keyFileCount, implementerProfile, stepUp } = require('./lib/model-profiles/implementer-tier');
+const { PROFILES, resolve } = require('./lib/model-profiles/profiles');
+const { POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt } = require('./lib/model-profiles/implementer-tier');
+const { locatePolicyFile } = require('./lib/policy-file');
+const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { fsPath } = require('./lib/health-core/io');
 const { resolvePolicy, realDeps: policyDeps } = require('./resolve-policy');
 
@@ -41,8 +56,10 @@ const EXIT_OK = 0;
 const EXIT_PAYLOAD = 1;
 const EXIT_INVOCATION = 2;
 
-const USAGE = 'usage: implementer-tier.js --spec-file <path> [--rule lane|record] [--run <dir>] [--from <profile>]';
-const FLAGS = ['--spec-file', '--rule', '--run', '--from'];
+const USAGE = 'usage: implementer-tier.js --spec-file <path> [--rule lane|record] [--run <dir>] [--from <profile>] [--attempt-profile <profile> --attempt-effort <low|medium|high|inherit> --escalations <0|1|2> --trigger <red-tests|fix-round-failed|blocked|cannot-complete>]';
+const ATTEMPT_FLAGS = ['--attempt-profile', '--attempt-effort', '--escalations', '--trigger'];
+const FLAGS = ['--spec-file', '--rule', '--run', '--from', ...ATTEMPT_FLAGS];
+const ATTEMPT_EFFORTS = ['low', 'medium', 'high', 'inherit'];
 const HEADING_RE = /^#{1,6}\s/;
 
 // The CRLF-normalized lines before the first blank line or the first heading.
@@ -72,6 +89,38 @@ function readSize(text) {
   return { size: undefined };
 }
 
+// The header's `risk:` value — never an error: zero lines, two or more, or a
+// value outside low/medium/high all read as undefined (no risk).
+function readRisk(text) {
+  const prefix = 'risk:';
+  const values = headerLines(text).filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trim());
+  return values.length === 1 && SIZES.includes(values[0]) ? values[0] : undefined;
+}
+
+// The model-profiles policy fragment, read as resolve-profile.js reads it: a
+// missing file is an empty policy, a malformed one throws. An unreadable cwd
+// (a deleted working directory) is an empty policy too — the ladder is then off.
+function readPolicy(deps) {
+  let policyPath;
+  try {
+    policyPath = locatePolicyFile(deps.cwd()).path;
+  } catch {
+    return {};
+  }
+  let raw;
+  try {
+    raw = fs.readFileSync(policyPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`cannot read ${policyPath}: ${err.message}`);
+  }
+  try {
+    return parsePolicyModelConfig(raw);
+  } catch (err) {
+    throw new Error(`malformed ${policyPath}: ${err.message}`);
+  }
+}
+
 // { opts } or { error }. A value-taking flag needs a value: a missing, blank or
 // `--`-led one is refused, as resolve-profile.js's requireValue does.
 function parseArgs(argv) {
@@ -97,12 +146,25 @@ function run(argv, deps = realDeps) {
   const parsed = parseArgs(argv);
   if (parsed.error) return fail(EXIT_INVOCATION, `${parsed.error}\n${USAGE}`);
   const { '--spec-file': specFile, '--rule': ruleFlag, '--run': runDir, '--from': from } = parsed.opts;
+  const attempt = ATTEMPT_FLAGS.filter((f) => parsed.opts[f] !== undefined);
+  if (attempt.length > 0 && attempt.length < ATTEMPT_FLAGS.length) {
+    const missing = ATTEMPT_FLAGS.filter((f) => parsed.opts[f] === undefined);
+    return fail(EXIT_INVOCATION, `the attempt flags are all-or-none — missing ${missing.join(', ')}\n${USAGE}`);
+  }
   if (specFile === undefined) return fail(EXIT_INVOCATION, `--spec-file is required\n${USAGE}`);
   if (ruleFlag !== undefined && !RULES.includes(ruleFlag)) {
     return fail(EXIT_INVOCATION, `--rule ${JSON.stringify(ruleFlag)} is not valid — expected lane or record`);
   }
   if (from !== undefined && !Object.hasOwn(PROFILES, from)) {
     return fail(EXIT_INVOCATION, `--from ${JSON.stringify(from)} is not a profile — expected ${Object.keys(PROFILES).join(', ')}`);
+  }
+
+  if (attempt.length > 0) {
+    const { '--attempt-profile': ap, '--attempt-effort': ae, '--escalations': esc, '--trigger': trig } = parsed.opts;
+    if (!Object.hasOwn(PROFILES, ap)) return fail(EXIT_INVOCATION, `--attempt-profile ${JSON.stringify(ap)} is not a profile — expected ${Object.keys(PROFILES).join(', ')}`);
+    if (!ATTEMPT_EFFORTS.includes(ae)) return fail(EXIT_INVOCATION, `--attempt-effort ${JSON.stringify(ae)} is not valid — expected ${ATTEMPT_EFFORTS.join(', ')}`);
+    if (!/^[0-9]$/.test(esc) || Number(esc) > MAX_ESCALATIONS) return fail(EXIT_INVOCATION, `--escalations ${JSON.stringify(esc)} is not valid — expected 0..${MAX_ESCALATIONS}`);
+    if (!TRIGGERS.includes(trig)) return fail(EXIT_INVOCATION, `--trigger ${JSON.stringify(trig)} is not valid — expected ${TRIGGERS.join(', ')}`);
   }
 
   let text;
@@ -145,7 +207,25 @@ function run(argv, deps = realDeps) {
   try {
     const count = keyFileCount(text);
     const profile = implementerProfile({ size: header.size, keyFileCount: count, rule });
-    line = JSON.stringify({ profile, stepUp: stepUp(from ?? profile), rule, size: header.size ?? null, keyFileCount: count });
+    const policy = readPolicy(deps);
+    const base = from ?? profile;
+    const ladder = rule === 'record' && policy['model-effort'] === 'profile';
+    const start = base === null ? null : startEffort({ risk: readRisk(text), launchEffort: resolve(base, { policy }).launchEffort });
+    let next = null;
+    if (ladder && attempt.length > 0) {
+      const { '--attempt-profile': ap, '--attempt-effort': ae, '--escalations': esc, '--trigger': trig } = parsed.opts;
+      next = nextAttempt({
+        profile: ap,
+        effort: ae === 'inherit' ? null : ae,
+        escalations: Number(esc),
+        trigger: trig,
+        resolveProfile: (p) => {
+          const r = resolve(p, { policy });
+          return { model: r.model, launchEffort: r.launchEffort };
+        },
+      });
+    }
+    line = JSON.stringify({ profile, stepUp: stepUp(base), rule, size: header.size ?? null, keyFileCount: count, startEffort: start, next, ladder });
   } catch (err) {
     return fail(EXIT_PAYLOAD, err.message);
   }
