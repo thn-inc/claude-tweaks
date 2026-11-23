@@ -787,6 +787,27 @@ describe('branch roles', () => {
     assert.equal(fixture.totals.notQualifying, 1);
   });
 
+  test('qualification is read before the prompt and tier: an Approved review whose pointer file is gone, or with no tier, is notQualifying, not excluded', async () => {
+    const approved = 'The change is small and correct.\n\nTask quality: Approved';
+    const x = await extractBranch('task-vs-branch', { pointer: 'gone' }, [], (bx) => {
+      setReply(bx, 'tp', approved);
+      const f = path.join(bx.runsRoot, RUNB, 'timing.json');
+      const timing = JSON.parse(read(f));
+      delete timing.dispatches.items.find((i) => i.agentId === 't1').tier;
+      fs.writeFileSync(f, JSON.stringify(timing));
+    });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, []);
+    assert.deepEqual(fixture.totals, { reviews: 1, slots: 2, byTaskTier: { capable: 1 }, notQualifying: 2 });
+    // A qualifying review whose pointer file is gone is still excluded.
+    const y = await extractBranch('task-vs-branch', { pointer: 'gone' });
+    ok(y);
+    const yFixture = y.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(yFixture.excluded, [{ run: RUNB, agentId: 'tp', tier: 'standard', reason: 'prompt-file-gone' }]);
+    assert.equal(yFixture.totals.notQualifying, 1);
+  });
+
   test('a second qualifying review is task-vs-branch.2, its taskTier its own, its archived tier the whole-branch review\'s', async () => {
     const x = await extractBranch('task-vs-branch', { pointer: 'present' });
     ok(x);

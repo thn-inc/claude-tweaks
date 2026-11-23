@@ -74,14 +74,24 @@ function promptFor(item, c, fs) {
 // An archived dispatch's tier, prompt and reply read through `readReply` -> { reason, tier? } (the first check it
 // fails: no-archived-tier, no-transcript, prompt-file-gone, report-unparsed) or { tier, prompt, transcript, reply }.
 // With no readReply (the whole-branch prompt task-vs-branch replays) the reply is not read: it has no findings of its own.
-function archivedReply(item, c, deps, readReply) {
+// With `qualifies`, the raw reply is read first, before the tier and the prompt: one that parses and does not qualify
+// gives { notQualifying: true } whatever its tier or prompt (a verdict and item severities never depend on the paths
+// strippedReply removes); the rest go on to the checks, their reply re-read stripped for its item paths.
+function archivedReply(item, c, deps, readReply, qualifies = null) {
+  let raw;
+  if (qualifies) {
+    const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
+    raw = file === undefined ? null : lastAssistantText(file, deps.fs);
+    const early = raw === null ? null : readReply(raw);
+    if (early !== null && !qualifies(early)) return { notQualifying: true };
+  }
   const tier = item.tier;
   if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { reason: 'no-archived-tier' };
   const got = promptFor(item, c, deps.fs);
   if (got.reason) return { tier, reason: got.reason };
   const { prompt, transcript, file } = got;
   if (!readReply) return { tier, prompt, transcript, reply: { verdict: null, items: [], itemsUnparsed: false } };
-  const raw = lastAssistantText(file, deps.fs);
+  if (raw === undefined) raw = lastAssistantText(file, deps.fs);
   const reply = raw === null ? null : readReply(strippedReply(raw, prompt, c.mainRoot));
   if (reply === null) return { tier, reason: 'report-unparsed' };
   return { tier, prompt, transcript, reply };
@@ -184,17 +194,22 @@ function wholeBranchOf(r, dispatches, c, deps) {
   return leaks(x.candidate, r, c) ? null : x.candidate;
 }
 
+const isCriticalOrImportant = (i) => i.sev === 'critical' || i.sev === 'important';
+// Whether a task review's reply qualifies it for task-vs-branch: Needs fixes with a Critical or Important item, or with
+// items that do not parse (excluded later as items-unparsed, since they may hold one).
+const qualifiesForTaskVsBranch = (reply) => reply.verdict === 'needs-fixes' && (reply.itemsUnparsed || reply.items.some(isCriticalOrImportant));
+
 // One task review for task-vs-branch -> { reason, tier? }, { notQualifying: true } (an Approved review, or a Needs
-// fixes one with no Critical or Important item), or { pair }: the whole-branch prompt `wb` replayed at the head the
-// task review reviewed and at wb's own head, each scored on the task review's Critical and Important items.
+// fixes one with no Critical or Important item, decided before its tier and prompt are read), or { pair }: the
+// whole-branch prompt `wb` replayed at the head the task review reviewed and at wb's own head, each scored on the task
+// review's Critical and Important items.
 function examineTaskReview(r, item, c, deps, wb) {
-  const got = archivedReply(item, c, deps, BRANCH_ROLES.task.readReply);
-  if (got.reason) return got;
+  const got = archivedReply(item, c, deps, BRANCH_ROLES.task.readReply, qualifiesForTaskVsBranch);
+  if (got.notQualifying || got.reason) return got;
   const { tier, prompt, reply } = got;
-  if (reply.verdict !== 'needs-fixes') return { notQualifying: true };
+  if (!qualifiesForTaskVsBranch(reply)) return { notQualifying: true };
   if (reply.itemsUnparsed) return { tier, reason: 'items-unparsed' };
-  const items = reply.items.filter((i) => i.sev === 'critical' || i.sev === 'important');
-  if (items.length === 0) return { notQualifying: true };
+  const items = reply.items.filter(isCriticalOrImportant);
   // The prompt's own head is the task's commit before its fix round: the fix is re-reviewed under `re-review`.
   const shas = shaPairOf(prompt);
   if (shas === null) return { tier, reason: 'no-sha-range' };
