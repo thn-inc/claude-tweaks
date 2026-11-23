@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-23T073201-record-6109/work/6109-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-23T151029-record-6109/work/6109-spec.md` (re-materialized 2026-11-23 with the issue body's plan-review **Decision**: Reading B plus the indirect route closed)
 
 Scope keywords: learned-skills-auto-merge, deriveHousekeepingAutoMerge
 
@@ -17,15 +17,15 @@ Scope keywords: learned-skills-auto-merge, deriveHousekeepingAutoMerge
 - Key: `learned-skills-auto-merge`, type `boolean`, category `merge-safety`, tier `advanced`, schema `default: false`.
 - Summary (exact): `Not yet used. Lets wrap-up's learned-skill update PRs merge themselves once CI is green, instead of waiting for a person.`
 - Derived unset default: `true` only when `autonomy` resolves `unattended` AND `control-mode` does not resolve `on`; otherwise `false`. An explicit key wins both ways (#580), including explicit `true` under `control-mode: on`.
-- `autonomy` read through `firstSourceValue(sources, 'autonomy')` (same walk as `deriveHousekeepingAutoMerge`); `control-mode` read policy-file only (it is `policyOnly` and in `FACTORY_REFUSED_KEYS`): skip `run-config` and `factory` sources, the way `planningDecisionsFrom` skips them.
+- `autonomy` read through `firstSourceValue` with the `run-config` source skipped (policy.yml then factory; factory is skipped only if `autonomy` is in `refusedKeys`, which it is not today) — so a run config's `autonomy: unattended` never turns the default on (spec Decision). `control-mode` read policy-file only (it is `policyOnly` and in `FACTORY_REFUSED_KEYS`): skip `run-config` and `factory` sources, the way `planningDecisionsFrom` skips them. Use one skip predicate for both reads: `(s) => s.name === 'run-config' || (s.name === 'factory' && refusedKeys.includes(key))`. `housekeeping-auto-merge`'s own derivation is not changed.
 - Derived entry keeps `source: 'default'` (Shape B invariant).
 - Commit messages: `{Verb} {what} — {detail}` with `refs #6109`; never `closes`/`fixes`.
-- `plugin/skills/_shared/policy-schema.md` is 50,996 B against RAIL_BYTES 52,500 B (1,504 B headroom): the new row must be ≤ 600 B, leaving ≥ 900 B.
+- `plugin/skills/_shared/policy-schema.md` is 51,122 B (after merging main) against RAIL_BYTES 52,500 B (1,378 B headroom): the new row must be ≤ 600 B, leaving ≥ 770 B.
 - Other files cite the ADR by title, never by number.
 
 ## Who may set it (policy-key-addition decision)
 
-**`policyOnly: true`; factory-settable (not in `FACTORY_REFUSED_KEYS`).** The key removes a human-review floor on instruction changes, and a run's own agent writes that run's `config.yml` — the same reason #5830 made `control-mode` policy-only — so a `--run` overlay must never switch it on. A user-wide factory default is the maintainer's own standing consent (as for `housekeeping-auto-merge`), so it stays settable there. State this in the comment above the row. Owes policy-key-addition sites 8 and 9.
+**`policyOnly: true`; factory-settable (not in `FACTORY_REFUSED_KEYS`).** The key removes a human-review floor on instruction changes, and a run's own agent writes that run's `config.yml` — the same reason #5830 made `control-mode` policy-only — so a `--run` overlay must never switch it on. A user-wide factory default is the maintainer's own standing consent (as for `housekeeping-auto-merge`), so it stays settable there. This is the issue body's **Decision** (Reading B), which also closes the indirect route: the derived default reads `autonomy` with the run-config source skipped. State both in the comment above the row. Owes policy-key-addition sites 8 and 9.
 
 ## Governing skill rules (quoted from `.claude/skills/policy-key-addition`)
 
@@ -47,8 +47,9 @@ Check B hit `plugin/skills/_shared/autonomy-ceiling.md` (its ceiling table descr
 1. `control-mode: on` set only in a run config (`runConfigRaw`) must NOT veto the derivation (control-mode is policyOnly) — unattended still derives `true`. Test in Task 1.
 2. `control-mode: on` in the factory layer must NOT veto (control-mode is factory-refused). Test in Task 1.
 3. A run config setting `learned-skills-auto-merge: true` under `autonomy: supervised` must resolve `false` (key is policyOnly). Test in Task 1.
-4. A malformed key value (`maybe`) at unattended keeps `invalid: true` and takes the derived `true`. Test in Task 1.
-5. `autonomy: trusted` derives `false` (positive-list on `unattended` only — unlike housekeeping). Covered by AC1.1 (b).
+4. A run config setting `autonomy: unattended` over a `policy.yml` `autonomy: supervised` must derive `false` (run-config skip on the autonomy read). Test in Task 1.
+5. A malformed key value (`maybe`) at unattended keeps `invalid: true` and takes the derived `true`. Test in Task 1.
+6. `autonomy: trusted` derives `false` (positive-list on `unattended` only — unlike housekeeping). Covered by AC1.1 (b).
 
 ---
 
@@ -57,7 +58,7 @@ Check B hit `plugin/skills/_shared/autonomy-ceiling.md` (its ceiling table descr
 **Files:**
 - Modify: `plugin/bin/lib/policy-schema.js` (row after `housekeeping-auto-merge` ~line 145; new derive function after `deriveHousekeepingAutoMerge` ~line 659; apply in `resolvePolicyKeys` beside the housekeeping branch ~line 877)
 - Test: `tests/resolve-policy-lib.test.js` (new block right after the housekeeping-auto-merge block, before `// --- merge-authorization`)
-- Modify: `tests/policy-schema.test.js:46-48` (count 122 → 123, `// Last bump: 122 -> 123, #6109`)
+- Modify: `tests/policy-schema.test.js:46-48` (both counts 124 → 125, `// Last bump: 124 -> 125, #6109`)
 - Modify: `tests/resolve-policy-control-mode.test.js:313` (append `'learned-skills-auto-merge'` to `NOT_YET_USED`)
 - Modify: `plugin/skills/_shared/policy-schema.md` (row after `grant-veto-window-hours` in the merge-safety table)
 - Modify: `plugin/skills/_shared/policy-schema-read-path.md:20` (Shape B paragraph: add the key to the member list)
@@ -82,7 +83,8 @@ test('AC2.1 (b) AC3.2: explicit true at supervised wins', () => { /* 'learned-sk
 test('explicit true under control-mode: on wins (#580)', () => { /* '...: true\nautonomy: unattended\ncontrol-mode: on\n' -> true/policy */ });
 test('a run-config control-mode: on does not veto (control-mode is policyOnly)', () => { /* policyRaw unattended, runConfigRaw 'control-mode: on\n' -> true/default */ });
 test('a factory control-mode: on does not veto (control-mode is factory-refused)', () => { /* policyRaw unattended, factoryRaw 'control-mode: on\n' -> true/default */ });
-test('a run-config value never sets the key (policyOnly)', () => { /* policyRaw supervised, runConfigRaw '...: true\n' -> false/default */ });
+test('AC3 (a): a run-config value never sets the key (policyOnly)', () => { /* policyRaw supervised, runConfigRaw '...: true\n' -> false/default */ });
+test('AC3 (b): a run-config autonomy: unattended never turns the default on', () => { /* policyRaw 'autonomy: supervised\n', runConfigRaw 'autonomy: unattended\n' -> false/default */ });
 test('set-but-invalid at unattended keeps invalid: true and derives true', () => { /* '...: maybe\nautonomy: unattended\n' -> { value: true, source: 'default', invalid: true } */ });
 ```
 
@@ -95,7 +97,7 @@ Expected: FAIL — unknown key / missing row.
 
 - [ ] **Step 3: Implement**
   - Row (with the decision comment above it): `{ key: 'learned-skills-auto-merge', type: 'boolean', default: false, policyOnly: true, summary: <Global Constraints exact>, category: 'merge-safety', tier: 'advanced' }`. Comment also names the derivation and that the `drain` sub-issue drops the marker.
-  - `deriveLearnedSkillsAutoMerge(sources, refusedKeys)`: `firstSourceValue(sources, 'autonomy') === 'unattended' && firstSourceValue(sources, 'control-mode', (s) => s.name === 'run-config' || (s.name === 'factory' && refusedKeys.includes('control-mode'))) !== 'on'`. Header comment states the invariants (positive list on `unattended`; control-mode policy-file only; source stays `'default'`).
+  - `deriveLearnedSkillsAutoMerge(sources, refusedKeys)`: with `const skipFor = (key) => (s) => s.name === 'run-config' || (s.name === 'factory' && refusedKeys.includes(key));` return `firstSourceValue(sources, 'autonomy', skipFor('autonomy')) === 'unattended' && firstSourceValue(sources, 'control-mode', skipFor('control-mode')) !== 'on'`. Header comment states the invariants (positive list on `unattended`; neither input is read from a run config, so no run config can turn the key on directly or indirectly; source stays `'default'`).
   - In `resolvePolicyKeys`, beside the housekeeping branch: `if (canonical === 'learned-skills-auto-merge' && resolved.source === 'default') resolved = { ...resolved, value: deriveLearnedSkillsAutoMerge(sources, FACTORY_REFUSED_KEYS) };` (use the same lazily-required `FACTORY_REFUSED_KEYS` binding the plan-at-specify branch at ~line 905 uses; confirm it is in scope at the insertion point).
   - Bump `tests/policy-schema.test.js` counts and Last-bump line; add to `NOT_YET_USED`.
 
@@ -111,7 +113,7 @@ Expected: PASS (these fail until the doc row exists — do Step 5 first if namin
   - policyOnly lists in `policy-schema-coverage.md:102` and `docs/journeys/resolve-a-policy-key.md:48`.
   - Byte check: `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,600; then `node plugin/bin/context-cost-report.js --plugin-root plugin` shows no rail breach (Gotcha verify step).
 
-- [ ] **Step 6: Go-red controls (AC3.1)** — in the worktree, temporarily replace `=== 'unattended'` with `=== 'never'` in the derive function: AC1.1 (a) must fail. Restore. Temporarily drop the `&& ... !== 'on'` clause: AC1.1 (d) must fail. Restore. Record both outputs (test name + `not ok`) in the task report.
+- [ ] **Step 6: Go-red controls (AC3.1)** — in the worktree, temporarily replace `=== 'unattended'` with `=== 'never'` in the derive function: AC1.1 (a) must fail. Restore. Temporarily drop the `&& ... !== 'on'` clause: AC1.1 (d) must fail. Restore. Temporarily make the autonomy read's skip `() => false` (run-config consulted): AC3 (b) must fail. Restore. Record all three outputs (test name + `not ok`) in the task report.
 
 - [ ] **Step 7: Run the impacted tests again** (Step 4 command plus `tests/context-cost.test.js` and any `rail:` suite touching `_shared/`): PASS.
 
@@ -143,6 +145,6 @@ git commit -m "Add the learned-skills-auto-merge policy key — derived true onl
 
 ### Final verification (AC5.1)
 
-Waived AC3.1: proven by Task 1 Step 6's go-red mutation controls (a revert-and-observe proof, not a committed test); the implementer quotes both failing outputs in its report.
+Waived AC3.1: proven by Task 1 Step 6's go-red mutation controls (a revert-and-observe proof, not a committed test); the implementer quotes all three failing outputs in its report.
 
 Waived AC5.1: `npm test -- --full` is run by the build's Common Step 5 / `/claude-tweaks:test` runner, not by a task.
