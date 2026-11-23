@@ -26,12 +26,13 @@ const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety'
 const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
 
 // A `list` row's optional `element` names the rule every comma-separated entry
-// must match (isValidValue): a login, a slug, or a defer-reason. A list row with
+// must match (isValidValue): a login, a slug, a defer-reason, or a glob. A list row with
 // no `element` accepts any text.
 const LIST_ELEMENT_PATTERNS = {
   login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
   slug: /^[a-z0-9][a-z0-9-]*$/,
   'defer-reason': new RegExp(`^(?:${DEFER_REASONS.join('|')})$`), // a Defer-reason: value (#5932), built from DEFER_REASONS so the two never drift
+  glob: /^[^\s"'[\]{}?\\]+$/, // a path glob (#6020): refuses whitespace, quotes, brackets, braces, `?` and a backslash, so a YAML-flow or shell-quoted spelling never becomes one literal glob that protects nothing
 };
 
 // The explicit empty list on a list row with `emptyList: true` (#5932). A blank
@@ -123,6 +124,8 @@ const POLICY_KEYS = [
   { key: 'express-driver-max-risk', type: 'enum', values: ['low', 'medium', 'high'], default: 'low', policyOnly: true, summary: "Highest risk label the driver will take on: low, medium or high; above low it needs the reviewer step and a human merge.", category: 'merge-safety', tier: 'advanced' },
   // #6019: what the driver does with a record whose Key Files touch a protected path. policyOnly because it decides whether autonomous machinery may take a protected path, so a --run config never loosens it. Under `reviewer`, merge-time families (hooks/, hooks.js, hooks.sh, skills/_shared/, CODEOWNERS) pass behind the reviewer step and the record always stops at pending-review for a human merge; build-time families (.github/, .gitlab-ci.yml, .circleci/, .githooks/, .husky/, package.json, .claude/settings*.json, .mcp.json, .claude-tweaks/policy.yml, .claude-tweaks/verify-scope.json) refuse under both values. Factory decision (#6006): factory-settable (not in FACTORY_REFUSED_KEYS), safe as a user-wide default because `reviewer` admits nothing without the reviewer step on and always ends at a human merge.
   { key: 'express-driver-protected-paths', type: 'enum', values: ['refuse', 'reviewer'], default: 'refuse', policyOnly: true, summary: "What the driver does with a protected path: refuse it, or reviewer to pass merge-time paths behind the reviewer step and a human merge.", category: 'merge-safety', tier: 'advanced' },
+  // #6020: the protected-path list as a policy value; when set it replaces eligibility.js's SHIPPED_PROTECTED_PATHS (unset keeps it, [] protects nothing). policyOnly because it decides what autonomous machinery may merge, so a --run config never shrinks it. Consumers read it from the main checkout (express/policy.js's resolveProtectedPathsEntry), never the record's worktree. A malformed value (element: 'glob'; hashInvalid refuses an inline # that parseFlatLines would cut at) resolves invalid and the shipped list applies, never an empty one.
+  { key: 'protected-paths', type: 'list', default: [], element: 'glob', emptyList: true, hashInvalid: true, policyOnly: true, summary: "Root-anchored path globs the express lane and the driver refuse to take; unset keeps the shipped list, and [] protects nothing.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -458,6 +461,20 @@ function readLocatedPolicy(repoRoot) {
 // living inside a fenced code block — matches bin/lib/policy.js's convention.
 // bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
 // change both, plus its hooks.sh AC9 differential fixtures.
+// hashInvalid rows (#6020): parseFlatLines cuts a value at its first `#`, which would
+// silently drop every list element after one (`docs/#x/**`). True when the column-0
+// `{key}:` line has a `#` directly after a non-whitespace character in its value; a
+// `#` after whitespace is a comment and parses as usual.
+function hasInlineHash(raw, key) {
+  if (!raw) return false;
+  const prefix = `${key}:`;
+  for (const rawLine of raw.split('\n')) {
+    if (!rawLine.startsWith(prefix)) continue;
+    if (/\S#/.test(rawLine.slice(prefix.length))) return true;
+  }
+  return false;
+}
+
 function parseFlatLines(raw) {
   const result = {};
   if (!raw) return result;
@@ -790,7 +807,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       values[alias.replacedBy] = String(migrated);
       renamedFrom[alias.replacedBy] = alias.key;
     }
-    return { name, values, renamedFrom, emptyRenames };
+    return { name, raw, values, renamedFrom, emptyRenames };
   });
 
   const result = {};
@@ -855,7 +872,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       if (factoryHoldsRefused && source.name === 'factory') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
-      if (isValidValue(schemaEntry, raw)) {
+      if (isValidValue(schemaEntry, raw) && !(schemaEntry.hashInvalid && hasInlineHash(source.raw, canonical))) {
         resolved = { value: resolveValue(canonical, raw), source: source.name };
       } else {
         // A typo must never activate a different configured value: resolve to
