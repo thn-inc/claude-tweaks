@@ -221,9 +221,13 @@ function flatEntries(deps, runDir) {
 // config.yml `spec:` is the lowest of a run's records, so it names one record
 // of a multi-record run and carries no closing intent (an express run's PR
 // body already carries its own `Fixes`). Decided here once; consumers read the result.
+// Array-or-null (#4108): an array, possibly empty, is the set the run may
+// close; `null` means no records resolved (`unavailable`): no decision, so
+// only then may a reader fall back to Phase 1's identified record.
 const CLOSING_RECORD_SOURCES = new Set(['headers', 'worktree-headers']);
 
 function closingRecords({ records, source }) {
+  if (source === 'unavailable') return null;
   return CLOSING_RECORD_SOURCES.has(source) ? records : [];
 }
 

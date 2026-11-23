@@ -1355,7 +1355,7 @@ test('#3365: a closed multi-spec spec-{N}/ dir reads the parent worktreeAtClose 
 test('#3365: a parent run dir with only a manifest does not treat manifest ids as resolved records (Ruling R1)', () => {
   const { runDir, wtDir } = mirrorFixture({ record: null, state: (wt) => ({ status: 'active', worktree: wt }) });
   fs.writeFileSync(path.join(runDir, 'manifest.yml'), 'multispec:\n  parent: 3300\n  specs:\n    - id: 3337\n      status: not-run\n      subdir: spec-3337/\n');
-  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [900] });
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
   // Precondition: this fixture must actually reach the manifest rung of
   // resolveRecords — otherwise the assertion below would pass regardless of
   // whether resolvedIssueNumbers' closingRecords call is even present
@@ -1367,7 +1367,17 @@ test('#3365: a parent run dir with only a manifest does not treat manifest ids a
     wtDir,
   );
   assert.strictEqual(precondition.source, 'manifest', 'fixture does not reach the manifest rung — test would be non-discriminating');
-  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [900]);
+  // #4108: the manifest rung's [] is a decision (close nothing), so the
+  // expectations file's issues are not consulted.
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), []);
+});
+
+test('#4108: an unavailable resolution (closingRecords null) falls through to verify-expectations.json issues', () => {
+  const runDir = makeTmpDir('verify-unavailable-fallthrough-');
+  writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
+  const deps = { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') };
+  assert.strictEqual(resolveRecords(deps, runDir, null).source, 'unavailable');
+  assert.deepStrictEqual(resolvedIssueNumbers(runDir), [41]);
 });
 
 test('#3365: carrier-commit fails, not skips, for a mirror-resolved record with no closing keyword on branch or PR', () => {
