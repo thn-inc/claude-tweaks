@@ -65,7 +65,7 @@ test('auto-decision-log.md: worked example cites the pr-first bootstrap skip (#7
 const BUILD_STEP_SKIP_SITES = [
   { name: 'Spec Step 1 (pr-first draft-PR bootstrap)', source: BUILD_SKILL, pattern: /a no-op under `local-merge`\. \*\*On skip\*\* \(local-merge\), write a `SKIP` entry/ },
   { name: 'Spec Step 2.5 (Manual Steps probing)', source: BUILD_SKILL, pattern: /\*\*No Manual Steps section \(skip\):\*\* write one `SKIP` entry/ },
-  { name: 'Common Step 1.6 (Plan Review gate, #3377)', source: BUILD_SKILL, pattern: /uses the size test alone\. \*\*On skip\*\*, write a `SKIP` entry per `_shared\/auto-decision-log\.md`'s degrade-trace rule/ },
+  { name: 'Common Step 1.6 (Plan Review gate, #3377)', source: BUILD_SKILL, pattern: /drops the fast-lane condition\. \*\*On skip\*\*, write a `SKIP` entry per `_shared\/auto-decision-log\.md`'s degrade-trace rule/ },
   { name: 'Common Step 1.7 (Design Pre-Build gate)', source: BUILD_SKILL, pattern: /see `design-prebuild\.md` in this skill's directory\. \*\*On skip\*\*, write a `SKIP` entry/ },
   { name: 'Common Step 4.5 (Architecture Alignment)', source: BUILD_SKILL, pattern: /\*\*On skip\*\* \(one of the three conditions fires — never for a normal run finding zero deviations\), write a `SKIP` entry/ },
   { name: 'Common Step 5.5 (Operational Checklist)', source: BUILD_SKILL, pattern: /Otherwise skip this step entirely\. \*\*On skip\*\*, write a `SKIP` entry per the degrade-trace rule \(condition: no schema\/env\/IaC\/CI\/platform-config files in diff\)/ },

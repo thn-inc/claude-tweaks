@@ -294,8 +294,8 @@ test('go-red: the example count fails with a single example', () => {
 
 // --- #6051: planning-decisions pointer and the asked-classes sub-file ---
 // Under the default `ask-all`, plan-review.md must stay the base bytes: the frozen fixture is
-// plan-review.md at 483adc1d58 (before the pointer landed), so stripping the marker-delimited
-// pointer from the live file must give it back byte for byte.
+// plan-review.md at 483adc1d58 (before the pointer landed) plus #6060's `## Skip logging` edits,
+// so stripping the marker-delimited pointer from the live file must give it back byte for byte.
 
 const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 const { classStatementSites } = require('./helpers/planning-decisions-clauses');

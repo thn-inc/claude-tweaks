@@ -9,6 +9,9 @@ const path = require('node:path');
 const {
   parseAcceptanceCriteria,
   lowConfidenceFindings,
+  settledPlanningLines,
+  PLANNING_DECISIONS_HEADING,
+  SETTLED_PLANNING_PREFIX,
   qaSelectionFromDecisions,
   expectedChecksFromDeclaration,
   parseStoryFile,
@@ -20,6 +23,7 @@ const {
 const { validateFactsShape } = require('../../../plugin/bin/lib/wrap-up/packet-validate');
 const { renderPacket } = require('../../../plugin/bin/lib/wrap-up/packet-render');
 const { findingItems } = require('../../../plugin/bin/lib/console/resolve');
+const { readText } = require('../../helpers/read-skill');
 
 const tempDirs = [];
 function tempDir(prefix) {
@@ -1356,6 +1360,125 @@ test('a story value is cut at a comment after whitespace, and a long whitespace 
   assert.deepEqual(idsOf2('stories:\n  - id: a\t# comment # more\n'), ['a']);
   assert.deepEqual(idsOf2(`stories:\n  - id: a${WIDE}b\n`), [`a${WIDE}b`]);
   assert.deepEqual(idsOf2(`stories:\n  - id: a${WIDE}# c\n`), ['a']);
+});
+
+// settled planning lines
+
+const PD = PLANNING_DECISIONS_HEADING;
+const SETTLED_A = 'Settled at planning: a — chose x; not y';
+const SETTLED_B = 'Settled at planning: b — chose p; not q';
+
+test('settledPlanningLines lists the two settled lines of a section', () => {
+  const spec = `## Overview\n\n${PD}\n\n${SETTLED_A}\n- ${SETTLED_B}\n`;
+  assert.deepEqual(settledPlanningLines(spec), [SETTLED_A, SETTLED_B]);
+});
+
+test('a Decided by the user line is not listed', () => {
+  const spec = `${PD}\n\nDecided by the user at planning: c — chose m; not n\n${SETTLED_A}\n`;
+  assert.deepEqual(settledPlanningLines(spec), [SETTLED_A]);
+});
+
+test('no section yields nothing', () => {
+  assert.deepEqual(settledPlanningLines(`## Overview\n\n${SETTLED_A}\n`), []);
+});
+
+test('two sections are both read', () => {
+  const spec = `${PD}\n${SETTLED_A}\n## Original request\nSettled at planning: x — chose 1; not 2\n${PD}\n${SETTLED_B}\n`;
+  assert.deepEqual(settledPlanningLines(spec), [SETTLED_A, SETTLED_B]);
+});
+
+test('a deeper heading stays inside the section', () => {
+  assert.deepEqual(settledPlanningLines(`${PD}\n### Notes\n${SETTLED_A}\n`), [SETTLED_A]);
+});
+
+test('settledPlanningLines ignores fenced lines', () => {
+  assert.deepEqual(settledPlanningLines(`${PD}\n\`\`\`\n${SETTLED_A}\n\`\`\`\n${SETTLED_B}\n`), [SETTLED_B]);
+});
+
+test('only column-0 lines, bare or behind "- ", count', () => {
+  const spec = `${PD}\n  Settled at planning: i — chose a; not b\n* Settled at planning: j — chose a; not b\n${SETTLED_A}   \n`;
+  assert.deepEqual(settledPlanningLines(spec), [SETTLED_A]);
+});
+
+test('a CRLF spec lists the same settled lines', () => {
+  const lf = `## Overview\n\n${PD}\n\n${SETTLED_A}\n- ${SETTLED_B}\n`;
+  assert.deepEqual(settledPlanningLines(lf.replace(/\n/g, '\r\n')), [SETTLED_A, SETTLED_B]);
+});
+
+test('null spec yields nothing', () => {
+  assert.deepEqual(settledPlanningLines(null), []);
+});
+
+test('entries number on after the console entries', () => {
+  const items = [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }];
+  const spec = `${PD}\n${SETTLED_A}\n${SETTLED_B}\n`;
+  assert.deepEqual(
+    lowConfidenceFindings({ items, findings: [], decisions: '' }, () => 'Title: console one', {
+      records: [7], readSpec: (n) => (n === 7 ? spec : null),
+    }),
+    [
+      { n: 1, text: 'console one' },
+      { n: 2, text: SETTLED_A, source: 'planning-decisions' },
+      { n: 3, text: SETTLED_B, source: 'planning-decisions' },
+    ],
+  );
+});
+
+test('several records read each spec, in record order', () => {
+  const specs = { 7: `${PD}\n${SETTLED_A}\n`, 9: `${PD}\n${SETTLED_B}\n` };
+  assert.deepEqual(
+    lowConfidenceFindings({ items: [], findings: [], decisions: '' }, () => null, {
+      records: [7, 9], readSpec: (n) => specs[n],
+    }),
+    [
+      { n: 1, text: SETTLED_A, source: 'planning-decisions' },
+      { n: 2, text: SETTLED_B, source: 'planning-decisions' },
+    ],
+  );
+});
+
+test('a gathered settled-line fact is sourced to planning decisions, a console finding to review', () => {
+  const items = [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }];
+  const spec = `${PD}\n${SETTLED_A}\n`;
+  const lowConfidence = lowConfidenceFindings(
+    { items, findings: [], decisions: '' }, () => 'Title: console one', { records: [7], readSpec: () => spec },
+  );
+  const facts = gather({ lowConfidence });
+  assert.equal(factOf(facts, 'finding:1').source, 'review');
+  assert.equal(factOf(facts, 'finding:2').source, 'planning-decisions');
+});
+
+test('a missing spec adds nothing', () => {
+  const items = [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }];
+  const read = () => 'Title: console one';
+  const base = { items, findings: [], decisions: '' };
+  assert.deepEqual(
+    lowConfidenceFindings(base, read, { records: [7], readSpec: () => null }),
+    lowConfidenceFindings(base, read),
+  );
+});
+
+test("the parser's prefix and heading are the shared contract's", () => {
+  const contract = readText(path.join(__dirname, '../../../plugin/skills/_shared/planning-decisions.md'));
+  assert.ok(contract.includes(`\`${SETTLED_PLANNING_PREFIX} {finding} `));
+  assert.ok(contract.includes(`\`${PLANNING_DECISIONS_HEADING}\` section`));
+});
+
+test('a settled line carrying markdown renders neutralized', () => {
+  const spec = `${PD}\nSettled at planning: ## x [l](https://e.example) @octo #12 — chose a; not b\n`;
+  const [finding] = lowConfidenceFindings({ items: [], findings: [], decisions: '' }, () => null, {
+    records: [4611], readSpec: () => spec,
+  });
+  const facts = gather({ lowConfidence: [finding] });
+  const claims = [{ section: 'least-confident', text: factOf(facts, 'finding:1').text, refs: ['finding:1'] }];
+  const { markdown } = renderPacket(facts, { schemaVersion: 1, claims });
+  const line = markdown.split('\n').find((l) => l.includes('finding:1'));
+  assert.ok(line !== undefined);
+  // Code spans are neutralized text; what is left outside them must hold no live link or mention.
+  const bare = line.replace(/`[^`]*`/g, '');
+  assert.ok(!bare.includes('[l]('));
+  assert.ok(!bare.includes('@octo'));
+  assert.ok(!/(^|\s)#12/.test(bare));
 });
 
 // readPacket

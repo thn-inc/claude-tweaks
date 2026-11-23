@@ -1,6 +1,6 @@
 # Planning Decisions — which planning questions go to the user, and how the rest are settled
 
-This file is the one statement of which planning questions a human answers and how every other one is settled and written down (#6051). It applies only when policy key `planning-decisions` resolves `asked-classes`; under the default `ask-all` every plan-review gap is asked, and nothing here changes that. `build/plan-review-asked-classes.md` cites it for build-time plan review today; specify-time planning will cite it later. Cite this file's sections by name rather than restating the classes.
+This file is the one statement of which planning questions a human answers and how every other one is settled and written down (#6051). It applies only when policy key `planning-decisions` resolves `asked-classes`; under the default `ask-all` every plan-review gap is asked, and nothing here changes that. `build/plan-review-asked-classes.md` cites it for build-time plan review, and `specify/planning.md` for specify-time planning (#6056). Cite this file's sections by name rather than restating the classes.
 
 ## Asked classes
 
@@ -14,7 +14,7 @@ A question is asked only when it falls in one of three classes.
 
 A row whose readings all break an Acceptance Criterion or recorded decision is (c) whatever its topic.
 
-The classifier is the build's plan review (the controller), never the reviewer. The reviewer reports the finding and its readings; the controller decides the class against this file.
+The classifier is the controller — the build's plan review, or `/claude-tweaks:specify`'s planning step — never the reviewer. The reviewer reports the finding and its readings; the controller decides the class against this file.
 
 ## Settled path
 
