@@ -65,4 +65,5 @@ files:
 - Updated during build of #4358: a sequential multi-spec run gauges with `--record-steps`, and its continuation resumes each record at that record's own step (steps 1 to 5).
 - Updated during build of #5253: the gauge itself refuses a top-level `wrap-up` handoff (step 2's fourth keep-going case).
 - Updated during build of #5941: the continuation `Agent` also takes the resolver's `launchEffort` as `effort` (step 3).
+- Updated during build of #5270: the branch follows the caller's `[dispatch-prompt: {run-id} {call}]` marker, not `run-state.json` `dispatched: true`, so a human resuming a dispatched run takes the top-level path (steps 2 to 4).
 - Related: `clear-the-two-call-gate-for-a-dispatched-group-2775.md` (step 6 is the dispatching session's side of step 4 here), `compose-a-per-run-context-bundle-1988.md` (step 12, the per-phase bundles #4027 added alongside this cap).
