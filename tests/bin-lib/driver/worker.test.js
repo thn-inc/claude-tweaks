@@ -1157,3 +1157,39 @@ test('AC7.1 (#5942): live probe — a launch with --effort low records low, one 
   assert.deepStrictEqual(recorded.medium, ['medium']);
   assert.strictEqual(recorded.none.length, 1, 'the CLI default is a single value, got ' + JSON.stringify(recorded.none));
 });
+
+test('AC9.1 (#5997): live probe — three implementer launches on the Fast model return a RESULT_SCHEMA envelope', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const { resolve } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+  const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment.js'));
+  const policyRaw = fs.readFileSync(path.join(__dirname, '..', '..', '..', '.claude-tweaks', 'policy.yml'), 'utf8');
+  const keyed = resolvePolicyKeys(['model-ceiling', 'model-effort'], { policyRaw });
+  const policy = { 'model-profiles': modelProfilesEntry(policyRaw).value, 'model-ceiling': keyed['model-ceiling'].value, 'model-effort': keyed['model-effort'].value };
+  const { model, launchEffort } = resolve('fast', { policy, unattended: true });
+  const git = (cwd, ...args) => cp.execFileSync('git', args, { cwd, stdio: 'pipe' });
+  let valid = 0;
+  for (let i = 1; i <= 3; i++) {
+    const cwd = tmp(t);
+    fs.writeFileSync(path.join(cwd, 'greet.js'), "module.exports = function greet(name) {\n  return 'Hello ' + name;\n};\n");
+    git(cwd, 'init', '-q');
+    git(cwd, 'add', 'greet.js');
+    git(cwd, '-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'Add greet');
+    const prompt = [
+      'Record #0: Make greet add an exclamation mark',
+      '',
+      'Key Files:',
+      '- greet.js',
+      '',
+      'Edit only the Key Files and test files.',
+      "Tests: do not run tests — the driver runs the project's check after it commits your change.",
+      'Limits: the change stays within 20 implementation lines; the launch ends at 5 minutes of wall clock or $1 of spend.',
+      'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
+      '',
+      "Change greet.js so greet('Ann') returns 'Hello Ann!'. Run each command exactly as written, with nothing appended.",
+      '',
+    ].join('\n');
+    const env = await launchWorker({ role: 'implementer', cwd, settingsDir: tmp(t), prompt, model, ...(launchEffort ? { effort: launchEffort } : {}), testCommand: 'npm test', ceilings: { wallClockMs: 300000, spendCeiling: 1 } }, { runner: worker.defaultRunner });
+    t.diagnostic('launch=' + i + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' result.status=' + (env.result && env.result.status) + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_input && d.tool_input.command)));
+    if (env.status === 'ok' && env.result && ['done', 'cannot-complete'].includes(env.result.status)) valid++;
+  }
+  assert.strictEqual(valid, 3);
+});
