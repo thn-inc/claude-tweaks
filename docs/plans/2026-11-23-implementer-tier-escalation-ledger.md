@@ -1,8 +1,0 @@
-# Open Items — Take the standard lane's implementer profile from the record rule and escalate once
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | dispatch.md's AC-forwarding and deferral-rulings reads pointed at {run-dir}/work/{n}-spec.md, absent in worktree mode (parked by Task 1's re-review as out-of-scope; final review ruled it fix-now) | fixed | Both reads now use {spec-file} — 83263b7cd5 |
-| 2 | build/skill | skill-prose-conformance-tests (enrichment): a pin on a CLI call in prose must run through the argument, not stop at the flag — #5999's CLI_CALL ended at --spec-file, so reverting the argument to a broken path stayed green until review | observation | — |
-| 3 | review | Review lenses 3a/3c/3f/3g: step-up wording read as the cached stepUp (second --from call needed); escalation reasons and SDD fix-round interplay unstated; --run, null-profile and one-profile-up clauses unpinned; bare bin names in new text; hand-rolled temp dir in the new suite | fixed | Fixed in f641d154ae; suite re-run green (24960 tests, 0 failed) |
-| 4 | review | Review lenses 3a/3f (tiebreak drop): dispatch.md growth +1,144 B over the 1 KB soft target; verbatim-phrase pins and one literal negative check; CLI-answer overlap with the #5996 suite; dispatch-no-stash AC9.1 prefix pin redundant with the new suite; two info rows with nothing to fix | accepted | Accepted: tiebreak recommended drop for each; growth already staged as build-deviation-1; exact-phrase pins are the repo's conformance convention; the overlap and the redundant prefix pin cost one extra assertion each |
