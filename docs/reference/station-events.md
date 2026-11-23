@@ -2,7 +2,7 @@
 
 `station-events.jsonl` is an append-only log of station events: one JSON line each time claude-tweaks program code moves a record into, through or out of a station (intake, shape, authorize, release, build, test, review, polish, wrap-up, merge, accept). It is written locally, with no network call, no hub dependency and no policy key. A reader (the dispatch scoreboard) pairs the lines into station visits; the emitter only records facts.
 
-The code is `plugin/bin/lib/station-events/emit.js` (`appendStationEvent`, `buildLine`, `eventKey`, `toRepoName`, `stationEventPath`) and `plugin/bin/lib/station-events/stations.js` (every station, lane, kind, outcome and mapping name). Tests: `tests/bin-lib/station-events/emit.test.js`.
+The code is `plugin/bin/lib/station-events/emit.js` (`appendStationEvent`, `buildLine`, `eventKey`, `toRepoName`, `stationEventPath`) and `plugin/bin/lib/station-events/stations.js` (every station, lane, kind, outcome and mapping name). Tests: `tests/bin-lib/station-events/emit.test.js`, `tests/bin-lib/station-events/transition-table.test.js`.
 
 > **Unconfirmed names.** Station, label and driver-step names are unconfirmed against the design's Phase 0 fixtures. "The design" is the factory floor design, `docs/superpowers/specs/2026-11-18-factory-floor-design.md` in the `thn-inc/dispatch` repository (dispatch PR #1894): its "The ledger: station events" section and its station registry table. They live only in `stations.js`, so a correction is a one-file change; no call site under `plugin/bin` spells a station itself (`tests/bin-lib/station-events/station-literal-conformance.test.js` fails when one does).
 
@@ -21,6 +21,70 @@ In journey order (`STATION` in `stations.js`). Each line is the reading this rep
 - `wrap-up`: the driver's `pr` step. Opening the PR is the driver's wrap-up step, and the design has no separate PR station; an unconfirmed reading.
 - `merge`: the driver's `ci` and `merge` steps and the merge sub-steps (`merge-ready`, `merge-confirm`, `merge-park`).
 - `accept`: the record awaits local acceptance; entered when `accept:pending` is added.
+
+## Transition code by station
+
+Which code performs each station transition today, read from the files (record #6145). A cell is `none` or entries `` `plugin/bin/<path>.js:<function>` `` joined by `; `; the function is the one that defines or performs the emit. `kinds emitted today` is what that code writes now; the two right-hand columns say what the code itself already knows, so a later record adding `payload.reasonCode` or `payload.actor` knows where each is available. `tests/bin-lib/station-events/transition-table.test.js` pins one row per station and that each cited file defines its function.
+
+| station | code that performs the transition (path:function) | kinds emitted today | outcome known to the code | reason known to the code |
+|---------|----------------------------------------------------|---------------------|---------------------------|--------------------------|
+| `intake` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions` | `exited` | `passed` (`needs:definition` removed, or `ready` added) | the label and direction (`payload.label`, `payload.direction`) only |
+| `shape` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions` | `exited` | `passed` (`ready` added) | the label and direction only |
+| `authorize` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/station-events/blockers.js:makeBlockerSnapshotSink` | `entered` (`ready` added), `exited` (`auto:build` added), `blockers` | `passed` on the exit | the label and direction; a blocker snapshot carries `blockedBy`, `openBlockerIds`, `crossRepoBlockers` |
+| `release` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition` | `entered` (`auto:build` added), `exited` (`bot:in-progress` added, or the claim landing) | `passed` | none beyond the label |
+| `build` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/claim-targets/claim-targets.js:emitStation`; `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition`; `plugin/bin/lib/claim-targets/claim-targets.js:emitRollbackExit`; `plugin/bin/release-claim.js:run`; `plugin/bin/accept-park.js:parkSteps`; `plugin/bin/pr-early-open.js:run`; `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `entered` (`bot:in-progress` added, the claim), `started` (driver `worker` step; `pr_opened` fact), `session_bound`, `exited` (a claim release, a rollback, a driver `worker` exit) | claim release: from the release reason (`outcomeForReleaseReason`); rollback: `abandoned`; park hand-forward: `passed`; driver `worker`: from step status (`ok` passed, `fail` failed, `stop` returned) | the release reason string (`reason`: `never-started: ...` on rollback, `awaiting-local-acceptance` on the park hand-forward, the caller's reason on a release); the driver step's status only |
+| `test` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `test` step) | from step status (`ok`, `fail`, `stop`) | none beyond the step's status |
+| `review` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `review` step); `session_bound` for a review fix session is filed under `build` | from step status | none beyond the step's status |
+| `polish` | none | none | none | none |
+| `wrap-up` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `pr` step) | from step status | none beyond the step's status |
+| `merge` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `ci` and `merge` steps); `entered` / `exited` for the merge sub-steps | from step status; sub-steps `merge-confirm` `passed`, `merge-park` `returned` | none beyond the step's status or sub-step name |
+| `accept` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/accept-park.js:parkSteps` | `entered` (`accept:pending` added; packet posted) | none (no exit is written) | the label (`accept:pending`) |
+
+### Holds and plan changes
+
+Code that changes a record's state without a station transition today, and so the code a hold, release or replan fact would attach to:
+
+- `bot:blocked` is added by `plugin/bin/lib/driver/settle.js` (`settle`, its `settle-label` step: `gh issue edit --add-label bot:blocked` after a driver stop). The stop's step, outcome and detail are known there.
+- `bot:parked` is added by `plugin/bin/lib/driver/merge.js` (`park`, the red-path park at merge: bootstrap check, label add, re-read). The park reason is known there.
+- `accept:changes-requested` is named by `plugin/bin/lib/issues/accept-entry.js` (`verdictLabelEdits`, which only returns the label edits for a verdict); the `accept` skill's prose applies them with `gh issue edit`, so no program code adds the label itself.
+- A claimed record's ceremony profile is changed by `plugin/bin/lib/set-config/write.js` (`setConfigLever`, whose `ceremony-profile` branch calls `fillRunManifest` to write `ceremonyProfile` into the run manifest). `plugin/bin/lib/express/cli.js` (`runCheck`) returns `configSet` with `ceremony-profile=fast-lane` for an express run that proceeds, which the caller applies through that same lever.
+
+## Station order from real moves
+
+Confirmed order: `intake` → `shape` → `authorize` → `release` → `build` → `test` → `review` → `polish` → `wrap-up` → `merge` → `accept`
+
+`STATION` in `stations.js` already has this order, so it was not reordered. This section and `## Starting lists` on `main` are the report the hub plan's Task 4 (`thn-inc/dispatch` H4) reads; no other post is made.
+
+Basis: the hub node database (local hub Postgres, table `station_visits`; the query takes `lead(station) over (partition by work_order_key order by entered_at, id)`, last 28 days, pairs with n >= 10, run 2026-11-23): 14,899 visits over 3,196 work orders.
+
+| pair | n | pair | n | pair | n |
+|------|---|------|---|------|---|
+| intake→shape | 3132 | build→intake | 212 | build→accept | 79 |
+| shape→authorize | 3132 | build→build | 166 | wrap-up→polish | 62 |
+| release→build | 1920 | polish→test | 138 | polish→wrap-up | 60 |
+| authorize→release | 1467 | test→wrap-up | 130 | build→wrap-up | 33 |
+| build→release | 469 | wrap-up→build | 123 | test→test | 22 |
+| authorize→intake | 213 | build→polish | 112 | intake→intake | 21 |
+| wrap-up→wrap-up | 105 | build→authorize | 19 | release→authorize | 14 |
+| release→polish | 14 | authorize→build | 13 | test→polish | 11 |
+
+Visits per station: authorize 3167, intake 3154, shape 3132, release 2322, build 2295, wrap-up 336, polish 199, test 173, accept 122; `review` and `merge` have 0 visits.
+
+Reading the counts. The hub opens a Polish visit on a session `simplify` segment (`hub/packages/core/src/stations.ts` in `thn-inc/dispatch`: polish `workStarts` is "a `simplify` segment opens"; its own `startsWaiting` note says "`simplify` also opens before `test`"). `/claude-tweaks:build` runs `/claude-tweaks:simplify` at its Common Step 3, before its final verification and before `/claude-tweaks:test`. So the Polish-to-Test pairs (138) against Test-to-Polish (11) measure a `simplify` segment inside build followed by test, and are not returns to an earlier station. In claude-tweaks' own code paths Test comes before Polish: `/flow`'s default step list is `build,test,review,polish,wrap-up` (polish then re-runs `test skip-qa` as re-verify), and the driver's steps run `worker, test, review, pr, ci, merge` (`STEP_NAMES` in `plugin/bin/lib/driver/events.js`) with no polish step. Review and merge have no visits because the hub leaves them unconfirmed (no session or driver key maps to them in 28 days). Answer: **Test comes before Polish.**
+
+## Starting lists
+
+The lists a `planned` event can start from, from the real manifests (`.claude-tweaks/pipelines/**/manifest.json`, 306 files, 2026-11-21 to 2026-11-23). Observed `lane` / `ceremonyProfile` pairs: absent/absent 223 (manifests from before the fields existed), standard/standard 47, unknown/null 31, driver/standard 3, driver/fast-lane 1, standard/fast-lane 1.
+
+| list | stations | selected by |
+|------|----------|-------------|
+| `standard` | `intake`, `shape`, `authorize`, `release`, `build`, `test`, `review`, `polish`, `wrap-up`, `merge`, `accept` | otherwise: `ceremonyProfile: standard`, or a null or absent profile on lane `standard`, `unknown` or absent |
+| `fast-lane` | `intake`, `shape`, `authorize`, `release`, `build`, `test`, `review`, `wrap-up`, `merge`, `accept` | `ceremonyProfile: fast-lane` on any lane other than `driver` (`_shared/ceremony-profile.md`'s `polish` row skips polish under fast-lane); observed `standard`/`fast-lane` 1 |
+| `driver` | `intake`, `shape`, `authorize`, `release`, `build`, `test`, `review`, `wrap-up`, `merge`, `accept` | lane `driver`, whatever the ceremony profile (the driver has no polish step); observed `driver`/`standard` 3, `driver`/`fast-lane` 1 |
+
+A lane of `driver` selects the list `driver`; otherwise a ceremony profile of `fast-lane` selects `fast-lane`; otherwise the list is `standard`. An absent or unknown lane with an absent profile is `standard`, and the `planned` event carries reason `default-list`.
+
+The lane `express` was not observed in any manifest and follows the same rule; no list is written for it.
 
 ## File location
 
