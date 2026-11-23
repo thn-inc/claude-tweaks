@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, zero npm deps.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-23T154242-record-6002/work/6002-spec.md` (worktree copy)
+**Spec:** `.claude-tweaks/pipelines/2026-11-23T161212-record-6002/work/6002-spec.md` (worktree copy)
 
 Scope keywords: startEffort, nextAttempt, relaunchNote, relaunchOrStop, planRelaunch, implementer escalated, implementer profile
 
@@ -124,7 +124,7 @@ Rules (the spec's Deliverables 1-2, exactly):
 Rules:
 - New flags `--attempt-profile <profile>`, `--attempt-effort <low|medium|high|inherit>` (`inherit` = `null`), `--escalations <0|1|2>`, `--trigger <red-tests|fix-round-failed|blocked|cannot-complete>`: all four or none, else exit 2 naming the missing ones; an invalid value is exit 2. USAGE line and header comment updated.
 - `risk` is read from the spec header like `size` (same `headerLines`), but never errors: zero lines, two or more lines, or a value outside `low|medium|high` → missing.
-- `startEffort` = `startEffort({ risk, launchEffort: resolve(profile, { policy }).launchEffort })` when `profile` is non-null, else `null`. Under `model-effort: inherit` (or unset) `launchEffort` is `null`, so `startEffort` is `null`.
+- `startEffort` = `startEffort({ risk, launchEffort: resolve(p, { policy }).launchEffort })` where `p` is `--from`'s profile when given (a `**Role:**` marker's task, spec Decisions Reading A), else the computed `profile`; `null` when `p` is null. Under `model-effort: inherit` (or unset) `launchEffort` is `null`, so `startEffort` is `null`.
 - `next` = `null` without the four flags, and `null` whenever `startEffort` would be `null` because `model-effort` is not `profile` (spec: "under `model-effort: inherit` both are `null`"); otherwise `nextAttempt({ profile: attemptProfile, effort: attemptEffort, escalations, trigger, resolveProfile: (p) => { const r = resolve(p, { policy }); return { model: r.model, launchEffort: r.launchEffort }; } })`.
 - An unreadable or malformed `policy.yml` → exit 1 with the parse message (mirrors resolve-profile.js); a missing one → empty policy (read with `readFileSync`, `ENOENT` → none; no `existsSync`).
 
@@ -133,6 +133,7 @@ Rules:
   - `AC1.2 (CLI): model-effort inherit gives null startEffort and null next, the rest unchanged` — same spec without `model-effort`; with all four attempt flags: `{ profile: 'standard', stepUp: 'capable', rule: 'record', size: 'medium', keyFileCount: 3, startEffort: null, next: null }` exactly.
   - `AC2.1 (CLI): next takes the effort rung` — `--attempt-profile standard --attempt-effort low --escalations 0 --trigger red-tests` → `next` `{ profile: 'standard', effort: 'medium', escalations: 1 }`.
   - `AC3.1 (CLI): next for blocked is the profile step` — `--attempt-effort low --escalations 0 --trigger blocked` → `{ profile: 'capable', effort: 'medium', escalations: 1 }`.
+  - `Decision Q1 (Reading A, CLI): --from sets the profile startEffort is computed against` — `model-effort: profile`, `risk: low`, build profile `standard`: `--from fast` → `startEffort: null` (Fast's `launchEffort` is `null`); `--from capable` with `model-profiles: { capable: { effort: high } }` and `risk: medium` → `'medium'`; `--from capable` with `risk: high` → `'high'`; `profile` and `keyFileCount` unchanged by `--from`.
   - `public-contract: the five existing keys keep their order and values` — `Object.keys(out).slice(0, 5)` equals `['profile', 'stepUp', 'rule', 'size', 'keyFileCount']` and the last two keys are `['startEffort', 'next']`.
   - `the attempt flags are all-or-none` — three of four → exit 2; `--escalations 3` → exit 2; `--attempt-effort xhigh` → exit 2.
   - Update line 125's expected object with `startEffort: null, next: null`.
@@ -270,7 +271,7 @@ Rules — the prose (dispatcher voice, the paragraph's existing style):
 1. The profile log line becomes `` `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}) effort {startEffort}. Reversibility: n/a.` `` with "`{startEffort}` is `inherit` when `null`" (AC6.1).
 2. A new sentence block `**Effort ladder (#6002).**` placed after the `**Escalation (#5999).**` paragraph's last sentence, before `**Child-prompt _shared bundle (#4359).**`:
    - Applies when the CLI's `rule` is `record`, no `profile=` token (or its `tier=` alias) was given, and `startEffort` is not `null` (`model-effort: profile`); it then replaces the #5999 escalation; with `startEffort` `null`, #5999's paragraph applies unchanged.
-   - Every per-task implementer dispatch sets the Agent tool's `effort` parameter to `startEffort` (a `**Role:**` marker's task: the marker's profile at `startEffort`), per `_shared/subagent-dispatch-core.md`'s Dispatching rule (#5941).
+   - Every per-task implementer dispatch sets the Agent tool's `effort` parameter to `startEffort`, per `_shared/subagent-dispatch-core.md`'s Dispatching rule (#5941). A `**Role:**` marker's task starts from the marker's own profile instead (spec Decisions, Reading A): its effort is the `startEffort` of a second call, the same arguments plus `--from {marker profile}` (Task 2: `--from` sets the profile `startEffort` is computed against), never the build profile's — so a Fast marker starts with no effort (no `effort` parameter, no effort rung, its first escalation the profile step) and a Capable marker at its risk-allowed level capped at Capable's own effort.
    - Same two triggers as #5999 (`blocked`: a `STATUS: BLOCKED` reply; `fix-round-failed`: the re-review of the task's first fix round fails); same fresh-implementer rule.
    - The next attempt is the `next` of a second call, pinned whole: `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}" --attempt-profile {profile} --attempt-effort {effort} --escalations {n} --trigger {trigger}` (plus `--run "$PIPELINE_RUN_DIR"` when set), `{profile}`/`{effort}` the task's current attempt (`inherit` for no effort), `{n}` the count of the task's `task {k} implementer escalated` lines in `decisions.md` (no run dir: SDD's `progress.md`); its model via `resolve-profile.js {next.profile}`, its `effort` parameter `next.effort` (none when `null`).
    - At most two escalations per task; a `null` `next` (two escalations, no step-up, or a step-up to the same model) gets SDD's own handling at the task's last profile and effort, as do fix rounds after an escalation.
@@ -282,6 +283,7 @@ Rules — the prose (dispatcher voice, the paragraph's existing style):
   - the ladder escalation line → `'AC6.2: effort-ladder escalation line'`
   - "sets the Agent tool's `effort` parameter to `startEffort`" → `'AC6.1: dispatch at startEffort'`
   - "At most two escalations per task" → `'AC6.3: at most two escalations'`
+  - the marker clause "plus `--from {marker profile}`" in the Effort ladder block → `'Decision Q1: a Role-marker task starts at its own profile's startEffort'`
   - "a `null` `next`" clause → `'AC6.3: past the ladder, SDD's own handling'`
   - "`startEffort` is not `null`" gate → `'AC5.1 (lane): inherit keeps #5999'`
   - `"{startEffort}` is `inherit` when `null`" → `'AC6.1: inherit printed for null'`
@@ -312,4 +314,5 @@ Rules — the prose (dispatcher voice, the paragraph's existing style):
 | Deliverable 7 docs/driver.md | 4 |
 | Deliverable 8 tests | 1-5 |
 | AC7.1 | 1, 3, 4 |
+| Decisions: plan review Q1, Reading A (a `**Role:**` marker's task starts at its own profile's `startEffort`) | 2 (`--from`), 5 (dispatch prose) |
 | Gotcha: ASSUMPTION probe | controller ran it before planning (decisions.md, 6 of 6 pass); recorded in Task 3 Step 5 (worker.js header) and Task 4 (docs/driver.md), and in the PR body at review |
