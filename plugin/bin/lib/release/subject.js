@@ -136,7 +136,7 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
 // `Fixes`/`Refs` lines — the PR links no record.
 function composeHousekeepingSubject({ title, number, scope, tag } = {}) {
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
-  const cleanTitle = typeof title === 'string' ? title.replace(/^[A-Za-z]+(\([^)]*\))?!?:\s+/, '').trim() : '';
+  const cleanTitle = typeof title === 'string' ? title.replace(/^(?:feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(?:\([^)]*\))?!?:(?:\s+|$)/i, '').trim() : '';
   if (!cleanTitle) throw usage(`title must be a non-empty string for #${number}`);
   const { head, suffix } = subjectHead({ prefixBase: 'chore', scope, breaking: false, number, cleanTitle });
   const paragraphs = [cleanTitle];

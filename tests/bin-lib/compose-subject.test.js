@@ -1270,7 +1270,7 @@ test('AC8.1: realDeps.pinGhHost reads the origin and hosts.yml from the injected
   assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => PHANTOM_HOME, stderr: () => {} }), GHE_HOST);
 });
 
-const HK_PR = { number: 5207, title: 'Prune 111 completed execution plans', body: '<!-- tidy-housekeeping-pr -->\nTidy housekeeping.' };
+const HK_PR = { number: 5207, title: 'Prune 111 completed execution plans', body: '<!-- tidy-housekeeping-pr -->\nTidy housekeeping.', closingIssuesReferences: [] };
 
 test('AC2.1: --housekeeping --pr {n} --out-dir {d} exits 0 and writes a chore subject and a body with no Release-Note or Fixes line', () => {
   const { deps, out } = fakeDeps({ prView: HK_PR });
@@ -1283,6 +1283,7 @@ test('AC2.1: --housekeeping --pr {n} --out-dir {d} exits 0 and writes a chore su
   assert.equal(out.stdout, `'${title}'\n`);
   assert.deepEqual(out.calls[0].slice(0, 3), ['pr', 'view', '5207']);
   assert.ok(out.calls[0].includes('acme/repo'));
+  assert.equal(out.calls[0][out.calls[0].indexOf('--json') + 1], 'number,title,body,closingIssuesReferences');
   assert.ok(!out.calls.some((c) => c[0] === 'issue'), 'no gh issue view in the record-less form');
 });
 
@@ -1307,6 +1308,23 @@ test('--housekeeping refuses a PR body with no housekeeping marker (exit 1), acc
   assert.match(plain.out.stderr, /no housekeeping marker/);
   const residue = fakeDeps({ prView: { ...HK_PR, body: '<!-- wrap-up-residue-pr -->' } });
   assert.equal(run(['--housekeeping', '--pr', '5207'], residue.deps), 0, residue.out.stderr);
+});
+
+test('--housekeeping refuses a marker-quoting PR that links a record (closingIssuesReferences non-empty), no output written', () => {
+  const body = 'Fixes #5208\n\nStamps `<!-- tidy-housekeeping-pr -->` on tidy PRs.';
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, body, closingIssuesReferences: [{ number: 5208 }] } });
+  assert.equal(run(['--housekeeping', '--pr', '5207', '--out-dir', '/tmp/hk'], deps), 1);
+  assert.match(out.stderr, /links no record/);
+  assert.deepEqual(out.files, {});
+  assert.equal(out.stdout, '');
+});
+
+test('--housekeeping neutralizes a cross-repo closing phrase in the PR title', () => {
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, title: 'Prune plans, closes other/repo#12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.doesNotMatch(`${title}\n${body}`, /closes other\/repo#12/);
+  assert.ok(title.startsWith('chore:'), title);
 });
 
 test('--housekeeping neutralizes a closing phrase in the PR title', () => {

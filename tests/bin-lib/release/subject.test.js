@@ -223,6 +223,11 @@ test('composeHousekeepingSubject: a Conventional-Commits-shaped title loses its 
   assert.ok(long.title.endsWith('… (#5207)'), long.title);
 });
 
+test('composeHousekeepingSubject: only a Conventional-Commits type prefix is stripped; a prefix-only title is empty', () => {
+  assert.equal(composeHousekeepingSubject({ title: 'Note: keep this word', number: 9 }).title, 'chore: Note: keep this word (#9)');
+  assert.throws(() => composeHousekeepingSubject({ title: 'chore:', number: 9 }), (err) => err instanceof ComposeSubjectError);
+});
+
 test('composeHousekeepingSubject: throws ComposeSubjectError on a bad number, an empty title, or a bad scope', () => {
   for (const bad of [{ title: 'T', number: 0 }, { title: '  ', number: 9 }, { title: 'T', number: 9, scope: 'a b' }]) {
     assert.throws(() => composeHousekeepingSubject(bad), (err) => err instanceof ComposeSubjectError);

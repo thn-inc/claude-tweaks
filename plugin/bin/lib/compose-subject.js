@@ -24,7 +24,8 @@
 // housekeeping PRs, which link no record: it reads the PR with `gh pr view`, composes a `chore:`
 // subject from its title (closing phrases neutralized) with no Release-Note or Fixes line, and
 // takes no <n>, --keep-open or --range. A PR body carrying neither `<!-- tidy-housekeeping-pr -->`
-// nor `<!-- wrap-up-residue-pr -->` is refused (exit 1); a failed or unparseable read exits 3.
+// nor `<!-- wrap-up-residue-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
+// record), is refused (exit 1); a failed or unparseable read exits 3.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
 // body; no trailing newline on any of them), creating <dir> recursively, and
@@ -358,7 +359,7 @@ function run(argv, deps = realDeps) {
   if (opts.housekeeping) {
     let rawPr;
     try {
-      rawPr = deps.runner(['pr', 'view', String(opts.pr), '--repo', slug, '--json', 'number,title,body'], injected);
+      rawPr = deps.runner(['pr', 'view', String(opts.pr), '--repo', slug, '--json', 'number,title,body,closingIssuesReferences'], injected);
     } catch (err) {
       deps.stderr(`compose-subject.js: gh pr view ${opts.pr} failed: ${errMessage(err)}\n`);
       return 3;
@@ -369,6 +370,12 @@ function run(argv, deps = realDeps) {
     }
     if (!housekeepingPr || typeof housekeepingPr !== 'object' || !HOUSEKEEPING_MARKER.test(housekeepingPr.body || '')) {
       deps.stderr(`compose-subject.js: PR #${opts.pr} carries no housekeeping marker (<!-- tidy-housekeeping-pr --> or <!-- wrap-up-residue-pr -->) — the record-less form is for housekeeping PRs only\n`);
+      return 1;
+    }
+    // A record-linked PR that merely quotes the marker must not take the record-less path — it
+    // would merge without its Fixes lines, past the park and acceptance gates.
+    if (Array.isArray(housekeepingPr.closingIssuesReferences) && housekeepingPr.closingIssuesReferences.length > 0) {
+      deps.stderr(`compose-subject.js: PR #${opts.pr} links a record (closingIssuesReferences non-empty) — a housekeeping PR links no record, so the record-less form refuses it\n`);
       return 1;
     }
   }
@@ -469,7 +476,7 @@ function run(argv, deps = realDeps) {
   let composed;
   try {
     composed = opts.housekeeping ? composeHousekeepingSubject({
-      title: neutralizeClosingPhrases(String(housekeepingPr.title ?? ''), { owner: repoSpec.owner, repo: repoSpec.repo }).text,
+      title: neutralizeClosingPhrases(String(housekeepingPr.title ?? '')).text,
       number: Number(opts.pr),
       scope,
       tag: opts.tag,
