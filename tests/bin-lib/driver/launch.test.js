@@ -118,7 +118,8 @@ async function composedArgs(role, policyRaw, runConfigRaw = null) {
     runner: (call) => { seen = call.args; return { pid: 1, kill() {}, exited: Promise.resolve({ code: 0, signal: null, stdout: '', stderr: '' }) }; },
     launchWorker: (o, d) => launchWorker(o, d),
   };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p' });
+  // attrSource (the empty tree's id) is required for the lens-reviewer and ignored by every other role.
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p', attrSource: '4b825dc642cb6eb9a060e54bf8d69288fbee4904' });
   return seen;
 }
 const argModel = (args) => args[args.indexOf('--model') + 1];

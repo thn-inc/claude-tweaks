@@ -245,16 +245,53 @@
 // - Narrowed by this probe: `--show-signature` and `%G` placeholders start `gpg.program` on a
 //   signed commit (plain git, then denied live), and `git grep`, `git status` and `git blame`
 //   ran with no allow rule and started fsmonitor or textconv, so each is now denied whole.
-// - Not closed by any rule (a residual): the CLI's own read-only command table admits bare
-//   `git diff`, `git log -p` and `git show` with no allow rule and no denial (2). Bare
-//   `git diff HEAD~1 HEAD` started the configured external diff, and bare `git log -p` and
-//   `git show HEAD` the textconv filter. The pinned `git diff --no-ext-diff --no-textconv`
-//   with no revisions (a worktree compare) started `core.fsmonitor` (6). A deny rule naming
-//   the bare forms would refuse the pinned ones too, so the allow list does not hold these
-//   programs back; the sandbox does: each program's write outside the working directory
-//   failed (`touch` "Operation not permitted") and its network reach failed (`curl` exit 56).
-//   The programs are the ones the repository's own config names; the reviewed change chooses
-//   among them through its tracked `.gitattributes`.
+// - Not closed by any rule, so closed by the environment (Task 2b): the CLI's own read-only
+//   command table admits bare `git diff`, `git log -p` and `git show` with no allow rule and no
+//   denial (2). Without the pinned environment, bare `git diff HEAD~1 HEAD` started the
+//   configured external diff, bare `git log -p` and `git show HEAD` the textconv filter, and
+//   the pinned `git diff --no-ext-diff --no-textconv` with no revisions (a worktree compare)
+//   started `core.fsmonitor` (6). A deny rule naming the bare forms would refuse the pinned
+//   ones too, so the allow list cannot hold these programs back. The sandbox contained them
+//   even then: each program's write outside the working directory failed (`touch` "Operation
+//   not permitted") and its network reach failed (`curl` exit 56).
+// - Pinned git environment (Task 2b). Every lens-reviewer launch adds `lensGitEnv` to the
+//   worker's allow-listed env, and `launchWorker` refuses a launch without a well-formed
+//   `attrSource` (the reviewed repository's empty tree id). Each setting and what it stops:
+//   `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, any program the system or
+//   global config defines (a diff driver, fsmonitor, a pager); `diff.external` emptied, the
+//   repository's external diff (bare `git diff` and `git diff A B` now exit 128, "cannot run
+//   : No such file or directory": they fail closed, and the pinned `--no-ext-diff` forms
+//   still work); `core.fsmonitor=false`, the fsmonitor hook on any worktree compare, status
+//   or blame; `GIT_ATTR_SOURCE` set to the empty tree, the tracked `.gitattributes` that
+//   picks a diff driver (its external command and its textconv); `core.attributesFile`
+//   pointed at `/dev/null`, an attributes file the repository config names; `core.pager=cat`,
+//   a configured pager (it starts only with a TTY, so it has no negative test). Textconv has
+//   no fixed key to clear (it is per driver, `diff.<driver>.textconv`), so the spec's
+//   "textconv disabled through GIT_CONFIG_COUNT" is met by closing every attributes source
+//   the environment can reach: `GIT_ATTR_SOURCE` and `core.attributesFile`. Plain git (no
+//   worker): the default-suite `AC10.1 (#6000)` test in `tests/bin-lib/driver/worker.test.js`
+//   shows no program starts under the pinned env for bare and pinned `diff`, `log -p`, `show`,
+//   `status` and `blame`, and removing any one setting starts the program it stops. Live
+//   (2026-11-23, CLI 2.1.325, git 2.56.0, macOS 27.0.1, subscription login, no TTY, haiku,
+//   vectors 2-6, 13a, 13b and the new 17 of `AC4.1 (#6000)`): vector 2 and 17's bare
+//   `git diff HEAD~1 HEAD` errored with exit 128 and started nothing; 17's bare `git log -p -1`
+//   and `git show HEAD` printed the raw diff with no textconv; 6's worktree compare started
+//   no fsmonitor; the pinned forms (3, 4, 5, 13a, 13b) printed real git output, so
+//   `/dev/null` as the global and attributes file and `GIT_ATTR_SOURCE` are readable and
+//   accepted under the sandbox and the read block. No program start remained.
+// - The accepted residual, sandbox-contained: what the environment cannot reach.
+//   `$GIT_DIR/info/attributes` is read whatever `GIT_ATTR_SOURCE` says (the AC10.1 test's
+//   global and system sub-cases name their driver there), so a driver it names and the
+//   repository config defines still runs its textconv (plain git under the pinned env,
+//   2026-11-23: bare `git log -p -1` and `git show HEAD` started it, the pinned
+//   `--no-textconv` form did not); a reviewed change cannot write it,
+//   since it is repository-local and untracked. Repository config keys not overridden (any
+//   other program-starting key, and `diff.<driver>.textconv` reached through
+//   `info/attributes`) stay as the repository's own config names them. Such a program runs
+//   inside the sandbox: Task 2's probe refused its writes outside the working directory and
+//   its network reach. Adding a `GIT_CONFIG_KEY_n`, changing `lensGitEnv`, or widening the
+//   allow list means re-probing (the AC10.1 test and `AC4.1 (#6000)` with
+//   `DRIVER_LIVE_SMOKE=1`).
 // - `filesystem.denyWrite: ['.']` was accepted: every launch returned `ok` (12).
 // - Linked-worktree reads (13): `git log` and `git show` in the pinned forms succeeded from
 //   the worktree with the common dir in `readPaths`, and also with `readPaths: []`, so on this
@@ -262,7 +299,8 @@
 //   dir went through, apparently the CLI's git carve-out).
 // Not probed: Linux and Windows hosts; other entries of the CLI's read-only table (for
 // example `git cat-file`, `git shortlog`, `git ls-files`) and their textconv or filter flags;
-// `diff.external` and `pager.<cmd>` config; a TTY-attached launch. Widening the allow list,
+// `diff.external` config live (plain git only, AC10.1) and `pager.<cmd>` config; a
+// TTY-attached launch. Widening the allow list,
 // or dropping a deny rule, means re-probing.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
@@ -493,6 +531,37 @@ function lensReviewerSettings({ platform, readPaths = [] } = {}) {
   return settings;
 }
 
+// The lens-reviewer worker's pinned git environment (see "Pinned git environment" in the
+// header). The empty config is the null device, a literal POSIX path: the lens-reviewer has
+// Bash only on darwin, so no other platform runs git under this env.
+const LENS_EMPTY_GIT_CONFIG = '/dev/null';
+// Each pair overrides a repository config key that starts a program from a read-only git
+// command (or, for core.attributesFile, names the attributes that pick a textconv driver).
+// GIT_CONFIG_COUNT is derived from this list's length.
+const LENS_GIT_CONFIG_PAIRS = deepFreeze([
+  ['diff.external', ''],
+  ['core.fsmonitor', 'false'],
+  ['core.attributesFile', LENS_EMPTY_GIT_CONFIG],
+  ['core.pager', 'cat'],
+]);
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// The env a lens-reviewer worker's git runs under: no system or global config, the pairs
+// above, and attributes read from `attrSource` (the reviewed repository's empty tree id), so
+// no tracked .gitattributes names a diff driver.
+function lensGitEnv({ attrSource } = {}) {
+  if (typeof attrSource !== 'string' || !OBJECT_ID.test(attrSource)) {
+    throw new TypeError('attrSource must be a 40- or 64-character lowercase hex object id, got ' + JSON.stringify(attrSource));
+  }
+  const env = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: LENS_EMPTY_GIT_CONFIG, GIT_CONFIG_COUNT: String(LENS_GIT_CONFIG_PAIRS.length) };
+  LENS_GIT_CONFIG_PAIRS.forEach(([key, value], i) => {
+    env['GIT_CONFIG_KEY_' + i] = key;
+    env['GIT_CONFIG_VALUE_' + i] = value;
+  });
+  env.GIT_ATTR_SOURCE = attrSource;
+  return Object.freeze(env);
+}
+
 // The command forms the lens-reviewer may run, for its appended system prompt. Derived from
 // LENS_GIT_RULES, so the note and the allow list cannot drift.
 function lensAdmittedFormsNote() {
@@ -663,4 +732,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, LENS_EMPTY_GIT_CONFIG, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensGitEnv, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };

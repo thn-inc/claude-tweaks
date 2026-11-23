@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, LENS_REPLY_SCHEMA, LENS_GIT_RULES, lensReviewerSettings, lensAdmittedFormsNote, settingsFor } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, LENS_REPLY_SCHEMA, LENS_GIT_RULES, lensReviewerSettings, lensAdmittedFormsNote, settingsFor, lensGitEnv, LENS_EMPTY_GIT_CONFIG } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES, EFFORT_SCALE } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
@@ -922,4 +922,33 @@ test('settingsFor dispatches by role', () => {
   assert.deepStrictEqual(settingsFor('lens-reviewer', input), lensReviewerSettings({ platform: 'darwin', readPaths: ['/opt/a'] }));
   for (const role of ['reviewer', 'explorer', 'merge-check', 'acceptance']) assert.strictEqual(settingsFor(role, input), null, role);
   assert.throws(() => settingsFor('nope', input), /unknown role/);
+});
+
+// The lens-reviewer worker's pinned git environment (#6000 Task 2b).
+const EMPTY_TREE_SHA1 = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+test('lensGitEnv pins system/global config, diff.external, fsmonitor, attributesFile, pager and GIT_ATTR_SOURCE', () => {
+  const env = lensGitEnv({ attrSource: EMPTY_TREE_SHA1 });
+  assert.deepStrictEqual({ ...env }, {
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_COUNT: '4',
+    GIT_CONFIG_KEY_0: 'diff.external', GIT_CONFIG_VALUE_0: '',
+    GIT_CONFIG_KEY_1: 'core.fsmonitor', GIT_CONFIG_VALUE_1: 'false',
+    GIT_CONFIG_KEY_2: 'core.attributesFile', GIT_CONFIG_VALUE_2: '/dev/null',
+    GIT_CONFIG_KEY_3: 'core.pager', GIT_CONFIG_VALUE_3: 'cat',
+    GIT_ATTR_SOURCE: EMPTY_TREE_SHA1,
+  });
+  assert.ok(Object.isFrozen(env));
+  assert.strictEqual(LENS_EMPTY_GIT_CONFIG, '/dev/null');
+  assert.strictEqual(Number(env.GIT_CONFIG_COUNT), Object.keys(env).filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k)).length);
+  // A SHA-256 repository's empty tree is accepted too.
+  const sha256 = '6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321';
+  assert.strictEqual(lensGitEnv({ attrSource: sha256 }).GIT_ATTR_SOURCE, sha256);
+});
+
+test('lensGitEnv refuses a malformed attrSource', () => {
+  for (const bad of [undefined, null, '', 'HEAD', EMPTY_TREE_SHA1.toUpperCase(), EMPTY_TREE_SHA1.slice(1), EMPTY_TREE_SHA1 + '0', EMPTY_TREE_SHA1 + '\n', ' ' + EMPTY_TREE_SHA1, 42]) {
+    assert.throws(() => lensGitEnv({ attrSource: bad }), TypeError, JSON.stringify(bad));
+  }
+  assert.throws(() => lensGitEnv(), TypeError);
 });

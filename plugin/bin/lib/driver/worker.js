@@ -162,7 +162,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort, lensGitEnv } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -560,6 +560,10 @@ async function launchWorker(opts, deps = defaultDeps()) {
       }
     }
   }
+  // The lens-reviewer's git runs under a pinned environment (roles.js, "Pinned git
+  // environment"); a missing or malformed attrSource is refused here, before any write.
+  // Every other role ignores attrSource and keeps exactly the allow-listed env.
+  const gitEnv = role === 'lens-reviewer' ? lensGitEnv({ attrSource: opts.attrSource }) : null;
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
   const written = [];
@@ -577,7 +581,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
     const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
-    const childEnv = buildEnv(env, platform);
+    const childEnv = gitEnv ? { ...buildEnv(env, platform), ...gitEnv } : buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;
     try {
