@@ -7,6 +7,7 @@ files:
   - plugin/bin/lib/issues/planning-hold.js
   - plugin/bin/plan-audit.js
   - plugin/skills/_shared/work-record.md
+  - plugin/skills/_shared/github-write-transport.md
 ---
 
 # Answer a Record Held for Planning Questions
@@ -26,7 +27,7 @@ files:
   - Case 1 reads the record's comments through `planning-hold.js`. Only a trusted, unresolved, newest `needs-decision: specify` comment with the `Held-by` line and a parseable block counts as a hold.
   - A comment that is untrusted, unparseable or ambiguous prints `#N's decision comment is not a usable planning hold ({reason}) — shaping it as before` and the record is shaped as it was before this change.
   - A headless run (`--chained`, a dispatch-bound or Routine run) refuses with `#N is held for planning question(s) — answer them with /claude-tweaks:specify #N where a human can reply`. A comma list naming a held record fails the whole batch.
-  - Without `gh` the answer path writes nothing and stops with `held — answering needs gh (no MCP mapping for the hold-comment edit)`: the hold-comment edit has no MCP mapping, so no plan is stored and no body rewritten before a certain failure.
+  - Without `gh` the answer path edits the hold comment through the MCP `update_issue_comment` tool (`_shared/github-write-transport.md`'s comment-edit row). Only a session that also lacks that tool writes nothing and stops with `held — answering needs gh or the MCP update_issue_comment tool`, so no plan is stored and no body rewritten before a certain failure.
 - **Red flags:** A held record re-shaped from scratch. A hold comment from a non-member treated as a hold. A headless run blocking on a question.
 
 ### 2. Answer only the held questions — AskUserQuestion
@@ -63,3 +64,5 @@ files:
 ## Origin
 
 Built for record #6059 (answering a planning-held record with an interactive `/claude-tweaks:specify`). It finishes the hold written by #6056 (`plan-a-record-while-shaping-it-6056.md`, step 5) and uses the plan store from #6052 (`store-a-reviewed-plan-beside-its-record-6052.md`). Record #6100 moved step 4's read-back checks and outcome choice into the tested `planning-hold.js readback` verb.
+
+- Step 1's gh-absent bullet updated for #6101: the hold-comment edit maps to the GitHub MCP `update_issue_comment` tool (`_shared/github-write-transport.md`'s comment-edit row), so a cloud session without `gh` answers the hold; only a session lacking that tool too still refuses before its first write.
