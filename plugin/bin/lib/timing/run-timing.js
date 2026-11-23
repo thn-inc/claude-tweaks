@@ -297,7 +297,8 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   // The headless lens workers' log, in the same window collectDispatches uses (#6000).
   const workers = readWorkerDispatches(runDir, { window: clip === null ? eventWindow(events) : clip });
   for (const n of workers.notes) outNotes.push(`dispatches: ${n}`);
-  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree, scopeDispatchesTo, workerItems: workers.items, workerExcludedOutsideWindow: workers.excludedOutsideWindow } : { deadlineAt, worktree, scopeDispatchesTo, workerItems: workers.items, workerExcludedOutsideWindow: workers.excludedOutsideWindow });
+  const dispatchOpts = { deadlineAt, worktree, scopeDispatchesTo, workerItems: workers.items, workerExcludedOutsideWindow: workers.excludedOutsideWindow };
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { ...dispatchOpts, window: clip } : dispatchOpts);
   if (dispatches === null) return hit();
   const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
   const tokens = joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, transcriptPaths, at) });
