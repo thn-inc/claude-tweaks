@@ -1,26 +1,26 @@
 {
-  "computedAt": "2026-11-23T15:47:57.562Z",
+  "computedAt": "2026-11-23T17:11:23.154Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 6152,
-        "updatedAt": "2026-11-23T15:45:44Z",
+        "updatedAt": "2026-11-23T16:10:26Z",
         "state": "OPEN"
       },
       {
         "number": 6151,
-        "updatedAt": "2026-11-23T15:45:37Z",
+        "updatedAt": "2026-11-23T16:10:24Z",
         "state": "OPEN"
       },
       {
         "number": 6150,
-        "updatedAt": "2026-11-23T15:45:29Z",
+        "updatedAt": "2026-11-23T16:10:21Z",
         "state": "OPEN"
       },
       {
         "number": 6149,
-        "updatedAt": "2026-11-23T15:45:21Z",
+        "updatedAt": "2026-11-23T16:10:19Z",
         "state": "OPEN"
       },
       {
@@ -30,27 +30,22 @@
       },
       {
         "number": 6147,
-        "updatedAt": "2026-11-23T15:45:06Z",
+        "updatedAt": "2026-11-23T16:09:10Z",
         "state": "OPEN"
       },
       {
         "number": 6146,
-        "updatedAt": "2026-11-23T15:44:57Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6145,
-        "updatedAt": "2026-11-23T15:44:48Z",
+        "updatedAt": "2026-11-23T16:19:10Z",
         "state": "OPEN"
       },
       {
         "number": 6143,
-        "updatedAt": "2026-11-23T15:42:35Z",
+        "updatedAt": "2026-11-23T16:45:03Z",
         "state": "OPEN"
       },
       {
         "number": 6142,
-        "updatedAt": "2026-11-23T15:42:42Z",
+        "updatedAt": "2026-11-23T16:30:04Z",
         "state": "OPEN"
       },
       {
@@ -69,11 +64,6 @@
         "state": "OPEN"
       },
       {
-        "number": 6109,
-        "updatedAt": "2026-11-23T15:18:38Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6062,
         "updatedAt": "2026-11-23T08:44:01Z",
         "state": "OPEN"
@@ -85,7 +75,7 @@
       },
       {
         "number": 6002,
-        "updatedAt": "2026-11-23T15:45:57Z",
+        "updatedAt": "2026-11-23T16:20:22Z",
         "state": "OPEN"
       },
       {
@@ -105,12 +95,7 @@
       },
       {
         "number": 5270,
-        "updatedAt": "2026-11-23T15:19:39Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5208,
-        "updatedAt": "2026-11-23T15:18:15Z",
+        "updatedAt": "2026-11-23T17:05:32Z",
         "state": "OPEN"
       },
       {
@@ -170,7 +155,7 @@
       },
       {
         "number": 4764,
-        "updatedAt": "2026-11-03T09:36:12Z",
+        "updatedAt": "2026-11-23T17:09:08Z",
         "state": "OPEN"
       },
       {
@@ -230,7 +215,7 @@
       },
       {
         "number": 4617,
-        "updatedAt": "2026-10-30T16:09:07Z",
+        "updatedAt": "2026-11-23T16:10:52Z",
         "state": "OPEN"
       },
       {
@@ -780,7 +765,7 @@
       },
       {
         "number": 3822,
-        "updatedAt": "2026-10-24T05:39:32Z",
+        "updatedAt": "2026-11-23T16:16:25Z",
         "state": "OPEN"
       },
       {
@@ -828,20 +813,14 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nAdd the new vocabulary (kinds, outcomes, reason codes, actors, hold reasons, process id) to `stations.js` and the matching validation to `emit.js`. The file stays version 1; legacy outcomes are still accepted until Task 8. This is task 2 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Low\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\nNone. This record has no blockers in this repository.\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- \"`skipped` and `abandoned` are retired from the vocabulary; `abandoned` maps to `stopped`; `returned` becomes `sent-back`.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/stations.js`, `plugin/bin/lib/station-events/emit.js`\n- Test: `tests/bin-lib/station-events/emit.test.js`, `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\nInterfaces:\n\n- Produces in `stations.js`: `KINDS` gains `planned | replanned | held | released | decided`; `OUTCOMES` is `['passed','sent-back','failed','stopped']` plus `RETIRED_OUTCOMES = ['returned','skipped','abandoned']`, both still accepted by `appendStationEvent` until Task 8; `REASON_CODES` (frozen array: `unspecified`, `default-list`, `infrastructure`, `test-failed`, `spec-wrong`, `scope-too-big`, `blocked-by-other`, `changes-requested`, `superseded`, `withdrawn`, `ceremony-downgrade`, `documents-only`, `other`, extended by Task 1's findings); `ACTORS` (matcher `agent|script|person|rule:<id>`); `HOLD_WHYS = ['blocked','parked','changes-requested','waiting-on-you']`; `PROCESS = Object.freeze({ id: 'build-a-record', version: 1 })`.\n- Produces in `emit.js`: `invalidReason(event)` also rejects an `exited` whose `outcome` is new-vocabulary and lacks `payload.actor`, a non-`passed` new outcome lacking a `payload.reasonCode` in `REASON_CODES`, a `sent-back` lacking a `payload.next` in `STATIONS`, a `held`/`released` with `why` outside `HOLD_WHYS`, and a `planned`/`replanned` whose `payload.stations` is not an array of `STATIONS` ids.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests** in `emit.test.js`: `exited sent-back without next is dropped with a reason`; `exited failed without reasonCode is dropped`; `exited passed with actor script is written`; `held with an unknown why is dropped`; `planned with an unknown station is dropped`; `a legacy returned outcome is still written` (until Task 8); `a dropped line never throws and writes a reason to stderr`; `concurrent appends of a planned and an exited line both land intact`. In the conformance test, add `no call site spells a reason code or actor literal outside stations.js`.\n2. Review focus, covered by the tests above: A concurrent writer (two sessions claiming different records) never interleaves or loses a line; the existing `withLock` still covers every new kind.\n3. Review focus, covered by the tests above: An `exited` with `sent-back` and no `next`, or an unknown station in `next`, is dropped with a stderr reason and does not stop the transition.\n\n## Release Note\n\nAdded the station-event vocabulary and validation for plans, reasons, actors and holds, with legacy outcomes still accepted.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests** in `emit.test.js`: `exited sent-back without next is dropped with a reason`; `exited failed without reasonCode is dropped`; `exited passed with actor script is written`; `held with an unknown why is dropped`; `planned with an unknown station is dropped`; `a legacy returned outcome is still written` (until Task 8); `a dropped line never throws and writes a reason to stderr`; `concurrent appends of a planned and an exited line both land intact`. In the conformance test, add `no call site spells a reason code or actor literal outside stations.js`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/emit.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** the constants in `stations.js` and the checks in `invalidReason` (`emit.js`); legacy outcomes bypass the new-field checks.\n- [ ] **Step 4: Run** the station-events directory: `node tools/run-tests.js tests/bin-lib/station-events`. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: station-event vocabulary for plans, reasons and holds`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/stations.js`\n- `plugin/bin/lib/station-events/emit.js`\n- `tests/bin-lib/station-events/emit.test.js`\n- `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\n## Gotchas\n\n- Adds vocabulary and validation to the emitter; legacy outcomes stay accepted until Task 8.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-2 -->\nwork-fingerprint: factory-floor-map-emission:emission-2",
-        "createdAt": "2026-11-23T15:42:56Z",
+        "body": "Surface: backend\nRisk-flags: auth, irreversible-side-effect\n**Related:** #5649, #4366, #5179, #5884\n\n## Current State\n\n- `plugin/bin/learned-skills-pr.js` has `capture`, `land` and `stage` verbs. `land` opens one ready learned-skills PR per run and never merges it; `plugin/skills/wrap-up/learned-skills-pr.md` (\"The PR waits for a human\") and `_shared/github-pr-scan.md` item 9 keep it unarmed.\n- The PRs pile up and conflict (#6088): 36 in a week, median 19h open, ten `DIRTY` at once on 2026-11-22. #6088 dropped the review floor for this PR: it should merge itself once CI is green, under the `learned-skills-auto-merge` policy key (sibling sub-issue).\n- This repo's `main` has no branch protection or rulesets, `allow_auto_merge` is true, and `merge-verification` resolves `merge-when-green`; `_shared/pr-first-merge.md` Step 2.5 therefore degrades a non-`BLOCKED` PR to the `wait` row (bounded 900 s watch, then an immediate `--squash` once green), never an immediate merge. CI takes about 3 minutes.\n- 14 learned-skills merge commits on `main` read `(#undefined)`: a merge title read a field its `--json` call never requested.\n\n## Deliverables\n\n1. A `drain` verb on `plugin/bin/learned-skills-pr.js` (args: `--run`, `--integration-branch`, `--own-pr <n>` optional). It lists every open PR whose body carries `<!-- wrap-up-skills-pr -->`, and for each:\n   - **green** → merges it through `_shared/pr-first-merge.md`'s Step 2.5 gate and Step 3 squash (arms `--auto` only where Step 2.5 says arming holds), with `--delete-branch`;\n   - **checks pending** → for `--own-pr` only, waits within Step 2.5's bounded watch (`MERGE_GATE_WATCH_SECONDS`, 900 s); any other pending PR is left for a later drain;\n   - **`DIRTY`/conflicting** → reported as `conflicting` and left open (the rebuild is a sibling sub-issue that plugs in here);\n   - **red** → left open, reported; no record labels are added (the `refs` records are not this PR's to park — tidy Step 7.5's precedent for a caller with no record).\n   It prints one JSON line `{merged:[…], leftOpen:[{pr, reason}], conflicting:[…]}` and follows the `gh-api-module-pattern` project skill's CLI contract (injectable runner, exit codes in the header).\n   - **Seam:** `drain.js` owns listing, classification and the one merge call; `_shared/pr-first-merge.md` Step 2.5 is the source of the semantics, and a `prose-code-twin-pin` test goes red when Step 2.5's row set changes. A PR of another run has no run dir: it skips the ci-gate write and run-scoped logging and uses only the state read and the merge call; only this run's PR logs to `decisions.md`.\n   - **Green** means `statusCheckRollup` is non-empty, every entry completed with conclusion SUCCESS, NEUTRAL or SKIPPED, and the PR is open and not a draft. An empty rollup is pending, never green.\n   - **Per PR, oldest first:** `mergeStateStatus` is re-read right before the merge, so a sibling turned `DIRTY` by an earlier merge in the same drain is reported `conflicting`; the merge is pinned to the classified `headRefOid` (`--match-head-commit`), and a mismatch is `leftOpen` reason `head-changed`.\n   - **Scope of what it touches:** only an open PR whose head branch is `learned-skills/*` in this repository (not a fork). Any other marker-carrying PR is left alone with reason `not-learned-skills-branch`. An already merged or closed PR (a concurrent drain got there first) is a no-op.\n   - **`leftOpen` reasons** are the closed set `pending`, `timeout`, `red`, `head-changed`, `not-learned-skills-branch`, `no-gh`. Without `gh` the verb merges nothing and reports `no-gh`. An unset or unreadable `learned-skills-auto-merge` resolves `false`.\n   The drain acts on a PR only when all three hold: its head is a same-repository branch named `learned-skills/*` (never a fork: `isCrossRepository` false), its body carries `<!-- wrap-up-skills-pr -->`, and every changed file (`gh pr view --json files`) is under `.claude/skills/`. Any other PR, marker or not, is left open and reported in `leftOpen` with the failed condition as its reason. There is no author-identity check: anyone able to push a same-repository branch already has write access, so an author check would add nothing the branch and path checks do not. Acceptance: a test pins that a marker PR from a fork, on a non-`learned-skills/*` branch, or with a file outside `.claude/skills/` is left open with that reason and never merged.\n2. Merge subject and body come from `compose-subject.js`'s record-less form, which #5208 adds (this unit is blocked by it; the form does not exist on `main` yet) (a `chore:` subject from the PR title, `(#{pr})` appended), extended if needed to accept the `<!-- wrap-up-skills-pr -->` marker; the body carries the PR's `Refs #n` lines and never a `Fixes`. Every value is read from fields the `--json` call requested.\n3. `plugin/skills/wrap-up/learned-skills-pr.md`: when `learned-skills-auto-merge` resolves `true`, run `drain` once at the end of wrap-up (after the Review Console and `record`), passing this run's PR as `--own-pr`. Replace the \"Never armed\" bullet with the new rule, and log each outcome to `decisions.md` per `_shared/auto-decision-log.md` with `[lever: learned-skills-auto-merge={value}]` (`AUTO` for a merge, `SKIP` for a left-open degrade). With the lever `false`, nothing changes.\n4. The final summary's Skills row (rendered by `plugin/bin/lib/wrap-up/engine-render.js`, never hand-composed) and the short-circuit FYI (`plugin/skills/wrap-up/auto-merge-short-circuit.md`) show the drain's outcome for this run's PR: `merged` or `left open: {reason}`. The render shows only the `--own-pr` outcome; other PRs are logged to `decisions.md` only.\n5. `plugin/skills/wrap-up/curation-engine.md` names the drain step where it orders wrap-up's phases.\n6. Every other statement that the learned-skills PR is \"never armed\" or \"waits for a human\" is updated to the new rule: grep the retired phrases repo-wide (`docs/skill-graph.md`, `/help`, `README.md`, the header of `plugin/bin/learned-skills-pr.js`, `learned-skills-pr.md`). `_shared/github-pr-scan.md` item 9 and tidy's arm row are the PR-scan sub-issue's, and are left alone here.\n\n## Acceptance Criteria\n\n- Tests for `drain` with a fake gh runner: a green marker PR is merged with subject `chore: Add learned skill updates from wrap-up of #N (#P)` and a body with `Refs #N` and no `Fixes`; a pending sibling is left untouched; a pending `--own-pr` is watched and merged when it turns green; a red PR is left open with no label writes; a `DIRTY` PR is reported `conflicting`; a PR without the marker is never touched.\n- A test pins that no subject contains `undefined`.\n- Green is pinned: an empty `statusCheckRollup` is left open as `pending`; a head that changes between classification and merge is left open as `head-changed`; a marker PR on a head branch outside `learned-skills/*` is never touched.\n- With `learned-skills-auto-merge: false`, the wrap-up procedure runs no `drain` (conformance test over `learned-skills-pr.md`).\n- In an unprotected repo, a drain never merges a PR whose checks have not all completed green (test through the Step 2.5 path).\n- Each new test was seen failing with its behaviour reverted.\n- `npm test -- --full` passes.\n\n## Release Note\n\nWrap-up now merges its learned-skill update PRs once CI passes (when `learned-skills-auto-merge` is on), so they no longer pile up waiting for a person.\n\n## Technical Approach\n\nPut the drain's logic in a new `plugin/bin/lib/learned-skills/drain.js` beside `land.js`, reusing `learned-skills.js`'s deps seam. Read PR state with `gh pr view --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,title,body,number` (request every field the subject reads). Reuse Step 2.5's existing gate code paths rather than restating them in prose; if Step 2.5 has no callable code twin, call the documented fences from the skill prose and keep `drain` to listing, classifying and the one merge call.\n\n### Key Files\n\n- `plugin/bin/learned-skills-pr.js` — `drain` verb, help text, exit codes\n- `plugin/bin/lib/learned-skills/drain.js` — new: list, classify, merge\n- `plugin/skills/wrap-up/learned-skills-pr.md` — drain step and the replaced never-armed rule\n- `plugin/skills/wrap-up/curation-engine.md` — phase order names the drain\n- `plugin/skills/wrap-up/auto-merge-short-circuit.md` — FYI carries the outcome\n- `plugin/bin/lib/wrap-up/engine-render.js` — Skills row outcome\n- `plugin/bin/lib/compose-subject.js` — record-less form accepts the learned-skills marker, if #5208 does not already\n- `tests/wrap-up-learned-skills-pr.test.js` — conformance updates (it pins the never-armed prose today)\n- `tests/bin-lib/learned-skills/drain.test.js` — new\n\n## Gotchas\n\n- Do not copy `wrap-up/residue-sweep.md`'s bare `gh pr merge --auto` at creation: in an unprotected repo it can merge before CI (#5649).\n- `pr-checks.js` cannot see a merge-conflicted PR (#4366); classify `DIRTY` from `mergeStateStatus`/`mergeable`, not from checks.\n- A PR that turns conflicting during the bounded watch must be reported `conflicting`, not timed out (#5179's concern).\n- When #5884's merge pause lands, the drain is a plugin-driven merge and must honour it.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:merge-green-learned-skills-prs-at-the-end-of-every-wrap-up-w -->\nwork-fingerprint: learned-skills-auto-merge:merge-green-learned-skills-prs-at-the-end-of-every-wrap-up-w\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`, `Proof(irreversible-side-effect): …`.\n\n",
+        "createdAt": "2026-11-23T07:01:37Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
             "name": "ready",
             "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
             "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
@@ -868,10 +847,10 @@
             "color": "BFDADC"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACszEEfQ",
@@ -880,271 +859,19 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6146,
+        "number": 6112,
         "state": "OPEN",
-        "title": "Floor map, emission 2/8: Vocabulary and validation",
-        "updatedAt": "2026-11-23T15:44:57Z",
+        "title": "Merge green learned-skills PRs at the end of every wrap-up with a drain verb",
+        "updatedAt": "2026-11-23T07:26:50Z",
         "facets": {
           "origin": null,
-          "risk": "low",
+          "risk": "high",
           "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nCapture which claude-tweaks code performs each station transition today, confirm the station order against real moves, and name the starting lists from real manifests. Tasks 3, 4, 6 and 7 read these sections. This is task 1 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Low\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\nNone. This record has no blockers in this repository.\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Modify: `docs/reference/station-events.md` (add the two sections below)\n- Test: `tests/bin-lib/station-events/transition-table.test.js` (Create)\n\nInterfaces:\n\n- Produces: a section `## Transition code by station` with one table row per station of `STATIONS`, columns `station | code that performs the transition (path:function) | kinds emitted today | outcome known to the code | reason known to the code`; a section `## Station order from real moves` stating the confirmed order and the counts it rests on; a section `## Starting lists` naming each list the plan can start from (`standard` plus every other list the real manifests show) with its stations and the ceremony profile or lane that selects it. Tasks 3, 4, 6, 7 read these sections.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write the failing test** `tests/bin-lib/station-events/transition-table.test.js`: test `every station has a row in the transition table` (parse the markdown table; assert one row per `STATIONS` entry); test `every cited code path exists` (each `path:function` cell names a file under `plugin/bin/` that exists and contains the function name, or the cell is exactly `none`); test `the order section names every station once`.\n2. `docs/reference/station-events.md` carries the three sections `## Transition code by station`, `## Station order from real moves` and `## Starting lists`, each as the Interfaces above describe; a list not observed in real manifests is not written.\n\n## Release Note\n\nDocumented which code performs each station transition, the confirmed station order, and the starting lists the plan can begin from.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write the failing test** `tests/bin-lib/station-events/transition-table.test.js`: test `every station has a row in the transition table` (parse the markdown table; assert one row per `STATIONS` entry); test `every cited code path exists` (each `path:function` cell names a file under `plugin/bin/` that exists and contains the function name, or the cell is exactly `none`); test `the order section names every station once`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js`. Expected: FAIL (sections missing).\n- [ ] **Step 3: Capture.** For each station, read the code that performs its transition (grep the callers of `appendStationEvent` and the label protocol under `plugin/bin/lib/issues/`) and fill the row; a station with no code (expected for review, polish, wrap-up, which the local file shows almost no events for) is `none`. For the order, run against a hub node database the query that counts consecutive-visit pairs per work order over 28 days (lead of `station` partitioned by `work_order_key` ordered by `entered_at, id`) and record the pairs with at least 10 occurrences; state whether Test comes before or after Polish (the 2026-11-22 counts were 133 Polish-to-Test, 120 Build-to-Polish, 12 Test-to-Polish). Read the real `manifest.json` files under `.claude-tweaks/pipelines/*/` for `lane` and `ceremonyProfile` to fill the starting lists; a list not observed is not written.\n- [ ] **Step 4: Run the test** from Step 2. Expected: PASS.\n- [ ] **Step 5: If the confirmed order differs from `STATION`'s order in `stations.js`,** reorder `STATION` to match, run `node tools/run-tests.js tests/bin-lib/station-events`, and note the change in the doc. Report the confirmed order to the hub plan's Task 4.\n- [ ] **Step 6: Commit** `docs: capture station transition code, order and starting lists`.\n\n### Key Files\n\n- `docs/reference/station-events.md`\n- `tests/bin-lib/station-events/transition-table.test.js`\n\n## Gotchas\n\n- Documentation capture plus one table-parsing test; no emitter behaviour changes except a possible reorder of STATION in Step 5.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n- Cross-repository: the hub plan's H4 (\"process as data\") in `thn-inc/dispatch` takes station order and starting lists from this record. The orchestrator adds that blocked-by edge (H4 blocked by this record) later; this record carries no cross-repository edge. Report the confirmed order to the hub plan's Task 4.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-1 -->\nwork-fingerprint: factory-floor-map-emission:emission-1",
-        "createdAt": "2026-11-23T15:42:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6145,
-        "state": "OPEN",
-        "title": "Floor map, emission 1/8: Capture pass: transition code by station, and the station order from real moves",
-        "updatedAt": "2026-11-23T15:44:48Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\nA `pr-first` run opens a draft PR at run start (`_shared/pr-early-run-lifecycle.md`). Its body carries a `claude-tweaks-run:` marker and a phases checklist. Nothing stops another session from running `gh pr ready` and `gh pr merge` on that draft mid-run.\n\nOn 2026-11-23 PR #6061 (run `2026-11-23T062258-record-6000`, build in progress, every phase unchecked) was marked ready and merged 5 seconds later at 06:55:38Z by a session merging a batch of PRs (#6064 and #6065 went the same way). The merge closed #6000. Reconcile's post-merge then released the claim, stripped `auto:build` and archived the run as if it had finished, and the release bot posted \"Shipped in v6.177.0\" on #6000. #6003, which depends on #6000, was then dispatched against code that did not exist. Recovery took a reopened issue, a hand-written decision, a new draft PR (#6138) and a restarted run.\n\n## Deliverables\n\n1. A PreToolUse gate in `plugin/bin/lib/hooks/pre-tool-use.js`. A Bash call running `gh pr ready <n>` or `gh pr merge <n>` (any flags) is denied when PR n's body carries a `claude-tweaks-run: {id}` marker naming a run under `$RUN_ROOT/.claude-tweaks/pipelines/` whose `run-state.json` is non-terminal and whose phases checklist still has `build` or `test` unchecked. The deny reason names the run and its owning session. The owning session (`run-state.json` `sessionId`) is allowed. The gate fails open when the PR body or run state cannot be read, per `docs/hooks.md`'s never-break-a-session invariant.\n\n2. Reconcile's post-merge (`plugin/bin/lib/reconcile/post-merge.js`, `release-merged.js`) does not settle a hollow merge as a success. When a merged PR's marker names a run that was non-terminal at merge time, or the PR's phases checklist has `build` unchecked, it does not release the claim as merged, strip `auto:build` or archive the run. Instead it posts one comment on the record naming the merge, and reconcile's summary reports it.\n\n## Acceptance Criteria\n\n- [ ] Hook test: `gh pr merge 123 --squash` against a fake PR whose marker names an active run with `build` unchecked is denied; the same command from the run's owning session is allowed; an unreadable PR is allowed.\n\n- [ ] Hook test: `gh pr ready 123` behaves the same way as the merge case above.\n\n- [ ] Reconcile test: a merged PR whose marker names an active run with `build` unchecked leaves the claim, `auto:build` and the run directory in place, posts one comment, and appears in the summary.\n\n- [ ] Reconcile test: a merged PR whose run is clean and whose phases are all checked settles exactly as today.\n\n## Release Note\n\nAnother session can no longer mark a pipeline's draft PR ready or merge it while its build is still running, and a merge that lands mid-build is reported instead of being treated as shipped.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — add the in-flight-run gate for gh pr ready / gh pr merge\n- `plugin/bin/lib/reconcile/post-merge.js` — detect a hollow merge and skip success settlement\n- `plugin/bin/lib/reconcile/release-merged.js` — do not release the claim on a hollow merge\n- `tests/bin-lib/reconcile/post-merge.test.js` — hollow-merge fixtures\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-23T15:37:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 6143,
-        "state": "OPEN",
-        "title": "Refuse to ready or merge a pipeline PR while its run is still building",
-        "updatedAt": "2026-11-23T15:42:35Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\n`plugin/bin/lib/preflight-records/blocker-landing.js` classifies a blocker `landed` when any candidate closing commit is reachable from the integration branch. It never looks at what that commit changed.\n\nOn 2026-11-23 #6000 was closed by PR #6061, whose squash `46e21cbf6` added only the materialized spec, the plan and the ledger (`.claude-tweaks/pipelines/*/work/6000-spec.md`, `docs/superpowers/plans/…`, `docs/plans/…-ledger.md`): the run was still building. None of #6000's Key Files (`plugin/bin/lib/driver/roles.js`, `plugin/bin/review-lens-workers.js`, …) were touched. The check read #6000 as `landed`, so `/claude-tweaks:dispatch #6003` claimed #6003, opened draft PR #6121 and ran a build against a launcher that did not exist. The build agent noticed and stopped with `failed:blocker-landing` after about 7.5 minutes.\n\n## Deliverables\n\n1. In `blocker-landing.js`, a reachable closing commit counts as `landed` only when its diff touches at least one path in the blocker's `### Key Files`. A reachable commit that touches none of them, or only pipeline bookkeeping (`.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**`, `docs/plans/*-ledger.md`), gets a distinct verdict (for example `hollow`) carrying the PR number.\n\n2. A blocker with no `### Key Files` section keeps reachability as the rule, with the bookkeeping-only check from deliverable 1 still applied.\n\n3. The queue pull (`plugin/bin/lib/dispatch/unlanded-blockers.js`) excludes a record whose blocker is `hollow` as `unlanded-blocker`, and its report line says why: `#N waits — blocker #M was closed by #PR with no implementation`. `bin/preflight-records.js --blocker-landing` prints the same verdict.\n\n## Acceptance Criteria\n\n- [ ] A blocker whose reachable closing commit touches only `docs/superpowers/plans/x.md` and `.claude-tweaks/pipelines/r/work/1-spec.md` is not `landed`, and its dependent is excluded as `unlanded-blocker` with the no-implementation reason.\n\n- [ ] A blocker with Key Files `a.js` whose closing commit touches only `b.js` is not `landed`.\n\n- [ ] A closing commit that touches a Key File is `landed`, unchanged.\n\n- [ ] A blocker without Key Files whose closing commit touches a non-bookkeeping file is `landed`, unchanged.\n\n- [ ] A fixture replaying squash `46e21cbf6`'s file list against #6000's Key Files excludes the dependent (#6003's case).\n\n## Release Note\n\nDispatch no longer builds a record whose blocker was closed by a merge that carried no implementation.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — add the Key Files / bookkeeping-only check and the new verdict\n- `plugin/bin/lib/dispatch/unlanded-blockers.js` — exclude and report the new verdict\n- `plugin/bin/preflight-records.js` — print the new verdict\n- `tests/bin-lib/preflight-records/blocker-landing.test.js` — fixtures for each acceptance criterion\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-23T15:37:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 6142,
-        "state": "OPEN",
-        "title": "Treat a dispatch blocker as landed only when its closing merge carried the implementation",
-        "updatedAt": "2026-11-23T15:42:42Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
+          "priority": null,
           "stage": "ready",
           "grants": {
             "build": true,
@@ -2232,90 +1959,6 @@
     ],
     [
       {
-        "body": "Surface: backend\n\n**Related:** #3982, #3995, #4725, #4738\n\n## Current State\n\nThe post-merge Windows check failed on commit ba69ced99 (compared against 22d287f46), after PR #4742. Baseline adjudication attributed `tests/friction-events-cli.test.js` as newly failing. Run: https://github.com/thn-inc/claude-tweaks/actions/runs/41222731872\n\nThree #4704 tests are attributed, at lines 562, 577 and 645. All cover whether the CLI treats its cwd as the main checkout, so comparing `repoRoot` to the worktree path is the likely site.\n\n## Deliverables\n\n1. `tests/friction-events-cli.test.js` passes on Windows, by fixing the product code or the test, whichever the failure turns out to be.\n2. The cause is named in the PR, including whether other tests share it.\n\n## Acceptance Criteria\n\n1. `tests/friction-events-cli.test.js` passes in the Windows workflow on the fixing branch, proven by a run dispatched after the last code change.\n2. The same file still passes on Linux and macOS.\n3. `npm test` passes.\n\n## Release Note\n\nNo user-facing change; this restores the Windows test suite.\n\n## Technical Approach\n\nReproduce it first. Forward-slash and backslash handling is the usual cause here, and swapping `require(\"path\")` for `path.win32` in a preload reproduces most path-string failures locally on unit tests.\n\n### Key Files\n\n- `tests/friction-events-cli.test.js` — the failing suite\n- `plugin/bin/friction-events.js` — the main-checkout check\n\n## Gotchas\n\n- Check that the failure still reproduces on current `main` before building. A later Windows fix may already have cleared it.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after ba69ced99\n\nThe post-merge Windows check failed on commit ba69ced992d524663f37d4a5631fd30325949458 (compared against 22d287f46).\n\n**Merged PR:** #4742 (https://github.com/thn-inc/claude-tweaks/pull/4742)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/41222731872\n\n### Newly failing test files\n- `tests/friction-events-cli.test.js`\n\n### Failure excerpts\n\n#### `tests/friction-events-cli.test.js`\n\n_Excerpts for the 3 test(s) the baseline adjudication attributed as new._\n\n```\nnot ok 13657 - \\#4704: from the main checkout with no session id, no path sibling is unioned\n  ---\n  duration_ms: 1.3017\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:562:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n    + []\n    - [\n```\n\n```\nnot ok 13658 - \\#4704: from the main checkout with no session id, the skipped path sibling is named on stderr; with a session id it is not\n  ---\n  duration_ms: 0.75\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:577:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n    + []\n    - [\n```\n\n```\nnot ok 13664 - \\#4704: repoRoot and the worktree path are compared through the same canonicalizer (case-folding fake: /Main vs /main is the main checkout)\n  ---\n  duration_ms: 1.8266\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:645:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n      [\n        '/run/2026-10-31T100000-adhoc-standalone',\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._",
-        "createdAt": "2026-10-31T17:24:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4764,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after ba69ced99",
-        "updatedAt": "2026-11-03T09:36:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: backend\n\n**Related:** #4359, #4429, #3974, #4358, #4366, #4395, #4553, #4593, #4708, #4718\n\n## Current State\n\nIn a multi-spec `/claude-tweaks:flow` run every record shares one worktree and branch, so a later record's `/claude-tweaks:review` must review only its own commits. `review/code-mode-steps.md` Step 2 derives `{base}` from the integration branch and has no rule for a record's own range inside the shared branch. Nothing records it either: `flow/multispec-run-dir-layout.md`'s `manifest.yml` keeps per-spec status and phase timestamps, with no base sha.\n\nIn run 2026-10-31T101111 (8 records) the controller supplied the range by hand as the parent of each record's materialize commit. It built the review context from the wrong base twice (#4070, #4090) before correcting it, each time re-running `build-review-context.js`.\n\nThe filer's probe, `git grep -n -i -e \"multi-spec\" -e \"MULTISPEC\" -e \"materialize commit\" origin/main -- plugin/skills/review/code-mode-steps.md plugin/skills/review/step3-lens-dispatch.md plugin/bin/lib/review-context`, matched only the verdict-marker, worktree-entry and prior-review-reuse paragraphs, and no per-record base rule.\n\n## Deliverables\n\n1. Define a record's own review range in a multi-spec shared worktree: `{base}` is the parent of that record's materialize commit (`Materialize spec #{N}`), `{branch}` is `HEAD`.\n2. Give review Step 2 that rule under `$MULTISPEC_PARENT_DIR`, and have `/claude-tweaks:flow`'s per-spec review invocation pass the range, or a sha the review reads, instead of leaving it to the controller.\n\n## Acceptance Criteria\n\n1. Under `$MULTISPEC_PARENT_DIR`, review Step 2 names the per-record base without the controller computing it.\n2. A conformance pin fails if the rule is removed.\n3. A single-spec review still derives `{base}` from the integration branch.\n\n## Release Note\n\nMulti-spec `/flow` runs review each record against its own commits automatically.\n\n## Technical Approach\n\nPrefer resolving the sha mechanically from the materialize commit's subject over asking the controller to carry it.\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — Step 2: per-record base under MULTISPEC_PARENT_DIR\n- `plugin/skills/flow/multi-spec.md` — pass the per-record range to the per-spec review\n\n## Gotchas\n\n- A resumed series, or a record re-materialized on the same branch, can have more than one matching commit, so the rule must say which one wins.\n\n## Original request\n\nReview a multi-spec record against its own commit range\n\nDefer-reason: tangential\n\n# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full from #4070\n\nDefer-reason: tangential\n\n## Current State\n\nIn a multi-spec `/claude-tweaks:flow` run every record shares one worktree and branch, so a later record's `/claude-tweaks:review` must review only its own commits. `review/code-mode-steps.md` Step 2 derives `{base}` from the integration branch and has no rule for a record's own range inside the shared branch; nothing records it either (`flow/multispec-run-dir-layout.md`: `manifest.yml` keeps per-spec status and phase timestamps, no base sha).\n\nIn run 2026-10-31T101111 (8 records) the controller supplied the range by hand as the parent of each record's materialize commit, and built the review context from the wrong base twice (#4070, #4090) before correcting it — each a re-run of `build-review-context.js`.\n\nProbe: `git grep -n -i -e \"multi-spec\" -e \"MULTISPEC\" -e \"materialize commit\" origin/main -- plugin/skills/review/code-mode-steps.md plugin/skills/review/step3-lens-dispatch.md plugin/bin/lib/review-context` — matched only the verdict-marker, worktree-entry and prior-review-reuse paragraphs, no per-record base rule.\n\n## Deliverables\n\n1. Define a record's own review range in a multi-spec shared worktree: `{base}` = the parent of that record's materialize commit (`Materialize spec #{N}`), `{branch}` = `HEAD`.\n2. Give review Step 2 that rule under `$MULTISPEC_PARENT_DIR`, and have `/claude-tweaks:flow`'s per-spec review invocation pass the range (or a sha the review reads) instead of leaving it to the controller.\n\n## Acceptance Criteria\n\n1. Under `$MULTISPEC_PARENT_DIR`, review Step 2 names the per-record base without the controller computing it.\n2. A conformance pin fails if the rule is removed.\n\n## Release Note\n\nMulti-spec `/flow` runs review each record against its own commits automatically.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — Step 2: per-record base under MULTISPEC_PARENT_DIR\n- `plugin/skills/flow/multi-spec.md` — pass the per-record range to the per-spec review\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-31T14:50:06Z",
         "labels": [
@@ -2833,7 +2476,7 @@
         "number": 4617,
         "state": "OPEN",
         "title": "Feature-level acceptance for decomposed work",
-        "updatedAt": "2026-10-30T16:09:07Z",
+        "updatedAt": "2026-11-23T16:10:52Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -10195,7 +9838,7 @@
         "number": 3822,
         "state": "OPEN",
         "title": "Settle the dispatch-prompt \"one plain command per call\" mandate against the section 7 refusal table",
-        "updatedAt": "2026-10-24T05:39:32Z",
+        "updatedAt": "2026-11-23T16:16:25Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -11394,8 +11037,7 @@
     {
       "number": 6149,
       "blockedBy": [
-        6146,
-        6145
+        6146
       ]
     },
     {
@@ -11407,8 +11049,7 @@
     {
       "number": 6147,
       "blockedBy": [
-        6146,
-        6145
+        6146
       ]
     },
     {
@@ -11421,13 +11062,6 @@
       "number": 6113,
       "blockedBy": [
         6112
-      ]
-    },
-    {
-      "number": 6112,
-      "blockedBy": [
-        5208,
-        6109
       ]
     },
     {
