@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { runCli, spawnCli } = require('../../helpers/run-cli');
+const { readText } = require('../../helpers/read-skill');
 const { committedRepo, linkedWorktreeOf, fixtureGit, cleanGitEnv } = require('../../helpers/git-fixtures');
 const { WORKER_DISPATCHES_FILE } = require('../../../plugin/bin/lib/driver/lens-workers');
 const { lensAdmittedFormsNote } = require('../../../plugin/bin/lib/driver/roles');
@@ -49,7 +50,7 @@ function fakeRunner(answer = (call, n) => resultOut(`reply ${n}`)) {
     const record = { ...call, files: {}, kills: [] };
     for (const flag of ['--settings', '--append-system-prompt-file']) {
       const i = call.args.indexOf(flag);
-      if (i !== -1) record.files[flag] = fs.readFileSync(call.args[i + 1], 'utf8');
+      if (i !== -1) record.files[flag] = readText(call.args[i + 1]);
     }
     calls.push(record);
     const outcome = answer(call, calls.length, record);
