@@ -661,10 +661,14 @@ const HOLLOW_PINS = [
 for (const [name, file, re] of HOLLOW_PINS) {
   test(`#6142: ${name}`, () => {
     const text = readText(file);
-    assert.match(text, re);
-    // Go-red control: the same text with every match of the pinned clause removed fails the pin.
-    const stripped = text.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '');
-    assert.notEqual(stripped, text);
-    assert.doesNotMatch(stripped, re);
+    const m = text.match(re);
+    assert.ok(m, 'pin matches the live text');
+    // Go-red control: change one meaningful token of the matched clause in place (`hollow` -> `unlanded`, or
+    // the clause's last character where it names no verdict) and the pin must fail on the otherwise identical text.
+    const clause = m[0];
+    const broken = clause.includes('hollow') ? clause.replace('hollow', 'unlanded') : `${clause.slice(0, -1)}#`;
+    const mutated = text.slice(0, m.index) + broken + text.slice(m.index + clause.length);
+    assert.notEqual(mutated, text);
+    assert.doesNotMatch(mutated, re);
   });
 }

@@ -375,5 +375,5 @@ function expressMergeVerification(resolved) {
 module.exports = {
   EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
   RISK_CEILINGS, isReadableRiskCeiling, widenings, widenedByFor,
-  BOUND_REASONS, REASONS, isProtectedPath, PROTECTED_FAMILIES, SHIPPED_PROTECTED_PATHS, BUILD_TIME_PROTECTED_GLOBS, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  BOUND_REASONS, REASONS, canonicalPath, isProtectedPath, PROTECTED_FAMILIES, SHIPPED_PROTECTED_PATHS, BUILD_TIME_PROTECTED_GLOBS, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

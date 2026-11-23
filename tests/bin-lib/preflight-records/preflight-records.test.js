@@ -824,7 +824,11 @@ function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra =
     const hit = Object.values(issues).find((i) => isIssueView(args, i.number));
     if (hit) return JSON.stringify(hit);
     if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) return JSON.stringify({ data: { repository } });
-    if (isCommitFiles(args)) return (files[args[2].split('/').pop()] || ['src/impl.js']).join('\n');
+    if (isCommitFiles(args)) {
+      const f = files[args[2].split('/').pop()] || ['src/impl.js'];
+      if (f instanceof Error) throw f;
+      return f.join('\n');
+    }
     if (isCompare(args)) {
       const sha = args[1].split('...').pop();
       if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
@@ -1317,6 +1321,15 @@ test('--blocker-landing: a compare call that throws leaves the blocker undetermi
     [{ blocker: 5, verdict: 'undetermined', commit: 'eee555', via: 'probe-failed' }]);
   const text = err.join('');
   assert.match(text, /^preflight-records\.js: blocker landing compare failed for eee555: [^\n]*unexpected compare eee555[^\n]*\n$/, 'exactly one line, with the cause');
+});
+
+test('--blocker-landing: a commits read that throws reads undetermined/files-unreadable, exits 0, and prints one stderr line saying the changed-files read failed', () => {
+  const { runner } = landingFixture({ repository: { b5: closedBlocker('eee555') }, files: { eee555: new Error('HTTP 502 bad gateway') } });
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['11'].blockerLanding,
+    [{ blocker: 5, verdict: 'undetermined', commit: 'eee555', via: 'files-unreadable' }]);
+  assert.match(err.join(''), /^preflight-records\.js: blocker landing changed-files read failed for eee555: [^\n]*502[^\n]*\n$/);
 });
 
 test('AC7.1: --blocker-landing under --records-json: every out-of-run blocker undetermined/records-json, one stderr line, no runner call, exit 0', () => {

@@ -92,8 +92,8 @@ const malformedExclusion = ({ number, cause }) => ({ reason: MALFORMED_REASON, r
 // The landing call's envelope, the requested numbers -> { exclusions, undetermined }.
 // One `unlanded-blocker` exclusion per requested record with an `unlanded` or `hollow`
 // verdict (blockers in blockerLanding order; a hollow entry adds `verdict: 'hollow'` and
-// the closing `pr`, null for a direct Commit closer, to the unlanded `{blocker, commit}`); `undetermined` lists every undetermined
-// verdict, which the CLI keeps and logs. `open` is the blocked pass's, and `landed`
+// the closing `pr`, null for a direct Commit closer, to the unlanded `{blocker, commit}`);
+// `undetermined` lists every undetermined verdict, which the CLI keeps and logs. `open` is the blocked pass's, and `landed`
 // and `not-applicable` contribute nothing. A cross-repository `undetermined` is a
 // CLOSED foreign blocker, which /dispatch does not count as blocking (#4793); its
 // entry carries the verdict's `repository` so the CLI names it owner/name#N. Throws a

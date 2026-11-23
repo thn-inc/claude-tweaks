@@ -91,7 +91,7 @@ gh issue reopen {blocker}
 # Escape 2 — remove the edge (escape 2 above), then re-run.
 ```
 
-With `pr: null` (a direct Commit closer) the clause reads `closed by {commit}`.
+With `pr: null` (a direct Commit closer) the clause reads `closed by {commit}`. Before reopening, check whether an implementation PR merged somewhere other than the integration branch (an unlanded implementation): that blocker needs its work landed, not rebuilt.
 
 A cherry-picked landing reads `unlanded` (different sha) — confirm by hand, then take escape 2.
 

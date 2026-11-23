@@ -122,7 +122,7 @@ const MCP_FACTS = [
   [/`bin\/queue-pull\.js` still runs the pass on `--transport files`/, 'MCP path: the CLI still runs the pass (#5230)'],
   [/its `malformed-blocker` screen reads only the bodies already in `dispatch-groups\.json`, so it still excludes/, 'AC4.3: the screen needs no gh'],
   [/the GitHub MCP server has no generic GraphQL bridge \(the #2523 section below\)/, 'cites the #2523 convention'],
-  [/reads every closed blocker `undetermined`, so it can never return the `unlanded` verdict/, 'why no MCP substitute'],
+  [/reads every closed blocker `undetermined`, so it can never return the `unlanded` or `hollow` verdict/, 'why no MCP substitute'],
   [/`\/claude-tweaks:flow` Step 2\.7b has the same blind spot on this transport/, 'same blind spot as /flow'],
   [/the CLI prints one `Warning:` line and excludes no `unlanded-blocker` record/, 'run as written, the landing call fails open'],
 ];

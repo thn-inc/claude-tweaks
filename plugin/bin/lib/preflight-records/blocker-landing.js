@@ -25,13 +25,13 @@
 //
 // A reachable candidate counts as landing only when its changed files (REST
 // commits API, previous_filename included) touch a Key File of the blocker (see
-// isHollow); the blocker is `landed` when ANY reachable candidate is non-hollow.
+// isHollow); the blocker is `landed` when ANY reachable non-hollow candidate exists.
 //
 // Candidate commits are the UNION of the recorded closer (a merged PR's
 // mergeCommit, or a closing Commit) and every merged closedByPullRequests
 // reference, closer first, deduped by sha; the blocker is `landed` when ANY
-// candidate is reachable from the integration branch — a fix merged into
-// `dev` by a second PR counts, whatever the closer was.
+// reachable non-hollow candidate exists on the integration branch — a fix merged
+// into `dev` by a second PR counts, whatever the closer was.
 //
 // A whole-query failure (a blocker that is not a positive safe integer, the
 // GraphQL call throwing, unparseable output, no data.repository, any
@@ -62,6 +62,8 @@
 
 const { errorText } = require('./preflight-records');
 const { extractKeyFiles } = require('../issues/grouping');
+const { globToRegExp } = require('../issues/blast-radius');
+const { canonicalPath } = require('../express/eligibility');
 
 const NOT_APPLICABLE_REASONS = new Set(['NOT_PLANNED', 'DUPLICATE']);
 
@@ -76,19 +78,10 @@ const BOOKKEEPING_PATH_RE = /^(?:\.claude-tweaks\/pipelines\/|docs\/superpowers\
 // `:N`, `:N-M` or `#L…` suffix; a trailing `/` prefix-matches; `*` globs
 // (`**` spans directories, `*` stays in one segment); anything else is equality.
 function keyMatches(file, rawKey) {
-  const key = String(rawKey).replace(/(?:#L.*|:\d+(?:-\d+)?)$/, '');
-  if (!key) return false;
-  if (key.includes('*')) {
-    let re = '';
-    for (let i = 0; i < key.length; i++) {
-      if (key[i] === '*') {
-        if (key[i + 1] === '*') {
-          if (key[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
-        } else re += '[^/]*';
-      } else re += key[i].replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-    }
-    return new RegExp(`^${re}$`).test(file);
-  }
+  const stripped = String(rawKey).replace(/(?:#L.*|:\d+(?:-\d+)?)$/, '');
+  if (!stripped) return false;
+  const key = canonicalPath(stripped);
+  if (key.includes('*')) return globToRegExp(key).test(file);
   if (key.endsWith('/')) return file.startsWith(key);
   return file === key;
 }
@@ -323,8 +316,8 @@ function queryRepository(runner, args, blockers) {
 
 // -> { results: Map<number, result>|null, error: string|null, probeErrors? };
 // results is null exactly when error is set (a whole-query failure — never
-// per-blocker undetermined). probeErrors lists each compare call that threw,
-// {sha, message}: the verdict stays per-blocker undetermined, but a systematic
+// per-blocker undetermined). probeErrors lists each compare or commits-read call that threw,
+// {kind: 'compare'|'files', sha, message}: the verdict stays per-blocker undetermined, but a systematic
 // failure (a wrong integration branch, a 403, a rate limit) is no longer silent.
 function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, runner }) {
   if (!Array.isArray(blockers) || blockers.length === 0) return { results: new Map(), error: null, probeErrors: [] };
@@ -366,7 +359,7 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
           reach.set(sha, reachabilityFromStatus(runner(compareArgs({ owner, repo, host, integrationBranch, sha }))));
         } catch (err) {
           reach.set(sha, 'error');
-          probeErrors.push({ sha, message: errorText(err) });
+          probeErrors.push({ kind: 'compare', sha, message: errorText(err) });
         }
       }
       if (reach.get(sha) !== 'reachable') continue;
@@ -376,7 +369,7 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
           files.set(sha, String(out).split('\n').map((l) => l.trim()).filter(Boolean));
         } catch (err) {
           files.set(sha, null);
-          probeErrors.push({ sha, message: errorText(err) });
+          probeErrors.push({ kind: 'files', sha, message: errorText(err) });
         }
       }
       const read = files.get(sha);
