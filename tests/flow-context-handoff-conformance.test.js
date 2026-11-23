@@ -339,7 +339,7 @@ test('context-handoff.md states the fail-open rule: over: false, exit 2, or non-
 test('context-handoff.md: a dispatched call reports OUTCOME: handoff and NEXT_STEPS: with STATUS: DONE, after the phase-exit push', () => {
   const t = read(HANDOFF);
   const d = region(t, '\n## Dispatched call', '\n## ', 'dispatched branch');
-  assert.match(d, /`dispatched: true`/);
+  assert.match(d, /prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
   assert.match(d, /`OUTCOME: handoff`/);
   assert.match(d, /`NEXT_STEPS: \{comma-joined remaining steps\}`/);
   assert.match(d, /`STATUS: DONE`/);
@@ -485,7 +485,17 @@ test('context-handoff.md states which runs gauge in which form, and the interact
 
 test('context-handoff.md: an empty dispatched read lands on the top-level branch', () => {
   const r = region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result');
-  assert.match(r, /prints nothing[^\n]*Top-level run branch/);
+  assert.match(r, /Top-level run branch/);
+});
+
+test('context-handoff.md: the branch follows the caller (dispatch-prompt marker), not the run dispatched flag (#5270)', () => {
+  const r = region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result');
+  assert.match(r, /matches the caller, not the run's `dispatched` flag/);
+  assert.match(r, /Dispatched call branch only when this agent's own prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
+  assert.match(r, /human-typed or Routine-typed `\/flow`, whatever `run-state.json` says[^\n]*take the Top-level run branch/);
+  const n = region(read(HANDOFF), '## Top-level run', '\n```', 'top-level branch');
+  assert.match(n, /even on a `dispatched: true` run/);
+  assert.match(stepFourItem(), /does not start with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
 });
 
 test('context-handoff.md: a top-level run never hands off wrap-up, and runs wrap-up and Step 5 itself after relaying', () => {
