@@ -83,3 +83,16 @@ test('policy-schema.md indexes the key', () => {
   assert.ok(md.includes('| `protected-paths` |'));
   assert.ok(Buffer.byteLength(md) < RAIL_BYTES, `policy-schema.md is ${Buffer.byteLength(md)} B against ${RAIL_BYTES}`);
 });
+
+test('AC6.3: the prose row states root-anchoring, the express-lane consequence, the main-checkout read and Phase 11', () => {
+  const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+  const md = readText(path.join(shared, 'policy-schema-express-driver.md'));
+  const row = md.split('\n').find((l) => /^\| `protected-paths` \| /.test(l));
+  assert.ok(row, 'policy-schema-express-driver.md has no protected-paths row');
+  for (const needle of ['root-anchored', '**/package.json', 'case-sensitive', 'on green with no human', 'main checkout', 'Phase 11', 'invalid: true', '`[]`', 'SHIPPED_PROTECTED_PATHS', 'policyOnly']) {
+    assert.ok(row.includes(needle), `row lacks ${needle}`);
+  }
+  const coverage = readText(path.join(shared, 'policy-schema-coverage.md'));
+  const bullet = coverage.split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(bullet && bullet.includes('`protected-paths` (#6020)'), 'coverage policyOnly bullet lacks protected-paths');
+});
