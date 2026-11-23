@@ -22,6 +22,7 @@ const { isWholeBranch } = require('../pipeline-cost-report/guards.js');
 const { renderSlot, promptOf, strippedReply, readRunInput } = require('./reviews-extract.js');
 
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+const transcriptFileOf = (item, c) => (item.agentId != null ? c.transcripts.get(item.agentId) : undefined);
 
 // Per branch role: which dispatches it selects and how it reads an archived reply -> { verdict, items, itemsUnparsed }
 // or null when the reply does not parse (report-unparsed).
@@ -50,7 +51,7 @@ const BRANCH_ROLES = {
 // A prompt that names a file but carries its own sha pair while the file's text has none is a full or hybrid prompt
 // citing a template or rules file, not a pointer: the original prompt is kept.
 function promptFor(item, c, fs) {
-  const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
+  const file = transcriptFileOf(item, c);
   let transcript = null;
   try {
     transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
@@ -80,7 +81,7 @@ function promptFor(item, c, fs) {
 function archivedReply(item, c, deps, readReply, qualifies = null) {
   let raw;
   if (qualifies) {
-    const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
+    const file = transcriptFileOf(item, c);
     raw = file === undefined ? null : lastAssistantText(file, deps.fs);
     const early = raw === null ? null : readReply(raw);
     if (early !== null && !qualifies(early)) return { notQualifying: true };
