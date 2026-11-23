@@ -4,7 +4,7 @@ Read only from `SKILL.md`'s Resolve-the-input case 1, on a `held` verdict from `
 
 ## Inputs
 
-With `gh` absent and no `update_issue_comment` tool in the session, write nothing and stop here: `## Write` (c) and `## Re-hold` (d) edit the hold comment, which `_shared/github-write-transport.md` maps to that tool, so every run would store the plan and rewrite the body before failing. The outcome is `held — answering needs gh or the MCP update_issue_comment tool`.
+With `gh` absent and no `update_issue_comment` tool in the session, write nothing and stop here: `## Write` (c) and `## Re-hold` (d) edit the hold comment, which `_shared/github-write-transport.md` maps to that tool, so such a run would store the plan and rewrite the body before failing. The outcome is `held — answering needs gh or the MCP update_issue_comment tool`.
 
 Write the fetched body with the Write tool to `{held-body}`, the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-answer-held-{n}.md` prints, and copy it to `{body}` (`--value specify-answer-body-{n}.md`). The kept `Plan:` line is the body's one line starting `Plan: ` above its first `##` heading; none, or more than one, counts as missing. When `{body}` lacks `## Overview` or `## Planning Decisions` (a hold whose planning failed), add them as `planning.md`'s `## Per-record step` step 1 does. This path runs none of shaping mode's steps: no framing, ceremony or risk-flag pass, and no compose.
 
