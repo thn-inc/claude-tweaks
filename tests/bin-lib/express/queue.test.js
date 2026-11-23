@@ -394,6 +394,16 @@ test('#6062 an unrecognised express-driver is disabled but its fingerprint still
   }
 });
 
+test('#6062 a missing merge-sensitive-paths entry is not a failed read: it reads as an empty list, as before the fingerprint', () => {
+  const sink = stderrSink();
+  const full = policy(FP_BASE).resolvePolicy;
+  const p = expressQueuePolicy({ resolvePolicy: (keys) => { const r = full(keys); delete r['merge-sensitive-paths']; return r; }, stderr: sink.stderr });
+  assert.deepEqual(sink.lines, []);
+  assert.equal(p.enabled, true);
+  assert.equal(p.fingerprint, fpOf({ ...FP_BASE, 'merge-sensitive-paths': undefined }).fingerprint);
+  assert.equal(p.fingerprint, fpOf({ ...FP_BASE, 'merge-sensitive-paths': [] }).fingerprint);
+});
+
 test('#6062 AC7: every key expressQueuePolicy requests is a grouping input', () => {
   const { resolvePolicy, calls } = policy(FP_BASE);
   expressQueuePolicy({ resolvePolicy });

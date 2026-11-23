@@ -43,9 +43,10 @@ const oneLine = (err) => collapse(err && err.message);
 
 // The raw resolved value of each requested key, so a key added to FIRST_KEYS or SECOND_KEYS
 // reaches the fingerprint with no further edit.
-// A throwing read records its error in `failed` when given (the caller rethrows it where the old code did) and hashes as a sentinel.
+// With `failed` given (the second call) a throwing read records its error there (the caller rethrows it where
+// the old code did) and hashes as a sentinel, and a missing entry reads as undefined; without it, either throws.
 const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
-  try { return [k, result[k].value]; } catch (err) {
+  try { return [k, failed ? (result[k] && result[k].value) : result[k].value]; } catch (err) {
     if (!failed) throw err;
     failed[k] = err;
     return [k, UNREADABLE];
@@ -99,13 +100,19 @@ function expressQueuePolicy(deps = {}) {
 
   let expressOpts;
   let policy;
+  const failed = {};
+  // A second-call value read once up front; a throwing or missing entry fails here as a direct read would.
+  const need = (key) => {
+    if (failed[key]) throw failed[key];
+    if (!policy[key]) throw new TypeError(`policy entry ${key} missing`);
+    return read[key];
+  };
   try {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
-    const failed = {};
     Object.assign(read, valuesOf(SECOND_KEYS, policy, failed));
     if (expressOn) {
       if (failed['merge-sensitive-paths']) throw failed['merge-sensitive-paths'];
-      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }) };
+      expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);
@@ -123,8 +130,8 @@ function expressQueuePolicy(deps = {}) {
       driver = {
         routingReason, reviewerGateReason, widenedReviewerReason, preScreen, reviewRequired, extractKeyFiles,
         eligibility: eligibilityOptions(policy),
-        bounds: { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value },
-        reviewPolicy: policy['express-driver-review'].value,
+        bounds: { sizeCeiling: need('express-driver-max-size'), maxKeyFiles: need('express-driver-max-key-files') },
+        reviewPolicy: need('express-driver-review'),
       };
     } catch (err) {
       stderr(`express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
