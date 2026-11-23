@@ -563,7 +563,7 @@ test('a successful create whose re-read fails names the read error', (t) => {
 
 for (const [state, reason] of [
   ['CLOSED', (b) => new RegExp(`${b} already exists on origin and PR #77 was closed`)],
-  ['MERGED', () => /the earlier learned-skills PR #77 was merged/],
+  ['MERGED', (b) => new RegExp(`^the earlier learned-skills PR #77 was merged, so ${b} is not reused as a base$`)],
 ]) {
   test(`an existing branch whose PR is ${state} is not reused as a base: new patches are staged`, (t) => {
     const f = fixture(t, { capturedTargets: [X] });
@@ -859,6 +859,23 @@ test('with no remote branch and no PR, land builds fresh commits and opens a new
   assert.equal(gh.calls.some((c) => c.args[0] === 'api'), false);
   assert.equal(res.pr.number, 77);
   assert.equal(sh(f.origin, ['rev-list', '--count', `main..${remoteBranch(f)}`]).trim(), '2');
+});
+
+test('a merged PR that shipped every entry lands them all, and an open PR whose branch is gone is not reported', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh);
+  gh.state.prs.push({ number: 78, url: 'https://github.com/o/r/pull/78', state: 'OPEN' });
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed.map((l) => l.pr.number), [77, 77]);
+  assert.deepEqual(res.staged, []);
+  assert.equal(res.pr, null, 'the open PR whose branch is gone is not confirmed');
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
 });
 
 test('two merged PRs on the head name each land their own entry', (t) => {
