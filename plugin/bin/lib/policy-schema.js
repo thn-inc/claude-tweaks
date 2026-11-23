@@ -687,11 +687,18 @@ function deriveHousekeepingAutoMerge(sources) {
 // can turn the key on directly or indirectly; the factory source is skipped
 // for a key in refusedKeys (control-mode is, so a factory `control-mode: on`
 // never vetoes); (3) the derived entry keeps source: 'default'. refusedKeys
-// is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS.
+// is resolvePolicyKeys' lazily required FACTORY_REFUSED_KEYS. (4) Fail closed:
+// a present-but-invalid control-mode (`On`, `yes`) vetoes the derivation and
+// derives false — checked directly here, not through firstSourceValue's
+// invalid -> schema-default ('off') mapping, which would fail open.
 function deriveLearnedSkillsAutoMerge(sources, refusedKeys) {
   const skipFor = (key) => (s) => s.name === 'run-config' || (s.name === 'factory' && refusedKeys.includes(key));
-  return firstSourceValue(sources, 'autonomy', skipFor('autonomy')) === 'unattended'
-    && firstSourceValue(sources, 'control-mode', skipFor('control-mode')) !== 'on';
+  if (firstSourceValue(sources, 'autonomy', skipFor('autonomy')) !== 'unattended') return false;
+  const skipControlMode = skipFor('control-mode');
+  const modeSource = sources.find((s) => !skipControlMode(s) && hasOwn(s.values, 'control-mode'));
+  if (!modeSource) return true;
+  const raw = modeSource.values['control-mode'];
+  return isValidValue(SCHEMA_BY_KEY.get('control-mode'), raw) && resolveValue('control-mode', raw) !== 'on';
 }
 
 // The one first-source-wins read the derived keys share (#6056 review): the first source holding

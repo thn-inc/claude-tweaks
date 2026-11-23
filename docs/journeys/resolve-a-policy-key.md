@@ -51,7 +51,7 @@ files:
 - **URL:** `node plugin/bin/resolve-policy.js --all`
 - **Action:** Run with no key arguments.
 - **Should feel:** One call replacing key-by-key enumeration — the whole config, self-describing.
-- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers and `trusted-authors` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the #4608 record that wires each one drops the marker (#4816).
+- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers, `trusted-authors` and `learned-skills-auto-merge` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the #4608 record that wires each one drops the marker (#4816).
 - **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments; a control-mode key's summary reading as live behavior (no "Not yet used" opener) while no plugin code consumes it.
 
 ### 5. Confirm the enforcement hook honors the same alias — `plugin/bin/lib/policy.js`
@@ -96,6 +96,7 @@ files:
   - A test run that changes when `~/.claude-tweaks/factory-policy.yml` exists.
 
 ## Origin
+- Steps 3 and 4 updated during build of #6109 (`learned-skills-auto-merge`) — the key is `policyOnly`, so step 3's red flag lists it, and step 4 lists it among the levers that open "Not yet used"
 - Step 1 updated at the wrap-up of #6056 — the `plan-at-specify` conflict entry joins `degraded` as an additive envelope field, with its stderr warning
 - Step 3 updated during build of #6056 (`plan-at-specify`) — the key is `policyOnly`, so step 3's red flag lists it; set `on` beside a `planning-decisions` that resolves `ask-all`, and it resolves `off` with an additive `conflict` field and one stderr warning
 - Step 8 added during build of #6006 (factory policy layer): `source: "factory"`, the new precedence, the four refused keys, per-row block merge, the factory-named invalid warning and the test-run `CT_FACTORY_POLICY_FILE` relocation; the persona and success state gain the layer and `files:` gains `plugin/bin/lib/policy-factory.js`

@@ -37,7 +37,8 @@ derives `true` only when `autonomy` resolves `unattended` and `control-mode` doe
 
 - `unattended` alone turns the default on because that setting is the maintainer's own consent to
   unreviewed merges.
-- `control-mode: on` vetoes an unset default.
+- `control-mode: on` vetoes an unset default, and so does an invalid `control-mode` value in
+  `policy.yml` (`On`, `yes`): a malformed control-point setting fails closed, never open.
 - An explicit value always wins, in both directions.
 - The key is `policyOnly`, so a run config can never set it. It stays factory-settable: the factory
   layer is the maintainer's own user-wide consent, like `policy.yml`. The derivation also reads

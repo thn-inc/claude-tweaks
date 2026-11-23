@@ -36,7 +36,7 @@ files:
 - **URL:** no command — say "show advanced" in chat
 - **Action:** Ask to see the advanced-tier levers still on default.
 - **Should feel:** A free follow-up, not a new decision — no confirmation, no new question.
-- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The levers listed here (the deploy, dev and acceptance keys and `trusted-authors`) show summaries opening "Not yet used". Setting them today changes nothing, until the #4608 record that wires each one lands (#4816).
+- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The levers listed here (the deploy, dev and acceptance keys, `trusted-authors` and `learned-skills-auto-merge`) show summaries opening "Not yet used". Setting them today changes nothing, until the #4608 record that wires each one lands (#4816).
 - **Red flags:** A second `AskUserQuestion` call firing here; a control-mode lever presented as if setting it changes behavior today.
 
 ### 4. Answer the one apply question — `AskUserQuestion`
@@ -60,4 +60,5 @@ Reviewing configuration this way is read-only-safe up through Step 3 — `/claud
 - Related specs: #332 (policy-key naming convention), #602 (`worktree.always` → `worktree-always`)
 - Updated by #3495: the policy.yml write exemption now compares case-canonical real paths, so a mis-cased path to the file keeps the exemption
 - Updated by #4492: Step 5 names the worktree-fallback branch. A worktree that reads the main checkout's policy gets paste-ready commands, never a worktree-local file that would hide the main checkout's keys
+- Updated by #6109: Step 3's "Not yet used" lever list gains `learned-skills-auto-merge`
 - Updated by #4816: Step 2 red flag for the CRLF `model-profiles` audit blind spot, now closed; Step 3 notes the "Not yet used" marker on control-mode lever summaries
