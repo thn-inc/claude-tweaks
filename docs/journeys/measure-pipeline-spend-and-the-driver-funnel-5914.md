@@ -6,7 +6,7 @@ files:
   - tools/pipeline-cost-report/records.js
   - tools/pipeline-cost-report/runs.js
   - plugin/bin/lib/timing/transcript.js
-  - docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md
+  - docs/reference/pipeline-economy-baseline.md
 ---
 
 # Measure Pipeline Spend and the Driver Funnel
@@ -18,7 +18,7 @@ files:
 - how many records were created, closed and deferred.
 
 **Entry point:** `node tools/pipeline-cost-report.js --since <YYYY-MM-DD> --until <YYYY-MM-DD>`, run from the main checkout or any of its worktrees.
-**Success state:** exit 0 with every section rendered. The maintainer sets the figures beside `docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md` and pastes them into the change's PR. Files that could not be read are shown under `unreadable` and never folded into a total.
+**Success state:** exit 0 with every section rendered. The maintainer sets the figures beside `docs/reference/pipeline-economy-baseline.md` and pastes them into the change's PR. Files that could not be read are shown under `unreadable` and never folded into a total.
 
 ## Steps
 
@@ -90,4 +90,4 @@ files:
   - A `priceTableDate` that differs from the baseline's, with no note beside the comparison.
 
 ## Origin
-- Created during the build of #5914 (run `2026-11-19T055619-spec-5914-5916-5925`, PR #5928). The first measured baseline is committed at `docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md`. #5916 adds a `guards` section and #5925 a `reviews` section. #6012 (run `2026-11-21T183551-record-6012`, PR #6028) adds the funnel's driver runs, dispatch firings and not-driven flag line to step 2.
+- Created during the build of #5914 (run `2026-11-19T055619-spec-5914-5916-5925`, PR #5928). The first measured baseline is committed at `docs/reference/pipeline-economy-baseline.md`. #5916 adds a `guards` section and #5925 a `reviews` section. #6012 (run `2026-11-21T183551-record-6012`, PR #6028) adds the funnel's driver runs, dispatch firings and not-driven flag line to step 2.

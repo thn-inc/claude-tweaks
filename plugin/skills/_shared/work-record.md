@@ -141,7 +141,7 @@ actual reader rather than by deleting the write.
 ### Decision-comment template
 
 The canonical shape for a `needs:decision` residue comment — cited by every writer
-(`backlog/grant-lane-decision.md`, `backlog/refine-headless.md`, `tidy/decision-markers.md`) rather
+(`backlog/grant-lane-decision.md`, `backlog/refine-headless.md`, `tidy/decision-markers.md`, `specify/planning.md`'s `## Hold`) rather
 than restated:
 
 ```
@@ -152,7 +152,9 @@ than restated:
 **Command:** `{paste-ready, fully-qualified}`
 ```
 
-`{unit}` is the literal skill/mode name that wrote it (`backlog-refine`, `backlog-grant`, `tidy`) —
+Specify's planning hold is this comment with a `Held-by: specify-planning` line and a held-questions block, written by `specify/planning.md`'s `## Hold` and read by `bin/planning-hold.js`; `/claude-tweaks:specify #{n}` answers it.
+
+`{unit}` is the literal skill/mode name that wrote it (`backlog-refine`, `backlog-grant`, `tidy`, `specify`) —
 this is what lets a later reader (and Phase 6's tidy loop-safety rule) tell which unit's proposal a
 given comment is.
 
@@ -485,6 +487,10 @@ the declared set: `parseTripwireFlags` is its one reader and `addTripwireRiskFla
 ## Acceptance-target line
 
 One body-metadata line (#4615, grammar in `specify/spec-template.md`): `Acceptance-target: local`, a per-item acceptance override. `parseAcceptanceTarget` (`bin/lib/issues/record.js`) is the one reader: an absent line is no override, and a malformed line or any value but `local` reads invalid, which resolves to `local` (`bin/lib/accept/target.js`). `/claude-tweaks:specify`'s interactive path is the only writer; never hand-edit the line. The reader reports a `dev` line as well-formed; `accept/target.js` rejects it as `invalid-input`. `local-files` carries it in the body, never in `facets`.
+
+## Plan line
+
+One body-metadata line (#6052): `Plan: refs/claude-tweaks/plans/{n} {plan-commit-sha} spec-sha256:{hash}`, a stored plan pinned to the spec text it was written against. `parsePlanLine` (`bin/lib/issues/record.js`) is the one reader. `bin/plan-store.js write` is the one writer path; never hand-edit the line. An absent line means no stored plan. A malformed line reads `check`'s `valid: false`, so the caller re-plans. `local-files` carries it in the body, never in `facets`.
 
 ## Type
 
