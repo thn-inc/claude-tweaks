@@ -39,6 +39,10 @@ A line that records something about another line's values (`Risk-flags-added-by-
 - **Every path that composes a fresh body carries it forward.** A writer-only line is never in a composed body, so a re-shape loses it silently unless the compose path copies it over from the prior body. `bin/risk-flags.js`'s `settle` passes `priorBody` to `carryTripwireFlags`, which keeps only the slugs still kept. Pin the carry at the CLI as well as in the module (`tests/risk-flags-cli.test.js`, "a re-shape carries the prior body's tripwire line forward, minus a slug answered remove").
 - **Its key joins the writer scan, and its writers join every scan that names writers.** Widen the sanctioned-writer scan's line-key regex to the companion key (`RISK_LINE` in `tests/risk-flags-writer-conformance.test.js`) and plant a literal of it, flagged outside the writer module and allowed inside. Add the companion's writer functions to any scan that forbids a module from writing the record (`WRITER_REF` in `tests/accept-monotonic-conformance.test.js`).
 
+### The new line leaves every existing parser's verdict unchanged
+
+Other readers scan the same preamble (`liftMetadata`, `parseRiskFlags`, `parseAcceptanceTarget`, `parseDependencies`, the Key Files and plan-audit extractors, the `validateShaped` shape gate), so a new line there can shift one of their answers without anyone noticing. Pin it with one table-driven test: build a full shaped body, insert the line, and assert `deepEqual(fn(withLine), fn(body))` for each parser. Add a control case in which a real metadata change does move a parser's answer, so the comparison is shown to detect a difference. `tests/bin-lib/issues/plan-line-body-parsers.test.js` (#6056, for `Plan:`) is the instance. A parser that gives the same answer for any whole body, such as `parsePlanLine`, which reads one line and rejects a body either way, passes the loop without proving anything; #6056's review marked that row can't-tell.
+
 ## Registration sites
 
 | Site | What it gets |
