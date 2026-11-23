@@ -121,57 +121,136 @@ function composeLensPrompt(bundleText, brief) {
   return '<review-context>\n' + bundleText + '\n</review-context>\n\n' + brief;
 }
 
-// A permission denial for a git command (spec AC9): a Bash denial with any segment of its
-// command that, once its leading `NAME=value` assignments are dropped and it is trimmed, is
-// `git` or starts with `git` and whitespace. Segments split on `;`, `&`, `|`, a line break,
-// `(`, `)` and a backtick, so `cd src && git log`, `true; git diff` and `$(git ...)` count.
-// Over-splitting (a `2>&1`, a separator inside quotes) can only add a segment, so it errs
-// toward `denied`, a failed side. A denial of any other tool leaves the side's outcome alone.
-// One forward pass, no regex over the command (regex-scan-linearity).
-const SEGMENT_SEPARATORS = new Set([';', '&', '|', '\n', '\r', '(', ')', '`']);
+// A permission denial for a git command (spec AC9): a Bash denial whose command runs git
+// anywhere a shell would start a command. The command is cut into segments at `;`, `&`, `|`,
+// a line break, `(`, `)` and command substitution (`$(…)`, backticks, inside double quotes
+// too), but never at a separator inside single or double quotes, so `A="x;y" git log` stays
+// one segment. Each segment is split into words (quotes removed, a backslash escaping the
+// next character); leading `NAME=value` assignments, the keywords in COMMAND_PREFIXES and,
+// after a wrapper in COMMAND_WRAPPERS, its `-` options are skipped, and the segment is git
+// when the next word's basename is `git` (`/usr/bin/git log`). After `xargs`, any later
+// word named git counts. A shell given `-c` (`sh -c "git log"`, `bash -lc '…'`) has its
+// script scanned the same way, to a nesting depth of SHELL_C_DEPTH. Over-matching only
+// labels a non-git denial `denied`, which fails the side to the Task path; what is not
+// recognised (`eval`, a variable or alias holding git, a function) is a reply, not `denied`.
+// One forward pass per level with a context stack, no regex over the command
+// (regex-scan-linearity).
+const COMMAND_PREFIXES = new Set(['{', '}', '!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until']);
+const COMMAND_WRAPPERS = new Set(['time', 'env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'sudo']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+const SHELL_C_DEPTH = 3;
 const isNameStart = (c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c === '_';
 const isNameChar = (c) => isNameStart(c) || (c >= '0' && c <= '9');
 const isSpace = (c) => c === ' ' || c === '\t';
 
-// A segment past its leading `NAME=value` assignments (a quoted value may hold spaces); an
-// unterminated quote leaves nothing, since no command follows it.
-function afterAssignments(segment) {
-  let i = 0;
-  for (;;) {
-    while (i < segment.length && isSpace(segment[i])) i += 1;
-    if (!isNameStart(segment[i])) return segment.slice(i);
-    let j = i + 1;
-    while (j < segment.length && isNameChar(segment[j])) j += 1;
-    if (segment[j] !== '=') return segment.slice(i);
-    j += 1;
-    while (j < segment.length && !isSpace(segment[j])) {
-      if (segment[j] === '"' || segment[j] === "'") {
-        const close = segment.indexOf(segment[j], j + 1);
-        if (close === -1) return '';
-        j = close + 1;
-      } else j += 1;
+// command -> its segments: the text between separators that sit where a command can start.
+// The stack holds the open contexts: `'` and `"` (quoted), `$(` and a backtick (a command).
+function commandSegments(command) {
+  const segments = [];
+  const stack = [];
+  let start = 0;
+  // A separator of `width` characters at `i` ends the current segment.
+  const cut = (i, width) => { segments.push(command.slice(start, i)); start = i + width; };
+  for (let i = 0; i < command.length; i += 1) {
+    const c = command[i];
+    const top = stack[stack.length - 1];
+    if (top === "'") {
+      if (c === "'") stack.pop();
+    } else if (c === '\\' && i + 1 < command.length) {
+      i += 1;
+    } else if (c === '`') {
+      if (top === '`') stack.pop(); else stack.push('`');
+      cut(i, 1);
+    } else if (c === '$' && command[i + 1] === '(') {
+      stack.push('$(');
+      cut(i, 2);
+      i += 1;
+    } else if (top === '"') {
+      if (c === '"') stack.pop();
+    } else if (c === ')' && top === '$(') {
+      stack.pop();
+      cut(i, 1);
+    } else if (c === '"' || c === "'") {
+      stack.push(c);
+    } else if (c === ';' || c === '&' || c === '|' || c === '\n' || c === '\r' || c === '(' || c === ')') {
+      cut(i, 1);
     }
-    i = j;
   }
+  segments.push(command.slice(start));
+  return segments;
 }
 
-function isGitSegment(segment) {
-  const command = afterAssignments(segment).trim();
-  return command === 'git' || (command.startsWith('git') && /\s/.test(command[3]));
+// segment -> its words, quotes removed; an unterminated quote runs to the end. Each word is
+// collected as an array of characters and joined once.
+function segmentWords(segment) {
+  const words = [];
+  let word = null;
+  let quote = null;
+  for (let i = 0; i < segment.length; i += 1) {
+    const c = segment[i];
+    if (quote !== null) {
+      if (c === quote) quote = null;
+      else if (c === '\\' && quote === '"' && i + 1 < segment.length) { word.push(segment[i + 1]); i += 1; } else word.push(c);
+    } else if (isSpace(c) || c === '\n' || c === '\r') {
+      if (word !== null) { words.push(word.join('')); word = null; }
+    } else if (c === '"' || c === "'") {
+      quote = c;
+      if (word === null) word = [];
+    } else if (c === '\\' && i + 1 < segment.length) {
+      (word = word || []).push(segment[i + 1]);
+      i += 1;
+    } else {
+      (word = word || []).push(c);
+    }
+  }
+  if (word !== null) words.push(word.join(''));
+  return words;
+}
+
+const isAssignment = (word) => {
+  if (!isNameStart(word[0])) return false;
+  let j = 1;
+  while (j < word.length && isNameChar(word[j])) j += 1;
+  return word[j] === '=';
+};
+const baseName = (word) => word.slice(word.lastIndexOf('/') + 1);
+
+function isGitSegment(segment, depth) {
+  const words = segmentWords(segment);
+  let i = 0;
+  let wrapped = false;
+  while (i < words.length) {
+    const w = words[i];
+    if (isAssignment(w) || COMMAND_PREFIXES.has(w) || (wrapped && w.startsWith('-'))) {
+      i += 1;
+    } else if (COMMAND_WRAPPERS.has(baseName(w))) {
+      wrapped = true;
+      i += 1;
+    } else break;
+  }
+  if (i >= words.length) return false;
+  const name = baseName(words[i]);
+  if (name === 'git') return true;
+  if (name === 'xargs') return words.slice(i + 1).some((w) => baseName(w) === 'git');
+  if (SHELLS.has(name) && depth < SHELL_C_DEPTH) {
+    for (let j = i + 1; j < words.length - 1; j += 1) {
+      const w = words[j];
+      if (!w.startsWith('-')) break;
+      if (!w.startsWith('--') && w.includes('c')) return isGitCommand(words[j + 1], depth + 1);
+    }
+  }
+  return false;
+}
+
+function isGitCommand(command, depth) {
+  return commandSegments(command).some((segment) => isGitSegment(segment, depth));
 }
 
 function isGitDenial(denial) {
   if (!denial || typeof denial !== 'object' || denial.tool_name !== 'Bash') return false;
   const command = denial.tool_input && denial.tool_input.command;
   if (typeof command !== 'string') return false;
-  let start = 0;
-  for (let i = 0; i <= command.length; i += 1) {
-    if (i === command.length || SEGMENT_SEPARATORS.has(command[i])) {
-      if (isGitSegment(command.slice(start, i))) return true;
-      start = i + 1;
-    }
-  }
-  return false;
+  return isGitCommand(command, 0);
 }
 
 // envelope -> null (a reply) | one of the envelope reasons. See the header for `auth`.

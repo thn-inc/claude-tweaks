@@ -151,6 +151,40 @@ test('classifyFailure: timeout, auth, launch, denied, blank and a reply', () => 
   assert.strictEqual(classifyFailure(ok('No findings.')), null);
 });
 
+// Residuals B and C (#6000 fix-wave re-review): a separator inside a quoted assignment value does
+// not split the git segment away, and a git command behind a keyword, a wrapper, a path or a
+// shell's -c script is still a git denial. One test per shape.
+const deniedReason = (command) => classifyFailure({ status: 'ok', result: { text: 'No findings.' }, denials: [{ tool_name: 'Bash', tool_input: { command } }], detail: null });
+for (const command of [
+  'A="x;y" git log',
+  "A='x|y' B=\"p&&q\" git diff",
+  '{ git log; }',
+  'if git diff --quiet; then echo same; fi',
+  'while git log -1; do break; done',
+  '! git diff',
+  'time git log',
+  'env git log',
+  'env -i A=1 git log',
+  'command git log',
+  '/usr/bin/git log',
+  'xargs git log',
+  'xargs -n 1 git show',
+  'sh -c "git log"',
+  "bash -c 'git diff HEAD'",
+  'bash -lc "cd x && git log"',
+  'echo "$(git rev-parse HEAD)"',
+  'echo "`git rev-parse HEAD`"',
+]) {
+  test(`classifyFailure: ${JSON.stringify(command)} is a git denial`, () => {
+    assert.strictEqual(deniedReason(command), 'denied');
+  });
+}
+for (const command of ['cat a; ls', 'echo "a;git log"', "grep 'git log' f", 'sh -c "ls; cat a"', 'env A=1 ls', 'time ls', '{ ls; }', 'echo /usr/bin/git']) {
+  test(`classifyFailure: ${JSON.stringify(command)} is not a git denial`, () => {
+    assert.strictEqual(deniedReason(command), null);
+  });
+}
+
 // Whole-branch review finding 1 (#6000): a git command inside a compound or env-prefixed
 // command line is still a git denial; a compound with no git segment is not.
 test('classifyFailure: a denied compound, env-prefixed or cd-prefixed git command is denied', () => {
@@ -451,6 +485,22 @@ test('firstTurnTokens is the first assistant turn of the worker transcript, foun
   await runLensWorkers(input, { runner, locateTranscripts, readUsage });
   assert.deepStrictEqual(seen, [{ cwd: input.cwd, sessionId: 'sess-x', configDir: '/cfg' }]);
   assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, 31);
+});
+
+// Residual A (#6000 fix-wave re-review): the envelope's usage is the total and wins over a
+// readable transcript's sum; the two are never added.
+test("the envelope's usage wins over a readable transcript's non-zero sum", async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const rows = [
+    { role: 'assistant', turnStart: true, contextTokens: 7, inputTokens: 1, outputTokens: 2, cacheRead: 3, cacheCreate: 4 },
+    { role: 'assistant', turnStart: true, contextTokens: 9, inputTokens: 5, outputTokens: 6, cacheRead: 7, cacheCreate: 8 },
+  ];
+  await runLensWorkers(input, { runner, locateTranscripts: () => [{ path: '/t/sess-x.jsonl', mtimeMs: 1 }], readUsage: async () => rows });
+  const [rec] = logLines(input.runDir);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+  assert.strictEqual(rec.firstTurnTokens, 7);
+  assert.strictEqual(rec.notFound, null);
 });
 
 test('an unreadable worker transcript leaves firstTurnTokens null and the envelope totals standing', async (t) => {
