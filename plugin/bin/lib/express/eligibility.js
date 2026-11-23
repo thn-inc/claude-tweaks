@@ -147,12 +147,21 @@ function canonicalPath(p) {
   return posix.startsWith('./') ? posix.slice(2) : posix;
 }
 
+// globToRegExp's `.` skips line terminators (\n, \r, U+2028, U+2029), which a path from `git diff -z` or a Key
+// File may carry; the dotAll flag keeps the shipped list exactly as the pre-#6020 `(^|\/)…` regexes matched.
+const dotAllCache = new Map();
+function protectedGlobRegExp(glob) {
+  let re = dotAllCache.get(glob);
+  if (!re) { re = new RegExp(globToRegExp(glob).source, 's'); dotAllCache.set(glob, re); }
+  return re;
+}
+
 // A project's list (#6020) replaces the shipped one; globs are root-anchored and case-sensitive. Call
 // sites use an explicit arrow, never `.some(isProtectedPath)`, whose index argument would be the list.
 function isProtectedPath(path, list = SHIPPED_PROTECTED_PATHS) {
   if (!Array.isArray(list)) throw new TypeError('isProtectedPath: list must be an array of globs');
   const normalized = canonicalPath(path);
-  return list.some((glob) => globToRegExp(glob).test(normalized));
+  return list.some((glob) => protectedGlobRegExp(glob).test(normalized));
 }
 
 // The families declared buildTime above, derived from PROTECTED_FAMILIES (#6019) so a new family must
