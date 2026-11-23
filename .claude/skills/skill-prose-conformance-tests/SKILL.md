@@ -88,6 +88,10 @@ When a Node port of a skill's bash fence must match the fence, and the test runs
 
 When the pinned prose deliberately mirrors canonical text in another file, or is inlined verbatim into a Task-tool agent's prompt, read `mirrored-and-dispatched-prose-pins.md` alongside this file before writing its test. It covers pinning two live copies equal through a vocabulary-only normalizer, and the three checks a dispatched body needs beyond a content pin: a strict non-empty subset of the file, a sweep for references the agent cannot resolve, and fence balance.
 
+### Pin a CLI call in prose through its argument, not only its flag
+
+When the prose tells the reader to run a CLI, pin the whole call line including each argument's value, not the command and flag alone. #5999's first pin ended at `--spec-file`, so reverting the argument to a path that does not exist in the worktree stayed green until a review lens caught it. The shipped pin is the full literal `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"` (`CLI_CALL` in `tests/build-implementer-tier-conformance.test.js`).
+
 ### Import the shipped parser's constants; never retype them into the test's own helper
 
 When the corpus sweep needs the same recognizer a shipped module already owns — a marker regex, a
