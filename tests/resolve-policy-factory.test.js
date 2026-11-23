@@ -63,12 +63,13 @@ test('AC8.2: factory-only autonomy trusted derives housekeeping-auto-merge true'
 });
 
 test('AC11.1-3: refused keys resolve as with no factory layer', () => {
-  assert.deepStrictEqual(FACTORY_REFUSED_KEYS, ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook']);
+  assert.deepStrictEqual(FACTORY_REFUSED_KEYS, ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook', 'protected-paths']);
   const lines = {
     'merge-authorization': 'merge-authorization: pre-authorized\n',
     'control-mode': 'control-mode: on\n',
     'deploy-command': 'deploy-command: echo hi\n',
     'release-hook': 'release-hook: echo hi\n',
+    'protected-paths': 'protected-paths: []\n',
   };
   for (const key of FACTORY_REFUSED_KEYS) {
     const calls = [];
@@ -511,7 +512,7 @@ test('AC7.1, AC7.2: unreadable factory file resolves as absent, one warning line
 });
 
 test('AC11: refused keys warn once each, in JSON mode and --values mode', () => {
-  const variable = 'merge-authorization: pre-authorized\ncontrol-mode: on\ndeploy-command: echo hi\nrelease-hook: echo hi\nmodel-stance: economy\n';
+  const variable = 'merge-authorization: pre-authorized\ncontrol-mode: on\ndeploy-command: echo hi\nrelease-hook: echo hi\nprotected-paths: []\nmodel-stance: economy\n';
   const warn = (key) => `resolve-policy: warning: ${key} is not settable from the factory layer — ignored\n`;
   for (const key of FACTORY_REFUSED_KEYS) {
     const json = cli([key], { repo: cliRepo(), variable });

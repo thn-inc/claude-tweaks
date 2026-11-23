@@ -167,7 +167,7 @@ These resolve from `policy.yml`. `/claude-tweaks:init` does not generate them in
 
 ## Express driver
 
-Registered by #5218, #5222, #5224, #6018 and #6019; `bin/drive.js` reads all nine. Full canonical-home/owner-skill/default/meaning table: `policy-schema-express-driver.md` (split out per IL-70 for Read-rail headroom).
+Registered by #5218, #5222, #5224, #6018, #6019 and #6020; `bin/drive.js` reads all ten, and `bin/express-lane.js` reads `protected-paths` too. Full canonical-home/owner-skill/default/meaning table: `policy-schema-express-driver.md` (split out per IL-70 for Read-rail headroom).
 
 | Key |
 |---|
@@ -180,6 +180,7 @@ Registered by #5218, #5222, #5224, #6018 and #6019; `bin/drive.js` reads all nin
 | `express-driver-max-lines` |
 | `express-driver-max-risk` |
 | `express-driver-protected-paths` |
+| `protected-paths` |
 
 ## Model profiles
 

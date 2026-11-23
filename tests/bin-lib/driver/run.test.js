@@ -16,6 +16,7 @@ const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES, WORKER_TEST_MODES,
 } = require(path.join(LIB, 'driver', 'events'));
+const { SHIPPED_PROTECTED_PATHS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
   STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, relaunchOrStop, relaunchesOnCannotComplete,
@@ -354,6 +355,7 @@ const POLICY = {
   'express-driver-max-lines': undefined,
   'express-driver-max-risk': 'low',
   'express-driver-protected-paths': 'refuse',
+  'protected-paths': undefined,
   // #5917's model keys (#5942's model-effort, #5997's implementer-tier), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
   // model-profiles block or ceiling set, model-effort inherit, and implementer-tier lane.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
@@ -493,7 +495,7 @@ function defaultScript(over, fx) {
       : k === 'express-driver-max-risk' && policy[k] === undefined
         ? { value: 'low', source: 'default' }
         // #6019: an unset protected-paths key resolves to the real resolver's default reply.
-        : k === 'express-driver-protected-paths' && policy[k] === undefined
+        : (k === 'express-driver-protected-paths' || k === 'protected-paths') && policy[k] === undefined
           ? resolvePolicyKeys([k], { policyRaw: '' })[k]
           : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
@@ -743,7 +745,8 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   assert.deepEqual(issue, issueFor(7));
   assert.deepStrictEqual(opts, {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
-    sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false, protectedPathsNeedReviewer: false,
+    sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false,
+    protectedPathGlobs: SHIPPED_PROTECTED_PATHS, protectedPathsNeedReviewer: false,
   });
 });
 
@@ -5913,7 +5916,8 @@ test('(#5224) the eligibility step passes the size ceiling and Key File limit it
   await run(['#7'], plain.deps);
   assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
-    riskCeiling: 'low', allowAnyCeremony: false, protectedPathsNeedReviewer: false,
+    riskCeiling: 'low', allowAnyCeremony: false,
+    protectedPathGlobs: SHIPPED_PROTECTED_PATHS, protectedPathsNeedReviewer: false,
   });
   assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
 });
@@ -8962,4 +8966,66 @@ test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, 
   assert.strictEqual(interrupted.detail, 'interrupted by SIGTERM before test');
   assert.deepStrictEqual(between.filter((e) => e.discriminator === `test@${interrupted.ts}`).map((e) => [e.kind, e.outcome]),
     [['started', undefined], ['exited', 'failed']]);
+});
+
+// --- the protected list as a policy value, through the driver (#6020) -------------------------
+
+const PP_LABELS = ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS];
+const protectedReasons = (verdict) => verdict.reasons.filter((r) => r.startsWith('protected path:'));
+
+test('AC2.1, AC4.1 (driver half): --check under protected-paths infra/** stops refusing package.json and refuses infra/main.tf', async () => {
+  assert.deepStrictEqual(resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: infra/**\n' })['protected-paths'], { value: 'infra/**', source: 'policy' });
+  const pkg = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['package.json']);
+  assert.deepStrictEqual(protectedReasons(pkg.verdict), [], JSON.stringify(pkg.verdict));
+  const tf = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['infra/main.tf']);
+  assert.ok(tf.verdict.reasons.includes('protected path: infra/main.tf'), JSON.stringify(tf.verdict));
+  const unset = await widenCheck({}, PP_LABELS, {}, ['package.json']);
+  assert.ok(unset.verdict.reasons.includes('protected path: package.json'), JSON.stringify(unset.verdict));
+});
+
+test('AC3.1 (driver half): protected-paths [] protects no Key File', async () => {
+  const { verdict } = await widenCheck({ 'protected-paths': [] }, PP_LABELS, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(protectedReasons(verdict), [], JSON.stringify(verdict));
+});
+
+test('AC5.1 (driver half): a malformed protected-paths keeps the shipped list', async () => {
+  const resolved = resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: ["infra/**"]\n' })['protected-paths'];
+  assert.equal(resolved.invalid, true);
+  const malformed = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'protected-paths'
+    ? resolved
+    : k === 'express-driver-max-lines'
+      ? { value: POLICY['auto-merge-max-lines'], source: 'default' }
+      : { value: POLICY[k], source: 'policy' }]))];
+  const { verdict } = await widenCheck({}, PP_LABELS, { script: [malformed, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+  assert.ok(verdict.reasons.includes('protected path: package.json'), JSON.stringify(verdict));
+});
+
+test('AC4.1, Deliverable 6 (driver half): --check reads protected-paths through defaultResolvePolicy from the main checkout', async () => {
+  const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+  const { defaultResolvePolicy } = require(path.join(LIB, 'express', 'policy'));
+  const main = gitRepo();
+  const policyFile = path.join(main, '.claude-tweaks', 'policy.yml');
+  fs.mkdirSync(path.dirname(policyFile), { recursive: true });
+  fs.writeFileSync(policyFile, 'protected-paths: infra/**\n');
+  const wt = harnessWorktreeOf(main, 'rec');
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'protected-paths: []\n');
+  const real = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'protected-paths'
+    ? defaultResolvePolicy(['protected-paths'])['protected-paths']
+    : k === 'express-driver-max-lines'
+      ? { value: POLICY['auto-merge-max-lines'], source: 'default' }
+      : { value: POLICY[k], source: 'policy' }]))];
+  const cwd = process.cwd();
+  try {
+    process.chdir(wt);
+    const tf = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['infra/main.tf']), ...REAL_GATES] });
+    assert.ok(tf.verdict.reasons.includes('protected path: infra/main.tf'), JSON.stringify(tf.verdict));
+    const pkg = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+    assert.deepStrictEqual(protectedReasons(pkg.verdict), [], JSON.stringify(pkg.verdict));
+    fs.rmSync(policyFile);
+    const gone = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+    assert.ok(gone.verdict.reasons.includes('protected path: package.json'), JSON.stringify(gone.verdict));
+  } finally {
+    process.chdir(cwd);
+  }
 });

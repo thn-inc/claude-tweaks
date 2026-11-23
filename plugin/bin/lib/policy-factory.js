@@ -16,9 +16,10 @@ const FACTORY_POLICY_ENV = 'CLAUDE_TWEAKS_FACTORY_POLICY';
 const FACTORY_POLICY_REL_PATH = '.claude-tweaks/factory-policy.yml';
 // Names another factory file in place of ~/FACTORY_POLICY_REL_PATH; tools/run-tests.js sets it for every suite.
 const FACTORY_POLICY_FILE_ENV = 'CT_FACTORY_POLICY_FILE';
-// Keys a factory layer may never set: each is a per-run human decision or an executed
-// command, so a user-wide file or variable must not stand in for it.
-const FACTORY_REFUSED_KEYS = ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook'];
+// Keys a factory layer may never set: each is a per-run human decision, an executed
+// command, or a repository-layout list whose factory floor is Phase 11's (`protected-paths`),
+// so a user-wide file or variable must not stand in for it.
+const FACTORY_REFUSED_KEYS = ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook', 'protected-paths'];
 
 const KEY_LINE = /^["']?([A-Za-z0-9_.-]+)["']?\s*:/;
 

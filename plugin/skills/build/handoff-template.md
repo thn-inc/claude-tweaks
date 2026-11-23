@@ -52,6 +52,11 @@ Render the markdown below, substituting placeholders. Generate field values from
 - {clarification or plan change} — {class}; record comment {url}
 (or omit this section: Common Step 1.6 amended nothing, or a run directory exists — `decisions.md` carries them as `AUTO` entries instead.)
 
+### Implementer profile (standalone build)
+- implementer profile {profile} (rule: {rule}, size: {size}, key files: {count})
+- task {k} implementer escalated {from} → {to} ({trigger})
+(or omit this section: a run directory exists — `decisions.md` carries both as `AUTO` entries — or the build was design mode; omit the escalation line when no task escalated.)
+
 ### Manual Steps Required
 | # | What | Where |
 |---|------|-------|

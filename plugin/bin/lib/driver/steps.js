@@ -145,6 +145,8 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, lane-bounds.js's laneBounds and this file's driverLineBound).
 // express-driver-protected-paths (#6019) is not a bound: `reviewer` lets a merge-time protected Key File
 // through eligibility and check, behind the reviewer step and a human merge.
+// protected-paths (#6020) is the protected list itself, read from the main checkout through defaultResolvePolicy;
+// lane-bounds.js's eligibilityOptions hands it to every eligibility caller.
 // The last five, express-driver-models, model-profiles, model-ceiling, model-effort and implementer-tier,
 // are the model and effort each worker launches with (#5917, #5942 and #5997, launch.js's roleLaunch);
 // the policy step refuses a run whose roles do not resolve.
@@ -153,7 +155,7 @@ const POLICY_KEYS = Object.freeze([
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
   'auto-merge-max-lines', 'express-driver-review',
   'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines', 'express-driver-max-risk',
-  'express-driver-protected-paths',
+  'express-driver-protected-paths', 'protected-paths',
   ...MODEL_POLICY_KEYS,
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.

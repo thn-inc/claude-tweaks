@@ -12,7 +12,7 @@ const { normalizeLabelNames, parseRecordFacets, typeOf } = require('../issues/re
 const { shapeGate, liftMetadata } = require('../issues/materialize-format');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { fileMatchesFrontendPredicate } = require('../design-detect/index');
-const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
+const { classifyDiffFiles, isSensitivePath, globToRegExp } = require('../issues/blast-radius');
 const { CEREMONY_TIERS } = require('../issues/record-vocabulary');
 
 const EXPRESS_MAX_KEY_FILES = 3;
@@ -101,7 +101,8 @@ const REASONS = Object.freeze({
   sensitivePath: (p) => `merge-sensitive path: ${p}`,
 });
 
-// Project-agnostic (never this repo's plugin/ prefix). Each family is here because
+// The shipped defaults (SHIPPED_PROTECTED_PATHS), project-agnostic (never this repo's plugin/ prefix); a
+// project replaces the whole list with the `protected-paths` policy key (#6020). Each family is here because
 // a change to it can weaken a gate the lane merges on, which a green CI cannot
 // vouch for when the change edits what CI (or the agent) runs:
 //  - hook code and shared skill contracts (`skills/_shared/` is a conservative
@@ -113,30 +114,30 @@ const REASONS = Object.freeze({
 //  - the agent's own permissions and tool config (`.claude/settings*.json`,
 //    `.mcp.json`) and the plugin's policy and verify-scope files.
 // Harm model (#6019): the CI/forge, git-hook, `package.json` and agent-config families act at push or
-// build time, before any merge, so no merge-time review can vouch for them (BUILD_TIME_PROTECTED_RES).
+// build time, before any merge, so no merge-time review can vouch for them (BUILD_TIME_PROTECTED_GLOBS).
 // So do the policy and verify-scope files: `check` and `verify.js` read them from the PR's own
 // worktree, so a branch editing them would loosen the bounds and checks that judge it. The rest (hook
 // code, `skills/_shared/`, CODEOWNERS) act only once merged, so the driver may take them behind its
 // reviewer; the express lane never does.
 // Each family declares its kind once: buildTime true acts before a merge (see the harm model above).
 const PROTECTED_FAMILIES = Object.freeze([
-  Object.freeze({ re: /(^|\/)hooks\//, buildTime: false }),
-  Object.freeze({ re: /(^|\/)hooks\.js$/, buildTime: false }),
-  Object.freeze({ re: /(^|\/)hooks\.sh$/, buildTime: false }),
-  Object.freeze({ re: /(^|\/)skills\/_shared\//, buildTime: false }),
-  Object.freeze({ re: /(^|\/)\.github\//, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.gitlab-ci\.yml$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.circleci\//, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.githooks\//, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.husky\//, buildTime: true }),
-  Object.freeze({ re: /(^|\/)CODEOWNERS$/, buildTime: false }),
-  Object.freeze({ re: /(^|\/)package\.json$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.claude\/settings[^/]*\.json$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.mcp\.json$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.claude-tweaks\/policy\.yml$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.claude-tweaks\/verify-scope\.json$/, buildTime: true }),
+  Object.freeze({ glob: '**/hooks/**/*', buildTime: false }),
+  Object.freeze({ glob: '**/hooks.js', buildTime: false }),
+  Object.freeze({ glob: '**/hooks.sh', buildTime: false }),
+  Object.freeze({ glob: '**/skills/_shared/**/*', buildTime: false }),
+  Object.freeze({ glob: '**/.github/**/*', buildTime: true }),
+  Object.freeze({ glob: '**/.gitlab-ci.yml', buildTime: true }),
+  Object.freeze({ glob: '**/.circleci/**/*', buildTime: true }),
+  Object.freeze({ glob: '**/.githooks/**/*', buildTime: true }),
+  Object.freeze({ glob: '**/.husky/**/*', buildTime: true }),
+  Object.freeze({ glob: '**/CODEOWNERS', buildTime: false }),
+  Object.freeze({ glob: '**/package.json', buildTime: true }),
+  Object.freeze({ glob: '**/.claude/settings*.json', buildTime: true }),
+  Object.freeze({ glob: '**/.mcp.json', buildTime: true }),
+  Object.freeze({ glob: '**/.claude-tweaks/policy.yml', buildTime: true }),
+  Object.freeze({ glob: '**/.claude-tweaks/verify-scope.json', buildTime: true }),
 ]);
-const PROTECTED_PATH_RES = PROTECTED_FAMILIES.map((fam) => fam.re);
+const SHIPPED_PROTECTED_PATHS = Object.freeze(PROTECTED_FAMILIES.map((fam) => fam.glob));
 
 // A path in comparison form: `\` as `/`, `.` and `..` segments resolved, no leading `./`.
 // A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
@@ -146,26 +147,39 @@ function canonicalPath(p) {
   return posix.startsWith('./') ? posix.slice(2) : posix;
 }
 
-function isProtectedPath(path) {
+// globToRegExp's `.` skips line terminators (\n, \r, U+2028, U+2029), which a path from `git diff -z` or a Key
+// File may carry; the dotAll flag keeps the shipped list exactly as the pre-#6020 `(^|\/)…` regexes matched.
+const dotAllCache = new Map();
+function protectedGlobRegExp(glob) {
+  let re = dotAllCache.get(glob);
+  if (!re) { re = new RegExp(globToRegExp(glob).source, 's'); dotAllCache.set(glob, re); }
+  return re;
+}
+
+// A project's list (#6020) replaces the shipped one; globs are root-anchored and case-sensitive. Call
+// sites use an explicit arrow, never `.some(isProtectedPath)`, whose index argument would be the list.
+function isProtectedPath(path, list = SHIPPED_PROTECTED_PATHS) {
+  if (!Array.isArray(list)) throw new TypeError('isProtectedPath: list must be an array of globs');
   const normalized = canonicalPath(path);
-  return PROTECTED_PATH_RES.some((re) => re.test(normalized));
+  return list.some((glob) => protectedGlobRegExp(glob).test(normalized));
 }
 
 // The families declared buildTime above, derived from PROTECTED_FAMILIES (#6019) so a new family must
-// declare its kind. Every build-time family is also a protected family.
-const BUILD_TIME_PROTECTED_RES = Object.freeze(PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.re));
+// declare its kind. Always the shipped families, whatever a project's `protected-paths` list says (#6020):
+// its one caller tests isProtectedPath against the project's list first, so a family the list drops is
+// never judged build-time, and a project-added glob is never build-time.
+const BUILD_TIME_PROTECTED_GLOBS = Object.freeze(PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.glob));
 
 function isBuildTimeProtectedPath(path) {
-  const normalized = canonicalPath(path);
-  return BUILD_TIME_PROTECTED_RES.some((re) => re.test(normalized));
+  return isProtectedPath(path, BUILD_TIME_PROTECTED_GLOBS);
 }
 
 // The one rule both gates apply in the driver's reviewer mode (#6019): a protected path is left for
 // the reviewer only when it is not build-time and not merge-sensitive. evaluateRecordEligibility
 // (Key Files) and evaluateDiffBounds (changed paths, a rename's oldPath) must agree on it, or a path
 // eligibility admits would escalate at check, or the reverse.
-function protectedPathLeftForReviewer(path, sensitive) {
-  return isProtectedPath(path) && !isBuildTimeProtectedPath(path) && !sensitive;
+function protectedPathLeftForReviewer(path, sensitive, list) {
+  return isProtectedPath(path, list) && !isBuildTimeProtectedPath(path) && !sensitive;
 }
 
 // Mirrors design-detect's layer2 (FRONTEND_SURFACES there, `terminal` included;
@@ -202,6 +216,7 @@ function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
     sizeCeiling, maxKeyFiles, riskCeiling, allowAnyCeremony = false, protectedPathsNeedReviewer = false,
+    protectedPathGlobs = SHIPPED_PROTECTED_PATHS,
   } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
@@ -250,8 +265,8 @@ function evaluateRecordEligibility(issue, opts) {
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
     const sensitive = isSensitivePath(canonicalPath(p), sensitivePaths);
-    const leftForReviewer = protectedPathsNeedReviewer === true && protectedPathLeftForReviewer(p, sensitive);
-    if (isProtectedPath(p) && !leftForReviewer) reasons.push(REASONS.protectedPath(p));
+    const leftForReviewer = protectedPathsNeedReviewer === true && protectedPathLeftForReviewer(p, sensitive, protectedPathGlobs);
+    if (isProtectedPath(p, protectedPathGlobs) && !leftForReviewer) reasons.push(REASONS.protectedPath(p));
     if (sensitive) reasons.push(REASONS.sensitivePath(p));
   }
   if (!shapeGate(body).ok) reasons.push(REASONS.notShaped);
@@ -268,12 +283,12 @@ function evaluateRecordEligibility(issue, opts) {
 // every label name, never the parsed facets (which keep only the last match), so a dual-labelled
 // record answers the same in any order.
 // Pure: the driver steps, merge.js and the queue pull call it; admission and review read its result.
-function widenings({ labels, riskCeiling, anyCeremony, keyFiles, protectedPathsNeedReviewer } = {}) {
+function widenings({ labels, riskCeiling, anyCeremony, keyFiles, protectedPathsNeedReviewer, protectedPathGlobs = SHIPPED_PROTECTED_PATHS } = {}) {
   const names = normalizeLabelNames(labels || []);
   const out = [];
   if (isReadableRiskCeiling(riskCeiling) && names.some((n) => n === 'risk:medium' || n === 'risk:high')) out.push('risk');
   if (anyCeremony === true && names.some((n) => isCeremonyTierName(n) && n !== 'ceremony:fast-lane')) out.push('ceremony');
-  if (protectedPathsNeedReviewer === true && Array.isArray(keyFiles) && keyFiles.some(isProtectedPath)) out.push('protected-path');
+  if (protectedPathsNeedReviewer === true && Array.isArray(keyFiles) && keyFiles.some((p) => isProtectedPath(p, protectedPathGlobs))) out.push('protected-path');
   return out;
 }
 
@@ -286,6 +301,7 @@ function widenedByFor(labels, keyFiles, opts = {}) {
     riskCeiling: opts.riskCeiling,
     anyCeremony: opts.allowAnyCeremony,
     protectedPathsNeedReviewer: opts.protectedPathsNeedReviewer,
+    protectedPathGlobs: opts.protectedPathGlobs,
   });
 }
 
@@ -299,7 +315,7 @@ function widenedByFor(labels, keyFiles, opts = {}) {
 // nor merge-sensitive out of violations into the result's protectedPaths (encounter order, no
 // duplicates); the key is absent otherwise, so the express return shape is unchanged.
 function evaluateDiffBounds(files, opts) {
-  const { keyFiles = [], sensitivePaths = [], maxLines, reportProtectedPaths } = opts || {};
+  const { keyFiles = [], sensitivePaths = [], maxLines, reportProtectedPaths, protectedPathGlobs = SHIPPED_PROTECTED_PATHS } = opts || {};
   const report = reportProtectedPaths === true;
   const protectedPaths = [];
   const noteProtected = (p) => { if (!protectedPaths.includes(p)) protectedPaths.push(p); };
@@ -321,8 +337,8 @@ function evaluateDiffBounds(files, opts) {
         if (!keySet.has(canonicalPath(f.path))) violations.push(`outside Key Files: ${f.path}`);
       }
     }
-    if (isProtectedPath(f.path)) {
-      if (report && protectedPathLeftForReviewer(f.path, f.isSensitive)) noteProtected(f.path);
+    if (isProtectedPath(f.path, protectedPathGlobs)) {
+      if (report && protectedPathLeftForReviewer(f.path, f.isSensitive, protectedPathGlobs)) noteProtected(f.path);
       else violations.push(REASONS.protectedPath(f.path));
     }
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));
@@ -331,8 +347,8 @@ function evaluateDiffBounds(files, opts) {
     const { oldPath } = inputs[i];
     if (oldPath && oldPath !== f.path) {
       const oldSensitive = isSensitivePath(oldPath, sensitivePaths);
-      if (isProtectedPath(oldPath)) {
-        if (report && protectedPathLeftForReviewer(oldPath, oldSensitive)) noteProtected(oldPath);
+      if (isProtectedPath(oldPath, protectedPathGlobs)) {
+        if (report && protectedPathLeftForReviewer(oldPath, oldSensitive, protectedPathGlobs)) noteProtected(oldPath);
         else violations.push(REASONS.protectedPath(oldPath));
       }
       if (oldSensitive) violations.push(REASONS.sensitivePath(oldPath));
@@ -359,5 +375,5 @@ function expressMergeVerification(resolved) {
 module.exports = {
   EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
   RISK_CEILINGS, isReadableRiskCeiling, widenings, widenedByFor,
-  BOUND_REASONS, REASONS, isProtectedPath, PROTECTED_FAMILIES, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
+  BOUND_REASONS, REASONS, isProtectedPath, PROTECTED_FAMILIES, SHIPPED_PROTECTED_PATHS, BUILD_TIME_PROTECTED_GLOBS, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

@@ -8,6 +8,7 @@ const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { run, USAGE } = require(path.join(LIB, 'express', 'cli.js'));
 const { POLICY_KEYS } = require(path.join(LIB, 'driver', 'plan-lane.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MICRO_FILES = ['plugin/bin/lib/plan-lane-fixture/m0.js', 'tests/plan-lane-fixture/m0.test.js'];
 const LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
@@ -30,6 +31,7 @@ const record = (number, labels = LABELS, b = body()) => ({ number, title: `recor
 const POLICY = {
   'express-driver': 'off', 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5, 'express-driver-max-risk': 'low',
   'express-driver-review': 'beyond-express', 'express-driver-protected-paths': 'refuse', 'express-lane': false, 'integration-model': 'pr-first', 'merge-sensitive-paths': [],
+  'protected-paths': resolvePolicyKeys(['protected-paths'], { policyRaw: '' })['protected-paths'],
 };
 
 const DIRS = [];
@@ -52,7 +54,7 @@ function harness(over = {}) {
     readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     resolvePolicy: (keys, opts) => {
       calls.resolvePolicy.push({ keys, opts });
-      return Object.fromEntries(keys.map((k) => [k, { value: POLICY[k], source: 'policy' }]));
+      return Object.fromEntries(keys.map((k) => [k, k === 'protected-paths' ? POLICY[k] : { value: POLICY[k], source: 'policy' }]));
     },
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
