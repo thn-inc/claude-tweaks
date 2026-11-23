@@ -73,6 +73,15 @@ The review step's fix round (#5222, `plugin/bin/lib/driver/review.js`) is the fi
 - Propagate a re-run step's own status and class unchanged, and list each re-run step's stops in the new module's header.
 - The worker had write access between the steps, so judge its output again before using it: the fix round re-checks each evidence path's canonical location and reads its bytes from disk before running it, never through git status.
 
+### A step that queues steps after itself
+
+The implementer relaunch (#5997, `plugin/bin/lib/driver/relaunch.js` decides and writes the prompt; `steps.js` wires it) is the first trigger that adds steps to a record's walk instead of re-running them inside one step. A step of this shape follows the same rules:
+- Return the queued steps through the result's `then: Step[]`. `defineStep` keeps it only on a non-halting result, and `run.js` walks the queue under the steps' own names before the rest of the table. An element that is not a `{ name, run }` step makes the result a `fail` (`step returned an invalid continuation`).
+- Put a one-shot guard on `ctx` (`ctx.relaunch`, set before the queue is returned), so a queued step never queues again. A refused plan queues a single step that returns the refusal with `noLine: true`, so it writes no event line.
+- The table's later entries for the re-run steps skip once the queue has run them (`tableCommitStep`, `tableTestStep` return `skip: true`), while the core `commitStep` and `testStep` stay what the review fix round runs, so the fix round never skips or relaunches.
+- A queued step's non-ok result keeps its own status, reason and class and gains a note naming the queue (`withRelaunchNote`); list each queued step's stops in the header comment.
+- Every reader of the event the queue repeats (`worker`, `commit`, `test`) is checked to tolerate a second line per record, and the pull request lists the readers.
+
 ### A check of git state around a worker launch
 
 The worker step and the review fix round both launch through `steps.js`'s `runImplementer`, which reads HEAD on both sides of the launch (#5414, `headOf` and `headFail`) and then, if HEAD has not moved, the index flags (#5415; the method is `headless-worker-launch`'s "What the consumer owes"). A new check of git state around a launch follows the same shape:
