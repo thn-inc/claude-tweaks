@@ -135,7 +135,8 @@
 //   to return `Hello Ann!`, each returned a valid result envelope (`status: ok`, `result.status`
 //   `done`, 4 turns, about $0.03, no denials) with the working change in the tree. Three
 //   Agent-tool dispatches at `model: sonnet`, `effort: low` on the same fixture each committed
-//   the change and replied `STATUS: DONE`. Re-run: the opt-in `#6002` live probe.
+//   the change and replied `STATUS: DONE`. Re-run the three launches with the opt-in `#6002` live probe;
+//   the Agent-tool half has no node test (an Agent dispatch cannot run outside a session).
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.

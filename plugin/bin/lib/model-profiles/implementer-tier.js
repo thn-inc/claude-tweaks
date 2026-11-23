@@ -97,6 +97,16 @@ function riskOf(values) {
   return Array.isArray(values) && values.length === 1 && SIZES.includes(values[0]) ? values[0] : undefined;
 }
 
+// A record's risk from its label names: the `risk:` values through riskOf. The driver reads it from the record's
+// labels and materialize.js writes the spec header's `risk:` line with it, so the standard lane's CLI (which
+// reads that header) and the driver resolve a duplicated or invalid label alike — as no risk (#6002).
+function riskFromLabels(names) {
+  const values = (Array.isArray(names) ? names : [])
+    .filter((n) => typeof n === 'string' && n.startsWith('risk:'))
+    .map((n) => n.slice('risk:'.length).trim());
+  return riskOf(values);
+}
+
 function startEffort({ risk, launchEffort } = {}) {
   const base = clampEffort(launchEffort);
   if (base === null) return null;
@@ -134,5 +144,5 @@ function nextAttempt({ profile, effort, escalations, trigger, resolveProfile } =
 
 module.exports = {
   POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, EFFORT_CAP,
-  keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt, riskOf,
+  keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt, riskOf, riskFromLabels,
 };

@@ -43,6 +43,7 @@ const PATTERNS = [
   ],
   [lit(PROFILE_LINE), 'AC6.1: one implementer profile line'],
   [lit('`{startEffort}` is `inherit` when `null`'), 'AC6.1: inherit printed for null'],
+  [lit('when the ladder below does not apply, log the effort dispatched instead'), 'AC6.1: off the ladder the line names the effort dispatched'],
   [lit(LADDER_CALL), 'AC2.1 AC3.1 (lane): names the next-attempt CLI call'],
   [lit(LADDER_ESCALATION_LINE), 'AC6.2: effort-ladder escalation line'],
   [lit("sets the Agent tool's `effort` parameter to `startEffort`"), 'AC6.1: dispatch at startEffort'],

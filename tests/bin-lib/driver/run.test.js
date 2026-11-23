@@ -4703,6 +4703,26 @@ test('#6002: the ladder bound reads ctx.relaunch alone, so an attempt that set n
   assert.equal(r, line, 'the result comes back as it was, nothing queued');
 });
 
+test('#6002: after a red first run, the fix round launches at the green relaunch\'s effort, not the first attempt\'s', async () => {
+  let h = null;
+  h = fixRig({
+    policy: { 'express-driver-review': 'on', ...LADDER },
+    script: [
+      MEDIUM_LOW_RISK,
+      redRun(1),
+      nthCall(isImplementerLaunch, 1, () => ({ ...ENVELOPE })),
+      nthCall(isImplementerLaunch, 2, () => { h.fx.dirty = ' M b.js\0'; return { ...ENVELOPE }; }),
+      nthCall(onGit('commit'), 2, () => { h.fx.dirty = ''; return ''; }),
+      ...reportReplies(() => h),
+    ],
+  });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('standard'), 'medium']]);
+  const [, relaunchLine, fixLine] = workerLines(h);
+  assert.deepEqual([relaunchLine.attempt, relaunchLine.effort], [2, 'medium']);
+  assert.deepEqual([fixLine.effort, fixLine.profile, fixLine.fix], ['medium', 'standard', true]);
+});
+
 test('#6002 AC7.1 (ladder): no launch above high', async () => {
   const h = ladderRig({ policy: { 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'max' } } }, script: [redRuns(2)] });
   assert.equal(await run(['#7'], h.deps), 0);

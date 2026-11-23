@@ -123,7 +123,7 @@ const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta, mergeWorker } = require('./review');
-const { startEffort, riskOf, MAX_ESCALATIONS } = require('../model-profiles/implementer-tier');
+const { startEffort, riskFromLabels, MAX_ESCALATIONS } = require('../model-profiles/implementer-tier');
 const { normalizeLabelNames } = require('../issues/record');
 const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
@@ -935,9 +935,11 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   if (rule === 'record') {
     try {
       profile = deps.recordImplementerProfile(ctx.issue);
-      // Under the ladder the first launch starts at the record's effort (#6002); a throw here refuses like a launch-time model refusal.
+      // Under the ladder the first launch starts at the record's effort (#6002): riskFromLabels reads exactly one valid
+      // `risk:` label, and zero, two or more, or an invalid one start at the profile's own effort. A throw here refuses
+      // like a launch-time model refusal.
       if (effortLadder(ctx.shared.policy)) {
-        effort = startEffort({ risk: riskOf(normalizeLabelNames(ctx.issue.labels).filter((n) => n.startsWith('risk:')).map((n) => n.slice('risk:'.length).trim())), launchEffort: roleLaunch('implementer', ctx.shared.policy, { profile }).effort });
+        effort = startEffort({ risk: riskFromLabels(normalizeLabelNames(ctx.issue.labels)), launchEffort: roleLaunch('implementer', ctx.shared.policy, { profile }).effort });
       }
     } catch (err) {
       if (err && err.code === MODEL_REFUSED_CODE) return { status: 'fail', detail: err.message, noLine: true };
@@ -1344,6 +1346,9 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   setImplementer(ctx, 'record', extra.model, extra.profile ?? null, attempt, extra.effort, relaunch.escalations);
   // `attempt` rides with the marks even when no model resolved (a HEAD unreadable before the launch).
   const line = withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, attempt, ...marks } });
+  // This guard and relaunchTestStep's read ctx.implementer, not ctx.relaunch: an attempt that resolved no model
+  // leaves ctx.implementer at escalations 0, so the second relaunch is refused — the safe direction. Reading
+  // ctx.relaunch would let relaunchOrStop plan from that stale implementer.
   if (ladder && ctx.implementer.escalations === 1 && relaunchesOnCannotComplete('record', result)) {
     return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, (n) => cannotCompletePrompt(result.cannotComplete.summary, { attempt: n }), [relaunchWorkerStep]);
   }

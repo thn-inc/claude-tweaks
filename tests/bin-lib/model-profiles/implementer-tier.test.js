@@ -197,3 +197,19 @@ test('riskOf: exactly one valid value is the risk; zero, several or an invalid o
   assert.strictEqual(riskOf(['huge']), undefined);
   assert.strictEqual(riskOf(undefined), undefined);
 });
+
+test('startEffort: a missing or unreadable risk starts at the launch effort whatever it is, not a fixed level', () => {
+  for (const launchEffort of ['low', 'high']) {
+    assert.strictEqual(startEffort({ risk: undefined, launchEffort }), launchEffort);
+    assert.strictEqual(startEffort({ risk: 'critical', launchEffort }), launchEffort);
+  }
+});
+
+test('riskFromLabels: the risk of exactly one valid risk: label; none, several or an invalid one is undefined', () => {
+  const { riskFromLabels } = require('../../../plugin/bin/lib/model-profiles/implementer-tier');
+  assert.strictEqual(riskFromLabels(['size:medium', 'risk:low', 'ceremony:standard']), 'low');
+  assert.strictEqual(riskFromLabels(['size:medium']), undefined);
+  assert.strictEqual(riskFromLabels(['risk:high', 'risk:low']), undefined);
+  assert.strictEqual(riskFromLabels(['risk:huge']), undefined);
+  assert.strictEqual(riskFromLabels(undefined), undefined);
+});
