@@ -24,8 +24,17 @@
 // remaining unresolved trusted decision comments (another unit's, or any that
 // is not a planning hold), which keep `needs:decision` on the record. On a `not-held` verdict
 // `supersededHolds` is `[]` and `otherUnresolved` is not a label decision.
+//
+// `readBack` (#6100) is the pure read-back of `specify/planning-answer.md`'s
+// `## Read-back and outcome`: given the re-fetched labels, body and comments plus
+// the write results, it runs the assertions in a fixed order (`labels`, `rehold`
+// on a re-held branch only, `resolved`, `plan-line`, `plan-check`) and returns
+// the verdict, the failed ids, the outcome line and the `next` action word. It
+// does no I/O; a CLI verb wraps it.
 
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
+const { parsePlanLine } = require('./plan-line');
+const { fencedLineMask } = require('../markdown-blocks');
 
 const HELD_BY_LINE = 'Held-by: specify-planning';
 const BLOCK_START = '<!-- held-questions:start -->';
@@ -133,4 +142,127 @@ function readPlanningHold(comments) {
   };
 }
 
-module.exports = { readPlanningHold, HELD_BY_LINE, BLOCK_START, BLOCK_END };
+const READBACK_BRANCHES = ['answered', 'kept', 're-held'];
+const NEXT_ACTIONS = ['ready', 'still-needs-decision', 'kept-needs-decision', 'held-or-failed'];
+const OUTCOME_TEMPLATES = {
+  ready: 'answered — {k} planning question(s), ready (Plan: {short commit})',
+  still: 'answered — {k} planning question(s); still needs:decision ({m} other decision comment(s))',
+  kept: 'answered — {k} planning question(s); needs:decision kept (decision comments could not be re-read)',
+  reheld: 'held — {j} answered, {k} re-held',
+  failedAfterReHold: 'failed — read-back ({what}); re-run /claude-tweaks:specify #{n}',
+  failedAfterWrite: 'failed — read-back ({what}); check the decision comments and remove needs:decision by hand once none is unresolved',
+};
+
+const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const isCount = (v) => Number.isInteger(v) && v >= 0;
+
+function validateReadBack(input) {
+  const bad = (field, why) => { throw new TypeError(`readBack: ${field} ${why}`); };
+  if (input === null || typeof input !== 'object') bad('input', 'must be an object');
+  if (!Number.isInteger(input.record) || input.record <= 0) bad('record', 'must be a positive integer');
+  if (!READBACK_BRANCHES.includes(input.branch)) bad('branch', `must be one of ${READBACK_BRANCHES.join(', ')}`);
+  if (!isStringArray(input.labels)) bad('labels', 'must be a string array');
+  if (typeof input.body !== 'string') bad('body', 'must be a string');
+  if (!Array.isArray(input.comments)) bad('comments', 'must be an array');
+  if (typeof input.planLine !== 'string') bad('planLine', 'must be a string');
+  if (!isStringArray(input.resolvedIds)) bad('resolvedIds', 'must be a string array');
+  if (!isCount(input.answered)) bad('answered', 'must be an integer >= 0');
+  if (input.branch === 'answered') {
+    if (!isCount(input.otherUnresolved)) bad('otherUnresolved', 'is required on answered and must be an integer >= 0');
+  } else if (input.otherUnresolved !== undefined) bad('otherUnresolved', 'is allowed only on answered');
+  if (input.branch === 're-held') {
+    if (!isStringArray(input.reheldQuestions) || input.reheldQuestions.length === 0) bad('reheldQuestions', 'is required on re-held and must be a non-empty string array');
+  } else if (input.reheldQuestions !== undefined) bad('reheldQuestions', 'is allowed only on re-held');
+}
+
+const sortedTrim = (arr) => arr.map((q) => q.trim()).sort();
+
+function labelsAssertion(input) {
+  const ready = input.labels.includes('ready');
+  const needs = input.labels.includes('needs:decision');
+  const wantReady = input.branch === 'answered' && input.otherUnresolved === 0;
+  const pass = wantReady ? ready && !needs : needs && !ready;
+  const expected = wantReady ? 'ready present, needs:decision absent' : 'needs:decision present, ready absent';
+  return { id: 'labels', pass, detail: `expected ${expected}; got [${input.labels.join(', ')}]` };
+}
+
+function reholdAssertion(input) {
+  const hold = readPlanningHold(input.comments);
+  const expected = sortedTrim(input.reheldQuestions);
+  const got = sortedTrim(hold.questions.map((q) => q.question));
+  const pass = hold.verdict === 'held' && got.length === expected.length && got.every((q, i) => q === expected[i]);
+  const detail = hold.verdict === 'held'
+    ? `expected held questions [${expected.join(' | ')}]; got [${got.join(' | ')}]`
+    : `expected a held verdict; got not-held (${hold.reason})`;
+  return { id: 'rehold', pass, detail };
+}
+
+function resolvedAssertion(input) {
+  const comments = input.comments.filter((c) => c !== null && typeof c === 'object');
+  const problems = [];
+  for (const id of input.resolvedIds) {
+    const match = comments.filter((c) => String(ref(c).id) === id || String(c.id) === id);
+    if (match.length === 0) problems.push(`${id} (comment not found)`);
+    else if (!match.some((c) => bodyOf(c).includes(RESOLVED))) problems.push(`${id} (no ${RESOLVED})`);
+  }
+  if (input.resolvedIds.length === 0) problems.push('no resolved ids given');
+  return {
+    id: 'resolved',
+    pass: problems.length === 0,
+    detail: problems.length === 0 ? `resolved: ${input.resolvedIds.join(', ')}` : `expected every id resolved; got ${problems.join(', ')}`,
+  };
+}
+
+function planLineAssertion(input) {
+  const parsed = parsePlanLine(input.planLine);
+  const lines = input.body.replace(/\r\n/g, '\n').split('\n');
+  const mask = fencedLineMask(lines);
+  const found = lines.filter((line, i) => !mask[i] && line.replace(/[ \t]+$/, '').startsWith('Plan:')).map((line) => line.replace(/[ \t]+$/, ''));
+  const want = input.planLine.replace(/[ \t\r]+$/, '');
+  const pass = parsed.ok && found.length === 1 && found[0] === want;
+  const detail = !parsed.ok
+    ? `expected a parseable plan line; got ${parsed.reason ?? 'unparseable'}`
+    : `expected exactly one body Plan: line equal to the written line; got ${found.length} (${found.length === 1 ? 'differs' : 'count'})`;
+  return { id: 'plan-line', pass, detail: pass ? 'body carries the written Plan: line once' : detail };
+}
+
+function planCheckAssertion(input) {
+  const pc = input.planCheck;
+  const pass = pc !== null && typeof pc === 'object' && pc.valid === true;
+  return { id: 'plan-check', pass, detail: pass ? 'plan-check valid' : `expected plan-check valid === true; got ${JSON.stringify(pc)}` };
+}
+
+const render = (tpl, vars) => tpl.replace(/\{(k|m|j|n|what|short commit)\}/g, (_, key) => String(vars[key]));
+
+// input: see the field list in #6100's spec. -> { ok, branch, assertions, failed, outcome, next }.
+function readBack(input) {
+  validateReadBack(input);
+  const assertions = [labelsAssertion(input)];
+  if (input.branch === 're-held') assertions.push(reholdAssertion(input));
+  assertions.push(resolvedAssertion(input), planLineAssertion(input), planCheckAssertion(input));
+  const failed = assertions.filter((a) => !a.pass).map((a) => a.id);
+  const ok = failed.length === 0;
+  const { branch, record, answered } = input;
+  const T = OUTCOME_TEMPLATES;
+  let outcome;
+  let next;
+  if (!ok) {
+    const vars = { what: failed.join(', '), n: record };
+    if (branch === 're-held') { outcome = render(T.failedAfterReHold, vars); next = 'held-or-failed'; }
+    else { outcome = render(T.failedAfterWrite, vars); next = 'kept-needs-decision'; }
+  } else if (branch === 're-held') {
+    outcome = render(T.reheld, { j: answered, k: input.reheldQuestions.length }); next = 'held-or-failed';
+  } else if (branch === 'kept') {
+    outcome = render(T.kept, { k: answered }); next = 'kept-needs-decision';
+  } else if (input.otherUnresolved === 0) {
+    outcome = render(T.ready, { k: answered, 'short commit': parsePlanLine(input.planLine).commit.slice(0, 7) }); next = 'ready';
+  } else {
+    outcome = render(T.still, { k: answered, m: input.otherUnresolved }); next = 'still-needs-decision';
+  }
+  return { ok, branch, assertions, failed, outcome, next };
+}
+
+module.exports = {
+  readPlanningHold, HELD_BY_LINE, BLOCK_START, BLOCK_END,
+  readBack, READBACK_BRANCHES, NEXT_ACTIONS, OUTCOME_TEMPLATES,
+};
