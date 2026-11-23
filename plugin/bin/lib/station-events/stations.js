@@ -32,11 +32,40 @@ const PR_OPENED_TRANSITION = Object.freeze({ kind: 'started', station: STATION.B
 // Passed in by the caller, never inferred; `unknown` is valid.
 const LANES = Object.freeze(['standard', 'express', 'driver', 'unknown']);
 
-// `blockers` is an addition to the design's four kinds.
-const KINDS = Object.freeze(['entered', 'started', 'exited', 'session_bound', 'blockers']);
+// `blockers` is an addition to the design's four kinds; `planned`/`replanned` carry a record's station list,
+// `held`/`released` a hold, `decided` a person's or rule's decision.
+const KIND = Object.freeze({
+  ENTERED: 'entered', STARTED: 'started', EXITED: 'exited', SESSION_BOUND: 'session_bound', BLOCKERS: 'blockers',
+  PLANNED: 'planned', REPLANNED: 'replanned', HELD: 'held', RELEASED: 'released', DECIDED: 'decided',
+});
+const KINDS = Object.freeze(Object.values(KIND));
 
-// Carried only on `exited`; every other kind writes `outcome: null`.
-const OUTCOMES = Object.freeze(['passed', 'failed', 'returned', 'skipped', 'abandoned']);
+// Carried only on `exited`; every other kind writes `outcome: null`. An `exited` is on the
+// new contract (it must carry a valid `payload.actor`) when its outcome is `sent-back` or
+// `stopped`, or when it is `passed`/`failed` and carries an actor at all; a `passed`/`failed`
+// without one, and every RETIRED_OUTCOMES line, is pre-contract and is written unchanged.
+const OUTCOME = Object.freeze({ PASSED: 'passed', SENT_BACK: 'sent-back', FAILED: 'failed', STOPPED: 'stopped' });
+const OUTCOMES = Object.freeze(Object.values(OUTCOME));
+// Still accepted until the emitters that write them are migrated (record 8/8).
+const RETIRED_OUTCOMES = Object.freeze(['returned', 'skipped', 'abandoned']);
+
+// Why an exit was not a pass, or why a plan was made. A caller's unknown or missing code is
+// normalized to REASON_UNSPECIFIED by emit.js, never dropped.
+const REASON_UNSPECIFIED = 'unspecified';
+const REASON_CODES = Object.freeze([
+  REASON_UNSPECIFIED, 'default-list', 'infrastructure', 'test-failed', 'spec-wrong', 'scope-too-big',
+  'blocked-by-other', 'changes-requested', 'superseded', 'withdrawn', 'ceremony-downgrade',
+  'documents-only', 'other',
+]);
+
+// Who made an exit or a decision: `agent`, `script`, `person` or `rule:{name}`.
+const ACTORS = /^(?:agent|script|person|rule:[^\s:]+)$/;
+
+// Why a record is held, on `held` and `released` lines.
+const HOLD_WHYS = Object.freeze(['blocked', 'parked', 'changes-requested', 'waiting-on-you']);
+
+// The process a `planned` line names.
+const PROCESS = Object.freeze({ id: 'build-a-record', version: 1 });
 
 // The station a `blockers` snapshot is filed under: blocker state decides whether an authorized
 // record can be released to build, the closest reading of where blocker state matters.
@@ -151,7 +180,8 @@ function releaseTransition(reason) {
 }
 
 module.exports = {
-  STATION, STATIONS, LANES, KINDS, OUTCOMES, BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
+  STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS, PROCESS,
+  BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
   PR_OPENED_FACT, PR_OPENED_TRANSITION,
   DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,
   outcomeForReleaseReason, releaseTransition, outcomeForDriverStatus, transitionsForLabel,

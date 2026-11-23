@@ -11,7 +11,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { withLock } = require('../file-lock');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { STATIONS, LANES, KINDS, OUTCOMES } = require('./stations');
+const {
+  STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS,
+} = require('./stations');
 
 const LINE_VERSION = 1;
 const REPO_NAME_RE = /^[^/\s]+\/[^/\s]+$/;
@@ -81,6 +83,47 @@ function optionalString(v) {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
+const payloadOf = (event) => (isPlainObject(event.payload) ? event.payload : {});
+const validStationList = (v) => Array.isArray(v) && v.every((st) => STATIONS.includes(st));
+const validActor = (v) => typeof v === 'string' && ACTORS.test(v);
+
+// Is this an `exited` on the new contract (stations.js, above OUTCOMES)? A pre-contract line is
+// written unchanged: a retired outcome, or a passed/failed with no actor.
+function isNewContractExit(event) {
+  if (event.kind !== KIND.EXITED) return false;
+  if (event.outcome === OUTCOME.SENT_BACK || event.outcome === OUTCOME.STOPPED) return true;
+  return (event.outcome === OUTCOME.PASSED || event.outcome === OUTCOME.FAILED) && payloadOf(event).actor !== undefined;
+}
+
+// event -> the field a new-contract line gets wrong, or null. Never judges `reasonCode`.
+function invalidContract(event) {
+  const payload = payloadOf(event);
+  if (isNewContractExit(event)) {
+    if (!validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${payload.actor}`;
+    if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${payload.next}`;
+  }
+  if ((event.kind === KIND.HELD || event.kind === KIND.RELEASED) && !HOLD_WHYS.includes(payload.why)) return `payload.why outside the closed set: ${payload.why}`;
+  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && !validStationList(payload.stations)) return `payload.stations is not a list of stations: ${payload.stations}`;
+  if (event.kind === KIND.DECIDED && !validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${payload.actor}`;
+  return null;
+}
+
+// The payload a line carries. A new-contract non-pass exit or a plan whose reasonCode is unknown
+// or missing is written with REASON_UNSPECIFIED, the original kept in reasonText; the caller's
+// object is never mutated.
+function contractPayload(event) {
+  const payload = payloadOf(event);
+  const needsReason = event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED
+    || (isNewContractExit(event) && event.outcome !== OUTCOME.PASSED);
+  if (!needsReason || REASON_CODES.includes(payload.reasonCode)) return payload;
+  const original = payload.reasonCode;
+  const copy = { ...payload, reasonCode: REASON_UNSPECIFIED };
+  if (original !== undefined && original !== null && original !== '') {
+    copy.reasonText = typeof payload.reasonText === 'string' ? `${String(original)}: ${payload.reasonText}` : String(original);
+  }
+  return copy;
+}
+
 // event -> why it cannot become a line, or null when it can.
 function invalidReason(event) {
   if (!isPlainObject(event)) return 'event is not an object';
@@ -88,10 +131,10 @@ function invalidReason(event) {
   if (!Number.isInteger(event.recordNumber) || event.recordNumber <= 0) return 'recordNumber is not a positive integer';
   if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${event.kind}`;
   if (!STATIONS.includes(event.station)) return `station outside the closed set: ${event.station}`;
-  if (event.kind === 'exited' && !OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${event.outcome}`;
+  if (event.kind === 'exited' && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${event.outcome}`;
   if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${event.lane}`;
   if (typeof event.discriminator !== 'string' || event.discriminator === '') return 'discriminator missing';
-  return null;
+  return invalidContract(event);
 }
 
 function resolveAt(event, now) {
@@ -119,7 +162,7 @@ function buildLine(event, deps = {}) {
     lane: event.lane || 'unknown',
     sessionId: optionalString(event.sessionId),
     runId,
-    payload: isPlainObject(event.payload) ? event.payload : {},
+    payload: contractPayload(event),
   };
 }
 
