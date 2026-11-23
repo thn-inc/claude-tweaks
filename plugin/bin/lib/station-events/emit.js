@@ -95,16 +95,26 @@ function isNewContractExit(event) {
   return (event.outcome === OUTCOME.PASSED || event.outcome === OUTCOME.FAILED) && payloadOf(event).actor !== undefined;
 }
 
+// A payload value for a drop reason; never throws (a Symbol or a null-prototype object would
+// make a template literal throw and turn the reason into "append failed").
+function show(v) {
+  try {
+    const s = JSON.stringify(v);
+    if (typeof s === 'string') return s;
+  } catch { /* fall through */ }
+  return typeof v;
+}
+
 // event -> the field a new-contract line gets wrong, or null. Never judges `reasonCode`.
 function invalidContract(event) {
   const payload = payloadOf(event);
   if (isNewContractExit(event)) {
-    if (!validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${payload.actor}`;
-    if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${payload.next}`;
+    if (!validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${show(payload.actor)}`;
+    if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${show(payload.next)}`;
   }
-  if ((event.kind === KIND.HELD || event.kind === KIND.RELEASED) && !HOLD_WHYS.includes(payload.why)) return `payload.why outside the closed set: ${payload.why}`;
-  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && !validStationList(payload.stations)) return `payload.stations is not a list of stations: ${payload.stations}`;
-  if (event.kind === KIND.DECIDED && !validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${payload.actor}`;
+  if ((event.kind === KIND.HELD || event.kind === KIND.RELEASED) && !HOLD_WHYS.includes(payload.why)) return `payload.why outside the closed set: ${show(payload.why)}`;
+  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && !validStationList(payload.stations)) return `payload.stations is not a list of stations: ${show(payload.stations)}`;
+  if (event.kind === KIND.DECIDED && !validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${show(payload.actor)}`;
   return null;
 }
 
@@ -131,7 +141,7 @@ function invalidReason(event) {
   if (!Number.isInteger(event.recordNumber) || event.recordNumber <= 0) return 'recordNumber is not a positive integer';
   if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${event.kind}`;
   if (!STATIONS.includes(event.station)) return `station outside the closed set: ${event.station}`;
-  if (event.kind === 'exited' && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${event.outcome}`;
+  if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${event.outcome}`;
   if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${event.lane}`;
   if (typeof event.discriminator !== 'string' || event.discriminator === '') return 'discriminator missing';
   return invalidContract(event);
@@ -148,7 +158,7 @@ function buildLine(event, deps = {}) {
   if (invalidReason(event) !== null) return null;
   const at = resolveAt(event, deps.now || (() => new Date()));
   if (at === null) return null;
-  const outcome = event.kind === 'exited' ? event.outcome : null;
+  const outcome = event.kind === KIND.EXITED ? event.outcome : null;
   const runId = optionalString(event.runId);
   return {
     v: LINE_VERSION,

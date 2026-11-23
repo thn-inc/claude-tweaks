@@ -454,21 +454,30 @@ test('AC1.6: a legacy returned outcome is still written', () => {
 });
 
 test('AC3.2: a dropped line never throws and writes a reason to stderr', () => {
-  for (const bad of [exitedEvent('stopped', null), { kind: 'held', payload: 'x' }]) {
+  for (const [bad, fieldRe] of [[exitedEvent('stopped', null), /actor/], [{ kind: 'held', payload: 'x' }, /why/]]) {
     const root = scratchDir('ct-station-events-');
     const { stderr, d } = deps(root);
     let result;
     assert.doesNotThrow(() => { result = appendStationEvent(event(bad), d); });
     assert.equal(result.written, false);
+    assert.match(result.reason, fieldRe);
     assert.equal(stderr.calls.length, 1);
   }
+});
+
+test('a drop reason names the field even when the payload value cannot be stringified', () => {
+  dropped({ kind: 'held', payload: { why: Object.create(null) } }, /why/);
+  dropped({ kind: 'held', payload: { why: Symbol('x') } }, /why/);
+  dropped({ kind: 'planned', payload: { stations: [Symbol('x')] } }, /stations/);
 });
 
 test('AC2.1: concurrent appends of a planned and an exited line both land intact', async () => {
   const { execFile } = require('child_process');
   const root = scratchDir('ct-station-events-');
   const emitPath = path.join(__dirname, '../../../plugin/bin/lib/station-events/emit.js');
-  const script = (ev) => `require(${JSON.stringify(emitPath)}).appendStationEvent(${JSON.stringify(event(ev))}, { mainRoot: ${JSON.stringify(root)} });`;
+  // Both children busy-wait to one shared instant so their appends contend for the lock.
+  const startAt = Date.now() + 750;
+  const script = (ev) => `const m = require(${JSON.stringify(emitPath)}); while (Date.now() < ${startAt}) {} m.appendStationEvent(${JSON.stringify(event(ev))}, { mainRoot: ${JSON.stringify(root)} });`;
   const run = (ev) => new Promise((resolve, reject) => {
     execFile(process.execPath, ['-e', script(ev)], { windowsHide: true }, (err) => (err ? reject(err) : resolve()));
   });
