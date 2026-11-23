@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { runCliSync } = require('./helpers/run-cli');
-const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -144,4 +144,27 @@ test('AC5.2: --from fast steps up to standard, not capable', () => {
 
 test('AC7.3: an effort: high header under lane gets capable', () => {
   assert.strictEqual(answer('effort: high\n', THREE, ['--rule', 'lane']).profile, 'capable');
+});
+
+// AC8.2: flow/materialize.md's `size` reader row names the CLI, not the old prose mapping.
+const SIZE_ROW = lineStartingWith(
+  readText(path.join(ROOT, 'plugin', 'skills', 'flow', 'materialize.md')),
+  '| `size` |',
+);
+const OLD_MAPPING = '`low`→Fast';
+const sizeRowFacts = (row) => [
+  ...(/bin\/implementer-tier\.js/.test(row) ? [] : ['AC8.2: names the CLI']),
+  ...(row.includes(OLD_MAPPING) ? ['AC8.2: no prose mapping'] : []),
+];
+
+test("AC8.2: materialize.md's size row names implementer-tier.js, not the prose mapping", () => {
+  assert.ok(SIZE_ROW.length > 0, 'materialize.md has no size row');
+  assert.deepStrictEqual(sizeRowFacts(SIZE_ROW), []);
+});
+
+test('AC8.2 control: stripping the CLI name or re-adding the old mapping turns exactly that fact red', () => {
+  const noCli = SIZE_ROW.replace('bin/implementer-tier.js', () => '');
+  assert.notEqual(noCli, SIZE_ROW, 'the CLI name is not in the size row');
+  assert.deepStrictEqual(sizeRowFacts(noCli), ['AC8.2: names the CLI']);
+  assert.deepStrictEqual(sizeRowFacts(`${SIZE_ROW} ${OLD_MAPPING}`), ['AC8.2: no prose mapping']);
 });
