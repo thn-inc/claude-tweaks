@@ -4,6 +4,8 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/bin/closing-links.js
   - plugin/bin/lib/flow/closing-links.js
+  - plugin/bin/lib/compose-subject.js
+  - plugin/bin/lib/release/subject.js
 ---
 
 # Tidy's Housekeeping PR Waits for Its Own Checks
@@ -36,6 +38,13 @@ files:
 - **Should understand:** Under an explicit `merge-verification: off`, tidy merges as every other merge site does under `off`. That is the maintainer's opt-out, not a tidy special case.
 - **Red flags:** `mergedAt` earlier than a check's completion on a repo without required checks while `merge-verification` is not `off`; a `bot:parked` label appearing anywhere (a housekeeping PR has no record to park); or a ready-and-comment degrade on a PR that was never a draft.
 
+### 4. Compose the merge subject without a record — `compose-subject.js --housekeeping`
+- **URL:** none (local; the subject dir under the session tmp root)
+- **Action:** Wherever Step 3's fences run, branch 1's immediate-merge degrade included, tidy composes with `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" --housekeeping --pr {pr-number} --out-dir "{subject-dir}"`. That call passes no record list, no `--tag` and no `--keep-open`. The composer reads the PR (`gh pr view`), checks its body for `<!-- tidy-housekeeping-pr -->` or `<!-- wrap-up-residue-pr -->`, and checks that the PR closes no issue (`closingIssuesReferences` is empty). It then writes `chore: {PR title} (#{n})`, with any closing phrase in the title neutralized and any Conventional-Commits prefix stripped. The body holds the title and carries no `Fixes` line and no `Release-Note:`. The one stdout line is pasted as `-t` into `gh pr merge`.
+- **Should feel:** The arm just works. The decision log reads `armed` or `merged`, never `arm-failed`.
+- **Should understand:** The record form (`compose-subject.js {issue-list} …`) still refuses a call with no record, exiting 1 with `missing <n> argument`. Only the explicit `--housekeeping` flag opens the record-less path, and only for a marker-stamped PR that links no record. Wrap-up's residue-sweep PRs and the `## Arm ready PR` sweep backstop use the same form.
+- **Red flags:** `arm-failed` on a housekeeping PR with `housekeeping-auto-merge` on; a squash subject reading `chore: chore: …`; or a record-linked PR (one with a `Fixes` line) composed through `--housekeeping`. That last case must exit 1, because it would merge without closing its record.
+
 ## Origin
 
-Record #4467 (tidy step-7-5: the housekeeping PR merges immediately when the repo has no required checks, and its body is not screened for closing keywords). Updated by resumed run 2026-11-16T020459-record-4467, which named the body file and added the Conflict-path, `ci-gate` record and post-merge rules.
+Record #4467 (tidy step-7-5: the housekeeping PR merges immediately when the repo has no required checks, and its body is not screened for closing keywords). Updated by resumed run 2026-11-16T020459-record-4467, which named the body file and added the Conflict-path, `ci-gate` record and post-merge rules. Updated by record #5208 (run 2026-11-23T151011-record-5208): the record-less `--housekeeping` composer form, so the creation-time arm and the sweep backstop no longer fail with `missing <n> argument`.

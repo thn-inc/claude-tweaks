@@ -5,7 +5,8 @@
 // archived sha, worktree and main-checkout path rewritten), the manifest, the fixture recording what was selected and
 // why, and the archived reports the scorer compares to. A control arm per archived (tier, effort) reruns the slots at
 // the tier and effort they were archived at. No archived reply text or decisions.md verdict line reaches a prompt, a
-// repository or a copy; archived-reports.json keeps only each row's severity, path and line.
+// repository or a copy; archived-reports.json keeps only each row's severity, path and line. The branch roles (task,
+// whole-branch) select their slots in reviews-branch.js and share the rendering, barrier and writes here.
 
 const os = require('os');
 const path = require('path');
@@ -28,9 +29,11 @@ const REMOVED = '[run-directory path removed]';
 const LENS_ARG = new RegExp(`^${LENS_ID}$`);
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-// What a --role replays: which timing.json items are its dispatches, and the { lens, side } slot each one fills.
+// What a --role replays. The lens row: which timing.json items are its dispatches, and the { lens, side } slot each one
+// fills. A branch row (`kind: 'branch'`) is selected by reviews-branch.js under its `key`.
 const ROLES = {
   lens: {
+    kind: 'lens',
     // A headless worker (`kind: 'worker'`, #6000) has no subagent transcript to replay from.
     isDispatch: (item) => item.role === 'lens reviewer' && item.kind !== 'worker',
     slotOf: (item) => {
@@ -40,11 +43,17 @@ const ROLES = {
       return lens && side ? { lens: lensIdOf(lens[1]), side: side[1].toLowerCase() } : null;
     },
   },
+  task: { kind: 'branch', key: 'task' },
+  'whole-branch': { kind: 'branch', key: 'whole-branch' },
+  'task-vs-branch': { kind: 'branch', key: 'task-vs-branch' },
 };
 
 // The options parseArgs collected -> the validated request, or { error } for a malformed invocation.
 function parseReviewsOptions(opts, profiles, efforts) {
   if (!hasOwn(ROLES, opts.role)) return { error: `--role must be one of ${Object.keys(ROLES).join('|')}: "${opts.role}"` };
+  if (ROLES[opts.role].kind !== 'lens') {
+    for (const flag of ['lens', 'max-per-lens']) if (opts[flag] !== undefined) return { error: `--${flag} applies to --role lens only` };
+  }
   if (!opts.arms || opts.arms.length === 0) return { error: 'extract-reviews requires at least one --arm' };
   const arms = [];
   for (const text of opts.arms) {
@@ -148,12 +157,29 @@ function promptOf(transcriptText) {
   return text ? text : null;
 }
 
+// An archived dispatch's transcript and first user message -> { file, transcript, prompt }: `file` is undefined when
+// its agentId has no indexed transcript; `transcript` is null when there is none or it cannot be read, and `prompt` is
+// null then or when the transcript holds no user message.
+function transcriptPromptOf(item, c, fs) {
+  const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
+  let transcript = null;
+  try {
+    transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
+  } catch {
+    transcript = null;
+  }
+  return { file, transcript, prompt: transcript === null ? null : promptOf(transcript) };
+}
+
+// The archived reply with every worktree path the prompt names, then the main checkout, stripped, read through
+// scanView. Stripped before any parse: a location regex cannot match across the space in a root like `main checkout`.
+const strippedReply = (reply, prompt, mainRoot) => [...worktreePathsOf(prompt, { mainRoot }), mainRoot].reduce((t, root) => stripTree(t, root), scanView(reply));
+
 // The archived reply's rows with every worktree path the prompt names, then the main checkout, stripped from the
 // paths they cite, so a row cited by absolute path is stored repo-relative. Read through scanView, as the worktree
 // paths are, so a win32 citation spelled with `\` strips too and its row path is `/`-separated.
 function archivedRows(reply, prompt, mainRoot) {
-  const stripped = [...worktreePathsOf(prompt, { mainRoot }), mainRoot].reduce((t, root) => stripTree(t, root), scanView(reply));
-  const parsed = parseFindings(stripped);
+  const parsed = parseFindings(strippedReply(reply, prompt, mainRoot));
   return parsed ? parsed.rows.map(({ sev, path: p, line }) => ({ sev, path: p, line })) : [];
 }
 
@@ -181,6 +207,19 @@ function confirmedOf(unitDir, lens, fs) {
   ];
   const findings = all.filter((f) => Number.isFinite(f.line));
   return { findings, unlocated: all.length - findings.length };
+}
+
+// One run input's text, from the run's directory; for a run read from `{runs}/archive/{run}`, an input absent there is
+// read from `{runs}/{run}`, where an archived run keeps its `work/`. Throws when neither holds it (run-input-gone).
+function readRunInput(r, i, fs) {
+  const own = path.join(r.dir, i.member || '', i.rel);
+  try {
+    return fs.readFileSync(own, 'utf8');
+  } catch (e) {
+    const archive = path.dirname(r.dir);
+    if (path.basename(archive) !== 'archive') throw e;
+    return fs.readFileSync(path.join(path.dirname(archive), path.basename(r.dir), i.member || '', i.rel), 'utf8');
+  }
 }
 
 const inputKey = (i) => `${i.member ? `${i.member}/` : ''}${i.rel}`;
@@ -241,14 +280,7 @@ function examineDispatch(r, item, c, deps, member) {
   let unitKey = member ? `${r.run}/${member}` : r.run;
   const tier = item.tier;
   if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { slot, unitKey, reason: 'no-archived-tier' };
-  const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
-  let transcript = null;
-  try {
-    transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
-  } catch {
-    transcript = null;
-  }
-  const prompt = transcript === null ? null : promptOf(transcript);
+  const { file, transcript, prompt } = transcriptPromptOf(item, c, fs);
   if (prompt === null) return { slot, unitKey, reason: 'no-transcript' };
   const { inputs, unknown } = runInputsOf(prompt, { mainRoot: c.mainRoot, runName: r.run });
   unitKey = unitOf(r, inputs).key;
@@ -272,7 +304,7 @@ function examineDispatch(r, item, c, deps, member) {
   for (const i of inputs) {
     if (i.kind === 'scratch') continue;
     try {
-      i.source = fs.readFileSync(path.join(r.dir, i.member || '', i.rel), 'utf8');
+      i.source = readRunInput(r, i, fs);
     } catch {
       return { slot, unitKey, rows, reason: 'run-input-gone' };
     }
@@ -284,7 +316,7 @@ function examineDispatch(r, item, c, deps, member) {
     rows,
     candidate: {
       ...slot, run: r, agentId: item.agentId, prompt, inputs, counts, rows,
-      archivedBase: resolved[0], archivedHead: resolved[1], archivedTier: tier,
+      archivedBase: resolved[0], archivedHead: resolved[1], promptBase: resolved[0], promptHead: resolved[1], archivedTier: tier,
       archivedEffort: c.EFFORT_SCALE.includes(effort) ? effort : c.PROFILES[tier].effort,
       originRefs: originRefsOf(prompt),
     },
@@ -319,8 +351,12 @@ function extractReviews(opts, deps) {
   const out = path.resolve(opts.out);
   const c = {
     role, PROFILES, EFFORT_SCALE, mainRoot: path.resolve(opts.runs, '..', '..'), transcripts: indexTranscripts(opts.transcripts, fs).files,
-    exists: existsOnDisk(fs),
+    exists: existsOnDisk(fs), out, arms,
+    // task-vs-branch: the task reviews that are not a Needs fixes with a Critical or Important item (no slot, no row).
+    ...(role.key === 'task-vs-branch' ? { notQualifying: 0 } : {}),
   };
+  // Required here, not at the top: reviews-branch.js requires this module's helpers at its own top level.
+  const branch = role.kind === 'branch' ? require('./reviews-branch.js') : null;
   const excluded = [];
   // Every exclusion row goes through here, so a reason the schema does not list fails loudly instead of shipping.
   const exclude = (row) => {
@@ -340,6 +376,16 @@ function extractReviews(opts, deps) {
     return x < y ? 1 : -1;
   });
   for (const dir of byNewest) {
+    if (branch) {
+      // decisions.md is a lens input only, so a branch role reads no run record beyond its dispatches.
+      const r = { run: path.basename(dir), dir };
+      const found = dispatchesOf(dir, fs);
+      for (const { member, index, reason } of found.problems) {
+        exclude({ run: r.run, ...(member ? { member } : {}), ...(index != null ? { index } : {}), reason });
+      }
+      passed.push(...branch.selectBranchSlots(r, found.dispatches, c, deps, exclude));
+      continue;
+    }
     const r = readRun(dir, deps);
     if (r.excluded) {
       exclude({ run: r.run, reason: r.excluded });
@@ -391,16 +437,26 @@ function extractReviews(opts, deps) {
     bump(perLens, s.lens);
     return true;
   });
-  const byLens = {};
-  for (const s of slots) bump(byLens, s.lens);
-  if (slots.length === 0 || (requested.minReviews !== undefined && slots.length < requested.minReviews)) {
-    deps.err(JSON.stringify({ shortfall: { requested, available: { reviews: slots.length, byLens } }, excluded }));
+  // The lens role counts slots per lens; task and whole-branch per archived tier; task-vs-branch counts task reviews
+  // (its task-head slots) per task-review tier, each beside its final-head control slot.
+  const by = {};
+  let totals;
+  if (role.key === 'task-vs-branch') {
+    const heads = slots.filter((s) => s.at === 'task-head');
+    for (const s of heads) bump(by, s.taskTier);
+    totals = { reviews: heads.length, slots: slots.length, byTaskTier: by, notQualifying: c.notQualifying };
+  } else {
+    for (const s of slots) bump(by, role.kind === 'lens' ? s.lens : s.archivedTier);
+    totals = { reviews: slots.length, [role.kind === 'lens' ? 'byLens' : 'byArchivedTier']: by };
+  }
+  if (slots.length === 0 || (requested.minReviews !== undefined && totals.reviews < requested.minReviews)) {
+    deps.err(JSON.stringify({ shortfall: { requested, available: totals }, excluded }));
     return EXIT_SHORTFALL;
   }
 
   // Selection succeeded: from here on files are written.
   try {
-    return writeOutputs({ out, slots, arms, requested, excluded, byLens, runRows, opts, c }, deps);
+    return writeOutputs({ out, slots, arms, requested, excluded, totals, runRows, opts, c }, deps);
   } catch (e) {
     deps.err(`review-replay.js: writing ${out} failed: ${String((e && e.message) || e).split('\n')[0]}\nreview-replay.js: ${out} is now partial; remove it before re-running extract-reviews`);
     return 1;
@@ -408,9 +464,10 @@ function extractReviews(opts, deps) {
 }
 
 function writeOutputs(w, deps) {
-  const { out, slots, arms, requested, excluded, byLens, runRows, opts, c } = w;
+  const { out, slots, arms, requested, excluded, totals, runRows, opts, c } = w;
   const fs = deps.fs;
   const { PROFILES } = c;
+  const lens = c.role.kind === 'lens';
 
   // One repository per distinct (run, base, head), numbered within the run.
   const repos = new Map();
@@ -453,7 +510,8 @@ function writeOutputs(w, deps) {
   const confirmed = {};
   const fixtureSlots = [];
   for (const s of slots) {
-    const shaMap = { [s.archivedBase]: s.repo.replayBase, [s.archivedHead]: s.repo.replayHead };
+    // The shas the prompt names map to the replay's (for the lens role and --role task, those are the repository's own).
+    const shaMap = { [s.promptBase]: s.repo.replayBase, [s.promptHead]: s.repo.replayHead };
     const slotArms = [...userArms, ...controls.filter((a) => a.slots.has(s))];
     const texts = renderSlot(s, { mainRoot: c.mainRoot, out, repoDir: s.repo.dir, shaMap, arms: slotArms });
     // Check 8 ran before the replay shas existed: the texts as written must pass it too, or nothing more is written.
@@ -470,6 +528,17 @@ function writeOutputs(w, deps) {
       fs.writeFileSync(p.file, p.text);
       slotArms[i].prompts.push({ file: p.file, name, run: s.run.run, lens: s.lens, side: s.side, repo: repoPath });
     });
+    if (!lens) {
+      reports[name] = {
+        role: s.role, run: s.run.run, verdict: s.verdict, items: s.items, itemsUnparsed: s.itemsUnparsed,
+        unlocated: s.items.filter((i) => i.path === null).length, taskTier: s.taskTier, at: s.at,
+      };
+      fixtureSlots.push({
+        name, run: s.run.run, role: s.role, agentId: s.agentId, repoKey: s.repo.key, verdict: s.verdict, taskTier: s.taskTier, at: s.at,
+        baseFrom: s.baseFrom, taskAgentId: s.taskAgentId, archivedTier: s.archivedTier, archivedEffort: s.archivedEffort, controlArm: s.controlArm,
+      });
+      continue;
+    }
     const unit = unitOf(s.run, s.inputs);
     reports[name] = { lens: s.lens, side: s.side, run: s.run.run, unitKey: unit.key, counts: s.counts, rows: s.rows };
     const byUnit = confirmed[unit.key] || (confirmed[unit.key] = {});
@@ -481,16 +550,15 @@ function writeOutputs(w, deps) {
   }
 
   const manifestArms = [...userArms, ...controls.map(({ slots: _, ...a }) => a)];
-  const totals = { reviews: slots.length, byLens };
   writeJson(fs, path.join(out, REVIEWS_MANIFEST_FILE), { schemaVersion: SCHEMA_VERSION, kind: REVIEWS_KIND, arms: manifestArms });
   writeJson(fs, path.join(out, REVIEWS_FIXTURE_FILE), {
     schemaVersion: SCHEMA_VERSION, role: opts.role, requested, totals, excluded,
     repos: [...repos.values()].map((r) => ({ key: r.key, run: r.run, path: path.join(r.dir, 'repo'), archivedBase: r.archivedBase, archivedHead: r.archivedHead, replayBase: r.replayBase, replayHead: r.replayHead })),
     slots: fixtureSlots,
   });
-  writeJson(fs, path.join(out, REPORTS_FILE), { schemaVersion: SCHEMA_VERSION, reports, confirmed, runRows });
+  writeJson(fs, path.join(out, REPORTS_FILE), lens ? { schemaVersion: SCHEMA_VERSION, reports, confirmed, runRows } : { schemaVersion: SCHEMA_VERSION, reports });
   deps.log(JSON.stringify({ totals, requested, excluded, arms: manifestArms.map((a) => ({ name: a.name, prompts: a.prompts.length })) }, null, 2));
   return 0;
 }
 
-module.exports = { extractReviews, ROLES, existsOnDisk };
+module.exports = { extractReviews, ROLES, existsOnDisk, renderSlot, promptOf, transcriptPromptOf, strippedReply, readRunInput };

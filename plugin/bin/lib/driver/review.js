@@ -180,7 +180,7 @@
 // each kept file (its TAP at {runDir}/review/fix-evidence-{i}.tap, i: its index among the confirmed)
 // each preceded by a byte check of that file and followed by a tree check that expects nothing (the
 // evidence is committed by then), then the
-// "changed nothing" judgement, then wiring.check. Nothing launches a third implementer.
+// "changed nothing" judgement, then wiring.check. The round launches no further implementer.
 //   rewrite   the fix worker had write access, so each path is judged again before anything is
 //             touched: the PATH_RULES chain but `exists` (the file may still be there), and the path
 //             must still resolve to the spelling git reported when it was confirmed. A file or a
@@ -992,14 +992,15 @@ function buildFixPrompt(confirmed) {
   return lines.join('\n');
 }
 
-// ctx.worker after the fix round (see the header). A cost or turn count that neither launch reported
-// stays null; one that only one launch reported is that launch's.
-function mergeWorker(first, fix) {
+// ctx.worker after the fix round (see the header), and after the worker step's relaunch (#5997, label
+// `Relaunch`). A cost or turn count that neither launch reported stays null; one that only one launch
+// reported is that launch's.
+function mergeWorker(first, fix, label = 'Review fix') {
   if (!first || typeof first !== 'object') return fix;
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const sum = (a, b) => (num(a) === null && num(b) === null ? null : (num(a) ?? 0) + (num(b) ?? 0));
   const list = (v) => (Array.isArray(v) ? v : []);
-  const summary = [first.summary || '', fix.summary ? `Review fix: ${fix.summary}` : ''].filter(Boolean).join(' ') || null;
+  const summary = [first.summary || '', fix.summary ? `${label}: ${fix.summary}` : ''].filter(Boolean).join(' ') || null;
   return {
     ...fix,
     summary,
@@ -1235,6 +1236,7 @@ module.exports = {
   truncateUtf8,
   buildReviewerPrompt,
   buildFixPrompt,
+  mergeWorker,
   reviewPass,
   reviewRecord,
 };

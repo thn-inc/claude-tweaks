@@ -1,5 +1,5 @@
 'use strict';
-const { test, before } = require('node:test');
+const { test, before, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,7 @@ const schema = require('../../tools/review-replay/schema');
 const { toPosix } = schema;
 const { scratchDir } = require('../helpers/tmp-dir');
 const { runWorkflow } = require('./helpers');
-const { buildReviewsFixture, RUN, RUN_GONE, cleanEnv } = require('./reviews-fixture');
+const { buildReviewsFixture, buildBranchFixture, RUN, RUN_GONE, RUN_BRANCH, cleanEnv } = require('./reviews-fixture');
 const { unrewrittenPaths } = require('../../tools/review-replay/reviews-rewrite');
 const { existsOnDisk } = require('../../tools/review-replay/reviews-extract');
 
@@ -492,4 +492,439 @@ test('a headless worker item (kind: worker) is not a lens dispatch the replay ca
   const { ROLES } = require('../../tools/review-replay/reviews-extract');
   assert.equal(ROLES.lens.isDispatch({ role: 'lens reviewer', description: 'Review lens 3a correctness A' }), true);
   assert.equal(ROLES.lens.isDispatch({ role: 'lens reviewer', kind: 'worker', description: 'lens 3a A' }), false);
+});
+
+describe('branch roles', () => {
+  const RUNB = RUN_BRANCH;
+  // Extracts `role` from a fresh branch fixture built with `opts`, changed by `tweak(bx)` first when given.
+  async function extractBranch(role, opts = {}, extra = [], tweak = null) {
+    const bRoot = scratchDir('rr-branch-');
+    const bx = buildBranchFixture(bRoot, opts);
+    if (tweak) tweak(bx);
+    const out = path.join(bRoot, 'out');
+    const deps = makeDeps(bx.mainRoot);
+    const code = await run({ argv: ['extract-reviews', '--runs', bx.runsRoot, '--out', out, '--role', role, '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast', ...extra], deps });
+    const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+    return { code, deps, out, json, bx };
+  }
+  const plainTask = memo(() => extractBranch('task'));
+  const promptOf = (x, name, arm = 'a') => read(x.json(schema.REVIEWS_MANIFEST_FILE).arms.find((a) => a.name === arm).prompts.find((p) => p.name === name).file);
+
+  test('--role task: one slot per task review, verdict and located items archived', async () => {
+    const x = await plainTask();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.equal(fixture.role, 'task');
+    assert.deepEqual(fixture.slots.map((s) => [s.name.split('/').pop(), s.verdict, s.archivedTier]), [['task', 'approved', 'standard'], ['task.2', 'needs-fixes', 'capable']]);
+    assert.deepEqual(fixture.slots.map((s) => [s.role, s.agentId, s.taskTier, s.at, s.baseFrom, s.taskAgentId]), [['task', 't1', null, null, null, null], ['task', 't2', null, null, null, null]]);
+    assert.deepEqual(fixture.totals, { reviews: 2, byArchivedTier: { standard: 1, capable: 1 } });
+    const reports = x.json(schema.REPORTS_FILE);
+    assert.deepEqual(Object.keys(reports), ['schemaVersion', 'reports'], 'no confirmed or runRows for a branch role');
+    const r = reports.reports[`${RUNB}/task.2`];
+    assert.deepEqual(r.items.map((i) => [i.sev, i.path, i.line]), [['important', 'src/x.js', 10], ['minor', null, null]]);
+    assert.equal(r.unlocated, 1);
+    assert.deepEqual([r.role, r.run, r.verdict, r.itemsUnparsed, r.taskTier, r.at], ['task', RUNB, 'needs-fixes', false, null, null]);
+    assert.ok(!JSON.stringify(reports).includes(x.bx.mainRoot), 'no archived path is stored');
+    assert.deepEqual(reports.reports[`${RUNB}/task`].items, []);
+    const slot = fixture.slots.find((s) => s.agentId === 't2');
+    const repo = fixture.repos.find((p) => p.key === slot.repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2]);
+    const text = promptOf(x, `${RUNB}/task.2`);
+    for (const needle of [x.bx.T1, x.bx.T2, x.bx.T1.slice(0, 7), '[Effort:', x.bx.mainRoot]) assert.ok(!text.includes(needle), `the prompt names ${needle}`);
+    assert.ok(text.includes(`Base ${repo.replayBase}, Head ${repo.replayHead}.`), text);
+    const manifest = x.json(schema.REVIEWS_MANIFEST_FILE);
+    assert.deepEqual(schema.validateReviewsManifest(manifest), []);
+    assert.deepEqual(manifest.arms.map((a) => a.name), ['a', 'control.standard.medium', 'control.capable.high']);
+  });
+
+  test('--role task: re-review dispatches are never slots', async () => {
+    const x = await plainTask();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.ok(![...fixture.slots, ...fixture.excluded].some((s) => s.agentId === 'rr2'));
+    assert.ok(![...fixture.slots, ...fixture.excluded].some((s) => s.agentId === 'wb'), 'nor whole-branch dispatches');
+  });
+
+  test('AC6.1: a pointer prompt whose file is gone is excluded as prompt-file-gone and writes no prompt', async () => {
+    const x = await extractBranch('task', { pointer: 'gone' });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 'tp', tier: 'standard', reason: 'prompt-file-gone' }]);
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['t1', 't2']);
+    // Each slot is written once per user arm (one here) and once for its own control arm.
+    const files = filesUnder(path.join(x.out, 'prompts'));
+    assert.equal(files.length, fixture.slots.length * 2);
+    const prompts = x.json(schema.REVIEWS_MANIFEST_FILE).arms.flatMap((a) => a.prompts);
+    assert.equal(prompts.length, files.length);
+    const slotOf = new Map(fixture.slots.map((s) => [s.name, s.agentId]));
+    assert.ok(prompts.every((p) => slotOf.has(p.name) && slotOf.get(p.name) !== 'tp'), JSON.stringify(prompts.map((p) => p.name)));
+    for (const f of files) assert.ok(!read(f).includes('task-2-review-prompt'), f);
+  });
+
+  test('an archived run reads a run input its archive directory lacks from the top-level run directory', async () => {
+    const aRoot = scratchDir('rr-branch-archive-');
+    const ax = buildBranchFixture(aRoot);
+    const top = path.join(ax.runsRoot, RUNB);
+    const archived = path.join(ax.runsRoot, 'archive', RUNB);
+    fs.mkdirSync(path.dirname(archived), { recursive: true });
+    fs.renameSync(top, archived);
+    // As an archived run is kept: timing.json under archive/{run}, work/ left at the top-level {run}.
+    fs.mkdirSync(top);
+    fs.renameSync(path.join(archived, 'work'), path.join(top, 'work'));
+    const extractAt = async (name) => {
+      const out = path.join(aRoot, name);
+      const deps = makeDeps(ax.mainRoot);
+      const code = await run({ argv: ['extract-reviews', '--runs', ax.runsRoot, '--out', out, '--role', 'whole-branch', '--transcripts', ax.transcripts, '--arm', 'name=a,profile=fast', '--select', RUNB], deps });
+      return { code, deps, out };
+    };
+    const x = await extractAt('out');
+    assert.equal(x.code, 0, x.deps.errs.join('\n'));
+    const fixture = JSON.parse(read(path.join(x.out, schema.REVIEWS_FIXTURE_FILE)));
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['wb']);
+    const copy = path.join(x.out, 'repos', `${RUNB}--r1`, 'whole-branch--7-spec.md');
+    assert.equal(read(copy), read(path.join(top, 'work', '7-spec.md')));
+    // Absent from both directories, the input is gone.
+    fs.rmSync(path.join(top, 'work'), { recursive: true });
+    const y = await extractAt('out-gone');
+    assert.equal(y.code, 3);
+    assert.deepEqual(JSON.parse(y.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 'wb', tier: 'capable', reason: 'run-input-gone' }]);
+  });
+
+  test('--role task: a pointer prompt whose file exists replays that file', async () => {
+    const x = await extractBranch('task', { pointer: 'present' });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId]), [[`${RUNB}/task`, 't1'], [`${RUNB}/task.2`, 't2'], [`${RUNB}/task.3`, 'tp']]);
+    const text = promptOf(x, `${RUNB}/task.3`);
+    assert.ok(!text.includes('it is your prompt'), text);
+    assert.equal(text, promptOf(x, `${RUNB}/task.2`), 'the pointer file\'s text, rewritten as t2\'s own prompt is');
+  });
+
+  test('--role task: a pointer whose file carries its own sha pair replays the file, whatever range the pointer names', async () => {
+    const x = await extractBranch('task', { pointer: 'present', pointerShas: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    const tp = fixture.slots.find((s) => s.agentId === 'tp');
+    const repo = fixture.repos.find((p) => p.key === tp.repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2], 'the range is the file\'s');
+    assert.equal(promptOf(x, tp.name), promptOf(x, `${RUNB}/task.2`));
+  });
+
+  test('--role task: a prompt citing a file with no sha pair while naming its own range replays the original prompt', async () => {
+    const x = await extractBranch('task', { hybrid: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId]), [[`${RUNB}/task`, 't1'], [`${RUNB}/task.2`, 't2'], [`${RUNB}/task.3`, 'th']]);
+    const repo = fixture.repos.find((p) => p.key === fixture.slots[2].repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2]);
+    const text = promptOf(x, `${RUNB}/task.3`);
+    assert.ok(text.startsWith('Follow the reviewer instructions in this file exactly:\n'), text);
+    assert.ok(text.includes(`Base ${repo.replayBase}, Head ${repo.replayHead}.`), text);
+    assert.ok(!text.includes('TEMPLATE-TEXT'), 'not the cited file\'s text');
+  });
+
+  test('--role whole-branch: one slot, items archived, prompt rewritten', async () => {
+    const x = await extractBranch('whole-branch');
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId, s.role, s.verdict, s.archivedTier, s.archivedEffort]), [[`${RUNB}/whole-branch`, 'wb', 'whole-branch', null, 'capable', 'high']]);
+    assert.deepEqual(fixture.excluded, []);
+    const r = x.json(schema.REPORTS_FILE).reports[`${RUNB}/whole-branch`];
+    assert.deepEqual(r.items.map((i) => [i.sev, i.path, i.line]), [['minor', 'src/y.js', 2]]);
+    assert.equal(r.unlocated, 0);
+    const repo = fixture.repos[0];
+    assert.deepEqual([fixture.repos.length, repo.archivedBase, repo.archivedHead], [1, x.bx.B, x.bx.F]);
+    const text = promptOf(x, `${RUNB}/whole-branch`);
+    assert.ok(text.includes(`Base ${repo.replayBase} (the review base). Head ${repo.replayHead}.`), text);
+    assert.ok(text.includes('## What Was Implemented'), text);
+    for (const needle of [x.bx.B, x.bx.F, '[Effort:', x.bx.mainRoot]) assert.ok(!text.includes(needle), `the prompt names ${needle}`);
+    const spec = path.join(x.out, 'repos', `${RUNB}--r1`, 'whole-branch--7-spec.md');
+    assert.ok(text.includes(`Spec: ${toPosix(spec)}`), text);
+    assert.equal(read(spec), read(path.join(x.bx.runsRoot, RUNB, 'work', '7-spec.md')));
+  });
+
+  const plainTvb = memo(() => extractBranch('task-vs-branch'));
+  const lsTree = (cwd, rev) => gitIn(cwd)('ls-tree', '-r', rev);
+  const repoOf = (x, s) => x.json(schema.REVIEWS_FIXTURE_FILE).repos.find((r) => r.key === s.repoKey);
+  // Replaces agent `id`'s archived reply in the branch fixture's transcripts.
+  const setReply = (bx, id, text) => {
+    const file = path.join(bx.transcripts, 'slug', 'sess', 'subagents', `agent-${id}.jsonl`);
+    const lines = read(file).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    lines[1].message.content[0].text = text;
+    fs.writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  };
+
+  test('AC1.1 AC1.2 AC1.3: one task-head slot, its repository head tree is T2, not F (git ls-tree -r)', async () => {
+    const x = await plainTvb();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.equal(fixture.role, 'task-vs-branch');
+    const head = fixture.slots.filter((s) => s.at === 'task-head');
+    assert.equal(head.length, 1);
+    assert.deepEqual([head[0].name, head[0].taskAgentId, head[0].agentId], [`${RUNB}/task-vs-branch`, 't2', 'wb']);
+    const repo = repoOf(x, head[0]).path;
+    assert.equal(lsTree(repo, 'HEAD'), lsTree(x.bx.mainRoot, x.bx.T2));
+    assert.notEqual(lsTree(repo, 'HEAD'), lsTree(x.bx.mainRoot, x.bx.F));
+    assert.equal(lsTree(repo, 'HEAD~1'), lsTree(x.bx.mainRoot, x.bx.B), 'the base is the whole-branch prompt\'s');
+  });
+
+  test('AC2.1: the slot prompt is the whole-branch prompt with replay shas, no task prompt or reply text', async () => {
+    const x = await plainTvb();
+    ok(x);
+    const slot = x.json(schema.REVIEWS_FIXTURE_FILE).slots.find((s) => s.at === 'task-head');
+    const repo = repoOf(x, slot);
+    const text = promptOf(x, slot.name);
+    for (const needle of ['You are a Senior Code Reviewer', '## What Was Implemented', `Base ${repo.replayBase} (the review base). Head ${repo.replayHead}.`]) assert.ok(text.includes(needle), `the prompt lacks ${needle}`);
+    for (const needle of ['a broad whole-branch review happens separately', 'null deref when y is unset', 'Task quality', x.bx.B, x.bx.F, x.bx.T2, '[Effort:', x.bx.mainRoot]) assert.ok(!text.includes(needle), `the prompt names ${needle}`);
+  });
+
+  test('AC7.1 (extract half): two slots for the Needs fixes review, task head and final head', async () => {
+    const x = await plainTvb();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.role, s.at, s.baseFrom, s.taskAgentId, s.taskTier, s.verdict, s.archivedTier, s.archivedEffort]), [
+      [`${RUNB}/task-vs-branch`, 'task-vs-branch', 'task-head', 'whole-branch', 't2', 'capable', 'needs-fixes', 'capable', 'high'],
+      [`${RUNB}/task-vs-branch--final`, 'task-vs-branch', 'final-head', 'whole-branch', 't2', 'capable', 'needs-fixes', 'capable', 'high'],
+    ]);
+    const final = fixture.slots[1];
+    assert.equal(lsTree(repoOf(x, final).path, 'HEAD'), lsTree(x.bx.mainRoot, x.bx.F));
+    assert.deepEqual([repoOf(x, final).archivedBase, repoOf(x, final).archivedHead], [x.bx.B, x.bx.F]);
+    const reports = x.json(schema.REPORTS_FILE).reports;
+    for (const s of fixture.slots) {
+      const r = reports[s.name];
+      // The task review's Critical and Important items only: its unlocated Minor item is not an archived finding here.
+      assert.deepEqual(r.items.map((i) => [i.sev, i.path, i.line]), [['important', 'src/x.js', 10]]);
+      assert.deepEqual([r.role, r.verdict, r.itemsUnparsed, r.unlocated, r.taskTier, r.at], ['task-vs-branch', 'needs-fixes', false, 0, 'capable', s.at]);
+    }
+    assert.deepEqual(fixture.excluded, []);
+    assert.deepEqual(fixture.totals, { reviews: 1, slots: 2, byTaskTier: { capable: 1 }, notQualifying: 1 });
+  });
+
+  test('the re-review range ending after the fix is not read as the pre-fix head', async () => {
+    const x = await plainTvb();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.ok(![...fixture.slots, ...fixture.excluded].some((s) => s.agentId === 'rr2' || s.taskAgentId === 'rr2'));
+    const head = fixture.slots.find((s) => s.at === 'task-head');
+    assert.equal(repoOf(x, head).archivedHead, x.bx.T2);
+    assert.equal(lsTree(repoOf(x, head).path, 'HEAD'), lsTree(x.bx.mainRoot, x.bx.T2));
+  });
+
+  test('catch-up base: whole-branch base not an ancestor of the task head → merge-base', async () => {
+    const x = await extractBranch('task-vs-branch', { catchUp: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    const [head, final] = fixture.slots;
+    assert.deepEqual([head.at, head.baseFrom, final.at, final.baseFrom], ['task-head', 'merge-base', 'final-head', 'whole-branch']);
+    assert.deepEqual([repoOf(x, head).archivedBase, repoOf(x, head).archivedHead], [x.bx.B, x.bx.T2]);
+    assert.equal(lsTree(repoOf(x, head).path, 'HEAD~1'), lsTree(x.bx.mainRoot, x.bx.B));
+    assert.deepEqual([repoOf(x, final).archivedBase, repoOf(x, final).archivedHead], [x.bx.M, x.bx.W]);
+    // The prompt still names the whole-branch shas, each mapped to the replay's.
+    const text = promptOf(x, head.name);
+    assert.ok(text.includes(`Base ${repoOf(x, head).replayBase} (the review base). Head ${repoOf(x, head).replayHead}.`), text);
+  });
+
+  // Extracts task-vs-branch with the git seam failing the `git merge-base` calls on the task head T2 that `fail` names
+  // by mode ('--is-ancestor', or the plain 'merge-base'), each with the exit status it maps to.
+  async function extractFailingMergeBase(fail) {
+    const bRoot = scratchDir('rr-branch-mb-');
+    const bx = buildBranchFixture(bRoot);
+    const deps = makeDeps(bx.mainRoot);
+    const real = deps.git;
+    deps.git = (args) => {
+      const mode = args[1] === '--is-ancestor' ? '--is-ancestor' : 'merge-base';
+      if (args[0] === 'merge-base' && args[args.length - 1] === bx.T2 && fail[mode] !== undefined) throw Object.assign(new Error(`git exited ${fail[mode]}`), { status: fail[mode] });
+      return real(args);
+    };
+    const out = path.join(bRoot, 'out');
+    const code = await run({ argv: ['extract-reviews', '--runs', bx.runsRoot, '--out', out, '--role', 'task-vs-branch', '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast'], deps });
+    const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+    return { code, deps, json, bx };
+  }
+
+  test('a whole-branch base with no merge base with the task head excludes the review as no-merge-base', async () => {
+    // Neither an ancestor nor sharing a merge base: both calls exit 1.
+    const x = await extractFailingMergeBase({ '--is-ancestor': 1, 'merge-base': 1 });
+    assert.equal(x.code, 3);
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-merge-base' }]);
+  });
+
+  test('--is-ancestor exit 1 takes the merge-base path', async () => {
+    const x = await extractFailingMergeBase({ '--is-ancestor': 1 });
+    ok(x);
+    const head = x.json(schema.REVIEWS_FIXTURE_FILE).slots.find((s) => s.at === 'task-head');
+    assert.equal(head.baseFrom, 'merge-base');
+    assert.equal(x.json(schema.REVIEWS_FIXTURE_FILE).repos.find((r) => r.key === head.repoKey).archivedBase, x.bx.B);
+  });
+
+  test('a merge-base failure other than exit 1 fails the extract, not a no-merge-base row', async () => {
+    // The plain merge-base call is reached only after --is-ancestor says "not an ancestor" (exit 1).
+    for (const fail of [{ '--is-ancestor': 128 }, { '--is-ancestor': 1, 'merge-base': 128 }]) {
+      const x = await extractFailingMergeBase(fail);
+      assert.equal(x.code, 1, JSON.stringify(fail));
+      assert.ok(x.deps.errs.join('\n').includes('git exited 128'), x.deps.errs.join('\n'));
+    }
+  });
+
+  test('no usable whole-branch prompt excludes the task reviews, the row naming why', async () => {
+    for (const opts of [{ noWholeBranch: true }, { wbUnusableFirst: true }]) {
+      const x = await extractBranch('task-vs-branch', opts);
+      assert.equal(x.code, 3, JSON.stringify(opts));
+      const err = JSON.parse(x.deps.errs.join('\n'));
+      assert.deepEqual(err.excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'no-transcript' }], JSON.stringify(opts));
+      assert.deepEqual(err.shortfall.available, { reviews: 0, slots: 0, byTaskTier: {}, notQualifying: 1 });
+    }
+    // A run with no whole-branch dispatch at all.
+    const x = await extractBranch('task-vs-branch', {}, [], (bx) => {
+      const f = path.join(bx.runsRoot, RUNB, 'timing.json');
+      const timing = JSON.parse(read(f));
+      timing.dispatches.items = timing.dispatches.items.filter((i) => i.agentId !== 'wb');
+      fs.writeFileSync(f, JSON.stringify(timing));
+    });
+    assert.equal(x.code, 3);
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'not-dispatched' }]);
+  });
+
+  test('an Approved review and a Minor-only Needs fixes review yield no slot and no exclusion, and count in totals.notQualifying', async () => {
+    // t2's reply with its Important item dropped: Needs fixes over one Minor item.
+    const x = await extractBranch('task-vs-branch', {}, [], (bx) => setReply(bx, 't2', '### Issues\n#### Minor\n- naming could be clearer\n\nTask quality: Needs fixes'));
+    assert.equal(x.code, 3);
+    const err = JSON.parse(x.deps.errs.join('\n'));
+    assert.deepEqual(err.excluded, []);
+    assert.deepEqual(err.shortfall.available, { reviews: 0, slots: 0, byTaskTier: {}, notQualifying: 2 });
+  });
+
+  test('an Approved review listing an Important item is not qualifying', async () => {
+    const x = await extractBranch('task-vs-branch', {}, [], (bx) => setReply(bx, 't1', '#### Important\n- src/y.js:3 unused\n\nTask quality: Approved'));
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => s.taskAgentId), ['t2', 't2']);
+    assert.equal(fixture.totals.notQualifying, 1);
+  });
+
+  test('qualification is read before the prompt and tier: an Approved review whose pointer file is gone, or with no tier, is notQualifying, not excluded', async () => {
+    const approved = 'The change is small and correct.\n\nTask quality: Approved';
+    const x = await extractBranch('task-vs-branch', { pointer: 'gone' }, [], (bx) => {
+      setReply(bx, 'tp', approved);
+      const f = path.join(bx.runsRoot, RUNB, 'timing.json');
+      const timing = JSON.parse(read(f));
+      delete timing.dispatches.items.find((i) => i.agentId === 't1').tier;
+      fs.writeFileSync(f, JSON.stringify(timing));
+    });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, []);
+    assert.deepEqual(fixture.totals, { reviews: 1, slots: 2, byTaskTier: { capable: 1 }, notQualifying: 2 });
+    // A qualifying review whose pointer file is gone is still excluded.
+    const y = await extractBranch('task-vs-branch', { pointer: 'gone' });
+    ok(y);
+    const yFixture = y.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(yFixture.excluded, [{ run: RUNB, agentId: 'tp', tier: 'standard', reason: 'prompt-file-gone' }]);
+    assert.equal(yFixture.totals.notQualifying, 1);
+  });
+
+  test('a second qualifying review is task-vs-branch.2, its taskTier its own, its archived tier the whole-branch review\'s', async () => {
+    const x = await extractBranch('task-vs-branch', { pointer: 'present' });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.at, s.taskAgentId, s.taskTier, s.archivedTier]), [
+      [`${RUNB}/task-vs-branch`, 'task-head', 't2', 'capable', 'capable'],
+      [`${RUNB}/task-vs-branch--final`, 'final-head', 't2', 'capable', 'capable'],
+      [`${RUNB}/task-vs-branch.2`, 'task-head', 'tp', 'standard', 'capable'],
+      [`${RUNB}/task-vs-branch.2--final`, 'final-head', 'tp', 'standard', 'capable'],
+    ]);
+    // Same (run, base, head) as t2's: the repositories are shared.
+    assert.equal(fixture.repos.length, 2);
+    assert.deepEqual(fixture.totals, { reviews: 2, slots: 4, byTaskTier: { capable: 1, standard: 1 }, notQualifying: 1 });
+  });
+
+  test('--min-reviews counts task reviews, not slots', async () => {
+    const x = await extractBranch('task-vs-branch', { pointer: 'present' }, ['--min-reviews', '3']);
+    assert.equal(x.code, 3, 'two task reviews, four slots');
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).shortfall.available, { reviews: 2, slots: 4, byTaskTier: { capable: 1, standard: 1 }, notQualifying: 1 });
+    ok(await extractBranch('task-vs-branch', { pointer: 'present' }, ['--min-reviews', '2']));
+  });
+
+  test('the whole-branch review\'s own reply is never read: an unparseable one still supplies the prompt', async () => {
+    const x = await extractBranch('task-vs-branch', {}, [], (bx) => setReply(bx, 'wb', 'I looked around.'));
+    ok(x);
+    assert.deepEqual(x.json(schema.REVIEWS_FIXTURE_FILE).slots.map((s) => s.taskAgentId), ['t2', 't2']);
+  });
+
+  test('a whole-branch prompt that fails the leak barrier excludes the task reviews as no-whole-branch-prompt', async () => {
+    const bRoot = scratchDir('rr-branch-moved-');
+    const bx = buildBranchFixture(bRoot);
+    // mainRoot is derived from --runs: moved, the whole-branch prompt's spec path is no longer a run input to rewrite.
+    const moved = path.join(bRoot, 'moved', 'repo', '.claude-tweaks', 'pipelines');
+    fs.cpSync(bx.runsRoot, moved, { recursive: true });
+    const deps = makeDeps(bx.mainRoot);
+    const code = await run({ argv: ['extract-reviews', '--runs', moved, '--out', path.join(bRoot, 'out'), '--role', 'task-vs-branch', '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast'], deps });
+    assert.equal(code, 3, deps.errs.join('\n'));
+    assert.deepEqual(JSON.parse(deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'unrewritten-path' }]);
+  });
+
+  // Rewrites agent `id`'s archived prompt in the branch fixture's transcripts through `edit`.
+  const setPrompt = (bx, id, edit) => {
+    const file = path.join(bx.transcripts, 'slug', 'sess', 'subagents', `agent-${id}.jsonl`);
+    const lines = read(file).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    lines[0].message.content = edit(lines[0].message.content);
+    fs.writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  };
+  const NOT_IN_CLONE = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+  test('--role whole-branch: a prompt with no sha pair, a sha not in the clone, or a decisions.md input is excluded', async () => {
+    for (const [reason, edit] of [
+      ['no-sha-range', (p, bx) => p.replace(`Base ${bx.B} (the review base). Head ${bx.F}.`, 'The review range is the branch.')],
+      ['commit-not-in-clone', (p, bx) => p.replace(bx.F, NOT_IN_CLONE)],
+      ['unknown-run-input', (p, bx) => `${p}\nDecisions: ${bx.mainRoot}/.claude-tweaks/pipelines/${RUNB}/decisions.md`],
+    ]) {
+      const x = await extractBranch('whole-branch', {}, [], (bx) => setPrompt(bx, 'wb', (p) => {
+        const edited = edit(p, bx);
+        assert.notEqual(edited, p, reason);
+        return edited;
+      }));
+      assert.equal(x.code, 3, reason);
+      assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 'wb', tier: 'capable', reason }]);
+    }
+  });
+
+  test('task-vs-branch: a qualifying task review with no sha pair, or a head not in the clone, is excluded', async () => {
+    for (const [reason, edit] of [
+      ['no-sha-range', (p, bx) => p.split(bx.T1).join('the previous task').split(bx.T2).join('the task commit')],
+      ['commit-not-in-clone', (p, bx) => p.split(bx.T2).join(NOT_IN_CLONE)],
+    ]) {
+      const x = await extractBranch('task-vs-branch', {}, [], (bx) => setPrompt(bx, 't2', (p) => {
+        const edited = edit(p, bx);
+        assert.notEqual(edited, p, reason);
+        return edited;
+      }));
+      assert.equal(x.code, 3, reason);
+      assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason }]);
+    }
+  });
+
+  test('--role task: a "this file" prompt with two lone path lines is excluded as pointer-ambiguous, not replayed as written', async () => {
+    const x = await extractBranch('task', {}, [], (bx) => setPrompt(bx, 't1', (p) => `Your instructions are in this file:\n${bx.worktree}/a.md\n${bx.worktree}/b.md\n\n${p}`));
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 't1', tier: 'standard', reason: 'pointer-ambiguous' }]);
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['t2']);
+  });
+
+  test('a bold-label Needs fixes review (boldLabel fixture, t3) is excluded as items-unparsed', async () => {
+    const x = await extractBranch('task-vs-branch', { boldLabel: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 't3', tier: 'standard', reason: 'items-unparsed' }]);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.taskAgentId]), [[`${RUNB}/task-vs-branch`, 't2'], [`${RUNB}/task-vs-branch--final`, 't2']]);
+  });
+
+  test('--lens with a branch role exits 2', async () => {
+    const x = await extractBranch('task', {}, ['--lens', '3a']);
+    assert.equal(x.code, 2);
+    assert.ok(x.deps.errs.join('\n').includes('--lens applies to --role lens only'), x.deps.errs.join('\n'));
+    const y = await extractBranch('whole-branch', {}, ['--max-per-lens', '1']);
+    assert.equal(y.code, 2);
+    assert.ok(y.deps.errs.join('\n').includes('--max-per-lens applies to --role lens only'), y.deps.errs.join('\n'));
+  });
 });

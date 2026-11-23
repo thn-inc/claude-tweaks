@@ -45,7 +45,7 @@ test('express-lane false: keepSingleton is false for an eligible record and grou
   assert.equal(p.grouping, 'per-record');
   assert.equal(p.keepSingleton(ELIGIBLE), false);
   // A disabled lane must not resolve integration-model (an unpinned one probes `gh repo view`).
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links']]);
 });
 
 test('express-lane true + pr-first: eligible stays a singleton, risk:medium does not, grouping is per-record+express', () => {
@@ -58,7 +58,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -168,7 +168,7 @@ test('AC6.1: with the driver half on, grouping differs from per-record and per-r
 });
 
 test('AC7.1: a resolver that throws on the first or the second call disables both halves with exactly one stderr line naming the failed read', () => {
-  for (const [failOn, named, notNamed] of [[1, /\(express-lane, express-driver\)/, /express-driver-review/], [2, /express-driver-review/, /\(express-lane, express-driver\)/]]) {
+  for (const [failOn, named, notNamed] of [[1, /\(express-lane, express-driver, dispatch-fastlane-bundle-cap, work-links\)/, /express-driver-review/], [2, /express-driver-review/, /\(express-lane, express-driver, dispatch-fastlane-bundle-cap, work-links\)/]]) {
     let n = 0;
     const resolvePolicy = (keys) => {
       n += 1;
@@ -198,7 +198,7 @@ test('AC10.1: split with a non-integer number never keeps a driver-only record; 
   assert.equal(unknown.keepSingleton(ELIGIBLE), false, 'an express-eligible record is bundled too');
   assert.equal(unknown.grouping, 'per-record');
   assert.equal(unknown.enabled, false);
-  assert.deepStrictEqual(recorded.calls.map((c) => c.keys), [['express-lane', 'express-driver']]);
+  assert.deepStrictEqual(recorded.calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links']]);
   assert.equal(sink.lines.length, 1);
   assert.match(sink.lines[0], /sometimes/);
 });
@@ -252,6 +252,7 @@ test('a driver module load failure is named as such, not as a policy read, with 
   assert.equal(sink.lines.length, 1);
   assert.match(sink.lines[0], /^express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: sensitive paths unreadable\n$/);
   assert.doesNotMatch(sink.lines[0], /policy read failed/);
+  assert.notEqual(p.fingerprint, groupingFingerprint({}), '#6062: not a failed read, so the fingerprint covers the values read');
 });
 
 test('an unrecognised express-driver value is collapsed to one stderr line', () => {
@@ -320,6 +321,129 @@ test('#6018: an any-ceremony widened record follows the same reviewer rule', () 
 test('#6018: under beyond-express a risk-widened record turns the reviewer on and stays driver-routable', () => {
   const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'beyond-express' }).resolvePolicy });
   assert.equal(p.keepSingleton(MEDIUM_RISK), true);
+});
+
+// #6062: the settings fingerprint, the queue-order cache's key beside the grouping stamp.
+const { GROUPING_INPUTS, groupingFingerprint } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'express', 'queue.js'));
+const FP_BASE = {
+  'express-lane': true, 'express-driver': 'on', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text',
+  'integration-model': 'pr-first', 'merge-sensitive-paths': ['a/**'], 'express-driver-max-size': 'low',
+  'express-driver-max-key-files': 3, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'refuse', 'express-driver-review': 'beyond-express',
+  'protected-paths': 'infra/**',
+};
+const FP_CHANGED = {
+  'express-lane': false, 'express-driver': 'split', 'dispatch-fastlane-bundle-cap': 2, 'work-links': 'native',
+  'integration-model': 'local-merge', 'merge-sensitive-paths': ['b/**'], 'express-driver-max-size': 'medium',
+  'express-driver-max-key-files': 4, 'express-driver-max-risk': 'medium', 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on',
+  'protected-paths': 'ops/**',
+};
+const fpOf = (values) => expressQueuePolicy({ resolvePolicy: policy(values).resolvePolicy });
+
+test('#6062 AC5: groupingFingerprint is order-independent and stable for equal inputs', () => {
+  const a = groupingFingerprint({ 'merge-sensitive-paths': ['b/**', 'a/**'] });
+  assert.equal(groupingFingerprint({ 'merge-sensitive-paths': ['a/**', 'b/**', 'a/**'] }), a);
+  assert.equal(groupingFingerprint({ 'merge-sensitive-paths': 'a/**, b/**' }), a);
+  assert.equal(groupingFingerprint({ ...FP_BASE }), groupingFingerprint({ ...FP_BASE }));
+  assert.match(a, /^[0-9a-f]{16}$/);
+});
+
+test('#6062 AC1/AC2: the policy fingerprint changes when any one grouping input changes', () => {
+  const base = fpOf(FP_BASE);
+  const covered = [];
+  for (const key of GROUPING_INPUTS) {
+    const changed = fpOf({ ...FP_BASE, [key]: FP_CHANGED[key] });
+    assert.notEqual(changed.fingerprint, base.fingerprint, key);
+    if (key !== 'express-lane') assert.equal(changed.grouping, base.grouping, key);
+    covered.push(key);
+  }
+  assert.deepEqual(covered, [...GROUPING_INPUTS]);
+});
+
+test('#6062 AC3: equal grouping inputs give an equal policy fingerprint', () => {
+  assert.equal(fpOf(FP_BASE).fingerprint, fpOf({ ...FP_BASE }).fingerprint);
+});
+
+test('#6062 lanes off: the fingerprint still covers the bundle cap without the second resolver call', () => {
+  const off = { 'express-lane': false, 'express-driver': 'off', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text' };
+  const a = policy(off);
+  const pa = expressQueuePolicy({ resolvePolicy: a.resolvePolicy });
+  assert.equal(a.calls.length, 1);
+  assert.equal(pa.enabled, false);
+  assert.equal(pa.grouping, 'per-record');
+  assert.notEqual(fpOf({ ...off, 'dispatch-fastlane-bundle-cap': 2 }).fingerprint, pa.fingerprint);
+  assert.notEqual(fpOf({ ...off, 'work-links': 'native' }).fingerprint, pa.fingerprint);
+});
+
+test('#6062 failed read: a throwing resolver carries groupingFingerprint({}), on either call', () => {
+  const sink = stderrSink();
+  const thrown = expressQueuePolicy({ resolvePolicy: () => { throw new Error('boom'); }, stderr: sink.stderr });
+  assert.equal(thrown.fingerprint, groupingFingerprint({}));
+  let n = 0;
+  const second = expressQueuePolicy({ resolvePolicy: (keys) => { n += 1; if (n === 2) throw new Error('boom'); return policy(FP_BASE).resolvePolicy(keys); }, stderr: sink.stderr });
+  assert.equal(second.fingerprint, groupingFingerprint({}));
+});
+
+test('#6062 failed read: a second-call getter that throws a falsy value still fails the read, as a thrown Error does', () => {
+  for (const key of ['integration-model', 'merge-sensitive-paths']) {
+    const sink = stderrSink();
+    let n = 0;
+    const p = expressQueuePolicy({
+      resolvePolicy: (keys) => {
+        n += 1;
+        const r = policy(FP_BASE).resolvePolicy(keys);
+        if (n === 2) r[key] = { get value() { throw undefined; }, source: 'policy' }; // eslint-disable-line no-throw-literal
+        return r;
+      },
+      stderr: sink.stderr,
+    });
+    assert.equal(p.enabled, false, key);
+    assert.equal(p.fingerprint, groupingFingerprint({}), key);
+    assert.equal(sink.lines.length, 1, key);
+    assert.match(sink.lines[0], /policy read failed/, key);
+  }
+});
+
+test('#6062 an unrecognised express-driver is disabled but its fingerprint still tracks the bundle cap and work-links', () => {
+  const sink = stderrSink();
+  const bad = { ...FP_BASE, 'express-driver': 'maybe' };
+  const p = expressQueuePolicy({ resolvePolicy: policy(bad).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.enabled, false);
+  assert.equal(p.grouping, 'per-record');
+  assert.equal(p.keepSingleton(ELIGIBLE), false);
+  assert.notEqual(p.fingerprint, groupingFingerprint({}));
+  for (const [key, value] of [['dispatch-fastlane-bundle-cap', 2], ['work-links', 'native']]) {
+    assert.notEqual(expressQueuePolicy({ resolvePolicy: policy({ ...bad, [key]: value }).resolvePolicy, stderr: sink.stderr }).fingerprint, p.fingerprint, key);
+  }
+});
+
+test('#6062 a missing merge-sensitive-paths entry is not a failed read: it reads as an empty list, as before the fingerprint', () => {
+  const sink = stderrSink();
+  const full = policy(FP_BASE).resolvePolicy;
+  const p = expressQueuePolicy({ resolvePolicy: (keys) => { const r = full(keys); delete r['merge-sensitive-paths']; return r; }, stderr: sink.stderr });
+  assert.deepEqual(sink.lines, []);
+  assert.equal(p.enabled, true);
+  assert.equal(p.fingerprint, fpOf({ ...FP_BASE, 'merge-sensitive-paths': undefined }).fingerprint);
+  assert.equal(p.fingerprint, fpOf({ ...FP_BASE, 'merge-sensitive-paths': [] }).fingerprint);
+});
+
+test('#6062 AC7: every key expressQueuePolicy requests is a grouping input', () => {
+  const { resolvePolicy, calls } = policy(FP_BASE);
+  expressQueuePolicy({ resolvePolicy });
+  const requested = new Set(calls.flatMap((c) => c.keys));
+  for (const k of requested) assert.ok(GROUPING_INPUTS.includes(k), k);
+  assert.deepEqual([...requested].sort(), [...GROUPING_INPUTS].sort());
+});
+
+test('#6062 AC7: every policy entry the queue policy reads is a grouping input', () => {
+  const read = [];
+  const resolvePolicy = (keys) => {
+    const entries = Object.fromEntries(keys.map((k) => [k, { value: FP_BASE[k], source: 'policy' }]));
+    return new Proxy(entries, { get(target, prop) { if (typeof prop === 'string') read.push(prop); return target[prop]; } });
+  };
+  const p = expressQueuePolicy({ resolvePolicy });
+  p.keepSingleton(ELIGIBLE);
+  assert.ok(read.length > 0);
+  for (const k of read) assert.ok(GROUPING_INPUTS.includes(k), k);
 });
 
 // #6019: the driver half asks the protected-path question the eligibility step asks.

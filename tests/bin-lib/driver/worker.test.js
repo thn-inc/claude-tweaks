@@ -14,6 +14,7 @@ const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTAN
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 const { initRepo, fixtureGit } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -1592,4 +1593,40 @@ test('AC4.1 (#6000): live probe — the lens-reviewer git rules write nothing an
   t.diagnostic('unsettled: ' + JSON.stringify(reports.flatMap((r) => r.unsettled.map((c) => r.vector + ': ' + c))));
   const failures = reports.flatMap((r) => r.failures);
   assert.deepStrictEqual(failures, []);
+});
+
+test('AC9.1 (#5997): live probe — three implementer launches on the Fast model return a RESULT_SCHEMA envelope', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const { resolve } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+  const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment.js'));
+  const policyRaw = readText(path.join(__dirname, '..', '..', '..', '.claude-tweaks', 'policy.yml'));
+  const keyed = resolvePolicyKeys(['model-ceiling', 'model-effort'], { policyRaw });
+  const policy = { 'model-profiles': modelProfilesEntry(policyRaw).value, 'model-ceiling': keyed['model-ceiling'].value, 'model-effort': keyed['model-effort'].value };
+  const { model, launchEffort } = resolve('fast', { policy, unattended: true });
+  const git = (cwd, ...args) => cp.execFileSync('git', args, { cwd, stdio: 'pipe' });
+  let valid = 0;
+  for (let i = 1; i <= 3; i++) {
+    const cwd = tmp(t);
+    fs.writeFileSync(path.join(cwd, 'greet.js'), "module.exports = function greet(name) {\n  return 'Hello ' + name;\n};\n");
+    git(cwd, 'init', '-q');
+    git(cwd, 'add', 'greet.js');
+    git(cwd, '-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'Add greet');
+    const prompt = [
+      'Record #0: Make greet add an exclamation mark',
+      '',
+      'Key Files:',
+      '- greet.js',
+      '',
+      'Edit only the Key Files and test files.',
+      "Tests: do not run tests — the driver runs the project's check after it commits your change.",
+      'Limits: the change stays within 20 implementation lines; the launch ends at 5 minutes of wall clock or $1 of spend.',
+      'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
+      '',
+      "Change greet.js so greet('Ann') returns 'Hello Ann!'. Run each command exactly as written, with nothing appended.",
+      '',
+    ].join('\n');
+    const env = await launchWorker({ role: 'implementer', cwd, settingsDir: tmp(t), prompt, model, ...(launchEffort ? { effort: launchEffort } : {}), testCommand: 'npm test', ceilings: { wallClockMs: 300000, spendCeiling: 1 } }, { runner: worker.defaultRunner });
+    t.diagnostic('launch=' + i + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' result.status=' + (env.result && env.result.status) + ' costUsd=' + env.costUsd + ' denials=' + JSON.stringify((env.denials || []).map((d) => d.tool_input && d.tool_input.command)));
+    if (env.status === 'ok' && env.result && ['done', 'cannot-complete'].includes(env.result.status)) valid++;
+  }
+  assert.strictEqual(valid, 3);
 });

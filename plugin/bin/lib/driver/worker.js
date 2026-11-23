@@ -112,6 +112,21 @@
 //     `--safe-mode --restricted`. `medium` against no flag does not discriminate; `low`
 //     and `high` do. Re-run: the opt-in `AC7.1 (#5942)` live probe in
 //     `tests/bin-lib/driver/worker.test.js`.
+// - Fast implementer (#5997). Probed on 2026-11-23 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), under a subscription login, launched from a process with no TTY, every launch
+//   under `--safe-mode --restricted`, on the model alias `haiku` (what `resolve('fast')`
+//   returns under this repository's policy; `launchEffort` null). The opt-in live probe
+//   (`AC9.1 (#5997)`) launched the implementer three times, each in a fresh git repository
+//   holding a committed `greet.js`, asking for `greet('Ann')` to return `Hello Ann!`. Two
+//   runs of it each returned 3 of 3 valid result envelopes (`status: ok`), with `result.status`
+//   `done`, `cannot-complete`, `done` in the first run and `done`, `done`, `cannot-complete`
+//   in the second (the controller's scratch probe on 2026-11-22 also returned 3 of 3). In the
+//   second run, the only one that logged denials, two of three workers tried
+//   `git add greet.js && git commit -m ...` and were denied (the implementer has no
+//   `git commit`; the driver commits, not the worker). Envelope
+//   `ok` means only that conforming output arrived; the verdict is `result.status`. A change
+//   to `RESULT_SCHEMA`, the sandbox flags or the Fast profile's model needs a re-probe
+//   (re-run: the opt-in `AC9.1 (#5997)` live probe).
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.

@@ -119,7 +119,7 @@ If every gate still holds (and, for a record-linked PR, labeling has landed),
 run `_shared/pr-first-merge.md`'s Step 3 (Attempt auto-merge) against this PR directly — that file
 already defines the full degrade chain (`--auto` arm → immediate merge on repos without
 auto-merge enabled → ready-and-comment on any other failure), so this
-action does not reimplement it. This is the one call site that reaches Step 3 from outside a build
+action does not reimplement it. The housekeeping-marker flavor composes with Step 3's record-less `--housekeeping` form (no `--tag`); the record-linked flavor with its `Fixes` records as `{issue-list}`. This is the one call site that reaches Step 3 from outside a build
 or dispatch pipeline; the outcome vocabulary (`armed`/`merged`/`pending-review`) still applies —
 log which outcome landed, since "armed" and "merged" are both legitimate results of the same call
 and neither is a failure.

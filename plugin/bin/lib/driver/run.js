@@ -12,7 +12,10 @@
 // on appended to {run-dir}/driver-events.jsonl as well (events.js's sink). A step whose
 // result halts ends the record; an ok result with skip: true (a step that did not apply)
 // emits no line, and neither does a non-ok result with noLine: true (a step that started nothing,
-// a launch-time model refusal), which still halts and becomes the record's stop. Every record ends with a final line carrying the outcome word, the totals
+// a launch-time model refusal), which still halts and becomes the record's stop. A result that does not
+// halt may queue steps of its own (`then`, #5997's relaunch): they run next, under their own names, then
+// the rest of the table. ctx.relaunch (#5997) is a record of that decision, not a side effect, so it
+// gets no interruptClass rung. Every record ends with a final line carrying the outcome word, the totals
 // with and without the CI wait, the PR, the CI word, the worker's cost, turns and denial
 // count, and the structured stop. The outcome word is the merge result's own
 // (ctx.merge.outcome: `merged`, `armed` or `pending-review`) when the merge step ran and
@@ -213,8 +216,8 @@ function newShared() {
 // for its `auto:build` grant at admission; a record the --budget loop picked never is.
 function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
-    created: { worktree: false, branch: false }, pushed: false, configWritten: false,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null,
+    created: { worktree: false, branch: false }, pushed: false, configWritten: false, relaunch: null,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     workerTestCommand: undefined, workerTestMode: undefined,
     eligibilityReasons: null, admissionReasons: null, typedCommandNote: null,
@@ -431,7 +434,10 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
     current.started = started;
     let bound = false;
     let stop = null;
-    for (const step of steps) {
+    // A non-halting result's `then` steps (defineStep validated them) run next, ahead of the rest of the table.
+    const queue = [...steps];
+    while (queue.length > 0) {
+      const step = queue.shift();
       await yieldToEventLoop();
       if (shared.interrupted) {
         // Before the first step the handler has already terminated; after one, the
@@ -463,6 +469,7 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
         stop = { name: step.name, result };
         break;
       }
+      if (Array.isArray(result.then) && result.then.length > 0) queue.unshift(...result.then);
     }
     let settled = SETTLE_NONE;
     if (stop) {
@@ -683,6 +690,8 @@ const realDeps = {
     return { code: r.status, stdout: r.stdout || '', stderr: r.error ? `${stderr}${r.error.message}\n` : stderr };
   },
   resolvePolicy: (keys) => defaultResolvePolicy(keys),
+  // The implementer's first profile under `implementer-tier: record` (#5997).
+  recordImplementerProfile: (issue) => require('./launch').recordImplementerProfile(issue),
   resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),

@@ -10,6 +10,15 @@ integration-model: pr-first
 housekeeping-auto-merge: true
 express-lane: true
 express-driver: on
+# Driver admission trial (#6021): the five rows below widen the driver's lane for 20 records. max-key-files is 11, the
+# smallest value that admits every record refused only for its Key File count on 2026-11-23 (27 records; #4366 lists 11).
+# Revert signal: a "worse" verdict in docs/superpowers/specs/2026-11-18-pipeline-economy-phase-7-trial.md sets all five
+# back to their defaults (delete the rows).
+express-driver-review: on
+express-driver-max-size: medium
+express-driver-max-key-files: 11
+express-driver-max-risk: high
+express-driver-protected-paths: reviewer
 # implementer-tier (#5995): record runs a size:low record with one or two Key Files on Fast, every other record on Standard.
 # Revert signal: over the first 20 implementation tasks on Fast, a share needing a fix round higher than Standard's over
 # the same runs (tools/pipeline-cost-report.js's review-results-by-role-and-tier table) means set this back to lane.

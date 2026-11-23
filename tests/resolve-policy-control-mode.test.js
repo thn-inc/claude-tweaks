@@ -308,8 +308,9 @@ test('AC4.8: isControlModeOn is true only for the exact string on', () => {
 
 // Keys that land before their consumer: no plugin code acts on them yet, and the
 // record that wires a key (the #4608 leaves for the control-mode keys) removes it
-// from this list and drops "Not yet used" from its summary.
-const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors'];
+// from this list and drops "Not yet used" from its summary, as #5997 did for
+// `implementer-tier`.
+const NOT_YET_USED = ['deploy-reach', 'deploy-command', 'deploy-live-workflow', 'deploy-version-url', 'dev-base-url', 'dev-test-account', 'deploy-wait-seconds', 'deploy-poll-seconds', 'trusted-authors', 'learned-skills-auto-merge'];
 
 test('every key that landed before its consumer says so in its summary (#4816)', () => {
   for (const key of NOT_YET_USED) {
