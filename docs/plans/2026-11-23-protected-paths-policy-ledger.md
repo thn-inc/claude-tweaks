@@ -11,3 +11,4 @@
 | 7 | build | SDD ruling — residuals pass the fix-now test (one file + its test + one row, no product decision): ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 8 | build | SDD ruling — residual review.js:403 over-long comment line left unfixed: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 9 | build | SDD ruling — residual hardening 'read core.worktree with git config --local --get' left unfixed: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 10 | build/skill | Skill policy-key-addition extends: #6020 added a list validation flag (hashInvalid, a raw-line check run in resolvePolicyKeys per source) and found auditPolicy must apply every new validation flag too or /harness-health reports a value clean that the resolver rejects | observation | — |
