@@ -6,3 +6,4 @@
 | 2 | build | SDD ruling — pre-flight: a planRelaunch-thrown refusal returns a no-line fail (superseded by sdd-ruling-2): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 3 | build | SDD ruling — a planRelaunch-thrown refusal keeps the trigger line and queues a no-line worker refusal: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 4 | build | SDD ruling — a relaunch that fails before any model resolves carries no attempt or relaunch marks: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 5 | build/skill | driver-step-addition extends: a step can queue continuation steps through the generic then result field (run.js walks them before the rest of the table, each writing its own line; a halting result's then is ignored, an invalid element fails the step) — the skill documents re-run steps only through a wiring object | observation | — |
