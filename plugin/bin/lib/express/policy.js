@@ -78,7 +78,7 @@ function fallbackMainRoot(cwd) {
   const common = path.resolve(cwd, commonDir);
   if (path.resolve(cwd, gitDir) === common) return top || null;
   let configured = '';
-  try { configured = defaultGit(['config', '--get', 'core.worktree'], { cwd }).trim(); } catch { return null; }
+  try { configured = defaultGit(['config', '--local', '--get', 'core.worktree'], { cwd }).trim(); } catch { return null; }
   return configured ? path.resolve(common, configured) : null;
 }
 
