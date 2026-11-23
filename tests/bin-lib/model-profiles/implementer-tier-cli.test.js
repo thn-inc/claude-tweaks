@@ -283,7 +283,7 @@ test('an invalid effort: value with no size: line exits 1 naming the value', () 
   refused(['--spec-file', file, '--rule', 'lane'], 1, 'huge');
 });
 
-test('an absolute readable --spec-file never reads cwd(), so a deleted working directory does not fail it', () => {
+test('an absolute readable --spec-file with an unreadable cwd still exits 0, warning that the policy read was skipped', () => {
   const file = LOW_TWO();
   const out = [];
   const err = [];
@@ -295,7 +295,10 @@ test('an absolute readable --spec-file never reads cwd(), so a deleted working d
     stderr: (m) => err.push(m),
   };
   assert.strictEqual(run(['--spec-file', file, '--rule', 'lane'], deps), 0, err.join(''));
-  assert.strictEqual(JSON.parse(out.join('')).profile, 'fast');
+  const printed = JSON.parse(out.join(''));
+  assert.strictEqual(printed.profile, 'fast');
+  assert.deepStrictEqual([printed.startEffort, printed.next, printed.ladder], [null, null, false]);
+  assert.match(err.join(''), /warning: cannot read the working directory — policy read skipped/);
 });
 
 // ---- #6002: the effort ladder (startEffort, next, ladder) ----
@@ -388,4 +391,24 @@ test('a malformed policy.yml exits 1 naming the parse message; a missing one is 
   refused(['--spec-file', MED_THREE(), '--rule', 'record'], 1, 'frontier-run-cap', project);
   const out = ok(['--spec-file', MED_THREE(), '--rule', 'record'], tmpDir());
   assert.strictEqual(out.ladder, false);
+});
+
+test('--escalations 2 leaves no further attempt: next is null', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record', ...ATTEMPT('standard', 'low', 2, 'red-tests')], project);
+  assert.strictEqual(out.ladder, true);
+  assert.strictEqual(out.next, null);
+});
+
+test('--rule lane under model-effort profile with all four attempt flags gives next null', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'lane', ...ATTEMPT('standard', 'low', 0, 'red-tests')], project);
+  assert.strictEqual(out.ladder, false);
+  assert.strictEqual(out.next, null);
+});
+
+test('a fix-round-failed trigger takes the effort rung through the CLI', () => {
+  const project = scratchProject(PROFILE_POLICY);
+  const out = ok(['--spec-file', MED_THREE(), '--rule', 'record', ...ATTEMPT('standard', 'low', 0, 'fix-round-failed')], project);
+  assert.deepStrictEqual(out.next, { profile: 'standard', effort: 'medium', escalations: 1 });
 });

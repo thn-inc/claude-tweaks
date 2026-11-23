@@ -28,7 +28,10 @@
 // Rule: --rule, else the run's config.yml via --run, else policy.yml, else the
 // schema default (lane). --run is validated even when --rule is passed (a
 // mistyped run id never passes silently); the resolved policy value is then
-// ignored, so an invalid policy.yml value does not fail a --rule call.
+// ignored, so an invalid implementer-tier value does not fail a --rule call.
+// The policy.yml read for the effort ladder is separate: a malformed file (a
+// bad model-profiles section, say) exits 1 even under --rule, as in
+// resolve-profile.js.
 //
 // Exit codes (the Payload-1/Invocation-2 family, per
 // .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md):
@@ -99,12 +102,14 @@ function readRisk(text) {
 
 // The model-profiles policy fragment, read as resolve-profile.js reads it: a
 // missing file is an empty policy, a malformed one throws. An unreadable cwd
-// (a deleted working directory) is an empty policy too — the ladder is then off.
+// (a deleted working directory) is an empty policy too, with a stderr warning —
+// the ladder is then off.
 function readPolicy(deps) {
   let policyPath;
   try {
     policyPath = locatePolicyFile(deps.cwd()).path;
   } catch {
+    deps.stderr('implementer-tier: warning: cannot read the working directory — policy read skipped, startEffort/next/ladder reflect an empty policy\n');
     return {};
   }
   let raw;
