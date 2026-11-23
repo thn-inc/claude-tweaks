@@ -1,8 +1,33 @@
 {
-  "computedAt": "2026-11-23T07:16:06.451Z",
+  "computedAt": "2026-11-23T07:29:19.793Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6114,
+        "updatedAt": "2026-11-23T07:27:03Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6113,
+        "updatedAt": "2026-11-23T07:26:56Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6112,
+        "updatedAt": "2026-11-23T07:26:50Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6110,
+        "updatedAt": "2026-11-23T07:26:45Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6109,
+        "updatedAt": "2026-11-23T07:26:38Z",
+        "state": "OPEN"
+      },
       {
         "number": 6062,
         "updatedAt": "2026-11-23T07:06:28Z",
@@ -25,7 +50,7 @@
       },
       {
         "number": 6003,
-        "updatedAt": "2026-11-21T18:20:11Z",
+        "updatedAt": "2026-11-23T07:27:22Z",
         "state": "OPEN"
       },
       {
@@ -35,12 +60,12 @@
       },
       {
         "number": 5999,
-        "updatedAt": "2026-11-23T07:07:58Z",
+        "updatedAt": "2026-11-23T07:22:27Z",
         "state": "OPEN"
       },
       {
         "number": 5997,
-        "updatedAt": "2026-11-23T07:07:52Z",
+        "updatedAt": "2026-11-23T07:22:22Z",
         "state": "OPEN"
       },
       {
@@ -61,6 +86,11 @@
       {
         "number": 5270,
         "updatedAt": "2026-11-12T19:15:27Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5208,
+        "updatedAt": "2026-11-23T07:26:32Z",
         "state": "OPEN"
       },
       {
@@ -778,6 +808,84 @@
   "groups": [
     [
       {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n- Wrap-up's learned-skills PR (`plugin/bin/lib/learned-skills/land.js`, #5290) is never armed: `plugin/skills/wrap-up/learned-skills-pr.md`'s \"The PR waits for a human\" section says `housekeeping-auto-merge` is never read for it, and `plugin/skills/_shared/github-pr-scan.md` item 9 refuses the `<!-- wrap-up-skills-pr -->` marker by name.\n- No policy key expresses \"learned-skill edits may merge without a human\". `housekeeping-auto-merge` (`plugin/bin/lib/policy-schema.js`) means mechanical, low-judgment cleanup and derives its unset default from `autonomy` (`true` at `trusted`/`unattended`).\n- #6088 ruled (2026-11-23) that the human-review floor for the learned-skills PR is dropped: the maintainer does not read these diffs, and 36 PRs in one week piled up and conflicted. That reverses #5290's ruling and needs an ADR. The design is `docs/superpowers/specs/2026-11-23-learned-skills-auto-merge-design.md` (deleted by /specify once decomposed; this body carries what the unit needs).\n\n## Deliverables\n\n1. A new policy key `learned-skills-auto-merge` in `plugin/bin/lib/policy-schema.js`: type boolean, category `merge-safety`, tier `advanced` (the core tier is at its cap), schema default `false`, summary \"Lets wrap-up's learned-skill update PRs merge themselves once CI is green, instead of waiting for a person.\" (opened with the \"Not yet used\" marker that the comment on the key table in `policy-schema.js` requires until a reader is wired; the `drain` sub-issue removes it when it lands)\n2. Its unset default is derived beside `housekeeping-auto-merge`'s derivation in `resolvePolicyKeys`: `true` only when `autonomy` resolves `unattended` and `control-mode` does not resolve `on`; otherwise `false`. An explicit key wins in both directions (#580's rule), including an explicit `true` under `control-mode: on`. `autonomy` is read through the same source walk `deriveHousekeepingAutoMerge` uses; `control-mode` is `policyOnly`, so it is read from the policy file only.\n3. A row in `plugin/skills/_shared/policy-schema.md` naming its readers (the learned-skills `drain` in `plugin/skills/wrap-up/learned-skills-pr.md` and `_shared/github-pr-scan.md` item 9 — both wired by sibling sub-issues), following the `policy-key-addition` project skill's checklist for every registration site, including any \"not yet used\" marker the schema conventions require until a reader lands.\n4. ADR `docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` (next free number; re-check `docs/decisions/` at build time). It records: #5290's ruling quoted (\"an instruction change that merges with no review is what the floor exists to stop\"); the evidence (the maintainer reports not reading these diffs; merges happen in batches minutes apart; 36 PRs in a week, median 19h open; #6083's hand fold of ten conflicting PRs); the decision (the learned-skills PR merges once CI is green under `learned-skills-auto-merge`); and the boundary (a record's own diff, the record-owned run-branch route and console-approved skill updates keep `merge-check`'s agent-instruction floor unchanged). The ADR also states: the decision takes effect only once the `drain` and PR-scan sub-issues land, and the old \"waits for a human\" prose stays authoritative until then; why `unattended` alone turns the default on (the setting is the maintainer's own consent to unreviewed merges, `control-mode: on` vetoes an unset default, and an explicit key always wins); that \"green\" means every check on the PR head completed successfully, with no checks, only skipped checks or pending checks counting as not green; and that a bad merge is undone with `git revert` of its squash commit. Other files cite the ADR by title, not by number. Add it to `docs/REGISTRY.md` if ADRs are registered there.\n\n## Acceptance Criteria\n\n- `node plugin/bin/resolve-policy.js --values learned-skills-auto-merge` prints `true` in a project whose `policy.yml` sets only `autonomy: unattended`, and `false` for `autonomy: trusted`, `autonomy: supervised`, and `autonomy: unattended` with `control-mode: on`.\n- An explicit `learned-skills-auto-merge: false` under `autonomy: unattended` resolves `false`, and an explicit `true` under `autonomy: supervised` resolves `true`.\n- Tests for these six cases (the four derived outcomes plus the two explicit-wins cases) sit beside the existing `housekeeping-auto-merge` derivation tests (`tests/resolve-policy-lib.test.js`), and the unattended `true` case and the `control-mode: on` case were each seen failing with the matching clause of the derivation reverted (the `unattended` clause, the `control-mode` clause); the remaining cases pin the explicit-wins and `false` outcomes.\n- The ADR file exists and cites #5290 and #6088.\n- `npm test -- --full` passes.\n\n## Release Note\n\nAdd a `learned-skills-auto-merge` setting that lets wrap-up's learned-skill update PRs merge on their own once CI passes; it is on by default only at `autonomy: unattended`.\n\n## Technical Approach\n\nMirror `housekeeping-auto-merge`'s entry and derivation exactly; do not reuse that key (it would widen what a housekeeping grant means in every consumer project). Run the `policy-key-addition` skill's checklist.\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — new key entry and derived default\n- `plugin/skills/_shared/policy-schema.md` — new row\n- `docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` — new ADR\n- `docs/REGISTRY.md` — ADR registration, if ADRs are listed there\n- `tests/resolve-policy-lib.test.js` — derivation cases\n\n## Gotchas\n\n- `plugin/skills/_shared/policy-schema.md` is 50,555 B against the 52,500 B read rail; keep the row short, and check `node plugin/bin/context-cost-report.js --plugin-root plugin` after the edit.\n- Many open records add policy keys at the same time; expect a merge conflict in `policy-schema.js` and resolve by keeping both entries.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:add-the-learned-skills-auto-merge-policy-key-and-record-the -->\nwork-fingerprint: learned-skills-auto-merge:add-the-learned-skills-auto-merge-policy-key-and-record-the\n",
+        "createdAt": "2026-11-23T07:01:26Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6109,
+        "state": "OPEN",
+        "title": "Add the learned-skills-auto-merge policy key and record the floor reversal in an ADR",
+        "updatedAt": "2026-11-23T07:26:38Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: backend\nRisk-flags: public-contract\n\n## Current State\n\n`review-lens-dispatch` (`plugin/bin/lib/policy-schema.js`, #5599) takes `task` (default) or `workflow`. The workflow path falls back to the Task dispatch whenever the Workflow tool is absent, which includes every review run inside a dispatched or continuation agent (`/claude-tweaks:dispatch` runs review inside a Task agent), per #5825.\n\n#6000 in this decomposition adds a `lens-reviewer` role and `plugin/bin/review-lens-workers.js`, which runs lens briefs as headless `claude -p` workers and returns the workflow script's reply shape. A headless worker is started through Bash, so it is reachable from inside a Task agent, where the Workflow tool is not.\n\n## Deliverables\n\n1. A third value `worker` for `review-lens-dispatch` (additive; `task` stays the default), added with `.claude/skills/policy-key-addition`.\n2. Step 3 prose for the worker path in a new sub-file (proposed `plugin/skills/review/step3-worker-dispatch.md`), with one pointer line in `step3-lens-dispatch.md`: compose each lens brief once, write the lenses file, call the launcher (its interface is read from the merged #6000: `--run <dir> --lenses-file <json>`, the workflow script's reply shape), and settle with `review-coordination.js settle-lens-replies` exactly as the workflow path does. Lens 3f is never sent to the launcher (#6000's launcher rejects it); the dispatcher routes 3f to the Task path in the same review and settles every reply set in one `settle-lens-replies` call. With `review-lens-selection: adaptive`, the lens set comes from the selection CLI.\n3. Fallback to the Task dispatch with one `Step 3 lens dispatch (worker fallback)` `SKIP` line naming the condition (no `claude` binary, launch error, every worker failed, settle exit 2). The unit of fallback is the lens: only lenses whose workers failed or timed out re-dispatch on the Task path, and their replies merge into the same single `settle-lens-replies` call as the worker replies. A settle exit 2 caused by one of the two fail-closed reply shapes stays a stop, exactly as on the workflow path, and never re-dispatches. Two acceptance criteria below cover the partial and settle-exit-2 cases. Lenses kept off the worker path (3f, if the role record keeps it off) dispatch on the Task path in the same review.\n4. One real review run on the worker path at build: per lens, worker first-turn tokens, total tokens and confirmed findings, quoted in the PR beside the numbers of a paired re-run of the same diff on the Task path (a single sample, labelled anecdotal, since lens output varies run to run). The repository opts in by setting `review-lens-dispatch: worker` in its committed `.claude-tweaks/policy.yml`, which is what the parked record's trigger counts.\n5. File a parked measurement record (Defer-reason: blocked-external; trigger: 20 worker-path reviews after this repository opts in, or 30 days): per lens pair, confirmed findings and total tokens on the worker path against the Task path, the Haiku-lens 100k ceiling checked, and the fallback share by condition; outcome a default-flip record or a stated reason to keep the current default. Fallback counts by condition are read from the `worker fallback` `SKIP` lines in `decisions.md`.\n\n## Acceptance Criteria\n\n- [ ] With `review-lens-dispatch: task` or `workflow`, Step 3 is unchanged (prose pins and the existing workflow-path tests stay green).\n- [ ] With `worker`, Step 3 calls the launcher and settles through `settle-lens-replies`; a stubbed launcher failure logs one `worker fallback` `SKIP` line and the review completes on the Task path.\n- [ ] With `worker`, a review where one lens's workers fail and the others succeed re-dispatches only the failed lens on the Task path and settles all replies in one `settle-lens-replies` call; the succeeded lenses are not run twice.\n- [ ] With `worker`, a settle exit 2 caused by one of the two fail-closed reply shapes stops the review exactly as on the workflow path and logs no `worker fallback` line.\n- [ ] A review run inside a Task agent (the `/claude-tweaks:dispatch` shape) takes the worker path rather than falling back, shown by a dispatched probe (a Task agent runs the review with `worker` set; the evidence is no `worker fallback` line and launcher output in the run directory) that states its preconditions (`claude` on PATH, auth inherited) and its expected outcome when they fail.\n- [ ] An older build reading `review-lens-dispatch: worker` resolves to the `task` path with no hard failure, shown by a probe or the older build's resolver test. `worker` is a permanent third value. Its removal condition, written beside the key in `policy-schema.js`, is tied to #5825's outcome. If #5825 flips the default to `workflow`, `worker` stays only if this record's parked measurement shows it cheaper than `workflow` with no fewer confirmed findings; otherwise it is removed one minor release after that ruling. This repository's committed `.claude-tweaks/policy.yml` must not set `worker` until a release carrying the value has shipped and is the installed plugin.\n- [ ] A mixed review (3f on the Task path, the other lenses on workers) settles through one `settle-lens-replies` call, shown by a test with a stubbed launcher.\n- [ ] The build's real run reports every Haiku lens worker under 100k total tokens (the design's own ceiling), or the PR says which one was over and by how much; an overrun is reported, not a build failure.\n- [ ] The parked measurement record is filed and linked.\n\n## Release Note\n\nReview can run its lens reviewers as lightweight headless workers with `review-lens-dispatch: worker`, including when review runs inside a dispatched agent.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — add `worker` to `review-lens-dispatch`\n- `plugin/skills/_shared/policy-schema.md` — document the value\n- `plugin/skills/review/step3-worker-dispatch.md` — new Step 3 sub-file\n- `plugin/skills/review/step3-lens-dispatch.md` — one pointer line only\n- `plugin/bin/review-coordination.js` — only if `settle-lens-replies` needs a worker source tag\n- `tests/` — the pins and size checks over `step3-lens-dispatch.md` and its sub-files; the build names them in the plan and checks whether the new sub-file counts against the read rail\n\n## Gotchas\n\n- `step3-lens-dispatch.md` is 48,911 B, within 10% of the 52,500 B read rail: new prose goes in the sub-file.\n- The key's removal condition (`policy-schema.js` comment, #5599) names `task` and `workflow`; update it to state what happens to `worker`. Expand-contract: a run on an older plugin reading `worker` must not break. Check what an older build's policy audit does with an unknown value (#5825 found it reports the key unrecognised).\n- `settle-lens-replies` leaves two real reply shapes fail-closed (#5836, #5599 comments). The worker path inherits them; do not loosen them here.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n\n## Decision Rationale\n\n- **Why a third dispatch value and not a replacement.** #5825 decides whether `workflow` becomes the default. The worker path is measured beside it, not instead of it.\n- **Why the worker path matters most inside dispatched agents.** There the workflow path always falls back, so without workers a dispatched review keeps the 51k-token Task agents.\n\nOrigin: Phase 10, `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`. Blocked by #6000 and #6001 (the #5825 blocker was dropped by the maintainer on 2026-11-21; see #6005). Do not opt this repository into `worker` before #5825 has ruled.\n\n\n<!-- work-fingerprint: pipeline-economy:phase-10-lens-worker-dispatch -->\nwork-fingerprint: pipeline-economy:phase-10-lens-worker-dispatch\n**Related:** #5825, #5836, #5481\n\n\n",
         "createdAt": "2026-11-21T17:36:56Z",
         "labels": [
@@ -821,7 +929,7 @@
         "number": 6003,
         "state": "OPEN",
         "title": "Run review lenses as lean headless workers behind review-lens-dispatch: worker",
-        "updatedAt": "2026-11-21T18:20:11Z",
+        "updatedAt": "2026-11-23T07:27:22Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -896,6 +1004,12 @@
             "color": "FEF2C0"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAADEgcf9A",
+            "name": "fix-on-worktree-dispatch-record-6019",
+            "description": "Fixed on worktree-dispatch-record-6019, not yet on the default branch",
+            "color": "FBCA04"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAADEgi2JQ",
             "name": "fix-on-worktree-dispatch-record-5997",
             "description": "Fixed on worktree-dispatch-record-5997, not yet on the default branch",
@@ -917,7 +1031,7 @@
         "number": 5999,
         "state": "OPEN",
         "title": "Take the standard lane's implementer profile from the record rule and escalate once",
-        "updatedAt": "2026-11-23T07:07:58Z",
+        "updatedAt": "2026-11-23T07:22:27Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1237,6 +1351,84 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #4467 (open PR #4586 edits `step-7-5-worktree-always.md` and `pr-first-merge.md` too — sequence after it or rebase), #4462\n\n## Current State\n\nTidy's Step 7.5 `pr-first` branch (`plugin/skills/tidy/step-7-5-worktree-always.md`) arms a housekeeping PR at creation when `housekeeping-auto-merge: true` and `tidy-aggressiveness` is `moderate` or higher. It does this by running `_shared/pr-first-merge.md` Step 3's compose fence: `compose-subject.js {issue-list} --tag {tag} --pr {n} --out-dir …`.\n\nA housekeeping PR (`<!-- tidy-housekeeping-pr -->`) links no record, so `{issue-list}` is empty. `parseArgs` refuses with `missing <n> argument` (`plugin/bin/lib/compose-subject.js:134`) and exits 1, and the fence stops before `gh pr merge --auto`. So the creation-time arm can never succeed. The sweep backstop (`tidy/actions-github-issues.md`'s `## Arm ready PR`) reaches the same Step 3 for the same marker flavors (`<!-- tidy-housekeeping-pr -->` and `<!-- wrap-up-residue-pr -->`), so it fails the same way.\n\nSeen on PR #5207 (2026-11-11, `tidy --approve` on sweep run `2026-11-11T192023-sweep-standalone`). The run logged `arm-failed`, and the PR was armed by hand with a hand-written `chore:` subject. It then merged immediately because main has no required checks, which is #4467's separate concern.\n\n## Deliverables\n\n- `compose-subject.js` gains a record-less form for marker-stamped housekeeping PRs: `--pr {n}` with no `<n>`, gated by an explicit flag (e.g. `--housekeeping`). It emits a Conventional-Commits `chore:` subject and a body derived from the PR title, written to `--out-dir` like the record form.\n- Without that flag, a call with no `<n>` still refuses with `missing <n> argument` (exit 1), so record-linked callers keep failing closed.\n- `tidy/step-7-5-worktree-always.md`'s creation-time arm and `tidy/actions-github-issues.md`'s `## Arm ready PR` use the record-less form for marker-stamped PRs.\n- `_shared/pr-first-merge.md` Step 3 documents the record-less invocation next to the existing fence.\n- Unit tests in `tests/compose-subject.test.js` cover the record-less form and the kept refusal.\n\n## Acceptance Criteria\n\n- A tidy housekeeping PR opened under `housekeeping-auto-merge: true` with `moderate` aggressiveness logs `armed`, not `arm-failed`.\n- `compose-subject.js --housekeeping --pr {n} --out-dir {d}` exits 0 and writes a `chore:` subject and body; `compose-subject.js --pr {n}` with no `<n>` and no flag still exits 1 with `missing <n> argument`.\n- `npm test` passes.\n\n## Release Note\n\nTidy's housekeeping PRs now arm for auto-merge when you have opted in, instead of always being left unarmed.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/compose-subject.js` — modify\n- `plugin/skills/tidy/step-7-5-worktree-always.md` — modify\n- `plugin/skills/tidy/actions-github-issues.md` — modify\n- `plugin/skills/_shared/pr-first-merge.md` — modify\n- `tests/compose-subject.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-11T21:16:32Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 5208,
+        "state": "OPEN",
+        "title": "Arm record-less tidy housekeeping PRs — compose-subject.js refuses with no record, so the creation-time arm always fails",
+        "updatedAt": "2026-11-23T07:26:32Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -8842,6 +9034,84 @@
     ],
     [
       {
+        "body": "Surface: backend\nRisk-flags: none\n**Related:** #5663\n\n## Current State\n\n- `plugin/bin/lib/learned-skills/land.js` reads the run branch's PRs only when `git ls-remote` still finds `refs/heads/learned-skills/{run-id}` (the `if (line) { … listPrs() … }` block in step 1, \"The base\"). With no remote branch it builds fresh commits on the integration tip and opens a new PR.\n- When the branch exists and its PR is `MERGED`, `land` sets `orphanReason` (\"the earlier learned-skills PR #N was merged, so … is not reused as a base\") and stages every captured entry.\n- Sibling sub-issues make the learned-skills PR merge itself once green and delete its branch on merge (`--delete-branch`). A run that dies after that merge but before its manifest write would then, on resume, either open a second PR with the same edits (branch gone) or stage edits that already shipped (branch present, PR merged).\n\n## Deliverables\n\n1. `land` looks up the run branch's PRs by head-branch name whether or not the remote branch exists (`gh pr list --head learned-skills/{run-id} --state all`, through the same `listPrs` seam, or through `listPrsForHead` if #5663 has landed by build time). A failed lookup or commit read fails closed: every remaining captured entry is staged with a reason naming the failed read, and `land` never builds fresh commits or a new PR on that path. The commit read pages to completion. When several PRs share the head name, the commits of every `MERGED` one count.\n2. When a `MERGED` PR exists for the run branch, each still-`captured` entry whose commit is among that PR's commits is recorded `landed` against that PR (commit and PR URL set, its AUTO log line written once). A commit matches an entry when its trailers carry this run's id and the entry's id, and its diff's `git patch-id --stable` equals the entry's patch file's — the same verification `land` already applies to commits on an existing branch. Read the merged PR's commits through `gh` (`gh pr view {n} --json commits` or `gh api repos/{owner}/{repo}/pulls/{n}/commits`); the branch may be deleted, so never read them from `origin/learned-skills/{run-id}`. The patch-id comparison needs the commits' objects locally, so `land` first runs `git fetch origin refs/pull/{n}/head` (GitHub keeps that ref after a merge and a branch delete); a fetch that fails is a failed read under the rule above.\n3. Entries not on the merged PR, including ones captured after it merged, are staged with a reason naming the merged PR, as today; that staging is intended.\n4. The header comment's Resume paragraph in `land.js` and `plugin/skills/wrap-up/learned-skills-pr.md`'s description of a resumed `land` say the new rule.\n\n## Acceptance Criteria\n\n- A test in `tests/bin-lib/learned-skills/land.test.js` with no remote branch and a `MERGED` PR whose commits carry the run's trailers and matching patch-ids records every entry `landed` against that PR, creates no new branch or PR, and stages nothing.\n- A test with the same merged PR missing one entry's commit lands the present entries and stages only the missing one, its reason naming the merged PR.\n- A test with no remote branch and no PR at all keeps today's behaviour (fresh commits, new PR).\n- Each new test was seen failing with the new lookup reverted.\n- `npm test -- --full` passes.\n\n## Release Note\n\nFix a resumed wrap-up so it recognises learned-skill edits whose PR already merged, instead of opening a duplicate PR or staging them again.\n\n## Technical Approach\n\nHoist the `listPrs()` call out of the `if (line)` block so it runs for every land; keep the existing branch-present paths (open PR reused, closed PR stages, no PR means the branch is this run's own). Add the merged-PR reconciliation before `orphanReason` stages anything. Reuse the existing trailer and patch-id verification helpers rather than writing a second matcher.\n\n### Key Files\n\n- `plugin/bin/lib/learned-skills/land.js` — PR lookup independent of the remote branch; merged-PR reconciliation; header comment\n- `plugin/skills/wrap-up/learned-skills-pr.md` — resumed-land description\n- `tests/bin-lib/learned-skills/land.test.js` — new resume cases\n\n## Gotchas\n\n- The sibling sub-issue that merges the learned-skills PR in the same wrap-up widens the merge-then-crash window, but the rule here is safe whichever lands first: a PR merged by a human in the old flow hits the identical case.\n\n- #5663 replaces head-branch PR lookups with one fork-excluding helper and touches `land.js`; whichever lands second rebases onto the other.\n- `--state all` with `--head` matches by head ref name, so a deleted branch's PR is still found; verify with a fake runner that the argv carries no `--repo`-less fork ambiguity (#5663's concern).\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:let-a-resumed-learned-skills-land-recognise-edits-a-merged-p -->\nwork-fingerprint: learned-skills-auto-merge:let-a-resumed-learned-skills-land-recognise-edits-a-merged-p\n\n",
+        "createdAt": "2026-11-23T07:01:31Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6110,
+        "state": "OPEN",
+        "title": "Let a resumed learned-skills land recognise edits a merged PR already shipped",
+        "updatedAt": "2026-11-23T07:26:45Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: terminal\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n**Related:** #3313, #2987, #3002, #3933\n\n## Current State\n\nA project's `verify-scope.json` can declare `preExisting`: a glob/path allowlist of known-failing test files (#3129; e.g. a shallow clone's precondition tests). A run whose entire failing-file set is covered by it is adjudicated as passing (`plugin/bin/verify.js` around line 616). #3313 added a report-only new/fixed split (`newAndFixed` in `plugin/bin/lib/verify/pre-existing.js`): \"fixed\" lists the tracked test files an entry covers that did not fail. It is computed only inside the adjudication block, gated on `!rawPass && !adjudicatedPass` (`verify.js:632`), and only for a full-scope run with every check run.\n\nA green (raw-pass) run never enters that block, so it never reports that its `preExisting` entries went unused. Because `verify-scope.json` is a committed project file, an entry that is no longer needed stays a standing waiver: if that file later breaks again for a real reason, its failure is excused without anyone seeing it.\n\n## Deliverables\n\n- [ ] On a raw-pass, full-scope run (every check ran) with a non-empty `preExisting` declaration, print one report line: none of the N declared `preExisting` entries was needed in this run, naming the entries\n- [ ] Narrower scope modes (`affected` and the like) print nothing, since they did not run every suite and cannot claim a listed file passed (the same rule `newAndFixed` already applies)\n- [ ] The line is informational: it never changes the exit code or the verify stamp, and never tells the reader to delete the entries. Entries are often environment-specific (a test that fails only in a shallow clone passes locally), so the line reads \"not needed in this run\", not \"stale, remove\"\n- [ ] Add the same fact to the run's JSON/report output beside the existing `preExistingAdjudicated` field (for example `preExistingUnused: { declared, mode }`), so `/test` and the wrap-up pack can surface it\n- [ ] Document the line in `plugin/skills/test/verification.md`'s `preExisting` paragraph\n\n## Acceptance Criteria\n\n- A raw-pass full-scope run with `preExisting: [\"tests/a.test.js\"]` prints the not-needed line naming `tests/a.test.js`, and its JSON carries `preExistingUnused`\n- A raw-pass run in a narrower scope mode, a run with no `preExisting` key, and a failing run each print no such line\n- The line does not alter the exit code or the stamp (asserted by comparing to the same run without the declaration)\n- No `git ls-files` call is made on the raw-pass path (asserted with the injectable `execImpl`)\n- `npm test` passes\n\n## Release Note\n\n`verify` now notes when a full green run didn't need any of the declared pre-existing-failure allowances.\n\n## Technical Approach\n\nThe original question offered three postures: report on every pass, only under full scope, or only behind a flag. Full scope only, by default, is the one that is both sound and cheap:\n\n- **Sound:** only a full-scope run with every check run exercised every suite, which is the same reason `newAndFixed` returns `fixed: null` for narrower modes.\n- **Cheap:** the cost the original record worried about was `git ls-files` on every green run. On a raw pass no test failed, so every declared entry was unneeded by definition, and the line can name the declared entries directly with no tracked-file enumeration. The output cost is one line, only for projects that declare `preExisting`, which is meant to be temporary.\n- **Not behind a flag:** a flag would leave the standing-waiver risk invisible, which is the gap this record exists to close.\n\n### Key Files\n\n- `plugin/bin/verify.js` — raw-pass branch: emit the line and the `preExistingUnused` field\n- `plugin/bin/lib/verify/pre-existing.js` — optional small helper for the raw-pass report (no `trackedFiles` call)\n- `plugin/skills/test/verification.md` — document the line beside the existing `preExisting` paragraph\n- `tests/bin-lib/verify/` — new cases for the line, the narrower-mode silence, and the no-`ls-files` assertion\n\n## Gotchas\n\n- `verify.js`'s stdout is bounded by contract (\"one table row per check plus at most one ≤100-line failing region\", `verification.md:58`); the new line has to fit that contract's wording, so update the bound's description if it enumerates every line kind.\n- Keep the report out of stamp-match logic: `verify.js:142` treats a `preExisting`-adjudicated stamp differently, and a raw pass that merely reports unused entries is still a plain raw pass.\n\n## Original request\n\nDecide whether a green verify run should flag stale preExisting allowlist entries\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n#3313 made `verify.js` report which allowlisted `preExisting` files passed (\"N new, M fixed\") — but only on a run that failed and was adjudicated. A green (raw-pass) run never adjudicates, so a fully stale allowlist, where every entry now passes, is never flagged for removal. Files: `plugin/bin/verify.js`, `plugin/bin/lib/verify/pre-existing.js`, `plugin/skills/test/verification.md`.\n\n## Deliverables\n\n- [ ] Decide whether a raw-pass run with a `preExisting` declaration should print the fixed list.\n- [ ] If yes, implement it and pin the cost of `git ls-files` on every green run.\n\n## Open Question\n\nShould a green run pay for the stale-allowlist check on every pass, only under scope mode full, or only on request (a flag)? Printing it by default adds output to the most common run; a flag keeps a stale allowlist invisible unless someone asks.\n\n## Release Note\n\nNo user-visible change until the question is answered.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
         "createdAt": "2026-10-20T17:25:10Z",
         "labels": [
@@ -11219,6 +11489,26 @@
       ]
     },
     {
+      "number": 6114,
+      "blockedBy": [
+        6112
+      ]
+    },
+    {
+      "number": 6113,
+      "blockedBy": [
+        6112
+      ]
+    },
+    {
+      "number": 6112,
+      "blockedBy": [
+        5208,
+        6110,
+        6109
+      ]
+    },
+    {
       "number": 6021,
       "blockedBy": [
         6019
@@ -11322,7 +11612,7 @@
       ]
     }
   ],
-  "grouping": "per-record+express",
+  "grouping": "per-record+express+driver",
   "bundles": [
     {
       "records": [
