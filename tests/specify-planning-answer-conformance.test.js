@@ -384,16 +384,48 @@ function nextActionLabels(region) {
   }).sort();
 }
 
+// A renamed NEXT_ACTIONS value, as a control's expected list.
+const RENAMED_ACTIONS = NEXT_ACTIONS.map((v) => (v === 'held-or-failed' ? 'held-or-fail' : v));
+const assertBulletsName = (region, actions) => assert.deepEqual(nextActionLabels(region), [...actions].sort(), 'bullets ≠ next values');
+
 test('twin: the Next Actions bullet labels equal NEXT_ACTIONS', () => {
   const region = sec('## Read-back and outcome');
-  const want = [...NEXT_ACTIONS].sort();
-  assert.deepEqual(nextActionLabels(region), want);
+  assertBulletsName(region, NEXT_ACTIONS);
+  // Go-red: the same assertion over a dropped bullet, an extra value, a renamed value and an unmapped label.
   const heldLine = region.split('\n').find((l) => l.startsWith('- **Held or failed:**'));
   const noHeld = region.replace(heldLine, '');
   assert.notEqual(noHeld, region);
-  assert.notDeepEqual(nextActionLabels(noHeld), want);
-  assert.notDeepEqual(nextActionLabels(region), [...NEXT_ACTIONS, 'extra'].sort());
-  assert.throws(() => nextActionLabels(`${region}\n- **Other:** x`), { message: 'unmapped Next Actions label: Other' });
+  assert.throws(() => assertBulletsName(noHeld, NEXT_ACTIONS), { message: /^bullets ≠ next values/ });
+  assert.throws(() => assertBulletsName(region, [...NEXT_ACTIONS, 'extra']), { message: /^bullets ≠ next values/ });
+  assert.throws(() => assertBulletsName(region, RENAMED_ACTIONS), { message: /^bullets ≠ next values/ });
+  assert.throws(() => assertBulletsName(`${region}\n- **Other:** x`, NEXT_ACTIONS), { message: 'unmapped Next Actions label: Other' });
+});
+
+// The lead-in sentence names the values the agent matches the verdict's `next` against: its backticked
+// values between "names —" and the first ";" must equal NEXT_ACTIONS as a set.
+const NEXT_SENTENCE = 'Next Actions takes the bullet the verdict\'s `next` names — ';
+function sentenceNextValues(region) {
+  const from = region.indexOf(NEXT_SENTENCE);
+  if (from === -1) throw new Error('Next Actions lead-in sentence not found');
+  const rest = region.slice(from + NEXT_SENTENCE.length);
+  const list = rest.slice(0, rest.indexOf(';'));
+  return [...list.matchAll(/`([^`]+)`/g)].map(([, v]) => v).sort();
+}
+const assertSentenceNames = (region, actions) => assert.deepEqual(sentenceNextValues(region), [...actions].sort(), 'lead-in ≠ next values');
+
+test('twin: the Next Actions lead-in names exactly NEXT_ACTIONS', () => {
+  const region = sec('## Read-back and outcome');
+  assertSentenceNames(region, NEXT_ACTIONS);
+  // Go-red: the same assertion over a dropped value, an extra value, a renamed value in the prose, and a renamed NEXT_ACTIONS value.
+  const red = (mutated, actions) => {
+    assert.throws(() => assertSentenceNames(mutated, actions), { message: /^lead-in ≠ next values/ });
+  };
+  const dropped = region.replace('`kept-needs-decision` or `held-or-failed`', '`kept-needs-decision`');
+  const extra = region.replace('or `held-or-failed`', 'or `held-or-failed` or `extra`');
+  const renamed = region.replace('or `held-or-failed`', 'or `held-or-fail`');
+  for (const m of [dropped, extra, renamed]) { assert.notEqual(m, region); red(m, NEXT_ACTIONS); }
+  red(region, RENAMED_ACTIONS);
+  assert.throws(() => sentenceNextValues(region.replace(NEXT_SENTENCE, 'Next Actions splits four ways — ')), { message: 'Next Actions lead-in sentence not found' });
 });
 
 test('twin: the Write and Re-hold outcomes equal readBack\'s templates', () => {
