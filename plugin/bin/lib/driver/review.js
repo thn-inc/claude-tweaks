@@ -394,10 +394,11 @@ const fsReady = (opts) => {
 };
 
 // The protected and merge-sensitive checks without regard to letter case: the path is the
-// reviewer's, not git's, and on a case-insensitive volume `.GITHUB/` is `.github/`. Each protected
-// pattern is written in one case (`CODEOWNERS` upper, the rest lower), so the path is tried as
-// given, lowered and raised; the sensitive globs are compared lowered on both sides. A setting that
-// is not a list of strings fails closed. The protected side tests the union of the shipped list and
+// reviewer's, not git's, and on a case-insensitive volume `.GITHUB/` is `.github/`. The shipped
+// patterns are each written in one case (`CODEOWNERS` upper, the rest lower); a project glob is
+// matched as written, in the same three spellings of the path (as given, lowered, raised), and a
+// mixed-case glob relies on the canonical-path variant when the directory exists. The sensitive
+// globs are compared lowered on both sides. A setting that is not a list of strings fails closed. The protected side tests the union of the shipped list and
 // the project's resolved protected-paths (protectedPathGlobs; absent means the shipped list alone),
 // so a project can never open an evidence path onto a shipped protected path.
 function isProtectedOrSensitive(p, sensitivePaths = [], protectedPathGlobs) {
@@ -466,7 +467,7 @@ const RESERVED_SEGMENTS = ['.git', 'node_modules'];
 // test file by the eligibility gate's isTestPath.
 const notTestFile = (p) => typeof p !== 'string' || p.length > EVIDENCE_PATH_MAX_CHARS || !isTestFile(p);
 
-// test(p, { wt, sensitivePaths, deps }) is true when p violates the rule.
+// test(p, { wt, sensitivePaths, protectedPathGlobs, deps }) is true when p violates the rule.
 const PATH_RULES = Object.freeze([
   { name: 'empty-or-too-long', test: (p) => typeof p !== 'string' || p === '' || p.length > EVIDENCE_PATH_MAX_CHARS },
   // Printable ASCII only. Anything else can alias on a volume that folds Unicode (APFS reads `ſ` as

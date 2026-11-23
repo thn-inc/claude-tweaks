@@ -92,7 +92,7 @@ test('express policy merges a factory model-profiles row', { skip: STUB_SKIP }, 
 
 // --- protected-paths (#6020): read from the main checkout, never the record's worktree ---
 
-const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf, fixtureGit } = require('../../helpers/git-fixtures');
 const { protectedPathGlobsOf, resolveProtectedPathsEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'policy.js'));
 const { SHIPPED_PROTECTED_PATHS, evaluateRecordEligibility } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
@@ -159,6 +159,27 @@ test('Review Focus 2: a worktree [] never reaches a main checkout with no policy
   const wt = harnessWorktreeOf(main, 'rec');
   writePolicy(wt, 'protected-paths: []\n');
   assert.deepStrictEqual(resolveProtectedPathsEntry(wt), { value: [], source: 'default' });
+});
+
+test('a --separate-git-dir checkout (no linked worktree, no main root) still reads its own configured list', () => {
+  const dir = fs.realpathSync(scratchDir('ct-sepgit-'));
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(work);
+  fixtureGit(['init', '-q', '--separate-git-dir', path.join(dir, 'admin'), work]);
+  writePolicy(work, 'protected-paths: infra/**\n');
+  assert.deepStrictEqual(globsFrom(work), ['infra/**']);
+});
+
+test('the mixed-key real call: a worktree [] never reaches protected-paths, merge-sensitive-paths still resolves', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: []\n');
+  const saved = process.cwd();
+  process.chdir(wt);
+  let out;
+  try { out = defaultResolvePolicy(['merge-sensitive-paths', 'protected-paths']); } finally { process.chdir(saved); }
+  assert.deepStrictEqual(out['protected-paths'], { value: [], source: 'default' });
+  assert.ok(out['merge-sensitive-paths'], 'merge-sensitive-paths entry present');
 });
 
 test('protectedPathGlobsOf keys on invalid and source, from real resolver replies', () => {

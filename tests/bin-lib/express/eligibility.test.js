@@ -717,7 +717,7 @@ function familyCorpus(glob) {
 }
 
 test('AC1.1: the shipped glob list answers every corpus path as the pre-#6020 regexes do', () => {
-  const named = ['hooks/x.js', 'a/hooks/x.js', 'hooks.js', 'a/b/hooks.sh', '.github/workflows/ci.yml', 'CODEOWNERS', 'docs/CODEOWNERS', 'package.json', 'a/package.json', '.claude/settings.local.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json', 'hooksmith/x.js', 'package.json.bak', 'my-hooks.js', 'hooks', '.github', 'skills/_shared', 'a\n/hooks/x.js', '.github/a\nb/c.yml', '.github/a\u2028b/c.yml', 'x\r/hooks/y.js', 'a\n/package.json', 'a\u2029/skills/_shared/z.md'];
+  const named = ['hooks/x.js', 'a/hooks/x.js', 'hooks.js', 'a/b/hooks.sh', '.github/workflows/ci.yml', 'CODEOWNERS', 'docs/CODEOWNERS', 'package.json', 'a/package.json', '.claude/settings.local.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json', 'hooksmith/x.js', 'package.json.bak', 'my-hooks.js', 'hooks', '.github', 'skills/_shared', 'a\n/hooks/x.js', '.github/a\nb/c.yml', '.github/a\u2028b/c.yml', 'x\r/hooks/y.js', 'a\n/package.json', 'a\u2029/skills/_shared/z.md', './hooks/x.js', 'hooks\\x.js', 'a/../package.json', '.github/./ci.yml'];
   const oldCanonical = (q) => { const n = path.posix.normalize(q.replace(/\\/g, '/')); return n.startsWith('./') ? n.slice(2) : n; };
   const corpus = [...PROTECTED_FAMILIES.flatMap((fam) => familyCorpus(fam.glob)), ...named];
   assert.strictEqual(TODAY_PROTECTED_RES.length, 15);

@@ -465,6 +465,7 @@ test('#6020 AC5: a malformed protected-paths applies the shipped list in the pla
     assert.deepStrictEqual(v, unset);
   }
   assert.deepStrictEqual(read({ error: 'unknown-key' }), { lane: null, reason: 'policy-unreadable' });
+  assert.deepStrictEqual(read({ value: 'infra/**', source: 'policy', error: 'x' }), { lane: null, reason: 'policy-unreadable' });
 });
 
 test('#6020: a resolved protected-paths list decides the driver and express lanes', () => {

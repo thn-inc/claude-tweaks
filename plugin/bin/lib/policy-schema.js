@@ -457,10 +457,6 @@ function readLocatedPolicy(repoRoot) {
   return policyPath === null ? null : readFileSafe(policyPath);
 }
 
-// Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
-// living inside a fenced code block — matches bin/lib/policy.js's convention.
-// bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
-// change both, plus its hooks.sh AC9 differential fixtures.
 // hashInvalid rows (#6020): parseFlatLines cuts a value at its first `#`, which would
 // silently drop every list element after one (`docs/#x/**`). True when the column-0
 // `{key}:` line has a `#` directly after a non-whitespace character in its value; a
@@ -475,6 +471,10 @@ function hasInlineHash(raw, key) {
   return false;
 }
 
+// Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
+// living inside a fenced code block — matches bin/lib/policy.js's convention.
+// bin/hooks.sh's policy_verdict mirrors this for `worktree-always` (#5392):
+// change both, plus its hooks.sh AC9 differential fixtures.
 function parseFlatLines(raw) {
   const result = {};
   if (!raw) return result;
@@ -1236,7 +1236,7 @@ function auditPolicy(repoRoot) {
   for (const [key, value] of Object.entries(policyEntries)) {
     const schemaEntry = SCHEMA_BY_KEY.get(key);
     if (!schemaEntry) continue;
-    if (!isValidValue(schemaEntry, value)) {
+    if (!isValidValue(schemaEntry, value) || (schemaEntry.hashInvalid && hasInlineHash(policyRaw, key))) {
       invalidValues.push({ key, value, expected: schemaEntry });
     } else if (schemaEntry.policySourceExcluded) {
       sourceExcludedKeys.push({ key, value });

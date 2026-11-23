@@ -6,7 +6,7 @@
 'use strict';
 
 const { evaluateRecordEligibility, widenedByFor } = require('./eligibility');
-const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } =require('./policy');
+const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
 
 const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });

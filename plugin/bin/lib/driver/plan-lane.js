@@ -32,7 +32,8 @@
 // any lane is tried, so a missing, unreadable or malformed input returns lane null with its own
 // reason and never falls through to a later lane. A policy entry resolve-policy marks `invalid`
 // (a malformed policy.yml value resolved to the schema default) or that carries an `error` field
-// is unreadable even though the driver would run on the default (spec Plan Review Clarification 1).
+// is unreadable even though the driver would run on the default (spec Plan Review Clarification 1) —
+// except `protected-paths`, where a malformed value applies the shipped list, as the gates do (#6020 AC5).
 
 const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/record');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
@@ -82,7 +83,7 @@ function policyReadable(policy) {
     // protected-paths alone tolerates `invalid: true` and an unusable value: protectedPathGlobsOf applies the
     // shipped list to them, as the gates do (#6020 AC5). A missing entry, a non-object or an `error` stays unreadable.
     return isObject(entry) && Object.prototype.hasOwnProperty.call(entry, 'value')
-      && (key === 'protected-paths' || entry.invalid !== true) &&!Object.prototype.hasOwnProperty.call(entry, 'error');
+      && (key === 'protected-paths' || entry.invalid !== true) && !Object.prototype.hasOwnProperty.call(entry, 'error');
   });
   if (!entriesReadable) return false;
   const value = (key) => policy[key].value;

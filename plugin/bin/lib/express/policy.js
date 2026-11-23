@@ -1,6 +1,6 @@
 // bin/lib/express/policy.js — the express lane's (#4025) policy-read seam: the real
 // git/file/policy readers and the merge-sensitive-paths list parse that cli.js (the
-// verbs) and queue.js (dispatch's queue-pull) both need. Kept out of cli.js so the
+// verbs) and queue.js (dispatch's queue-pull) both need, and the `protected-paths` read from the main checkout. Kept out of cli.js so the
 // queue-pull path loads this small module, not the whole CLI graph.
 'use strict';
 
@@ -38,8 +38,8 @@ function protectedPathGlobsOf(entry) {
   return SHIPPED_PROTECTED_PATHS;
 }
 
-// The express gate's record options from the resolved express-lane, integration-model and
-// merge-sensitive-paths entries: cli.js's gate verb and the plan-lane predicate
+// The express gate's record options from the resolved express-lane, integration-model,
+// merge-sensitive-paths and protected-paths entries: cli.js's gate verb and the plan-lane predicate
 // (driver/plan-lane.js) read the express bounds from here, so a new bound reaches both.
 function expressGateOptions(policy) {
   return {
@@ -64,14 +64,26 @@ function defaultReadFile(p) {
 
 // `protected-paths` is read from the MAIN checkout's policy.yml, never the cwd's: a record builds in a linked
 // worktree whose own policy.yml it can edit, and a list read there would let a record shrink its own protected
-// set. A null main root or any throw is an invalid entry (-> the shipped list), a fresh object each time.
+// set. A `.git` file that is not a linked worktree's (a --separate-git-dir checkout, a submodule) leaves
+// mainCheckoutRoot null; when git reports the git dir equal to the common dir (a non-linked checkout) its
+// toplevel is the main checkout, so a configured list still applies (`git worktree list` is no help there: it
+// names the separate git dir). A linked worktree is never read. Otherwise the entry is invalid (-> the shipped
+// list) with one stderr warning, a fresh object each time; any throw is the same invalid entry.
 function resolveProtectedPathsEntry(cwd = process.cwd()) {
-  try {
-    const main = mainCheckoutRoot(cwd);
-    if (main === null) return { value: [], source: 'default', invalid: true };
-    return resolvePolicyConfig({ git: (args) => defaultGit(args, { cwd: main }), readFile: defaultReadFile, keys: ['protected-paths'], cwd: main }).result['protected-paths'];
-  } catch {
+  const invalid = (why) => {
+    process.stderr.write(`express-policy: protected-paths not read (${why}) — shipped list applies\n`);
     return { value: [], source: 'default', invalid: true };
+  };
+  try {
+    let main = mainCheckoutRoot(cwd);
+    if (main === null) {
+      const [gitDir, commonDir, top] = defaultGit(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd }).split('\n').map((s) => s.trim());
+      main = gitDir && gitDir === commonDir && top ? top : null;
+    }
+    if (!main) return invalid('no main checkout resolved');
+    return resolvePolicyConfig({ git: (args) => defaultGit(args, { cwd: main }), readFile: defaultReadFile, keys: ['protected-paths'], cwd: main }).result['protected-paths'];
+  } catch (err) {
+    return invalid(`read failed: ${err && err.code ? err.code : 'error'}`);
   }
 }
 

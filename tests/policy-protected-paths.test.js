@@ -4,10 +4,12 @@
 // inline `#` never cuts the list short.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { scratchDir } = require('./helpers/tmp-dir');
 
-const { POLICY_KEYS, LIST_ELEMENT_PATTERNS, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+const { POLICY_KEYS, LIST_ELEMENT_PATTERNS, resolvePolicyKeys, auditPolicy } = require('../plugin/bin/lib/policy-schema');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 
 const KEY = 'protected-paths';
@@ -59,6 +61,19 @@ test('an inline # never cuts the list short', () => {
     resolvePolicyKeys(['deferral-digest-reasons'], { policyRaw: 'deferral-digest-reasons: blocked-dependency#x\n' })['deferral-digest-reasons'],
     { value: 'blocked-dependency', source: 'policy' },
   );
+});
+
+test('auditPolicy reports an inline-# list as invalid, exactly as the resolver does; a trailing comment is clean', () => {
+  const audit = (text) => {
+    const dir = scratchDir('policy-protected-paths-audit-');
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+    return auditPolicy(dir).invalidValues.filter((r) => r.key === KEY);
+  };
+  const bad = audit(`${KEY}: infra/**, docs/#x/**\n`);
+  assert.strictEqual(bad.length, 1);
+  assert.strictEqual(bad[0].value, 'infra/**, docs/');
+  assert.deepStrictEqual(audit(`${KEY}: infra/** # ours\n`), []);
 });
 
 test('AC10.2 (resolver half): a never-matching glob is valid', () => {

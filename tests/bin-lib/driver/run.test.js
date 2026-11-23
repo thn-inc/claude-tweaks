@@ -8479,7 +8479,7 @@ const protectedReasons = (verdict) => verdict.reasons.filter((r) => r.startsWith
 test('AC2.1, AC4.1 (driver half): --check under protected-paths infra/** stops refusing package.json and refuses infra/main.tf', async () => {
   assert.deepStrictEqual(resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: infra/**\n' })['protected-paths'], { value: 'infra/**', source: 'policy' });
   const pkg = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['package.json']);
-  assert.ok(!pkg.verdict.reasons.includes('protected path: package.json'), JSON.stringify(pkg.verdict));
+  assert.deepStrictEqual(protectedReasons(pkg.verdict), [], JSON.stringify(pkg.verdict));
   const tf = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['infra/main.tf']);
   assert.ok(tf.verdict.reasons.includes('protected path: infra/main.tf'), JSON.stringify(tf.verdict));
   const unset = await widenCheck({}, PP_LABELS, {}, ['package.json']);
