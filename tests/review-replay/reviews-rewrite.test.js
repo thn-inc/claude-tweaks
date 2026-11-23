@@ -423,7 +423,7 @@ test('pointerPathOf: a "this file" prompt with the path alone on its own line, i
 });
 
 test('pointerPathOf: a "this file" prompt with no lone path line, or two, is not a pointer', () => {
-  assert.equal(rw.pointerPathOf('Check the null guard in this file.\nWORKTREE: /Users/x/r\nSee /tmp/x is your prompt'), null);
+  assert.equal(rw.pointerPathOf('Check the null guard in this file.\nWORKTREE: /Users/x/r\n/tmp/x is your prompt'), null, 'a path followed by words is not a lone path');
   assert.equal(rw.pointerPathOf('Your instructions are in this file:\n/tmp/a/p.md\n/tmp/b/q.md'), null);
   assert.equal(rw.pointerPathOf('Review the change.\n/tmp/a/p.md'), null, 'a lone path line alone does not make a pointer');
 });
