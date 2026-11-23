@@ -58,7 +58,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -328,12 +328,12 @@ const { GROUPING_INPUTS, groupingFingerprint } = require(path.join(ROOT, 'plugin
 const FP_BASE = {
   'express-lane': true, 'express-driver': 'on', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text',
   'integration-model': 'pr-first', 'merge-sensitive-paths': ['a/**'], 'express-driver-max-size': 'low',
-  'express-driver-max-key-files': 3, 'express-driver-max-risk': 'low', 'express-driver-review': 'beyond-express',
+  'express-driver-max-key-files': 3, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'refuse', 'express-driver-review': 'beyond-express',
 };
 const FP_CHANGED = {
   'express-lane': false, 'express-driver': 'split', 'dispatch-fastlane-bundle-cap': 2, 'work-links': 'native',
   'integration-model': 'local-merge', 'merge-sensitive-paths': ['b/**'], 'express-driver-max-size': 'medium',
-  'express-driver-max-key-files': 4, 'express-driver-max-risk': 'medium', 'express-driver-review': 'on',
+  'express-driver-max-key-files': 4, 'express-driver-max-risk': 'medium', 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on',
 };
 const fpOf = (values) => expressQueuePolicy({ resolvePolicy: policy(values).resolvePolicy });
 
@@ -442,4 +442,32 @@ test('#6062 AC7: every policy entry the queue policy reads is a grouping input',
   p.keepSingleton(ELIGIBLE);
   assert.ok(read.length > 0);
   for (const k of read) assert.ok(GROUPING_INPUTS.includes(k), k);
+});
+
+// #6019: the driver half asks the protected-path question the eligibility step asks.
+const PROTECTED_POLICY = { ...WIDENED_POLICY, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'reviewer' };
+const withKeyFile = (file) => ({ ...ELIGIBLE, body: BODY.replace('plugin/skills/init/claude-md-template.md', file) });
+const PROTECTED_KEY_FILE = withKeyFile('plugin/hooks/x.js');
+
+test('#6019: under reviewer with the reviewer on, a protected-Key-File record is driver-routable', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), true);
+  assert.deepStrictEqual(sink.lines, []);
+});
+
+test('#6019: under reviewer with the reviewer off, the protected-Key-File record is not driver-routable', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-review': 'off' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('#6019: with the key refuse the protected-Key-File record keeps today\'s answer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-protected-paths': 'refuse' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+});
+
+test('#6019: a build-time Key File is never driver-routable under reviewer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy });
+  assert.equal(p.keepSingleton(withKeyFile('.github/workflows/ci.yml')), false);
 });

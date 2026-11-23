@@ -23,6 +23,7 @@ const POLICY_RESOLVED = Object.freeze({
   'express-driver-max-key-files': { value: 3 },
   'express-driver-review': { value: 'beyond-express' },
   'express-driver-max-risk': { value: 'low' },
+  'express-driver-protected-paths': { value: 'refuse' },
 });
 const DEFAULT_FACTS = Object.freeze({ final: null, outcome: 'pending-review', claimed: true, claimExit: 0 });
 const EMPTY_PULL = Object.freeze({ groups: [], exclusions: [] });

@@ -1977,6 +1977,12 @@ test('AC4.1 (#6018): beyond-express turns the reviewer on for a risk-widened rec
   }), { on: true, reason: 'admitted widened by risk, ceremony' });
 });
 
+test('AC2.3 (#6019): beyond-express turns the reviewer on for a protected-path-widened record', () => {
+  assert.deepStrictEqual(reviewRequired({
+    issue: { labels: [{ name: 'size:low' }] }, keyFiles: ['plugin/hooks/x.js'], policyValue: 'beyond-express', widenedBy: ['protected-path'],
+  }), { on: true, reason: 'admitted widened by protected-path' });
+});
+
 test('AC4.2 (#6018): ceremony:standard with risk:low and no widening keeps today\'s off answer', () => {
   const issue = { labels: [{ name: 'size:low' }, { name: 'risk:low' }, { name: 'ceremony:standard' }] };
   const want = { on: false, reason: 'size:low and 2 Key Files are inside the express bounds' };
