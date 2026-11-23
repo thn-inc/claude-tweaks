@@ -46,6 +46,8 @@
 // writes one first stderr line, in every output mode (stdout and the exit code
 // unchanged): `resolve-policy: note — {root} has no .claude-tweaks/policy.yml;
 // read the main checkout's {policyPath}`.
+// A requested `plan-at-specify` refused for `planning-decisions: ask-all` writes one stderr warning in every
+// output mode (stdout and the exit code unchanged); its JSON entry carries the additive `conflict` field (#6056).
 // Repo root comes from `git rev-parse --show-toplevel` at the
 // injected cwd (`deps.cwd()`, the process cwd when run as a script; that cwd
 // itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
@@ -232,6 +234,10 @@ function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degra
   for (const key of ['integration-model', 'merge-verification']) {
     if (!degrades.has(key)) continue;
     lines.push(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
+  // #6056: plan-at-specify refused for planning-decisions: ask-all, in every output mode.
+  if (new Set(keys).has('plan-at-specify') && result['plan-at-specify'] && result['plan-at-specify'].conflict === 'planning-decisions') {
+    lines.push('resolve-policy: warning: plan-at-specify is on but planning-decisions is ask-all — using "off"; set planning-decisions: asked-classes to plan at /claude-tweaks:specify\n');
   }
   if (values) {
     // #4141: a rejected value still prints its schema default on stdout, so

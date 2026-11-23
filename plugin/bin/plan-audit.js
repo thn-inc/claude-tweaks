@@ -12,7 +12,8 @@
 // (#3378) is the same kind of read-only verb, printing each task's per-task
 // Role/Review-risk markers for dispatch.md's tier forwarding. `--risk-proofs`
 // (#4618) is a read-only verb running Check G alone with the full audit's
-// policy read, for Common Step 1.5's skip path.
+// policy read, for Common Step 1.5's skip path. `--surface-diff <before-plan>` (#6059) is a
+// read-only verb reporting whether an amend changed the plan's file list or AC coverage.
 'use strict';
 
 const fs = require('node:fs');
@@ -24,7 +25,7 @@ const {
   extractTaskMarkers,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, checkPremiseRefs, checkTaskMarkers,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, checkPremiseRefs, checkTaskMarkers, surfaceDiff,
 } = require('./lib/plan-audit/checks');
 const { makeExec, resolveAgainst } = require('./lib/health-core/io');
 const { readRiskPolicy } = require('./lib/policy');
@@ -164,6 +165,21 @@ function run(argv, deps) {
       deps.stderr(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message.split(specResolved).join(parsed.spec)}\n`);
       return 2;
     }
+  }
+
+  // #6059: --surface-diff needs neither a repo root nor the policy. An unreadable before-plan is
+  // the same exit-2 file-read error as an unreadable plan.
+  if (parsed.surfaceDiff !== null) {
+    const beforeResolved = resolveAgainst(deps.cwd(), parsed.surfaceDiff);
+    let beforeText;
+    try {
+      beforeText = fs.readFileSync(beforeResolved, 'utf8');
+    } catch (err) {
+      deps.stderr(`plan-audit.js: cannot read before-plan file ${parsed.surfaceDiff}: ${err.message.split(beforeResolved).join(parsed.surfaceDiff)}\n`);
+      return 2;
+    }
+    deps.stdout(`${JSON.stringify({ surfaceDiff: surfaceDiff(specText, beforeText, text) })}\n`);
+    return 0;
   }
 
   const repoRoot = resolveRepoRoot(parsed.repoRoot, deps.cwd(), deps);

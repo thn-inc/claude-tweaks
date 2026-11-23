@@ -4,7 +4,7 @@
 // confirmRiskFlags, appendRiskProofGotcha) plus, for the diff tripwire (#4619), the
 // `Risk-flags-added-by-tripwire:` line (parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags). A record body, not a facet, carries the
 // line, so the GitHub and local-files backends read it through the same function.
-// No I/O.
+// No I/O. RISK_FLAG_LINE_KEYS is read by issues/plan-line.js (#6052), which excludes these lines from the spec hash.
 //
 // Grammar. `Risk-flags: migrations, auth` (comma-separated lowercase slugs: the four
 // BUILTIN_RISK_CATEGORIES plus policy `risk-categories`) or `Risk-flags: none`
@@ -56,6 +56,9 @@ const EXACT_FLAG_RE = /^Risk-flags: (.*)$/;
 const EXACT_TRIPWIRE_RE = /^Risk-flags-added-by-tripwire: (.*)$/;
 const MARKER_TRUE = 'Risk-flags-unconfirmed: true';
 const MARKER_FALSE = 'Risk-flags-unconfirmed: false';
+// The three line keys, colon included, in the order the spec hash lists them: the one
+// source for issues/plan-line.js's excluded prefixes (#6052), so a key change here moves them too.
+const RISK_FLAG_LINE_KEYS = ['Risk-flags:', 'Risk-flags-unconfirmed:', 'Risk-flags-added-by-tripwire:'];
 // The policy schema's own slug rule, so a `risk-categories` entry the resolver accepts reads here.
 const SLUG_RE = LIST_ELEMENT_PATTERNS.slug;
 const PREAMBLE_END_RE = /^## /;
@@ -464,6 +467,6 @@ function appendRiskProofGotcha(body, slugs) {
 module.exports = {
   // MARKER_LINE_RE is exported for /backlog refine's Step 3.7 pre-filter, so its narrowing
   // detects the same marker lines parseRiskFlags does.
-  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, parseRiskFlags, parseRiskFlagsValue, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, RISK_FLAG_LINE_KEYS, parseRiskFlags, parseRiskFlagsValue, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
   parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
 };

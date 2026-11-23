@@ -163,6 +163,7 @@ Extending a byte/line-pinned table cell — adding a second marker form alongsid
 |---|---|
 | A table or list that restates a data structure living in code | Read it live and pin it against that structure; say so in a header comment, citing `[IL-80]` and why this is the carve-out |
 | Content a future migration is expected to delete or rewrite | Freeze the bytes as a fixture under `tests/fixtures/` |
+| A skill file whose default path must stay byte-identical while the change adds an opt-in path (expand-contract) | Let the opt-in enter only through one marker-delimited pointer (`<!-- {key}:start -->` … `<!-- {key}:end -->`) and put its procedure in a sibling sub-file. Freeze the base bytes as a `.txt` fixture, so markdown walkers miss its HARD-GATE markers, then strip the pointer and `strictEqual` the rest. Controls: one changed character outside the pointer breaks the identity, and the stripper throws on a missing or out-of-order marker (`stripPointer` in `tests/build-plan-review-conformance.test.js`, #6051) |
 | A shell or `node -e` snippet the reader is told to run, where the full command matters | Extract the fence from the doc with a structurally-anchored regex and execute exactly that string; byte-pin the fence instead only when the probe needs fixture-specific surroundings |
 | A shell snippet the reader is told to run, where only the flags matter | Byte-pin the fence, tokenize it, feed the argv straight through the CLI's own arg parser |
 | A literal banned in a file's command text but legitimate in its prose | Extract the code regions first — fences, then inline spans over the fence-stripped remainder — and sweep only those; assert the extraction is non-empty, or the sweep passes on an empty haystack |
@@ -239,7 +240,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 
 ## Advanced proof patterns — lazy-loaded
 
-`advanced-proof-patterns.md` alongside this file holds nine specialized procedures. Read it when a go-red proof needs zero tree mutation, a claim reworded across several copies needs a ban and a positive twin, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, a negative claim needs a clause sweep, or a new pin needs an existing suite to model on (its `## Reference instances`).
+`advanced-proof-patterns.md` alongside this file holds ten specialized procedures. Read it when a go-red proof needs zero tree mutation, a policy-gated opt-in spans several files with no frozen base, a claim reworded across several copies needs a ban and a positive twin, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, a negative claim needs a clause sweep, or a new pin needs an existing suite to model on (its `## Reference instances`).
 
 ## Reference
 
