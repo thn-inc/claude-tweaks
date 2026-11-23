@@ -106,7 +106,7 @@ CACHE_HIT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_
   const depFreshness = require(process.argv[2]);
   if (!Array.isArray(autoBuild) || !Array.isArray(depFreshness)) throw new Error('not a JSON array');
   const current = buildFreshnessSignal([...autoBuild, ...depFreshness]);
-  if (!autoBuild.length || !cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping)) { console.log('0'); process.exit(0); }
+  if (!autoBuild.length || !cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy())) { console.log('0'); process.exit(0); }
   fs.writeFileSync(process.argv[3], JSON.stringify(persisted.groups));
   // persisted.excluded keeps the disk cache's {number, blockedBy}[] shape; convert to reason:'blocked' entries here.
   for (const e of persisted.excluded) {
@@ -288,7 +288,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_QUEUE_RAW" "$DISPA
   const blob = composeOrderBlob({
     computedAt: new Date().toISOString(),
     runId: process.env.PIPELINE_RUN_DIR ? path.basename(process.env.PIPELINE_RUN_DIR) : null,
-    freshnessSignal, groups, excluded, bundles, grouping: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping,
+    freshnessSignal, groups, excluded, bundles, ...require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy(),
   });
   const result = writeOrder(root, blob);
   if (!result.ok) console.error('Queue-order cache write-back failed (non-blocking): ' + result.error);

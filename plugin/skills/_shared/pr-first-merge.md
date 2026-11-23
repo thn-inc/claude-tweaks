@@ -298,7 +298,7 @@ Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-
 
 No fence below runs until Step 2.9 lets the merge through, whichever Step 2.5 route led here. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
-**Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`).
+**Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`). Marker-stamped PR: every composer fence, branch 1's included, takes `--housekeeping` and drops `{issue-list}`, `--tag`, `--keep-open`.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
@@ -317,7 +317,7 @@ auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` 
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
-resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed, so later callers such as `dispatch/close-out.md` and `tidy` compose the same subject); an explicit `--scope {scope}` overrides both. The composer writes
+resolves inside the composer from the `commit-scope`/`commit-scope-paths` policy keys (`_shared/policy-schema.md`) over the PR's own changed files (`gh pr diff --name-only` behind `--pr` — no checkout needed); an explicit `--scope {scope}` overrides both. The composer writes
 the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n}` for a
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
@@ -352,8 +352,7 @@ the result:
    error text also matches, unless item 3's or item 4's signature is also present: it is the arm
    mutation's name, which GitHub appends to every arm-unavailable failure of an `--auto` call.
    `allow_auto_merge: true` alone, without
-   branch protection or a ruleset on the base branch, still fails this way — the setting by
-   itself does not make `--auto` armable (the appendix's "Why `--auto` alone is not a wait"
+   branch protection or a ruleset on the base branch, still fails this way (the appendix's "Why `--auto` alone is not a wait"
    mechanism):
 
    - under `merge-verification: off` only — degrade to an immediate merge, no `--auto` (today's
