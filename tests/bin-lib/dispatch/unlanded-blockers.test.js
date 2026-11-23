@@ -49,7 +49,7 @@ const notFoundError = (repository, errors) => Object.assign(new Error('Command f
 
 // repository: the landing query's b{n} nodes; compare: sha -> status text (or an Error);
 // native: null (the native query is unexpected) | { edges, missing, noRepository }.
-function makeWorld({ repository = {}, compare = {}, native = null } = {}) {
+function makeWorld({ repository = {}, compare = {}, native = null, files = {} } = {}) {
   const calls = [];
   let nativeCalls = 0;
   const runner = (args) => {
@@ -94,6 +94,11 @@ function makeWorld({ repository = {}, compare = {}, native = null } = {}) {
         if (errors.length) throw notFoundError(repo, errors);
         return JSON.stringify({ data: { repository: repo } });
       }
+    }
+    if (args[0] === 'api' && args.includes('--paginate') && args.some((a) => /\/commits\//.test(a))) {
+      const sha = args.find((a) => /\/commits\//.test(a)).split('/commits/').pop();
+      if (!(sha in files)) throw new Error(`unexpected commits read ${sha}`);
+      return files[sha].join('\n');
     }
     if (isCompare(args)) {
       const sha = args[1].split('...').pop();
@@ -719,6 +724,26 @@ test('CLI: a hollow blocker excludes its dependent with the no-implementation AU
 
   const r2 = exec(t, { groups, preflight: mk([{ blocker: 6000, verdict: 'hollow', commit: '46e21cbf6', via: 'commit', pr: null }]) });
   assert.match(r2.stderr, /^AUTO — dispatch: #6003 waits — blocker #6000 was closed by 46e21cbf6 with no implementation$/m);
+});
+
+test('CLI: replaying squash 46e21cbf6 (spec, plan and ledger only) against #6000 Key Files excludes #6003 through the real preflight', (t) => {
+  const blocker = {
+    ...closedBlocker('46e21cbf6', 6000),
+    body: '### Key Files\n\n- `plugin/bin/lib/driver/roles.js` — the launcher\n- `plugin/bin/review-lens-workers.js` — the worker\n',
+    labels: { nodes: [] },
+  };
+  blocker.timelineItems.nodes[0].closer.number = 6061;
+  const world = makeWorld({
+    repository: { b6000: blocker },
+    compare: { '46e21cbf6': 'behind\n' },
+    files: { '46e21cbf6': ['.claude-tweaks/pipelines/2026-11-23T000000-record-6000/work/6000-spec.md', 'docs/superpowers/plans/2026-11-23-driver.md', 'docs/plans/2026-11-23-driver-ledger.md'] },
+  });
+  const groups = [[R10], [rec(6003, 'Blocked by #6000\n')]];
+  const r = exec(t, { groups, world });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.groups, [[R10]]);
+  assert.deepEqual(r.exclusions, [{ reason: 'unlanded-blocker', records: [6003], detail: { blockers: [{ blocker: 6000, commit: '46e21cbf6', verdict: 'hollow', pr: 6061 }] } }]);
+  assert.match(r.stderr, /^AUTO — dispatch: #6003 waits — blocker #6000 was closed by #6061 with no implementation$/m);
 });
 
 test('withoutExcluded leaves the input arrays unmutated', () => {

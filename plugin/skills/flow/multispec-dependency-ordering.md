@@ -88,7 +88,11 @@ Blocker landed hollow — stopping before any claim.
 # Escape 1 — reopen the blocker so its implementation is built:
 gh issue reopen {blocker}
 
-# Escape 2 — remove the edge (escape 2 above), then re-run.
+# Escape 2 — remove the edge, then re-run. work-links: native:
+gh api -X DELETE "repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by/$(gh api repos/{owner}/{repo}/issues/{blocker} --jq .id)"
+
+# Escape 2 — work-links: body-text: rewrite the record body without the "Blocked by #{blocker}" line:
+gh issue view {n} --json body -q .body | grep -vE "^Blocked by #{blocker}([^0-9]|$)" | gh issue edit {n} --body-file -
 ```
 
 With `pr: null` (a direct Commit closer) the clause reads `closed by {commit}`. Before reopening, check whether an implementation PR merged somewhere other than the integration branch (an unlanded implementation): that blocker needs its work landed, not rebuilt.

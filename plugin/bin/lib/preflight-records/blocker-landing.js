@@ -73,6 +73,8 @@ function result(blocker, verdict, commit, via) {
 // Paths a closing commit may touch without delivering a blocker's work (#6142).
 const BOOKKEEPING_PATH_RE = /^(?:\.claude-tweaks\/pipelines\/|docs\/superpowers\/plans\/|docs\/plans\/[^/]+-ledger\.md$)/;
 
+const MAX_KEY_WILDCARDS = 3;
+
 // A Key File entry keeps its first backticked span verbatim: strip a trailing
 // `:N`, `:N-M` or `#L…` suffix; a trailing `/` prefix-matches; `*` globs
 // (`**` spans directories, `*` stays in one segment); anything else is equality.
@@ -80,7 +82,11 @@ function keyMatches(file, rawKey) {
   const stripped = String(rawKey).replace(/(?:#L.*|:\d+(?:-\d+)?)$/, '');
   if (!stripped) return false;
   const key = canonicalPath(stripped);
-  if (key.includes('*')) return globToRegExp(key).test(file);
+  // Key Files are record text, and globToRegExp backtracks polynomially in the
+  // wildcard count: past MAX_KEY_WILDCARDS the entry is read as touching nothing
+  // (hollow — the dependent waits and the report says why) rather than hanging the
+  // synchronous pre-flight (#6142 review).
+  if (key.includes('*')) return (key.match(/\*+/g) || []).length <= MAX_KEY_WILDCARDS && globToRegExp(key).test(file);
   if (key.endsWith('/')) return file.startsWith(key);
   return file === key;
 }
@@ -217,9 +223,13 @@ function classifyBlocker(blocker, node, reach, files) {
     }
     return { ...result(blocker, 'hollow', reachable[0].sha, reachable[0].via), pr: prForSha(node, reachable[0].sha) };
   }
+  // No files map: reachability alone decides (the pre-#6142 rule). fetchBlockerLanding
+  // always passes one; this is the contract for a direct caller of this exported
+  // classifier that has no changed-files read to offer, and for the reachability-only
+  // unit tests.
   const landed = reachable[0];
   if (landed) return result(blocker, 'landed', landed.sha, landed.via);
-  const failed = candidates.find((c) => reach.get(c.sha) !== 'unreachable');
+  const failed =candidates.find((c) => reach.get(c.sha) !== 'unreachable');
   if (failed) return result(blocker, 'undetermined', failed.sha, 'probe-failed');
   // `unlanded` claims no candidate is reachable; a references read cut at first:10
   // has not seen them all, so it cannot make that claim.

@@ -595,6 +595,16 @@ test('#6142 Q1: first reachable hollow, second reachable candidate files read th
   assert.deepEqual(results.get(5), { blocker: 5, verdict: 'undetermined', commit: 'ccc333', via: 'files-unreadable' });
 });
 
+test('#6142 Q1: first reachable candidate files read throws, second touches a Key File → landed via the second', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: new Error('HTTP 500'), ccc333: ['a.js'] },
+  });
+  const { results, probeErrors } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'ccc333', via: 'closing-pr-ref' });
+  assert.deepEqual(probeErrors.map((e) => [e.kind, e.sha]), [['files', 'aaa111']]);
+});
+
 test('#6142 Q1: first reachable hollow, second candidate compare throws → undetermined probe-failed', () => {
   const runner = fakeRunner({
     repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
@@ -644,6 +654,14 @@ test('#6142 isHollow units, including Key File suffix and glob normalization', (
   assert.equal(isHollow(['plugin/skills/foo/a.md'], ['plugin/skills/foo/*.md']), false);
   assert.equal(isHollow(['plugin/skills/foo/sub/a.md'], ['plugin/skills/foo/*.md']), true);
   assert.equal(isHollow(['plugin/skills/foo/sub/a.md'], ['plugin/skills/**/a.md']), false);
+});
+
+test('#6142 review: a Key File with more than three wildcard runs reads as touching nothing instead of backtracking', () => {
+  const started = Date.now();
+  assert.equal(isHollow(['a'.repeat(40) + '.md'], ['*a'.repeat(12) + '*b']), true);
+  assert.equal(isHollow(['a/'.repeat(60) + 'z'], ['**/'.repeat(8) + 'x']), true);
+  assert.ok(Date.now() - started < 1000, 'the over-cap entries must not reach the regex engine');
+  assert.equal(isHollow(['a/b/c/d.js'], ['*/*/*/d.js']), false, 'three wildcard runs still match');
 });
 
 test('#6142: classifyBlocker without a files map keeps the pre-hollow rules', () => {
