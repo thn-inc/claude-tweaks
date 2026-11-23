@@ -179,7 +179,8 @@ function commitFilesArgs({ owner, repo, host, sha }) {
 // The PR number whose merge commit is `sha`, among the closer and the references.
 function prForSha(node, sha) {
   const events = (node && node.timelineItems && Array.isArray(node.timelineItems.nodes)) ? node.timelineItems.nodes : [];
-  const closer = events.length && events[events.length - 1] && events[events.length - 1].closer;
+  const lastEvent = events[events.length - 1];
+  const closer = lastEvent && lastEvent.closer;
   if (closer && closer.__typename === 'PullRequest' && mergedOid(closer) === sha) return closer.number;
   const refs = (node && node.closedByPullRequestsReferences && Array.isArray(node.closedByPullRequestsReferences.nodes))
     ? node.closedByPullRequestsReferences.nodes : [];
