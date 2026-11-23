@@ -3447,8 +3447,11 @@ test('#5230 express: the grouping pass, the write-back blob and the cache check 
   });
   assert.equal(otherFp.state.cacheHit, false, 'a blob written under other grouping settings is never reused (#6062)');
   assert.ok(!otherFp.json('dispatch-exclusions.json').some((e) => e.records.includes(9999)), 'AC8: a fingerprint miss recomputes the blocker exclusions, it does not replay the persisted ones');
-  const hit = pull(SFast(), { persisted: blob, deps: { expressQueuePolicy: recordingExpress().dep } });
+  assert.deepEqual(groupNumbers(otherFp), [[9101], [9102, 9103]], 'AC8: a fingerprint miss recomputes the groups');
+  const withExcluded = { ...blob, excluded: [{ number: 9999, blockedBy: [1] }] };
+  const hit = pull(SFast(), { persisted: withExcluded, deps: { expressQueuePolicy: recordingExpress().dep } });
   assert.equal(hit.state.cacheHit, true, 'the cache check compares the blob against the policy grouping');
+  assert.ok(hit.json('dispatch-exclusions.json').some((e) => e.records.includes(9999)), 'control: a hit replays the persisted exclusions, so the AC8 absence above can go red');
   assert.deepEqual(groupNumbers(hit), [[9101], [9102, 9103]]);
   const otherMode = pull(SFast(), { persisted: blob });
   assert.equal(otherMode.state.cacheHit, false, 'a blob stamped under another grouping is never reused');
