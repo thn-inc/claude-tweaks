@@ -5,14 +5,14 @@
 // mode, so a blob computed under another mode is never reused.
 'use strict';
 
-const { evaluateRecordEligibility, widenings } = require('./eligibility');
-const { defaultResolvePolicy, sensitivePathsOf } = require('./policy');
+const { evaluateRecordEligibility, widenedByFor } = require('./eligibility');
+const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
 
 const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
 
 const FIRST_KEYS = ['express-lane', 'express-driver'];
-const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review'];
+const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths'];
 const ROUTINGS = ['on', 'off', 'split'];
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
@@ -26,7 +26,7 @@ const oneLine = (err) => collapse(err && err.message);
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
 // the express half's flag; the driver half is on for `express-driver` `on` or
 // `split`, and keeps a record the driver would route (routing, eligibility and
-// reviewer rules, a risk- or ceremony-widened record needing the reviewer on, the
+// reviewer rules, a risk-, ceremony- or protected-path-widened record needing the reviewer on, the
 // driver modules loaded only then). A failed resolution, or an
 // `express-driver` value that is not on/off/split, behaves as disabled for the
 // whole pull (fail toward bundling, the pre-#4025 behavior) with one stderr line;
@@ -60,7 +60,7 @@ function expressQueuePolicy(deps = {}) {
   try {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
     if (expressOn) {
-      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);
@@ -93,7 +93,7 @@ function expressQueuePolicy(deps = {}) {
     if (driver.preScreen(issue, driver.eligibility, { evaluateRecordEligibility }).verdict !== 'pass') return false;
     const keyFiles = driver.extractKeyFiles(issue);
     if (!Array.isArray(keyFiles)) return false;
-    const widenedBy = widenings({ labels: issue.labels, riskCeiling: driver.eligibility.riskCeiling, anyCeremony: driver.eligibility.allowAnyCeremony });
+    const widenedBy = widenedByFor(issue.labels, keyFiles, driver.eligibility);
     const reviewerOn = driver.reviewRequired({ issue, keyFiles, policyValue: driver.reviewPolicy, widenedBy }).on;
     return driver.reviewerGateReason({ labels: issue.labels, keyFiles, bounds: driver.bounds, reviewerOn }) === null
       && driver.widenedReviewerReason({ widenedBy, reviewerOn }) === null;

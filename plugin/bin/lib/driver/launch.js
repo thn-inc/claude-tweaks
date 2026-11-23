@@ -10,10 +10,14 @@
 // shared `model-profiles` / `model-ceiling` policy keys, never left to the account default.
 // So is its launch effort (#5942): `model-effort: profile` passes resolve()'s `launchEffort` as
 // `--effort`; unset (`inherit`) or a profile with no effort for that model launches at the harness default.
+// A launch may also name its profile explicitly (#5997): `roleLaunch`'s `{ profile }` replaces the role-map lookup, and
+// `recordImplementerProfile` is the `implementer-tier: record` rule that picks the implementer's first profile from the record.
 
 const { DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require('./roles');
 const { resolve } = require('../model-profiles/profiles');
 const { neutralize } = require('./events');
+const { parseRecordFacets } = require('../issues/record');
+const { keyFileCount, implementerProfile } = require('../model-profiles/implementer-tier');
 
 // On win32 the worker launcher's default `bin` (`claude`) does not find an npm-installed
 // `claude.cmd`, so a win32 caller passes this explicitly.
@@ -38,7 +42,8 @@ function readCeilings(policy) {
   return { minutes, dollars };
 }
 
-const MODEL_POLICY_KEYS = Object.freeze(['express-driver-models', 'model-profiles', 'model-ceiling', 'model-effort']);
+const IMPLEMENTER_TIER_KEY = 'implementer-tier';
+const MODEL_POLICY_KEYS = Object.freeze(['express-driver-models', 'model-profiles', 'model-ceiling', 'model-effort', IMPLEMENTER_TIER_KEY]);
 const MODEL_REFUSED_CODE = 'DRIVER_MODEL_REFUSED';
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
@@ -53,14 +58,17 @@ function refuse(role, why) {
   return err;
 }
 
-// One role's launch values, `{ model, effort }`: the model (a family alias) and the launch effort
+// One role's launch values, `{ model, effort, profile }`: the model (a family alias) and the launch effort
 // (`resolve().launchEffort`, a string or null), from the policy step's `{ [key]: { value, source } }`.
 // A policy-settable role reads its profile from `express-driver-models`; any other role in
-// DRIVER_ROLE_PROFILES (`explorer`) takes its code-only default. Anything unreadable throws a
+// DRIVER_ROLE_PROFILES (`explorer`) takes its code-only default; an explicit `{ profile }` replaces that lookup for this
+// call. `profile` is the profile name resolved. Anything unreadable throws a
 // DRIVER_MODEL_REFUSED error naming the role: the launch never falls back to the account default.
-function roleLaunch(role, policy) {
+function roleLaunch(role, policy, { profile: explicit } = {}) {
   let profile;
-  if (POLICY_DRIVER_ROLES.includes(role)) {
+  if (explicit !== undefined) {
+    profile = explicit;
+  } else if (POLICY_DRIVER_ROLES.includes(role)) {
     const entry = policy && policy['express-driver-models'];
     const map = entry && entry.value;
     if (!isPlainObject(map)) throw refuse(role, 'role map unreadable');
@@ -85,7 +93,7 @@ function roleLaunch(role, policy) {
   if (typeof effortMode === 'string' && effortMode !== '') resolvePolicy['model-effort'] = effortMode;
   try {
     const r = resolve(profile, { policy: resolvePolicy, unattended: true });
-    return { model: r.model, effort: r.launchEffort };
+    return { model: r.model, effort: r.launchEffort, profile };
   } catch (err) {
     throw refuse(role, `profile ${neutralize(String(profile))} did not resolve (${neutralize(err.message)})`);
   }
@@ -93,6 +101,27 @@ function roleLaunch(role, policy) {
 
 // One role's model alone: roleLaunch's `model`.
 const roleModel = (role, policy) => roleLaunch(role, policy).model;
+
+// The refusal for a throw from #5996's implementer-tier functions; their messages already open with `implementer-tier: `.
+function tierRefusal(err) {
+  const msg = neutralize(err.message);
+  return refuse('implementer', msg.startsWith('implementer-tier: ') ? msg : `implementer-tier: ${msg}`);
+}
+
+// The implementer's first profile under `implementer-tier: record` (#5997): the record's size label and
+// Key Files count through #5996's rule. A throw from the rule refuses the launch, never a default profile.
+// `profileFor` is a test seam.
+function recordImplementerProfile({ labels, body }, { profileFor = implementerProfile } = {}) {
+  try {
+    return profileFor({
+      size: parseRecordFacets(labels || []).size,
+      keyFileCount: keyFileCount(typeof body === 'string' ? body : ''),
+      rule: 'record',
+    });
+  } catch (err) {
+    throw tierRefusal(err);
+  }
+}
 
 // The reason a driver launch cannot get a model from this policy, or null: the first invalid
 // model key, else the first role that does not resolve.
@@ -114,11 +143,13 @@ function modelPolicyRefusal(policy) {
 // win32, WIN32_CLAUDE_BIN. Only the first runner call is the worker: on win32 the launcher's
 // ceiling kill runs taskkill through the same runner, and that handle must not replace the
 // worker's. shared.activeWorker is reset however the launch ends; a throw reaches the caller.
-// Resolves `{ envelope, model, effort }`; a launcher throw is rethrown with `model` and `effort` attached.
-async function launchTracked(shared, deps, { minutes, dollars }, opts) {
+// `opts.profile` (optional) goes to roleLaunch and is stripped from what reaches the launcher.
+// Resolves `{ envelope, model, effort, profile }`; a launcher throw is rethrown with `model`, `effort` and `profile` attached.
+async function launchTracked(shared, deps, { minutes, dollars }, { profile: explicitProfile, ...opts }) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
-  // shared.activeWorker as they were. `model` and `effort` follow the opts spread, so no caller can override them.
-  const { model, effort } = roleLaunch(opts.role, shared.policy);
+  // shared.activeWorker as they were. `model`, `effort` and `profile` are resolved here and `profile` is
+  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`.
+  const { model, effort, profile } = roleLaunch(opts.role, shared.policy, { profile: explicitProfile });
   let captured = false;
   const runner = (call) => {
     const handle = deps.runner(call);
@@ -138,17 +169,18 @@ async function launchTracked(shared, deps, { minutes, dollars }, opts) {
       env: deps.env,
       ...(deps.platform === 'win32' ? { bin: WIN32_CLAUDE_BIN } : {}),
     }, { runner });
-    return { envelope, model, effort };
+    return { envelope, model, effort, profile };
   } catch (err) {
     // A throw after the launch values resolved carries them, so the caller's event line can still name
     // them. A refusal from roleLaunch above never reaches here, so it carries neither.
     const e = err instanceof Error ? err : new Error(String(err));
     e.model = model;
     e.effort = effort;
+    e.profile = profile;
     throw e;
   } finally {
     shared.activeWorker = null;
   }
 }
 
-module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, launchTracked };
+module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, tierRefusal, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, recordImplementerProfile, IMPLEMENTER_TIER_KEY, launchTracked };

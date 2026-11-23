@@ -16,10 +16,12 @@ const {
   STEP_NAMES, SETTLE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES,
   outcomeFor, neutralize, normalizeTitle, createEventSink, MERGE_STEP_NAMES, WORKER_TEST_MODES,
 } = require(path.join(LIB, 'driver', 'events'));
+const { SHIPPED_PROTECTED_PATHS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, relaunchOrStop, relaunchesOnCannotComplete,
 } = require(path.join(LIB, 'driver', 'steps'));
+const { relaunchNote, cannotCompletePrompt } = require(path.join(LIB, 'driver', 'relaunch'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
 const { driverStepsOf } = require('../../../tools/step-yield-report');
@@ -352,12 +354,15 @@ const POLICY = {
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
   'express-driver-max-risk': 'low',
-  // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
-  // model-profiles block or ceiling set, and model-effort inherit.
+  'express-driver-protected-paths': 'refuse',
+  'protected-paths': undefined,
+  // #5917's model keys (#5942's model-effort, #5997's implementer-tier), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
+  // model-profiles block or ceiling set, model-effort inherit, and implementer-tier lane.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
   'model-profiles': null,
   'model-ceiling': null,
   'model-effort': 'inherit',
+  'implementer-tier': 'lane',
 };
 
 function issueFor(n) {
@@ -409,6 +414,13 @@ const checkProceed = (over = {}) => ({
   bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'] }, ...over,
 });
 
+// cli.js's usage error for a --protected-paths value other than `reviewer`; null when the call is fine.
+function badProtectedFlag(c) {
+  const i = c.args.indexOf('--protected-paths');
+  if (i === -1 || c.args[i + 1] === 'reviewer') return null;
+  return { code: 2, stdout: '', stderr: `express-lane.js: --protected-paths must be reviewer, got "${c.args[i + 1]}"` };
+}
+
 function defaultScript(over, fx) {
   const policy = { ...POLICY, ...(over.policy || {}) };
   return [
@@ -453,7 +465,8 @@ function defaultScript(over, fx) {
     // The test, check and push steps' happy path: green tests, a check that proceeds with
     // HEAD_SHA, a HEAD that is that sha, a push that lands.
     [on('node', /verify\.js$/), { code: 0, stdout: '', stderr: '' }],
-    [on('node', /express-lane\.js$/, 'check'), { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) }],
+    // Like the real CLI (#6019): --protected-paths takes only `reviewer`.
+    [on('node', /express-lane\.js$/, 'check'), (c) => (badProtectedFlag(c) || { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) })],
     [onGit('push'), ''],
     // The settle calls (settle.js, #5219): the escalate and release CLIs succeed, the forge
     // writes land, the worktree list shows nothing registered, and a probe for the branch finds
@@ -481,7 +494,10 @@ function defaultScript(over, fx) {
       // #6018: a policy of undefined is the key unset, which the resolver answers as its default.
       : k === 'express-driver-max-risk' && policy[k] === undefined
         ? { value: 'low', source: 'default' }
-        : { value: policy[k], source: 'policy' }]))],
+        // #6019: an unset protected-paths key resolves to the real resolver's default reply.
+        : (k === 'express-driver-protected-paths' || k === 'protected-paths') && policy[k] === undefined
+          ? resolvePolicyKeys([k], { policyRaw: '' })[k]
+          : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],
@@ -500,6 +516,7 @@ function describeArgs(args) {
 // The record's one reviewer answer (#5224): recorded in reviewerCalls, outside `calls` so the captured call
 // signatures stay as they were; over.reviewRequired replaces the real function.
 const { reviewRequired: realReviewRequired } = require(path.join(LIB, 'driver', 'review'));
+const { recordImplementerProfile: recordImplementerProfileReal } = require(path.join(LIB, 'driver', 'launch'));
 
 function harness(over = {}) {
   const calls = [];
@@ -552,6 +569,7 @@ function harness(over = {}) {
     rankNext: (groups, entries, opts) => { record('rankNext', [groups, entries, opts]); return rankNext(groups, entries, opts); },
     reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
+    recordImplementerProfile: recordImplementerProfileReal,
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     // The --run guard (#5232): recorded, and a refusal unless a test passes over.deps.adoptRun.
     adoptRun: (opts) => { record('adoptRun', [opts]); return { ok: false, why: 'adoptRun not scripted' }; },
@@ -728,6 +746,7 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   assert.deepStrictEqual(opts, {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
     sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false,
+    protectedPathGlobs: SHIPPED_PROTECTED_PATHS, protectedPathsNeedReviewer: false,
   });
 });
 
@@ -1673,6 +1692,16 @@ test('AC2.1 (driver): a policy row reaches the launch', async () => {
   assert.equal(launchedModel(h, 'implementer'), M('fast'));
 });
 
+test('#5997 characterization: lane worker launch opts', async () => {
+  // Pinned before runImplementer learned `profile`: the launcher's opts carry no `profile` key and the model is the lane's.
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [opts] = workerCall(h).args;
+  assert.equal(Object.hasOwn(opts, 'profile'), false);
+  assert.equal(opts.model, M('standard'));
+  assert.equal(opts.role, 'implementer');
+});
+
 test('AC5.1 (driver): a launch-time refusal writes no worker line, the final line names the role', async () => {
   const h = harness();
   const shared = newShared();
@@ -2285,10 +2314,11 @@ const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reprod
 // The admission line gained `authority` (#5584), the worker line `tests` (#5915) and `model` (#5917), and the review
 // line `model` (#5917), and both lines `effort` (#5942): the fields added since the capture.
 const KA = ['authority', ...K0];
-const KW = [...K1, 'effort', 'model', 'tests'].sort();
+const KW = [...K1, 'attempt', 'effort', 'model', 'profile', 'tests'].sort();
 const K5M = [...K5, 'effort', 'model'].sort();
-// The review fix round's own worker line (#5942): the worker line's keys plus `fix`.
-const KWF = [...KW, 'fix'].sort();
+// The review fix round's own worker line (#5942): the worker line's keys plus `fix`, minus `attempt` (it names the profile only, #5997).
+// The worker line gained `attempt` and `profile`, and the fix line `profile` (#5997).
+const KWF = [...K1, 'effort', 'fix', 'model', 'profile', 'tests'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -3945,6 +3975,473 @@ const FINDING_0 =`${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evide
 const workerLines = (h) => h.lines().filter((l) => l.step === STEP.worker);
 const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fast' };
 
+// --- the implementer's profile under implementer-tier (#5997) ---------------------------------
+const keyFilesBody = (...names) => `Body.\n\n### Key Files\n\n${names.map((n) => `- \`${n}\``).join('\n')}\n`;
+const tierIssue = (labels, body) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({ ...issueFor(Number(c.args.at(-1))), labels: labels.map((name) => ({ name })), body })];
+const RECORD_TIER = { 'implementer-tier': 'record' };
+
+test('#5997 AC1.1: record — size:low with 2 Key Files launches the implementer on fast', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('fast'));
+  const [line] = workerLines(h);
+  assert.deepEqual([line.profile, line.attempt, line.model], ['fast', 1, M('fast')]);
+});
+
+test('#5997 AC1.2: record — 3 Key Files, or size:high, launches on standard', async () => {
+  for (const [size, names] of [['low', ['a.js', 'b.js', 'c.js']], ['high', ['a.js']]]) {
+    // Lane would give fast here, so a dropped record profile cannot hide behind standard being the default.
+    const h = harness({ policy: { ...RECORD_TIER, 'express-driver-models': FAST_IMPLEMENTER }, script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody(...names))] });
+    assert.equal(await run(['#7'], h.deps), 0, size);
+    assert.equal(launchedModel(h, 'implementer'), M('standard'), size);
+    assert.equal(workerLines(h)[0].profile, 'standard', size);
+  }
+});
+
+test('#5997: a record with no size label launches on standard under record', async () => {
+  const h = harness({ policy: { ...RECORD_TIER, 'express-driver-models': FAST_IMPLEMENTER }, script: [tierIssue(['risk:low'], keyFilesBody('a.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('standard'));
+  assert.equal(workerLines(h)[0].profile, 'standard');
+});
+
+test('#5997 AC2.1: lane and unset launch from express-driver-models for every size', async () => {
+  for (const tier of ['lane', undefined]) {
+    for (const size of ['low', 'medium', 'high']) {
+      const h = harness({
+        policy: { 'implementer-tier': tier, 'express-driver-models': FAST_IMPLEMENTER },
+        script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody('a.js'))],
+      });
+      assert.equal(await run(['#7'], h.deps), 0, `${tier} ${size}`);
+      assert.equal(launchedModel(h, 'implementer'), M('fast'), `${tier} ${size}`);
+      const [line] = workerLines(h);
+      assert.deepEqual([line.profile, line.attempt], ['fast', 1], `${tier} ${size}`);
+      assert.equal(Object.hasOwn(workerCall(h).args[0], 'profile'), false, `${tier} ${size}: no profile reaches the launcher`);
+    }
+  }
+});
+
+test('#5997: a launcher throw under record still names profile and attempt on the worker line', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js')), [on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], h.deps);
+  const [line] = workerLines(h);
+  assert.equal(line.status, 'fail');
+  assert.deepEqual([line.profile, line.attempt, line.model], ['fast', 1, M('fast')]);
+});
+
+test('#5997: a refused record-rule launch writes no worker line', async () => {
+  const h = harness({
+    policy: RECORD_TIER,
+    deps: { recordImplementerProfile: () => { throw Object.assign(new Error('no model for driver role implementer: implementer-tier: boom'), { code: 'DRIVER_MODEL_REFUSED' }); } },
+  });
+  await run(['#7'], h.deps);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(workerLines(h).length, 0);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'worker');
+  assert.match(final.stop.detail, /^no model for driver role implementer/);
+});
+
+test('#5997: realDeps.recordImplementerProfile is the real rule', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(realDeps.recordImplementerProfile({ labels: [{ name: 'size:low' }], body: keyFilesBody('a.js') }), 'fast');
+  assert.equal(realDeps.recordImplementerProfile({ labels: [{ name: 'size:low' }], body: keyFilesBody('a.js', 'b.js', 'c.js') }), 'standard');
+});
+
+test('#5997: the fix round launches on the first attempt\'s profile and its line names profile only', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].model, M('fast'));
+  assert.equal(fix.args[0].model, M('fast'));
+  const [, fixLine] = workerLines(h);
+  assert.equal(fixLine.fix, true);
+  assert.equal(fixLine.profile, 'fast');
+  assert.equal(Object.hasOwn(fixLine, 'attempt'), false);
+});
+
+// --- the implementer relaunch under implementer-tier record (#5997, Task 5) ----------------------
+const RED_REPORT = readText(path.join(__dirname, '..', '..', 'fixtures', 'driver-relaunch', 'red-report.json'));
+const REPORT_PATH = path.join(MAIN, 'verify-report.json');
+const RED_VERIFY = Object.freeze({ code: 1, stdout: '', stderr: '' });
+const redRun = (n, effect = () => {}) => nthCall(isVerifyCall, n, () => { effect(); return RED_VERIFY; });
+const STUCK = Object.freeze({ ...ENVELOPE, result: { status: 'cannot-complete', title: 'Partial', summary: 'stuck on X' } });
+const FAIL_EXIT = Object.freeze({ ...ENVELOPE, status: 'fail', reason: 'exit', result: null, detail: null });
+const SMALL_RECORD = tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'));
+// The verify report the red-tests relaunch reads: the run's events file names it, and its bytes are Task 4's red fixture.
+const reportReplies = (get) => [
+  [(c) => c.kind === 'readFile' && calls(get(), 'resolveRunDir').length > 0 && c.args[0] === path.join(runDirOf(get()), 'events.jsonl'), () => `${JSON.stringify({ type: 'verify', reportPath: REPORT_PATH })}\n`],
+  [(c) => c.kind === 'readFile' && c.args[0] === REPORT_PATH, RED_REPORT],
+];
+// A record-tier run whose first implementer launch replies `first` and its relaunch `second`; the relaunch leaves
+// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean.
+function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
+  let h = null;
+  h = harness({
+    ...over,
+    policy: { ...RECORD_TIER, ...policy },
+    script: [
+      ...script,
+      issue,
+      [isImplementerLaunch, (c) => {
+        if (implementerCalls(h).length === 1) return pick(first, c);
+        h.fx.dirty += relaunchDirty;
+        return pick(second, c);
+      }],
+      [onGit('commit'), () => { h.fx.committed = true; h.fx.dirty = ''; return ''; }],
+      ...(report ? reportReplies(() => h) : []),
+    ],
+  });
+  return h;
+}
+const stepPairs = (lines) => lines.map((l) => [l.step, l.status]);
+const unsettled = (h) => h.lines().filter((l) => !SETTLE_STEP_NAMES.includes(l.step));
+const fromFirstWorker = (h) => stepPairs(h.lines().slice(h.lines().findIndex((l) => l.step === STEP.worker)));
+const noRelaunchKey = (h) => h.lines().every((l) => !Object.hasOwn(l, 'noRelaunch'));
+const escalateReason = (h) => {
+  const [c] = calls(h, 'node', /express-lane\.js$/).filter((k) => k.args[1] === 'escalate');
+  return c ? c.args[c.args.indexOf('--reason') + 1] : null;
+};
+const gitAddPaths = (h) => gitCalls(h).filter((c) => c.cwd === WT && gitSub(c)[0] === '--literal-pathspecs').map((c) => c.args.slice(c.args.indexOf('--') + 1));
+const summaryText = (h) => h.files[path.join(runDirOf(h), 'summary.txt')];
+const prSummary = (h) => h.files[path.join(runDirOf(h), 'pr-summary.md')];
+
+test('#5997 run.js: a non-halting result\'s then-steps run next, then the table', async () => {
+  const ok = (name) => defineStep(name, STOP_CLASSES.PRE_PUSH, async () => ({ status: 'ok' }));
+  const [x, y, b, c] = ['x', 'y', 'b', 'c'].map(ok);
+  const h = harness();
+  await driveRecord(7, newShared(), h.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', halt: false, then: [x, y] })), b, c]);
+  assert.deepEqual(stepPairs(h.lines()), [['a', 'stop'], ['x', 'ok'], ['y', 'ok'], ['b', 'ok'], ['c', 'ok'], [FINAL_STEP, 'ok']]);
+  for (const bad of [[x, { name: 'z' }], [x, { name: 1, run: () => {} }], [null], 'x']) {
+    const hb = harness();
+    await driveRecord(7, newShared(), hb.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', halt: false, then: bad })), b]);
+    assert.deepEqual(stepPairs(unsettled(hb)), [['a', 'fail'], [FINAL_STEP, 'fail']], JSON.stringify(bad));
+    assert.equal(hb.lines()[0].detail, 'step returned an invalid continuation');
+  }
+  const hh = harness();
+  await driveRecord(7, newShared(), hh.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', then: [x] })), b]);
+  assert.deepEqual(stepPairs(unsettled(hh)), [['a', 'stop'], [FINAL_STEP, 'stop']], 'a halting result\'s then is ignored');
+});
+
+test('#5997 AC3.1: cannot-complete on fast relaunches once on standard with the reason and the edit kept', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(first.args[0].model, M('fast'));
+  assert.equal(second.args[0].model, M('standard'));
+  assert.ok(second.args[0].prompt.includes('stuck on X'), 'the relaunch prompt carries the first worker\'s reason');
+  assert.ok(second.args[0].prompt.includes(first.args[0].prompt), 'the relaunch prompt carries the first prompt');
+  const between = h.calls.slice(h.calls.indexOf(first) + 1, h.calls.indexOf(second));
+  assert.ok(between.filter((c) => c.kind === 'git').every((c) => !c.args.some((a) => ['reset', 'checkout', 'stash', 'restore', 'clean'].includes(a))), 'nothing undoes the first worker\'s edit');
+  const status = gitCalls(h).find((c) => onGit('--no-optional-locks', 'status')(c));
+  assert.equal(status.cwd, WT);
+  assert.ok(h.calls.indexOf(status) > h.calls.indexOf(second), 'the commit reads the tree after the relaunch');
+});
+
+test('#5997 AC3.2: then the commit and test steps run', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 5), [['worker', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok']]);
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger, relaunched.profile, relaunched.model], [2, 'fast', 'cannot-complete', 'standard', M('standard')]);
+  assert.equal(h.lines().filter((l) => l.step === STEP.commit).length, 1);
+  assert.equal(h.lines().filter((l) => l.step === STEP.test).length, 1);
+});
+
+test('#5997 AC4.1: red tests after a fast attempt relaunch once on standard naming the failing files', async () => {
+  const h = relaunchRig({ script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, second] = implementerCalls(h);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(second.args[0].model, M('standard'));
+  assert.ok(second.args[0].prompt.includes('failing.test.js'), second.args[0].prompt);
+  assert.ok(second.args[0].prompt.includes('Failure lines:'));
+  assert.deepEqual(fromFirstWorker(h).slice(0, 6), [['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok']]);
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger], [2, 'fast', 'red-tests']);
+});
+
+test('#5997 AC4.2: a green second test run continues to check and review', async () => {
+  const h = relaunchRig({ policy: { 'express-driver-review': 'on' }, script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = h.lines();
+  const secondTest = lines.map((l, i) => [l, i]).filter(([l]) => l.step === STEP.test)[1][1];
+  assert.deepEqual(lines.slice(secondTest + 1, secondTest + 4).map((l) => l.step), ['check', 'review', 'push']);
+  assert.equal(lines.filter((l) => l.step === STEP.check).length, 1);
+});
+
+test('#5997: an unreadable report still relaunches with the fixed text', async () => {
+  const h = relaunchRig({ report: false, script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, second] = implementerCalls(h);
+  assert.ok(second.args[0].prompt.includes('could not read which ones'));
+  assert.ok(!second.args[0].prompt.includes('Failing test files:'));
+});
+
+test('#5997 AC5.1: a second failure ends as a single failure of its kind does with the key unset', async () => {
+  const cases = [
+    ['red then cannot-complete', { second: STUCK, script: [redRun(1)] }, { script: [[isImplementerLaunch, STUCK]] }],
+    ['cannot-complete then red', { first: STUCK, script: [redRun(1)] }, { script: [redRun(1)] }],
+    ['red twice', { script: [[isVerifyCall, RED_VERIFY]] }, { script: [redRun(1)] }],
+    ['red then worker fail', { second: FAIL_EXIT, script: [redRun(1)] }, { script: [[isImplementerLaunch, FAIL_EXIT]] }],
+  ];
+  for (const [name, relaunched, single] of cases) {
+    const control = harness({ ...single, policy: { 'implementer-tier': undefined } });
+    await run(['#7'], control.deps);
+    const h = relaunchRig(relaunched);
+    await run(['#7'], h.deps);
+    const [want, got] = [lastLine(control), lastLine(h)];
+    assert.deepEqual([got.outcome, got.stop.class, got.stop.reason, got.stop.step], [want.outcome, want.stop.class, want.stop.reason, want.stop.step], name);
+    assert.ok(got.stop.detail.includes('after one relaunch ('), `${name}: ${got.stop.detail}`);
+    assert.equal(escalateReason(h), escalateReason(control), name);
+    assert.ok(escalateReason(h) !== null, name);
+    assert.equal(implementerCalls(h).length, 2, name);
+    assert.ok(verifyCalls(h).length <= 2, name);
+  }
+});
+
+test('#5997 AC6.1: model-ceiling fast — a failed fast attempt is not relaunched and its line names the clamp', async () => {
+  for (const [name, over, single, step] of [
+    ['cannot-complete', { first: STUCK }, { script: [[isImplementerLaunch, STUCK]] }, STEP.worker],
+    ['red tests', { script: [redRun(1)] }, { script: [redRun(1)] }, STEP.test],
+  ]) {
+    const h = relaunchRig({ ...over, policy: { 'model-ceiling': 'fast' } });
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 1, name);
+    const line = h.lines().find((l) => l.step === step && l.status !== 'ok');
+    assert.equal(line.noRelaunch, 'clamped', name);
+    assert.ok(line.detail.includes('no relaunch: standard resolves to'), `${name}: ${line.detail}`);
+    const control = harness({ ...single, policy: { 'implementer-tier': undefined } });
+    await run(['#7'], control.deps);
+    assert.equal(lastLine(h).outcome, lastLine(control).outcome, name);
+  }
+});
+
+// The AC4 run (red, then a green relaunch) followed by a review fix round: fixRig's commit counter counts the
+// first commit and the fix commit, so the relaunch's commit (the second) is answered here.
+function relaunchThenFix() {
+  let h = null;
+  h = fixRig({
+    policy: { 'express-driver-review': 'on', ...RECORD_TIER },
+    script: [
+      SMALL_RECORD,
+      redRun(1),
+      nthCall(isImplementerLaunch, 1, () => ({ ...ENVELOPE })),
+      nthCall(isImplementerLaunch, 2, () => { h.fx.dirty = ' M b.js\0'; return { ...ENVELOPE }; }),
+      nthCall(onGit('commit'), 2, () => { h.fx.dirty = ''; return ''; }),
+      ...reportReplies(() => h),
+    ],
+  });
+  return h;
+}
+
+test('#5997 AC7.1: every implementer launch writes one worker line with model, profile and attempt; the relaunch\'s adds escalatedFrom and trigger', async () => {
+  const h = relaunchThenFix();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = workerLines(h);
+  assert.equal(lines.length, 3);
+  assert.equal(implementerCalls(h).length, 3);
+  assert.deepEqual(lines.map((l) => l.attempt), [1, 2, undefined]);
+  assert.ok(lines.every((l) => typeof l.model === 'string' && typeof l.profile === 'string'));
+  assert.deepEqual(lines.map((l) => [Object.hasOwn(l, 'escalatedFrom'), Object.hasOwn(l, 'trigger')]), [[false, false], [true, true], [false, false]]);
+  assert.equal(lines[2].fix, true);
+});
+
+test('#5997 AC8.1: a first worker fail is not relaunched; after a green relaunch the fix round launches on the relaunch\'s profile', async () => {
+  for (const reason of ['launch-error', 'spend-ceiling']) {
+    const h = relaunchRig({ first: { ...ENVELOPE, status: 'fail', reason, result: null } });
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 1, reason);
+    assert.ok(noRelaunchKey(h), reason);
+    assert.equal(lastLine(h).stop.step, STEP.worker, reason);
+  }
+  const h = relaunchThenFix();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, , fix] = implementerCalls(h);
+  assert.equal(fix.args[0].model, M('standard'));
+  assert.equal(workerLines(h)[2].profile, 'standard');
+});
+
+test('#5997: lane never relaunches', async () => {
+  for (const [name, script] of [['cannot-complete', () => [[isImplementerLaunch, STUCK]]], ['red tests', () => [redRun(1)]]]) {
+    const lane = harness({ policy: { 'implementer-tier': 'lane' }, script: [SMALL_RECORD, ...script()] });
+    await run(['#7'], lane.deps);
+    const unset = harness({ policy: { 'implementer-tier': undefined }, script: [SMALL_RECORD, ...script()] });
+    await run(['#7'], unset.deps);
+    assert.equal(implementerCalls(lane).length, 1, name);
+    assert.ok(noRelaunchKey(lane), name);
+    assert.deepEqual(stepPairs(lane.lines()), stepPairs(unset.lines()), name);
+  }
+});
+
+test('#5997 Decision Q1: a red run that changed the tree still relaunches and the relaunch commit includes those bytes', async () => {
+  let h = null;
+  h = relaunchRig({ script: [redRun(1, () => { h.fx.dirty = ' M src/x.js\0?? tmp/out.txt\0'; })] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  const [firstTest] = h.lines().filter((l) => l.step === STEP.test);
+  assert.equal(firstTest.status, 'stop');
+  assert.equal(Object.hasOwn(firstTest, 'noRelaunch'), false);
+  const [, relaunchAdd] = gitAddPaths(h);
+  assert.deepEqual(relaunchAdd, ['src/x.js', 'tmp/out.txt', 'b.js']);
+  assert.equal(verifyCalls(h).length, 2, 'the second test run follows');
+  assert.equal(h.lines().filter((l) => l.step === STEP.test)[1].status, 'ok');
+});
+
+test('#5997 Decision Q2: a stepped-up profile that does not resolve is a refused relaunch', async () => {
+  const h = relaunchRig({
+    first: STUCK,
+    issue: tierIssue(['risk:low', 'size:high'], keyFilesBody('a.js')),
+    policy: {
+      'express-driver-models': { ...POLICY['express-driver-models'], reviewer: 'standard' },
+      'model-profiles': { capable: { model: 'no-such-model' } },
+    },
+  });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 1);
+  assert.equal(implementerCalls(h)[0].args[0].model, M('standard'));
+  assert.deepEqual(stepPairs(workerLines(h)), [['worker', 'stop']], 'the refused relaunch writes no worker line');
+  const final = lastLine(h);
+  assert.equal(final.stop.step, STEP.worker);
+  assert.ok(final.stop.detail.startsWith('no model for driver role implementer'), final.stop.detail);
+  assert.ok(final.stop.detail.includes('after one relaunch (cannot-complete, standard to capable)'), final.stop.detail);
+  assert.ok(noRelaunchKey(h));
+});
+
+test('#5997: a red-tests relaunch\'s changedFiles is both commits\' paths', async () => {
+  // The relaunch never touches a.js, the first commit's only path: it survives only through the union.
+  const red = relaunchRig({ relaunchDirty: ' M b.js\0?? c.js\0', script: [redRun(1)] });
+  assert.equal(await run(['#7'], red.deps), 0);
+  assert.deepEqual(gitAddPaths(red), [['a.js'], ['b.js', 'c.js']]);
+  assert.ok(summaryText(red).includes('express lane: a.js, b.js, c.js;'), summaryText(red));
+  const stuck = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], stuck.deps), 0);
+  assert.ok(summaryText(stuck).includes('express lane: a.js;'), summaryText(stuck));
+});
+
+test('#5997: a refused plan (a stepUp throw) queues a no-line worker refusal whose note names the same null to', async () => {
+  // An unknown first profile makes the real planRelaunch throw its DRIVER_MODEL_REFUSED refusal (stepUp).
+  const ctx = { relaunch: null, implementer: { rule: 'record', profile: 'turbo', model: 'x' }, shared: { policy: {} }, changedFiles: ['a.js'] };
+  const line = { status: 'stop', detail: 'worker could not complete', halt: true, stopClass: STOP_CLASSES.PRE_PUSH, reason: 'stop', extra: { attempt: 1 } };
+  const r = relaunchOrStop(ctx, line, 'cannot-complete', () => assert.fail('a refused plan composes no prompt'));
+  assert.deepEqual([r.status, r.detail, r.halt, r.then.length], ['stop', 'worker could not complete', false, 1], 'the triggering line is kept, its stop queued');
+  assert.equal(ctx.relaunch.to, null);
+  const [refused] = r.then;
+  assert.equal(refused.name, STEP.worker);
+  const out = await refused.run(ctx, {});
+  assert.deepEqual([out.status, out.noLine, out.halt, out.stopClass], ['fail', true, true, STOP_CLASSES.PRE_PUSH]);
+  assert.ok(out.detail.startsWith('no model for driver role implementer: implementer-tier: unknown profile'), out.detail);
+  assert.ok(out.detail.endsWith(`; ${relaunchNote(ctx.relaunch)}`), 'the note is built from ctx.relaunch itself');
+  assert.ok(out.detail.endsWith('; after one relaunch (cannot-complete, turbo to no profile)'), out.detail);
+});
+
+test('#5997: a relaunch that changes nothing stops at its commit with the relaunch noted', async () => {
+  const h = relaunchRig({ relaunchDirty: '', script: [redRun(1)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], [STEP.commit, 'stop', STOP_CLASSES.PRE_PUSH]);
+  assert.equal(final.stop.detail, 'no changed files; after one relaunch (red-tests, fast to standard)');
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(verifyCalls(h).length, 1, 'no second test run');
+});
+
+test('#5997: the relaunch prompt follows the first prompt after a blank line', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  assert.ok(first.args[0].prompt.endsWith('\n'));
+  assert.equal(second.args[0].prompt, `${first.args[0].prompt}\n${cannotCompletePrompt('stuck on X')}`);
+  assert.ok(second.args[0].prompt.includes('\n\nRelaunch.'));
+});
+
+test('#5997: the cannot-complete reason is neutralized once in the relaunch prompt', async () => {
+  const h = relaunchRig({ first: { ...STUCK, result: { ...STUCK.result, summary: 'stuck on @bob' } } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  const added = second.args[0].prompt.slice(first.args[0].prompt.length);
+  assert.equal(added, `\n${cannotCompletePrompt('stuck on @bob')}`);
+  assert.equal(added.split('​').length, 2, 'one zero-width character for the one @, not two');
+});
+
+test('#5997: only the stop the launch marks cannot-complete triggers the worker step\'s relaunch', async () => {
+  const marked = { status: 'stop', detail: 'worker could not complete', cannotComplete: { summary: 'x' } };
+  assert.equal(relaunchesOnCannotComplete('record', marked), true);
+  assert.equal(relaunchesOnCannotComplete('lane', marked), false);
+  for (const other of [
+    { status: 'stop', detail: 'some other stop the launch path returns' },
+    { status: 'stop', reason: 'cannot-complete', detail: 'worker could not complete' },
+    { status: 'fail', detail: 'x', cannotComplete: { summary: 'x' } },
+  ]) assert.equal(relaunchesOnCannotComplete('record', other), false, JSON.stringify(other));
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.ok(!JSON.stringify(h.lines()).includes('cannotComplete'), 'no line carries the marker');
+});
+
+test('#5997: a relaunch that fails before any model resolves still writes attempt 2 beside its marks', async () => {
+  // The third HEAD read in the worktree is the relaunch's read before its launch (first launch: before, after).
+  const h = relaunchRig({ first: STUCK, script: [nthCall(isHeadReadInWt, 3, () => { throw unreadableGit(); })] });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 1, 'the relaunch launch never started');
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.status, relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger, Object.hasOwn(relaunched, 'model')], ['fail', 2, 'fast', 'cannot-complete', false]);
+  assert.equal(relaunched.detail, `${UNREADABLE_BEFORE}; after one relaunch (cannot-complete, fast to standard)`);
+});
+
+test('#5997: an interrupt during the relaunch launch is reported at the relaunch and runs nothing after it', async () => {
+  let h = null;
+  h = relaunchRig({ script: [redRun(1)], second: () => { h.signals[0]('SIGTERM'); return { ...ENVELOPE }; } });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [[STEP.worker, 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.equal(lastLine(h).settle, 'interrupted');
+  const after = h.calls.slice(h.calls.indexOf(implementerCalls(h)[1]) + 1);
+  assert.equal(after.filter((c) => c.kind === 'git' && ['commit', '--literal-pathspecs'].includes(gitSub(c)[0])).length, 0);
+  assert.equal(verifyCalls(h).length, 1);
+});
+
+test('#5997: a relaunch worker that moves HEAD fails with the relaunch noted', async () => {
+  let h = null;
+  h = relaunchRig({ first: STUCK, script: [[(c) => isHeadReadInWt(c) && implementerCalls(h).length === 2 && h.calls.at(-2) === implementerCalls(h)[1], `${OTHER_SHA}\n`]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], [STEP.worker, 'fail']);
+  assert.ok(final.stop.detail.includes('the worker moved HEAD'), final.stop.detail);
+  assert.ok(final.stop.detail.includes('after one relaunch ('), final.stop.detail);
+  assert.equal(implementerCalls(h).length, 2);
+});
+
+test('#5997: the final line\'s costUsd sums both implementer launches', async () => {
+  for (const over of [{ first: STUCK }, { script: [redRun(1)] }]) {
+    const h = relaunchRig({ ...over, second: { ...ENVELOPE, costUsd: 0.5 } });
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.equal(lastLine(h).costUsd, 0.75);
+    assert.equal(lastLine(h).turns, 6);
+  }
+});
+
+test('#5997: after a cannot-complete relaunch the PR summary is the relaunch\'s alone', async () => {
+  const whole = { ...ENVELOPE, result: { status: 'done', title: 'Do it', summary: 'did the whole thing' } };
+  const stuck = relaunchRig({ first: STUCK, second: whole });
+  assert.equal(await run(['#7'], stuck.deps), 0);
+  assert.equal(prSummary(stuck), 'did the whole thing\n');
+  const fix = { ...ENVELOPE, result: { status: 'done', title: 'Fix it', summary: 'did the fix' } };
+  const red = relaunchRig({ second: fix, script: [redRun(1)] });
+  assert.equal(await run(['#7'], red.deps), 0);
+  assert.equal(prSummary(red), `${ENVELOPE.result.summary} Relaunch: did the fix\n`);
+});
+
+test('#5997: the fix round never relaunches or skips', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [SMALL_RECORD, redRun(2)] });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 2, 'the first launch and the fix launch');
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.stop.reason], [STEP.review, 'failing-test']);
+  assert.ok(final.stop.detail.startsWith('fix round test: red tests'), final.stop.detail);
+  assert.ok(noRelaunchKey(h));
+});
+
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
@@ -4182,9 +4679,9 @@ test('#5942 (fix round): a throw without a resolved model writes no fix worker l
 test('#5942 (fix round): the throw-path line carries the worker step\'s detail, test-list note included', async () => {
   const emitted = [];
   const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
-  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', testListNote: 'list not removed' });
+  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', profile: 'fast', testListNote: 'list not removed' });
   await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw err; }), (e) => e === err);
-  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', fix: true }]]);
+  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', profile: 'fast', fix: true }]]);
 });
 
 test('#5942 (fix round): an interrupt during the fix launch writes no fix worker line', async () => {
@@ -5059,6 +5556,21 @@ test('(#5454) docs/driver.md names the test-step tree stop beside the index-flag
   assert.ok(!bullet.includes("run's own"), "the tree bullet does not call the pipelines paths the run's own");
 });
 
+test('#5997: docs/driver.md documents the record profile, the one relaunch and the new event fields', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const section = (heading) => {
+    const start = docs.indexOf(`\n## ${heading}`);
+    assert.notEqual(start, -1, `the ${heading} section exists`);
+    return docs.slice(start, docs.indexOf('\n## ', start + 1));
+  };
+  const models = section('Worker models');
+  for (const part of ['implementer-tier', '`record`', 'stepUp', 'cannot-complete', 'red-tests', 'escalatedFrom', 'attempt', 'noRelaunch', 'three implementer launches', 'model-ceiling']) {
+    assert.ok(models.includes(part), `Worker models names ${part}`);
+  }
+  const events = section('Event lines');
+  for (const part of ['`profile`', '`attempt`']) assert.ok(events.includes(part), `Event lines names ${part}`);
+});
+
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
   // A TAP destination the run cannot use: fixed text, never the error's own words.
   const thrown = fixRig({ script: [[(c) => c.kind === 'lstatType' && String(c.args[0]).endsWith('fix-evidence-0.tap'), { type: 'file', code: null }]] });
@@ -5405,6 +5917,7 @@ test('(#5224) the eligibility step passes the size ceiling and Key File limit it
   assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
     riskCeiling: 'low', allowAnyCeremony: false,
+    protectedPathGlobs: SHIPPED_PROTECTED_PATHS, protectedPathsNeedReviewer: false,
   });
   assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
 });
@@ -6508,14 +7021,15 @@ test('budget pre-screen: eligibilityOptions is exactly what the eligibility step
 // --- the driver's risk ceiling and ceremony relaxation through the driver (#6018) -------------
 
 // A record whose labels the test names outright (spec-shaped body, so Key Files pass), read by the real gates.
+// keyFiles is a count of src/f{i}.js paths or an array of the Key File paths themselves.
 const widenIssue = (labels, keyFiles = 1) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({
   ...issueFor(Number(c.args.at(-1))),
-  body: boundsBody(Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
+  body: boundsBody(Array.isArray(keyFiles) ? keyFiles : Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
   labels: labels.map((name) => ({ name })),
 })];
 const WIDEN_LABELS = ['size:low', 'type:task', 'auto:build'];
-async function widenCheck(policy, labels, extra = {}) {
-  const h = harness({ policy, script: [widenIssue(labels), ...REAL_GATES], ...extra });
+async function widenCheck(policy, labels, extra = {}, keyFiles = 1) {
+  const h = harness({ policy, script: [widenIssue(labels, keyFiles), ...REAL_GATES], ...extra });
   assert.equal(await run(['--check', '#7'], h.deps), 0);
   assertWriteFree(h.calls, h.writes());
   const lines = h.out.join('').split('\n').filter(Boolean);
@@ -6645,6 +7159,123 @@ test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
   assert.equal(final.merge.reason, 'widened-admission');
   const stop = h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop');
   assert.equal(stop.detail, 'widened-admission: admitted widened by risk');
+});
+
+// --- a protected Key File behind the reviewer (#6019) -----------------------------------------
+
+const REVIEWER_ON = { 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on' };
+const FAST = ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS];
+const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS'];
+const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
+const protectedCheck = (protectedPaths, over = {}) => [on('node', /express-lane\.js$/, 'check'), (c) => badProtectedFlag(c) || {
+  code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ ...over, bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'], ...(protectedPaths === undefined ? {} : { protectedPaths }) } })),
+}];
+const protectedArgs = (h) => checkCalls(h).map((c) => (c.args.indexOf('--protected-paths') === -1 ? null : c.args.slice(c.args.indexOf('--protected-paths'))));
+const widenedStop = async (script, deps) => {
+  const h = mergeHarness({ policy: REVIEWER_ON, deps, script: [...script, ...REAL_GATES], reconcile: archiveRunDir });
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  return { h, final, stop: h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop') };
+};
+
+test('AC1.2 (#6019): with the key unset or refuse, --check refuses a hooks/, .github/ or package.json Key File exactly as before', async () => {
+  for (const p of ['plugin/hooks/x.js', '.github/workflows/ci.yml', 'package.json']) {
+    const refuse = await widenCheck({ 'express-driver-protected-paths': 'refuse' }, FAST, {}, [p]);
+    const unset = await widenCheck({ 'express-driver-protected-paths': undefined }, FAST, {}, [p]);
+    assert.deepStrictEqual(refuse.verdict, unset.verdict, p);
+    assert.equal(refuse.verdict.admitted, false, p);
+    assert.ok(refuse.verdict.reasons.includes(`protected path: ${p}`), p);
+    assert.deepStrictEqual(refuse.verdict.widenedBy, [], p);
+  }
+});
+
+test('AC2.1, AC7.2 (#6019): with reviewer and the reviewer on, --check admits a protected Key File with widenedBy [protected-path]', async () => {
+  const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] });
+});
+
+test('AC2.2 (#6019): with reviewer and express-driver-review off, --check refuses with the widened reviewer-off reason', async () => {
+  const { verdict } = await widenCheck({ ...REVIEWER_ON, 'express-driver-review': 'off' }, FAST, {}, ['plugin/hooks/x.js']);
+  assert.equal(verdict.admitted, false);
+  assert.deepStrictEqual(verdict.reasons, [ADMISSION_REASONS.reviewerOffWidened]);
+  assert.deepStrictEqual(verdict.widenedBy, ['protected-path']);
+});
+
+test('AC2.3 (#6019): under beyond-express the protected-path widening turns the reviewer on', async () => {
+  const { verdict, h } = await widenCheck({ 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'beyond-express' }, FAST, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] });
+  assert.deepStrictEqual(h.reviewerCalls.map((o) => o.widenedBy), [['protected-path']]);
+});
+
+test('AC10.2 (#6019): each merge-time family Key File is admitted under reviewer with the reviewer on', async () => {
+  for (const p of MERGE_TIME) {
+    const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, [p]);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['protected-path'] }, p);
+  }
+});
+
+test('AC9.4 (#6019): each build-time family Key File refuses under reviewer with the reviewer on', async () => {
+  for (const p of BUILD_TIME) {
+    const { verdict } = await widenCheck(REVIEWER_ON, FAST, {}, [p]);
+    assert.equal(verdict.admitted, false, p);
+    assert.ok(verdict.reasons.includes(`protected path: ${p}`), p);
+  }
+});
+
+test('AC8.1 (#6019): check gets --protected-paths reviewer only when the key is reviewer and the reviewer is on', async () => {
+  for (const [key, isOn, expected] of [['reviewer', true, [['--protected-paths', 'reviewer']]], ['reviewer', false, [null]], ['refuse', true, [null]], ['refuse', false, [null]]]) {
+    const h = harness({ policy: { 'express-driver-protected-paths': key }, reviewRequired: () => ({ on: isOn, reason: 'sentinel' }), script: [widenIssue(FAST), ...REAL_GATES] });
+    await run(['#7'], h.deps);
+    assert.deepStrictEqual(protectedArgs(h), expected, `${key} ${isOn}`);
+  }
+});
+
+test('#6019: a check that rejects --protected-paths as an unknown argument (an older build) ends the record blocked with no push', async () => {
+  const older = [on('node', /express-lane\.js$/, 'check'), (c) => (c.args.includes('--protected-paths')
+    ? { code: 2, stdout: '', stderr: 'express-lane.js: unknown argument for check: --protected-paths' }
+    : { code: 0, stderr: '', stdout: JSON.stringify(checkProceed()) })];
+  const h = harness({ policy: REVIEWER_ON, script: [older, widenIssue(FAST), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.equal(finals(h)[0].outcome, 'blocked');
+  assert.equal(checkCalls(h).length, 1);
+  assert.equal(stepsRun(h).includes('push'), false);
+  assert.equal(h.calls.some((c) => c.kind === 'git' && c.args.includes('push')), false);
+});
+
+test('AC4.2 (#6019): a check that reports a protected path adds protected-path and the merge step stops at widened-admission without the supplier', async () => {
+  for (const reported of [['plugin/hooks/x.test.js'], ['plugin/hooks/old.js']]) {
+    const seen = [];
+    const { final, stop } = await widenedStop([protectedCheck(reported), widenIssue([...FAST, 'auto:merge'], ['src/f0.js'])],
+      { judgments: async () => { seen.push('called'); return { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } }; } });
+    assert.deepStrictEqual(seen, [], reported[0]);
+    assert.equal(final.merge.reason, 'widened-admission', reported[0]);
+    assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path', reported[0]);
+  }
+});
+
+test('#6019: a protected Key File record whose check also reports protected paths keeps one protected-path', async () => {
+  const { h, stop } = await widenedStop([protectedCheck(['plugin/hooks/x.js']), widenIssue([...FAST, 'auto:merge'], ['plugin/hooks/x.js'])]);
+  assert.deepStrictEqual(h.lines().find((l) => l.step === STEP.eligibility).widenedBy, ['protected-path']);
+  assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path');
+});
+
+test('#6019: under the flag a check envelope with no protectedPaths array fails closed to protected-path', async () => {
+  const { final, stop } = await widenedStop([protectedCheck(undefined), widenIssue([...FAST, 'auto:merge'], ['src/f0.js'])]);
+  assert.equal(final.merge.reason, 'widened-admission');
+  assert.equal(stop.detail, 'widened-admission: admitted widened by protected-path');
+});
+
+test('#6019: without the flag a check envelope with no protectedPaths array leaves widenedBy alone', async () => {
+  const h = mergeHarness({ script: [protectedCheck(undefined), widenIssue([...FAST, 'auto:merge'], ['src/f0.js']), ...REAL_GATES], reconcile: archiveRunDir });
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.notEqual(final.merge.reason, 'widened-admission');
+});
+
+test('#6019: the logged:false fallback proceed line carries the protected-path note, neutralized, before the runner stamp', async () => {
+  const odd = 'plugin/hooks/o\nld.js';
+  const h = harness({ policy: REVIEWER_ON, script: [protectedCheck(['plugin/hooks/x.test.js', odd], { logged: false }), widenIssue(FAST), ...REAL_GATES] });
+  await run(['#7'], h.deps);
+  assert.equal(h.files[Object.keys(h.files).find((f) => f.endsWith('check-proceed.txt'))],
+    `#7 proceed — 1 changed file(s), 3 implementation line(s) within bounds; protected path(s) left for the reviewer and a human merge: plugin/hooks/x.test.js, ${neutralize(odd)}; runner stamp verifies HEAD ${HEAD_SHA}.\n`);
 });
 
 // --- --budget through run() (record #5229) ----------------------------------------------------
@@ -8335,4 +8966,66 @@ test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, 
   assert.strictEqual(interrupted.detail, 'interrupted by SIGTERM before test');
   assert.deepStrictEqual(between.filter((e) => e.discriminator === `test@${interrupted.ts}`).map((e) => [e.kind, e.outcome]),
     [['started', undefined], ['exited', 'failed']]);
+});
+
+// --- the protected list as a policy value, through the driver (#6020) -------------------------
+
+const PP_LABELS = ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS];
+const protectedReasons = (verdict) => verdict.reasons.filter((r) => r.startsWith('protected path:'));
+
+test('AC2.1, AC4.1 (driver half): --check under protected-paths infra/** stops refusing package.json and refuses infra/main.tf', async () => {
+  assert.deepStrictEqual(resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: infra/**\n' })['protected-paths'], { value: 'infra/**', source: 'policy' });
+  const pkg = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['package.json']);
+  assert.deepStrictEqual(protectedReasons(pkg.verdict), [], JSON.stringify(pkg.verdict));
+  const tf = await widenCheck({ 'protected-paths': 'infra/**' }, PP_LABELS, {}, ['infra/main.tf']);
+  assert.ok(tf.verdict.reasons.includes('protected path: infra/main.tf'), JSON.stringify(tf.verdict));
+  const unset = await widenCheck({}, PP_LABELS, {}, ['package.json']);
+  assert.ok(unset.verdict.reasons.includes('protected path: package.json'), JSON.stringify(unset.verdict));
+});
+
+test('AC3.1 (driver half): protected-paths [] protects no Key File', async () => {
+  const { verdict } = await widenCheck({ 'protected-paths': [] }, PP_LABELS, {}, ['plugin/hooks/x.js']);
+  assert.deepStrictEqual(protectedReasons(verdict), [], JSON.stringify(verdict));
+});
+
+test('AC5.1 (driver half): a malformed protected-paths keeps the shipped list', async () => {
+  const resolved = resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: ["infra/**"]\n' })['protected-paths'];
+  assert.equal(resolved.invalid, true);
+  const malformed = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'protected-paths'
+    ? resolved
+    : k === 'express-driver-max-lines'
+      ? { value: POLICY['auto-merge-max-lines'], source: 'default' }
+      : { value: POLICY[k], source: 'policy' }]))];
+  const { verdict } = await widenCheck({}, PP_LABELS, { script: [malformed, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+  assert.ok(verdict.reasons.includes('protected path: package.json'), JSON.stringify(verdict));
+});
+
+test('AC4.1, Deliverable 6 (driver half): --check reads protected-paths through defaultResolvePolicy from the main checkout', async () => {
+  const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+  const { defaultResolvePolicy } = require(path.join(LIB, 'express', 'policy'));
+  const main = gitRepo();
+  const policyFile = path.join(main, '.claude-tweaks', 'policy.yml');
+  fs.mkdirSync(path.dirname(policyFile), { recursive: true });
+  fs.writeFileSync(policyFile, 'protected-paths: infra/**\n');
+  const wt = harnessWorktreeOf(main, 'rec');
+  fs.mkdirSync(path.join(wt, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.claude-tweaks', 'policy.yml'), 'protected-paths: []\n');
+  const real = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'protected-paths'
+    ? defaultResolvePolicy(['protected-paths'])['protected-paths']
+    : k === 'express-driver-max-lines'
+      ? { value: POLICY['auto-merge-max-lines'], source: 'default' }
+      : { value: POLICY[k], source: 'policy' }]))];
+  const cwd = process.cwd();
+  try {
+    process.chdir(wt);
+    const tf = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['infra/main.tf']), ...REAL_GATES] });
+    assert.ok(tf.verdict.reasons.includes('protected path: infra/main.tf'), JSON.stringify(tf.verdict));
+    const pkg = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+    assert.deepStrictEqual(protectedReasons(pkg.verdict), [], JSON.stringify(pkg.verdict));
+    fs.rmSync(policyFile);
+    const gone = await widenCheck({}, PP_LABELS, { script: [real, widenIssue(PP_LABELS, ['package.json']), ...REAL_GATES] });
+    assert.ok(gone.verdict.reasons.includes('protected path: package.json'), JSON.stringify(gone.verdict));
+  } finally {
+    process.chdir(cwd);
+  }
 });

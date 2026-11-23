@@ -323,6 +323,29 @@ test('driver steps sum ms and usage per step, tokens null without usage, malform
   assert.equal(T.driverStepsOf(path.join(root, 'absent'), fs), null);
 });
 
+test('#5997: step-yield counts the relaunch\'s worker, commit and test lines in their rows', () => {
+  const usage = { input_tokens: 1, output_tokens: 2, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 };
+  const byName = (r) => Object.fromEntries(r.steps.map((s) => [s.name, s]));
+  // A relaunch on cannot-complete: the first worker stops, the relaunch's worker, commit and test follow.
+  const a = mkTmp();
+  write(a, 'driver-events.jsonl', jl(
+    { step: 'worker', ms: 60000, status: 'stop', usage }, { step: 'worker', ms: 120000, status: 'ok', usage, attempt: 2, trigger: 'cannot-complete' },
+    { step: 'commit', ms: 10, status: 'ok' }, { step: 'test', ms: 30000, status: 'ok' },
+  ));
+  const ra = byName(T.driverStepsOf(a, fs));
+  assert.deepEqual(ra.worker, { name: 'worker', count: 2, minutes: 3, tokens: 20, failed: 1 });
+  assert.equal(ra.commit.count, 1);
+  assert.equal(ra.test.count, 1);
+  // A relaunch on red tests: a second commit and a second test line.
+  const b = mkTmp();
+  write(b, 'driver-events.jsonl', jl(
+    { step: 'worker', ms: 60000, status: 'ok' }, { step: 'commit', ms: 10, status: 'ok' }, { step: 'test', ms: 30000, status: 'stop' },
+    { step: 'worker', ms: 60000, status: 'ok', attempt: 2, trigger: 'red-tests' }, { step: 'commit', ms: 10, status: 'ok' }, { step: 'test', ms: 30000, status: 'ok' },
+  ));
+  const rb = byName(T.driverStepsOf(b, fs));
+  assert.deepEqual([rb.test.count, rb.test.failed, rb.commit.count, rb.worker.count], [2, 1, 2, 2]);
+});
+
 test('runRow maps a derived yield to step rows', () => {
   const root = mkTmp();
   const dir = path.join(root, '2026-11-12T090000-record-1');

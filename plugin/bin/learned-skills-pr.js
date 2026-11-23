@@ -37,8 +37,10 @@
 // every captured patch (local-merge). --merge-base (required) marks a captured entry whose edit the
 // run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice.
 // Stdout is one JSON line (pr is set only when confirmed open in this call):
-//   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit}], staged: [{id,target,stagePath,reason}]
+//   land:  {branch, pr: {number,url}|null, landed: [{id,target,commit[,pr]}], staged: [{id,target,stagePath,reason}]
 //           [, superseded][, failed][, logFailed][, manifestFailed][, prBodyStale]}
+//   landed[].pr — set on a row a resumed land recorded against a merged learned-skills PR that already
+//                 shipped it ({number,url} of that PR); the top-level pr is not that PR
 //   stage: {staged: [...][, superseded][, failed][, manifestFailed]}
 //   failed — entries whose staged write failed too (they stay captured; the CLI exits 1)
 //   manifestFailed — the manifest write failed after the work was done: landed[], pr and staged[] still
