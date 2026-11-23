@@ -13,6 +13,7 @@ const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLO
 const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
+const { readText } = require('../../helpers/read-skill');
 const OK = require('./fixtures/worker-result.json');
 const BUDGET = require('./fixtures/worker-result-budget.json');
 
@@ -1161,7 +1162,7 @@ test('AC7.1 (#5942): live probe — a launch with --effort low records low, one 
 test('AC9.1 (#5997): live probe — three implementer launches on the Fast model return a RESULT_SCHEMA envelope', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
   const { resolve } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
   const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment.js'));
-  const policyRaw = fs.readFileSync(path.join(__dirname, '..', '..', '..', '.claude-tweaks', 'policy.yml'), 'utf8');
+  const policyRaw = readText(path.join(__dirname, '..', '..', '..', '.claude-tweaks', 'policy.yml'));
   const keyed = resolvePolicyKeys(['model-ceiling', 'model-effort'], { policyRaw });
   const policy = { 'model-profiles': modelProfilesEntry(policyRaw).value, 'model-ceiling': keyed['model-ceiling'].value, 'model-effort': keyed['model-effort'].value };
   const { model, launchEffort } = resolve('fast', { policy, unattended: true });
