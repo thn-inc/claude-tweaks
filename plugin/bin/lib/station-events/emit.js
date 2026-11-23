@@ -83,10 +83,21 @@ function optionalString(v) {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
-const payloadOf = (event) => (isPlainObject(event.payload) ? event.payload : {});
-const validStationList = (v) => Array.isArray(v) && v.every((st) => STATIONS.includes(st));
-const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-const validActor = (v) => typeof v === 'string' && ACTORS.test(v);
+function payloadOf(event) {
+  return isPlainObject(event.payload) ? event.payload : {};
+}
+
+function validStationList(v) {
+  return Array.isArray(v) && v.every((st) => STATIONS.includes(st));
+}
+
+function hasOwn(o, k) {
+  return Object.prototype.hasOwnProperty.call(o, k);
+}
+
+function validActor(v) {
+  return typeof v === 'string' && ACTORS.test(v);
+}
 
 // Is this an `exited` on the new contract (stations.js, above OUTCOMES)? A pre-contract line is
 // written unchanged: a retired outcome, or a passed/failed with no actor.
@@ -114,8 +125,10 @@ function invalidContract(event) {
     if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${show(payload.next)}`;
   }
   if ((event.kind === KIND.HELD || event.kind === KIND.RELEASED) && !HOLD_WHYS.includes(payload.why)) return `payload.why outside the closed set: ${show(payload.why)}`;
-  const nonEmptyPlan = event.kind === KIND.PLANNED ? Array.isArray(payload.stations) && payload.stations.length > 0 : true;
-  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && (!validStationList(payload.stations) || !nonEmptyPlan)) return `payload.stations is not a list of stations: ${show(payload.stations)}`;
+  if (event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) {
+    const emptyPlan = event.kind === KIND.PLANNED && Array.isArray(payload.stations) && payload.stations.length === 0;
+    if (!validStationList(payload.stations) || emptyPlan) return `payload.stations is not a list of stations: ${show(payload.stations)}`;
+  }
   if (event.kind === KIND.DECIDED && !validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${show(payload.actor)}`;
   return null;
 }
