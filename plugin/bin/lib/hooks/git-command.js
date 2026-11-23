@@ -3974,8 +3974,9 @@ const GH_PR_VALUE_FLAGS = Object.freeze({
 // Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, cwd, lost }`. `selector`
 // is the first positional after the verb (null when absent), `repo` the -R/--repo value, `undo` true
 // for --undo. `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
-// a prefix's directory cannot be proved, and `cwd` is then a stand-in (the lost cwd's root, as
-// resolveGitCommand reports it).
+// a prefix's directory cannot be proved, and `cwd` is then a stand-in, taken from the first of: the
+// lost cwd's root (as resolveGitCommand reports it), else the unprovable prefix's directory, else the
+// walk's cwd (a lost one's root), else the `cwd` argument.
 function ghPrLifecycleCalls(command, cwd, opts) {
   const calls = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
