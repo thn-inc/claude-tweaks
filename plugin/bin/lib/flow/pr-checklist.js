@@ -64,6 +64,28 @@ function setPhaseRow({ body, phase, remove = false }) {
   return { body: out.join('\n'), changed: true, row: remove ? 'removed' : 'checked' };
 }
 
+// Read-only view of the Phases span: { span, rows } where rows maps each
+// canonical phase present inside the span to 'checked' | 'unchecked'. Same
+// exact-name match and `\r` tolerance as setPhaseRow; rows outside the span
+// are ignored. `span` is false (rows {}) when the body has no Phases span.
+function phaseRowStates(body) {
+  const lines = (typeof body === 'string' ? body : '').split('\n');
+  const span = locatePhasesSpan(lines);
+  if (!span) return { span: false, rows: {} };
+  const rows = {};
+  for (let i = span.start + 1; i < span.end; i++) {
+    const m = /^- \[( |x|X)\] (.+)$/.exec(bare(lines[i]));
+    if (m && CANONICAL_PHASES.includes(m[2])) rows[m[2]] = m[1] === ' ' ? 'unchecked' : 'checked';
+  }
+  return { span: true, rows };
+}
+
+// The subset of ['build', 'test'], in that order, whose row is present and unchecked.
+function uncheckedBuildOrTest(body) {
+  const { rows } = phaseRowStates(body);
+  return ['build', 'test'].filter((p) => rows[p] === 'unchecked');
+}
+
 // The run id from the body's first line — the HTML-comment marker or its
 // plain-text companion — else null (the marker must be the unconditional
 // first line, so a marker further down never identifies the run).
@@ -89,4 +111,4 @@ function readRunReversals(runDir, deps) {
   return parsePremiseReversals(text);
 }
 
-module.exports = { setPhaseRow, firstLineRunId, readRunReversals };
+module.exports = { setPhaseRow, phaseRowStates, uncheckedBuildOrTest, firstLineRunId, readRunReversals };

@@ -3,8 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
-const { setPhaseRow, firstLineRunId, readRunReversals } = require('../../../plugin/bin/lib/flow/pr-checklist');
+const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+const { setPhaseRow, firstLineRunId, readRunReversals, phaseRowStates, uncheckedBuildOrTest } = require('../../../plugin/bin/lib/flow/pr-checklist');
 
 const body = composePrEarlyBody({
   runId: 'R1', specSummary: 'S', target: '#1', nextStep: 'build', fixesLines: ['Fixes #1'],
@@ -171,4 +171,32 @@ test("readRunReversals reads a bundle's per-spec decisions.md files", () => {
     readManifest: () => null,
   });
   assert.deepEqual(single, [path.join(runDir, 'decisions.md')]);
+});
+
+test('phaseRowStates reads checked and unchecked rows inside the span only', () => {
+  const fresh = phaseRowStates(body);
+  assert.equal(fresh.span, true);
+  assert.deepEqual(Object.keys(fresh.rows).sort(), ['build', 'polish', 'review', 'test', 'wrap-up']);
+  assert.ok(Object.values(fresh.rows).every((v) => v === 'unchecked'));
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  assert.equal(phaseRowStates(built).rows.build, 'checked');
+  assert.equal(phaseRowStates(built).rows.test, 'unchecked');
+  assert.equal(phaseRowStates(built.replace('- [x] build', '- [X] build')).rows.build, 'checked');
+  assert.deepEqual(phaseRowStates(`${body}\n- [ ] build\n`), phaseRowStates(body));
+  assert.deepEqual(phaseRowStates(built.replace(/\n/g, '\r\n')), phaseRowStates(built));
+});
+
+test('phaseRowStates: no span gives span false, rows {}', () => {
+  const express = composeExpressBody({ runId: 'R1', specSummary: 'S', fixesLines: ['Fixes #1'] });
+  assert.deepEqual(phaseRowStates(express), { span: false, rows: {} });
+});
+
+test('uncheckedBuildOrTest lists the unchecked build/test rows in order', () => {
+  assert.deepEqual(uncheckedBuildOrTest(body), ['build', 'test']);
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  assert.deepEqual(uncheckedBuildOrTest(built), ['test']);
+  const both = setPhaseRow({ body: built, phase: 'test' }).body;
+  assert.deepEqual(uncheckedBuildOrTest(both), []);
+  const removed = setPhaseRow({ body, phase: 'build', remove: true }).body;
+  assert.deepEqual(uncheckedBuildOrTest(removed), ['test']);
 });
