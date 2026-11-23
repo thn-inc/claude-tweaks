@@ -7,6 +7,7 @@ files:
   - plugin/bin/lib/issues/planning-hold.js
   - plugin/bin/plan-audit.js
   - plugin/skills/_shared/work-record.md
+  - plugin/skills/_shared/github-write-transport.md
 ---
 
 # Answer a Record Held for Planning Questions
@@ -62,3 +63,5 @@ files:
 ## Origin
 
 Built for record #6059 (answering a planning-held record with an interactive `/claude-tweaks:specify`). It finishes the hold written by #6056 (`plan-a-record-while-shaping-it-6056.md`, step 5) and uses the plan store from #6052 (`store-a-reviewed-plan-beside-its-record-6052.md`).
+
+- Step 1's gh-absent bullet updated for #6101: the hold-comment edit maps to the GitHub MCP `update_issue_comment` tool (`_shared/github-write-transport.md`'s comment-edit row), so a cloud session without `gh` answers the hold; only a session lacking that tool too still refuses before its first write.
