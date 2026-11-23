@@ -44,10 +44,12 @@ files:
 - **Should feel:** separate and safe. The record's PR is unchanged, and the skill edits arrive as their own small diff.
 - **Should understand:**
   - The PR is never armed. `_shared/github-pr-scan.md`'s item 9 skips a `<!-- wrap-up-skills-pr -->` PR on both arm routes, even when the record carries `auto:merge`.
-  - On a resumed run, `land` reuses the open PR only when every commit on its branch is this run's verified edit. Anything else stages instead, with a reason naming the branch and the PR.
+  - On a resumed run, `land` reuses the open PR only when its branch still exists and every commit on it is this run's verified edit. Anything else stages instead, with a reason naming the branch and the PR.
+  - A resumed run whose earlier learned-skills PR already merged (its branch deleted on merge) records each edit that PR shipped as landed against it — matched by the run and entry trailers plus `git patch-id --stable`, with the PR's commits read through `gh` and `refs/pull/{n}/head` — and opens no second PR. Edits the merged PR did not ship stage with a reason naming it. A failed PR lookup, fetch or commit read stages every remaining edit and builds nothing.
 - **Red flags:**
   - the learned-skills PR has `autoMergeRequest` set, a closing keyword, or a `<!-- claude-tweaks-run:` marker
   - a finding with no AUTO line
+  - a second learned-skills PR for the same run after its first one merged, or a staged proposal for an edit the merged PR already carries
 
 ### 3. Find the PR where you already look
 - **URL:** the Review Console's Skill updates section; on the short-circuit path, the FYI `PushNotification`; the final summary's Phase 2 trace
@@ -87,4 +89,5 @@ files:
 
 ## Origin
 - Created during the build of #5290: `bin/learned-skills-pr.js` (`capture`, `land`, `stage`), `lib/learned-skills/`, the console and trace rendering of the PR URL, item 9's `<!-- wrap-up-skills-pr -->` exclusion, verify's `learned-skills-delivered` row, and `wrap-up/learned-skills-pr.md`.
+- Updated during the build of #6110: a resumed `land` recognises edits a merged learned-skills PR already shipped, looking the run branch's PRs up whether or not the branch still exists.
 - Related journeys: `keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md` covers the same console-less short-circuit for review findings. `trust-a-singleton-auto-merge-to-refuse-without-a-verdict-2941.md` covers the merge-check verdict this journey keeps from parking.
