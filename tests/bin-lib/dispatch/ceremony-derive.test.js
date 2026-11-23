@@ -178,15 +178,27 @@ test('isPromptProsePath: other markdown stays docs, including basenames that mer
   assert.equal(isPromptProsePath('plugin/skills/foo/helper.js'), false, 'non-markdown is never prompt prose');
 });
 
-// #3477: two prose twins restate the directory set isPromptProsePath keys on.
-// Pinned against PROMPT_PROSE_DIRS (which builds the regex), so adding or
-// dropping a directory in the code fails here until both twins are updated.
+// #3477: two prose twins restate the directory set isPromptProsePath keys on:
+// wrap-up/ceremony-derivation.md, and micro-plan-gate.js's header comment, the
+// counting rule /build's micro-plan gate reads (#6053). Pinned against
+// PROMPT_PROSE_DIRS (which builds the regex), so adding or dropping a directory
+// in the code fails here until both twins are updated.
 test('the prose twins name exactly the directories PROMPT_PROSE_DIRS lists', () => {
   const ticked = PROMPT_PROSE_DIRS.map((d) => `\`${d}/\``);
   const list = `${ticked.slice(0, -1).join(', ')}, or ${ticked[ticked.length - 1]}`;
-  const root = path.join(__dirname, '..', '..', '..', 'plugin', 'skills');
-  for (const rel of ['build/micro-plan.md', 'wrap-up/ceremony-derivation.md']) {
-    const prose = readText(path.join(root, rel));
+  const plugin = path.join(__dirname, '..', '..', '..', 'plugin');
+  // The module's leading comment block only: its code is not the rule text /build reads.
+  const header = (text) => {
+    const lines = text.split('\n').slice(1);
+    const end = lines.findIndex((l) => l !== '' && !l.startsWith('//'));
+    return lines.slice(0, end).join('\n');
+  };
+  const twins = [
+    ['skills/wrap-up/ceremony-derivation.md', (t) => t],
+    ['bin/lib/issues/micro-plan-gate.js', header],
+  ];
+  for (const [rel, view] of twins) {
+    const prose = view(readText(path.join(plugin, rel))).replace(/\n\/\/\s*/g, ' ').replace(/\s+/g, ' ');
     assert.ok(prose.includes(list), `${rel} must contain the phrase: ${list}`);
   }
   for (const d of PROMPT_PROSE_DIRS) {

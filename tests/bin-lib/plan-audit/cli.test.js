@@ -423,7 +423,7 @@ test('AC5.1, AC8.1: no arguments exits 2 with the usage text (script entry)', ()
   assert.strictEqual(r.stdout, '');
   assert.strictEqual(r.stderr, [
     'plan-file is required',
-    'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--count-tasks] [--bytes] [--task-markers] [--risk-proofs]',
+    'usage: plan-audit.js <plan-file> [--repo-root <dir>] [--spec <spec-file>] [--surface-diff <before-plan>] [--count-tasks] [--bytes] [--task-markers] [--risk-proofs]',
     '',
   ].join('\n'));
 });

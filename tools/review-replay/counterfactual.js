@@ -183,4 +183,4 @@ function counterfactual(opts, deps) {
   return t.unreadable > 0 || t.unpaired > 0 || t.pairs === 0 ? EXIT_NOT_CLEAN : 0;
 }
 
-module.exports = { counterfactual, parseFindingsTable };
+module.exports = { counterfactual, parseFindingsTable, parseFindings, near, NEAR_LINES, lastAssistantText, indexTranscripts };

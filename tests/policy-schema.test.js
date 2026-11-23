@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 116 -> 117, #5941
-  assert.strictEqual(POLICY_KEYS.length, 117);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 117);
+  // Last bump: 120 -> 121, #6056
+  assert.strictEqual(POLICY_KEYS.length, 121);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 121);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -781,6 +781,32 @@ test('merge-authorization is the one POLICY_KEYS entry currently flagged policyS
   assert.deepStrictEqual(flagged, ['merge-authorization']);
 });
 
+// #6006: a key a run decides live is both excluded from the standing sources and refused from the
+// factory layer, so the refused-key warning names every factory value the exclusion would discard.
+test('every policySourceExcluded row in POLICY_KEYS is in FACTORY_REFUSED_KEYS', () => {
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  const flagged = POLICY_KEYS.filter((k) => k.policySourceExcluded === true).map((k) => k.key);
+  assert.ok(flagged.length > 0, 'at least one flagged row, or this check is vacuous');
+  assert.deepStrictEqual(flagged.filter((key) => !FACTORY_REFUSED_KEYS.includes(key)), []);
+});
+
+// #6006: merge-authorization, the one flagged row, is also factory-refused, so only a temporarily
+// flagged row reaches the guard with a factory value. The flag is restored before the test returns.
+test('a policySourceExcluded row is set neither from policy.yml nor from the factory layer, only from a run config', () => {
+  const row = POLICY_KEYS.find((k) => k.key === 'design-ceremony');
+  assert.ok(row && !row.policySourceExcluded && !row.policyOnly);
+  row.policySourceExcluded = true;
+  try {
+    const resolve = (raws) => resolvePolicyKeys(['design-ceremony'], raws)['design-ceremony'];
+    assert.deepStrictEqual(resolve({ factoryRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ policyRaw: 'design-ceremony: fast-lane\n' }), { value: 'standard', source: 'default' });
+    assert.deepStrictEqual(resolve({ runConfigRaw: 'design-ceremony: fast-lane\n', factoryRaw: 'design-ceremony: standard\n' }), { value: 'fast-lane', source: 'run-config' });
+  } finally {
+    delete row.policySourceExcluded;
+  }
+  assert.deepStrictEqual(resolvePolicyKeys(['design-ceremony'], { factoryRaw: 'design-ceremony: fast-lane\n' })['design-ceremony'], { value: 'fast-lane', source: 'factory' });
+});
+
 test('mixed policy.yml + CLAUDE.md content is read independently, both audited together', () => {
   const repo = tmpRepo();
   writePolicy(repo, 'dispatch-retry-ceiling: 5\nmade-up-lever: 1\n');
@@ -918,6 +944,7 @@ const DRIVER_KEYS = [
   { id: 'AC7.1 (#5224)', key: 'express-driver-max-size', def: 'low', other: 'medium', policyVal: 'medium' },
   { id: 'AC7.2 (#5224)', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 },
   { id: 'AC7.3 (#5224)', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 },
+  { id: 'AC8 (#6018)', key: 'express-driver-max-risk', def: 'low', other: 'high', policyVal: 'medium' },
 ];
 
 // AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
@@ -950,6 +977,21 @@ test('AC16: express-driver-review values resolve and a malformed one falls back'
     assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: `express-driver-review: ${v}\n`, runConfigRaw: null })['express-driver-review'], { value: v, source: 'policy' });
   }
   assert.deepStrictEqual(resolvePolicyKeys(['express-driver-review'], { policyRaw: 'express-driver-review: sometimes\n', runConfigRaw: null })['express-driver-review'], { value: 'beyond-express', source: 'default', invalid: true });
+});
+
+test('AC8.1, AC8.2 (#6018): express-driver-max-risk resolves low unset, each enum value from policy, and a malformed value to low with invalid', () => {
+  const key = 'express-driver-max-risk';
+  assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: null })[key], { value: 'low', source: 'default' });
+  for (const v of ['low', 'medium', 'high']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: v, source: 'policy' });
+  }
+  for (const v of ['Medium', 'critical', '2']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: 'low', source: 'default', invalid: true }, v);
+  }
+  const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets.js');
+  const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+  assert.ok(fs.statSync(path.join(shared, 'policy-schema.md')).size < RAIL_BYTES);
+  assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-max-risk` \| /m);
 });
 
 test('AC8.1: each ceiling resolves its default when unset, at or above the design targets', () => {
@@ -992,7 +1034,7 @@ for (const { id, key, def, other, policyVal } of DRIVER_KEYS) {
 }
 
 test('AC8.3: each ceiling\'s doc row states its unit', () => {
-  const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema.md')).split('\n');
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-express-driver.md')).split('\n');
   // The summary cell alone: the key cell already spells the unit, so matching the whole row could not fail.
   const summaryOf = (key) => lines.find((l) => l.startsWith(`| \`${key}\` |`)).split('|')[5];
   assert.match(summaryOf('express-driver-wall-clock-minutes'), /\bminutes\b/i);
@@ -1115,6 +1157,12 @@ test('express-driver-models: the pre-change flat reader sees nothing of the bloc
 test('AC11.4 (#5917): the policyOnly bullet names express-driver-models', () => {
   const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
   assert.ok(line.includes('`express-driver-models`'));
+});
+
+test('#6056: the policyOnly bullet names plan-at-specify', () => {
+  const line = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'policy-schema-coverage.md')).split('\n').find((l) => l.includes('are `policyOnly`'));
+  assert.ok(line, 'the policyOnly bullet is missing');
+  assert.ok(line.includes('`plan-at-specify` (#6056)'), 'the policyOnly bullet does not name plan-at-specify');
 });
 
 test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {

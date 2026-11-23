@@ -594,6 +594,23 @@ test('a non-ENOENT error on subagents/workflows is counted unreadable', async ()
   assert.strictEqual(r.unreadable, 1);
 });
 
+test('a pluginRoot without transcript.js fails collectSpend loudly instead of counting every transcript unreadable', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const emptyPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: emptyPlugin }), /transcript\.js/);
+});
+
+test('a transcript.js under pluginRoot that does not export mergeUsage fails collectSpend with the loader error, not MODULE_NOT_FOUND', async () => {
+  const root = newRoot();
+  put(path.join(root, 'slug-a', 's1.jsonl'), [typed(0, 'flow'), opusCall('a', 1)]);
+  const badPlugin = fs.mkdtempSync(path.join(DIR, 'plugin-'));
+  const dir = path.join(badPlugin, 'bin', 'lib', 'timing');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'transcript.js'), 'module.exports = {};');
+  await assert.rejects(() => collectSpend({ roots: [root], ...WINDOW }, { pluginRoot: badPlugin }), /does not export mergeUsage/);
+});
+
 test('scanTranscript: a Bash drive.js --check call is route evidence; prose and other tools are not', async () => {
   const bash = (command) => ({ type: 'assistant', timestamp: '2026-11-19T09:00:00Z', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command } }] } });
   assert.strictEqual((await scanTranscript(fixture([bash('node "/p/bin/drive.js" --check 5270')]))).reachedRoute, true);

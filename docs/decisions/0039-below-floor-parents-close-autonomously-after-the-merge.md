@@ -1,4 +1,4 @@
-# 0028. Below-floor decomposition parents close autonomously, only after the last merge lands
+# 0039. Below-floor decomposition parents close autonomously, only after the last merge lands
 
 - **Status:** accepted
 - **Date:** 2026-10-30

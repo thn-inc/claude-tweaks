@@ -291,3 +291,229 @@ test('go-red: the example count fails with a single example', () => {
   const block = dispatchBlock(readText(REVIEW_PATH));
   assert.deepStrictEqual(boundaryProblems(block.replace('example:', 'removed')), ['two example: occurrences']);
 });
+
+// --- #6051: planning-decisions pointer and the asked-classes sub-file ---
+// Under the default `ask-all`, plan-review.md must stay the base bytes: the frozen fixture is
+// plan-review.md at 483adc1d58 (before the pointer landed) plus #6060's `## Skip logging` edits,
+// so stripping the marker-delimited pointer from the live file must give it back byte for byte.
+
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
+const { classStatementSites } = require('./helpers/planning-decisions-clauses');
+
+const FIXTURE = path.join(ROOT, 'tests', 'fixtures', 'plan-review-ask-all-6051.txt');
+const SUB_REL = 'plugin/skills/build/plan-review-asked-classes.md';
+const SUB_PATH = path.join(ROOT, SUB_REL);
+const POINTER_START = '<!-- planning-decisions:start -->';
+const POINTER_END = '<!-- planning-decisions:end -->\n\n';
+
+function pointerBounds(text) {
+  const start = text.indexOf(POINTER_START);
+  const end = text.indexOf(POINTER_END);
+  if (start === -1 || end === -1 || end < start) throw new Error('pointer markers missing');
+  return [start, end + POINTER_END.length];
+}
+
+// Removes the pointer from its start marker through the end marker and the blank line after it.
+function stripPointer(text) {
+  const [start, end] = pointerBounds(text);
+  return text.slice(0, start) + text.slice(end);
+}
+
+const pointerBlock = (text) => text.slice(...pointerBounds(text));
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const factsOf = (literals) => literals.map((l) => [new RegExp(escapeRe(l)), l]);
+
+// Every fact holds on the live text, and stripping one fact's match reports exactly that fact
+// (so each literal also matches exactly once in the region).
+function assertFacts(text, literals) {
+  const facts = factsOf(literals);
+  const missing = missingFactsOf(facts);
+  assert.deepStrictEqual(missing(text), []);
+  assertEachPatternGoesRed(text, facts, missing);
+}
+
+const subText = () => norm(readText(SUB_PATH));
+
+test('AC1.1/AC9.1: with the pointer removed, plan-review.md is byte-identical to the frozen ask-all fixture', () => {
+  const live = readText(REVIEW_PATH);
+  const fixture = readText(FIXTURE);
+  assert.strictEqual(stripPointer(live), fixture);
+  // Control: one character changed inside the `## Dispatch prompt` block breaks the identity.
+  const at = live.indexOf('spec gap', live.indexOf('\n## Dispatch prompt'));
+  assert.notStrictEqual(at, -1, 'control anchor missing from the Dispatch prompt block');
+  const doctored = live.slice(0, at) + 'S' + live.slice(at + 1);
+  assert.notStrictEqual(doctored, live);
+  assert.notStrictEqual(stripPointer(doctored), fixture);
+});
+
+test('stripPointer throws when a marker is absent or the two are out of order', () => {
+  const live = readText(REVIEW_PATH);
+  const noStart = live.replace(POINTER_START, '');
+  const noEnd = live.replace(POINTER_END, '');
+  assert.notStrictEqual(noStart, live);
+  assert.notStrictEqual(noEnd, live);
+  assert.throws(() => stripPointer(noStart), { message: 'pointer markers missing' });
+  assert.throws(() => stripPointer(noEnd), { message: 'pointer markers missing' });
+  assert.throws(() => stripPointer(`${POINTER_END}x${POINTER_START}`), { message: 'pointer markers missing' });
+});
+
+test('AC5.2: the pointer cites _shared/planning-decisions.md and the sub-file and resolves planning-decisions once', () => {
+  assertFacts(pointerBlock(readText(REVIEW_PATH)), [
+    '--values planning-decisions',
+    'plan-review-asked-classes.md',
+    '_shared/planning-decisions.md',
+    'Any other output, or a failed call, leaves this file as written.',
+  ]);
+});
+
+test('AC2.1: under asked-classes a settled row writes Settled at planning, an AUTO line and a record comment, and asks nothing', () => {
+  assertFacts(subText(), [
+    'Settled at planning: {finding} — chose {reading}; not {other reading}',
+    'under `## Planning Decisions`',
+    '--step "Common Step 1.6 (plan review)"',
+    'the record comment carries that line verbatim',
+    'no `AskUserQuestion`, no question comment and no `failed: plan-review-needs-human`',
+    'the settled line stands in for the Evidence quote',
+    'judges only the chosen reading',
+    'so a blocked call still leaves its settled lines committed',
+    'list only the asked rows',
+  ]);
+});
+
+test('AC7.1: settling holds in every mode and in a dispatched call', () => {
+  assertFacts(subText(), [
+    'in every mode — `auto`, `confirm`, `interactive` and `hybrid`',
+    'when every needs-human row settles, the build continues to Common Step 1.7',
+  ]);
+});
+
+test('AC3.1: an asked row reaches the needs-human HARD-GATE exactly as today, recommended reading first', () => {
+  assertFacts(subText(), [
+    '`### Spec gap — needs-human` HARD-GATE exactly as today',
+    'the recommended reading first, labelled `(Recommended)`, then the other reading, then `Stop the build`',
+  ]);
+});
+
+test('AC4.1: an unflagged category adds the flag through risk-flags.js add before asking, add never drop', () => {
+  assertFacts(subText(), [
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" add --body-file "{worktree spec}" --add {slug} --repo-root "{worktree root}"',
+    'before the question is asked',
+    'Add, never drop',
+    'A non-zero exit still asks the question',
+  ]);
+});
+
+test('asked-classes retires the converged round and the Plan Review Clarifications heading only under asked-classes', () => {
+  assertFacts(subText(), [
+    '`### Converged round (#4958)` does not apply',
+    'instead of `## Plan Review Clarifications`',
+    'never asked again',
+  ]);
+});
+
+// Fix round 1: the declared set follows the shared doubt rule's control-mode rule (the one
+// risk-flags.js add reads extras by), a blocking branch commits settled rows and flag additions
+// early while a present human's settled rows join the post-answer sequence, and a failed add
+// writes no Proof line.
+test('fix round 1: step 1 reads the declared categories by the doubt rule\'s control-mode rule, built-ins only on a failed read', () => {
+  assertFacts(subText(), [
+    'follow `## Doubt rule`\'s control-mode rule',
+    'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values control-mode`, and only when it prints `on`',
+    'When either read fails or prints nothing, the declared set is the four built-ins only.',
+  ]);
+});
+
+test('fix round 1: a present human\'s mixed reply joins the post-answer sequence; only blocking branches commit early', () => {
+  assertFacts(subText(), [
+    'With a present human, the settled rows wait for the answers and join `plan-review.md`\'s single post-answer amendment sequence',
+    'Only the branches that block — a dispatched call and a `parallel`-wave member — commit early',
+    'Every non-settled amendment row in those branches stays unapplied, as today.',
+  ]);
+});
+
+// Fix round 2: the early commit's condition is settled rows OR flag additions, so an all-asked
+// blocking reply with an unflagged class (b) row still commits its flag edit.
+test('fix round 2: a blocking reply whose rows are all asked still commits step 3\'s flag addition early', () => {
+  assertFacts(subText(), [
+    'whenever they hold settled rows or step 3\'s flag additions',
+    'A blocking reply whose rows are all asked still gets this commit when step 3 added a flag, holding only those flag edits and their `Proof` lines.',
+  ]);
+});
+
+test('fix round 1: in a blocking branch the flag addition rides the early commit, and a failed add writes no Proof line', () => {
+  assertFacts(subText(), [
+    'the `add` edit and its `Proof({slug}):` plan line ride in step 5\'s early commit, before the question comment is posted.',
+    'A failed `add` writes no `Proof` line.',
+  ]);
+});
+
+// Fix wave (final review): a blocking branch's question comment carries the flag to the record
+// body (the resumed run re-materializes the spec from it), an answered round adds a flag the
+// answer left off, a flag-only early commit re-audits with no record comment, and a failed
+// policy read logs a SKIP.
+test('fix wave: a blocking branch\'s question comment asks the answerer to add the flag to the record body', () => {
+  assertFacts(subText(), [
+    'the question comment for each row step 3 flagged names `{slug}` and tells the answerer to add `{slug}` to the record body\'s `Risk-flags:` line along with their `**Decision**` paragraph',
+  ]);
+});
+
+test('fix wave: an answered round still runs step 3\'s add, without asking, for a declared category the spec does not keep', () => {
+  assertFacts(subText(), [
+    'also runs step 3\'s `risk-flags.js add` without asking, and adds its `Proof({slug}):` plan line',
+    'so an answer recorded without the flag still leaves the implementing build owing that flag\'s Check G proof',
+  ]);
+});
+
+test('fix wave: a flag-only early commit still re-audits and posts no amendment record comment', () => {
+  assertFacts(subText(), [
+    'When no settled row exists, the re-audit (`plan-audit.js … --spec`) still runs on the amended pair, and no amendment record comment is posted, because the question comment carries the flag.',
+  ]);
+});
+
+test('fix wave: a failed or empty policy read in step 1 logs one SKIP', () => {
+  assertFacts(subText(), [
+    'A failed or empty read logs one `SKIP`',
+    'condition: {control-mode|risk-categories} read failed ({reason}) → fallback: declared categories are the four built-ins',
+  ]);
+});
+
+// Targeted fix: a failed answered-round add never asks the row again, and answered-round rows
+// ride a blocking branch's early commit as settled rows.
+test('targeted fix: a failed step-2 add writes no Proof line, asks nothing and logs its own SKIP', () => {
+  assertFacts(subText(), [
+    'A failed `add` here writes no `Proof` line and asks nothing',
+    'decision-text-{run-id}-planning-answered-flag-{k}.md',
+    'condition: risk-flags.js add exited {code} ({stderr line}) on an answered row → fallback: answered row settled without the flag',
+  ]);
+});
+
+test('targeted fix: answered-round rows count as settled rows for a blocking branch\'s early commit', () => {
+  assertFacts(subText(), [
+    'Answered-round rows (step 2) count as settled rows for this early commit: their `Decided by the user at planning:` lines and any step-2 flag edit with its `Proof` line ride it.',
+  ]);
+});
+
+test('clarification: an answered-round row also gets step 4\'s AUTO line and record comment', () => {
+  assertFacts(subText(), [
+    'Each answered-round row also gets step 4\'s `AUTO` line and record comment: one `AUTO` per row through the same `--text-file "{text-file}"` form, `{text-file}` holding its `Decided by the user at planning:` line',
+    'decision-text-{run-id}-planning-answered-{k}.md` prints, `{k}` numbering this reply\'s answered rows from 1',
+    'and that line rides the same record comment',
+  ]);
+});
+
+test('clarification: {k} in both flag tmp names numbers that step\'s flagged rows in this reply from 1', () => {
+  assertFacts(subText(), [
+    'decision-text-{run-id}-planning-flag-{k}.md` prints (`{k}` numbering this step\'s flagged rows in this reply from 1)',
+    'decision-text-{run-id}-planning-answered-flag-{k}.md` prints (`{k}` numbering this step\'s answered rows flagged in this reply from 1)',
+  ]);
+});
+
+test('AC5.1: the sub-file cites the shared rule rather than restating the classes', () => {
+  const text = readText(SUB_PATH);
+  assert.ok(text.includes('_shared/planning-decisions.md'), 'the sub-file must cite _shared/planning-decisions.md');
+  assert.deepStrictEqual(classStatementSites(new Map([[SUB_REL, text]])), []);
+  // Control: the same sweep finds a class clause restated in the sub-file.
+  const restated = `${text}\nNo reading keeps every Acceptance Criterion and recorded decision intact.\n`;
+  assert.deepStrictEqual(classStatementSites(new Map([[SUB_REL, restated]])), [SUB_REL]);
+});

@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
+const { ASKED_CLASSES_TEXT } = require('./helpers/planning-decisions-clauses');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
@@ -178,7 +179,7 @@ test('plan-review.md stays within the rail', () => {
 });
 
 const CLOSED_RULE_SENTENCE = "The rule still matters on a record's first plan-review round; after one answered round, later rounds converge under `build/plan-review.md`'s convergence rule anyway, which treats a Closed rule as a recorded decision.";
-const CONTRACT_QUALIFIER = 'plan-review needs-human spec gap (`build/plan-review.md`, #3377; after one answered round, only a gap no reading settles without altering a criterion or contradicting a recorded decision, #4958)';
+const CONTRACT_QUALIFIER = 'plan-review needs-human spec gap (`build/plan-review.md`, #3377; after one answered round, only a gap no reading settles without altering a criterion or contradicting a recorded decision, #4958; ' + ASKED_CLASSES_TEXT;
 
 function closedRuleSection(text) {
   const start = text.indexOf('## State-Classification Deliverables\n');

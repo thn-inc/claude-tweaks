@@ -43,6 +43,7 @@ const { writeFileAtomic } = require('./lib/atomic-write');
 const { findingItems } = require('./lib/console/resolve');
 const { DECISION_RENDER_FIELDS } = require('./lib/console/decision-facts');
 const { readRecord, writeRecord } = require('./lib/issues/local-store');
+const { headerFileCandidates } = require('./lib/run-header');
 const {
   parseRepo, ghAvailable, ghOptions, injectedGhDeps, pinExplicitRepoHost,
 } = require('./lib/repo-resolve');
@@ -599,14 +600,44 @@ function readChanges(base, head, deps) {
   }
 }
 
-function readLowConfidence(runDir, deps, notes) {
+// The console's low-confidence items (none without a run dir), then the settled planning lines of the
+// covered record's spec: its materialized spec in the run dir, else the --spec file. Null only when
+// nothing was listed and the console was not read, so a gather with nothing new stays byte-identical.
+// The run-dir read takes every header location run-header.js resolves (flat or spec-{n}/work, live or
+// archived), so a gather after wrap-up's archive still finds the spec. The --spec fallback covers the
+// packet's own record only: in worktree mode the run dir under $RUN_ROOT holds no work/ until merge,
+// and --spec names the worktree copy of that same record's spec.
+function readLowConfidence(runDir, deps, notes, { record, spec }) {
+  let consoleItems = { items: [], findings: [], decisions: '' };
+  let consoleRead = false;
+  if (runDir !== null) {
+    try {
+      consoleItems = findingItems({ runDir, deps });
+      consoleRead = true;
+    } catch {
+      notes.push(FINDINGS_NOT_READ);
+    }
+  }
+  const readStaged = (id) => readTextOrNull(deps, path.join(runDir, 'staged', id));
+  const readSpec = (n) => {
+    if (runDir !== null) {
+      for (const file of headerFileCandidates([runDir], n)) {
+        const text = readTextOrNull(deps, file);
+        if (text !== null) return text;
+      }
+    }
+    if (n === record && spec !== undefined) return readTextOrNull(deps, spec);
+    return null;
+  };
+  let entries;
   try {
-    const readStaged = (id) => readTextOrNull(deps, path.join(runDir, 'staged', id));
-    return lowConfidenceFindings(findingItems({ runDir, deps }), readStaged);
+    entries = lowConfidenceFindings(consoleItems, readStaged, { records: [record], readSpec });
   } catch {
-    notes.push(FINDINGS_NOT_READ);
+    // The console catch above may already have pushed this note; a packet states it once.
+    if (!notes.includes(FINDINGS_NOT_READ)) notes.push(FINDINGS_NOT_READ);
     return null;
   }
+  return entries.length === 0 && !consoleRead ? null : entries;
 }
 
 const optionalString = (value) => value === undefined || typeof value === 'string';
@@ -699,7 +730,7 @@ function gatherToFile(opts, deps) {
       proofs: optionalJson('--proofs', isEntryList),
       decisions: opts.decisionItems === undefined && runDir !== null ? readRunDecisions() : optionalJson('--decision-items', isDecisionEntryList),
       decisionsText: runDir === null ? null : readTextOrNull(deps, path.join(runDir, 'decisions.md')),
-      lowConfidence: runDir === null ? null : readLowConfidence(runDir, deps, notes),
+      lowConfidence: readLowConfidence(runDir, deps, notes, { record: opts.record, spec: opts.spec }),
       storyIndex: readStoryIndex(opts.storiesDir, listsStories, deps, notes),
       storyResults,
       stampStories,
