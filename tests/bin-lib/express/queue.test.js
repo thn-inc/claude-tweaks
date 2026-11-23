@@ -252,6 +252,7 @@ test('a driver module load failure is named as such, not as a policy read, with 
   assert.equal(sink.lines.length, 1);
   assert.match(sink.lines[0], /^express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: sensitive paths unreadable\n$/);
   assert.doesNotMatch(sink.lines[0], /policy read failed/);
+  assert.notEqual(p.fingerprint, groupingFingerprint({}), '#6062: not a failed read, so the fingerprint covers the values read');
 });
 
 test('an unrecognised express-driver value is collapsed to one stderr line', () => {
@@ -371,12 +372,26 @@ test('#6062 lanes off: the fingerprint still covers the bundle cap without the s
   assert.notEqual(fpOf({ ...off, 'work-links': 'native' }).fingerprint, pa.fingerprint);
 });
 
-test('#6062 failed read: a throwing resolver and an unrecognised express-driver both carry groupingFingerprint({})', () => {
+test('#6062 failed read: a throwing resolver carries groupingFingerprint({}), on either call', () => {
   const sink = stderrSink();
   const thrown = expressQueuePolicy({ resolvePolicy: () => { throw new Error('boom'); }, stderr: sink.stderr });
   assert.equal(thrown.fingerprint, groupingFingerprint({}));
-  const bad = expressQueuePolicy({ resolvePolicy: policy({ ...FP_BASE, 'express-driver': 'maybe' }).resolvePolicy, stderr: sink.stderr });
-  assert.equal(bad.fingerprint, groupingFingerprint({}));
+  let n = 0;
+  const second = expressQueuePolicy({ resolvePolicy: (keys) => { n += 1; if (n === 2) throw new Error('boom'); return policy(FP_BASE).resolvePolicy(keys); }, stderr: sink.stderr });
+  assert.equal(second.fingerprint, groupingFingerprint({}));
+});
+
+test('#6062 an unrecognised express-driver is disabled but its fingerprint still tracks the bundle cap and work-links', () => {
+  const sink = stderrSink();
+  const bad = { ...FP_BASE, 'express-driver': 'maybe' };
+  const p = expressQueuePolicy({ resolvePolicy: policy(bad).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.enabled, false);
+  assert.equal(p.grouping, 'per-record');
+  assert.equal(p.keepSingleton(ELIGIBLE), false);
+  assert.notEqual(p.fingerprint, groupingFingerprint({}));
+  for (const [key, value] of [['dispatch-fastlane-bundle-cap', 2], ['work-links', 'native']]) {
+    assert.notEqual(expressQueuePolicy({ resolvePolicy: policy({ ...bad, [key]: value }).resolvePolicy, stderr: sink.stderr }).fingerprint, p.fingerprint, key);
+  }
 });
 
 test('#6062 AC7: every key expressQueuePolicy requests is a grouping input', () => {

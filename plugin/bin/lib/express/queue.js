@@ -34,7 +34,9 @@ function groupingFingerprint(values) {
   return crypto.createHash('sha256').update(JSON.stringify(pairs)).digest('hex').slice(0, 16);
 }
 
-const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint: groupingFingerprint({}), keepSingleton: () => false });
+// The disabled shape (fail toward bundling), carrying the fingerprint of whatever was read.
+const disabled = (fingerprint) => Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint, keepSingleton: () => false });
+const DISABLED = disabled(groupingFingerprint({}));
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
 const oneLine = (err) => collapse(err && err.message);
@@ -43,7 +45,7 @@ const oneLine = (err) => collapse(err && err.message);
 // reaches the fingerprint with no further edit.
 // A throwing read records its error in `failed` when given (the caller rethrows it where the old code did) and hashes as a sentinel.
 const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
-  try { return [k, result[k] && result[k].value]; } catch (err) {
+  try { return [k, result[k].value]; } catch (err) {
     if (!failed) throw err;
     failed[k] = err;
     return [k, UNREADABLE];
@@ -53,10 +55,12 @@ const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
 // deps: { resolvePolicy?, stderr? } -> { enabled, grouping, fingerprint, keepSingleton }.
 // `fingerprint` is groupingFingerprint over every value the resolver calls returned, the
 // queue-order cache's key beside the `grouping` stamp (#6062): a policy change that leaves
-// the queue unchanged must not replay a stale order. A failed read carries
-// groupingFingerprint({}).
+// the queue unchanged must not replay a stale order. Only a throwing resolver call carries
+// groupingFingerprint({}); every path past a successful first call (an unrecognised
+// `express-driver`, lanes off, driver modules failing to load) carries the fingerprint of the
+// values read, since queue-pull still uses `work-links` and the bundle cap in those states.
 // Two resolver calls, project policy only (no run dir exists at queue-pull time).
-// The first reads `express-lane` and `express-driver`; the second, made only when
+// The first reads `express-lane`, `express-driver`, `dispatch-fastlane-bundle-cap` and `work-links`; the second, made only when
 // either half is on, reads the keys the halves need: the lanes are opt-in, and an
 // unpinned `integration-model` costs a `gh repo view` probe that a queue pull (up
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
@@ -81,17 +85,17 @@ function expressQueuePolicy(deps = {}) {
   try {
     const first = resolvePolicy(FIRST_KEYS, { runDir: null });
     read = valuesOf(FIRST_KEYS, first);
-    expressOn = first['express-lane'].value === true;
-    routing = first['express-driver'].value;
+    expressOn = read['express-lane'] === true;
+    routing = read['express-driver'];
   } catch (err) {
     return readFailed(FIRST_KEYS, err);
   }
   if (!ROUTINGS.includes(routing)) {
     stderr(`express-driver: value not recognised (${collapse(routing)}), fast-lane bundling unchanged this pull\n`);
-    return DISABLED;
+    return disabled(groupingFingerprint(read));
   }
   const driverOn = routing !== 'off';
-  if (!expressOn && !driverOn) return { enabled: false, grouping: groupingMode(false), fingerprint: groupingFingerprint(read), keepSingleton: () => false };
+  if (!expressOn && !driverOn) return disabled(groupingFingerprint(read));
 
   let expressOpts;
   let policy;
@@ -124,7 +128,7 @@ function expressQueuePolicy(deps = {}) {
       };
     } catch (err) {
       stderr(`express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
-      return DISABLED;
+      return disabled(groupingFingerprint(read));
     }
   }
 
