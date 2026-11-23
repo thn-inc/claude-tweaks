@@ -1,6 +1,7 @@
 ---
 files:
   - tools/review-replay.js
+  - tools/review-replay/reviews-branch.js
   - tools/review-replay/reviews-extract.js
   - tools/review-replay/reviews-rewrite.js
   - tools/review-replay/reviews-score.js
@@ -63,5 +64,17 @@ files:
   - A lens whose `confirmedMissingSource` is non-zero read as a lens with nothing confirmed.
   - An arm compared without its `control` `fidelity` beside it.
 
+## Task and whole-branch reviewers (#5992)
+Three more roles replay the other reviewers of an SDD run through the same two commands: `extract-reviews --role task|whole-branch|task-vs-branch` and the same `score-reviews`. `--lens` and `--max-per-lens` are refused for them.
+- **Slots:** `task` replays each archived `task review` dispatch (its archived verdict and located Critical/Important items kept). `whole-branch` replays each run's first usable whole-branch review dispatch (Critical, Important and Minor items kept). `task-vs-branch` replays the run's whole-branch prompt against the head each `Needs fixes` task review reviewed (`task-vs-branch`, `task-vs-branch.2`, …), beside a control slot `{name}--final` at the whole-branch prompt's own head.
+- **Pointer prompts:** a prompt is a pointer when it says its instructions are in or from "this file" (or "Read this file") and carries exactly one lone absolute path line; the archive holds many wordings (a 2026-11-23 probe counted about 204 pointer-shaped task-review prompts). The replay reads the file the pointer names. A cited file whose text has no sha pair while the prompt has one is a hybrid (template plus inline content), and the original prompt is replayed. A file that no longer exists is `prompt-file-gone`. SDD files a prompt names under `.superpowers/` are absent from the clean repository.
+- **Range:** the range is the prompt's own `Base {sha} … Head {sha}` pair. For `task-vs-branch` it is the whole-branch prompt's base when that is an ancestor of the task-reviewed head, else the `git merge-base` of the two (`baseFrom: whole-branch | merge-base` on the slot); a pair with no merge base is `no-merge-base`. The slot's replay repository holds the task-reviewed head, not the final one.
+- **Matching is by location:** an archived item is caught when any one of its `path:line` locations is within 5 lines of any location in the replay reply, and only the line an item itself carries is read. An item with no location is counted as `unlocated` and is in no denominator.
+- **Severity format:** a bold-label severity reply (`**Important**`) yields no items. Archived ones count as `itemsUnparsed` (task) or `items-unparsed` (task-vs-branch). A replayed task reply with a verdict but no parseable items scores its verdict and counts in `recall.replayItemsUnparsed`; a replayed whole-branch or task-vs-branch reply in that form is `could-not-parse`, which is `notJudged` and exit 3.
+- **Exclusions:** besides the lens reasons, `prompt-file-gone`, `no-whole-branch-prompt`, `no-sha-range`, `no-merge-base`, `items-unparsed`, `commit-not-in-clone` and `unknown-run-input`. Archived runs keep `work/` at the top-level run directory, and the input reader falls back there. Whole-branch prompts naming `evidence/` files, another run's paths or `decisions.md` are `unknown-run-input` (about 60 of 237 first whole-branch prompts in the 2026-11-23 probe), which shrinks the `task-vs-branch` sample; the no-leak barrier is kept on purpose. `task-vs-branch` also counts `notQualifying` task reviews (not a `Needs fixes` with a Critical or Important item), which get no slot.
+- **Output:** `score-reviews` prints a `task`, `wholeBranch` or `taskVsBranch` section per arm. `taskVsBranch` has `caught` (the task-head slots' share of the task review's items a whole-branch replay raised, by severity and by task tier), `baselineRecall` (the same for the final-head control) and `notRaised` (each located item a task-head repeat missed, with its `run`, `taskReview` and `repeat`). `fixture.selected` counts task reviews, with `slots` and `notQualifying` beside it. The whole-archive `task-vs-branch` extract of 2026-11-23 wrote 111 task reviews (222 slots) across 51 runs, with 650 not-qualifying task reviews.
+- **Should understand:** the sample keeps only runs with a task-review range and a usable whole-branch prompt, so a share is not an archive-wide figure; read it beside the per-reason and per-tier exclusion counts. Recall rewards a replay that behaves like the archive. Compare `caught` against `baselineRecall`, not against 1.
+- **Red flags:** a `caught` share read without its `baselineRecall`; an exclusion count ignored when comparing two extracts.
+
 ## Origin
-- Created during the build of #5991 (run `2026-11-22T104506-spec-5991`). This replays the lens reviewers where `replay-archived-reviews-to-measure-a-tiebreak-change-5557.md` replays the tiebreak judge.
+- Created during the build of #5991 (run `2026-11-22T104506-spec-5991`); extended for the task and whole-branch roles by #5992. This replays the lens reviewers where `replay-archived-reviews-to-measure-a-tiebreak-change-5557.md` replays the tiebreak judge.

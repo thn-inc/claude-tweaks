@@ -56,6 +56,12 @@
 // the archived rows, the figure an arm's numbers are read against; `fixture.byLens` repeats what the extraction selected
 // and excluded per lens (tools/review-replay/reviews-score.js). A reply that is missing, recorded at another effort than its
 // arm's, or not a lens report is notJudged; a `No findings` reply is a scored review with zero rows.
+// For the branch roles the same command prints one section per arm, keyed by role, over the archived reviewer's own items
+// (a replay is caught by location: any location of an item within 5 lines of any replay location):
+// `task` scores each replayed task review's verdict against the archived one and its located items' recall;
+// `wholeBranch` scores the replayed review's items against the archived whole-branch review's located items;
+// `taskVsBranch` scores a whole-branch replay at a Needs fixes task review's head (`caught`, with `notRaised` items) beside
+// its final-head control (`baselineRecall`). A reply that is missing, unparsed or at another effort is notJudged (exit 3).
 //
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall or empty set, score with any notJudged, counterfactual with an unreadable transcript, a

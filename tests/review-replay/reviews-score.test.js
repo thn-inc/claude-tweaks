@@ -534,3 +534,70 @@ test('fixture summary: an exclusion with no tier lands under unknown and the per
   const sum = (o) => Object.values(o).reduce((n, v) => n + v, 0);
   assert.equal(sum(excludedByTier), sum(excludedByReason));
 });
+
+// ---- the task-vs-branch role
+const TVB_NEAR = '#### Important (Should Fix)\n- src/x.js:12: may be null\n';
+const tvbOf = (r) => r.json.arms.a.taskVsBranch;
+const pickKeys = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
+
+test('AC3.1: a replay Important item 2 lines from the task item is caught 1 of 1, nothing not raised', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, () => TVB_NEAR));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  assert.equal(r.json.role, 'task-vs-branch');
+  const tvb = tvbOf(r);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of', 'unlocated']), { caught: 1, of: 1, unlocated: 0 });
+  assert.deepEqual(tvb.reviews, { taskHead: 1, finalHead: 1 });
+  assert.deepEqual(tvb.notRaised, []);
+});
+
+test('AC3.2: a reply raising nothing near it is 0 of 1 and lists the item', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? 'No issues found.' : TVB_NEAR)));
+  const tvb = tvbOf(r);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of']), { caught: 0, of: 1 });
+  assert.deepEqual(tvb.notRaised, [{ run: x.fx.runName, taskReview: 'task-vs-branch', repeat: 1, path: 'src/x.js', line: 10, severity: 'important', text: 'src/x.js:10: null deref when y is unset' }]);
+});
+
+test('AC7.1 (score half): caught and baselineRecall are both reported for the review', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? 'No issues found.' : '#### Important (Should Fix)\n- src/x.js:9: null\n')));
+  const tvb = tvbOf(r);
+  assert.equal(tvb.caught.bySeverity.important.of, 1);
+  assert.deepEqual(tvb.caught.bySeverity.critical, { caught: 0, of: 0, share: null });
+  assert.deepEqual(pickKeys(tvb.baselineRecall, ['caught', 'of', 'share']), { caught: 1, of: 1, share: 1 });
+  assert.deepEqual(tvb.baselineRecall.bySeverity.important, { caught: 1, of: 1, share: 1 });
+  assert.deepEqual(tvb.caught.byTaskTier, { capable: { caught: 0, of: 1, share: 0 } });
+});
+
+test('taskVsBranch: a reply with no heading and no "no issues" line is could-not-parse, exit 3', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? '**Important**\n- src/x.js:10 bad' : TVB_NEAR)));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.a.notJudgedByReason, { 'could-not-parse': 1 });
+  assert.equal(tvbOf(r).reviews.taskHead, 0);
+  assert.equal(tvbOf(r).caught.of, 0);
+});
+
+test('taskVsBranch: fixture summary counts task reviews, not slots, and reports slots and notQualifying from totals', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, () => TVB_NEAR));
+  const { selected } = r.json.fixture;
+  assert.equal(selected.total, 1);
+  assert.deepEqual(selected.byTaskTier, { capable: 1 });
+  assert.equal(selected.slots, 2);
+  assert.equal(typeof selected.notQualifying, 'number');
+});
+
+test('taskVsBranch: a not-raised item records the repeat that missed it', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const out = path.join(path.dirname(x.out), 'out-repeat');
+  const deps = makeDeps(x.fx);
+  const code = await run({ argv: ['extract-reviews', '--runs', x.fx.runsRoot, '--out', out, '--role', 'task-vs-branch', '--transcripts', x.fx.transcripts, '--arm', 'name=a,profile=fast,repeat=2'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const y = { fx: x.fx, out, manifest: JSON.parse(fs.readFileSync(path.join(out, REVIEWS_MANIFEST_FILE), 'utf8')) };
+  const wf = workflow(y, ({ repeat, slot }) => (slot === 'task-vs-branch' && repeat === 2 ? 'No issues found.' : TVB_NEAR));
+  const tvb = tvbOf(await scoreReviews(y, wf));
+  assert.deepEqual(tvb.notRaised.map((n) => n.repeat), [2]);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of']), { caught: 1, of: 2 });
+});

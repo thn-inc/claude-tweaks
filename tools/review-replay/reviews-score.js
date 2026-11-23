@@ -261,7 +261,56 @@ const WHOLE_BRANCH_SCORER = {
   },
 };
 
-const BRANCH_SCORERS = { task: TASK_SCORER, 'whole-branch': WHOLE_BRANCH_SCORER };
+// task-vs-branch: the whole-branch prompt replayed at the head a Needs fixes task review reviewed (`task-head`) and, as the
+// control, at the whole-branch prompt's own head (`final-head`), both scored on that task review's Critical/Important items.
+const ciCounts = () => ({ critical: { caught: 0, of: 0, share: null }, important: { caught: 0, of: 0, share: null } });
+const addCaught = (e, sev, hit) => {
+  e.of += 1;
+  e.bySeverity[sev].of += 1;
+  if (hit) {
+    e.caught += 1;
+    e.bySeverity[sev].caught += 1;
+  }
+};
+const finishShares = (e) => {
+  e.share = share(e.caught, e.of);
+  for (const b of Object.values(e.bySeverity)) b.share = share(b.caught, b.of);
+};
+
+const TASK_VS_BRANCH_SCORER = {
+  key: 'taskVsBranch',
+  init: () => ({
+    reviews: { taskHead: 0, finalHead: 0 },
+    caught: { caught: 0, of: 0, share: null, unlocated: 0, bySeverity: ciCounts(), byTaskTier: {} },
+    baselineRecall: { caught: 0, of: 0, share: null, bySeverity: ciCounts() },
+    notRaised: [],
+  }),
+  judge: (text) => parseBranchReply(text),
+  tally(e, { judged, report, name, repeat }) {
+    const head = report.at === 'task-head';
+    e.reviews[head ? 'taskHead' : 'finalHead'] += 1;
+    const sink = head ? e.caught : e.baselineRecall;
+    const rows = replayRows(judged.items);
+    if (head) e.caught.unlocated += report.items.filter((i) => i.locations.length === 0).length;
+    const tierSink = head ? (e.caught.byTaskTier[report.taskTier] || (e.caught.byTaskTier[report.taskTier] = { caught: 0, of: 0, share: null })) : null;
+    for (const i of report.items.filter((it) => CI.includes(it.sev) && it.locations.length > 0)) {
+      const hit = caughtItems([i], rows) === 1;
+      addCaught(sink, i.sev, hit);
+      if (tierSink) {
+        tierSink.of += 1;
+        if (hit) tierSink.caught += 1;
+      }
+      if (head && !hit) e.notRaised.push({ run: report.run, taskReview: name.slice(report.run.length + 1), repeat, path: i.path, line: i.line, severity: i.sev, text: i.text });
+    }
+  },
+  finish(e) {
+    finishShares(e.caught);
+    finishShares(e.baselineRecall);
+    for (const t of Object.values(e.caught.byTaskTier)) t.share = share(t.caught, t.of);
+  },
+};
+
+const BRANCH_SCORERS = { task: TASK_SCORER, 'whole-branch': WHOLE_BRANCH_SCORER, 'task-vs-branch': TASK_VS_BRANCH_SCORER };
 
 // The fixture's selected slots and its excluded rows, per archived tier and per reason.
 function branchFixtureSummary(fixture) {
@@ -272,6 +321,14 @@ function branchFixtureSummary(fixture) {
   for (const e of fixture.excluded) {
     bump(excludedByReason, e.reason);
     bump(excludedByTier, e.tier !== undefined ? e.tier : 'unknown');
+  }
+  if (fixture.role === 'task-vs-branch') {
+    // Selected per task review (its task-head slot), by the task reviewer's tier; each has a final-head control slot.
+    const heads = fixture.slots.filter((s) => s.at === 'task-head');
+    const byTaskTier = {};
+    for (const s of heads) bump(byTaskTier, s.taskTier);
+    const { slots, notQualifying } = fixture.totals;
+    return { selected: { total: heads.length, byTaskTier, slots, notQualifying }, excludedByReason, excludedByTier };
   }
   return { selected: { total: fixture.slots.length, byArchivedTier }, excludedByReason, excludedByTier };
 }
@@ -308,7 +365,7 @@ function scoreBranchReviews(opts, deps, manifest, fixture) {
     const report = reports[prompt.name];
     if (!report) throw new Error(`${REPORTS_FILE}: no archived report for ${prompt.name}`);
     a.scored += 1;
-    scorer.tally(a[scorer.key], { judged, report, tier: tiers.get(prompt.name) });
+    scorer.tally(a[scorer.key], { judged, report, tier: tiers.get(prompt.name), name: prompt.name, repeat: slot.repeat });
   }
   for (const a of Object.values(arms)) {
     a.minutes = Math.round(a.cost.seconds / 60);
