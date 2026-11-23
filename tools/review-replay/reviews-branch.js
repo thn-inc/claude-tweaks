@@ -43,6 +43,8 @@ const BRANCH_ROLES = {
 
 // The prompt an archived dispatch was given -> { prompt, transcript, file } or { reason }: the transcript's first user
 // message, or, when that is a pointer prompt, the text of the file it names (any read failure is prompt-file-gone).
+// A prompt that names a file but carries its own sha pair while the file's text has none is a full or hybrid prompt
+// citing a template or rules file, not a pointer: the original prompt is kept.
 function promptFor(item, c, fs) {
   const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
   let transcript = null;
@@ -55,11 +57,14 @@ function promptFor(item, c, fs) {
   if (first === null) return { reason: 'no-transcript' };
   const pointer = pointerPathOf(first);
   if (pointer === null) return { prompt: first, transcript, file };
+  let named;
   try {
-    return { prompt: fs.readFileSync(pointer, 'utf8'), transcript, file };
+    named = fs.readFileSync(pointer, 'utf8');
   } catch {
     return { reason: 'prompt-file-gone' };
   }
+  if (shaPairOf(named) === null && shaPairOf(first) !== null) return { prompt: first, transcript, file };
+  return { prompt: named, transcript, file };
 }
 
 // One branch dispatch -> { reason, tier? } (the first check it fails) or { candidate }.

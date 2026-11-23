@@ -199,7 +199,9 @@ function taskPrompt({ worktree, n, base, head }) {
 //   noWholeBranch:   wb has no transcript
 //   wbUnusableFirst: an extra whole-branch item wb0 with no transcript, before wb
 //   boldLabel:       a task review t3 of T1..T2 whose Needs fixes reply has bold-label severities only
-function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBranch = false, wbUnusableFirst = false, boldLabel = false } = {}) {
+//   hybrid:          a task review th whose prompt says "in this file" over a lone path to an existing template with
+//                    no sha pair, and carries its own `Base {T1}, Head {T2}` line: a full prompt, not a pointer
+function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBranch = false, wbUnusableFirst = false, boldLabel = false, hybrid = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -267,6 +269,15 @@ function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBran
     dispatch({
       agentId: 't3', description: 'Review task 2 again', role: 'task review', tier: 'standard', effort: 'medium',
       prompt: taskPrompt({ worktree, n: 2, base: T1, head: T2 }), reply: '**Important**\n- src/x.js:4 off by one\n\nTask quality: Needs fixes',
+    });
+  }
+  if (hybrid) {
+    const template = `${worktree}/.superpowers/sdd/x/reviewer-template.md`;
+    put(template, 'TEMPLATE-TEXT: review [BRIEF_FILE] between [BASE_SHA] and [HEAD_SHA].\n');
+    dispatch({
+      agentId: 'th', description: 'Review task 2 (template)', role: 'task review', tier: 'standard', effort: 'medium',
+      prompt: `Follow the reviewer instructions in this file exactly:\n${template}\n\n[BRIEF_FILE]: ${worktree}/.superpowers/sdd/x/task-2-brief.md\nBase ${T1}, Head ${T2}.`,
+      reply: t2Reply,
     });
   }
   const wbPrompt = [

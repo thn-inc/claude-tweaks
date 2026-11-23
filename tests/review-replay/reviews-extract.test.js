@@ -593,6 +593,19 @@ describe('branch roles', () => {
     assert.equal(text, promptOf(x, `${RUNB}/task.2`), 'the pointer file\'s text, rewritten as t2\'s own prompt is');
   });
 
+  test('--role task: a prompt citing a file with no sha pair while naming its own range replays the original prompt', async () => {
+    const x = await extractBranch('task', { hybrid: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId]), [[`${RUNB}/task`, 't1'], [`${RUNB}/task.2`, 't2'], [`${RUNB}/task.3`, 'th']]);
+    const repo = fixture.repos.find((p) => p.key === fixture.slots[2].repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2]);
+    const text = promptOf(x, `${RUNB}/task.3`);
+    assert.ok(text.startsWith('Follow the reviewer instructions in this file exactly:\n'), text);
+    assert.ok(text.includes(`Base ${repo.replayBase}, Head ${repo.replayHead}.`), text);
+    assert.ok(!text.includes('TEMPLATE-TEXT'), 'not the cited file\'s text');
+  });
+
   test('--role whole-branch: one slot, items archived, prompt rewritten', async () => {
     const x = await extractBranch('whole-branch');
     ok(x);
