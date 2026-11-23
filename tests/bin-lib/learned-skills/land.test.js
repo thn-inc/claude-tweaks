@@ -20,11 +20,21 @@ const { pinnedGit: git } = require('../../helpers/pinned-git');
 const { warmCallStartsNoGit } = require('../../helpers/git-trace');
 
 // A gh fake. State: the open PR list. Throws on any argv it does not handle.
-function fakeGh({ prs = [], createThrows = null, editThrows = null } = {}) {
+function fakeGh({ prs = [], createThrows = null, editThrows = null, prCommits = {} } = {}) {
   const calls = [];
-  const state = { prs: [...prs] };
+  const state = { prs: [...prs], prCommits: { ...prCommits }, apiThrows: null };
   const gh = (args, input) => {
     calls.push({ args, input });
+    // A merged PR's commit read: exactly this argv, pages of { sha, commit: { message } }.
+    if (args[0] === 'api') {
+      const m = /^repos\/\{owner\}\/\{repo\}\/pulls\/([1-9]\d*)\/commits\?per_page=100$/.exec(String(args[3]));
+      if (!m || JSON.stringify(args) !== JSON.stringify(['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${m[1]}/commits?per_page=100`])) {
+        throw new Error('unexpected ' + args.join(' '));
+      }
+      if (state.apiThrows) throw new Error(state.apiThrows);
+      if (!state.prCommits[m[1]]) throw new Error(`HTTP 404: no commits for PR ${m[1]}`);
+      return JSON.stringify(state.prCommits[m[1]]);
+    }
     if (args[0] === 'pr' && args[1] === 'list') {
       // A fake that ignored these flags would hide a wrong field list or state filter: pin both.
       if (args[args.indexOf('--state') + 1] !== 'all') throw new Error('unexpected state filter ' + args.join(' '));
@@ -317,7 +327,7 @@ test('push failure stages every patch', (t) => {
   assert.equal(res.staged.length, 2);
   assert.match(res.staged[0].reason, /push of learned-skills\//);
   assert.equal(res.pr, null);
-  assert.equal(gh.calls.length, 0, 'no PR work after a failed push');
+  assert.equal(gh.calls.some((c) => c.args[1] === 'create'), false, 'no PR work after a failed push');
   assert.equal(remoteBranch(f), null);
 });
 
@@ -561,6 +571,11 @@ for (const [state, reason] of [
     land(landArgs(f), deps(gh.gh).deps);
     const tip1 = remoteBranch(f);
     gh.state.prs = [{ number: 77, url: 'https://github.com/o/r/pull/77', state }];
+    if (state === 'MERGED') {
+      // The merged PR's commits are readable (X's, already landed), so only Z is left to stage.
+      sh(f.origin, ['update-ref', 'refs/pull/77/head', tip1]);
+      gh.state.prCommits[77] = prPages(f, tip1);
+    }
     captureMore(f, Z, (b) => b + 'z second\n', 'z finding');
     const again = deps(gh.gh);
     const createsBefore = gh.calls.filter((c) => c.args[1] === 'create').length;
@@ -736,6 +751,151 @@ test('CLI land and stage print one JSON line; a missing --record exits 2', (t) =
 
 const loseManifest = (f) => fs.writeFileSync(path.join(f.runDir, 'learned-skills', 'manifest.json'),
   JSON.stringify(readManifest(f.runDir).map(({ commit, pr, ...rest }) => ({ ...rest, status: 'captured' })), null, 2));
+
+// #6110: a run that died after its learned-skills PR merged and its branch was deleted. The merged PR's
+// commits come from `gh api` (two pages) and their objects from refs/pull/{n}/head.
+function prPages(f, tip, drop = []) {
+  const rows = sh(f.origin, ['log', '-z', '--format=%H%x09%B', `main..${tip}`]).split('\0').filter(Boolean).map((rec) => {
+    const tab = rec.indexOf('\t');
+    return { sha: rec.slice(0, tab), commit: { message: rec.slice(tab + 1) } };
+  }).filter((r) => {
+    const id = /^Learned-Skills-Entry: (\S+)$/m.exec(r.commit.message);
+    return !(id && drop.includes(id[1]));
+  });
+  return [rows.slice(0, 1), rows.slice(1)];
+}
+function mergeAndDeleteBranch(f, gh, { number = 77, drop = [], pullRef = true } = {}) {
+  const tip = remoteBranch(f);
+  assert.ok(tip, 'the branch exists before the merge');
+  if (pullRef) sh(f.origin, ['update-ref', `refs/pull/${number}/head`, tip]);
+  sh(f.origin, ['update-ref', '-d', `refs/heads/${BRANCH}`]);
+  gh.state.prCommits[number] = prPages(f, tip, drop);
+  gh.state.prs = [{ number, url: `https://github.com/o/r/pull/${number}`, state: 'MERGED' }];
+  return tip;
+}
+const creates = (gh) => gh.calls.filter((c) => c.args[1] === 'create').length;
+const idOf = (f, target) => String(readManifest(f.runDir).find((e) => e.target === target).id);
+
+test('a resumed land with no remote branch records every entry landed against the merged PR', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  const first = land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh);
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.equal(res.landed.length, 2);
+  for (const l of res.landed) {
+    assert.equal(l.pr.number, 77);
+    assert.equal(l.commit, first.landed.find((x) => x.id === l.id).commit);
+  }
+  assert.deepEqual(res.staged, []);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore, 'no new PR');
+  assert.equal(remoteBranch(f), null, 'no branch re-created');
+  const m = readManifest(f.runDir);
+  assert.deepEqual(m.map((e) => e.status), ['landed', 'landed']);
+  assert.deepEqual(m.map((e) => e.pr.number), [77, 77]);
+  assert.equal(decisions(f).split('\n').filter((l) => l.startsWith('- AUTO')).length, 2, 'AUTO lines written once');
+});
+
+test('a merged PR missing one entry\'s commit lands the others and stages only that one', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh, { drop: [idOf(f, X)] });
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed.map((l) => l.target), [Z]);
+  assert.deepEqual(res.staged.map((s) => s.target), [X]);
+  assert.match(res.staged[0].reason, /the earlier learned-skills PR #77 was merged/);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
+});
+
+test('with no remote branch and no PR, land builds fresh commits and opens a new PR', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(gh.calls.map((c) => c.args.slice(0, 2).join(' ')), ['pr list', 'pr create', 'pr list']);
+  assert.equal(gh.calls.some((c) => c.args[0] === 'api'), false);
+  assert.equal(res.pr.number, 77);
+  assert.equal(sh(f.origin, ['rev-list', '--count', `main..${remoteBranch(f)}`]).trim(), '2');
+});
+
+test('two merged PRs on the head name each land their own entry', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  const tip = mergeAndDeleteBranch(f, gh, { number: 77, drop: [idOf(f, Z)] });
+  sh(f.origin, ['update-ref', 'refs/pull/78/head', tip]);
+  gh.state.prCommits[78] = prPages(f, tip, [idOf(f, X)]);
+  gh.state.prs = [
+    { number: 77, url: 'https://github.com/o/r/pull/77', state: 'MERGED' },
+    { number: 78, url: 'https://github.com/o/r/pull/78', state: 'MERGED' },
+  ];
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.deepEqual(res.staged, []);
+  assert.deepEqual(res.landed.map((l) => [l.target, l.pr.number]).sort(), [[X, 77], [Z, 78]]);
+});
+
+test('a failed merged-PR commit read stages every entry and builds nothing', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh);
+  gh.state.apiThrows = 'HTTP 502';
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 2);
+  for (const s of res.staged) assert.match(s.reason, /^could not read merged PR #77's commits \(HTTP 502/);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
+  assert.deepEqual(readManifest(f.runDir).map((e) => e.status), ['staged', 'staged']);
+});
+
+test('a failed refs/pull fetch stages every entry and builds nothing', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh, { pullRef: false });
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 2);
+  for (const s of res.staged) assert.match(s.reason, /^could not fetch merged PR #77's commits \(refs\/pull\/77\/head: /);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
+});
+
+test('a failed PR lookup with no remote branch stages every entry and builds nothing', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  mergeAndDeleteBranch(f, gh);
+  const createsBefore = creates(gh);
+  const listFails = (args, input) => {
+    if (args[1] === 'list') throw new Error('HTTP 502 on pr list');
+    return gh.gh(args, input);
+  };
+  const again = deps(listFails);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 2);
+  for (const s of res.staged) assert.match(s.reason, /^could not list the PRs of learned-skills\//);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
+});
 
 test('a join that rewrites a pushed entry\'s patch under the same id is not matched to the old commit', (t) => {
   const f = fixture(t, { capturedTargets: [X] });

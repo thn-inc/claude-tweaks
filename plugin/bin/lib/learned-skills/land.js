@@ -8,17 +8,24 @@
 // touched: commits are built on a temp index (GIT_INDEX_FILE on the plumbing calls' own env), and a
 // commit built for an entry that is then staged is simply abandoned (an unreferenced object).
 //
-// Resume: an entry already `landed` is skipped. An existing remote branch is the base only when its
-// PRs say so: an open PR is reused; no PR ever (a crash between push and create) means the branch is
-// this run's own, so it is the base and the PR is opened on it. Either way, every commit on it must
-// carry this run's id and the id of a landed or still-captured entry in its trailers, and its own diff
-// must have the same `git patch-id --stable` as that entry's patch file (a join can rewrite the patch
-// under the same id); otherwise (a failed delete may have left staged entries' commits, even behind a
-// PR GitHub opened while create errored) every entry is staged with a reason naming the branch and
-// the PR. A closed PR leaves the branch untouched and a merged PR is never reused, and both stage
-// every entry with a reason. A captured entry whose verified commit is already on the branch (a run
-// that died before its manifest write) reuses it; any other is built and `apply --check` lands or
-// stages it.
+// Resume: an entry already `landed` is skipped. The branch's PRs are looked up by head name on every
+// land, whether or not the remote branch still exists (a merged PR's branch is deleted on merge). A
+// still-captured entry a MERGED PR already shipped (a run that died after the merge, before its
+// manifest write) is recorded landed against that PR: one of its commits carries this run's id and the
+// entry's id in its trailers, and that commit's own diff has the entry's patch's `git patch-id
+// --stable`. Its commits are read through `gh api` (every page, every merged PR on the head name) and
+// their objects fetched from refs/pull/{n}/head, never from the deleted branch. A failed PR lookup,
+// fetch or commit read fails closed: every remaining entry is staged naming the failed read, and nothing
+// is built. With no open PR, the entries a merged PR did not ship are staged naming it.
+// An existing remote branch is the base only when its PRs say so: an open PR is reused; no PR ever (a
+// crash between push and create) means the branch is this run's own, so it is the base and the PR is
+// opened on it. Either way, every commit on it must carry this run's id and the id of a landed or
+// still-captured entry in its trailers, and its own diff must have the same patch-id as that entry's
+// patch file (a join can rewrite the patch under the same id); otherwise (a failed delete may have left
+// staged entries' commits, even behind a PR GitHub opened while create errored) every entry is staged
+// with a reason naming the branch and the PR. A closed PR leaves the branch untouched and stages every
+// entry with a reason. A captured entry whose verified commit is already on the branch (a run that died
+// before its manifest write) reuses it; any other is built and `apply --check` lands or stages it.
 // A `captured` entry is `superseded` only when the run branch changed its target after the merge base
 // AND its patch reverse-applies to HEAD (capture's bothInTree/stuck outcomes leave the edit in the
 // tree for the run branch); any other `captured` entry is delivered.
@@ -243,6 +250,14 @@ function commitMessage(entry, records, runId) {
   return `${subject}\n\nLearned-Skills-Run: ${runId}\nLearned-Skills-Entry: ${entry.id}\n`;
 }
 
+// The run id and entry id a commit message's trailers carry (null when absent).
+function trailers(message) {
+  const text = String(message == null ? '' : message);
+  const run = /^Learned-Skills-Run: (.+)$/m.exec(text);
+  const id = /^Learned-Skills-Entry: (\S+)$/m.exec(text);
+  return { run: run ? run[1].trim() : null, id: id ? id[1] : null };
+}
+
 // HTML comments in a summary could plant a marker (<!-- claude-tweaks-run: …) in the PR body.
 const defang = (text) => String(text).replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
 // An @ in a summary (@user, @org/team, @types/node) would notify that account when the PR opens; a
@@ -294,7 +309,22 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   const { todo, superseded, already } = triage({ runDir, worktree, mergeBase: base, manifest, deps });
   if (superseded.length) out.superseded = superseded;
   out.staged.push(...already);
-  const finish = () => (todo.length || superseded.length || already.length ? recordManifest(runDir, manifest, deps, out) : out);
+  // todo shrinks as a merged PR's entries are recorded, so whether to write the manifest is fixed here.
+  const changed = Boolean(todo.length || superseded.length || already.length);
+  // AUTO items for landed entries, written by finish on every return path. A re-land of the same
+  // commits (a recovery) writes no line an earlier call already wrote.
+  const pending = [];
+  const sansTime = (line) => String(line).replace(/^- AUTO \d\d:\d\d:\d\d /, '');
+  const flushLog = (result) => {
+    const items = pending.splice(0);
+    if (!items.length) return result;
+    let logged = new Set();
+    try { logged = new Set(String(deps.readFile(path.join(runDir, 'decisions.md'))).split(/\r?\n/).map(sansTime)); } catch { /* no log yet */ }
+    const unlogged = items.filter((i) => !logged.has(sansTime(i.entry)));
+    if (unlogged.length) { try { deps.appendEntries({ runDir, items: unlogged }); } catch { result.logFailed = true; } }
+    return result;
+  };
+  const finish = () => flushLog(changed ? recordManifest(runDir, manifest, deps, out) : out);
   if (!todo.length) {
     if (prior) { try { const open = openOf(listPrs()); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
     return finish();
@@ -307,13 +337,47 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
 
   const indexFile = path.join(patchDir(runDir), 'index.tmp');
   const planEnv = () => gitEnv({ GIT_INDEX_FILE: indexFile });
+
+  // A pushed commit is this entry's only when its own diff has the entry's current patch's patch-id.
+  const patchId = (bytes) => String(git(['patch-id', '--stable'], { input: bytes })).trim().split(/\s+/)[0] || null;
+  const sameEdit = (commit, entry) => {
+    try {
+      const committed = git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '--binary', '--end-of-options', `${commit}^`, commit], { encoding: 'buffer' });
+      const a = patchId(committed);
+      return a !== null && a === patchId(deps.readFile(entry.patch));
+    } catch { return false; }
+  };
+
+  // Records an entry landed on prRef and queues one AUTO line per finding it carries, each under its
+  // own row, all naming the one commit. ownPr: the landed[] row names its PR (a merged PR this call
+  // recorded it against, not the one top-level pr).
+  const markLanded = (entry, commit, prRef, ownPr) => {
+    let short = commit.slice(0, 7);
+    try { short = String(git(['rev-parse', '--verify', '--short', '--end-of-options', commit])).trim() || short; } catch { /* keep the slice */ }
+    entry.status = STATUS.LANDED;
+    entry.commit = commit;
+    entry.pr = prRef;
+    const row = { id: entry.id, target: entry.target, commit };
+    if (ownPr) row.pr = prRef;
+    out.landed.push(row);
+    for (const f of entryFindings(entry)) {
+      pending.push({
+        section: LOG_SECTION,
+        entry: formatEntry({
+          status: 'AUTO', now: deps.now(), step: rowLabel(f.row),
+          text: `applied additive update to ${skillLabel(entry.target)} (${oneLine(f.summary)}) on learned-skills PR #${prRef.number}`,
+          reversibility: `high; commit: ${short}`,
+        }),
+      });
+    }
+  };
+
   try {
     deps.mkdir(path.dirname(indexFile));
 
     // 1. The base: the existing remote branch (a resumed run), else the integration branch's tip.
     let integrationSha;
     let tip = null;
-    let existingPr = null;
     let orphanReason = null;
     try {
       git(['fetch', '--end-of-options', 'origin', integrationBranch], { timeout: GIT_TIMEOUT_MS });
@@ -324,32 +388,66 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         git(['fetch', '--end-of-options', 'origin', `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeout: GIT_TIMEOUT_MS });
         tip = String(git(['rev-parse', '--verify', '--end-of-options', `origin/${branch}^{commit}`])).trim();
         if (tip !== line[0]) throw new Error(`the remote ${branch} moved while it was fetched`);
-        const rows = listPrs();
-        existingPr = openOf(rows);
-        if (!existingPr) {
-          const merged = rows.find((r) => r.state === 'MERGED');
-          const closed = rows.find((r) => r.state === 'CLOSED');
-          if (merged) orphanReason = `the earlier learned-skills PR #${merged.number} was merged, so ${branch} is not reused as a base`;
-          else if (closed) orphanReason = `${branch} already exists on origin and PR #${closed.number} was closed; the branch is left untouched`;
-          // No PR ever: the branch is this run's own (a crash between push and create) and stays the base.
-        }
       }
     } catch (err) {
       return downgradeAll(todo, `could not read the remote base (${firstStderrLine(err)})`);
     }
     const branchExisted = tip !== null;
+
+    // The branch's PRs, by head name, whether or not the branch still exists (merging deletes it).
+    let rows;
+    try { rows = listPrs(); } catch (err) {
+      return downgradeAll(todo, `could not list the PRs of ${branch} (${firstStderrLine(err)})`);
+    }
+    const existingPr = openOf(rows);
+    const mergedPrs = rows.filter((r) => r.state === 'MERGED');
+
+    // A merged PR may already have shipped captured entries (a run that died after the merge, before
+    // its manifest write). Every merged PR's commits are read before anything is marked, so a failed
+    // read stages every remaining entry and builds nothing.
+    const mergedCommits = [];
+    for (const m of mergedPrs) {
+      const n = String(m.number);
+      if (!/^[1-9]\d*$/.test(n)) return downgradeAll(todo, `could not read merged PR #${n}'s commits (its number is not a positive integer)`);
+      try {
+        git(['fetch', '--end-of-options', 'origin', `refs/pull/${n}/head`], { timeout: GIT_TIMEOUT_MS });
+      } catch (err) {
+        return downgradeAll(todo, `could not fetch merged PR #${n}'s commits (refs/pull/${n}/head: ${firstStderrLine(err)})`);
+      }
+      try {
+        const pages = JSON.parse(deps.gh(['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${n}/commits?per_page=100`]));
+        if (!Array.isArray(pages) || !pages.every(Array.isArray)) throw new Error('gh api did not return pages of commits');
+        mergedCommits.push({ pr: confirmed(m), commits: pages.flat() });
+      } catch (err) {
+        return downgradeAll(todo, `could not read merged PR #${n}'s commits (${firstStderrLine(err)})`);
+      }
+    }
+    for (const { pr, commits: shipped } of mergedCommits) {
+      for (const c of shipped) {
+        const sha = c && typeof c.sha === 'string' ? c.sha : '';
+        if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha)) continue;
+        const t = trailers(c.commit && c.commit.message);
+        if (t.run !== runId || !t.id) continue;
+        const i = todo.findIndex((e) => String(e.id) === t.id);
+        if (i < 0 || !sameEdit(sha, todo[i])) continue;
+        markLanded(todo[i], sha, pr, true);
+        todo.splice(i, 1);
+      }
+    }
+    if (!todo.length) {
+      if (existingPr) out.pr = confirmed(existingPr);
+      return finish();
+    }
+
+    if (!existingPr) {
+      const merged = mergedPrs[0];
+      const closed = rows.find((r) => r.state === 'CLOSED');
+      if (merged) orphanReason = `the earlier learned-skills PR #${merged.number} was merged, so ${branch} is not reused as a base`;
+      else if (closed && branchExisted) orphanReason = `${branch} already exists on origin and PR #${closed.number} was closed; the branch is left untouched`;
+      // No PR ever: an existing branch is this run's own (a crash between push and create) and stays the base.
+    }
     // A closed or merged PR means the branch's commits were rejected or shipped: never a base.
     if (orphanReason) return downgradeAll(todo, orphanReason);
-
-    // A pushed commit is this entry's only when its own diff has the entry's current patch's patch-id.
-    const patchId = (bytes) => String(git(['patch-id', '--stable'], { input: bytes })).trim().split(/\s+/)[0] || null;
-    const sameEdit = (commit, entry) => {
-      try {
-        const committed = git(['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/', '--binary', '--end-of-options', `${commit}^`, commit], { encoding: 'buffer' });
-        const a = patchId(committed);
-        return a !== null && a === patchId(deps.readFile(entry.patch));
-      } catch { return false; }
-    };
 
     // Every commit on the branch, with the run id and entry id its trailers carry.
     const commits = [];
@@ -360,9 +458,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
         for (const rec of splitNul(raw)) {
           const tab = rec.indexOf('\t');
           if (tab <= 0) continue;
-          const run = /^Learned-Skills-Run: (.+)$/m.exec(rec);
-          const id = /^Learned-Skills-Entry: (\S+)$/m.exec(rec);
-          commits.push({ sha: rec.slice(0, tab), run: run ? run[1].trim() : null, id: id ? id[1] : null });
+          commits.push({ sha: rec.slice(0, tab), ...trailers(rec) });
         }
       } catch (err) { logError = err; }
     }
@@ -465,26 +561,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
 
     // 5. Record and log.
     const prRef = confirmed(pr);
-    const items = [];
-    for (const b of built) {
-      let short = b.commit.slice(0, 7);
-      try { short = String(git(['rev-parse', '--verify', '--short', '--end-of-options', b.commit])).trim() || short; } catch { /* keep the slice */ }
-      b.entry.status = STATUS.LANDED;
-      b.entry.commit = b.commit;
-      b.entry.pr = prRef;
-      out.landed.push({ id: b.entry.id, target: b.entry.target, commit: b.commit });
-      // One AUTO line per finding the entry carries, each under its own row, all naming the one commit.
-      for (const f of entryFindings(b.entry)) {
-        items.push({
-          section: LOG_SECTION,
-          entry: formatEntry({
-            status: 'AUTO', now: deps.now(), step: rowLabel(f.row),
-            text: `applied additive update to ${skillLabel(b.entry.target)} (${oneLine(f.summary)}) on learned-skills PR #${prRef.number}`,
-            reversibility: `high; commit: ${short}`,
-          }),
-        });
-      }
-    }
+    for (const b of built) markLanded(b.entry, b.commit, prRef, false);
     out.pr = prRef;
     // Commits added to an open PR: its body lists only the earlier call's entries, so rewrite it with
     // every entry landed on it. The number is gh's own integer, never caller text. A failure leaves the
@@ -495,14 +572,7 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     }
     // The edits are on the PR by now: a failed manifest write is reported (finish), and a later land
     // reuses the verified commits and records them.
-    const result = finish();
-    // A re-land of the same commits (that recovery) writes no AUTO line an earlier call already wrote.
-    const sansTime = (line) => String(line).replace(/^- AUTO \d\d:\d\d:\d\d /, '');
-    let logged = new Set();
-    try { logged = new Set(String(deps.readFile(path.join(runDir, 'decisions.md'))).split(/\r?\n/).map(sansTime)); } catch { /* no log yet */ }
-    const unlogged = items.filter((i) => !logged.has(sansTime(i.entry)));
-    if (unlogged.length) { try { deps.appendEntries({ runDir, items: unlogged }); } catch { result.logFailed = true; } }
-    return result;
+    return finish();
   } finally {
     try { if (deps.lstatType(indexFile).type !== 'missing') deps.unlink(indexFile); } catch { /* best effort */ }
   }
