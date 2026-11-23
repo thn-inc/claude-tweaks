@@ -130,6 +130,7 @@ const REVIEW_EXCLUSION_REASONS = [
   'no-timing',
   // The branch roles (task, whole-branch, task-vs-branch).
   'prompt-file-gone',
+  'pointer-ambiguous',
   'no-whole-branch-prompt',
   'no-merge-base',
   'items-unparsed',

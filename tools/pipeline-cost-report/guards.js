@@ -395,4 +395,4 @@ async function collectGuards({ runs, split, n, roots, repo }, { fsImpl = fs, gh 
   return { split, runs: n, before: await read(columns.before), after: await read(columns.after) };
 }
 
-module.exports = { selectColumns, resolveRun, membersOf, isWholeBranch, SEVERITY_RE, HEADING_RE, ITEM_RE, walkReviewItems, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };
+module.exports = { selectColumns, resolveRun, membersOf, isWholeBranch, walkReviewItems, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };

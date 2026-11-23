@@ -301,16 +301,43 @@ function isLonePath(line) {
   return line.split(/[ \t]+/).slice(1).every((piece) => /[/\\.]/.test(piece));
 }
 
+// The path after the first `(it is your prompt …):` marker, on that line or the next, else null: the first match of
+// /\(it is your prompt\b[^)\n]*\):[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/, by a scan that stays linear. That regex
+// rescanned `[^)\n]*` to the same `)` or newline from every marker before it (quadratic in the markers). Every marker
+// before one `)` or newline shares that stop and so its answer, so each stop is read once.
+function markedPointerPath(t) {
+  const marker = /\(it is your prompt\b/g;
+  const tail = /[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/y;
+  let stop = -1;
+  for (let m; (m = marker.exec(t)) !== null;) {
+    const from = m.index + m[0].length;
+    if (from <= stop) continue;
+    stop = from;
+    while (stop < t.length && t[stop] !== ')' && t[stop] !== '\n') stop += 1;
+    if (t[stop] !== ')' || t[stop + 1] !== ':') continue;
+    tail.lastIndex = stop + 2;
+    const got = tail.exec(t);
+    if (got) return got[1].trimEnd();
+  }
+  return null;
+}
+
+// pointerPathOf's answer for a prompt that says its instructions are in or from "this file" and has two or more lone
+// absolute path lines: a pointer whose file cannot be told, never "not a pointer" (its text would replay as the prompt).
+const POINTER_AMBIGUOUS = Object.freeze({ ambiguous: true });
+
 // The file path a pointer prompt names: after `(it is your prompt …):`, on that line or the next; else, in a prompt
-// that says its instructions are in or from "this file", the one line that is a lone absolute path. Null when neither
-// holds, or when such a prompt has no lone path line or more than one.
+// that says its instructions are in or from "this file", the one line that is a lone absolute path. POINTER_AMBIGUOUS
+// when such a prompt has more than one lone path line; null when neither holds, or when it has no lone path line (an
+// inline prompt that only mentions "this file").
 function pointerPathOf(text) {
   const t = String(text);
-  const m = /\(it is your prompt\b[^)\n]*\):[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/.exec(t);
-  if (m) return m[1].trimEnd();
+  const marked = markedPointerPath(t);
+  if (marked !== null) return marked;
   if (!/\b(?:in|from) this file\b|\bRead this file\b/i.test(t)) return null;
   const paths = t.split(/\r?\n/).map((l) => l.trim()).filter(isLonePath);
+  if (paths.length > 1) return POINTER_AMBIGUOUS;
   return paths.length === 1 ? paths[0] : null;
 }
 
-module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths, shaPairOf, pointerPathOf };
+module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths, shaPairOf, pointerPathOf, POINTER_AMBIGUOUS };

@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const rw = require(path.join(__dirname, '..', '..', 'tools', 'review-replay', 'reviews-rewrite.js'));
+const { locationMatches } = require(path.join(__dirname, '..', '..', 'tools', 'pipeline-cost-report', 'reviews.js'));
 
 const B = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 const H = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -458,9 +459,9 @@ test('pointerPathOf: a "this file" prompt with the path alone on its own line, i
   assert.equal(rw.pointerPathOf('Your instructions are in this file:\n~/sdd/p.md'), '~/sdd/p.md');
 });
 
-test('pointerPathOf: a "this file" prompt with no lone path line, or two, is not a pointer', () => {
+test('pointerPathOf: a "this file" prompt with no lone path line is not a pointer; with two it is ambiguous', () => {
   assert.equal(rw.pointerPathOf('Check the null guard in this file.\nWORKTREE: /Users/x/r\n/tmp/x is your prompt'), null, 'a path followed by words is not a lone path');
-  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n/tmp/a/p.md\n/tmp/b/q.md'), null);
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n/tmp/a/p.md\n/tmp/b/q.md'), rw.POINTER_AMBIGUOUS);
   assert.equal(rw.pointerPathOf('Review the change.\n/tmp/a/p.md'), null, 'a lone path line alone does not make a pointer');
 });
 
@@ -489,4 +490,24 @@ test('originRefsOf agrees with the lazy-capture expression on every short string
   };
   walk('', 5);
   assert.ok(checked > 60000, `checked ${checked} strings`);
+});
+
+// The global location regex locationMatches replaced for linearity (perf/review-replay-branch-linearity.test.js): kept
+// here only as the oracle the scanner must agree with.
+const LOCATION_RE = /([\w./@-]+\.[\w]+):(\d+)/g;
+
+test('locationMatches agrees with the global location regex on every short string of its pieces', () => {
+  const pieces = ['a', '1', '.', '/', '-', ':', ' ', 'b.js:2'];
+  const shape = (ms) => ms.map((m) => [m.index, m[0], m[1], m[2]]);
+  let checked = 0;
+  const walk = (prefix, depth) => {
+    const oracle = shape([...prefix.matchAll(LOCATION_RE)]);
+    assert.deepStrictEqual(shape(locationMatches(prefix)), oracle, JSON.stringify(prefix));
+    assert.deepStrictEqual(shape(locationMatches(prefix, 1)), oracle.slice(0, 1), `max 1: ${JSON.stringify(prefix)}`);
+    checked++;
+    if (depth === 0) return;
+    for (const p of pieces) walk(prefix + p, depth - 1);
+  };
+  walk('', 6);
+  assert.ok(checked > 200000, `checked ${checked} strings`);
 });

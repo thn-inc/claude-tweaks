@@ -62,11 +62,11 @@ test('the shared constants carry the contract values', () => {
   assert.deepStrictEqual(schema.REVIEWS_MANIFEST_KEYS, ['schemaVersion', 'kind', 'arms']);
   assert.deepStrictEqual(schema.REVIEWS_ARM_KEYS, ['name', 'profile', 'model', 'effort', 'repeat', 'prompts']);
   assert.deepStrictEqual(schema.REVIEWS_PROMPT_KEYS, ['file', 'name', 'run', 'lens', 'side', 'repo']);
-  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 18);
+  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 19);
 });
 
 test('the branch roles\' exclusion reasons are listed', () => {
-  for (const reason of ['prompt-file-gone', 'no-whole-branch-prompt', 'no-merge-base', 'items-unparsed']) {
+  for (const reason of ['prompt-file-gone', 'pointer-ambiguous', 'no-whole-branch-prompt', 'no-merge-base', 'items-unparsed']) {
     assert.ok(schema.REVIEW_EXCLUSION_REASONS.includes(reason), reason);
   }
 });

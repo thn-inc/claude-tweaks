@@ -14,12 +14,11 @@
 const path = require('path');
 const { lastAssistantText } = require('./counterfactual.js');
 const { transcriptEffort } = require('./score.js');
-const { shaPairOf, pointerPathOf, runInputsOf, originRefsOf, unrewrittenPaths } = require('./reviews-rewrite.js');
-const { parseReviewItems, parseBranchReply } = require('./reviews-score.js');
-const { parseTaskVerdict } = require('../pipeline-cost-report/reviews.js');
+const { shaPairOf, pointerPathOf, POINTER_AMBIGUOUS, runInputsOf, originRefsOf, unrewrittenPaths } = require('./reviews-rewrite.js');
+const { parseBranchReply, readTaskReply } = require('./reviews-score.js');
 const { isWholeBranch } = require('../pipeline-cost-report/guards.js');
 // reviews-extract.js requires this module lazily, so this top-level require never sees a partial export.
-const { renderSlot, promptOf, strippedReply, readRunInput } = require('./reviews-extract.js');
+const { renderSlot, transcriptPromptOf, strippedReply, readRunInput } = require('./reviews-extract.js');
 
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const transcriptFileOf = (item, c) => (item.agentId != null ? c.transcripts.get(item.agentId) : undefined);
@@ -29,13 +28,8 @@ const transcriptFileOf = (item, c) => (item.agentId != null ? c.transcripts.get(
 const BRANCH_ROLES = {
   task: {
     isDispatch: (item) => item.role === 'task review',
-    readReply: (text) => {
-      const verdict = parseTaskVerdict(text);
-      if (verdict === null) return null;
-      const parsed = parseReviewItems(text);
-      // A Needs fixes reply with no severity heading keeps its slot: its verdict scores, its items cannot.
-      return { verdict, items: parsed ? parsed.items : [], itemsUnparsed: parsed === null && verdict === 'needs-fixes' };
-    },
+    // A Needs fixes reply with no severity heading keeps its slot: its verdict scores, its items cannot.
+    readReply: readTaskReply,
   },
   'whole-branch': {
     isDispatch: isWholeBranch,
@@ -47,20 +41,15 @@ const BRANCH_ROLES = {
 };
 
 // The prompt an archived dispatch was given -> { prompt, transcript, file } or { reason }: the transcript's first user
-// message, or, when that is a pointer prompt, the text of the file it names (any read failure is prompt-file-gone).
+// message, or, when that is a pointer prompt, the text of the file it names (any read failure is prompt-file-gone; a
+// pointer-worded prompt with several lone path lines, whose file cannot be told, is pointer-ambiguous).
 // A prompt that names a file but carries its own sha pair while the file's text has none is a full or hybrid prompt
 // citing a template or rules file, not a pointer: the original prompt is kept.
 function promptFor(item, c, fs) {
-  const file = transcriptFileOf(item, c);
-  let transcript = null;
-  try {
-    transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
-  } catch {
-    transcript = null;
-  }
-  const first = transcript === null ? null : promptOf(transcript);
+  const { file, transcript, prompt: first } = transcriptPromptOf(item, c, fs);
   if (first === null) return { reason: 'no-transcript' };
   const pointer = pointerPathOf(first);
+  if (pointer === POINTER_AMBIGUOUS) return { reason: 'pointer-ambiguous' };
   if (pointer === null) return { prompt: first, transcript, file };
   let named;
   try {
@@ -73,7 +62,7 @@ function promptFor(item, c, fs) {
 }
 
 // An archived dispatch's tier, prompt and reply read through `readReply` -> { reason, tier? } (the first check it
-// fails: no-archived-tier, no-transcript, prompt-file-gone, report-unparsed) or { tier, prompt, transcript, reply }.
+// fails: no-archived-tier, no-transcript, pointer-ambiguous, prompt-file-gone, report-unparsed) or { tier, prompt, transcript, reply }.
 // With no readReply (the whole-branch prompt task-vs-branch replays) the reply is not read: it has no findings of its own.
 // With `qualifies`, the raw reply is read first, before the tier and the prompt: one that parses and does not qualify
 // gives { notQualifying: true } whatever its tier or prompt (a verdict and item severities never depend on the paths
@@ -143,10 +132,13 @@ function leaks(s, r, c) {
   return [...texts.copies, ...texts.prompts].some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: c.out, exists: c.exists }).length > 0);
 }
 
-const excludeRow = (r, item, x) => ({ run: r.run, ...(item.agentId != null ? { agentId: item.agentId } : {}), ...(x.tier !== undefined ? { tier: x.tier } : {}), reason: x.reason });
+const excludeRow = (r, item, x) => ({
+  run: r.run, ...(item.agentId != null ? { agentId: item.agentId } : {}), ...(x.tier !== undefined ? { tier: x.tier } : {}), reason: x.reason,
+  ...(x.cause !== undefined ? { cause: x.cause } : {}),
+});
 
 // A run's slots for the branch role c.role.key, in dispatch order, named `{role}`, `{role}.2`, …; every dispatch of the
-// role that fails a check goes through `exclude` as { run, agentId, tier (when known), reason }.
+// role that fails a check goes through `exclude` as { run, agentId, tier (when known), reason, cause (when it has one) }.
 function selectBranchSlots(r, dispatches, c, deps, exclude) {
   if (c.role.key === 'task-vs-branch') return selectTaskVsBranch(r, dispatches, c, deps, exclude);
   const row = BRANCH_ROLES[c.role.key];
@@ -185,14 +177,16 @@ function rangeBase(wbBase, head, deps) {
 }
 
 // The run's whole-branch prompt for task-vs-branch: its first whole-branch dispatch, checked as --role whole-branch
-// checks it bar its archived reply, else null (no-whole-branch-prompt) — a later whole-branch dispatch never stands in.
+// checks it bar its archived reply -> { wb }, else { cause } — why there is none, which every task review's
+// no-whole-branch-prompt row carries: `not-dispatched`, the dispatch's own exclusion reason, or `unrewritten-path`.
+// A later whole-branch dispatch never stands in.
 function wholeBranchOf(r, dispatches, c, deps) {
   const first = dispatches.find((d) => isWholeBranch(d.item));
-  if (!first) return null;
+  if (!first) return { cause: 'not-dispatched' };
   const x = examineBranch(r, first.item, c, deps, { readReply: null });
-  if (x.reason) return null;
+  if (x.reason) return { cause: x.reason };
   x.candidate.name = c.role.key;
-  return leaks(x.candidate, r, c) ? null : x.candidate;
+  return leaks(x.candidate, r, c) ? { cause: 'unrewritten-path' } : { wb: x.candidate };
 }
 
 const isCriticalOrImportant = (i) => i.sev === 'critical' || i.sev === 'important';
@@ -202,9 +196,9 @@ const qualifiesForTaskVsBranch = (reply) => reply.verdict === 'needs-fixes' && (
 
 // One task review for task-vs-branch -> { reason, tier? }, { notQualifying: true } (an Approved review, or a Needs
 // fixes one with no Critical or Important item, decided before its tier and prompt are read), or { pair }: the
-// whole-branch prompt `wb` replayed at the head the task review reviewed and at wb's own head, each scored on the task
-// review's Critical and Important items.
-function examineTaskReview(r, item, c, deps, wb) {
+// whole-branch prompt `whole.wb` replayed at the head the task review reviewed and at wb's own head, each scored on the
+// task review's Critical and Important items. With no wb, the row's `cause` is wholeBranchOf's.
+function examineTaskReview(r, item, c, deps, whole) {
   const got = archivedReply(item, c, deps, BRANCH_ROLES.task.readReply, qualifiesForTaskVsBranch);
   if (got.notQualifying || got.reason) return got;
   const { tier, prompt, reply } = got;
@@ -220,7 +214,8 @@ function examineTaskReview(r, item, c, deps, wb) {
   } catch {
     return { tier, reason: 'commit-not-in-clone' };
   }
-  if (wb === null) return { tier, reason: 'no-whole-branch-prompt' };
+  const { wb } = whole;
+  if (!wb) return { tier, reason: 'no-whole-branch-prompt', cause: whole.cause };
   const pair = [];
   for (const [at, head] of [['task-head', taskHead], ['final-head', wb.promptHead]]) {
     const b = rangeBase(wb.promptBase, head, deps);
@@ -237,10 +232,10 @@ function examineTaskReview(r, item, c, deps, wb) {
 // head and its control `task-vs-branch[.k]--final` at the whole-branch head. A review that does not qualify counts in
 // c.notQualifying; one that fails a check goes through `exclude`.
 function selectTaskVsBranch(r, dispatches, c, deps, exclude) {
-  const wb = wholeBranchOf(r, dispatches, c, deps);
+  const whole = wholeBranchOf(r, dispatches, c, deps);
   const slots = [];
   for (const { item } of dispatches.filter((d) => BRANCH_ROLES.task.isDispatch(d.item))) {
-    const x = examineTaskReview(r, item, c, deps, wb);
+    const x = examineTaskReview(r, item, c, deps, whole);
     if (x.notQualifying) {
       c.notQualifying += 1;
       continue;

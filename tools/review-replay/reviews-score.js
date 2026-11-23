@@ -9,7 +9,7 @@ const path = require('path');
 const { bump } = require('./util.js');
 const { replaySlots, readJson, stripTree, emptyCost, addCost } = require('./score.js');
 const { parseFindings, near } = require('./counterfactual.js');
-const { parseLensReport, parseTaskVerdict, SEVERITIES, LOCATION_RE } = require('../pipeline-cost-report/reviews.js');
+const { parseLensReport, parseTaskVerdict, SEVERITIES, locationMatches } = require('../pipeline-cost-report/reviews.js');
 const { walkReviewItems } = require('../pipeline-cost-report/guards.js');
 const {
   REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE, isControlArm, validateReviewsManifest,
@@ -206,14 +206,7 @@ const TASK_SCORER = {
     reviews: 0, verdict: { agree: 0, disagree: 0, share: null, byArchivedTier: {} },
     recall: { caught: 0, of: 0, share: null, unlocated: 0, itemsUnparsed: 0, replayItemsUnparsed: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
   }),
-  // A reply with a verdict line but no parseable items still scores its verdict. For Needs fixes its items are unknown,
-  // never none (as the archive side's reply reading, reviews-branch.js); an Approved reply without headings has none.
-  judge(text) {
-    const verdict = parseTaskVerdict(text);
-    if (verdict === null) return null;
-    const parsed = parseReviewItems(text);
-    return { verdict, items: parsed ? parsed.items : [], itemsUnparsed: parsed === null && verdict === 'needs-fixes' };
-  },
+  judge: (text) => readTaskReply(text),
   tally(e, { judged, report, tier }) {
     e.reviews += 1;
     const side = e.verdict.byArchivedTier[tier] || (e.verdict.byArchivedTier[tier] = tierCounts());
@@ -384,12 +377,22 @@ function parseReviewItems(text) {
   if (!walked) return null;
   return {
     items: walked.map(({ sev, bare }) => {
-      const locations = [...bare.matchAll(new RegExp(LOCATION_RE.source, 'g'))].map((m) => ({ path: m[1], line: Number(m[2]) }));
+      const locations = locationMatches(bare).map((m) => ({ path: m[1], line: Number(m[2]) }));
       return {
         sev, text: bare, path: locations.length ? locations[0].path : null, line: locations.length ? locations[0].line : null, locations,
       };
     }),
   };
+}
+
+// A task-review reply, archived or replayed -> { verdict, items, itemsUnparsed }, or null when it has no verdict line.
+// A reply with a verdict but no parseable items keeps its verdict: for Needs fixes its items are unknown, never none
+// (itemsUnparsed); an Approved reply without severity headings has none.
+function readTaskReply(text) {
+  const verdict = parseTaskVerdict(text);
+  if (verdict === null) return null;
+  const parsed = parseReviewItems(text);
+  return { verdict, items: parsed ? parsed.items : [], itemsUnparsed: parsed === null && verdict === 'needs-fixes' };
 }
 
 // A whole-branch reply: its severity headings, else an explicit "No issues" line (at the line start, after optional
@@ -400,4 +403,4 @@ function parseBranchReply(text) {
   return String(text).split(/\r?\n/).some((l) => /^\W*no issues\b/i.test(l)) ? { items: [] } : null;
 }
 
-module.exports = { scoreReviews, parseReviewItems, parseBranchReply, NOTES };
+module.exports = { scoreReviews, parseReviewItems, parseBranchReply, readTaskReply, NOTES };

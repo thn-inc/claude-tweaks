@@ -156,6 +156,20 @@ function promptOf(transcriptText) {
   return text ? text : null;
 }
 
+// An archived dispatch's transcript and first user message -> { file, transcript, prompt }: `file` is undefined when
+// its agentId has no indexed transcript; `transcript` is null when there is none or it cannot be read, and `prompt` is
+// null then or when the transcript holds no user message.
+function transcriptPromptOf(item, c, fs) {
+  const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
+  let transcript = null;
+  try {
+    transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
+  } catch {
+    transcript = null;
+  }
+  return { file, transcript, prompt: transcript === null ? null : promptOf(transcript) };
+}
+
 // The archived reply with every worktree path the prompt names, then the main checkout, stripped, read through
 // scanView. Stripped before any parse: a location regex cannot match across the space in a root like `main checkout`.
 const strippedReply = (reply, prompt, mainRoot) => [...worktreePathsOf(prompt, { mainRoot }), mainRoot].reduce((t, root) => stripTree(t, root), scanView(reply));
@@ -265,14 +279,7 @@ function examineDispatch(r, item, c, deps, member) {
   let unitKey = member ? `${r.run}/${member}` : r.run;
   const tier = item.tier;
   if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { slot, unitKey, reason: 'no-archived-tier' };
-  const file = item.agentId != null ? c.transcripts.get(item.agentId) : undefined;
-  let transcript = null;
-  try {
-    transcript = file === undefined ? null : fs.readFileSync(file, 'utf8');
-  } catch {
-    transcript = null;
-  }
-  const prompt = transcript === null ? null : promptOf(transcript);
+  const { file, transcript, prompt } = transcriptPromptOf(item, c, fs);
   if (prompt === null) return { slot, unitKey, reason: 'no-transcript' };
   const { inputs, unknown } = runInputsOf(prompt, { mainRoot: c.mainRoot, runName: r.run });
   unitKey = unitOf(r, inputs).key;
@@ -553,4 +560,4 @@ function writeOutputs(w, deps) {
   return 0;
 }
 
-module.exports = { extractReviews, ROLES, existsOnDisk, renderSlot, promptOf, strippedReply, readRunInput };
+module.exports = { extractReviews, ROLES, existsOnDisk, renderSlot, promptOf, transcriptPromptOf, strippedReply, readRunInput };

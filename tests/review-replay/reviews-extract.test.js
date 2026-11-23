@@ -760,14 +760,23 @@ describe('branch roles', () => {
     }
   });
 
-  test('no usable whole-branch prompt excludes the task reviews', async () => {
+  test('no usable whole-branch prompt excludes the task reviews, the row naming why', async () => {
     for (const opts of [{ noWholeBranch: true }, { wbUnusableFirst: true }]) {
       const x = await extractBranch('task-vs-branch', opts);
       assert.equal(x.code, 3, JSON.stringify(opts));
       const err = JSON.parse(x.deps.errs.join('\n'));
-      assert.deepEqual(err.excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt' }], JSON.stringify(opts));
+      assert.deepEqual(err.excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'no-transcript' }], JSON.stringify(opts));
       assert.deepEqual(err.shortfall.available, { reviews: 0, slots: 0, byTaskTier: {}, notQualifying: 1 });
     }
+    // A run with no whole-branch dispatch at all.
+    const x = await extractBranch('task-vs-branch', {}, [], (bx) => {
+      const f = path.join(bx.runsRoot, RUNB, 'timing.json');
+      const timing = JSON.parse(read(f));
+      timing.dispatches.items = timing.dispatches.items.filter((i) => i.agentId !== 'wb');
+      fs.writeFileSync(f, JSON.stringify(timing));
+    });
+    assert.equal(x.code, 3);
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'not-dispatched' }]);
   });
 
   test('an Approved review and a Minor-only Needs fixes review yield no slot and no exclusion, and count in totals.notQualifying', async () => {
@@ -845,7 +854,55 @@ describe('branch roles', () => {
     const deps = makeDeps(bx.mainRoot);
     const code = await run({ argv: ['extract-reviews', '--runs', moved, '--out', path.join(bRoot, 'out'), '--role', 'task-vs-branch', '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast'], deps });
     assert.equal(code, 3, deps.errs.join('\n'));
-    assert.deepEqual(JSON.parse(deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt' }]);
+    assert.deepEqual(JSON.parse(deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt', cause: 'unrewritten-path' }]);
+  });
+
+  // Rewrites agent `id`'s archived prompt in the branch fixture's transcripts through `edit`.
+  const setPrompt = (bx, id, edit) => {
+    const file = path.join(bx.transcripts, 'slug', 'sess', 'subagents', `agent-${id}.jsonl`);
+    const lines = read(file).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    lines[0].message.content = edit(lines[0].message.content);
+    fs.writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  };
+  const NOT_IN_CLONE = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+  test('--role whole-branch: a prompt with no sha pair, a sha not in the clone, or a decisions.md input is excluded', async () => {
+    for (const [reason, edit] of [
+      ['no-sha-range', (p, bx) => p.replace(`Base ${bx.B} (the review base). Head ${bx.F}.`, 'The review range is the branch.')],
+      ['commit-not-in-clone', (p, bx) => p.replace(bx.F, NOT_IN_CLONE)],
+      ['unknown-run-input', (p, bx) => `${p}\nDecisions: ${bx.mainRoot}/.claude-tweaks/pipelines/${RUNB}/decisions.md`],
+    ]) {
+      const x = await extractBranch('whole-branch', {}, [], (bx) => setPrompt(bx, 'wb', (p) => {
+        const edited = edit(p, bx);
+        assert.notEqual(edited, p, reason);
+        return edited;
+      }));
+      assert.equal(x.code, 3, reason);
+      assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 'wb', tier: 'capable', reason }]);
+    }
+  });
+
+  test('task-vs-branch: a qualifying task review with no sha pair, or a head not in the clone, is excluded', async () => {
+    for (const [reason, edit] of [
+      ['no-sha-range', (p, bx) => p.split(bx.T1).join('the previous task').split(bx.T2).join('the task commit')],
+      ['commit-not-in-clone', (p, bx) => p.split(bx.T2).join(NOT_IN_CLONE)],
+    ]) {
+      const x = await extractBranch('task-vs-branch', {}, [], (bx) => setPrompt(bx, 't2', (p) => {
+        const edited = edit(p, bx);
+        assert.notEqual(edited, p, reason);
+        return edited;
+      }));
+      assert.equal(x.code, 3, reason);
+      assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason }]);
+    }
+  });
+
+  test('--role task: a "this file" prompt with two lone path lines is excluded as pointer-ambiguous, not replayed as written', async () => {
+    const x = await extractBranch('task', {}, [], (bx) => setPrompt(bx, 't1', (p) => `Your instructions are in this file:\n${bx.worktree}/a.md\n${bx.worktree}/b.md\n\n${p}`));
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 't1', tier: 'standard', reason: 'pointer-ambiguous' }]);
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['t2']);
   });
 
   test('a bold-label Needs fixes review (boldLabel fixture, t3) is excluded as items-unparsed', async () => {

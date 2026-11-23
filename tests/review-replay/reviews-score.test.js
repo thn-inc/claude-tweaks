@@ -7,7 +7,7 @@ const { execFileSync } = require('child_process');
 const { run, makeWriteRepo } = require('../../tools/review-replay');
 const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
 const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
-const { armLabel, toPosix, REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE } = require('../../tools/review-replay/schema');
+const { armLabel, toPosix, REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE } = require('../../tools/review-replay/schema');
 const { scratchDir } = require('../helpers/tmp-dir');
 const { buildReviewsFixture, buildBranchFixture, cleanEnv } = require('./reviews-fixture');
 
@@ -443,7 +443,7 @@ test('task: a replay far from the archived Important is not caught', async () =>
 
 test('task: an itemsUnparsed review scores its verdict and counts in recall.itemsUnparsed, not in of', async () => {
   const x = await extractedBranch('task', { boldLabel: true });
-  const fixture = JSON.parse(fs.readFileSync(path.join(x.out, 'reviews-fixture.json'), 'utf8'));
+  const fixture = JSON.parse(fs.readFileSync(path.join(x.out, REVIEWS_FIXTURE_FILE), 'utf8'));
   const t3 = fixture.slots.find((s) => s.agentId === 't3').name.split('/').pop();
   const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === t3 ? TASK_FIX : slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
   assert.equal(r.code, 0, r.deps.errs.join('\n'));
@@ -469,7 +469,7 @@ test('an item citing two locations is caught by a replay item near its second', 
   const x = await extractedBranch('task');
   const copy = path.join(root, 'two-locations');
   fs.cpSync(x.out, copy, { recursive: true });
-  const file = path.join(copy, 'archived-reports.json');
+  const file = path.join(copy, REPORTS_FILE);
   const archived = JSON.parse(fs.readFileSync(file, 'utf8'));
   const key = Object.keys(archived.reports).find((k) => k.endsWith('/task.2'));
   archived.reports[key].items[0].locations.push({ path: 'src/q.js', line: 50 });
@@ -502,7 +502,7 @@ test('wholeBranch: an archived item with no location counts as unlocated and is 
   const x = await extractedBranch('whole-branch');
   const copy = path.join(root, 'wb-unlocated');
   fs.cpSync(x.out, copy, { recursive: true });
-  const file = path.join(copy, 'archived-reports.json');
+  const file = path.join(copy, REPORTS_FILE);
   const archived = JSON.parse(fs.readFileSync(file, 'utf8'));
   const [key] = Object.keys(archived.reports);
   archived.reports[key].items.push({ sev: 'minor', text: 'vague', path: null, line: null, locations: [] });
@@ -533,7 +533,7 @@ test('fixture summary: an exclusion with no tier lands under unknown and the per
   // A run-level exclusion carries no tier: add one beside the tiered prompt-file-gone row.
   const copy = path.join(root, 'tierless');
   fs.cpSync(x.out, copy, { recursive: true });
-  const file = path.join(copy, 'reviews-fixture.json');
+  const file = path.join(copy, REVIEWS_FIXTURE_FILE);
   const fixture = JSON.parse(fs.readFileSync(file, 'utf8'));
   fixture.excluded.push({ run: 'run-without-review', reason: 'no-review' });
   fs.writeFileSync(file, JSON.stringify(fixture));
