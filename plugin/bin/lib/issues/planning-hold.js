@@ -217,7 +217,8 @@ function planLineAssertion(input) {
   const parsed = parsePlanLine(input.planLine);
   const lines = input.body.replace(/\r\n/g, '\n').split('\n');
   const mask = fencedLineMask(lines);
-  const found = lines.filter((line, i) => !mask[i] && line.replace(/[ \t]+$/, '').startsWith('Plan:')).map((line) => line.replace(/[ \t]+$/, ''));
+  const stripTrailing = (line) => line.replace(/[ \t]+$/, '');
+  const found = lines.map(stripTrailing).filter((line, i) => !mask[i] && line.startsWith('Plan:'));
   const want = input.planLine.replace(/[ \t\r]+$/, '');
   const pass = parsed.ok && found.length === 1 && found[0] === want;
   const detail = !parsed.ok
@@ -248,16 +249,20 @@ function readBack(input) {
   let next;
   if (!ok) {
     const vars = { what: failed.join(', '), n: record };
-    if (branch === 're-held') { outcome = render(T.failedAfterReHold, vars); next = 'held-or-failed'; }
-    else { outcome = render(T.failedAfterWrite, vars); next = 'kept-needs-decision'; }
+    outcome = render(branch === 're-held' ? T.failedAfterReHold : T.failedAfterWrite, vars);
+    next = branch === 're-held' ? 'held-or-failed' : 'kept-needs-decision';
   } else if (branch === 're-held') {
-    outcome = render(T.reheld, { j: answered, k: input.reheldQuestions.length }); next = 'held-or-failed';
+    outcome = render(T.reheld, { j: answered, k: input.reheldQuestions.length });
+    next = 'held-or-failed';
   } else if (branch === 'kept') {
-    outcome = render(T.kept, { k: answered }); next = 'kept-needs-decision';
+    outcome = render(T.kept, { k: answered });
+    next = 'kept-needs-decision';
   } else if (input.otherUnresolved === 0) {
-    outcome = render(T.ready, { k: answered, 'short commit': parsePlanLine(input.planLine).commit.slice(0, 7) }); next = 'ready';
+    outcome = render(T.ready, { k: answered, 'short commit': parsePlanLine(input.planLine).commit.slice(0, 7) });
+    next = 'ready';
   } else {
-    outcome = render(T.still, { k: answered, m: input.otherUnresolved }); next = 'still-needs-decision';
+    outcome = render(T.still, { k: answered, m: input.otherUnresolved });
+    next = 'still-needs-decision';
   }
   return { ok, branch, assertions, failed, outcome, next };
 }
