@@ -60,11 +60,12 @@ Scope keywords: Transition code by station, Station order from real moves, Start
 - Per-station code (verify each by reading; enclosing function names were found by reading the files):
   - `intake`, `shape`: `plugin/bin/apply-refine-labels.js:emitLabelTransitions` (`exited` `passed` on `needs:definition` removed / `ready` added).
   - `authorize`: `apply-refine-labels.js:emitLabelTransitions` (`entered` on `ready`, `exited` `passed` on `auto:build`); `plugin/bin/lib/station-events/blockers.js:makeBlockerSnapshotSink` (`blockers`).
-  - `release`: `apply-refine-labels.js:emitLabelTransitions` (`entered` on `auto:build`); `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition` (`exited` `passed`).
-  - `build`: `claim-targets.js:emitStation` (`session_bound`), `emitInProgressTransition` (`entered`), `emitRollbackExit` (`exited` `abandoned`, reason `never-started: …`); `plugin/bin/release-claim.js:run` (`exited`, outcome from the release reason); `plugin/bin/accept-park.js:parkSteps` (`exited` `passed`, reason `awaiting-local-acceptance`); `plugin/bin/pr-early-open.js:run` (`started`, `pr_opened`); `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` (`worker` step `started`/`exited`, `session_bound`).
+  - `release`: `apply-refine-labels.js:emitLabelTransitions` (`entered` on `auto:build`; `exited` `passed` on `bot:in-progress` added); `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition` (`exited` `passed`).
+  - `build`: `apply-refine-labels.js:emitLabelTransitions` (`entered` on `bot:in-progress` added); `claim-targets.js:emitStation` (`session_bound`), `emitInProgressTransition` (`entered`), `emitRollbackExit` (`exited` `abandoned`, reason `never-started: …`); `plugin/bin/release-claim.js:run` (`exited`, outcome from the release reason); `plugin/bin/accept-park.js:parkSteps` (`exited` `passed`, reason `awaiting-local-acceptance`); `plugin/bin/pr-early-open.js:run` (`started`, `pr_opened`); `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` (`worker` step `started`/`exited`, `session_bound`).
   - `test`, `review`, `wrap-up`, `merge`: `driver-mirror.js:stationEventsFor` (driver `test`, `review`, `pr`, `ci`/`merge` steps and merge sub-steps). Outcome from step status (`ok`/`fail`/`stop`); reason: none beyond the step's status.
   - `polish`: `none`.
-  - `accept`: `accept-park.js:parkSteps` (`entered`).
+  - `accept`: `apply-refine-labels.js:emitLabelTransitions` (`entered` on `accept:pending` added); `accept-park.js:parkSteps` (`entered`).
+  - Before writing, check every row against the doc's existing `## Producers` table and `LABEL_TRANSITIONS` in `stations.js`: each producer and label transition listed there for a station appears in that station's row (the gathered evidence above is a starting point, not the complete set).
 
 - [ ] **Step 1: Write the failing test** `tests/bin-lib/station-events/transition-table.test.js`
 
