@@ -3,7 +3,7 @@
 // evaluateRecordEligibility (#5224), as a leaf module: steps.js re-exports eligibilityOptions,
 // and plan-lane.js reads both from here without loading the driver's step graph (#6053).
 
-const { sensitivePathsOf } = require('../express/policy');
+const { sensitivePathsOf, protectedPathGlobsOf } = require('../express/policy');
 
 // The driver lane's record bounds (#5224), as eligibility and admission both get them.
 function laneBounds(policy) {
@@ -27,6 +27,7 @@ function eligibilityOptions(policy) {
     allowAnyCeremony: policy['express-driver-review'].value === 'on',
     // Follows the key alone (#6019): admission's widened rule and reviewRequired supply the reviewer
     // requirement, since a `protected-path` widening is a non-empty widenedBy.
+    protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']),
     protectedPathsNeedReviewer: policy['express-driver-protected-paths'].value === 'reviewer',
   };
 }
