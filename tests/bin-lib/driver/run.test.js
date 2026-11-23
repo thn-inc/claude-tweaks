@@ -3974,7 +3974,8 @@ test('#5997 AC1.1: record — size:low with 2 Key Files launches the implementer
 
 test('#5997 AC1.2: record — 3 Key Files, or size:high, launches on standard', async () => {
   for (const [size, names] of [['low', ['a.js', 'b.js', 'c.js']], ['high', ['a.js']]]) {
-    const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody(...names))] });
+    // Lane would give fast here, so a dropped record profile cannot hide behind standard being the default.
+    const h = harness({ policy: { ...RECORD_TIER, 'express-driver-models': FAST_IMPLEMENTER }, script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody(...names))] });
     assert.equal(await run(['#7'], h.deps), 0, size);
     assert.equal(launchedModel(h, 'implementer'), M('standard'), size);
     assert.equal(workerLines(h)[0].profile, 'standard', size);
@@ -3982,7 +3983,7 @@ test('#5997 AC1.2: record — 3 Key Files, or size:high, launches on standard', 
 });
 
 test('#5997: a record with no size label launches on standard under record', async () => {
-  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low'], keyFilesBody('a.js'))] });
+  const h = harness({ policy: { ...RECORD_TIER, 'express-driver-models': FAST_IMPLEMENTER }, script: [tierIssue(['risk:low'], keyFilesBody('a.js'))] });
   assert.equal(await run(['#7'], h.deps), 0);
   assert.equal(launchedModel(h, 'implementer'), M('standard'));
   assert.equal(workerLines(h)[0].profile, 'standard');
@@ -4002,6 +4003,14 @@ test('#5997 AC2.1: lane and unset launch from express-driver-models for every si
       assert.equal(Object.hasOwn(workerCall(h).args[0], 'profile'), false, `${tier} ${size}: no profile reaches the launcher`);
     }
   }
+});
+
+test('#5997: a launcher throw under record still names profile and attempt on the worker line', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js')), [on('worker'), new Error('launch blew up')]] });
+  await run(['#7'], h.deps);
+  const [line] = workerLines(h);
+  assert.equal(line.status, 'fail');
+  assert.deepEqual([line.profile, line.attempt, line.model], ['fast', 1, M('fast')]);
 });
 
 test('#5997: a refused record-rule launch writes no worker line', async () => {
