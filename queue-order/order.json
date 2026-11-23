@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-23T07:29:30.123Z",
+  "computedAt": "2026-11-23T08:07:21.702Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -20,12 +20,12 @@
       },
       {
         "number": 6110,
-        "updatedAt": "2026-11-23T07:26:45Z",
+        "updatedAt": "2026-11-23T07:37:19Z",
         "state": "OPEN"
       },
       {
         "number": 6109,
-        "updatedAt": "2026-11-23T07:26:38Z",
+        "updatedAt": "2026-11-23T07:43:03Z",
         "state": "OPEN"
       },
       {
@@ -44,11 +44,6 @@
         "state": "OPEN"
       },
       {
-        "number": 6019,
-        "updatedAt": "2026-11-22T16:55:09Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6003,
         "updatedAt": "2026-11-23T07:27:22Z",
         "state": "OPEN"
@@ -56,16 +51,6 @@
       {
         "number": 6002,
         "updatedAt": "2026-11-23T06:56:10Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5999,
-        "updatedAt": "2026-11-23T07:22:27Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5997,
-        "updatedAt": "2026-11-23T07:22:22Z",
         "state": "OPEN"
       },
       {
@@ -90,7 +75,7 @@
       },
       {
         "number": 5208,
-        "updatedAt": "2026-11-23T07:26:32Z",
+        "updatedAt": "2026-11-23T07:48:32Z",
         "state": "OPEN"
       },
       {
@@ -857,11 +842,167 @@
         "number": 6109,
         "state": "OPEN",
         "title": "Add the learned-skills-auto-merge policy key and record the floor reversal in an ADR",
-        "updatedAt": "2026-11-23T07:26:38Z",
+        "updatedAt": "2026-11-23T07:43:03Z",
         "facets": {
           "origin": null,
           "risk": "low",
           "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\nRisk-flags: none\n\n## Overview\n\nPhase 7 is done when a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium`, a raised `express-driver-max-key-files`, and the new risk and protected-path values, and the quality guards are no worse than the standard lane's (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, Phase 7 \"Done when\"). This record sets those values in `.claude-tweaks/policy.yml`, drives 20 admitted records, and writes the result.\n\nA driver run has no task review and no whole-branch review, so guards 1 and 2 have nothing native to read. The maintainer chose on 2026-11-21 to run `/claude-tweaks:review` on each of the 20 driven PRs before the human merges it. Its Critical/Important share is compared with the standard lane's 70% (guard 1). Guard 3, bug records filed within 14 days naming a file a merged PR changed, is read 14 days after the last merge. Guard 2 (task-review first pass) does not apply to the driver and is reported as not applicable.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Changing any default in `plugin/bin/lib/policy-schema.js`. Defaults change only after this trial, in a separate record.\n- Fixing why admissible records do not reach the driver from `/claude-tweaks:dispatch` (design Phase 8). The trial drives records with `drive.js` directly.\n- Building new report code. `tools/pipeline-cost-report.js` already prints the funnel and guard 3.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #6018 | Admit driver records by risk and ceremony with the reviewer on, ending at pending-review | open |\n| #6019 | Let a protected path require the driver's reviewer instead of refusing | open |\n\n## Current State\n\n- `.claude-tweaks/policy.yml` sets `express-driver: on` and `express-lane: true`. `express-driver-review` is unset (default `beyond-express`).\n- `tools/pipeline-cost-report.js` (#5914, #5916, #5925): the funnel runs `drive.js --check` over every open `ready` + `auto:build` record (`tools/pipeline-cost-report/funnel.js`). Guard 3 is `collectPostMergeBugs` in `tools/pipeline-cost-report/guards.js`, and the committed baseline sits beside the design doc.\n- `plugin/bin/drive.js #N` drives one record. With the reviewer on, every Phase 7 widened record ends at `pending-review`.\n\n## Deliverables\n\n- [ ] `.claude-tweaks/policy.yml` sets, for the trial: `express-driver-review: on`, `express-driver-max-size: medium`, `express-driver-max-key-files` raised (the smallest N that admits every record the pre-trial funnel shows refused only by \"more than 3 Key Files\", recorded with its reason), the risk ceiling key (`express-driver-max-risk`, per #6018's proposal) at `high`, and the protected-path mode (`express-driver-protected-paths`, per #6019's proposal) at `reviewer` (names confirmed against the merged prerequisites). This lands as its own PR before the first driven record.\n- [ ] Before the first record: the funnel output (`node tools/pipeline-cost-report.js` with its funnel section) over the open build-authorized ready records, showing the admitted share. Expected about 61% against 11%.\n- [ ] 20 admitted records driven with `node plugin/bin/drive.js #N`, each to `pending-review` or a stop. For each PR, `/claude-tweaks:review` runs before the human merge, and its Critical/Important count is recorded.\n- [ ] A results file beside the design doc (`docs/superpowers/specs/2026-11-18-pipeline-economy-phase-7-trial.md`) with: admission share before and after, per record (number, size, risk, widenings, outcome, minutes, cost, review Critical/Important count, merged or not), guard 1's share against 70%, guard 2 \"not applicable: the driver has no task review\", and guard 3 once 14 days have passed since the last merge.\n- [ ] A verdict line: whether the guards are no worse. If they are worse, the policy values go back to their defaults in the same PR.\n- [ ] The verdict rule, written into the results file before the first driven record: guard 1 is the share of driven PRs whose `/claude-tweaks:review` report has at least one Critical or Important finding, counted with `parseReviewCounts` in `tools/pipeline-cost-report/guards.js` (the counter behind the 70% baseline). \"No worse\" means at or below 70%, with no margin. Guard 3 is the rate of bug records per merged PR, compared with the guard 3 value in `docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md` using the rule in `collectPostMergeBugs`, and \"no worse\" means at or below it. Guard 2 is not applicable. A provisional verdict is written after guard 1, and the final verdict after guard 3's read 14 days after the last trial merge. Only records driven to a PR count toward the 20: a record stopped or refused before its PR is listed separately and replaced, and a rejected or closed PR counts, with its review.\n\n\n## Acceptance Criteria\n\n1. The policy PR changes only `.claude-tweaks/policy.yml`, and `node plugin/bin/resolve-policy.js` on main after it prints the five trial values.\n2. The results file lists exactly 20 driven records, each with the per-record columns named in Deliverables filled.\n3. Guard 1 is computed from the 20 `/claude-tweaks:review` reports and printed against 70%. Guard 3 is printed with its read date, at least 14 days after the last trial merge.\n4. The funnel before and after is quoted from the tool's raw output, not summarised.\n5. The record closes only when the verdict line is written and, if the verdict is \"worse\", the policy values are back at their defaults.\n6. The verdict-rule text is committed in the results file before the first driven record's PR exists, so its commit time comes before that PR's creation time.\n7. The provisional verdict line cites guard 1's numerator and denominator. The final verdict line cites guard 3's count, merged-PR count and baseline value.\n\n## Release Note\n\nNo user-visible change: this repository trialled the wider pipeline-driver admission on 20 records and recorded the result.\n\n## Technical Approach\n\nDrive records one at a time with `drive.js`, not through `/claude-tweaks:dispatch`, because dispatch routes only single-record groups to the driver (design Phase 8). Pick the 20 from the funnel's admitted set in queue order. Skip a record only for a logged reason (contested claim, open PR appeared), and note it in the results file. Merge each PR by hand after its review. A Critical finding is fixed or the PR is closed, never merged as is.\n\n### Key Files\n\n- `.claude-tweaks/policy.yml`: the five trial values\n- `docs/superpowers/specs/2026-11-18-pipeline-economy-phase-7-trial.md`: the results file (new)\n\n## Gotchas\n\n- Guard 3 needs 14 days after the last merge. The record stays open (not `bot:in-progress`) until then, with the results file committed as far as it can go.\n- `/claude-tweaks:review` on a driver PR runs outside a `/flow` run directory. Record its report path in the results file so guard 1 can be re-counted.\n- Every widened record ends at `pending-review` by construction. A trial PR that merged on its own is a defect in the merge stop: stop the trial and file it.\n- The five trial values are `express-driver-review`, `express-driver-max-size`, `express-driver-max-key-files`, the risk ceiling key and the protected-path mode; `express-driver-max-lines` stays at its default, and the funnel before and after runs under the same effective settings.\n- The candidate list is frozen at the pre-trial funnel. Fewer than 20 admitted records, or a skip that drops the count, is reported in the results file and the record stays open rather than shrinking the sample.\n- The policy PR and the results file are separate PRs; a \"worse\" verdict reverts the policy values in a third, policy-only PR before the record closes.\n- Record per driven PR whether a fix was applied before merge, so guard 3 can be read split by that flag. Record each `/claude-tweaks:review` report at a fixed path under the results file's directory so guard 1 can be recounted.\n- The new keys are ignored by an older installed build reading the committed `policy.yml`, so sequencing the policy PR after #6018 and #6019 ship is enough.\n\n## Manual Steps\n\n- Merge or reject each of the 20 driven PRs after its review (reason-not-auto: requires-judgment)\n\n<!-- work-fingerprint: pipeline-economy-phase-7:run-the-20-record-driver-admission-trial-in-this-repository -->\nwork-fingerprint: pipeline-economy-phase-7:run-the-20-record-driver-admission-trial-in-this-repository\n",
+        "createdAt": "2026-11-21T18:08:15Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6021,
+        "state": "OPEN",
+        "title": "Run the 20-record driver admission trial in this repository",
+        "updatedAt": "2026-11-21T19:06:50Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: auth\n\n## Overview\n\nThe protected-path list is a hardcoded array of regular expressions, `PROTECTED_PATH_RES` in `plugin/bin/lib/express/eligibility.js`, that no project can change. The express lane and the pipeline driver both refuse a record whose Key Files or diff touch it. This record makes the list a policy value: unset, the shipped list applies as today; set, the project's list replaces it, removals included, and an explicit empty list protects nothing.\n\nThe maintainer chose \"fully editable\" on 2026-11-21, knowing the trade-off. The express lane merges on green with no reviewer. So a project that removes, for example, `package.json` from its list lets the express lane merge a change to `package.json` with no human. The record documents that consequence in the key's prose. A factory floor (a list the factory sets that a repository cannot shrink) is Phase 11's ceiling rule and is not built here.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- The factory layer and its floor for this list (design Phase 11, which owns the stricter-of rule for ceiling keys).\n- The protected-path *mode* (`refuse`/`reviewer`, sibling sub-issue).\n- Changing what the shipped list contains.\n- `merge-sensitive-paths`, which stays a separate list with its own semantics.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #6019 | Let a protected path require the driver's reviewer instead of refusing | open |\n\n## Current State\n\n- `plugin/bin/lib/express/eligibility.js`: `PROTECTED_PATH_RES`, 15 regexes (`/(^|\\/)hooks\\//`, `/(^|\\/)package\\.json$/`, ...), with the comment explaining why each family is there. `isProtectedPath(path)` canonicalises the path (`canonicalPath`) and tests the list. Callers: `evaluateRecordEligibility`, `evaluateDiffBounds`, and `plugin/bin/lib/driver/review.js` line 395 (the evidence-path guard, which tests the path in three case spellings).\n- `plugin/bin/lib/issues/blast-radius.js`: `isSensitivePath(path, globs)` matches policy globs via `globToRegExp`. This is the matcher a policy-held path list already uses (`merge-sensitive-paths`).\n- `plugin/bin/lib/policy-schema.js`: every `type: 'list'` key defaults to `[]`. `deferral-digest-reasons` uses `emptyList: true` so an explicit `[]` is honoured as distinct from unset.\n- `plugin/bin/lib/express/cli.js` (`check`, `gate`) and `plugin/bin/lib/driver/steps.js` resolve policy and pass values into the pure eligibility functions (\"No I/O: callers resolve policy\").\n\n## Deliverables\n\n- [ ] A policy key holding the protected-path list as globs (proposal: `protected-paths`, `type: 'list'`, `policyOnly: true`, category `merge-safety`), settled with `.claude/skills/policy-key-addition`. Unset means the shipped list applies. A set value replaces it, and an explicit `[]` is honoured (`emptyList: true` or the schema's equivalent).\n- [ ] The shipped list becomes a glob constant equivalent to today's regexes, matched with the same `globToRegExp` that `isSensitivePath` uses. A test proves equivalence over a corpus of paths that includes nested and root-level forms of each family (every one of the 15 shipped families at root, nested and as a near-miss, generated from the constant so none is missed, plus the bare-directory cases `hooks`, `.github` and `skills/_shared`; named cases include `hooks/x.js`, `a/hooks/x.js`, `hooks.js`, `a/b/hooks.sh`, `.github/workflows/ci.yml`, `CODEOWNERS`, `docs/CODEOWNERS`, `package.json`, `a/package.json`, `.claude/settings.local.json`, `.claude-tweaks/policy.yml`, `.claude-tweaks/verify-scope.json`) and near-misses (`hooksmith/x.js`, `package.json.bak`, `my-hooks.js`).\n- [ ] `isProtectedPath(path, list)` takes the resolved list. Every caller passes it: `evaluateRecordEligibility` and `evaluateDiffBounds` through an option (absent means the shipped list), and the express CLI and the driver from the resolved key. `review.js`'s evidence-path guard tests the union of the shipped list and the resolved list, so a project can never open an evidence path onto a shipped protected path.\n- [ ] Prose row for the key in `plugin/skills/_shared/policy-schema-express-driver.md` (or the file that holds the express rows after the risk-and-ceremony sub-issue's split). It states that removing an entry lets the express lane merge changes to that path on green with no human, and that Phase 11 will let a factory set a floor.\n- [ ] The key is added to the driver's `POLICY_KEYS` and to the express CLI's resolved policy.\n- [ ] The key is resolved from the main checkout's `.claude-tweaks/policy.yml` (the base the run started from), never from the record's worktree, in both `express-lane.js check`/`gate` and the driver. ASSUMPTION — verify at build: which root each caller's `deps.resolvePolicy` reads today (resolve-policy reads the cwd project, and `check` may run with its cwd in the worktree) — via a test that runs each entry point with the worktree's `policy.yml` edited.\n\n\n## Acceptance Criteria\n\n1. With the key unset, every eligibility and diff-bounds verdict in the existing express and driver suites is unchanged, and the equivalence test passes: for every corpus path, the glob list and today's `PROTECTED_PATH_RES` give the same answer.\n2. With the key set to `[\"infra/**\"]`, a record whose Key File is `package.json` is not refused for a protected path by `evaluateRecordEligibility` (express and driver), and a record whose Key File is `infra/main.tf` is refused with `protected path: infra/main.tf`.\n3. With the key set to `[]`, no path is protected for eligibility or diff bounds, and `review.js`'s evidence-path guard still refuses an evidence path under `hooks/`.\n4. `express-lane.js check` and `drive.js --check` both read the resolved key: a fixture repository whose `policy.yml` sets `protected-paths: [\"infra/**\"]` refuses a diff to `infra/main.tf` and does not refuse a diff to `package.json` for a protected path.\n5. A malformed value (not a list of strings) resolves `invalid: true` and falls back to the shipped list, never to an empty list. An unset key, an absent `policy.yml` and an unreadable `policy.yml` all yield the shipped list, proved through the real resolver, not only the pure function.\n6. Key globs are root-anchored (`globToRegExp` is `^...$`): with `[\"package.json\"]`, `package.json` is protected and `a/package.json` is not; with `[\"**/package.json\"]` both are. The key's prose row says so.\n7. The evidence-path guard calls `isProtectedPath` through an explicit arrow (`(s) => isProtectedPath(s, union)`), not `.some(isProtectedPath)`, and `isProtectedPath` refuses a non-array list; a test shows `hooks/` still refused when a list is passed.\n8. A record whose diff edits `.claude-tweaks/policy.yml` to remove `package.json` from `protected-paths` (with the main checkout still protecting it) gets the same eligibility and `check` verdict for a `package.json` change as without that edit.\n9. Each adversarial spelling gets the same answer as its canonical path, against the shipped list and against `[\"infra/**\"]`: a `.` segment (`hooks/./x.js`, `infra/./main.tf`), a `..` segment (`a/../hooks/x.js`, `x/../infra/main.tf`), backslashes (`hooks\\x.js`, `infra\\main.tf`), a leading `./` (`./hooks/x.js`, `./infra/main.tf`), and a trailing slash (`hooks/`, `infra/`), whose answer the test pins. Case follows the Gotcha: eligibility is case-sensitive, and the evidence guard tests three case spellings. Percent-encoding (`%2e%2e`, `%2f`) and URL schemes are out of scope: repo paths come from git and from Key Files text, and neither is URL-decoded, so `%2e%2e/hooks/x.js` is an ordinary literal path, and a test shows it is not decoded.\n10. A list containing an empty-string element (`[\"\"]`, `[\"infra/**\", \"\"]`) resolves `invalid: true` and falls back to the shipped list. A well-formed glob that matches nothing (`[\"no/such/**\"]`) is valid and protects nothing else.\n\n## Release Note\n\nProjects can now set which paths the express lane and the pipeline driver treat as protected, instead of a fixed built-in list.\n\n## Technical Approach\n\nKeep `eligibility.js` pure: the list is a parameter, never read from disk there. Convert the regexes to globs once, as a frozen constant beside the comment that explains each family, and keep the comment. Equivalence is proved by a test over a fixed corpus, not by inspection.\n\nThe fallback direction for a malformed value is the shipped list. Fail closed, as `express-driver-max-size`'s unreadable value refuses rather than widening.\n\n### Data / API Surface\n\n- Policy key (proposal `protected-paths`): `{ type: 'list', default: [], emptyList: true, policyOnly: true, category: 'merge-safety', tier: 'advanced' }`, with unset meaning `SHIPPED_PROTECTED_PATHS`. The exact unset-vs-default representation is settled with policy-key-addition.\n- `SHIPPED_PROTECTED_PATHS`: frozen glob array exported from `eligibility.js`.\n- `isProtectedPath(path, list = SHIPPED_PROTECTED_PATHS)`.\n- `evaluateRecordEligibility(issue, { ..., protectedPaths })`, `evaluateDiffBounds(files, { ..., protectedPaths })`.\n\n### Key Files\n\n- `plugin/bin/lib/express/eligibility.js`: glob constant, `isProtectedPath` parameter, options\n- `plugin/bin/lib/express/cli.js`: resolve the key and pass it\n- `plugin/bin/lib/driver/steps.js`: `POLICY_KEYS` and passing the list\n- `plugin/bin/lib/driver/review.js`: evidence-path guard over the union\n- `plugin/bin/lib/policy-schema.js`: the key row\n- `plugin/skills/_shared/policy-schema-express-driver.md`: the key's prose row and its consequence\n- `plugin/skills/_shared/express-lane.md`: the Eligibility section names the list as a policy value\n\n## Gotchas\n\n- `globToRegExp`'s handling of `**` and of a root-level match must be checked against the corpus before writing the constant. `(^|\\/)hooks\\.js$` means \"a file named hooks.js at any depth\", which needs both `hooks.js` and `**/hooks.js` if `**/` does not match zero directories.\n- `review.js` line 395 tests three case spellings of the path. Keep that when switching to the union.\n- `policyOnly: true` matters: a `--run` config must never shrink the list.\n- The express CLI's `gate` verb runs eligibility too. Pass the list there as well as in `check`.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n- Project globs match the canonical posix path with no leading `./` and are case-sensitive; the evidence guard's three case spellings still apply to the union. The key's prose row states this and the root-anchoring rule.\n- `globToRegExp` renders a trailing `/**` as matching the bare parent, so `**/hooks/**` also matches a path named `hooks`; the equivalence test rules on that (a bare directory name is not a file in git) rather than assuming exactness.\n- The unset sentinel must survive resolver normalization: a later change that makes unset read as `[]` would disable protection everywhere, so the resolver-level test in AC5 is load-bearing.\n- `drive.js --check` reaches eligibility through `steps.js`; confirm every entry point calling `evaluateRecordEligibility` or `evaluateDiffBounds` passes the list.\n- This record and the protected-path mode sibling edit the same eligibility options and prose file; the option names (`protectedPaths` beside the sibling's) are pinned once the sibling lands.\n- #6019's build-time subset (`BUILD_TIME_PROTECTED`) is a fixed constant, not part of this key: it applies to a path only while the resolved list protects it. A project that removes a build-time family from its list un-protects it entirely, by choice.\n\n\n## Decision Rationale\n\n- The maintainer chose fully editable over add-only on 2026-11-21, after being shown that removals reach the express lane. The design's own wording is \"a default a project can edit, with the factory able to set a floor\".\n- The evidence-path guard keeps the shipped list as a floor because it guards what the reviewer worker may write, not what a record may change.\n- Resolved from the main checkout (maintainer, 2026-11-21), so a record cannot widen its own run by editing `policy.yml`. An empty-string glob is invalid. A never-matching glob is allowed, since the list is editable by choice.\n\n<!-- work-fingerprint: pipeline-economy-phase-7:make-the-protected-path-list-a-policy-value-a-project-can-edit -->\nwork-fingerprint: pipeline-economy-phase-7:make-the-protected-path-list-a-policy-value-a-project-can-edit\n",
+        "createdAt": "2026-11-21T18:08:06Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6020,
+        "state": "OPEN",
+        "title": "Make the protected-path list a policy value a project can edit",
+        "updatedAt": "2026-11-21T18:53:31Z",
+        "facets": {
+          "origin": null,
+          "risk": "high",
+          "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -958,8 +1099,8 @@
     ],
     [
       {
-        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nMoves the standard lane's per-task implementer profile from a prose mapping in `/build` onto the record-rule CLI, and adds one escalation. Under `implementer-tier: record`, every per-task implementer in a build starts on the profile the record rule picks (Fast for a `size:low` record with one or two Key Files, Standard otherwise). When a task's implementer reports `BLOCKED`, or the task's first fix round fails its re-review, that task's next implementer dispatch is a fresh agent one profile up, once. Under `lane`, the default, the CLI returns today's `size:` mapping, so a build's profiles are what they are today.\n\nToday `plugin/skills/build/dispatch.md` tells `/superpowers:subagent-driven-development` to map the materialized header's `size:` to Fast, Standard or Capable in prose, and no task changed tier after a failed round over 453 implementation tasks between 8 and 18 November 2026.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- The rule and the CLI: #5996, which adds `plugin/bin/implementer-tier.js`.\n- An effort per attempt: #6002.\n- Reviewer, re-review or whole-branch-review models. The `**Review risk:**` marker rules are unchanged.\n- The `batched` execution strategy: it has no per-task implementer dispatch.\n- Escalating on every fix round. About half of Sonnet tasks need one; escalating each would bring Opus implementers back.\n- Changing the `profile=` token, the per-task `**Role:**` markers, or Frontier's guard.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #5996 | Pick an implementer's work profile from its record in code | ready; adds `plugin/bin/implementer-tier.js` and `implementer-tier` (blocked-by link) |\n\n## Current State\n\n- `plugin/skills/build/dispatch.md`'s **subagent** paragraph (the first paragraph after the Frontier guard and strategy precondition) maps the header's `size:` to a profile — `low` → Fast, `medium` → Standard, `high` → Capable — and tells SDD to default every per-task implementer to it; a header with no `size:` gets no override. Its \"Per-task role/review-risk tier forwarding\" text sets the precedence: `profile=` token, then `**Role:**` marker (`transcription` → Fast, `integration` → Standard, `judgment` → Capable), then `size:`.\n- `plugin/skills/flow/materialize.md`'s reader table row for `size` names the same mapping as `/build`'s size-based profile selection.\n- `plugin/skills/build/build-options.md` describes `profile=` as overriding \"the `size:`-derived per-task implementer profile\".\n- `plugin/skills/build/plan-authoring-checks.md`'s Per-task role/review-risk markers paragraph says an unmarked task \"keeps the `size:`-derived mapping\".\n- `tests/plan-task-markers-conformance.test.js` pins dispatch.md's marker mapping (its \"#3378 AC9\" test names \"dispatch.md's implementer-tier mapping\").\n- SDD's own handling of a `BLOCKED` implementer is its prose (\"re-dispatch with more context or a more capable model\"); `/build` adds no instruction about which model.\n- Sizes: `plugin/skills/build/dispatch.md` is 45,061 bytes, `plugin/skills/build/SKILL.md` 49,340 and `plugin/skills/flow/materialize.md` 41,837, against the 52,500-byte read rail.\n- Run log: `/build` writes `decisions.md` lines through `plugin/bin/log-decision.js --status {STATUS} --section \"/build\"`.\n- Materialization: Spec Step 1 (`plugin/skills/build/SKILL.md`) materializes a record build's spec to `{run-dir}/work/{n}-spec.md` for a standalone `/build #N` as well as under `/flow`. A design-doc build has no materialized spec (Design Mode).\n- The CLI (#5996) prints `{\"profile\",\"stepUp\",\"rule\",\"size\",\"keyFileCount\"}`, reads a pre-rename `effort:` header as `size`, takes `--from <profile>` to step up any profile, and returns `stepUp: null` from Capable, Frontier or a `null` profile. Under `lane` it still returns a `stepUp`; this record gates escalation on `rule`, not on `stepUp`.\n\n## Deliverables\n\n- [ ] `dispatch.md`'s subagent paragraph, for a record build (Spec Mode), runs `node \"${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js\" --spec-file \"{run-dir}/work/{n}-spec.md\"` (with `--run \"$PIPELINE_RUN_DIR\"` when set) once per build and uses its `profile` as every per-task implementer's default, replacing the prose `size:` mapping, `effort:` fallback included (the CLI owns it now). A `null` profile means no override, as a missing `size:` does today. A non-zero exit, a missing spec file included, stops the build with the CLI's message; it never falls back to the prose mapping. A design-doc build runs no CLI and gets no override, as today.\n- [ ] The precedence stays `profile=` token, then `**Role:**` marker, then the CLI's profile. The marker mapping and the Frontier guard are unchanged.\n- [ ] Under `implementer-tier: record` only (read from the CLI's `rule`), `dispatch.md` adds one instruction to the text `/build` already hands `/superpowers:subagent-driven-development`:\n  - **Triggers, exactly two:** a per-task implementer's `STATUS: BLOCKED`, or a failed re-review of that task's first fix round (the initial task review asking for a fix is not a trigger). `NEEDS_CONTEXT` and `DONE_WITH_CONCERNS` are not triggers.\n  - **The escalated dispatch** is a fresh implementer, never a `SendMessage` resume, on the step-up of the task's current profile: `implementer-tier.js --spec-file … --from {task's profile}`'s `stepUp`, resolved through `resolve-profile.js` as every dispatch is. Its brief carries the task text, the review findings (or the `BLOCKED` reason) and the task's current diff. A task whose profile came from a `**Role:**` marker or the `profile=` token steps up from that profile.\n  - **Once per task:** with a run directory, a task has escalated when `decisions.md` already holds a `task {k} implementer escalated` line, so the count survives a context handoff; without one, SDD's `progress.md` holds the same line. A trigger on an already-escalated task, a `null` step-up, or a step-up resolving to the same model gets SDD's own handling, unchanged.\n- [ ] `/build` logs, through `log-decision.js --status AUTO --section \"/build\"`, one line per record build with the resolved profile and its inputs, `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.`, and one line per escalation, `AUTO {time} — task {k} implementer escalated {from} → {to} ({trigger}). Reversibility: n/a.`, `{trigger}` being `blocked` or `fix-round-failed`. Standalone `/build` (no run directory) lists both in the Step 7 handoff instead. Neither line is a new console or parser contract: `_shared/auto-decision-log.md`'s entry schema already covers `AUTO` lines, and no reader matches these texts (checked by grep at build; the pull request names the result).\n- [ ] `materialize.md`'s `size` row, `build-options.md`'s `profile=` row and `plan-authoring-checks.md`'s unmarked-task sentence name the CLI's profile instead of the `size:`-derived mapping, each in one sentence.\n- [ ] Tests: a conformance test that fails when dispatch.md names the prose `size:` mapping (`low` → Fast, `medium` → Standard, `high` → Capable) as the source, when it does not name `implementer-tier.js` and `--from`, and when either escalation trigger, the fresh-dispatch rule or the `decisions.md` once-per-task check is missing; `tests/plan-task-markers-conformance.test.js` updated for the new wording.\n\n## Acceptance Criteria\n\n1. In a build of a record with `size: high` in its materialized header, under `implementer-tier: record`, the first per-task implementer is dispatched on Standard's model; under the key unset it is dispatched on Capable's model, as before this change.\n2. Under `record`, a record with `size: low` and two Key Files gets Fast per-task implementers; one with three Key Files gets Standard.\n3. A task carrying `**Role:** judgment` is dispatched on Capable under both values; a build invoked with `profile=standard` dispatches every task on Standard under both values.\n4. Under `record`, a task whose implementer reports `BLOCKED` is re-dispatched as a fresh implementer on the step-up profile, and `decisions.md` holds `task {k} implementer escalated {from} → {to} (blocked)`; a task whose first fix round fails re-review gets a fresh implementer on the step-up profile for its next fix, logged with `(fix-round-failed)`; a task whose first review asks for a fix is not escalated.\n5. A task already escalated once is never escalated again, including after a context handoff (the `decisions.md` line is the check); a `transcription`-marked (Fast) task in a Standard build escalates to Standard, not Capable; under `lane` no escalation line is written.\n6. `decisions.md` holds exactly one `implementer profile` line per build, naming the rule, size and Key File count the CLI printed.\n7. A record build whose CLI call exits non-zero stops before the first dispatch, and its stop names the CLI's message; a design-doc build runs no CLI call and dispatches with no override; a record build whose materialized header carries only `effort: high` dispatches on Capable under `lane`, as before this change.\n8. `git grep -n -F \"low\\` → Fast, \\`medium\\` → Standard, \\`high\\` → Capable\" -- plugin/skills/build/dispatch.md` returns nothing, run once against the tree before the change and seen to match; `materialize.md`'s `size` row is checked by the conformance test instead.\n9. The conformance test above goes red when the CLI call is removed from dispatch.md.\n\n## Decisions\n\n**Decision (plan review Q1, escalation against SDD's fix-loop schedule):** Reading A. AC5's \"never escalated again\" covers only this record's own escalation. After it, fix rounds 3-5 follow `/superpowers:subagent-driven-development`'s own schedule against the escalated agent, unchanged: rounds 1-3 resume the current implementer, and SDD's round-4 move to a fresh agent on a more capable model still happens, one profile above the escalated one. This record adds no instruction that overrides SDD's fix-loop rounds.\n\n**Decision (plan review Q2, the `profile=` token and escalation):** Reading B. The `profile=` token sets every implementer dispatch in the run, so a task whose profile came from the token never escalates: escalation is off whenever `profile=` is given. AC3 holds literally (\"a build invoked with `profile=standard` dispatches every task on Standard under both values\"), and `dispatch.md`'s \"it always wins\" stays true. The Deliverable's \"steps up from that profile\" applies to a profile from a `**Role:**` marker only, not from the token.\n\n## Release Note\n\nMade each build pick its implementer model from the record's size and file count through one shared rule, and move a stuck task to the next model up once.\n\n## Technical Approach\n\nThe rule lives in code; the prose only calls it and acts on its answer, so both lanes run one decision. Under `lane` the CLI returns exactly the mapping the prose carries today, so the move is behaviour-neutral until a project opts in. The escalation triggers are the two points SDD already reports: a `BLOCKED` status line, and a re-review verdict on the first fix round. Escalating only after a fix round fails, not on every fix round, keeps Capable for tasks that have shown they need it.\n\n### Data / API Surface\n\n- No new key or CLI here; two new `decisions.md` line shapes under `## /build` (above).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — the CLI call, the escalation instruction, the log lines\n- `plugin/skills/flow/materialize.md` — the `size` reader-table row\n- `plugin/skills/build/build-options.md` — the `profile=` row\n- `plugin/skills/build/plan-authoring-checks.md` — the unmarked-task sentence\n- `plugin/skills/build/handoff-template.md` — the standalone handoff lines\n- `plugin/bin/implementer-tier.js` — read only: the CLI's JSON\n- `tests/plan-task-markers-conformance.test.js` — the pinned marker-mapping wording\n- `tests/build-implementer-tier-conformance.test.js` — new: the dispatch.md conformance test\n\n### Package Dependencies\n\n- none\n\n## Gotchas\n\n- Read `.claude/skills/skill-prose-conformance-tests` before writing the conformance test, and `docs/skill-authoring.md` before editing any skill file.\n- `dispatch.md` has about 7.4 KB of headroom under the 52,500-byte rail; the change replaces one sentence and adds about two, so keep the net growth under 1 KB. `plan-authoring-checks.md` is near its rail (#4765): change its sentence in place, add nothing.\n- Many open records edit `dispatch.md` (#5434, #5439, #5668 among them). Edit by anchor text, not line number.\n- A skill reference inside an instruction uses the fully-qualified `/claude-tweaks:{skill}` form; a bin path uses `${CLAUDE_PLUGIN_ROOT}`.\n- Copy each prescribed `decisions.md` line verbatim, status word included; both are `AUTO` lines, since neither writes a staged artifact (`_shared/auto-decision-log.md`'s Status semantics).\n- The escalated dispatch is a fresh implementer, not a `SendMessage` resume: a resume keeps the first agent's model.\n- SDD is a separate plugin that follows `/build`'s instruction as prose; nothing in code enforces the escalation. AC4 and AC5 are verified from a real run's `decisions.md`, not by the conformance test, which pins only the instruction.\n- `size:high` going to Standard rests on #5995's evidence and its 20-task guard; the revert is #5996's one policy line.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-9:take-the-standard-lane-s-implementer-profile-from-the-record -->\nwork-fingerprint: pipeline-economy-phase-9:take-the-standard-lane-s-implementer-profile-from-the-record\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
-        "createdAt": "2026-11-21T17:36:08Z",
+        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nOnce a launch's effort can be set (#5941 for agents in a session, #5942 for driver workers), an implementer's first attempt runs at the lowest effort its record's labels allow, and a failure raises the effort one step before it raises the profile. Starting effort follows `risk:`: `risk:low` starts at `low`, `risk:medium` at `medium`, anything higher, or no risk label, at the profile's own resolved effort. A failure an effort step can plausibly fix (red tests, or a failed fix-round re-review) first raises the effort one step on the same profile (never above `high`); a failure it cannot (`BLOCKED`, `cannot-complete`), or a second failure, steps the profile up at that profile's own resolved effort. At most two escalations; past them each lane does what #5997 and #5999 do after their one escalation. Implementers only: a test or a review shows when an implementer failed, while a review that misses a finding looks like a clean review and could never trigger a retry.\n\nThe design's done-when for this half: 20 tasks started at `low` show total minutes per task, retries included, no higher than tasks started at `medium` of the same size band, and no more fix rounds per task. Starting effort follows risk, so the two groups also differ in risk; the size match narrows that confound but does not remove it, and the comparison is read as cost and quality per risk class, not as a pure effort effect.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- Reviewers, judges and every non-implementer role: each gets one fixed effort, chosen by the review-replay phase of the design.\n- Changing `model-effort`, `launchEffort` or `--effort` themselves: #5941 and #5942.\n- The record rule and the one-profile step-up: #5996, #5997 and #5999. This record extends their ladder; it does not replace it.\n- `xhigh` or `max` for any implementer attempt.\n- The Fast profile's effort: its resolved effort is unset, so a Fast attempt has no effort step and its first escalation is the profile step.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #5941 | Set a launched agent's effort from its resolved profile | ready, not started; adds `model-effort` and `launchEffort` (blocked-by link) |\n| #5942 | Launch driver workers at the effort their role's profile names | ready, not started; adds `--effort` on driver launches and the `effort` event field (blocked-by link) |\n| #5996 | Pick an implementer's work profile from its record in code | ready; adds `plugin/bin/lib/model-profiles/implementer-tier.js` (blocked-by link) |\n| #5997 | Launch the driver implementer at the record's profile and retry once one profile up | ready; adds the driver relaunch (blocked-by link) |\n| #5999 | Take the standard lane's implementer profile from the record rule and escalate once | ready; adds the standard lane's escalation (blocked-by link) |\n\n## Current State\n\nWritten against the tree before its prerequisites; re-derive every name below from the merged code before planning.\n\n- `resolve()` (`plugin/bin/lib/model-profiles/profiles.js`) returns `effort`; #5941 adds `launchEffort`, the effort set on the launch under `model-effort: profile`, `null` under `inherit` and for a Fast resolution. `EFFORT_SCALE` is `low`, `medium`, `high`, `xhigh`, `max`.\n- #5941 also makes `_shared/subagent-dispatch-core.md` tell a dispatcher to set the Agent tool's `effort` parameter to `launchEffort`.\n- #5942 makes `launchTracked` (`plugin/bin/lib/driver/launch.js`) pass `launchEffort` to `composeArgs` (`plugin/bin/lib/driver/roles.js`) as `--effort`, and adds `effort` to each worker event line.\n- #5996, #5997 and #5999 add `keyFileCount`, `implementerProfile` and `stepUp` (`plugin/bin/lib/model-profiles/implementer-tier.js`), the CLI `plugin/bin/implementer-tier.js` (with `--from`), the driver's one relaunch on `cannot-complete` or red tests with per-launch ceilings, the worker line's `attempt` (1-2) field, the standard lane's one escalation on `BLOCKED` or a failed first fix round, and the `implementer profile` and `task {k} implementer escalated` `decisions.md` lines this record extends.\n- Under `implementer-tier: record`, a first profile is Fast or Standard only (Capable is reached only by a step-up), and Fast's resolved effort is unset, so Standard is the only profile that can start below its resolved effort.\n- This repository's `.claude-tweaks/policy.yml`, after #5941, sets `model-effort: profile` and Standard and Capable to `medium`.\n\n## Deliverables\n\n- [ ] `implementer-tier.js` gains `startEffort({ risk, launchEffort })` → `'low' | 'medium' | 'high' | null`: `null` when `launchEffort` is `null`; otherwise `low` for `risk: 'low'`, `medium` for `risk: 'medium'`, and `launchEffort` for `high` or a missing risk; never above `launchEffort`, and clamped to `high` when `launchEffort` is `xhigh` or `max`.\n- [ ] `implementer-tier.js` gains `nextAttempt({ profile, effort, escalations, trigger, resolveProfile })` → `{ profile, effort, escalations }` or `null`. `trigger` is `red-tests`, `fix-round-failed`, `blocked` or `cannot-complete`. With `escalations` 0, a `red-tests` or `fix-round-failed` trigger, and an `effort` that is not `null` and below `high`: one effort step up on the same profile. Otherwise, with `escalations` below 2: `stepUp(profile)` at that profile's resolved `launchEffort` (clamped to `high`). `null` at two escalations, at a `null` step-up, or when the step-up resolves to the same model. The returned `escalations` is the input plus one; the caller passes it back on the next failure, so the count is owned by the function's output, not by each lane. `resolveProfile` is injected so the function stays pure.\n- [ ] The CLI's JSON gains `startEffort` and, given `--attempt-profile`, `--attempt-effort` and `--escalations`, the `next` attempt; under `model-effort: inherit` both are `null` and the CLI's output is otherwise unchanged.\n- [ ] Driver: under `implementer-tier: record` and `model-effort: profile`, the first implementer launch passes `startEffort` as its effort and each relaunch follows `nextAttempt` with #5997's trigger, so a worker-or-test-step implementer can launch up to three times (start, effort step, profile step). Ceilings stay per launch (#5997), so the worst case is four implementer launches per record, the review fix round included, and `docs/driver.md` says so. Under `model-effort: inherit` the driver keeps #5997's one profile-step relaunch at no effort. Each launch's event line carries its `effort` (#5942's field) and `attempt` (1-3). Past the ladder the record leaves the lane as #5997's second failure does.\n- [ ] Standard lane: under the same two values, `plugin/skills/build/dispatch.md` tells SDD to dispatch each per-task implementer at `startEffort` and to follow `nextAttempt` on #5999's triggers (`blocked`, `fix-round-failed`), setting the Agent tool's `effort` parameter per #5941's contract. A task escalates at most twice, the count read from its `decisions.md` escalation lines as #5999 reads one. The escalation line names the effort: `task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger})`. Past the ladder the task gets SDD's own handling at its last profile and effort, as #5999 defines after one escalation.\n- [ ] The per-build `implementer profile` `decisions.md` line gains `effort {startEffort}`, with `inherit` printed for `null`, so the parent's done-when can compare tasks started at `low` with tasks started at `medium` from run logs alone.\n- [ ] `docs/driver.md` documents the effort ladder.\n- [ ] Tests: `startEffort` for each risk, a `null` `launchEffort` and an `xhigh` `launchEffort`; `nextAttempt` as a sequence from each start rung (`low`, `medium`, `high`, Fast's `null`) under each trigger, both caps and the clamp; the driver's three-launch sequence and its `inherit` fallback; the CLI fields; and a dispatch.md conformance test for the ladder instruction and the log line.\n\n## Acceptance Criteria\n\n1. With `launchEffort: 'medium'`, `startEffort` returns `'low'` for `risk: 'low'`, `'medium'` for `risk: 'medium'`, and `'medium'` for `risk: 'high'` and for a missing risk; with `launchEffort: null` it returns `null` for every risk; with `launchEffort: 'xhigh'` and `risk: 'high'` it returns `'high'`.\n2. `nextAttempt({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'red-tests' })` returns `{ profile: 'standard', effort: 'medium', escalations: 1 }`; called again with that result and `trigger: 'red-tests'` it returns `{ profile: 'capable', effort: <capable's resolved launchEffort>, escalations: 2 }`; called a third time it returns `null`.\n3. `nextAttempt({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'blocked' })` returns the profile step with `escalations: 1`; `nextAttempt({ profile: 'standard', effort: 'high', escalations: 0, trigger: 'red-tests' })` returns the profile step; `nextAttempt({ profile: 'fast', effort: null, escalations: 0, trigger: 'red-tests' })` returns `{ profile: 'standard', effort: <standard's resolved launchEffort>, escalations: 1 }`.\n4. In a driver run with `implementer-tier: record`, `model-effort: profile` and a `risk:low`, `size:medium` record whose first two test steps are red, the implementer launches three times, with `--effort low` on Standard, `--effort medium` on Standard, and Capable at its resolved effort, and `driver-events.jsonl` holds three worker lines with `attempt` 1, 2 and 3; a third red test step leaves the lane as #5997's second failure does. With a first `cannot-complete` instead, the second launch is Capable.\n5. With `model-effort: inherit`, the same driver run launches at most twice, both with no `--effort`, as #5997 defines.\n6. A standard-lane build under both values logs `implementer profile {profile} … effort {startEffort}`; under `record` and `model-effort: profile`, a task whose first fix round fails re-review logs `escalated standard@low → standard@medium (fix-round-failed)`, and a task that reports `BLOCKED` first logs `escalated standard@low → capable@{effort} (blocked)`; a task past two escalations gets no third escalation line.\n7. No implementer attempt in either lane is launched at `xhigh` or `max`, and no non-implementer role's effort changes.\n\n## Release Note\n\nMade implementers start at a lower reasoning effort when the record's risk allows it, and raise the effort before moving to a larger model when an attempt fails.\n\n## Technical Approach\n\nThe ladder is one pure function next to the record rule, called in process by the driver and through the CLI by the standard lane, so both lanes climb the same rungs. Effort goes first, for the failures it can fix, because an effort step stays on the same model and per-token price, while a profile step moves Standard (Sonnet) to Capable (Opus) at several times the list price; for Opus the design measured `medium` and `high` turns at about the same cost ($0.077 and $0.074). `BLOCKED` and `cannot-complete` skip the effort rung: they report a missing capability or context, which more reasoning on the same model rarely supplies, so an effort step there would only add a wasted attempt. Risk sets the start because it is the record's own statement of how much a mistake costs; size already chose the model.\n\n### Data / API Surface\n\n- `startEffort({ risk, launchEffort })` → `'low' | 'medium' | 'high' | null`.\n- `nextAttempt({ profile, effort, escalations, resolveProfile })` → `{ profile, effort } | null`.\n- CLI JSON gains `startEffort` and `next`. Driver worker lines' `attempt` ranges 1-3. Additive.\n\n### Key Files\n\n- `plugin/bin/lib/model-profiles/implementer-tier.js` — `startEffort`, `nextAttempt`\n- `plugin/bin/lib/driver/review.js` — the review fix round's effort after a ladder\n- `plugin/bin/implementer-tier.js` — the CLI fields\n- `plugin/bin/lib/driver/launch.js` — the implementer's effort per attempt\n- `plugin/bin/lib/driver/steps.js` — the third launch\n- `plugin/bin/lib/driver/events.js` — `attempt` up to 3\n- `plugin/skills/build/dispatch.md` — the ladder instruction and log lines\n- `docs/driver.md` — the ladder\n- `tests/bin-lib/model-profiles/implementer-tier.test.js` — the function cases\n- `tests/bin-lib/driver/run.test.js` — the three-launch sequence\n- `tests/build-implementer-tier-conformance.test.js` — the ladder instruction\n\n### Package Dependencies\n\n- none\n\n## Gotchas\n\n- The build starts only after #5941, #5942 and #5996, #5997 and #5999 have merged (the blocked-by links). Re-derive Key Files and every identifier above from the merged code.\n- Read `.claude/skills/headless-worker-launch` and `.claude/skills/driver-step-addition` before touching the driver, and `.claude/skills/skill-prose-conformance-tests` before the conformance test.\n- Ceilings are per launch (#5997); a third worker launch costs one more full allowance, which the worst-case line in `docs/driver.md` states.\n- A `low`-effort attempt that passes its tests but writes weaker code is not retried; the task review and the done-when's fix-rounds-per-task comparison are what catch it.\n- `risk:` values are `low`, `medium` and `high` (`parseRecordFacets`); treat anything else as missing (start at `launchEffort`), never as `low`.\n- ASSUMPTION — verify at build: an implementer on Standard (the only profile that can start below its resolved effort under `record`) launched at `low` completes the task loop's contract — via three probe dispatches and three probe driver workers at `low` on one small fixture task, recorded with their outcomes in `plugin/bin/lib/driver/worker.js`'s header, `docs/driver.md` and the pull request. Pass means all six return a valid status line or result envelope and a commit. Anything less stops the build and is reported: the ladder would start every `risk:low` task with a wasted attempt.\n- Only 18 turns ran at `low` between 8 and 19 November 2026, so the starting rung has no track record; the parent's 20-task done-when is the check, and reverting is one line (`model-effort: inherit`, or `implementer-tier: lane`).\n\n\n<!-- work-fingerprint: pipeline-economy-phase-9:start-an-implementer-at-the-lowest-effort-its-record-allows -->\nwork-fingerprint: pipeline-economy-phase-9:start-an-implementer-at-the-lowest-effort-its-record-allows\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.",
+        "createdAt": "2026-11-21T17:36:32Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -1002,36 +1143,12 @@
             "name": "ceremony:standard",
             "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
             "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADEgcf9A",
-            "name": "fix-on-worktree-dispatch-record-6019",
-            "description": "Fixed on worktree-dispatch-record-6019, not yet on the default branch",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADEgi2JQ",
-            "name": "fix-on-worktree-dispatch-record-5997",
-            "description": "Fixed on worktree-dispatch-record-5997, not yet on the default branch",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADEgngeg",
-            "name": "fix-on-worktree-flow-spec-6100",
-            "description": "Fixed on worktree-flow-spec-6100, not yet on the default branch",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADEg1HWQ",
-            "name": "fix-on-worktree-dispatch-record-6062",
-            "description": "Fixed on worktree-dispatch-record-6062, not yet on the default branch",
-            "color": "FBCA04"
           }
         ],
-        "number": 5999,
+        "number": 6002,
         "state": "OPEN",
-        "title": "Take the standard lane's implementer profile from the record rule and escalate once",
-        "updatedAt": "2026-11-23T07:22:27Z",
+        "title": "Start an implementer at the lowest effort its record allows and raise effort before profile",
+        "updatedAt": "2026-11-23T06:56:10Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1415,7 +1532,7 @@
         "number": 5208,
         "state": "OPEN",
         "title": "Arm record-less tidy housekeeping PRs — compose-subject.js refuses with no record, so the creation-time arm always fails",
-        "updatedAt": "2026-11-23T07:26:32Z",
+        "updatedAt": "2026-11-23T07:48:32Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -9034,84 +9151,6 @@
     ],
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n**Related:** #5663\n\n## Current State\n\n- `plugin/bin/lib/learned-skills/land.js` reads the run branch's PRs only when `git ls-remote` still finds `refs/heads/learned-skills/{run-id}` (the `if (line) { … listPrs() … }` block in step 1, \"The base\"). With no remote branch it builds fresh commits on the integration tip and opens a new PR.\n- When the branch exists and its PR is `MERGED`, `land` sets `orphanReason` (\"the earlier learned-skills PR #N was merged, so … is not reused as a base\") and stages every captured entry.\n- Sibling sub-issues make the learned-skills PR merge itself once green and delete its branch on merge (`--delete-branch`). A run that dies after that merge but before its manifest write would then, on resume, either open a second PR with the same edits (branch gone) or stage edits that already shipped (branch present, PR merged).\n\n## Deliverables\n\n1. `land` looks up the run branch's PRs by head-branch name whether or not the remote branch exists (`gh pr list --head learned-skills/{run-id} --state all`, through the same `listPrs` seam, or through `listPrsForHead` if #5663 has landed by build time). A failed lookup or commit read fails closed: every remaining captured entry is staged with a reason naming the failed read, and `land` never builds fresh commits or a new PR on that path. The commit read pages to completion. When several PRs share the head name, the commits of every `MERGED` one count.\n2. When a `MERGED` PR exists for the run branch, each still-`captured` entry whose commit is among that PR's commits is recorded `landed` against that PR (commit and PR URL set, its AUTO log line written once). A commit matches an entry when its trailers carry this run's id and the entry's id, and its diff's `git patch-id --stable` equals the entry's patch file's — the same verification `land` already applies to commits on an existing branch. Read the merged PR's commits through `gh` (`gh pr view {n} --json commits` or `gh api repos/{owner}/{repo}/pulls/{n}/commits`); the branch may be deleted, so never read them from `origin/learned-skills/{run-id}`. The patch-id comparison needs the commits' objects locally, so `land` first runs `git fetch origin refs/pull/{n}/head` (GitHub keeps that ref after a merge and a branch delete); a fetch that fails is a failed read under the rule above.\n3. Entries not on the merged PR, including ones captured after it merged, are staged with a reason naming the merged PR, as today; that staging is intended.\n4. The header comment's Resume paragraph in `land.js` and `plugin/skills/wrap-up/learned-skills-pr.md`'s description of a resumed `land` say the new rule.\n\n## Acceptance Criteria\n\n- A test in `tests/bin-lib/learned-skills/land.test.js` with no remote branch and a `MERGED` PR whose commits carry the run's trailers and matching patch-ids records every entry `landed` against that PR, creates no new branch or PR, and stages nothing.\n- A test with the same merged PR missing one entry's commit lands the present entries and stages only the missing one, its reason naming the merged PR.\n- A test with no remote branch and no PR at all keeps today's behaviour (fresh commits, new PR).\n- Each new test was seen failing with the new lookup reverted.\n- `npm test -- --full` passes.\n\n## Release Note\n\nFix a resumed wrap-up so it recognises learned-skill edits whose PR already merged, instead of opening a duplicate PR or staging them again.\n\n## Technical Approach\n\nHoist the `listPrs()` call out of the `if (line)` block so it runs for every land; keep the existing branch-present paths (open PR reused, closed PR stages, no PR means the branch is this run's own). Add the merged-PR reconciliation before `orphanReason` stages anything. Reuse the existing trailer and patch-id verification helpers rather than writing a second matcher.\n\n### Key Files\n\n- `plugin/bin/lib/learned-skills/land.js` — PR lookup independent of the remote branch; merged-PR reconciliation; header comment\n- `plugin/skills/wrap-up/learned-skills-pr.md` — resumed-land description\n- `tests/bin-lib/learned-skills/land.test.js` — new resume cases\n\n## Gotchas\n\n- The sibling sub-issue that merges the learned-skills PR in the same wrap-up widens the merge-then-crash window, but the rule here is safe whichever lands first: a PR merged by a human in the old flow hits the identical case.\n\n- #5663 replaces head-branch PR lookups with one fork-excluding helper and touches `land.js`; whichever lands second rebases onto the other.\n- `--state all` with `--head` matches by head ref name, so a deleted branch's PR is still found; verify with a fake runner that the argv carries no `--repo`-less fork ambiguity (#5663's concern).\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:let-a-resumed-learned-skills-land-recognise-edits-a-merged-p -->\nwork-fingerprint: learned-skills-auto-merge:let-a-resumed-learned-skills-land-recognise-edits-a-merged-p\n\n",
-        "createdAt": "2026-11-23T07:01:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6110,
-        "state": "OPEN",
-        "title": "Let a resumed learned-skills land recognise edits a merged PR already shipped",
-        "updatedAt": "2026-11-23T07:26:45Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: terminal\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n**Related:** #3313, #2987, #3002, #3933\n\n## Current State\n\nA project's `verify-scope.json` can declare `preExisting`: a glob/path allowlist of known-failing test files (#3129; e.g. a shallow clone's precondition tests). A run whose entire failing-file set is covered by it is adjudicated as passing (`plugin/bin/verify.js` around line 616). #3313 added a report-only new/fixed split (`newAndFixed` in `plugin/bin/lib/verify/pre-existing.js`): \"fixed\" lists the tracked test files an entry covers that did not fail. It is computed only inside the adjudication block, gated on `!rawPass && !adjudicatedPass` (`verify.js:632`), and only for a full-scope run with every check run.\n\nA green (raw-pass) run never enters that block, so it never reports that its `preExisting` entries went unused. Because `verify-scope.json` is a committed project file, an entry that is no longer needed stays a standing waiver: if that file later breaks again for a real reason, its failure is excused without anyone seeing it.\n\n## Deliverables\n\n- [ ] On a raw-pass, full-scope run (every check ran) with a non-empty `preExisting` declaration, print one report line: none of the N declared `preExisting` entries was needed in this run, naming the entries\n- [ ] Narrower scope modes (`affected` and the like) print nothing, since they did not run every suite and cannot claim a listed file passed (the same rule `newAndFixed` already applies)\n- [ ] The line is informational: it never changes the exit code or the verify stamp, and never tells the reader to delete the entries. Entries are often environment-specific (a test that fails only in a shallow clone passes locally), so the line reads \"not needed in this run\", not \"stale, remove\"\n- [ ] Add the same fact to the run's JSON/report output beside the existing `preExistingAdjudicated` field (for example `preExistingUnused: { declared, mode }`), so `/test` and the wrap-up pack can surface it\n- [ ] Document the line in `plugin/skills/test/verification.md`'s `preExisting` paragraph\n\n## Acceptance Criteria\n\n- A raw-pass full-scope run with `preExisting: [\"tests/a.test.js\"]` prints the not-needed line naming `tests/a.test.js`, and its JSON carries `preExistingUnused`\n- A raw-pass run in a narrower scope mode, a run with no `preExisting` key, and a failing run each print no such line\n- The line does not alter the exit code or the stamp (asserted by comparing to the same run without the declaration)\n- No `git ls-files` call is made on the raw-pass path (asserted with the injectable `execImpl`)\n- `npm test` passes\n\n## Release Note\n\n`verify` now notes when a full green run didn't need any of the declared pre-existing-failure allowances.\n\n## Technical Approach\n\nThe original question offered three postures: report on every pass, only under full scope, or only behind a flag. Full scope only, by default, is the one that is both sound and cheap:\n\n- **Sound:** only a full-scope run with every check run exercised every suite, which is the same reason `newAndFixed` returns `fixed: null` for narrower modes.\n- **Cheap:** the cost the original record worried about was `git ls-files` on every green run. On a raw pass no test failed, so every declared entry was unneeded by definition, and the line can name the declared entries directly with no tracked-file enumeration. The output cost is one line, only for projects that declare `preExisting`, which is meant to be temporary.\n- **Not behind a flag:** a flag would leave the standing-waiver risk invisible, which is the gap this record exists to close.\n\n### Key Files\n\n- `plugin/bin/verify.js` — raw-pass branch: emit the line and the `preExistingUnused` field\n- `plugin/bin/lib/verify/pre-existing.js` — optional small helper for the raw-pass report (no `trackedFiles` call)\n- `plugin/skills/test/verification.md` — document the line beside the existing `preExisting` paragraph\n- `tests/bin-lib/verify/` — new cases for the line, the narrower-mode silence, and the no-`ls-files` assertion\n\n## Gotchas\n\n- `verify.js`'s stdout is bounded by contract (\"one table row per check plus at most one ≤100-line failing region\", `verification.md:58`); the new line has to fit that contract's wording, so update the bound's description if it enumerates every line kind.\n- Keep the report out of stamp-match logic: `verify.js:142` treats a `preExisting`-adjudicated stamp differently, and a raw pass that merely reports unused entries is still a plain raw pass.\n\n## Original request\n\nDecide whether a green verify run should flag stale preExisting allowlist entries\n\nOrigin: ledger resolve gate (record #3313, build item 14)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n#3313 made `verify.js` report which allowlisted `preExisting` files passed (\"N new, M fixed\") — but only on a run that failed and was adjudicated. A green (raw-pass) run never adjudicates, so a fully stale allowlist, where every entry now passes, is never flagged for removal. Files: `plugin/bin/verify.js`, `plugin/bin/lib/verify/pre-existing.js`, `plugin/skills/test/verification.md`.\n\n## Deliverables\n\n- [ ] Decide whether a raw-pass run with a `preExisting` declaration should print the fixed list.\n- [ ] If yes, implement it and pin the cost of `git ls-files` on every green run.\n\n## Open Question\n\nShould a green run pay for the stale-allowlist check on every pass, only under scope mode full, or only on request (a flag)? Printing it by default adds output to the most common run; a flag keeps a stale allowlist invisible unless someone asks.\n\n## Release Note\n\nNo user-visible change until the question is answered.\n\n_Filed by `ledger resolve gate`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
         "createdAt": "2026-10-20T17:25:10Z",
         "labels": [
@@ -11509,25 +11548,6 @@
       ]
     },
     {
-      "number": 6021,
-      "blockedBy": [
-        6019
-      ]
-    },
-    {
-      "number": 6020,
-      "blockedBy": [
-        6019
-      ]
-    },
-    {
-      "number": 6002,
-      "blockedBy": [
-        5999,
-        5997
-      ]
-    },
-    {
       "number": 4627,
       "blockedBy": [
         4622
@@ -11612,7 +11632,7 @@
       ]
     }
   ],
-  "grouping": "per-record+express+driver",
+  "grouping": "per-record+express",
   "bundles": [
     {
       "records": [
