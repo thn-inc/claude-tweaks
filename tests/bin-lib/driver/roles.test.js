@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, LENS_REPLY_SCHEMA, LENS_GIT_RULES, lensReviewerSettings, lensAdmittedFormsNote, settingsFor } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES, EFFORT_SCALE } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
@@ -250,7 +250,9 @@ test('AC1: every role but the implementer launches with no Bash, Edit or Write',
   for (const role of Object.keys(ROLES)) {
     if (role === 'implementer') continue;
     for (const p of ['darwin', 'linux', 'win32']) {
-      assert.deepEqual(toolsFor(role, p).filter((t) => ['Bash', 'Edit', 'Write'].includes(t)), [], role + ' on ' + p);
+      // The lens-reviewer has Bash where the sandbox was probed, and never Edit or Write.
+      const want = role === 'lens-reviewer' && SANDBOX_PROBED_PLATFORMS.includes(p) ? ['Bash'] : [];
+      assert.deepEqual(toolsFor(role, p).filter((t) => ['Bash', 'Edit', 'Write'].includes(t)), want, role + ' on ' + p);
     }
   }
   for (const [role, schema] of [['merge-check', MERGE_CHECK_RESULT_SCHEMA], ['acceptance', ACCEPTANCE_RESULT_SCHEMA]]) {
@@ -264,14 +266,20 @@ test('AC1: every role but the implementer launches with no Bash, Edit or Write',
 
 test('AC1: no role has an allow rule that can run gh', () => {
   for (const platform of ['darwin', 'linux', 'win32']) {
-    const allow = implementerSettings({ testCommand: 'npm test', platform, readPaths: [] }).permissions.allow;
+    const allow = [
+      ...implementerSettings({ testCommand: 'npm test', platform, readPaths: [] }).permissions.allow,
+      ...lensReviewerSettings({ platform, readPaths: [] }).permissions.allow,
+    ];
     for (const rule of allow) {
       assert.ok(!/^Bash\(\s*gh\b/.test(rule), rule);
       assert.ok(!['Bash', 'Bash(*)'].includes(rule), rule);
       assert.ok(!/^Bash\(\s*\*/.test(rule), rule);
     }
   }
-  for (const role of Object.keys(ROLES)) if (role !== 'implementer') assert.strictEqual(ROLES[role].settings, false, role);
+  for (const role of Object.keys(ROLES)) {
+    if (role === 'implementer') continue;
+    assert.strictEqual(ROLES[role].settings, role === 'lens-reviewer', role);
+  }
 });
 
 test('merge-check and acceptance result schemas use only the launcher subset', () => {
@@ -626,7 +634,7 @@ function assertEveryRoleHasProfile(roles, profiles) {
 }
 test('AC6.1: every ROLES entry has a default profile', () => {
   assertEveryRoleHasProfile(ROLES, DRIVER_ROLE_PROFILES);
-  assert.deepStrictEqual({ ...DRIVER_ROLE_PROFILES }, { implementer: 'standard', reviewer: 'capable', explorer: 'standard', 'merge-check': 'standard', acceptance: 'standard' });
+  assert.deepStrictEqual({ ...DRIVER_ROLE_PROFILES }, { implementer: 'standard', reviewer: 'capable', explorer: 'standard', 'merge-check': 'standard', acceptance: 'standard', 'lens-reviewer': 'fast' });
   assert.ok(Object.isFrozen(DRIVER_ROLE_PROFILES));
 });
 test('AC6.1 (go-red control): a role added to ROLES without a default fails the check', () => {
@@ -638,4 +646,110 @@ test('POLICY_DRIVER_ROLES: exactly the four spec roles, each in ROLES', () => {
   for (const r of POLICY_DRIVER_ROLES) assert.ok(Object.hasOwn(ROLES, r), r);
   assert.ok(!POLICY_DRIVER_ROLES.includes('explorer'));
   assert.ok(Object.isFrozen(POLICY_DRIVER_ROLES));
+});
+
+// The lens-reviewer role (#6000): a read-only headless lens reviewer.
+const LENS_GIT = ['Bash(git diff --no-ext-diff --no-textconv *)', 'Bash(git show --no-ext-diff --no-textconv *)', 'Bash(git log --no-ext-diff --no-textconv *)', 'Bash(git grep *)'];
+const LENS_DENY = [...DENY, 'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)', 'Bash(* --open-files-in-pager*)', 'Bash(git grep * -O*)', 'Bash(git -c *)', 'Edit', 'Write'];
+const LENS_DARWIN = {
+  permissions: { defaultMode: 'dontAsk', allow: ['Read', 'Grep', 'Glob', ...LENS_GIT], deny: LENS_DENY, blockReadsOutsideWorkingDirectories: true },
+  sandbox: { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true }, filesystem: { allowRead: ['/repo/.git'], denyWrite: ['.'] } },
+};
+const toolsArg = (args) => args[args.indexOf('--tools') + 1];
+
+test('AC1.1: the lens-reviewer tool list and darwin settings are pinned', () => {
+  assert.deepStrictEqual(ROLES['lens-reviewer'], { tools: ['Read', 'Grep', 'Glob', 'Bash'], settings: true });
+  assert.deepStrictEqual(toolsFor('lens-reviewer', 'darwin'), ['Read', 'Grep', 'Glob', 'Bash']);
+  assert.deepStrictEqual([...LENS_GIT_RULES], LENS_GIT);
+  assert.ok(Object.isFrozen(LENS_GIT_RULES));
+  assert.deepStrictEqual(lensReviewerSettings({ platform: 'darwin', readPaths: ['/repo/.git'] }), LENS_DARWIN);
+  const args = composeArgs({ role: 'lens-reviewer', settingsFile: '/s/x.json', schema: LENS_REPLY_SCHEMA, platform: 'darwin' });
+  for (const flag of ['--restricted', '--safe-mode']) assert.ok(args.includes(flag), flag);
+  assert.strictEqual(args[args.indexOf('--settings') + 1], '/s/x.json');
+  assert.strictEqual(toolsArg(args), 'Read,Grep,Glob,Bash');
+  assert.deepStrictEqual(LENS_REPLY_SCHEMA, { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false });
+  assert.ok(Object.isFrozen(LENS_REPLY_SCHEMA));
+  assert.ok(conformsTo(LENS_REPLY_SCHEMA, { text: 'x' }));
+  assert.ok(!conformsTo(LENS_REPLY_SCHEMA, { text: 'x', extra: 1 }));
+});
+
+test('AC1.2: off the sandbox-probed platforms the lens-reviewer has no Bash at all', () => {
+  for (const platform of ['linux', 'win32']) {
+    assert.deepStrictEqual(toolsFor('lens-reviewer', platform), ['Read'], platform);
+    const s = lensReviewerSettings({ platform, readPaths: [] });
+    assert.deepStrictEqual(Object.keys(s), ['permissions'], platform);
+    assert.deepStrictEqual(s.permissions.allow, ['Read'], platform);
+    assert.deepStrictEqual(s.permissions.deny, LENS_DENY, platform);
+    assert.ok(!('blockReadsOutsideWorkingDirectories' in s.permissions), platform);
+    for (const r of s.permissions.allow) assert.ok(!r.startsWith('Bash('), r);
+    assert.strictEqual(toolsArg(composeArgs({ role: 'lens-reviewer', settingsFile: '/s/x.json', schema: LENS_REPLY_SCHEMA, platform })), 'Read', platform);
+  }
+});
+
+test('lens-reviewer has no Write, Edit or network on any platform', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const tools = toolsFor('lens-reviewer', platform);
+    const allow = lensReviewerSettings({ platform, readPaths: [] }).permissions.allow;
+    for (const name of ['Write', 'Edit']) {
+      assert.ok(!tools.includes(name), name + ' ' + platform);
+      assert.ok(!allow.includes(name), name + ' ' + platform);
+    }
+  }
+  const network = lensReviewerSettings({ platform: 'darwin', readPaths: [] }).sandbox.network;
+  assert.deepStrictEqual(network.allowedDomains, []);
+  assert.strictEqual(network.strictAllowlist, true);
+});
+
+test('Proof(auth) unit: no credential reaches the lens-reviewer settings', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const text = JSON.stringify(lensReviewerSettings({ platform, readPaths: platform === 'win32' ? ['C:\\repo\\.git'] : ['/repo/.git'] }));
+    for (const word of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY', 'env', 'apiKeyHelper']) assert.ok(!text.includes(word), word + ' ' + platform);
+  }
+});
+
+test('lensReviewerSettings refuses a bad readPaths and returns fresh arrays', () => {
+  assert.throws(() => lensReviewerSettings({ platform: 'darwin', readPaths: ['rel'] }), TypeError);
+  assert.throws(() => lensReviewerSettings({ platform: 'darwin', readPaths: ['/'] }), TypeError);
+  const given = ['/repo/.git'];
+  const a = lensReviewerSettings({ platform: 'darwin', readPaths: given });
+  const b = lensReviewerSettings({ platform: 'darwin', readPaths: given });
+  assert.notStrictEqual(a.sandbox.filesystem.allowRead, given);
+  assert.notStrictEqual(a.permissions.allow, b.permissions.allow);
+  assert.deepStrictEqual(lensReviewerSettings({ platform: 'darwin' }).sandbox.filesystem.allowRead, []);
+});
+
+// One assertion, shared by the pin and its negative control: the note lists exactly the
+// forms of `rules`, one per line, and no other `git ` line.
+function assertNoteListsRules(note, rules) {
+  const lines = note.split('\n');
+  const forms = rules.map((r) => r.replace(/^Bash\(/, '').replace(/ \*\)$/, ''));
+  for (const form of forms) assert.ok(lines.includes(form), form);
+  assert.strictEqual(lines.filter((l) => l.startsWith('git ')).length, rules.length);
+  assert.ok(note.includes('exactly as written'));
+}
+test('Q2: the admitted-forms note lists every lens git allow rule and nothing else', () => {
+  const note = lensAdmittedFormsNote();
+  assertNoteListsRules(note, LENS_GIT_RULES);
+  for (const form of ['git diff --no-ext-diff --no-textconv', 'git show --no-ext-diff --no-textconv', 'git log --no-ext-diff --no-textconv', 'git grep']) {
+    assert.ok(note.split('\n').includes(form), form);
+  }
+  // Order: read-only reviewer, the forms, the Read tool, no rephrasing.
+  const reviewerAt = note.search(/read-only reviewer/);
+  const firstForm = note.indexOf('\ngit ');
+  const readAt = note.search(/Read tool/);
+  assert.ok(reviewerAt >= 0 && reviewerAt < firstForm);
+  assert.ok(firstForm < readAt);
+  assert.ok(readAt < note.search(/rephrase/));
+  for (const op of ['`;`', '`&&`', '`|`']) assert.ok(note.includes(op), op);
+  // Negative control: a rule list with one rule dropped yields a note the assertion rejects.
+  assert.throws(() => assertNoteListsRules(note, LENS_GIT_RULES.slice(1)));
+});
+
+test('settingsFor dispatches by role', () => {
+  const input = { testCommand: 'node --test', platform: 'darwin', readPaths: ['/opt/a'] };
+  assert.deepStrictEqual(settingsFor('implementer', input), implementerSettings(input));
+  assert.deepStrictEqual(settingsFor('implementer', { ...input, platform: 'linux' }), implementerSettings({ ...input, platform: 'linux' }));
+  assert.deepStrictEqual(settingsFor('lens-reviewer', input), lensReviewerSettings({ platform: 'darwin', readPaths: ['/opt/a'] }));
+  for (const role of ['reviewer', 'explorer', 'merge-check', 'acceptance']) assert.strictEqual(settingsFor(role, input), null, role);
+  assert.throws(() => settingsFor('nope', input), /unknown role/);
 });

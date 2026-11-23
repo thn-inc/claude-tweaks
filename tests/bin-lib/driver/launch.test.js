@@ -248,6 +248,16 @@ test('#5942: an explorer under model-effort profile resolves resolve().launchEff
   assert.strictEqual(roleLaunch('explorer', policy).effort, want);
 });
 
+test('AC3.2 (Q3): the lens-reviewer effort comes from its DRIVER_ROLE_PROFILES row', () => {
+  assert.strictEqual(DRIVER_ROLE_PROFILES['lens-reviewer'], 'fast');
+  for (const mode of ['profile', 'inherit']) {
+    // A role map that omits lens-reviewer: the code-only row is what is read.
+    const policy = { ...policyFrom(''), 'express-driver-models': { value: { ...FOUR }, source: 'policy' }, 'model-effort': { value: mode, source: 'policy' } };
+    assert.deepStrictEqual(roleLaunch('lens-reviewer', policy), { model: 'haiku', effort: null }, mode);
+  }
+  assert.strictEqual(modelPolicyRefusal(policyFrom('')), null);
+});
+
 test('#5942: an invalid model-effort refuses every role', () => {
   const policy = policyFrom('model-effort: fancy\n');
   assert.strictEqual(policy['model-effort'].invalid, true);

@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
 const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
-const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths } = require(path.join(LIB, 'driver', 'roles.js'));
+const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, LENS_REPLY_SCHEMA, lensReviewerSettings } = require(path.join(LIB, 'driver', 'roles.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 const OK = require('./fixtures/worker-result.json');
@@ -536,6 +536,69 @@ test('reviewer launches write no settings file', async (t) => {
   await launchWorker(base(t, { role: 'reviewer' }), { runner });
   assert.ok(!calls[0].args.includes('--settings'));
   assert.ok(!('--settings' in calls[0].files));
+});
+
+test('lens-reviewer launch writes lensReviewerSettings with the caller\'s readPaths and no toolchain paths', async (t) => {
+  const looked = [];
+  const toolchain = { lookup: (name) => { looked.push(name); return '/x/bin/' + name; }, realpath: (p) => p, firstLine: () => '', isExecutable: () => true };
+  const given = fakeRunner(okOut());
+  await launchWorker(base(t, { role: 'lens-reviewer', schema: LENS_REPLY_SCHEMA, readPaths: ['/repo/.git'] }), { runner: given.runner, toolchain });
+  const settings = JSON.parse(given.calls[0].files['--settings'].text);
+  assert.deepStrictEqual(settings, lensReviewerSettings({ platform: 'darwin', readPaths: ['/repo/.git'] }));
+  assert.deepStrictEqual(settings.sandbox.filesystem.allowRead, ['/repo/.git']);
+  assert.strictEqual(given.calls[0].args[given.calls[0].args.indexOf('--tools') + 1], 'Read,Grep,Glob,Bash');
+  // No readPaths: nothing is derived, even with a testCommand in the opts.
+  const none = fakeRunner(okOut());
+  await launchWorker(base(t, { role: 'lens-reviewer', schema: LENS_REPLY_SCHEMA }), { runner: none.runner, toolchain });
+  assert.deepStrictEqual(JSON.parse(none.calls[0].files['--settings'].text).sandbox.filesystem.allowRead, []);
+  assert.deepStrictEqual(looked, []);
+});
+
+test('lens-reviewer readPaths that re-open home are refused', { skip: process.platform === 'win32' && 'POSIX paths' }, async (t) => {
+  const { runner, calls } = fakeRunner(okOut());
+  const opts = base(t, { role: 'lens-reviewer', schema: LENS_REPLY_SCHEMA, readPaths: [os.homedir()], env: { PATH: HERMETIC_PATH, HOME: os.homedir() }, settingsDir: path.join(tmp(t), 'not-yet') });
+  await assert.rejects(launchWorker(opts, { runner }), (err) => err instanceof TypeError && /would re-open the home directory/.test(err.message));
+  assert.strictEqual(calls.length, 0);
+});
+
+// Captured from HEAD (b63aee088f) before the lens-reviewer role landed, through this
+// launcher with a fake runner; the settings file path is replaced by '<settings>'.
+test('existing roles: argv and settings unchanged', async (t) => {
+  const IMPL_SCHEMA_ARG = '{"type":"object","properties":{"status":{"type":"string","enum":["done","cannot-complete"]},"title":{"type":"string"},"summary":{"type":"string"}},"required":["status","title","summary"],"additionalProperties":false}';
+  const REVIEW_SCHEMA_ARG = '{"type":"object","properties":{"findings":{"type":"array"}},"required":["findings"],"additionalProperties":false}';
+  const TAIL = ['--max-budget-usd', '2', '--model', 'haiku', '--effort', 'high'];
+  const IMPL_DENY = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
+  const want = {
+    implementerDarwin: {
+      args: ['-p', '--safe-mode', '--restricted', '--tools', 'Read,Write,Edit,Bash', '--disable-slash-commands', '--strict-mcp-config', '--settings', '<settings>', '--permission-prompts', 'none', '--output-format', 'json', '--json-schema', IMPL_SCHEMA_ARG, ...TAIL],
+      settings: {
+        permissions: { defaultMode: 'dontAsk', allow: ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'], deny: IMPL_DENY, blockReadsOutsideWorkingDirectories: true },
+        sandbox: { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true }, filesystem: { allowRead: ['/opt/a'] } },
+      },
+    },
+    implementerLinux: {
+      args: ['-p', '--safe-mode', '--restricted', '--tools', 'Read,Write,Edit', '--disable-slash-commands', '--strict-mcp-config', '--settings', '<settings>', '--permission-prompts', 'none', '--output-format', 'json', '--json-schema', IMPL_SCHEMA_ARG, ...TAIL],
+      settings: { permissions: { defaultMode: 'dontAsk', allow: ['Read', 'Edit', 'Write'], deny: IMPL_DENY } },
+    },
+    reviewerDarwin: {
+      args: ['-p', '--safe-mode', '--restricted', '--tools', 'Read,Grep,Glob', '--disable-slash-commands', '--strict-mcp-config', '--permission-prompts', 'none', '--output-format', 'json', '--json-schema', REVIEW_SCHEMA_ARG, ...TAIL],
+      settings: null,
+    },
+  };
+  const cases = {
+    implementerDarwin: { role: 'implementer', platform: 'darwin', readPaths: ['/opt/a'] },
+    implementerLinux: { role: 'implementer', platform: 'linux', readPaths: ['/opt/a'] },
+    reviewerDarwin: { role: 'reviewer', platform: 'darwin', schema: REVIEW_RESULT_SCHEMA },
+  };
+  for (const [name, extra] of Object.entries(cases)) {
+    const { runner, calls } = fakeRunner(okOut());
+    await launchWorker(base(t, { ceilings: { wallClockMs: 60000, spendCeiling: 2 }, model: 'haiku', effort: 'high', ...extra }), { runner });
+    const args = calls[0].args.slice();
+    const i = args.indexOf('--settings');
+    if (i !== -1) args[i + 1] = '<settings>';
+    const settingsFile = calls[0].files['--settings'];
+    assert.deepStrictEqual({ args, settings: settingsFile ? JSON.parse(settingsFile.text) : null }, want[name], name);
+  }
 });
 
 test('Review focus: a schema with an unsupported keyword is refused before anything is written', async (t) => {
@@ -1098,10 +1161,10 @@ test('AC7/AC6.1: live smoke test — the write runs, and the echo, curl and .git
 test('AC8.1 (#5917): live probe — every role launches on each distinct default model', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
   const policy = resolvePolicyKeys(MODEL_POLICY_KEYS, { policyRaw: '' });
   const models = [...new Set(Object.keys(DRIVER_ROLE_PROFILES).map((role) => roleModel(role, policy)))].sort();
-  const schemas = { implementer: RESULT_SCHEMA, reviewer: REVIEW_RESULT_SCHEMA, explorer: RESULT_SCHEMA, 'merge-check': MERGE_CHECK_RESULT_SCHEMA, acceptance: ACCEPTANCE_RESULT_SCHEMA };
+  const schemas = { implementer: RESULT_SCHEMA, reviewer: REVIEW_RESULT_SCHEMA, explorer: RESULT_SCHEMA, 'merge-check': MERGE_CHECK_RESULT_SCHEMA, acceptance: ACCEPTANCE_RESULT_SCHEMA, 'lens-reviewer': LENS_REPLY_SCHEMA };
   assert.deepStrictEqual(Object.keys(schemas), Object.keys(ROLES));
   const implementerResult = { status: 'cannot-complete', title: 'probe', summary: 'probe' };
-  const replies = { implementer: implementerResult, reviewer: { findings: [] }, explorer: implementerResult, 'merge-check': { verdict: 'needs-human', rationale: 'probe' }, acceptance: { tryIt: [], observationPlan: {}, claims: [], parentBrief: {} } };
+  const replies = { implementer: implementerResult, reviewer: { findings: [] }, explorer: implementerResult, 'merge-check': { verdict: 'needs-human', rationale: 'probe' }, acceptance: { tryIt: [], observationPlan: {}, claims: [], parentBrief: {} }, 'lens-reviewer': { text: 'probe' } };
   const failing = [];
   for (const model of models) {
     for (const role of Object.keys(ROLES)) {

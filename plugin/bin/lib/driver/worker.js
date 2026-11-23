@@ -162,7 +162,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -542,12 +542,13 @@ async function launchWorker(opts, deps = defaultDeps()) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
   // Derived before the settings are built, so a bad testCommand or readPaths is refused
-  // before anything is written. A caller's readPaths is used as given.
+  // before anything is written. A caller's readPaths is used as given. Only the implementer
+  // derives toolchain read paths; the lens-reviewer reads the caller's, default none.
   let { readPaths } = opts;
-  if (spec.settings && readPaths === undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+  if (role === 'implementer' && readPaths === undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
     readPaths = toolchainReadPaths(testCommand, deps.toolchain || realToolchainDeps(env));
   }
-  const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform, readPaths }), null, 2) : null;
+  const settingsText = spec.settings ? JSON.stringify(settingsFor(role, { testCommand, platform, readPaths }), null, 2) : null;
   // A caller's readPaths may not re-open the home directory the read block exists to close:
   // an entry that is HOME, the passwd home, or an ancestor of either, lexically or through a
   // link, is refused by the same reopensHome rule toolchainRoot applies on the derived side.

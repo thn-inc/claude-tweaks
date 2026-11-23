@@ -1,7 +1,8 @@
 'use strict';
 // Worker roles for the driver's headless `claude -p` launcher: the per-role tool
 // list, the argument list the launcher composes, and the generated settings for
-// the one role that may run commands (the implementer). Pure data and builders;
+// the two roles that may run commands (the implementer, and the lens-reviewer's
+// read-only git forms). Pure data and builders;
 // nothing here spawns a process or touches the file system.
 //
 // What the rights rest on. These facts were probed on 2026-11-12 with Claude Code
@@ -190,6 +191,25 @@
 // `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
 // writable temporary root.
 //
+// The lens-reviewer role (#6000). A read-only headless lens reviewer: it reads a change
+// and returns one free-text reply (LENS_REPLY_SCHEMA), and it has no Write or Edit tool
+// and no network on any platform. Its generated settings (`lensReviewerSettings`) are
+// `defaultMode: dontAsk` with a closed allow list. On a sandbox-probed platform the list
+// is Read, Grep, Glob and the four git forms in LENS_GIT_RULES (`git diff`, `git show` and
+// `git log`, each with `--no-ext-diff --no-textconv` pinned, and `git grep`); the deny list
+// is the implementer's plus every flag of those forms that writes a file (`--output`), runs a
+// program (`--ext-diff`, `--textconv`, `git grep -O`/`--open-files-in-pager`, `git -c`) or
+// reads outside the working directory (`--no-index`), plus Edit and Write; the read block is
+// on; and the sandbox block is the implementer's, with `allowRead` set to the caller's
+// `readPaths` (the reviewed worktree's git common dir) and `filesystem.denyWrite` set to the
+// working directory. Off the probed platforms the allow list is Read alone, there is no
+// sandbox block, and `toolsFor` launches it with Read alone: Grep and Glob are on only where
+// they were probed (#5258), and Bash only where the sandbox was. The note its prompt carries
+// (`lensAdmittedFormsNote`) is derived from LENS_GIT_RULES, so the admitted forms it names
+// and the allow list cannot drift. Widening the allow list, or dropping a deny rule, means
+// re-probing every form it admits per the headless-worker-launch skill.
+// Probe results: Task 2
+//
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
 
@@ -262,6 +282,17 @@ const ACCEPTANCE_RESULT_SCHEMA = deepFreeze({
   additionalProperties: false,
 });
 
+// The lens-reviewer's reply: one free-text block. `required` is derived from the names.
+const LENS_REPLY_PROPERTIES = {
+  text: { type: 'string' },
+};
+const LENS_REPLY_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: LENS_REPLY_PROPERTIES,
+  required: Object.keys(LENS_REPLY_PROPERTIES),
+  additionalProperties: false,
+});
+
 const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
 
 const ROLES = deepFreeze({
@@ -270,18 +301,22 @@ const ROLES = deepFreeze({
   explorer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
   'merge-check': { tools: ['Read', 'Grep', 'Glob'], settings: false },
   acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  'lens-reviewer': { tools: ['Read', 'Grep', 'Glob', 'Bash'], settings: true },
 });
 
 // The work profile each role launches on unless policy `express-driver-models` overrides
-// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` keeps its
-// code-only row. `launch.js` resolves the profile through `profiles.js`. A new role in
-// ROLES needs a row here (AC6.1).
+// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` and
+// `lens-reviewer` keep their code-only rows. `launch.js` resolves the profile through
+// `profiles.js`. A new role in ROLES needs a row here (AC6.1). `lens-reviewer` is `fast`
+// because each lens picks its own model and `fast` carries no effort dial, so a haiku lens
+// never receives `--effort` (#6000).
 const DRIVER_ROLE_PROFILES = deepFreeze({
   implementer: 'standard',
   reviewer: 'capable',
   explorer: 'standard',
   'merge-check': 'standard',
   acceptance: 'standard',
+  'lens-reviewer': 'fast',
 });
 const POLICY_DRIVER_ROLES = deepFreeze(['implementer', 'reviewer', 'merge-check', 'acceptance']);
 
@@ -332,6 +367,23 @@ function assertReadPaths(readPaths, platform) {
   }
 }
 
+// A second layer, not the only one: with `dontAsk`, a closed allow list and
+// `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
+// rules keep them refused if a later change widens the allow list or the sandbox.
+const IMPLEMENTER_DENY = deepFreeze(['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)']);
+
+// The sandbox block every settings role gets on a sandbox-probed platform. A fresh object each call.
+function sandboxBlock(readPaths) {
+  return {
+    enabled: true,
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    failIfUnavailable: true,
+    network: { allowedDomains: [], strictAllowlist: true },
+    filesystem: { allowRead: readPaths.slice() },
+  };
+}
+
 function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
   assertReadPaths(readPaths, platform);
   if (testCommand !== undefined) assertTestCommand(testCommand);
@@ -341,23 +393,68 @@ function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
     if (testCommand !== undefined) allow.push('Bash(' + testCommand + ' *)');
     allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
-  // A second layer, not the only one: with `dontAsk`, a closed allow list and
-  // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
-  // rules keep them refused if a later change widens the allow list or the sandbox.
-  const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
-  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
+  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny: IMPLEMENTER_DENY.slice() } };
   if (sandboxed) {
     settings.permissions.blockReadsOutsideWorkingDirectories = true;
-    settings.sandbox = {
-      enabled: true,
-      autoAllowBashIfSandboxed: false,
-      allowUnsandboxedCommands: false,
-      failIfUnavailable: true,
-      network: { allowedDomains: [], strictAllowlist: true },
-      filesystem: { allowRead: readPaths.slice() },
-    };
+    settings.sandbox = sandboxBlock(readPaths);
   }
   return settings;
+}
+
+// The lens-reviewer's only shell commands (see "The lens-reviewer role" above). Each
+// diff-shaped form pins `--no-ext-diff --no-textconv`, so no configured diff program or
+// text conversion filter runs.
+const LENS_GIT_RULES = deepFreeze([
+  'Bash(git diff --no-ext-diff --no-textconv *)',
+  'Bash(git show --no-ext-diff --no-textconv *)',
+  'Bash(git log --no-ext-diff --no-textconv *)',
+  'Bash(git grep *)',
+]);
+// The implementer's deny rules plus every flag of the admitted forms that writes a file
+// (`--output`), runs a program (`--ext-diff`, `--textconv`, `git grep -O`/
+// `--open-files-in-pager`, `git -c`) or reads outside the working directory (`--no-index`),
+// and the two file-writing tools.
+const LENS_DENY = deepFreeze([
+  ...IMPLEMENTER_DENY,
+  'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)',
+  'Bash(* --open-files-in-pager*)', 'Bash(git grep * -O*)', 'Bash(git -c *)', 'Edit', 'Write',
+]);
+
+function lensReviewerSettings({ platform, readPaths = [] } = {}) {
+  assertReadPaths(readPaths, platform);
+  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
+  const allow = sandboxed ? ['Read', 'Grep', 'Glob', ...LENS_GIT_RULES] : ['Read'];
+  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny: LENS_DENY.slice() } };
+  if (sandboxed) {
+    settings.permissions.blockReadsOutsideWorkingDirectories = true;
+    settings.sandbox = sandboxBlock(readPaths);
+    settings.sandbox.filesystem.denyWrite = ['.'];
+  }
+  return settings;
+}
+
+// The command forms the lens-reviewer may run, for its appended system prompt. Derived from
+// LENS_GIT_RULES, so the note and the allow list cannot drift.
+function lensAdmittedFormsNote() {
+  const forms = LENS_GIT_RULES.map((rule) => rule.replace(/^Bash\(/, '').replace(/ \*\)$/, ''));
+  return [
+    'You are a read-only reviewer: you read and report, and you change nothing.',
+    'The only shell commands you may run are these forms, each followed by its own arguments:',
+    ...forms,
+    'Run each exactly as written, with nothing prepended, appended or chained (`;`, `&&`, `|`).',
+    'Every other file read goes through the Read tool.',
+    'A refused command is refused: do not rephrase it or retry it in another form.',
+  ].join('\n');
+}
+
+// The generated settings for a role: the implementer's or the lens-reviewer's, or null for a
+// role that launches with no settings file.
+function settingsFor(role, { testCommand, platform, readPaths } = {}) {
+  const spec = specFor(role);
+  if (!spec.settings) return null;
+  if (role === 'implementer') return implementerSettings({ testCommand, platform, readPaths });
+  if (role === 'lens-reviewer') return lensReviewerSettings({ platform, readPaths });
+  throw new Error('no settings builder for role ' + role);
 }
 
 // The first word of a command as a real path: an absolute word is the path, a relative
@@ -475,11 +572,14 @@ function assertEffort(value) {
 }
 
 // The tools a role launches with on a platform: Bash is dropped for a role that carries
-// generated settings when the platform is not sandbox-probed. A fresh array each call.
+// generated settings when the platform is not sandbox-probed, and so are the
+// lens-reviewer's Grep and Glob, which were probed for it only where the sandbox was
+// (#5258). A fresh array each call.
 function toolsFor(role, platform) {
   const spec = specFor(role);
-  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
-  return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
+  if (SANDBOX_PROBED_PLATFORMS.includes(platform)) return spec.tools.slice();
+  const unprobed = role === 'lens-reviewer' ? ['Bash', 'Grep', 'Glob'] : ['Bash'];
+  return spec.tools.filter((tool) => !(spec.settings && unprobed.includes(tool)));
 }
 
 function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
@@ -503,4 +603,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
