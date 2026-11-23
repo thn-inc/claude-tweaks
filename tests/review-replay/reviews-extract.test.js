@@ -593,6 +593,16 @@ describe('branch roles', () => {
     assert.equal(text, promptOf(x, `${RUNB}/task.2`), 'the pointer file\'s text, rewritten as t2\'s own prompt is');
   });
 
+  test('--role task: a pointer whose file carries its own sha pair replays the file, whatever range the pointer names', async () => {
+    const x = await extractBranch('task', { pointer: 'present', pointerShas: true });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    const tp = fixture.slots.find((s) => s.agentId === 'tp');
+    const repo = fixture.repos.find((p) => p.key === tp.repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2], 'the range is the file\'s');
+    assert.equal(promptOf(x, tp.name), promptOf(x, `${RUNB}/task.2`));
+  });
+
   test('--role task: a prompt citing a file with no sha pair while naming its own range replays the original prompt', async () => {
     const x = await extractBranch('task', { hybrid: true });
     ok(x);

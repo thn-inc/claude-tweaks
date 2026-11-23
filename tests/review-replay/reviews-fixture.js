@@ -195,13 +195,14 @@ function taskPrompt({ worktree, n, base, head }) {
 // and an unlocated Minor item), rr2 (the re-review of T2..F), wb (the whole-branch review of B..F, one Minor item).
 //   pointer:         null, or a task review tp whose prompt points at {worktree}/.superpowers/sdd/x/task-2-review-prompt.md;
 //                    'present' writes that file with t2's prompt, 'gone' does not
+//   pointerShas:     with pointer, tp's pointer prompt also names its own `Base {B}, Head {F}` line
 //   catchUp:         a side commit M off B (adds src/z.js) merged into the branch at F as W; wb reviews M..W
 //   noWholeBranch:   wb has no transcript
 //   wbUnusableFirst: an extra whole-branch item wb0 with no transcript, before wb
 //   boldLabel:       a task review t3 of T1..T2 whose Needs fixes reply has bold-label severities only
 //   hybrid:          a task review th whose prompt says "in this file" over a lone path to an existing template with
 //                    no sha pair, and carries its own `Base {T1}, Head {T2}` line: a full prompt, not a pointer
-function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBranch = false, wbUnusableFirst = false, boldLabel = false, hybrid = false } = {}) {
+function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBranch = false, wbUnusableFirst = false, boldLabel = false, hybrid = false, pointerShas = false } = {}) {
   const mainRoot = path.join(root, 'main checkout', 'repo');
   const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
   const transcripts = path.join(root, 'projects');
@@ -262,7 +263,7 @@ function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBran
     if (pointer === 'present') put(promptFile, t2Prompt);
     dispatch({
       agentId: 'tp', description: 'Review task 2 (pointer)', role: 'task review', tier: 'standard', effort: 'medium',
-      prompt: `Your full review instructions are in this file (it is your prompt): ${promptFile}`, reply: t2Reply,
+      prompt: `Your full review instructions are in this file (it is your prompt): ${promptFile}${pointerShas ? `\nBase ${B}, Head ${F}.` : ''}`, reply: t2Reply,
     });
   }
   if (boldLabel) {
