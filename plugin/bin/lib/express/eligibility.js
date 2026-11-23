@@ -165,7 +165,9 @@ function isProtectedPath(path, list = SHIPPED_PROTECTED_PATHS) {
 }
 
 // The families declared buildTime above, derived from PROTECTED_FAMILIES (#6019) so a new family must
-// declare its kind. Every build-time family is also a protected family.
+// declare its kind. Always the shipped families, whatever a project's `protected-paths` list says (#6020):
+// its one caller tests isProtectedPath against the project's list first, so a family the list drops is
+// never judged build-time, and a project-added glob is never build-time.
 const BUILD_TIME_PROTECTED_GLOBS = Object.freeze(PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.glob));
 
 function isBuildTimeProtectedPath(path) {

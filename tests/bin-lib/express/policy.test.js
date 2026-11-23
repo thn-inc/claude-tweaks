@@ -247,7 +247,8 @@ test('protectedPathGlobsOf keys on invalid and source, from real resolver replie
   assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: []\n')), []);
   assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: infra/**, **/package.json\n')), ['infra/**', '**/package.json']);
   assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: ["infra/**"]\n')), SHIPPED_PROTECTED_PATHS);
-  for (const e of [undefined, { value: undefined, source: 'policy' }, { value: 'a b', source: 'policy' }]) {
+  assert.deepStrictEqual(protectedPathGlobsOf({ value: ['infra/**'], source: 'policy' }), ['infra/**']);
+  for (const e of [undefined, { value: undefined, source: 'policy' }, { value: 'a b', source: 'policy' }, { value: ['infra/**', 'a b'], source: 'policy' }]) {
     assert.deepStrictEqual(protectedPathGlobsOf(e), SHIPPED_PROTECTED_PATHS, JSON.stringify(e));
   }
 });
