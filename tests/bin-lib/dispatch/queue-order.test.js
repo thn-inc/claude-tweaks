@@ -240,6 +240,7 @@ test('#6062 AC2: a change to any other grouping input is a miss', () => {
   const changes = {
     'express-driver': 'on', 'express-driver-max-key-files': '5', 'express-driver-review': 'off',
     'integration-model': 'local-merge', 'merge-sensitive-paths': 'b/**', 'dispatch-fastlane-bundle-cap': '8',
+    'express-driver-max-risk': 'medium',
   };
   for (const [k, v] of Object.entries(changes)) {
     assert.equal(cacheUsable(blobFor(BASE), SIGNAL, keyFor({ ...BASE, [k]: v })), false, k);

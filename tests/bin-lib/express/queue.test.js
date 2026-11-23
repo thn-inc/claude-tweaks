@@ -381,6 +381,26 @@ test('#6062 failed read: a throwing resolver carries groupingFingerprint({}), on
   assert.equal(second.fingerprint, groupingFingerprint({}));
 });
 
+test('#6062 failed read: a second-call getter that throws a falsy value still fails the read, as a thrown Error does', () => {
+  for (const key of ['integration-model', 'merge-sensitive-paths']) {
+    const sink = stderrSink();
+    let n = 0;
+    const p = expressQueuePolicy({
+      resolvePolicy: (keys) => {
+        n += 1;
+        const r = policy(FP_BASE).resolvePolicy(keys);
+        if (n === 2) r[key] = { get value() { throw undefined; }, source: 'policy' }; // eslint-disable-line no-throw-literal
+        return r;
+      },
+      stderr: sink.stderr,
+    });
+    assert.equal(p.enabled, false, key);
+    assert.equal(p.fingerprint, groupingFingerprint({}), key);
+    assert.equal(sink.lines.length, 1, key);
+    assert.match(sink.lines[0], /policy read failed/, key);
+  }
+});
+
 test('#6062 an unrecognised express-driver is disabled but its fingerprint still tracks the bundle cap and work-links', () => {
   const sink = stderrSink();
   const bad = { ...FP_BASE, 'express-driver': 'maybe' };

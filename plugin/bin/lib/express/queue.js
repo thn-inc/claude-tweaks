@@ -2,7 +2,9 @@
 // queue-pull policy: dispatch's queue-pull-script.md keeps express-eligible and
 // driver-routable fast-lane records out of bundles (buildDispatchGroups's
 // keepSingleton) and stamps the queue-order cache with the matching grouping
-// mode, so a blob computed under another mode is never reused.
+// mode, so a blob computed under another mode is never reused. expressQueuePolicy
+// also returns the settings `fingerprint` (groupingFingerprint over GROUPING_INPUTS)
+// that keys the queue-order cache beside the stamp (#6062).
 'use strict';
 
 const { evaluateRecordEligibility, widenings } = require('./eligibility');
@@ -103,7 +105,7 @@ function expressQueuePolicy(deps = {}) {
   const failed = {};
   // A second-call value read once up front; a throwing or missing entry fails here as a direct read would.
   const need = (key) => {
-    if (failed[key]) throw failed[key];
+    if (key in failed) throw failed[key];
     if (!policy[key]) throw new TypeError(`policy entry ${key} missing`);
     return read[key];
   };
@@ -111,7 +113,7 @@ function expressQueuePolicy(deps = {}) {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
     Object.assign(read, valuesOf(SECOND_KEYS, policy, failed));
     if (expressOn) {
-      if (failed['merge-sensitive-paths']) throw failed['merge-sensitive-paths'];
+      if ('merge-sensitive-paths' in failed) throw failed['merge-sensitive-paths'];
       expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }) };
     }
   } catch (err) {
