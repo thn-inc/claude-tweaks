@@ -18,7 +18,7 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, relaunchOrStop,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, relaunchOrStop, relaunchesOnCannotComplete,
 } = require(path.join(LIB, 'driver', 'steps'));
 const { relaunchNote, cannotCompletePrompt } = require(path.join(LIB, 'driver', 'relaunch'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
@@ -4307,9 +4307,10 @@ test('#5997 Decision Q2: a stepped-up profile that does not resolve is a refused
 });
 
 test('#5997: a red-tests relaunch\'s changedFiles is both commits\' paths', async () => {
-  const red = relaunchRig({ relaunchDirty: ' M b.js\0 M a.js\0?? c.js\0', script: [redRun(1)] });
+  // The relaunch never touches a.js, the first commit's only path: it survives only through the union.
+  const red = relaunchRig({ relaunchDirty: ' M b.js\0?? c.js\0', script: [redRun(1)] });
   assert.equal(await run(['#7'], red.deps), 0);
-  assert.deepEqual(gitAddPaths(red), [['a.js'], ['b.js', 'a.js', 'c.js']]);
+  assert.deepEqual(gitAddPaths(red), [['a.js'], ['b.js', 'c.js']]);
   assert.ok(summaryText(red).includes('express lane: a.js, b.js, c.js;'), summaryText(red));
   const stuck = relaunchRig({ first: STUCK });
   assert.equal(await run(['#7'], stuck.deps), 0);
@@ -4349,6 +4350,40 @@ test('#5997: the relaunch prompt follows the first prompt after a blank line', a
   assert.ok(first.args[0].prompt.endsWith('\n'));
   assert.equal(second.args[0].prompt, `${first.args[0].prompt}\n${cannotCompletePrompt('stuck on X')}`);
   assert.ok(second.args[0].prompt.includes('\n\nRelaunch.'));
+});
+
+test('#5997: the cannot-complete reason is neutralized once in the relaunch prompt', async () => {
+  const h = relaunchRig({ first: { ...STUCK, result: { ...STUCK.result, summary: 'stuck on @bob' } } });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  const added = second.args[0].prompt.slice(first.args[0].prompt.length);
+  assert.equal(added, `\n${cannotCompletePrompt('stuck on @bob')}`);
+  assert.equal(added.split('​').length, 2, 'one zero-width character for the one @, not two');
+});
+
+test('#5997: only the stop the launch marks cannot-complete triggers the worker step\'s relaunch', async () => {
+  const marked = { status: 'stop', detail: 'worker could not complete', cannotComplete: { summary: 'x' } };
+  assert.equal(relaunchesOnCannotComplete('record', marked), true);
+  assert.equal(relaunchesOnCannotComplete('lane', marked), false);
+  for (const other of [
+    { status: 'stop', detail: 'some other stop the launch path returns' },
+    { status: 'stop', reason: 'cannot-complete', detail: 'worker could not complete' },
+    { status: 'fail', detail: 'x', cannotComplete: { summary: 'x' } },
+  ]) assert.equal(relaunchesOnCannotComplete('record', other), false, JSON.stringify(other));
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.ok(!JSON.stringify(h.lines()).includes('cannotComplete'), 'no line carries the marker');
+});
+
+test('#5997: a relaunch that fails before any model resolves still writes attempt 2 beside its marks', async () => {
+  // The third HEAD read in the worktree is the relaunch's read before its launch (first launch: before, after).
+  const h = relaunchRig({ first: STUCK, script: [nthCall(isHeadReadInWt, 3, () => { throw unreadableGit(); })] });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 1, 'the relaunch launch never started');
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.status, relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger, Object.hasOwn(relaunched, 'model')], ['fail', 2, 'fast', 'cannot-complete', false]);
+  assert.equal(relaunched.detail, `${UNREADABLE_BEFORE}; after one relaunch (cannot-complete, fast to standard)`);
 });
 
 test('#5997: an interrupt during the relaunch launch is reported at the relaunch and runs nothing after it', async () => {

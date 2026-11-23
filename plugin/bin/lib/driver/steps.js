@@ -868,7 +868,11 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile 
     return { status: 'fail', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
   }
   if (result && result.status === 'cannot-complete') {
-    return { status: 'stop', detail: `worker could not complete${ctx.worker.summary ? `: ${ctx.worker.summary}` : ''}`, extra };
+    // `cannotComplete` marks this stop for the relaunch trigger (#5997, relaunchesOnCannotComplete) and carries
+    // the worker's raw summary, which cannotCompletePrompt neutralizes once. No line or final line carries it
+    // (defineStep and fixWorkerLaunch emit status, detail and extra only).
+    const cannotComplete = { summary: typeof result.summary === 'string' ? result.summary : null };
+    return { status: 'stop', detail: `worker could not complete${ctx.worker.summary ? `: ${ctx.worker.summary}` : ''}`, extra, cannotComplete };
   }
   if (!result || result.status !== 'done') {
     return { status: 'fail', detail: `worker result status is neither done nor cannot-complete: ${neutralize(String(result && result.status))}`, extra };
@@ -889,6 +893,11 @@ function launchThrowFail(ctx, err) {
 function implementerRule(policy) {
   const entry = policy && policy[IMPLEMENTER_TIER_KEY];
   return entry && entry.value === 'record' ? 'record' : 'lane';
+}
+// The worker step's relaunch trigger (#5997): under `record`, only the stop launchImplementerAndCheck marks
+// `cannotComplete` (the envelope's `cannot-complete`), never another `stop` it may return.
+function relaunchesOnCannotComplete(rule, result) {
+  return rule === 'record' && !!result && result.status === 'stop' && !!result.cannotComplete && typeof result.cannotComplete === 'object';
 }
 // What ctx.implementer records after a worker-step launch that resolved a model (a read: no interruptClass rung).
 function setImplementer(ctx, rule, model, profile, attempt) {
@@ -926,7 +935,8 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   setImplementer(ctx, rule, extra.model, extra.profile ?? null, 1);
   const line = { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 1 } : {}) } };
   // The cannot-complete trigger (#5997): the first worker's edits stay in the worktree as they are.
-  if (rule === 'record' && result.status === 'stop') return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, () => cannotCompletePrompt(ctx.worker && ctx.worker.summary));
+  // The prompt gets the raw summary: ctx.worker.summary is neutralized already, and cannotCompletePrompt neutralizes.
+  if (relaunchesOnCannotComplete(rule, result)) return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, () => cannotCompletePrompt(result.cannotComplete.summary));
   return line;
 });
 
@@ -1278,7 +1288,8 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   if (ctx.worker !== first) ctx.worker = relaunchWorker(first, ctx.worker, relaunch.trigger);
   const extra = result.extra || {};
   setImplementer(ctx, 'record', extra.model, extra.profile ?? null, 2);
-  return withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 2 } : {}), ...marks } });
+  // `attempt` rides with the marks even when no model resolved (a HEAD unreadable before the launch).
+  return withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, attempt: 2, ...marks } });
 });
 
 // The core commit step after the relaunch. After red tests it extends ctx.changedFiles: the first commit's paths,
@@ -1730,5 +1741,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule, relaunchOrStop,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule, relaunchOrStop, relaunchesOnCannotComplete,
 };

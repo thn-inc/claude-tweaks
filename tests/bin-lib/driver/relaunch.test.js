@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 const lib = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const relaunch = require(path.join(lib, 'driver', 'relaunch'));
@@ -168,5 +169,9 @@ test('header lists the three outcomes and never requires steps.js', () => {
   const src = readText(path.join(lib, 'driver', 'relaunch.js'));
   const header = src.split('\n').filter((l) => l.startsWith('//')).join('\n');
   for (const word of ['relaunch: true', 'no-step-up', 'clamped', 'never requires `steps.js`']) assert.ok(header.includes(word), word);
-  assert.ok(!/require\([^)]*steps/.test(src));
+  // The require check reads code only (bin-source-scan-conformance): a comment naming steps.js is not a require.
+  const code = stripComments(src);
+  const verdict = stripperVerdict(src, code);
+  assert.equal(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
+  assert.ok(!/require\([^)]*steps/.test(code));
 });
