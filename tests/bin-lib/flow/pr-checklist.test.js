@@ -182,8 +182,29 @@ test('phaseRowStates reads checked and unchecked rows inside the span only', () 
   assert.equal(phaseRowStates(built).rows.build, 'checked');
   assert.equal(phaseRowStates(built).rows.test, 'unchecked');
   assert.equal(phaseRowStates(built.replace('- [x] build', '- [X] build')).rows.build, 'checked');
-  assert.deepEqual(phaseRowStates(`${body}\n- [ ] build\n`), phaseRowStates(body));
+  assert.equal(phaseRowStates(`${built}\n- [ ] build\n`).rows.build, 'checked');
   assert.deepEqual(phaseRowStates(built.replace(/\n/g, '\r\n')), phaseRowStates(built));
+});
+
+test('phaseRowStates: a duplicate row for one phase reads unchecked when any copy is unchecked', () => {
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  const dupAfter = built.replace('- [x] build', '- [x] build\n- [ ] build');
+  const dupBefore = built.replace('- [x] build', '- [ ] build\n- [x] build');
+  assert.notEqual(dupAfter, built);
+  assert.equal(phaseRowStates(dupAfter).rows.build, 'unchecked');
+  assert.equal(phaseRowStates(dupBefore).rows.build, 'unchecked');
+  assert.deepEqual(uncheckedBuildOrTest(dupAfter), ['build', 'test']);
+});
+
+test('phaseRowStates reads the plain-text companion span when the HTML markers are absent', () => {
+  const plain = setPhaseRow({ body, phase: 'build' }).body
+    .replace('<!-- phases-start -->\n', '').replace('<!-- phases-end -->\n', '');
+  assert.ok(!plain.includes('<!-- phases-'));
+  assert.ok(plain.includes('[claude-tweaks-phases-start]'));
+  const states = phaseRowStates(plain);
+  assert.equal(states.span, true);
+  assert.equal(states.rows.build, 'checked');
+  assert.equal(states.rows.test, 'unchecked');
 });
 
 test('phaseRowStates: no span gives span false, rows {}', () => {

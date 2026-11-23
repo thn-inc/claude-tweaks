@@ -75,7 +75,9 @@ function phaseRowStates(body) {
   const rows = {};
   for (let i = span.start + 1; i < span.end; i++) {
     const m = /^- \[( |x|X)\] (.+)$/.exec(bare(lines[i]));
-    if (m && CANONICAL_PHASES.includes(m[2])) rows[m[2]] = m[1] === ' ' ? 'unchecked' : 'checked';
+    if (!m || !CANONICAL_PHASES.includes(m[2])) continue;
+    // Duplicate rows for one phase: unchecked wins (the conservative reading for an in-flight gate).
+    if (rows[m[2]] !== 'unchecked') rows[m[2]] = m[1] === ' ' ? 'unchecked' : 'checked';
   }
   return { span: true, rows };
 }
