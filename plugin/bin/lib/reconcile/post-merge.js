@@ -70,9 +70,10 @@
 //
 // `detectHollowMerges` (#6143) finds a hollow merge: a MERGED PR whose first-line run marker names a
 // non-terminal run whose build or test phase has not finished (lib/flow/inflight-run.js's inFlightPhase,
-// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (an unreadable
-// body, run state or decisions.md, any throw while checking it) is held as `hollow-check-failed`, never
-// settled. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
+// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (a transient
+// PR-state answer — HOLLOW_TRANSIENT_PR_ANSWERS —, an unreadable body, run state or decisions.md, any throw
+// while checking it, from its PR lookup on) is held as `hollow-check-failed`, never settled; the other runs
+// are still judged. A definitive PR-state answer (OPEN, CLOSED, `gh-absent`, `pr-not-found`, …) gives no entry. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
 // must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge it
 // posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
 // each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
@@ -110,6 +111,10 @@ const MAX_ATTEMPTS = 3;
 // detectHollowMerges' per-record comment marker: its location, and the section it is written under.
 const HOLLOW_STEP = 'reconcile hollow-merge';
 const HOLLOW_SECTION = '/reconcile';
+// The merge time a comment or marker names when neither the PR view nor the PR state carries one.
+const UNKNOWN_MERGE_TIME = 'an unknown time';
+// A hollow merge with no record to comment on (no closing reference in this repo, no single-number `spec:`).
+const NO_HOLLOW_RECORD_DETAIL = 'no record to comment on';
 // A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
 // An unreadable own claim (a non-ENOENT read error in heartbeatClaim) is reported with it too: an accepted
 // mislabel, the safe stop being the point.
@@ -136,6 +141,9 @@ const CLAIM_MAX_IDLE_MS = Math.max(5 * 60 * 1000, 2.5 * GH_TIMEOUT_CEILING_MS);
 const CLAIM_ASIDE_MAX_AGE_MS = 60 * 1000;
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
+// The PR-state answers that leave a merge unknown, so detectHollowMerges holds the run instead of settling it:
+// pr-state.js's one transport answer, plus this module's own retryable reasons. pr-state.js exports no list.
+const HOLLOW_TRANSIENT_PR_ANSWERS = new Set([TRANSIENT_PR_FAILURE, TRANSIENT_REASON, 'budget-exhausted']);
 // Step 4.0b skips that are deliberate gate outcomes, not failures: below-floor-parent-close.js's own list,
 // owned by the module that emits them. Every other reason — `gh-failed`, `internal-error`, the step-wide
 // `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
@@ -673,13 +681,17 @@ async function detectHollowMerges({
 
   // Non-terminal runs only: a `clean` run is never in flight.
   for (const { dir, state } of listRunDirsWithState(root)) {
-    const pr = hollowCandidatePr(root, dir, state, prStates, worktrees);
-    if (pr === null) continue;
-    const prState = await prStates.byNumberAsync(pr);
-    if (!prState || typeof prState !== 'object' || prState.state !== 'MERGED') continue;
     const runId = path.basename(dir);
     const commented = [];
+    let pr = null;
     try {
+      pr = hollowCandidatePr(root, dir, state, prStates, worktrees);
+      if (pr === null) continue;
+      const prState = await prStates.byNumberAsync(pr);
+      // A transient answer leaves the merge unknown: held. A definitive one (OPEN, CLOSED, `gh-absent`,
+      // `pr-not-found`, `invalid-arguments`, `unknown-host`, no answer) is not a hollow merge.
+      if (HOLLOW_TRANSIENT_PR_ANSWERS.has(prState)) throw new Error(`PR #${pr} state lookup: ${prState}`);
+      if (!prState || typeof prState !== 'object' || prState.state !== 'MERGED') continue;
       const view = JSON.parse(timedGh(['pr', 'view', String(pr), '--json', 'body,closingIssuesReferences,mergedAt']));
       if (!view || typeof view !== 'object' || typeof view.body !== 'string') throw new Error(`gh pr view ${pr}: no body in the response`);
       if (firstLineRunId(view.body) !== runId) continue; // not this run's PR: it settles as today
@@ -699,7 +711,7 @@ async function detectHollowMerges({
         const spec = specNumberOf(dir);
         records = spec ? [Number(spec)] : [];
       }
-      const mergedAt = view.mergedAt || prState.mergedAt;
+      const mergedAt = view.mergedAt || prState.mergedAt || UNKNOWN_MERGE_TIME;
       if (!dryRun) {
         for (const n of records) {
           if (hollowMarked(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), pr, n)) continue;
@@ -716,7 +728,10 @@ async function detectHollowMerges({
           });
         }
       }
-      entries.push({ runDir: dir, runId, pr, action: 'held', reason: 'hollow-merge', phase, records, commented });
+      entries.push({
+        runDir: dir, runId, pr, action: 'held', reason: 'hollow-merge', phase, records, commented,
+        ...(records.length === 0 ? { detail: NO_HOLLOW_RECORD_DETAIL } : {}),
+      });
     } catch (e) {
       entries.push({
         runDir: dir, runId, pr, action: 'held', reason: 'hollow-check-failed', detail: boundDetail(oneLine(e && e.message ? e.message : e)),

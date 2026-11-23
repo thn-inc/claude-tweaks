@@ -2534,13 +2534,91 @@ test('hollow merge: a marker naming another run, or an express body, gives no en
   assert.deepEqual(express, { entries: [], hollowRunDirs: [] });
 });
 
-test('hollow merge: an OPEN PR, or a failed PR-state lookup, gives no entry and no body read', async () => {
+test('hollow merge: an OPEN PR or a definitive lookup failure (gh-absent, pr-not-found) gives no entry and no body read', async () => {
   const root = mainCheckout();
   addRun(root, HR, { decisions: ONE_LINE_DECISION });
   const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
-  assert.deepEqual(await detect(root, { gh, prs: { 11: { number: 11, state: 'OPEN' } } }), { entries: [], hollowRunDirs: [] });
-  assert.deepEqual(await detect(root, { gh, prs: { 11: 'network-failure' } }), { entries: [], hollowRunDirs: [] });
+  for (const answer of [{ number: 11, state: 'OPEN' }, 'gh-absent', 'pr-not-found']) {
+    assert.deepEqual(await detect(root, { gh, prs: { 11: answer } }), { entries: [], hollowRunDirs: [] }, JSON.stringify(answer));
+  }
   assert.equal(gh.calls.length, 0);
+});
+
+test('hollow merge: a transient PR-state answer (network-failure, transient-failure, budget-exhausted) holds the run as hollow-check-failed with no gh call', async () => {
+  for (const answer of ['network-failure', 'transient-failure', 'budget-exhausted']) {
+    const root = mainCheckout();
+    const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+    const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+    const r = await detect(root, { gh, prs: { 11: answer } });
+    assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-check-failed', detail: `PR #11 state lookup: ${answer}` }], answer);
+    assert.deepEqual(r.hollowRunDirs, [dir]);
+    assert.equal(gh.calls.length, 0, answer);
+  }
+});
+
+test('hollow merge: a PR lookup that throws for one run holds that run (pr null before a number resolves) and still judges the other', async () => {
+  const root = mainCheckout();
+  const a = addRun(root, '2026-11-23T100000-record-1', { pr: null, decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(a, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: 42 }));
+  const b = addRun(root, '2026-11-23T110000-record-2', { pr: 12, decisions: ONE_LINE_DECISION });
+  const c = addRun(root, '2026-11-23T120000-record-3', { pr: 13, decisions: ONE_LINE_DECISION });
+  const prStates = {
+    byNumberAsync: async (n) => { if (n === 13) throw new Error('socket hang up'); return merged(); },
+    byBranch: () => { throw new Error('byBranch exploded'); },
+  };
+  const gh = hollowGh({ views: { 12: view(hollowBody(path.basename(b))) } });
+  const r = await detect(root, { gh, prStates });
+  const byRun = Object.fromEntries(r.entries.map((e) => [e.runDir, e]));
+  assert.equal(byRun[a].reason, 'hollow-check-failed', 'a corrupt worktree value throws in the branch route');
+  assert.equal(byRun[a].pr, null);
+  assert.equal(byRun[c].reason, 'hollow-check-failed');
+  assert.equal(byRun[c].pr, 13);
+  assert.match(byRun[c].detail, /socket hang up/);
+  assert.equal(byRun[b].reason, 'hollow-merge');
+  assert.deepEqual([...r.hollowRunDirs].sort(), [a, b, c].sort());
+});
+
+test('hollow merge: no mergedAt anywhere names an unknown time in the comment and the marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: { body: hollowBody(HR), closingIssuesReferences: [ref(6143)] } } });
+  await detect(root, { gh, prs: { 11: { number: 11, state: 'MERGED' } } });
+  assert.match(gh.comments()[0].input, /was merged at an unknown time while/);
+  assert.ok(hollowMarkers(dir)[0].action.startsWith('hollow merge of PR #11 commented on #6143 (merged an unknown time, build unfinished)'));
+  assert.doesNotMatch(decisionsOf(dir), /undefined/);
+});
+
+test('hollow merge: a hollow run with no record to comment on is held with a detail saying so', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR), []) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [], commented: [], detail: 'no record to comment on',
+  }]);
+  assert.equal(gh.comments().length, 0);
+});
+
+test('hollow merge: a run with no pr field resolves its branch from the live worktree entry for state.worktree', async () => {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-wt-')));
+  tempRoots.push(wt);
+  fs.rmdirSync(wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'wt-branch-6143', wt);
+  const dir = addRun(root, HR, { pr: null, decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: wt }));
+  const branchCalls = [];
+  const prStates = {
+    byNumberAsync: async (n) => ({ 43: merged() }[n]),
+    byBranch: (b) => { branchCalls.push(b); return b === 'wt-branch-6143' ? { number: 43 } : null; },
+  };
+  const gh = hollowGh({ views: { 43: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.deepEqual(branchCalls, ['wt-branch-6143']);
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].pr, 43);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
 });
 
 test('hollow merge: a setup failure returns the failure with empty sets', async () => {
