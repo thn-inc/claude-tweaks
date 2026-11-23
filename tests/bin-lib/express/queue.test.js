@@ -58,7 +58,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -320,4 +320,49 @@ test('#6018: an any-ceremony widened record follows the same reviewer rule', () 
 test('#6018: under beyond-express a risk-widened record turns the reviewer on and stays driver-routable', () => {
   const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'beyond-express' }).resolvePolicy });
   assert.equal(p.keepSingleton(MEDIUM_RISK), true);
+});
+
+// #6019: the driver half asks the protected-path question the eligibility step asks.
+const PROTECTED_POLICY = { ...WIDENED_POLICY, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'reviewer' };
+const withKeyFile = (file) => ({ ...ELIGIBLE, body: BODY.replace('plugin/skills/init/claude-md-template.md', file) });
+const PROTECTED_KEY_FILE = withKeyFile('plugin/hooks/x.js');
+
+test('#6019: under reviewer with the reviewer on, a protected-Key-File record is driver-routable', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), true);
+  assert.deepStrictEqual(sink.lines, []);
+});
+
+test('#6019: under reviewer with the reviewer off, the protected-Key-File record is not driver-routable', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-review': 'off' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('#6019: with the key refuse the protected-Key-File record keeps today\'s answer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...PROTECTED_POLICY, 'express-driver-protected-paths': 'refuse' }).resolvePolicy });
+  assert.equal(p.keepSingleton(PROTECTED_KEY_FILE), false);
+});
+
+test('#6019: a build-time Key File is never driver-routable under reviewer', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy });
+  assert.equal(p.keepSingleton(withKeyFile('.github/workflows/ci.yml')), false);
+});
+
+test('#6020: the express half keeps a protected Key File record only when the resolved list does not protect it', () => {
+  const hooks = { number: 30, body: BODY.replace('plugin/skills/init/claude-md-template.md', 'plugin/hooks/x.js'), labels: ELIGIBLE.labels };
+  const base = { 'express-lane': true, 'express-driver': 'off', 'integration-model': 'pr-first', 'merge-sensitive-paths': [] };
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy(base).resolvePolicy }).keepSingleton(hooks), false);
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy({ ...base, 'protected-paths': 'infra/**' }).resolvePolicy }).keepSingleton(hooks), true);
+});
+
+test('#6020: the driver half keeps a protected Key File record only when the resolved list does not protect it', () => {
+  const hooks = { number: 31, body: BODY.replace('plugin/skills/init/claude-md-template.md', 'plugin/hooks/x.js'), labels: ELIGIBLE.labels };
+  const base = {
+    'express-lane': false, 'express-driver': 'on', 'integration-model': 'pr-first', 'merge-sensitive-paths': [],
+    'express-driver-max-size': 'medium', 'express-driver-max-key-files': 3, 'express-driver-review': 'beyond-express', 'express-driver-protected-paths': 'refuse',
+  };
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy(base).resolvePolicy }).keepSingleton(hooks), false);
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy({ ...base, 'protected-paths': 'infra/**' }).resolvePolicy }).keepSingleton(hooks), true);
 });
