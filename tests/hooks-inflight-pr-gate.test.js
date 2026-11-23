@@ -172,13 +172,18 @@ function stubGh({ exit, json }) {
   const bin = mkTmp('ct-ipg-bin-');
   const argvFile = path.join(bin, 'argv.txt');
   const jsonFile = path.join(bin, 'out.json');
+  const pwdFile = path.join(bin, 'pwd.txt');
   if (json) fs.writeFileSync(jsonFile, JSON.stringify(json));
   fs.writeFileSync(path.join(bin, 'gh'),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\n${json ? `cat "${jsonFile}"\n` : ''}exit ${exit}\n`);
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\npwd -P > "${pwdFile}"\n${json ? `cat "${jsonFile}"\n` : ''}exit ${exit}\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.GH_HOST;
-  return { env, argv: () => fs.readFileSync(argvFile, 'utf8').split('\n').filter(Boolean) };
+  return {
+    env,
+    argv: () => fs.readFileSync(argvFile, 'utf8').split('\n').filter(Boolean),
+    pwd: () => fs.readFileSync(pwdFile, 'utf8').trim(),
+  };
 }
 
 const skipWin = process.platform === 'win32' ? 'stub gh is a POSIX shell script' : false;
@@ -205,7 +210,25 @@ test('AC1.3: the default runner passes no --repo for an empty -R= and no selecto
   assert.deepStrictEqual(gh.argv(), ['pr', 'view', '--json', 'body,number']);
 });
 
+test('AC1.3: the default runner runs gh in the call\'s own cwd, not the session\'s', { skip: skipWin }, async () => {
+  const fx = await fixture();
+  const away = mkTmp('ct-ipg-away-');
+  const link = path.join(mkTmp('ct-ipg-link-'), 'checkout');
+  fs.symlinkSync(fx.project, link, 'dir');
+  const gh = stubGh({ exit: 0, json: { body: bodyFor(fx), number: 5 } });
+  const ctx = { ...ctxFor(fx, `cd ${link} && gh pr merge 5`, {}, gh.env), cwd: away };
+  assert.ok(denyReason(gate(ctx)));
+  // pwd -P: the physical directory gh ran in, the checkout the link names.
+  assert.strictEqual(gh.pwd(), fx.project);
+});
+
 // ---- AC3: no owner, and the phase-exit record ----
+
+test('a named run with no run-state.json is allowed', async () => {
+  const fx = await fixture({ record: false });
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'run-state.json')));
+  assertAllowedNoEvent(gate(ctxFor(fx, MERGE), { readPrBody: reader(bodyFor(fx)) }), fx);
+});
 
 test('AC3.1: a run whose run-state has no sessionId is allowed', async () => {
   const fx = await fixture({ record: false });
