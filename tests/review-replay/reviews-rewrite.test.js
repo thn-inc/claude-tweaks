@@ -464,25 +464,29 @@ test('pointerPathOf: a "this file" prompt with no lone path line, or two, is not
   assert.equal(rw.pointerPathOf('Review the change.\n/tmp/a/p.md'), null, 'a lone path line alone does not make a pointer');
 });
 
-test('shaPairOf and pointerPathOf stay linear on long runs', () => {
-  const marker = '(it is your prompt): ';
-  const inputs = [
-    () => rw.shaPairOf('base '.repeat(50000)),
-    () => rw.shaPairOf(' '.repeat(200000)),
-    () => rw.shaPairOf('a'.repeat(200000)),
-    // Many sha-bearing "base" lines and no head: a lazy base-to-head scan restarts from each one (quadratic).
-    () => rw.shaPairOf('base 44200e4559 '.repeat(20000)),
-    () => rw.pointerPathOf(marker + ' '.repeat(200000)),
-    () => rw.pointerPathOf(marker + 'a'.repeat(200000)),
-    () => rw.pointerPathOf('(it is your prompt' + ' '.repeat(200000)),
-    // The "this file" scan: one long would-be path line of many space-separated pieces, and many short lines.
-    () => rw.pointerPathOf('in this file\n/' + 'a '.repeat(100000)),
-    () => rw.pointerPathOf('in this file\n' + '/a/b.md\n'.repeat(50000)),
-    () => rw.pointerPathOf('in this file ' + ' \t'.repeat(100000)),
-  ];
-  for (const f of inputs) {
-    const t0 = Date.now();
-    f();
-    assert.ok(Date.now() - t0 < 500);
+// The lazy-capture originRefsOf this build replaced for linearity (perf/review-replay-branch-linearity.test.js): kept
+// here only as the oracle the hand-cut scan must agree with.
+function lazyOriginRefsOf(text) {
+  const out = [];
+  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),:;]|$)/g)) {
+    let end = m[1].length;
+    while (end > 0 && m[1][end - 1] === '.') end--;
+    const name = m[1].slice(0, end);
+    const takes = name.split('/').every((seg) => seg !== '' && !seg.startsWith('.') && !seg.endsWith('.lock'));
+    if (takes && !out.includes(name)) out.push(name);
   }
+  return out;
+}
+
+test('originRefsOf agrees with the lazy-capture expression on every short string of its pieces', () => {
+  const pieces = ['origin/', 'a', '.', '/', '..', '!', ' ', ':', 'x.lock'];
+  let checked = 0;
+  const walk = (prefix, depth) => {
+    assert.deepStrictEqual(rw.originRefsOf(prefix), lazyOriginRefsOf(prefix), JSON.stringify(prefix));
+    checked++;
+    if (depth === 0) return;
+    for (const p of pieces) walk(prefix + p, depth - 1);
+  };
+  walk('', 5);
+  assert.ok(checked > 60000, `checked ${checked} strings`);
 });

@@ -67,12 +67,32 @@ const gitTakesRef = (name) => name.split('/').every((seg) => seg !== '' && !seg.
 // The origin/{name} refs a text names, once each. A ref ends at a `..` or `...` range (no git ref name holds `..`), or
 // before a space, quote, backtick, paren, comma, colon, semicolon or the end; a sentence's trailing dots are not part of
 // it. A name git would refuse is dropped, since writing it would fail the replay repository.
+// The name is the greedy run of ref characters, cut at its first `..` past the first character; a run with no `..` is
+// a name only when a terminator or the end follows it. A lazy capture with that lookahead rescanned the rest of the run
+// from every `origin/` in it (quadratic on `origin/` repeated with a non-terminator at the end).
+const REF_END = /[\s`'"),:;]/;
 function originRefsOf(text) {
+  const t = String(text);
   const out = [];
-  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),:;]|$)/g)) {
-    let end = m[1].length;
-    while (end > 0 && m[1][end - 1] === '.') end--; // a backward scan: a `\.+$` regex is quadratic on a long dot run
-    const name = m[1].slice(0, end);
+  const re = /\borigin\/([A-Za-z0-9._\/-]+)/g;
+  let m;
+  while ((m = re.exec(t)) !== null) {
+    const run = m[1];
+    const range = run.indexOf('..', 1);
+    let raw;
+    if (range !== -1) {
+      raw = run.slice(0, range);
+      re.lastIndex = m.index + 'origin/'.length + range;
+    } else {
+      // Every origin/ inside the run ends at the same character, so a non-terminator there rules them all out:
+      // lastIndex already sits at the run's end.
+      const next = t[m.index + m[0].length];
+      if (next !== undefined && !REF_END.test(next)) continue;
+      raw = run;
+    }
+    let end = raw.length;
+    while (end > 0 && raw[end - 1] === '.') end--; // a backward scan: a `\.+$` regex is quadratic on a long dot run
+    const name = raw.slice(0, end);
     if (gitTakesRef(name) && !out.includes(name)) out.push(name);
   }
   return out;
