@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { composeSubject, composeHousekeepingSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } =require('../../../plugin/bin/lib/release/subject.js');
+const { composeSubject, composeHousekeepingSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } = require('../../../plugin/bin/lib/release/subject.js');
 
 test('type mapping: feature→feat, bug→fix, task→chore', () => {
   assert.equal(TYPE_PREFIX.feature, 'feat');

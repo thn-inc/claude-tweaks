@@ -1294,7 +1294,7 @@ test('AC2.2: --pr {n} with no <n> and no --housekeeping still exits 1 with missi
 });
 
 test('--housekeeping usage errors: with a record number, --keep-open, --range, or without --pr — exit 1, no gh call', () => {
-  for (const argv of [['5207', '--housekeeping', '--pr', '1'], ['--housekeeping', '--pr', '1', '--keep-open', '2'], ['--housekeeping', '--range', 'a...b'], ['--housekeeping']]) {
+  for (const argv of [['5207', '--housekeeping', '--pr', '1'], ['--housekeeping', '--pr', '1', '--keep-open', '2'], ['--housekeeping', '--range', 'a...b'], ['--housekeeping', '--pr', '1', '--range', 'a...b'], ['--housekeeping']]) {
     const { deps, out } = fakeDeps({ prView: HK_PR });
     assert.equal(run(argv, deps), 1, argv.join(' '));
     assert.equal(out.calls.length, 0, argv.join(' '));
@@ -1314,6 +1314,8 @@ test('--housekeeping neutralizes a closing phrase in the PR title', () => {
   assert.equal(run(['--housekeeping', '--pr', '5207'], deps), 0, out.stderr);
   const { title, body } = JSON.parse(out.stdout);
   assert.doesNotMatch(`${title}\n${body}`, /closes #12/);
+  assert.ok(title.startsWith('chore: Prune plans'), title);
+  assert.ok(body.length > 0);
 });
 
 test('--housekeeping: a failed or unparseable gh pr view exits 3', () => {
