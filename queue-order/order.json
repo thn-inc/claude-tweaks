@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-23T10:21:27.675Z",
+  "computedAt": "2026-11-23T11:42:06.431Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -55,7 +55,7 @@
       },
       {
         "number": 5999,
-        "updatedAt": "2026-11-23T09:58:53Z",
+        "updatedAt": "2026-11-23T11:40:56Z",
         "state": "OPEN"
       },
       {
@@ -1104,7 +1104,7 @@
         "number": 5999,
         "state": "OPEN",
         "title": "Take the standard lane's implementer profile from the record rule and escalate once",
-        "updatedAt": "2026-11-23T09:58:53Z",
+        "updatedAt": "2026-11-23T11:40:56Z",
         "facets": {
           "origin": null,
           "risk": "medium",
