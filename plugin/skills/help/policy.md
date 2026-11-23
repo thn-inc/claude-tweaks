@@ -57,6 +57,7 @@ Row form, one per key, all values verbatim from the `--all` snapshot — the tra
 | `integration-model` (A) | `computed (forge detection)` | `detectIntegrationModel()`'s forge-detection result | `_shared/integration-model.md`'s resolution ladder |
 | `merge-verification` (A) | `computed (derivation ladder)` | `deriveMergeVerification()`'s result | `_shared/policy-schema-coverage.md`'s `merge-verification` coverage block |
 | `housekeeping-auto-merge` (B) | `computed (derived from autonomy)` | `deriveHousekeepingAutoMerge()`'s result | `_shared/policy-schema-read-path.md`'s Shape B paragraph |
+| `learned-skills-auto-merge` (B) | `computed (derived from autonomy and control-mode)` | `deriveLearnedSkillsAutoMerge()`'s result | `_shared/policy-schema-read-path.md`'s Shape B paragraph |
 
 A key added to either shape's list there is covered by this rule automatically — state only its own `computed (…)` wording when it's added, never a new hardcoded name check here.
 
