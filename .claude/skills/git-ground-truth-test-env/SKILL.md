@@ -43,6 +43,10 @@ A second implementation on the same branch is the checklist. Diff the new list a
 
 A memo that invalidates by classifying each git call (cached read, pass-through, or state change) rather than by a filesystem signature is a runner decorator: see `gh-api-module-pattern`'s `caching-and-locks.md` (`withReadCache`, #5790). Its key and its discards still start from what git reads: every per-call input that changes the answer (encoding, cwd, stdin, env) and every write to the file git reports on.
 
+## Code that builds a repository whose shas must be reproducible runs hermetic too
+
+Rule 2's hermetic env is not only for test ground truth. Code that commits into a fresh repository and promises the same shas for the same input inherits the same host and runner config, and any of it changes the commit or stops it: a `GIT_AUTHOR_NAME` a CI job exports, a config pair the runner's `GIT_CONFIG_COUNT` adds, a global `core.hooksPath` whose `pre-commit` fails, or a global `commit.gpgsign`. `makeWriteRepo` in `tools/review-replay.js` (#5991) drops every inherited `GIT_*` variable, sets a fixed author and committer name, email and date, adds `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL='/dev/null'`, and passes `-c commit.gpgsign=false`. `tests/review-replay/write-repo.test.js` proves both leaks closed: it sets `GIT_AUTHOR_NAME` on `process.env` and asserts the commit's fixed author, points `HOME` at a `.gitconfig` whose `hooksPath` holds a failing `pre-commit` and asserts the commit still lands, and asserts a second build returns the same shas. Restore every `process.env` key it sets in `finally`, since the other tests in the worker share it.
+
 ## Anti-patterns
 
 | Pattern | Why it fails |
