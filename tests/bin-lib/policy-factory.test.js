@@ -23,7 +23,7 @@ const VALID_BLOCK = (role, profile) => `express-driver-models:\n  ${role}: ${pro
 test('exported names are final', () => {
   assert.equal(FACTORY_POLICY_ENV, 'CLAUDE_TWEAKS_FACTORY_POLICY');
   assert.equal(FACTORY_POLICY_REL_PATH, '.claude-tweaks/factory-policy.yml');
-  assert.deepEqual(FACTORY_REFUSED_KEYS, ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook']);
+  assert.deepEqual(FACTORY_REFUSED_KEYS, ['merge-authorization', 'control-mode', 'deploy-command', 'release-hook', 'protected-paths']);
 });
 
 test('env only: raw is the variable verbatim, origin env', () => {
