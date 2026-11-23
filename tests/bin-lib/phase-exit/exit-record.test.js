@@ -89,7 +89,7 @@ test('readRunDecisions ignores a spec-x dir, a spec-N file, and a symlinked spec
   fs.mkdirSync(path.join(run, 'spec-x'));
   fs.writeFileSync(path.join(run, 'spec-x', 'decisions.md'), 'x\n');
   fs.writeFileSync(path.join(run, 'spec-4'), 'not a dir\n');
-  fs.symlinkSync(elsewhere, path.join(run, 'spec-3'), 'dir');
+  fs.symlinkSync(elsewhere, path.join(run, 'spec-3'), 'junction');
   assert.deepEqual(readRunDecisions(run), ['parent\n']);
 });
 
