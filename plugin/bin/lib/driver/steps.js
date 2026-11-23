@@ -116,8 +116,8 @@ const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta, mergeWorker } = require('./review');
-const { startEffort } = require('../model-profiles/implementer-tier');
-const { parseRecordFacets } = require('../issues/record');
+const { startEffort, riskOf } = require('../model-profiles/implementer-tier');
+const { normalizeLabelNames } = require('../issues/record');
 const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -929,7 +929,7 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
       profile = deps.recordImplementerProfile(ctx.issue);
       // Under the ladder the first launch starts at the record's effort (#6002); a throw here refuses like a launch-time model refusal.
       if (effortLadder(ctx.shared.policy)) {
-        effort = startEffort({ risk: parseRecordFacets(ctx.issue.labels || []).risk, launchEffort: roleLaunch('implementer', ctx.shared.policy, { profile }).effort });
+        effort = startEffort({ risk: riskOf(normalizeLabelNames(ctx.issue.labels).filter((n) => n.startsWith('risk:')).map((n) => n.slice('risk:'.length).trim())), launchEffort: roleLaunch('implementer', ctx.shared.policy, { profile }).effort });
       }
     } catch (err) {
       if (err && err.code === MODEL_REFUSED_CODE) return { status: 'fail', detail: err.message, noLine: true };

@@ -91,6 +91,12 @@ function clampEffort(launchEffort) {
   return EFFORT_SCALE[Math.min(i, CAP_IDX)];
 }
 
+// The one valid risk among the given `risk:` values: exactly one value, low/medium/high; else undefined
+// (zero, two or more, or an invalid value all read as no risk, so startEffort never lowers on a guess).
+function riskOf(values) {
+  return Array.isArray(values) && values.length === 1 && SIZES.includes(values[0]) ? values[0] : undefined;
+}
+
 function startEffort({ risk, launchEffort } = {}) {
   const base = clampEffort(launchEffort);
   if (base === null) return null;
@@ -129,5 +135,5 @@ function nextAttempt({ profile, effort, escalations, trigger, resolveProfile } =
 
 module.exports = {
   POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, EFFORT_CAP,
-  keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt,
+  keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt, riskOf,
 };

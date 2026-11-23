@@ -182,3 +182,13 @@ test('a step-up target with a null launchEffort returns effort null', () => {
   const rp = (n) => (n === 'capable' ? { model: 'opus', launchEffort: null } : TABLE[n]);
   assert.deepStrictEqual(nextAttempt({ profile: 'standard', effort: 'high', escalations: 0, trigger: 'blocked', resolveProfile: rp }), { profile: 'capable', effort: null, escalations: 1 });
 });
+
+test('riskOf: exactly one valid value is the risk; zero, several or an invalid one is undefined', () => {
+  const { riskOf } = require('../../../plugin/bin/lib/model-profiles/implementer-tier');
+  for (const v of ['low', 'medium', 'high']) assert.strictEqual(riskOf([v]), v);
+  assert.strictEqual(riskOf([]), undefined);
+  assert.strictEqual(riskOf(['high', 'low']), undefined);
+  assert.strictEqual(riskOf(['low', 'low']), undefined);
+  assert.strictEqual(riskOf(['huge']), undefined);
+  assert.strictEqual(riskOf(undefined), undefined);
+});

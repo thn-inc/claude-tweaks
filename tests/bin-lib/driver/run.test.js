@@ -4117,6 +4117,37 @@ test('#6002: the fix round launches at the green attempt\'s effort and profile; 
   assert.equal(implementerCalls(lane)[1].args[0].effort, 'medium', 'lane: roleLaunch\'s own effort');
 });
 
+test('#6002: under record + inherit and lane the fix round passes no effort key to the run seam', async () => {
+  for (const policy of [RECORD_TIER, { 'model-effort': 'profile' }]) {
+    const seen = [];
+    const ctx = { implementer: { rule: policy === RECORD_TIER ? 'record' : 'lane', profile: 'standard', effort: 'low' }, events: { emit() {} }, shared: { interrupted: null, policy: { 'implementer-tier': { value: policy['implementer-tier'] ?? 'lane' }, 'model-effort': { value: policy['model-effort'] ?? 'inherit' } } }, workerTestMode: 'declared' };
+    await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async (_c, _d, opts) => { seen.push(opts); return { status: 'ok' }; });
+    assert.equal(Object.hasOwn(seen[0], 'effort'), false, JSON.stringify(policy));
+  }
+  const ladder = { implementer: { rule: 'record', profile: 'standard', effort: 'low' }, events: { emit() {} }, shared: { interrupted: null, policy: { 'implementer-tier': { value: 'record' }, 'model-effort': { value: 'profile' } } }, workerTestMode: 'declared' };
+  const seen = [];
+  await fixWorkerLaunch(ladder, { now: () => 0 }, 'x', async (_c, _d, opts) => { seen.push(opts); return { status: 'ok' }; });
+  assert.equal(seen[0].effort, 'low');
+});
+
+test('#6002 AC1 (driver): risk:high, and duplicated risk labels, start at launchEffort', async () => {
+  for (const labels of [['risk:high', 'size:medium'], ['risk:high', 'risk:low', 'size:medium']]) {
+    const h = harness({ policy: LADDER, script: [tierIssue(labels, keyFilesBody('a.js', 'b.js', 'c.js'))] });
+    assert.equal(await run(['#7'], h.deps), 0, labels.join());
+    assert.equal(workerCall(h).args[0].effort, 'medium', labels.join());
+  }
+});
+
+test('#6002: a roleLaunch refusal inside the ladder branch is a no-line fail and launches nothing', async () => {
+  const h = harness({ policy: LADDER, deps: { recordImplementerProfile: () => 'no-such-profile' } });
+  await run(['#7'], h.deps);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(workerLines(h).length, 0);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'worker');
+  assert.match(final.stop.detail, /^no model for driver role implementer: profile no-such-profile did not resolve/);
+});
+
 test('#6002 AC7.1 (driver): the reviewer\'s effort is unchanged under the ladder', async () => {
   const base = fixRig({ policy: { 'express-driver-review': 'on', 'model-effort': 'profile', 'model-profiles': LADDER['model-profiles'] }, script: [MEDIUM_LOW_RISK] });
   assert.equal(await run(['#7'], base.deps), 0);

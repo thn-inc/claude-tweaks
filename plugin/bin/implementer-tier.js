@@ -49,7 +49,7 @@
 'use strict';
 const fs = require('fs');
 const { PROFILES, resolve } = require('./lib/model-profiles/profiles');
-const { POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt } = require('./lib/model-profiles/implementer-tier');
+const { POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt, riskOf } = require('./lib/model-profiles/implementer-tier');
 const { locatePolicyFile } = require('./lib/policy-file');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { fsPath } = require('./lib/health-core/io');
@@ -97,7 +97,7 @@ function readSize(text) {
 function readRisk(text) {
   const prefix = 'risk:';
   const values = headerLines(text).filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length).trim());
-  return values.length === 1 && SIZES.includes(values[0]) ? values[0] : undefined;
+  return riskOf(values);
 }
 
 // The model-profiles policy fragment, read as resolve-profile.js reads it: a

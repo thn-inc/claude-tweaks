@@ -1226,8 +1226,13 @@ test('#6002 Gotcha: live probe — three implementer launches on Standard at --e
     ].join('\n');
     const env = await launchWorker({ role: 'implementer', cwd, settingsDir: tmp(t), prompt, model, effort: 'low', testCommand: 'npm test', ceilings: { wallClockMs: 300000, spendCeiling: 1 } }, { runner: worker.defaultRunner });
     t.diagnostic('launch=' + i + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' result.status=' + (env.result && env.result.status) + ' costUsd=' + env.costUsd);
-    const greet = require(path.join(cwd, 'greet.js'));
-    if (env.status === 'ok' && env.result && env.result.status === 'done' && greet('Ann') === 'Hello Ann!') valid++;
+    let greeted = null;
+    try {
+      greeted = require(path.join(cwd, 'greet.js'))('Ann');
+    } catch (err) {
+      t.diagnostic('launch=' + i + ' left a greet.js that does not load: ' + err.message + ' — counted as a failed launch');
+    }
+    if (env.status === 'ok' && env.result && env.result.status === 'done' && greeted === 'Hello Ann!') valid++;
   }
   assert.strictEqual(valid, 3);
 });

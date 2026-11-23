@@ -149,7 +149,7 @@ function modelPolicyRefusal(policy) {
 async function launchTracked(shared, deps, { minutes, dollars }, { profile: explicitProfile, effort: explicitEffort, ...opts }) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
   // shared.activeWorker as they were. `model`, `effort` and `profile` are resolved here and `profile` is
-  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`; `effort` is overridable only through the explicit option.
+  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`; `effort` is overridable only through the explicit option, which is passed through unclamped: a caller that passes one owns the clamp (the effort ladder clamps through implementer-tier's startEffort and nextAttempt).
   const resolved = roleLaunch(opts.role, shared.policy, { profile: explicitProfile });
   const { model, profile } = resolved;
   const effort = explicitEffort === undefined ? resolved.effort : explicitEffort;
