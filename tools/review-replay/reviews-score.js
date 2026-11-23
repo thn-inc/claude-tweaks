@@ -206,7 +206,7 @@ const TASK_SCORER = {
     reviews: 0, verdict: { agree: 0, disagree: 0, share: null, byArchivedTier: {} },
     recall: { caught: 0, of: 0, share: null, unlocated: 0, itemsUnparsed: 0, replayItemsUnparsed: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
   }),
-  judge: (text) => readTaskReply(text),
+  judge: readTaskReply,
   tally(e, { judged, report, tier }) {
     e.reviews += 1;
     const side = e.verdict.byArchivedTier[tier] || (e.verdict.byArchivedTier[tier] = tierCounts());
