@@ -64,6 +64,12 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 
 - **Two negated classes around a literal separator.** `\{[^}]*,[^}]*\}` is polynomial on an unclosed `{` followed by many commas, because the first class can also consume the `,` the pattern then looks for. Exclude the separator and both braces from the first class (`\{[^{},]*,[^{}]*\}`), so each `,` has one place to match, and probe it with `'{' + ','.repeat(n)`.
 
+#5992's archive readers in the maintainer tool `tools/review-replay/` (`perf/review-replay-branch-linearity.test.js`) met shape 1 and shape 2 three times outside `plugin/bin/`, on archived prompts and replies no caller bounds:
+
+- **A lazy capture with a terminator lookahead.** `originRefsOf` in `reviews-rewrite.js` rescanned the rest of a ref run from every `origin/` in it (12.7 s on `'origin/'.repeat(30000) + '!'`). Fix: take the greedy run of ref characters, cut it at its first `..` by hand, and test the one character after the run for a terminator, so every `origin/` inside a run shares one verdict.
+- **A global location regex retried from every position of a long token.** `parseReviewItems`' `/([\w./@-]+\.[\w]+):(\d+)/` took about 3.4 s on a 60000-character token and 8.6 s on `'a.'.repeat(30000)`. Fix: `locationMatches` in `tools/pipeline-cost-report/reviews.js`, one pass per run of the class.
+- **A bounded class rescanned to the same stop from every marker.** `pointerPathOf`'s `\(it is your prompt\b[^)\n]*\):` read to the same `)` or newline from each unclosed marker (about 2.9 s at 16000 markers). Fix: read each stop once.
+
 ### A cap after the call does not bound the call
 
 A length cap applied to a regex's output (a slice, a truncate, a max-chars) does not bound the regex. #5222's `normalizeEventText` cut reviewer text to `EVENT_TEXT_MAX_CHARS` only after calling `normalizeTitle`, whose `/(?:\s*\.)+\s*$/` is shape 1: 80,000 dots took about 25 s. The commit step ran the same helper on the implementer's unbounded title. The bug got through build and two rounds of review, and only the high-tier reproduction lens caught it.
@@ -128,5 +134,6 @@ Run the perf suite: `npm run test:perf`.
 - `perf/driver-normalize-title-linearity.test.js`, `perf/driver-review-event-text-linearity.test.js`
 - `perf/cross-repo-dependency-linearity.test.js`, `perf/ledger-row-linearity.test.js`, `perf/process-kill-linearity.test.js`
 - `perf/workflow-shape-linearity.test.js`
+- `perf/review-replay-branch-linearity.test.js`, `perf/review-replay-rewrite-linearity.test.js` (`tools/review-replay/`)
 - `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
 - Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)
