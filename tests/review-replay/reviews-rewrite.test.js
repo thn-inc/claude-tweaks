@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const rw = require(path.join(__dirname, '..', '..', 'tools', 'review-replay', 'reviews-rewrite.js'));
+const { locationMatches } = require(path.join(__dirname, '..', '..', 'tools', 'pipeline-cost-report', 'reviews.js'));
 
 const B = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
 const H = 'fedcba9876543210fedcba9876543210fedcba98';
@@ -28,6 +29,42 @@ test('rangeOf reads X...HEAD with HEAD named apart', () => {
 test('rangeOf returns nulls for a symbolic range', () => {
   assert.deepStrictEqual(rw.rangeOf('git diff origin/main...HEAD'), { base: null, head: null });
   assert.deepStrictEqual(rw.originRefsOf('git diff origin/main...HEAD'), ['main']);
+});
+
+test('originRefsOf: a ref ends at a three-dot range or a space, quote, backtick, paren, comma or the end, once per name', () => {
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/main...HEAD'), ['main']);
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/feat/x...HEAD'), ['feat/x']);
+  for (const after of [' ', '\'', '"', '`', ')', ',', '']) assert.deepStrictEqual(rw.originRefsOf(`base origin/main${after}`), ['main'], JSON.stringify(after));
+  assert.deepStrictEqual(rw.originRefsOf('origin/main and (origin/dev) then origin/main, origin/v1.2_x-y'), ['main', 'dev', 'v1.2_x-y']);
+  assert.deepStrictEqual(rw.originRefsOf('no refs here'), []);
+});
+
+test('originRefsOf: a two-dot range also ends the ref (git ref names never hold `..`)', () => {
+  assert.deepStrictEqual(rw.originRefsOf('git log origin/main..main'), ['main']);
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/feat/x..HEAD'), ['feat/x']);
+});
+
+test('originRefsOf: characterization of the forms it accepts (each a ref git check-ref-format takes)', () => {
+  const cases = [
+    ['git diff origin/main...HEAD', ['main']], ['git log origin/main..main', ['main']], ['origin/main...', ['main']],
+    ['base origin/main ', ['main']], ['base origin/main\t', ['main']], ['base origin/main\nnext', ['main']],
+    ['`git diff origin/main...HEAD`', ['main']], ['`origin/main`', ['main']], ['(origin/main)', ['main']],
+    ['origin/feat/x.y_z-1 ', ['feat/x.y_z-1']], ['origin/v1.2', ['v1.2']], ['origin/a./b ', ['a./b']], ['origin/a.lockx ', ['a.lockx']],
+    ['github.com/origin/main ', ['main']], ['xorigin/main ', []],
+    ['origin/dev and origin/main...HEAD, origin/dev', ['dev', 'main']],
+  ];
+  for (const [text, refs] of cases) assert.deepStrictEqual(rw.originRefsOf(text), refs, JSON.stringify(text));
+});
+
+test('originRefsOf: sentence dots, `:` and `;` end a ref; a capture git check-ref-format refuses is dropped', () => {
+  const cases = [
+    ['origin/main.', ['main']], ['diff against origin/main. Then', ['main']], ['origin/v1.2.', ['v1.2']],
+    ['origin/main:', ['main']], ['git show origin/main:src/x.js', ['main']], ['origin/main;', ['main']], ['origin/main; then', ['main']],
+    // Refused by git, so never written: a component starting with `.`, a `.lock` component, an empty component.
+    ['origin/x/ ', []], ['origin/.x ', []], ['origin/a/.b ', []], ['origin/x.lock ', []], ['origin/a.lock/b ', []],
+    ['origin//x ', []], ['origin/a//b ', []], ['origin/. ', []], ['origin/.. ', []],
+  ];
+  for (const [text, refs] of cases) assert.deepStrictEqual(rw.originRefsOf(text), refs, JSON.stringify(text));
 });
 
 test('runInputsOf classifies the four kinds', () => {
@@ -389,4 +426,88 @@ test('win32: the leak barrier flags a native main-checkout path and a native for
     'E:/x/repo/.claude/worktrees/w/src',
   ]);
   assert.deepStrictEqual(rw.unrewrittenPaths(text, { mainRoot: winRoot, runName: 'R', platform: 'linux' }), []);
+});
+
+test('shaPairOf: Base/Head lines, a sha-less "base" first, and the two-dot fallback', () => {
+  assert.deepEqual(rw.shaPairOf('## Diff Under Review\nBase 44200e4559, Head b90d38882a. Diff file: x'), { base: '44200e4559', head: 'b90d38882a' });
+  assert.deepEqual(rw.shaPairOf('the review base after a catch-up.\nBase d5346c1c99056b72f56bd2172d720bd6a609fa5b (the merge commit). Head 6a7e879f6f.'), { base: 'd5346c1c99056b72f56bd2172d720bd6a609fa5b', head: '6a7e879f6f' });
+  assert.deepEqual(rw.shaPairOf('Fix diff (b90d38882a..c7e979dbd4), read once'), { base: 'b90d38882a', head: 'c7e979dbd4' });
+  assert.deepEqual(rw.shaPairOf('Head 1111111aaa was stale. Base 44200e4559, Head b90d38882a.'), { base: '44200e4559', head: 'b90d38882a' });
+  assert.equal(rw.shaPairOf('Head 1111111aaa then Base 44200e4559 only'), null);
+  assert.equal(rw.shaPairOf('SCOPE: origin/main...HEAD'), null);
+  assert.equal(rw.shaPairOf('Base 44200e4559 only'), null);
+});
+
+test('pointerPathOf: path on the next line, with spaces', () => {
+  const p = 'Read your full review instructions from this file and follow them exactly (it is your prompt; nothing else is):\n/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-3-review-prompt.md\n\n[Effort: high — x.]';
+  assert.equal(rw.pointerPathOf(p), '/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-3-review-prompt.md');
+  assert.equal(rw.pointerPathOf('(it is your prompt): /tmp/p.txt  '), '/tmp/p.txt');
+  assert.equal(rw.pointerPathOf('You are reviewing one task.'), null);
+});
+
+test('pointerPathOf: a "this file" prompt with the path alone on its own line, in the archive\'s other wordings', () => {
+  const file = '/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-2-review-prompt.md';
+  for (const lead of [
+    'Your complete instructions for this review are in this file. Read it first and follow it exactly:',
+    'Read your full review instructions from this file first and follow them exactly — it is your complete prompt.',
+    'You are a task reviewer. Read this file first — it is your complete instructions:',
+    'Your full instructions are in this file; read it first, in one Read call, and follow it exactly:',
+  ]) {
+    assert.equal(rw.pointerPathOf(`${lead}\n\n  ${file}  \n\n[Effort: high — x.]\nReply read-only.`), file, lead);
+  }
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\nC:\\Users\\x\\p.md'), 'C:\\Users\\x\\p.md');
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n~/sdd/p.md'), '~/sdd/p.md');
+});
+
+test('pointerPathOf: a "this file" prompt with no lone path line is not a pointer; with two it is ambiguous', () => {
+  assert.equal(rw.pointerPathOf('Check the null guard in this file.\nWORKTREE: /Users/x/r\n/tmp/x is your prompt'), null, 'a path followed by words is not a lone path');
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n/tmp/a/p.md\n/tmp/b/q.md'), rw.POINTER_AMBIGUOUS);
+  assert.equal(rw.pointerPathOf('Review the change.\n/tmp/a/p.md'), null, 'a lone path line alone does not make a pointer');
+});
+
+// The lazy-capture originRefsOf this build replaced for linearity (perf/review-replay-branch-linearity.test.js): kept
+// here only as the oracle the hand-cut scan must agree with.
+function lazyOriginRefsOf(text) {
+  const out = [];
+  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),:;]|$)/g)) {
+    let end = m[1].length;
+    while (end > 0 && m[1][end - 1] === '.') end--;
+    const name = m[1].slice(0, end);
+    const takes = name.split('/').every((seg) => seg !== '' && !seg.startsWith('.') && !seg.endsWith('.lock'));
+    if (takes && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+test('originRefsOf agrees with the lazy-capture expression on every short string of its pieces', () => {
+  const pieces = ['origin/', 'a', '.', '/', '..', '!', ' ', ':', 'x.lock'];
+  let checked = 0;
+  const walk = (prefix, depth) => {
+    assert.deepStrictEqual(rw.originRefsOf(prefix), lazyOriginRefsOf(prefix), JSON.stringify(prefix));
+    checked++;
+    if (depth === 0) return;
+    for (const p of pieces) walk(prefix + p, depth - 1);
+  };
+  walk('', 5);
+  assert.ok(checked > 60000, `checked ${checked} strings`);
+});
+
+// The global location regex locationMatches replaced for linearity (perf/review-replay-branch-linearity.test.js): kept
+// here only as the oracle the scanner must agree with.
+const LOCATION_RE = /([\w./@-]+\.[\w]+):(\d+)/g;
+
+test('locationMatches agrees with the global location regex on every short string of its pieces', () => {
+  const pieces = ['a', '1', '.', '/', '-', ':', ' ', 'b.js:2'];
+  const shape = (ms) => ms.map((m) => [m.index, m[0], m[1], m[2]]);
+  let checked = 0;
+  const walk = (prefix, depth) => {
+    const oracle = shape([...prefix.matchAll(LOCATION_RE)]);
+    assert.deepStrictEqual(shape(locationMatches(prefix)), oracle, JSON.stringify(prefix));
+    assert.deepStrictEqual(shape(locationMatches(prefix, 1)), oracle.slice(0, 1), `max 1: ${JSON.stringify(prefix)}`);
+    checked++;
+    if (depth === 0) return;
+    for (const p of pieces) walk(prefix + p, depth - 1);
+  };
+  walk('', 6);
+  assert.ok(checked > 200000, `checked ${checked} strings`);
 });

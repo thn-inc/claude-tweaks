@@ -5,9 +5,11 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { run, makeWriteRepo } = require('../../tools/review-replay');
-const { armLabel, toPosix, REVIEWS_MANIFEST_FILE } = require('../../tools/review-replay/schema');
+const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
+const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
+const { armLabel, toPosix, REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE } = require('../../tools/review-replay/schema');
 const { scratchDir } = require('../helpers/tmp-dir');
-const { buildReviewsFixture, cleanEnv } = require('./reviews-fixture');
+const { buildReviewsFixture, buildBranchFixture, cleanEnv } = require('./reviews-fixture');
 
 const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
 const NOTES = [
@@ -329,4 +331,285 @@ test('score-reviews exits 2 when --out or --transcripts is missing', async () =>
   assert.equal(await run({ argv: ['score-reviews', '--out', root], deps }), 2);
   assert.equal(await run({ argv: ['score-reviews', '--transcripts', root], deps }), 2);
   assert.match(deps.errs.join('\n'), /score-reviews requires --transcripts/);
+});
+
+test('parseReviewItems: one item per counted line, located by its first path:line', () => {
+  const text = ['### Issues', '#### Important (Should Fix)', '- src/x.js:10: null deref when y is unset', '- `/abs/src/a.js:3` and src/b.js:9 drift', '#### Minor', '1. naming could be clearer', '2. None.', '### Strengths', '- src/z.js:1 is tidy'].join('\n');
+  const { items } = parseReviewItems(text);
+  assert.deepEqual(items.map((i) => [i.sev, i.path, i.line]), [['important', 'src/x.js', 10], ['important', '/abs/src/a.js', 3], ['minor', null, null]]);
+  assert.deepEqual(items[1].locations, [{ path: '/abs/src/a.js', line: 3 }, { path: 'src/b.js', line: 9 }]);
+  assert.equal(items[0].text, 'src/x.js:10: null deref when y is unset');
+  assert.deepEqual(parseReviewCounts(text), { critical: 0, important: 2, minor: 1 });
+});
+
+test('parseReviewItems agrees with parseReviewCounts', () => {
+  const texts = [
+    ['### Issues', '#### Important', '- src/x.js:10: bad', '#### Minor', '1. nit', '2. None.'].join('\n'),
+    '#### Critical\n\n#### Important\nNone.\n#### Minor\n',
+    '**Important**\n- src/x.js:1 bad',
+    '',
+  ];
+  for (const t of texts) {
+    const counts = parseReviewCounts(t);
+    const parsed = parseReviewItems(t);
+    assert.equal(parsed === null, counts === null);
+    if (counts === null) continue;
+    for (const sev of ['critical', 'important', 'minor']) {
+      assert.equal(parsed.items.filter((i) => i.sev === sev).length, counts[sev]);
+    }
+  }
+});
+
+test('parseBranchReply: headings, "No issues", neither', () => {
+  assert.deepEqual(parseBranchReply('#### Critical (Must Fix)\nNone.\n').items, []);
+  assert.deepEqual(parseBranchReply('Reviewed it all.\nNo issues found.').items, []);
+  assert.equal(parseBranchReply('**Important**\n- src/x.js:1 bad'), null);
+});
+
+test('parseBranchReply: "No issues" counts only at a line start, after optional bullets or emphasis', () => {
+  for (const text of ['No issues found.', 'Reviewed it all.\n- **No issues.**', '## No issues', '> *no issues* in this branch']) {
+    assert.deepEqual(parseBranchReply(text), { items: [] }, JSON.stringify(text));
+  }
+  // Mid-sentence, it is no verdict: a heading-less reply raising an issue beside it does not parse.
+  for (const text of ['Reviewed it all. No issues found.', 'There are no issues with naming, but **Important:** src/x.js:1 is wrong.']) {
+    assert.equal(parseBranchReply(text), null, JSON.stringify(text));
+  }
+});
+
+// ---- the task and whole-branch roles
+const branchExtractions = new Map();
+// One extract-reviews run per (role, fixture options): the branch fixture is `a` (fast) plus the control arms.
+function extractedBranch(role, fxOpts = {}) {
+  const key = `${role}\0${JSON.stringify(fxOpts)}`;
+  if (!branchExtractions.has(key)) {
+    branchExtractions.set(key, (async () => {
+      const bRoot = path.join(root, `branch-${branchExtractions.size}`);
+      const fx = buildBranchFixture(bRoot, fxOpts);
+      const out = path.join(bRoot, 'out');
+      const deps = makeDeps(fx);
+      const code = await run({ argv: ['extract-reviews', '--runs', fx.runsRoot, '--out', out, '--role', role, '--transcripts', fx.transcripts, '--arm', 'name=a,profile=fast'], deps });
+      assert.equal(code, 0, deps.errs.join('\n'));
+      return { fx, out, manifest: JSON.parse(fs.readFileSync(path.join(out, REVIEWS_MANIFEST_FILE), 'utf8')) };
+    })());
+  }
+  return branchExtractions.get(key);
+}
+const VERDICT = (v) => `Task quality: ${v}`;
+const TASK_FIX = '#### Important\n- src/x.js:12 null\n\nTask quality: Needs fixes';
+
+test('AC5.1: the Approved review replayed as Needs fixes is one verdict disagreement', async () => {
+  const x = await extractedBranch('task');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Needs fixes') : TASK_FIX)));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  assert.equal(r.json.role, 'task');
+  assert.deepEqual(r.json.arms.a.task.verdict, {
+    agree: 1, disagree: 1, share: 0.5, byArchivedTier: { standard: { agree: 0, disagree: 1, share: 0 }, capable: { agree: 1, disagree: 0, share: 1 } },
+  });
+  assert.equal(r.json.arms.a.task.reviews, 2);
+  assert.deepEqual(r.json.arms.a.task.itemsBySeverity, { critical: 0, important: 1, minor: 0 });
+  // The headingless Needs fixes replay of review 1 has unknown items, so it is out of the per-review denominator.
+  assert.deepEqual(r.json.arms.a.task.itemsPerReview, { critical: 0, important: 1, minor: 0 });
+  assert.equal(r.json.arms.a.task.recall.replayItemsUnparsed, 1);
+});
+
+test('AC4.1: the unlocated Minor counts as unlocated 1 and is in no denominator', async () => {
+  const x = await extractedBranch('task');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
+});
+
+test('task: a reply with no verdict line is notJudged could-not-parse, exit 3', async () => {
+  const x = await extractedBranch('task');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? 'Looks fine to me.' : TASK_FIX)));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.a.notJudgedByReason, { 'could-not-parse': 1 });
+  assert.equal(r.json.arms.a.scored, 1);
+  assert.equal(r.json.arms.a.task.reviews, 1);
+});
+
+test('task: a missing reply is notJudged no-reply and adds nothing to the verdict tally', async () => {
+  const x = await extractedBranch('task');
+  const r = await scoreReviews(x, workflow(x, ({ arm, slot }) => (arm.name === 'a' && slot === 'task' ? undefined : TASK_FIX)));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.a.notJudgedByReason, { 'no-reply': 1 });
+  assert.equal(r.json.arms.a.task.verdict.agree + r.json.arms.a.task.verdict.disagree, 1);
+});
+
+test('task: a replay far from the archived Important is not caught', async () => {
+  const x = await extractedBranch('task');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : '#### Important\n- src/x.js:16 null\n\nTask quality: Needs fixes')));
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 0, of: 1, share: 0, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
+});
+
+test('task: an itemsUnparsed review scores its verdict and counts in recall.itemsUnparsed, not in of', async () => {
+  const x = await extractedBranch('task', { boldLabel: true });
+  const fixture = JSON.parse(fs.readFileSync(path.join(x.out, REVIEWS_FIXTURE_FILE), 'utf8'));
+  const t3 = fixture.slots.find((s) => s.agentId === 't3').name.split('/').pop();
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === t3 ? TASK_FIX : slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  assert.equal(r.json.arms.a.task.reviews, 3);
+  assert.equal(r.json.arms.a.task.verdict.agree, 3);
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 1, replayItemsUnparsed: 0 });
+});
+
+test('task: a replay with a verdict but unparseable items scores its verdict and is neither found-nothing nor in the item rates', async () => {
+  const x = await extractedBranch('task');
+  const unparsed = '**Important**\n- src/x.js:12 null\n\nTask quality: Needs fixes';
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? '#### Minor\n- a thing\n\nTask quality: Approved' : unparsed)));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  const t = r.json.arms.a.task;
+  assert.deepEqual(t.verdict, { agree: 2, disagree: 0, share: 1, byArchivedTier: { standard: { agree: 1, disagree: 0, share: 1 }, capable: { agree: 1, disagree: 0, share: 1 } } });
+  assert.deepEqual(t.recall, { caught: 0, of: 0, share: null, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 1 });
+  assert.deepEqual(t.itemsBySeverity, { critical: 0, important: 0, minor: 1 });
+  assert.deepEqual(t.itemsPerReview, { critical: 0, important: 0, minor: 1 });
+  assert.equal(t.reviews, 2);
+});
+
+test('an item citing two locations is caught by a replay item near its second', async () => {
+  const x = await extractedBranch('task');
+  const copy = path.join(root, 'two-locations');
+  fs.cpSync(x.out, copy, { recursive: true });
+  const file = path.join(copy, REPORTS_FILE);
+  const archived = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const key = Object.keys(archived.reports).find((k) => k.endsWith('/task.2'));
+  archived.reports[key].items[0].locations.push({ path: 'src/q.js', line: 50 });
+  fs.writeFileSync(file, JSON.stringify(archived));
+  const reply = '#### Important\n- src/q.js:52 other\n\nTask quality: Needs fixes';
+  const r = await scoreReviews({ ...x, out: copy }, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : reply)));
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
+});
+
+test('wholeBranch: recall of located items, the Critical-or-Important share, "No issues" scores zero items', async () => {
+  const x = await extractedBranch('whole-branch');
+  const near = await scoreReviews(x, workflow(x, () => '#### Minor\n- src/y.js:4 naming'));
+  assert.equal(near.code, 0, near.deps.errs.join('\n'));
+  assert.equal(near.json.role, 'whole-branch');
+  assert.deepEqual(near.json.arms.a.wholeBranch, {
+    reviews: 1, recall: { caught: 1, of: 1, share: 1, unlocated: 0 }, itemsBySeverity: { critical: 0, important: 0, minor: 1 },
+    itemsPerReview: { critical: 0, important: 0, minor: 1 }, withCriticalOrImportant: { n: 0, share: 0 },
+  });
+  const important = await scoreReviews(x, workflow(x, () => '#### Important\n- src/y.js:40 far\n'));
+  assert.deepEqual(important.json.arms.a.wholeBranch.recall, { caught: 0, of: 1, share: 0, unlocated: 0 });
+  assert.deepEqual(important.json.arms.a.wholeBranch.withCriticalOrImportant, { n: 1, share: 1 });
+  const none = await scoreReviews(x, workflow(x, () => 'Reviewed it.\nNo issues found.'));
+  assert.equal(none.code, 0, none.deps.errs.join('\n'));
+  assert.deepEqual(none.json.arms.a.wholeBranch.itemsBySeverity, { critical: 0, important: 0, minor: 0 });
+  assert.equal(none.json.arms.a.wholeBranch.recall.caught, 0);
+  assert.equal(none.json.arms.a.wholeBranch.reviews, 1);
+});
+
+test('wholeBranch: an archived item with no location counts as unlocated and is in no denominator', async () => {
+  const x = await extractedBranch('whole-branch');
+  const copy = path.join(root, 'wb-unlocated');
+  fs.cpSync(x.out, copy, { recursive: true });
+  const file = path.join(copy, REPORTS_FILE);
+  const archived = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const [key] = Object.keys(archived.reports);
+  archived.reports[key].items.push({ sev: 'minor', text: 'vague', path: null, line: null, locations: [] });
+  fs.writeFileSync(file, JSON.stringify(archived));
+  const r = await scoreReviews({ ...x, out: copy }, workflow(x, () => '#### Minor\n- src/y.js:4 naming'));
+  assert.deepEqual(r.json.arms.a.wholeBranch.recall, { caught: 1, of: 1, share: 1, unlocated: 1 });
+});
+
+test('wholeBranch: a bold-label-only reply is could-not-parse', async () => {
+  const x = await extractedBranch('whole-branch');
+  const r = await scoreReviews(x, workflow(x, () => '**Important**\n- src/y.js:2 bad'));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.a.notJudgedByReason, { 'could-not-parse': 1 });
+  assert.equal(r.json.arms.a.wholeBranch.reviews, 0);
+});
+
+test('fixture summary: selected and excluded per reason and per archived tier', async () => {
+  const x = await extractedBranch('task', { pointer: 'gone' });
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  assert.deepEqual(r.json.fixture, {
+    selected: { total: 2, byArchivedTier: { standard: 1, capable: 1 } }, excludedByReason: { 'prompt-file-gone': 1 }, excludedByTier: { standard: 1 },
+  });
+  assert.deepEqual(Object.keys(r.json), ['notes', 'role', 'fixture', 'unidentifiedAgents', 'unidentifiedCost', 'arms']);
+});
+
+test('fixture summary: an exclusion with no tier lands under unknown and the per-tier total equals the per-reason total', async () => {
+  const x = await extractedBranch('task', { pointer: 'gone' });
+  // A run-level exclusion carries no tier: add one beside the tiered prompt-file-gone row.
+  const copy = path.join(root, 'tierless');
+  fs.cpSync(x.out, copy, { recursive: true });
+  const file = path.join(copy, REVIEWS_FIXTURE_FILE);
+  const fixture = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fixture.excluded.push({ run: 'run-without-review', reason: 'no-review' });
+  fs.writeFileSync(file, JSON.stringify(fixture));
+  const r = await scoreReviews({ ...x, out: copy }, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  const { excludedByReason, excludedByTier } = r.json.fixture;
+  assert.deepEqual(excludedByTier, { standard: 1, unknown: 1 });
+  assert.deepEqual(excludedByReason, { 'prompt-file-gone': 1, 'no-review': 1 });
+  const sum = (o) => Object.values(o).reduce((n, v) => n + v, 0);
+  assert.equal(sum(excludedByTier), sum(excludedByReason));
+});
+
+// ---- the task-vs-branch role
+const TVB_NEAR = '#### Important (Should Fix)\n- src/x.js:12: may be null\n';
+const tvbOf = (r) => r.json.arms.a.taskVsBranch;
+const pickKeys = (o, keys) => Object.fromEntries(keys.map((k) => [k, o[k]]));
+
+test('AC3.1: a replay Important item 2 lines from the task item is caught 1 of 1, nothing not raised', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, () => TVB_NEAR));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  assert.equal(r.json.role, 'task-vs-branch');
+  const tvb = tvbOf(r);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of', 'unlocated']), { caught: 1, of: 1, unlocated: 0 });
+  assert.deepEqual(tvb.reviews, { taskHead: 1, finalHead: 1 });
+  assert.deepEqual(tvb.notRaised, []);
+});
+
+test('AC3.2: a reply raising nothing near it is 0 of 1 and lists the item', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? 'No issues found.' : TVB_NEAR)));
+  const tvb = tvbOf(r);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of']), { caught: 0, of: 1 });
+  assert.deepEqual(tvb.notRaised, [{ run: x.fx.runName, taskReview: 'task-vs-branch', repeat: 1, path: 'src/x.js', line: 10, severity: 'important', text: 'src/x.js:10: null deref when y is unset' }]);
+});
+
+test('AC7.1 (score half): caught and baselineRecall are both reported for the review', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? 'No issues found.' : '#### Important (Should Fix)\n- src/x.js:9: null\n')));
+  const tvb = tvbOf(r);
+  assert.equal(tvb.caught.bySeverity.important.of, 1);
+  assert.deepEqual(tvb.caught.bySeverity.critical, { caught: 0, of: 0, share: null });
+  assert.deepEqual(pickKeys(tvb.baselineRecall, ['caught', 'of', 'share']), { caught: 1, of: 1, share: 1 });
+  assert.deepEqual(tvb.baselineRecall.bySeverity.important, { caught: 1, of: 1, share: 1 });
+  assert.deepEqual(tvb.caught.byTaskTier, { capable: { caught: 0, of: 1, share: 0 } });
+});
+
+test('taskVsBranch: a reply with no heading and no "no issues" line is could-not-parse, exit 3', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task-vs-branch' ? '**Important**\n- src/x.js:10 bad' : TVB_NEAR)));
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.arms.a.notJudgedByReason, { 'could-not-parse': 1 });
+  assert.equal(tvbOf(r).reviews.taskHead, 0);
+  assert.equal(tvbOf(r).caught.of, 0);
+});
+
+test('taskVsBranch: fixture summary counts task reviews, not slots, and reports slots and notQualifying from totals', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const r = await scoreReviews(x, workflow(x, () => TVB_NEAR));
+  const { selected } = r.json.fixture;
+  assert.equal(selected.total, 1);
+  assert.deepEqual(selected.byTaskTier, { capable: 1 });
+  assert.equal(selected.slots, 2);
+  const written = JSON.parse(fs.readFileSync(path.join(x.out, REVIEWS_FIXTURE_FILE), 'utf8'));
+  assert.equal(selected.notQualifying, written.totals.notQualifying);
+  assert.equal(selected.slots, written.totals.slots);
+});
+
+test('taskVsBranch: a not-raised item records the repeat that missed it', async () => {
+  const x = await extractedBranch('task-vs-branch');
+  const out = path.join(path.dirname(x.out), 'out-repeat');
+  const deps = makeDeps(x.fx);
+  const code = await run({ argv: ['extract-reviews', '--runs', x.fx.runsRoot, '--out', out, '--role', 'task-vs-branch', '--transcripts', x.fx.transcripts, '--arm', 'name=a,profile=fast,repeat=2'], deps });
+  assert.equal(code, 0, deps.errs.join('\n'));
+  const y = { fx: x.fx, out, manifest: JSON.parse(fs.readFileSync(path.join(out, REVIEWS_MANIFEST_FILE), 'utf8')) };
+  const wf = workflow(y, ({ repeat, slot }) => (slot === 'task-vs-branch' && repeat === 2 ? 'No issues found.' : TVB_NEAR));
+  const tvb = tvbOf(await scoreReviews(y, wf));
+  assert.deepEqual(tvb.notRaised.map((n) => n.repeat), [2]);
+  assert.deepEqual(pickKeys(tvb.caught, ['caught', 'of']), { caught: 1, of: 2 });
 });

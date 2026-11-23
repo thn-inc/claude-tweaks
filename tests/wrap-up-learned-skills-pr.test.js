@@ -49,7 +49,7 @@ const PROC_FACTS = [
   [/This is the one fail-safe exception, and `merge-check`'s floor still holds that run/, 'capture exit 1 is the one fail-safe exception'],
   [/\*\*Ordering\.\*\* Every finding sent back to the run branch above \(`run-branch`, and both exit-1 working-tree cases\) is committed there \*\*before\*\* the `land` or `stage` call below/, 'run-branch commits land before land/stage (ruling 1)'],
   [/logs `_shared\/staged-patch\.md`'s own line for that case instead of the STAGED shape/, 'a degraded stage logs staged-patch.md\'s line (ruling 2)'],
-  [/Set `commit` to `landed\[\]\.commit`, shortened to the hash its AUTO line prints, and `pr` to `pr\.url`/, 'a landed finding gets commit and pr (ruling 4)'],
+  [/Set `commit` to `landed\[\]\.commit`, shortened to the hash its AUTO line prints, and `pr` to the row's own `pr\.url` when it carries one \(a merged PR that already shipped it\), else the top-level `pr\.url`/, 'a landed finding gets commit and pr (ruling 4)'],
   [/set `action: "staged"` and `stagePath` to the absolute `staged\[\]\.stagePath`, and remove `commit`/, 'a staged finding is rewritten to staged (ruling 4)'],
   [/the FYI `PushNotification` carries that same engine-rendered section/, 'the FYI carries the PR URL'],
   [/appends `learned-skills PR \{url\}` to the Skills row's Detail cell/, 'the final summary trace carries the PR URL'],
