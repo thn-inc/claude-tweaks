@@ -72,6 +72,23 @@ Three conventions follow from how this repo works, and all are visible below:
 * Take the standard lane's implementer profile from the… ([#5999](https://github.com/thn-inc/claude-tweaks/issues/5999)) ([6b97395](https://github.com/thn-inc/claude-tweaks/commit/6b97395f0526c00ae08dddc34e8446907b729c3c))
 * Tell specify which records a plan-less lane will take ([#6053](https://github.com/thn-inc/claude-tweaks/issues/6053)) ([2e0b297](https://github.com/thn-inc/claude-tweaks/commit/2e0b297e10929750a69e2de1fa951a2214dad3ec))
 
+### Highlights
+* Cloud sessions without the gh CLI know whether they can resolve a decision comment, instead of stopping at an undocumented gap.
+* Review can pick its lens reviewers per run from what the diff changed and how often each lens has found something in this repository, when `review-lens-selection: adaptive` is set.
+* Made each build pick its implementer model from the record's size and file count through one shared rule, and move a stuck task to the next model up once.
+* Made the pipeline driver start small records on the cheapest model and retry a failed attempt once on the next model up, before handing the record to the full pipeline.
+* Maintainer tooling only, nothing ships: the review replay can replay archived lens reviewers on any model and effort, and score each arm's findings against what the review confirmed.
+* A record held for a planning question is finished by running /claude-tweaks:specify on it: it asks just those questions and marks the record ready.
+* With `plan-at-specify: on`, a build reuses the plan specify already wrote and reviewed, skipping its own plan step when nothing has changed.
+* With `plan-at-specify: on`, decomposing a design doc also plans and reviews each sub-issue.
+* Internal: reconcile deletes a closed record's stored plan.
+* With `plan-at-specify: on`, /claude-tweaks:specify writes and reviews the plan while you're there, asks only questions that need you, and stores the plan for the build.
+* The acceptance packet lists every planning call the agent made for you, so you can check them when you accept the work.
+* Plan review can stop asking about low-level details: with `planning-decisions: asked-classes` it settles them itself, records each call, and asks only design-level, hard-to-undo or contradictory questions.
+* Internal: a check that tells specify which records will never need a written plan.
+* Internal: a store that keeps a reviewed plan beside its record and says whether it is still valid.
+* The pipeline driver can be set to take records above low risk or outside the fast-lane ceremony, with its reviewer on, and always leaves them for a human to merge.
+
 ## [6.176.0](https://github.com/thn-inc/claude-tweaks/compare/v6.175.0...v6.176.0) (2026-11-22)
 
 
