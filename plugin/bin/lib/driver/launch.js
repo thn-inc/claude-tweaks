@@ -141,8 +141,9 @@ function modelPolicyRefusal(policy) {
 // Resolves `{ envelope, model, effort, profile }`; a launcher throw is rethrown with `model`, `effort` and `profile` attached.
 async function launchTracked(shared, deps, { minutes, dollars }, { profile: explicitProfile, ...opts }) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
-  // shared.activeWorker as they were. `model` and `effort` follow the opts spread, so no caller can override them.
-  const { model, effort, profile } = roleLaunch(opts.role, shared.policy, explicitProfile === undefined ? {} : { profile: explicitProfile });
+  // shared.activeWorker as they were. `model`, `effort` and `profile` are resolved here and `profile` is
+  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`.
+  const { model, effort, profile } = roleLaunch(opts.role, shared.policy, { profile: explicitProfile });
   let captured = false;
   const runner = (call) => {
     const handle = deps.runner(call);

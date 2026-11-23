@@ -85,7 +85,7 @@ const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
 const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
-const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, launchTracked, modelPolicyRefusal } = require('./launch');
+const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, IMPLEMENTER_TIER_KEY, readCeilings, launchTracked, modelPolicyRefusal } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
@@ -119,9 +119,9 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, lane-bounds.js's laneBounds and this file's driverLineBound).
-// The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
-// and effort each worker launches with (#5917 and #5942, launch.js's roleLaunch); the policy step
-// refuses a run whose roles do not resolve.
+// The last five, express-driver-models, model-profiles, model-ceiling, model-effort and implementer-tier,
+// are the model and effort each worker launches with (#5917, #5942 and #5997, launch.js's roleLaunch);
+// the policy step refuses a run whose roles do not resolve.
 const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
@@ -696,7 +696,7 @@ function newIndexFlagStop(ctx, deps) {
 // HEAD is a `fail` naming only the shas. After an unmoved HEAD the index flags are checked, on the
 // throw path too. Once those checks are done, the worker's test list file is removed (#5915).
 async function runImplementer(ctx, deps, opts = {}) {
-  const launch = { started: false, note: null, model: null, effort: null };
+  const launch = { started: false, note: null, model: null, effort: null, profile: null };
   let result;
   let threw = false;
   let thrown;
@@ -715,13 +715,13 @@ async function runImplementer(ctx, deps, opts = {}) {
   }
   // Every result of a launch that resolved a model names it (#5917): no envelope and the HEAD and flag stops too.
   // A refusal never sets it. A thrown launcher carries it on the error (see workerStep).
-  // `effort` rides with it (#5942): a level, or null when no flag was passed.
-  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model, effort: launch.effort } };
+  // `effort` rides with it (#5942): a level, or null when no flag was passed; `profile` too (#5997).
+  if (launch.model) result = { ...result, extra: { ...(result.extra || {}), model: launch.model, effort: launch.effort, profile: launch.profile } };
   if (launch.note === null) return result;
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
 // runImplementer's launch and its checks; `launch.started` is set just before launchTracked is called.
-async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, launch) {
+async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile } = {}, launch) {
   const { shared } = ctx;
   // Resolved first, so the HEAD read below stays the call immediately before the launch. Only where
   // the implementer has Bash (#5915): elsewhere it cannot run a command, so nothing is read.
@@ -753,11 +753,13 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
       cwd: ctx.wt,
       prompt: workerPrompt(ctx, { minutes, dollars, maxLines, tests }) + extraPrompt,
       ...(tests !== null ? { testCommand: tests.command } : {}),
+      ...(typeof profile === 'string' ? { profile } : {}),
       settingsDir,
     });
     ({ envelope } = launched);
     launch.model = launched.model;
     launch.effort = launched.effort ?? null;
+    launch.profile = launched.profile ?? null;
   } catch (err) {
     // A model refusal (#5917) is thrown before any process starts: nothing ran, so nothing is swept
     // or re-read, and the result carries noLine so the refusal writes no `worker` event line.
@@ -770,6 +772,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '' } = {}, l
     if (err && typeof err.model === 'string') {
       launch.model = err.model;
       launch.effort = err.effort ?? null;
+      launch.profile = typeof err.profile === 'string' ? err.profile : null;
     }
     // A launcher that throws may have moved HEAD: that is reported in place of the throw;
     // otherwise the throw is rethrown as it was.
@@ -837,26 +840,53 @@ function launchThrowFail(ctx, err) {
   const detail = err.message || String(err);
   // The removal note runImplementer's normal path appends, kept for the throw path too (#5915).
   const note = typeof err.testListNote === 'string' ? err.testListNote : null;
-  return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null } };
+  return { status: 'fail', detail: note === null ? detail : `${detail}; ${note}`, extra: { tests: ctx.workerTestMode, model: err.model, effort: err.effort ?? null, profile: err.profile ?? null } };
 }
-// The worker line also names which path the targeted test command took (`tests`, #5915).
+// The implementer's rule (#5997): `record` only when the policy says so; unset or any other value is `lane`.
+function implementerRule(policy) {
+  const entry = policy && policy[IMPLEMENTER_TIER_KEY];
+  return entry && entry.value === 'record' ? 'record' : 'lane';
+}
+// What ctx.implementer records after a worker-step launch that resolved a model (a read: no interruptClass rung).
+function setImplementer(ctx, rule, model, profile, attempt) {
+  if (typeof model === 'string') ctx.implementer = { rule, profile, model, attempt };
+}
+// The worker line also names which path the targeted test command took (`tests`, #5915), the launch's
+// `profile` and its `attempt` (1: the first launch, #5997).
 // A launcher throw that carries the model it ran on (launchTracked) is reported as defineStep's own catch
-// would, plus the line's `tests` and `model`; any other throw propagates unchanged (#5917).
+// would, plus the line's `tests`, `model` and `profile`; any other throw propagates unchanged (#5917).
+// Under `implementer-tier: record` the first profile is the record's (launch.js's recordImplementerProfile); its
+// refusal is a no-line `fail` like a launch-time model refusal.
 const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const rule = implementerRule(ctx.shared.policy);
+  let profile;
+  if (rule === 'record') {
+    try {
+      profile = deps.recordImplementerProfile(ctx.issue);
+    } catch (err) {
+      if (err && err.code === MODEL_REFUSED_CODE) return { status: 'fail', detail: err.message, noLine: true };
+      throw err;
+    }
+  }
   let result;
   try {
-    result = await runImplementer(ctx, deps, {});
+    result = await runImplementer(ctx, deps, { profile });
   } catch (err) {
     const failed = launchThrowFail(ctx, err);
-    if (failed !== null) return failed;
+    if (failed !== null) {
+      setImplementer(ctx, rule, failed.extra.model, failed.extra.profile, 1);
+      return { ...failed, extra: { ...failed.extra, attempt: 1 } };
+    }
     throw err;
   }
-  return { ...result, extra: { ...(result.extra || {}), tests: ctx.workerTestMode } };
+  const extra = result.extra || {};
+  setImplementer(ctx, rule, extra.model, extra.profile ?? null, 1);
+  return { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 1 } : {}) } };
 });
 
 // The review fix round's implementer relaunch (#5942): runs `run` (runImplementer; a test seam) and writes
 // the launch's own worker line through ctx.events.emit, so its `model` and `effort` are the launch's own
-// and sit before the review line. The line carries the worker step's keys plus `fix: true`. A refusal
+// and sit before the review line. The line carries the worker step's keys plus `fix: true`, minus `attempt`. A refusal
 // (`noLine`) and a throw that resolved no model write none, as workerStep writes none; a throw that
 // carries `err.model` writes a `fail` line and rethrows unchanged. After an interrupt the signal handler
 // has already written the stop and final line, so no line is written. Returns the result unchanged.
@@ -864,7 +894,9 @@ async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
   const t0 = deps.now();
   let result;
   try {
-    result = await run(ctx, deps, { extraPrompt });
+    // The fix round launches on the first attempt's profile under `record` (#5997); under `lane` it passes none.
+    const profile = ctx.implementer && ctx.implementer.rule === 'record' ? ctx.implementer.profile : undefined;
+    result = await run(ctx, deps, { extraPrompt, profile });
   } catch (err) {
     const failed = ctx.shared.interrupted ? null : launchThrowFail(ctx, err);
     if (failed !== null) ctx.events.emit(STEP.worker, failed.status, deps.now() - t0, failed.detail, { ...failed.extra, fix: true });
@@ -1531,5 +1563,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule,
 };

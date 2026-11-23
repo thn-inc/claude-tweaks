@@ -213,7 +213,7 @@ function newShared() {
 // for its `auto:build` grant at admission; a record the --budget loop picked never is.
 function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, branch: null, claimed: false, claimExit: null,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     workerTestCommand: undefined, workerTestMode: undefined,
@@ -683,6 +683,8 @@ const realDeps = {
     return { code: r.status, stdout: r.stdout || '', stderr: r.error ? `${stderr}${r.error.message}\n` : stderr };
   },
   resolvePolicy: (keys) => defaultResolvePolicy(keys),
+  // The implementer's first profile under `implementer-tier: record` (#5997).
+  recordImplementerProfile: (issue) => require('./launch').recordImplementerProfile(issue),
   resolvePolicyCore: (opts, coreDeps) => require('../../resolve-policy').resolvePolicy(opts, coreDeps),
   evaluateRecordEligibility: (issue, opts) => require('../express/eligibility').evaluateRecordEligibility(issue, opts),
   evaluateAdmission: (input) => require('./admission').evaluateAdmission(input),

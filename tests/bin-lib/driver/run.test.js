@@ -501,6 +501,7 @@ function describeArgs(args) {
 // The record's one reviewer answer (#5224): recorded in reviewerCalls, outside `calls` so the captured call
 // signatures stay as they were; over.reviewRequired replaces the real function.
 const { reviewRequired: realReviewRequired } = require(path.join(LIB, 'driver', 'review'));
+const { recordImplementerProfile: recordImplementerProfileReal } = require(path.join(LIB, 'driver', 'launch'));
 
 function harness(over = {}) {
   const calls = [];
@@ -553,6 +554,7 @@ function harness(over = {}) {
     rankNext: (groups, entries, opts) => { record('rankNext', [groups, entries, opts]); return rankNext(groups, entries, opts); },
     reviewRequired: (opts) => { reviewerCalls.push(opts); return (over.reviewRequired || realReviewRequired)(opts); },
     launchWorker: (opts, d) => dispatch('worker', [opts, d]),
+    recordImplementerProfile: recordImplementerProfileReal,
     resolveRunDir: (opts) => dispatch('resolveRunDir', [opts]),
     // The --run guard (#5232): recorded, and a refusal unless a test passes over.deps.adoptRun.
     adoptRun: (opts) => { record('adoptRun', [opts]); return { ok: false, why: 'adoptRun not scripted' }; },
@@ -1674,6 +1676,16 @@ test('AC2.1 (driver): a policy row reaches the launch', async () => {
   assert.equal(launchedModel(h, 'implementer'), M('fast'));
 });
 
+test('#5997 characterization: lane worker launch opts', async () => {
+  // Pinned before runImplementer learned `profile`: the launcher's opts carry no `profile` key and the model is the lane's.
+  const h = harness();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [opts] = workerCall(h).args;
+  assert.equal(Object.hasOwn(opts, 'profile'), false);
+  assert.equal(opts.model, M('standard'));
+  assert.equal(opts.role, 'implementer');
+});
+
 test('AC5.1 (driver): a launch-time refusal writes no worker line, the final line names the role', async () => {
   const h = harness();
   const shared = newShared();
@@ -2286,10 +2298,11 @@ const K5 = ['costUsd', 'denials', 'detail', 'discarded', 'ms', 'record', 'reprod
 // The admission line gained `authority` (#5584), the worker line `tests` (#5915) and `model` (#5917), and the review
 // line `model` (#5917), and both lines `effort` (#5942): the fields added since the capture.
 const KA = ['authority', ...K0];
-const KW = [...K1, 'effort', 'model', 'tests'].sort();
+const KW = [...K1, 'attempt', 'effort', 'model', 'profile', 'tests'].sort();
 const K5M = [...K5, 'effort', 'model'].sort();
-// The review fix round's own worker line (#5942): the worker line's keys plus `fix`.
-const KWF = [...KW, 'fix'].sort();
+// The review fix round's own worker line (#5942): the worker line's keys plus `fix`, minus `attempt` (it names the profile only, #5997).
+// The worker line gained `attempt` and `profile`, and the fix line `profile` (#5997).
+const KWF = [...K1, 'effort', 'fix', 'model', 'profile', 'tests'].sort();
 const BASE_KEYS_PLAIN = [
   K0, K0, K0, KA, K0, K0,
   K0, KW, K2, K2, K0, K0,
@@ -3946,6 +3959,82 @@ const FINDING_0 =`${normalizeEventText('src/a.js')}:1 ${normalizeEventText(evide
 const workerLines = (h) => h.lines().filter((l) => l.step === STEP.worker);
 const FAST_IMPLEMENTER = { ...POLICY['express-driver-models'], implementer: 'fast' };
 
+// --- the implementer's profile under implementer-tier (#5997) ---------------------------------
+const keyFilesBody = (...names) => `Body.\n\n### Key Files\n\n${names.map((n) => `- \`${n}\``).join('\n')}\n`;
+const tierIssue = (labels, body) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({ ...issueFor(Number(c.args.at(-1))), labels: labels.map((name) => ({ name })), body })];
+const RECORD_TIER = { 'implementer-tier': 'record' };
+
+test('#5997 AC1.1: record — size:low with 2 Key Files launches the implementer on fast', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('fast'));
+  const [line] = workerLines(h);
+  assert.deepEqual([line.profile, line.attempt, line.model], ['fast', 1, M('fast')]);
+});
+
+test('#5997 AC1.2: record — 3 Key Files, or size:high, launches on standard', async () => {
+  for (const [size, names] of [['low', ['a.js', 'b.js', 'c.js']], ['high', ['a.js']]]) {
+    const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody(...names))] });
+    assert.equal(await run(['#7'], h.deps), 0, size);
+    assert.equal(launchedModel(h, 'implementer'), M('standard'), size);
+    assert.equal(workerLines(h)[0].profile, 'standard', size);
+  }
+});
+
+test('#5997: a record with no size label launches on standard under record', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [tierIssue(['risk:low'], keyFilesBody('a.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(launchedModel(h, 'implementer'), M('standard'));
+  assert.equal(workerLines(h)[0].profile, 'standard');
+});
+
+test('#5997 AC2.1: lane and unset launch from express-driver-models for every size', async () => {
+  for (const tier of ['lane', undefined]) {
+    for (const size of ['low', 'medium', 'high']) {
+      const h = harness({
+        policy: { 'implementer-tier': tier, 'express-driver-models': FAST_IMPLEMENTER },
+        script: [tierIssue(['risk:low', `size:${size}`], keyFilesBody('a.js'))],
+      });
+      assert.equal(await run(['#7'], h.deps), 0, `${tier} ${size}`);
+      assert.equal(launchedModel(h, 'implementer'), M('fast'), `${tier} ${size}`);
+      const [line] = workerLines(h);
+      assert.deepEqual([line.profile, line.attempt], ['fast', 1], `${tier} ${size}`);
+      assert.equal(Object.hasOwn(workerCall(h).args[0], 'profile'), false, `${tier} ${size}: no profile reaches the launcher`);
+    }
+  }
+});
+
+test('#5997: a refused record-rule launch writes no worker line', async () => {
+  const h = harness({
+    policy: RECORD_TIER,
+    deps: { recordImplementerProfile: () => { throw Object.assign(new Error('no model for driver role implementer: implementer-tier: boom'), { code: 'DRIVER_MODEL_REFUSED' }); } },
+  });
+  await run(['#7'], h.deps);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(workerLines(h).length, 0);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'worker');
+  assert.match(final.stop.detail, /^no model for driver role implementer/);
+});
+
+test('#5997: realDeps.recordImplementerProfile is the real rule', () => {
+  const { realDeps } = require(path.join(LIB, 'driver', 'run'));
+  assert.equal(realDeps.recordImplementerProfile({ labels: [{ name: 'size:low' }], body: keyFilesBody('a.js') }), 'fast');
+  assert.equal(realDeps.recordImplementerProfile({ labels: [{ name: 'size:low' }], body: keyFilesBody('a.js', 'b.js', 'c.js') }), 'standard');
+});
+
+test('#5997: the fix round launches on the first attempt\'s profile and its line names profile only', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'))] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].model, M('fast'));
+  assert.equal(fix.args[0].model, M('fast'));
+  const [, fixLine] = workerLines(h);
+  assert.equal(fixLine.fix, true);
+  assert.equal(fixLine.profile, 'fast');
+  assert.equal(Object.hasOwn(fixLine, 'attempt'), false);
+});
+
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
@@ -4183,9 +4272,9 @@ test('#5942 (fix round): a throw without a resolved model writes no fix worker l
 test('#5942 (fix round): the throw-path line carries the worker step\'s detail, test-list note included', async () => {
   const emitted = [];
   const ctx = { events: { emit: (...a) => emitted.push(a) }, shared: { interrupted: null }, workerTestMode: 'declared' };
-  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', testListNote: 'list not removed' });
+  const err = Object.assign(new Error('killed'), { model: 'm', effort: 'high', profile: 'fast', testListNote: 'list not removed' });
   await assert.rejects(fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async () => { throw err; }), (e) => e === err);
-  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', fix: true }]]);
+  assert.deepEqual(emitted, [['worker', 'fail', 0, 'killed; list not removed', { tests: 'declared', model: 'm', effort: 'high', profile: 'fast', fix: true }]]);
 });
 
 test('#5942 (fix round): an interrupt during the fix launch writes no fix worker line', async () => {
