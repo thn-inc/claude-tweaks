@@ -641,19 +641,30 @@ test('cross-repository entries are named {repository}#{blocker} in the stop line
 });
 
 // #6142 — the hollow verdict is named on every flow-side surface that enumerates the stopping verdicts.
-test('#6142: the hollow verdict is a hard fail with its own stop card, and every flow-side verdict enumeration names it', () => {
-  const ordering = readText(ORDERING);
-  const row = verdictRow(outOfRunSection(ordering), 'hollow');
-  assert.match(row, /hard fail — stop before Step 2\.8 claims, render the card below/, 'hollow row is a hard fail before claims');
-  assert.match(ordering, /^Blocker landed hollow — stopping before any claim\.$/m, 'the hollow stop card exists');
-  assert.match(ordering, /touched none of its Key Files \(or only pipeline bookkeeping\)/, 'the card names the cause');
-  assert.match(ordering, /closed by \{commit\}/, 'a null pr reads closed by {commit}');
-  assert.match(ordering, /gh issue reopen \{blocker\}/, 'the card offers the reopen escape');
-  const here = (p) => readText(path.join(FLOW_DIR, p));
-  assert.match(here('validation.md'), /`open`, `unlanded` or `hollow` is BLOCKED/, 'validation.md names hollow');
-  assert.match(here('SKILL.md'), /an `open`\/`unlanded`\/`hollow` out-of-run blocker/, 'flow SKILL.md names hollow');
-  assert.match(here('failure-cards.md'), /`open`, `unlanded` or `hollow` out-of-run blocker/, 'failure-cards.md names hollow');
-  const docs = path.join(__dirname, '..', 'docs');
-  assert.match(readText(path.join(docs, 'skill-graph.md')), /`open`\/`unlanded`\/`hollow`\/`landed`/, 'skill-graph names hollow');
-  assert.match(readText(path.join(docs, 'journeys', 'stop-a-run-whose-closed-blocker-never-landed-4553.md')), /The six verdicts are `open`, `landed`, `unlanded`, `hollow`/, 'the journey names six verdicts');
-});
+// One test per surface, so a failure names the surface; each pin goes red when its clause is deleted.
+const DOCS = path.join(__dirname, '..', 'docs');
+const JOURNEY = path.join(DOCS, 'journeys', 'stop-a-run-whose-closed-blocker-never-landed-4553.md');
+const HOLLOW_PINS = [
+  ['multispec-dependency-ordering.md: hollow row is a hard fail before claims', ORDERING, /^\| `hollow` \|.*hard fail — stop before Step 2\.8 claims, render the card below/m],
+  ['multispec-dependency-ordering.md: the gate sentence names hollow', ORDERING, /An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`/],
+  ['multispec-dependency-ordering.md: the hollow stop card exists', ORDERING, /^Blocker landed hollow — stopping before any claim\.$/m],
+  ['multispec-dependency-ordering.md: the card names the cause', ORDERING, /touched none of its Key Files \(or only pipeline bookkeeping\)/],
+  ['multispec-dependency-ordering.md: a null pr reads closed by {commit}', ORDERING, /closed by \{commit\}/],
+  ['multispec-dependency-ordering.md: the card offers the reopen escape', ORDERING, /gh issue reopen \{blocker\}/],
+  ['validation.md names hollow', path.join(FLOW_DIR, 'validation.md'), /`open`, `unlanded` or `hollow` is BLOCKED/],
+  ['flow SKILL.md names hollow', path.join(FLOW_DIR, 'SKILL.md'), /an `open`\/`unlanded`\/`hollow` out-of-run blocker/],
+  ['failure-cards.md names hollow', path.join(FLOW_DIR, 'failure-cards.md'), /`open`, `unlanded` or `hollow` out-of-run blocker/],
+  ['skill-graph.md lists hollow among the blockerLanding verdicts', path.join(DOCS, 'skill-graph.md'), /`open`\/`unlanded`\/`hollow`\/`landed`/],
+  ['the journey names six verdicts including hollow', JOURNEY, /The six verdicts are `open`, `landed`, `unlanded`, `hollow`/],
+  ['the journey step 3 names hollow as a hard fail', JOURNEY, /`open`, `unlanded` and `hollow` are hard fails before Step 2\.8 claims/],
+];
+for (const [name, file, re] of HOLLOW_PINS) {
+  test(`#6142: ${name}`, () => {
+    const text = readText(file);
+    assert.match(text, re);
+    // Go-red control: the same text with every match of the pinned clause removed fails the pin.
+    const stripped = text.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'), '');
+    assert.notEqual(stripped, text);
+    assert.doesNotMatch(stripped, re);
+  });
+}

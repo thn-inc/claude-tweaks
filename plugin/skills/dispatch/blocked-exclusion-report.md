@@ -31,7 +31,7 @@ render one line per record, under the same exception and empty-array rules below
 
 `#{number} excluded — blocker not landed: #{blocker} (closing commit {commit}), … — eligible again once it reaches the integration branch`
 
-An entry whose blocker carries `verdict: 'hollow'` (`{blocker, commit, verdict, pr}`; `bin/dispatch-unlanded-blockers.js` prints the same wording) renders instead `#{number} waits — blocker #{blocker} was closed by #{pr} with no implementation`; with `pr: null`, `closed by {commit}` in place of `#{pr}`. A mixed record (one exclusion whose `detail.blockers` holds both) renders one line naming every blocker, each clause in its own verdict's wording, in `detail.blockers` order.
+An entry whose blocker carries `verdict: 'hollow'` (`{blocker, commit, verdict, pr}`; `bin/dispatch-unlanded-blockers.js` prints the same wording) renders instead `#{number} waits — blocker #{blocker} was closed by #{pr} with no implementation`; with `pr: null`, `closed by {commit}` in place of `#{pr}`. A mixed record (one exclusion whose `detail.blockers` holds both) renders one line, opening `excluded — blocker not landed:` (the unlanded line's), naming every blocker in `detail.blockers` order, each clause in its own verdict's wording (a hollow one: `#{blocker} was closed by #{pr} with no implementation`).
 
 Then its `reason: 'malformed-blocker'` entries (`records: [number], detail: {cause}` each, #4792 —
 the same pass, or the eligibility step for non-array labels, #5315), one line per record, under the same rules. An entry

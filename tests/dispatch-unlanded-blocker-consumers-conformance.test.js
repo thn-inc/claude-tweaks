@@ -55,7 +55,7 @@ const REPORT_FACTS = [
   [/`#\{number\} waits — blocker #\{blocker\} was closed by #\{pr\} with no implementation`/, 'hollow: the report line mirrors the CLI AUTO line'],
   [/`verdict: 'hollow'`/, 'hollow: names the verdict that selects the line'],
   [/with `pr: null`, `closed by \{commit\}` in place of `#\{pr\}`/, 'hollow: a null pr names the commit'],
-  [/one line naming every blocker, each clause in its own verdict's wording, in `detail\.blockers` order/, 'hollow: a mixed record renders one line in detail order'],
+  [/one line, opening `excluded — blocker not landed:`.*naming every blocker in `detail\.blockers` order, each clause in its own verdict's wording/, 'hollow: a mixed record renders one line in detail order'],
   [/`#\{number\} excluded — blocker not landed: #\{blocker\} \(closing commit \{commit\}\), … — eligible again once it reaches the integration branch`/, 'AC3.1: the report line names blocker, commit and when it is eligible again'],
   [/Then its `reason: 'malformed-blocker'` entries \(`records: \[number\], detail: \{cause\}` each, #4792/, 'AC4.3: reads the malformed-blocker entries'],
   [/`#\{number\} excluded — malformed blocker declaration: \{cause\} — eligible again once its blocker declaration can be checked`/, 'AC4.2 AC4.3: the malformed record has its own report line'],
@@ -215,5 +215,5 @@ test('#6142: dispatch SKILL.md, settle-and-merge.md and queue-pull-script.md nam
   const dir = path.join(ROOT, 'plugin', 'skills', 'dispatch');
   assert.match(readText(path.join(dir, 'SKILL.md')), /no `unlanded`\/`hollow` out-of-run blocker/, 'SKILL.md queue line');
   assert.match(readText(path.join(dir, 'settle-and-merge.md')), /on an `open`, `unlanded` or `hollow` out-of-run blocker/, 'settle special case');
-  assert.match(collapse(readText(path.join(dir, 'queue-pull-script.md'))), /judges `unlanded` or `hollow`/, 'queue-pull-script reason bullet');
+  assert.match(collapse(readText(path.join(dir, 'queue-pull-script.md'))), /a hollow entry adding `verdict: 'hollow'` and `pr`.*judges `unlanded` \(closed, its closing commit not on `origin\/\{integration-branch\}`\) or `hollow` \(closing commit reachable, no Key File touched\)/, 'queue-pull-script reason bullet: both verdicts, the hollow detail fields');
 });

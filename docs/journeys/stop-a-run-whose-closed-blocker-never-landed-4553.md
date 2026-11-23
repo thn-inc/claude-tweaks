@@ -18,8 +18,8 @@ files:
 **Goal:** never build on an integration-branch base that is missing a prerequisite's code just because the prerequisite's issue is closed. A blocker closed by a PR merged into the wrong branch must stop the run before anything is claimed.
 **Entry point:** `/flow` Step 2's new substep 2.7b for a run invoked with one record target; multi-spec Validation step 3 for a batch. Both run before Step 2.8 claims.
 **Success state:**
-- A still-`open` out-of-run blocker stops the run before Step 2.8 claims anything. So does an `unlanded` one, whose closing commit is not reachable from `origin/{integration-branch}`.
-- An `unlanded` stop prints a card naming the record, the blocker, the closing commit and the integration branch, with two paste-ready escapes.
+- A still-`open` out-of-run blocker stops the run before Step 2.8 claims anything. So does an `unlanded` one, whose closing commit is not reachable from `origin/{integration-branch}`, and a `hollow` one, whose reachable closing commit touched none of the blocker's Key Files.
+- An `unlanded` stop prints a card naming the record, the blocker, the closing commit and the integration branch, with two paste-ready escapes; a `hollow` stop prints its own card naming the closing PR and commit, with a reopen escape and the remove-edge escape.
 - A blocker whose landing cannot be judged lets the run proceed and leaves one `SKIP` line per blocker in `decisions.md`.
 
 ## Steps
@@ -50,7 +50,7 @@ files:
   2. Remove the `blocked-by` edge, natively or by deleting the body's `Blocked by #{blocker}` line.
 - **Should feel:** Decisive and actionable. The stop names exactly what is missing and how to fix it from a stale checkout.
 - **Should understand:** A cherry-picked landing has a different sha and reads `unlanded`. Confirm the cherry-pick by hand, then take escape 2. Escape 1 merges the commit's whole history; to land only the fix, cherry-pick it and take escape 2.
-- **Red flags:** A claim, `bot:in-progress` label or draft PR created for a record whose blocker is `open` or `unlanded`. A card with no paste-ready command.
+- **Red flags:** A claim, `bot:in-progress` label or draft PR created for a record whose blocker is `open`, `unlanded` or `hollow`. A card with no paste-ready command.
 
 ### 4. An undetermined blocker proceeds, with one SKIP line per blocker
 - **URL:** `plugin/skills/flow/multispec-dependency-ordering.md` (`undetermined` row and its `--text-file` SKIP line); `validation.md` 2.7b step 7
