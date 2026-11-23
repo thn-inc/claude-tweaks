@@ -51,6 +51,11 @@ const PATTERNS = [
   [lit('a `null` `next`'), "AC6.3: past the ladder, SDD's own handling"],
   [lit("the CLI's `ladder` is `true`"), 'AC5.1 (lane): inherit keeps #5999'],
   [lit('renders as `inherit` on either side'), 'AC6.2: a null effort renders as inherit'],
+  [lit('; no line when `next` is `null`'), 'AC6.3: no escalation line for a null next'],
+  [lit("Triggers (`blocked`, `fix-round-failed`) and the fresh-implementer rule are the escalation's"), 'ladder keeps the #5999 triggers and fresh-implementer rule'],
+  [lit('its `effort` parameter `next.effort` (none when `null`)'), 'AC2.1: the next attempt dispatches at next.effort'],
+  [lit('(with `--run "$PIPELINE_RUN_DIR"` when set)'), 'AC7.4 (lane): the next-attempt call carries --run'],
+  [lit("before any escalation line, its start effort: the profile line's `effort` or the marker start line's"), "AC6.2: the first escalation's current effort is the start effort"],
   [lit(START_LINE), 'Deliverable 6: a Role-marker task logs its start effort'],
   [
     lit('Log once, skipped when `decisions.md` already holds an `implementer profile` line (a resumed build)'),
