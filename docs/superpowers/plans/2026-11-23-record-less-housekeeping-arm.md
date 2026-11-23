@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-23T073114-record-5208/work/5208-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-23T151011-record-5208/work/5208-spec.md`
 
 ## Global Constraints
 
@@ -40,12 +40,13 @@
 ### Task 1: Record-less housekeeping composer
 
 **Role:** integration
+**Review risk:** high (gates a merge that carries no `Fixes` line)
 
 **Files:**
 - Modify: `plugin/bin/lib/release/subject.js` (add `composeHousekeepingSubject`, export it; extend header comment by one sentence)
 - Modify: `plugin/bin/lib/compose-subject.js` (`parseArgs`, `run`, `USAGE`, header comment)
 - Test: `tests/bin-lib/release/subject.test.js`
-- Test: `tests/bin-lib/compose-subject.test.js` (the spec's Key Files names `tests/compose-subject.test.js`; that path does not exist — the suite lives here)
+- Test: `tests/bin-lib/compose-subject.test.js`
 
 **Interfaces:**
 - Produces: `composeHousekeepingSubject({ title: string, number: number, scope?: string|null, tag?: string|null }) -> { title: string, body: string }` exported from `plugin/bin/lib/release/subject.js`. Throws `ComposeSubjectError` on a non-positive `number`, an empty `title`, or a scope failing the same token rule as `composeSubject`.
@@ -194,6 +195,7 @@ test('AC1.1: every housekeeping arm site composes with the record-less --houseke
   const start = text.indexOf('## Step 3:');
   const step3 = text.slice(start, text.indexOf('\n## ', start + 1));
   assert.match(step3, /--housekeeping/, 'pr-first-merge.md Step 3 documents the record-less form');
+  assert.match(step3, /--housekeeping[^\n]*branch 1|branch 1[^\n]*--housekeeping/, "the record-less form covers every composer fence, branch 1's immediate-merge degrade included");
   assert.ok(read('plugin/skills/tidy/step-7-5-worktree-always.md').includes(HK_CALL), 'tidy Step 7.5 carries the full record-less command');
   for (const rel of ['plugin/skills/tidy/actions-github-issues.md', 'plugin/skills/wrap-up/residue-sweep.md']) {
     assert.match(read(rel), /--housekeeping/, `${rel} names the record-less form`);
@@ -212,7 +214,7 @@ Expected: FAIL on `pr-first-merge.md Step 3 documents the record-less invocation
 
 - [ ] **Step 3: Edit the prose**
 
-- `pr-first-merge.md` Step 3: append one short sentence to the "**Creation-time caller:**" line — e.g. `A housekeeping PR has no {issue-list}: its composer passes --housekeeping in place of it and --keep-open (a chore: subject from the PR title, no Fixes line).` (inline code as needed). Do not drop the restated degrade list. **Pinned, do not alter:** that line's `**Creation-time caller:**` label, its `Step 2.5` mention and the literal `Red path, Conflict path and ready+comment degrades become leave-unarmed` (`tests/tidy-housekeeping-pr-check-wait-conformance.test.js`), and line 299's `a caller with no \`Fixes\` record (tidy's housekeeping arm)` (`tests/accept-park-prose-conformance.test.js`). Offset the added bytes (net ≤ +9 B, Global Constraints) by tightening unpinned restatement elsewhere in `pr-first-merge.md` — before cutting any phrase, `git grep -n -F '{phrase}' -- tests plugin` and leave any phrase a test or another skill file reads. Keep the four fences byte-identical. Re-measure with `node "/Users/thomasholknielsen/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.176.0/bin/plan-audit.js" docs/superpowers/plans/2026-11-23-record-less-housekeeping-arm.md --bytes` (every `merge` row in `headroom.composed` must show `over: 0`).
+- `pr-first-merge.md` Step 3: append one short sentence to the "**Creation-time caller:**" line covering **every** composer fence in Step 3, branch 1's immediate-merge degrade (`merge-verification: off`) included (the record's Decision) — e.g. `A marker-stamped PR has no {issue-list}: every composer fence here, branch 1's included, passes --housekeeping in place of it and --keep-open.` (inline code as needed; the sentence must name `--housekeeping` and `branch 1` on one line — the Step 1 test pins it). Do not drop the restated degrade list. **Pinned, do not alter:** that line's `**Creation-time caller:**` label, its `Step 2.5` mention and the literal `Red path, Conflict path and ready+comment degrades become leave-unarmed` (`tests/tidy-housekeeping-pr-check-wait-conformance.test.js`), and line 299's `a caller with no \`Fixes\` record (tidy's housekeeping arm)` (`tests/accept-park-prose-conformance.test.js`). Offset the added bytes (net ≤ +9 B, Global Constraints) by tightening unpinned restatement elsewhere in `pr-first-merge.md` — before cutting any phrase, `git grep -n -F '{phrase}' -- tests plugin` and leave any phrase a test or another skill file reads. Keep the four fences byte-identical. Re-measure with `node "/Users/thomasholknielsen/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/6.176.0/bin/plan-audit.js" docs/superpowers/plans/2026-11-23-record-less-housekeeping-arm.md --bytes` (every `merge` row in `headroom.composed` must show `over: 0`).
 - `tidy/step-7-5-worktree-always.md`: after "Then run Step 3's fences only where the table routes to Step 3.", add that the composer fence takes the record-less form — `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" --housekeeping --pr {pr-number} --out-dir "{subject-dir}"`, no `{issue-list}` and no `--keep-open` (a housekeeping PR links no record).
 - `tidy/actions-github-issues.md` `## Arm ready PR`: in "If every gate still holds …", add that the housekeeping-marker flavor composes with Step 3's record-less `--housekeeping` form, the record-linked flavor with its `Fixes` records as `{issue-list}`.
 - `wrap-up/residue-sweep.md`: extend "arm now via `_shared/pr-first-merge.md` Step 3's initial compose + `gh pr merge --auto` fences" with "— the compose in its record-less `--housekeeping` form".
@@ -229,13 +231,11 @@ git add plugin/skills/_shared/pr-first-merge.md plugin/skills/tidy/step-7-5-work
 git commit -m "Point the housekeeping arm sites at compose-subject.js --housekeeping — tidy Step 7.5, Arm ready PR, residue-sweep — refs #5208"
 ```
 
-Waived tests/compose-subject.test.js: the spec's Key Files path does not exist; Task 1 modifies the real suite, `tests/bin-lib/compose-subject.test.js`.
-
 ## Acceptance coverage
 
 | Clause | Covered by |
 |---|---|
-| AC1.1 (tidy housekeeping PR logs `armed`, not `arm-failed`) | Task 2 Step 1 `AC1.1` prose test + Task 1 `AC2.1` CLI test (the arm failed only because the composer exited 1); a live arm is not reproducible in a unit suite |
+| AC1.1 (housekeeping PR logs `armed` or `merged`, never `arm-failed`) | Task 2 Step 1 `AC1.1` prose test + Task 1 `AC2.1` CLI test (the arm failed only because the composer exited 1) — accepted as AC1's coverage by the record's Decision; a live outcome is not observable in a unit suite |
 | AC2.1 | Task 1 Step 2 `AC2.1` |
 | AC2.2 | Task 1 Step 2 `AC2.2` |
 | AC3.1 (`npm test` passes) | `/claude-tweaks:build` Common Step 5 final verification |
