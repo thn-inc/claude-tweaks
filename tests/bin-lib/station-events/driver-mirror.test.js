@@ -55,6 +55,15 @@ test('#5942: a fix-round worker line maps to no station events', () => {
   assert.equal(stationEventsFor(line({ step: 'review', fix: true }), ID).length, 2);
 });
 
+test('#5997: a relaunch worker line (attempt 2, no fix marker) maps to a work segment and binds its own session', () => {
+  const relaunch = line({ attempt: 2, trigger: 'red-tests', escalatedFrom: 'fast', sessionId: 's2' });
+  const events = stationEventsFor(relaunch, ID);
+  assert.deepEqual(kinds(events), [['started', 'build', undefined], ['exited', 'build', 'passed'], ['session_bound', 'build', undefined]]);
+  assert.equal(events.find((e) => e.kind === 'session_bound').sessionId, 's2');
+  // Control: the same line marked as a fix-round launch maps to nothing.
+  assert.deepEqual(stationEventsFor({ ...relaunch, fix: true }, ID), []);
+});
+
 test('merge sub-steps: ready enters, a merged confirm exits passed, a park exits returned', () => {
   assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-ready', detail: 'PR undrafted' }), ID)), [['entered', 'merge', undefined]]);
   const confirm = stationEventsFor(line({ step: 'merge-confirm', detail: 'merged, unit concluded SUCCESS' }), ID);

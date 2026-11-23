@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 
 const lib = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
-const { roleModel, roleLaunch, modelPolicyRefusal, launchTracked, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
+const { roleModel, roleLaunch, modelPolicyRefusal, launchTracked, recordImplementerProfile, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE } = require(path.join(lib, 'driver', 'launch'));
 const { DRIVER_ROLE_PROFILES } = require(path.join(lib, 'driver', 'roles'));
 const { PROFILES, resolve } = require(path.join(lib, 'model-profiles', 'profiles'));
 const { resolvePolicyKeys } = require(path.join(lib, 'policy-schema'));
@@ -214,10 +214,11 @@ test('#5942: launchTracked resolves { envelope, model, effort } and a throw carr
   for (const [raw, effort] of [['model-effort: profile\n', 'high'], ['', null]]) {
     const shared = { activeWorker: null, policy: policyFrom(raw) };
     const ok = await launchTracked(shared, { platform: 'linux', env: {}, runner: () => {}, launchWorker: async () => 'env' }, limits, opts);
-    assert.deepStrictEqual(ok, { envelope: 'env', model: M('standard'), effort });
+    assert.deepStrictEqual(ok, { envelope: 'env', model: M('standard'), effort, profile: 'standard' });
     const err = await launchTracked(shared, { platform: 'linux', env: {}, runner: () => {}, launchWorker: async () => { throw boom; } }, limits, opts).then(() => null, (e) => e);
     assert.strictEqual(err.effort, effort);
     assert.strictEqual(err.model, M('standard'));
+    assert.strictEqual(err.profile, 'standard');
   }
 });
 
@@ -258,4 +259,57 @@ test('#5942: an invalid model-effort refuses every role', () => {
 test('roleModel: a profile name that does not resolve reaches the refusal neutralized (one line, no mention)', () => {
   const policy = { 'express-driver-models': { value: { implementer: 'bad\nprofile @x' }, source: 'policy' } };
   assert.throws(() => roleModel('implementer', policy), (e) => e.code === MODEL_REFUSED_CODE && !e.message.includes('\n') && !e.message.includes(' @x'));
+});
+
+// #5997: an explicit implementer profile and the record rule.
+const keyFilesBody = (...files) => `## Spec\n\n### Key Files\n\n${files.map((f) => `- \`${f}\``).join('\n')}\n`;
+
+test('#5997: roleLaunch with an explicit profile resolves that profile and names it', () => {
+  assert.deepStrictEqual(roleLaunch('implementer', policyFrom(''), { profile: 'fast' }), { model: M('fast'), effort: null, profile: 'fast' });
+  assert.strictEqual(roleLaunch('implementer', policyFrom('')).profile, 'standard');
+  assert.strictEqual(roleLaunch('reviewer', policyFrom('')).profile, 'capable');
+  assert.strictEqual(roleLaunch('explorer', policyFrom('')).profile, 'standard');
+});
+
+test('#5997: an explicit profile still goes through model-ceiling', () => {
+  assert.strictEqual(roleLaunch('implementer', policyFrom('model-ceiling: fast\n'), { profile: 'standard' }).model, M('fast'));
+});
+
+test('#5997: an explicit profile that does not resolve refuses', () => {
+  assert.throws(() => roleLaunch('implementer', policyFrom(''), { profile: 'turbo' }),
+    (e) => e.code === MODEL_REFUSED_CODE && /^no model for driver role implementer: profile turbo did not resolve/.test(e.message));
+});
+
+test('#5997 AC1.1: recordImplementerProfile', () => {
+  const low = [{ name: 'size:low' }];
+  assert.strictEqual(recordImplementerProfile({ labels: low, body: keyFilesBody('a.js', 'b.js') }), 'fast');
+  assert.strictEqual(recordImplementerProfile({ labels: low, body: keyFilesBody('a.js', 'b.js', 'c.js') }), 'standard');
+  assert.strictEqual(recordImplementerProfile({ labels: [{ name: 'size:high' }], body: keyFilesBody('a.js') }), 'standard');
+  assert.strictEqual(recordImplementerProfile({ labels: [], body: keyFilesBody('a.js') }), 'standard');
+  assert.strictEqual(recordImplementerProfile({ labels: low, body: keyFilesBody('src/') }), 'standard');
+});
+
+test('#5997: a throw from the rule refuses as DRIVER_MODEL_REFUSED', () => {
+  assert.throws(() => recordImplementerProfile({ labels: [], body: '' }, { profileFor: () => { throw new Error('implementer-tier: unknown size "x" @y'); } }),
+    (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier') && !e.message.includes(' @y')
+      && e.message.split('implementer-tier:').length === 2);
+  assert.strictEqual(recordImplementerProfile({ labels: [{ name: 'size:huge' }], body: '' }), 'standard');
+});
+
+test('#5997: launchTracked passes opts.profile and keeps it off the launcher opts', async () => {
+  const limits = { minutes: 1, dollars: 1 };
+  const shared = { activeWorker: null, policy: policyFrom('') };
+  let got = null;
+  const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: async (o) => { got = o; return 'env'; } };
+  const ok = await launchTracked(shared, deps, limits, { role: 'implementer', profile: 'fast', prompt: 'p' });
+  assert.deepStrictEqual(ok, { envelope: 'env', model: M('fast'), effort: null, profile: 'fast' });
+  assert.strictEqual('profile' in got, false);
+  assert.strictEqual(got.model, M('fast'));
+  const err = await launchTracked(shared, { ...deps, launchWorker: async () => { throw new Error('boom'); } }, limits, { role: 'implementer', profile: 'fast', prompt: 'p' }).then(() => null, (e) => e);
+  assert.strictEqual(err.profile, 'fast');
+});
+
+test('#5997: an invalid implementer-tier refuses the run', () => {
+  assert.strictEqual(modelPolicyRefusal(policyFrom('implementer-tier: sometimes\n')), 'driver model policy invalid: implementer-tier');
+  assert.strictEqual(modelPolicyRefusal(policyFrom('implementer-tier: record\n')), null);
 });
