@@ -22,7 +22,7 @@ files:
 
 ### 1. Ask about a live record
 - **URL:** `plugin/bin/express-lane.js plan-lane --issue {n} [--repo owner/name]`; `plugin/bin/lib/express/cli.js` (`runPlanLane`)
-- **Action:** The maintainer runs the verb against a record number. It fetches the record's fresh labels and body through `gh`, resolves exactly the policy keys the predicate reads (`POLICY_KEYS`: `express-driver`, `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-risk`, `express-driver-review`, `express-lane`, `integration-model`, `merge-sensitive-paths`), and prints the verdict.
+- **Action:** The maintainer runs the verb against a record number. It fetches the record's fresh labels and body through `gh`, resolves exactly the policy keys the predicate reads (`POLICY_KEYS`: `express-driver`, `express-driver-max-size`, `express-driver-max-key-files`, `express-driver-max-risk`, `express-driver-review`, `express-driver-protected-paths`, `express-lane`, `integration-model`, `merge-sensitive-paths`), and prints the verdict.
 - **Should feel:** Like asking one closed question and getting one line back. No claim, no label write, no run directory, nothing to clean up.
 - **Should understand:** The answer follows this checkout's policy: a project with `express-driver: on` can read `driver` for a record that `off` would send elsewhere. Exit 1 means the fetch or the policy read failed; exit 2 is a usage error (both or neither of `--issue` and `--record-json`, `--repo` without `--issue`) or `gh` absent with `--issue`.
 - **Red flags:** Any write to GitHub or the run directory. A verdict that changes when only `auto:build`, `auto:merge-pending`, `bot:*` or `parked` labels change, or when the record gains a `Blocked by #N` line.
@@ -50,4 +50,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #6053 (2026-11-22). The `/specify` call that consumes the verdict is a separate record (#6053's Non-Goals).
+- Updated during the build of #6019 (run `2026-11-22T163434-record-6019`): the verb also resolves `express-driver-protected-paths`, and under `reviewer` a record whose protected Key Files are all merge-time families reads `driver` only with the reviewer step on for it.
 - Related journeys: `ship-a-small-record-on-the-express-lane-4025.md` (the express lane this answers for), `drive-a-named-record-to-a-draft-pr-5218.md` (the driver lane), `give-an-agent-filed-record-a-key-files-list-2975.md` (the `### Key Files` section all three lanes read).

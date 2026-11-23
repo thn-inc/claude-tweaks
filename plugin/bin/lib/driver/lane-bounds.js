@@ -25,6 +25,9 @@ function eligibilityOptions(policy) {
     // Ceremony widening is allowed only with the reviewer forced on (#6018's Decision Rationale: the
     // default beyond-express must reproduce today, and a ceremony-widened record needs the reviewer).
     allowAnyCeremony: policy['express-driver-review'].value === 'on',
+    // Follows the key alone (#6019): admission's widened rule and reviewRequired supply the reviewer
+    // requirement, since a `protected-path` widening is a non-empty widenedBy.
+    protectedPathsNeedReviewer: policy['express-driver-protected-paths'].value === 'reviewer',
   };
 }
 
