@@ -1290,15 +1290,16 @@ function lensEnvFixture(t) {
     return dir;
   };
   const clear = () => { for (const m of Object.values(markers)) fs.rmSync(m, { force: true }); };
-  // Runs `git args` in `dir` under `env` and returns the programs whose markers appeared.
-  const started = (dir, args, env) => {
+  // Runs `git args` in `dir` under `env`: git's exit status and the programs whose markers appeared.
+  const runGit = (dir, args, env) => {
     clear();
-    cp.spawnSync('git', args, { cwd: dir, env, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    const r = cp.spawnSync('git', args, { cwd: dir, env, encoding: 'utf8', windowsHide: true, timeout: 30000 });
     const seen = LENS_PROGRAMS.filter((name) => fs.existsSync(markers[name]));
     clear();
-    return seen;
+    return { status: r.status, started: seen };
   };
-  return { root, home, base, hermetic, scripts, makeRepo, started };
+  const started = (dir, args, env) => runGit(dir, args, env).started;
+  return { root, home, base, hermetic, scripts, makeRepo, runGit, started };
 }
 
 // The pinned env with one setting removed: an env variable is deleted, a GIT_CONFIG_KEY_n
@@ -1322,9 +1323,11 @@ function pinnedWithout(pinned, name) {
   return out;
 }
 
+// Each command with the exit status git gives under the pinned env, so a negative cannot pass
+// because git never ran: bare diffs fail closed on the emptied diff.external (128), the rest run.
 const LENS_PINNED_COMMANDS = [
-  ['diff', 'HEAD~1', 'HEAD'], ['diff'], ['log', '-p', '-1'], ['show', 'HEAD'], ['status', '--short'], ['blame', 'a.txt'],
-  ['diff', '--no-ext-diff', '--no-textconv'], ['diff', '--no-ext-diff', '--no-textconv', 'HEAD~1', 'HEAD'],
+  [['diff', 'HEAD~1', 'HEAD'], 128], [['diff'], 128], [['log', '-p', '-1'], 0], [['show', 'HEAD'], 0], [['status', '--short'], 0], [['blame', 'a.txt'], 0],
+  [['diff', '--no-ext-diff', '--no-textconv'], 0], [['diff', '--no-ext-diff', '--no-textconv', 'HEAD~1', 'HEAD'], 0],
 ];
 
 test('AC10.1 (#6000): the pinned git environment starts no repository-configured program', { skip: process.platform === 'win32' && 'POSIX marker scripts' }, (t) => {
@@ -1340,8 +1343,8 @@ test('AC10.1 (#6000): the pinned git environment starts no repository-configured
   assert.deepStrictEqual(fx.started(repo, ['log', '-p', '-1'], fx.hermetic), ['textconv']);
   assert.deepStrictEqual(fx.started(repo, ['status', '--short'], fx.hermetic), ['fsmonitor']);
 
-  for (const args of LENS_PINNED_COMMANDS) {
-    assert.deepStrictEqual(fx.started(repo, args, pinned), [], 'git ' + args.join(' '));
+  for (const [args, status] of LENS_PINNED_COMMANDS) {
+    assert.deepStrictEqual(fx.runGit(repo, args, pinned), { status, started: [] }, 'git ' + args.join(' '));
   }
 
   // One negative per setting: the pinned env without it starts the program it stops.
@@ -1485,8 +1488,11 @@ const LENS_PROBE_CASES = [
   { vector: '14', commands: ['git diff ' + LENS_PROBE_P + ' --outp=out14.txt HEAD~1 HEAD', 'git log ' + LENS_PROBE_P + ' --ext HEAD -1', 'git show ' + LENS_PROBE_P + ' --textc HEAD'] },
   { vector: '15', commands: ['git show ' + LENS_PROBE_P + ' --ext-diff HEAD', 'git log ' + LENS_PROBE_P + ' -p --ext-diff -1', 'git show ' + LENS_PROBE_P + ' --textconv HEAD', 'git log ' + LENS_PROBE_P + ' --show-signature -1', 'git log ' + LENS_PROBE_P + ' --format=%GS -1'] },
   { vector: '16', commands: ['git status --short', 'git blame a.txt'] },
-  // Task 2b: the bare forms of vector 2/2b under the pinned environment start nothing.
-  { vector: '17', commands: ['git diff HEAD~1 HEAD', 'git log -p -1', 'git show HEAD'] },
+  // Task 2b: the bare forms of vector 2/2b under the pinned environment start nothing. The
+  // bare diff fails closed on the emptied diff.external (17); bare log -p and show run and print
+  // the raw diff, so 17b checks they ran rather than errored (no textconv, no sentinel).
+  { vector: '17', commands: ['git diff HEAD~1 HEAD'] },
+  { vector: '17b', commands: ['git log -p -1', 'git show HEAD'], ran: '+two' },
 ];
 
 async function launchLensProbe(t, repo, commands, readPaths, withNote = true) {

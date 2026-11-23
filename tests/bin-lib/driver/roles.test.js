@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const { conformsTo } = require(path.join(LIB, 'driver', 'worker.js'));
-const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, LENS_REPLY_SCHEMA, LENS_GIT_RULES, lensReviewerSettings, lensAdmittedFormsNote, settingsFor, lensGitEnv, LENS_EMPTY_GIT_CONFIG } = require(path.join(LIB, 'driver', 'roles.js'));
+const { ROLES, RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, LENS_REPLY_SCHEMA, LENS_GIT_RULES, lensReviewerSettings, lensAdmittedFormsNote, settingsFor, lensGitEnv, gitHonoursAttrSource, LENS_EMPTY_GIT_CONFIG } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES, EFFORT_SCALE } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
 
 const ALLOW_SANDBOXED = ['Read', 'Edit', 'Write', 'Bash(node --test *)', 'Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)'];
@@ -951,4 +951,50 @@ test('lensGitEnv refuses a malformed attrSource', () => {
     assert.throws(() => lensGitEnv({ attrSource: bad }), TypeError, JSON.stringify(bad));
   }
   assert.throws(() => lensGitEnv(), TypeError);
+});
+
+// gitHonoursAttrSource (#6000 Task 2b fix round 1): a functional check, not a version check.
+test('gitHonoursAttrSource is true for the real git in a repository, false outside one', (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { initRepo } = require('../../helpers/git-fixtures');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-attr-source-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  initRepo(repo, { env: { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } });
+  assert.strictEqual(gitHonoursAttrSource({ cwd: repo }), true);
+  const outside = path.join(dir, 'not-a-repo');
+  fs.mkdirSync(outside);
+  // The control run fails outside a repository (the temp dir has no enclosing one), so false.
+  assert.strictEqual(gitHonoursAttrSource({ cwd: outside, env: { PATH: process.env.PATH, HOME: dir } }), false);
+});
+
+test('gitHonoursAttrSource: a git that ignores the variable, a failed control, a spawn error or a throw is false', () => {
+  const fake = (control, probe) => {
+    const calls = [];
+    const spawnSync = (file, args, opts) => { calls.push({ file, args, opts }); const r = calls.length === 1 ? control : probe; if (r instanceof Error) throw r; return r; };
+    return { spawnSync, calls };
+  };
+  const honour = { status: 128, stdout: '', stderr: 'fatal: bad --attr-source or GIT_ATTR_SOURCE\n' };
+  const ok = { status: 0, stdout: '.: diff: unspecified\n', stderr: '' };
+  const env = { PATH: '/p', HOME: '/h', GH_TOKEN: 'g', GIT_CONFIG_COUNT: '1' };
+  const yes = fake(ok, honour);
+  assert.strictEqual(gitHonoursAttrSource({ cwd: '/r', spawnSync: yes.spawnSync, env }), true);
+  assert.deepStrictEqual(yes.calls.map((c) => [c.file, c.args]), [['git', ['-C', '/r', 'check-attr', 'diff', '--', '.']], ['git', ['-C', '/r', 'check-attr', 'diff', '--', '.']]]);
+  assert.deepStrictEqual(yes.calls[0].opts.env, { PATH: '/p', HOME: '/h', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' });
+  assert.deepStrictEqual(yes.calls[1].opts.env, { ...yes.calls[0].opts.env, GIT_ATTR_SOURCE: 'no such attr source' });
+  for (const c of yes.calls) assert.strictEqual(c.opts.windowsHide, true);
+  const cases = [
+    ['an older git ignores the variable', ok, ok],
+    ['a non-zero exit that is not the attr-source refusal', ok, { status: 128, stdout: '', stderr: 'fatal: something else\n' }],
+    ['the control fails (not a repository)', { status: 128, stdout: '', stderr: 'fatal: not a git repository\n' }, honour],
+    ['the control has a spawn error (no git)', { status: null, error: new Error('spawnSync git ENOENT') }, honour],
+    ['the probe has a spawn error', ok, { status: null, error: new Error('ETIMEDOUT'), stderr: 'GIT_ATTR_SOURCE' }],
+    ['the probe is killed by a signal', ok, { status: null, signal: 'SIGTERM', stderr: 'GIT_ATTR_SOURCE' }],
+    ['spawnSync throws', new Error('boom'), honour],
+  ];
+  for (const [label, control, probe] of cases) {
+    assert.strictEqual(gitHonoursAttrSource({ cwd: '/r', spawnSync: fake(control, probe).spawnSync, env }), false, label);
+  }
+  assert.strictEqual(gitHonoursAttrSource({ spawnSync: yes.spawnSync }), false, 'no cwd');
 });

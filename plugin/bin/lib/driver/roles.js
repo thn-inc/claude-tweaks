@@ -256,7 +256,12 @@
 //   not permitted") and its network reach failed (`curl` exit 56).
 // - Pinned git environment (Task 2b). Every lens-reviewer launch adds `lensGitEnv` to the
 //   worker's allow-listed env, and `launchWorker` refuses a launch without a well-formed
-//   `attrSource` (the reviewed repository's empty tree id). Each setting and what it stops:
+//   `attrSource` (the reviewed repository's empty tree id). The env is the worker process's,
+//   so it governs the whole process tree: the `claude` CLI's own git calls as well as every
+//   git the worker's Bash runs. The lens-reviewer requires a git that honours
+//   `GIT_ATTR_SOURCE` (an older git ignores it silently, so the tracked `.gitattributes`
+//   route would fail open), checked by `gitHonoursAttrSource` before launch: an older git is
+//   the unprobed cell, kept off. Each setting and what it stops:
 //   `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, any program the system or
 //   global config defines (a diff driver, fsmonitor, a pager); `diff.external` emptied, the
 //   repository's external diff (bare `git diff` and `git diff A B` now exit 128, "cannot run
@@ -275,19 +280,23 @@
 //   (2026-11-23, CLI 2.1.325, git 2.56.0, macOS 27.0.1, subscription login, no TTY, haiku,
 //   vectors 2-6, 13a, 13b and the new 17 of `AC4.1 (#6000)`): vector 2 and 17's bare
 //   `git diff HEAD~1 HEAD` errored with exit 128 and started nothing; 17's bare `git log -p -1`
-//   and `git show HEAD` printed the raw diff with no textconv; 6's worktree compare started
+//   and `git show HEAD` (now vector 17b, which asserts they ran) printed the raw diff with no
+//   textconv; 6's worktree compare started
 //   no fsmonitor; the pinned forms (3, 4, 5, 13a, 13b) printed real git output, so
 //   `/dev/null` as the global and attributes file and `GIT_ATTR_SOURCE` are readable and
 //   accepted under the sandbox and the read block. No program start remained.
 // - The accepted residual, sandbox-contained: what the environment cannot reach.
 //   `$GIT_DIR/info/attributes` is read whatever `GIT_ATTR_SOURCE` says (the AC10.1 test's
 //   global and system sub-cases name their driver there), so a driver it names and the
-//   repository config defines still runs its textconv (plain git under the pinned env,
-//   2026-11-23: bare `git log -p -1` and `git show HEAD` started it, the pinned
-//   `--no-textconv` form did not); a reviewed change cannot write it,
-//   since it is repository-local and untracked. Repository config keys not overridden (any
-//   other program-starting key, and `diff.<driver>.textconv` reached through
-//   `info/attributes`) stay as the repository's own config names them. Such a program runs
+//   repository config defines still starts both of its programs. Plain git under the pinned
+//   env, 2026-11-23: its external command (`diff.<driver>.command`) started on bare
+//   `git diff HEAD~1 HEAD`, since a per-driver command takes precedence over the emptied
+//   `diff.external`; its textconv started on bare `git log -p -1` and `git show HEAD`; the
+//   pinned `--no-ext-diff --no-textconv` forms started neither. A reviewed change cannot
+//   write `info/attributes`, since it is repository-local and untracked. Repository config
+//   keys not overridden (any other program-starting key, and `diff.<driver>.command` and
+//   `diff.<driver>.textconv` reached through `info/attributes`) stay as the repository's own
+//   config names them. Such a program runs
 //   inside the sandbox: Task 2's probe refused its writes outside the working directory and
 //   its network reach. Adding a `GIT_CONFIG_KEY_n`, changing `lensGitEnv`, or widening the
 //   allow list means re-probing (the AC10.1 test and `AC4.1 (#6000)` with
@@ -307,6 +316,7 @@
 // list: there is no path here that composes wider rights after a denial.
 
 const path = require('node:path');
+const cp = require('node:child_process');
 const { isAncestorOrSelf } = require('../path-guard');
 const { EFFORT_SCALE } = require('../model-profiles/profiles');
 
@@ -562,6 +572,32 @@ function lensGitEnv({ attrSource } = {}) {
   return Object.freeze(env);
 }
 
+// A name that can never resolve to a tree (a ref name cannot hold a space). Not an all-zero
+// id: git 2.56.0 accepts any full-length hex id as an attribute source without looking it up
+// (`check-attr` exits 0), so a zero id cannot tell an honouring git from an ignoring one.
+const UNRESOLVABLE_ATTR_SOURCE = 'no such attr source';
+
+// True only when the git in `cwd` honours GIT_ATTR_SOURCE, by its behaviour rather than its
+// version. A control `git check-attr diff -- .` without the variable must exit 0, then the
+// same command with UNRESOLVABLE_ATTR_SOURCE must fail with git's own refusal naming the
+// variable (git 2.56.0: exit 128, "fatal: bad --attr-source or GIT_ATTR_SOURCE"). A git
+// that ignores the variable exits 0 on the second run. A failed control (not a repository,
+// no git), a spawn error or any other outcome is false: the lens-reviewer stays off.
+function gitHonoursAttrSource({ cwd, spawnSync = cp.spawnSync, env = process.env } = {}) {
+  if (typeof cwd !== 'string' || cwd === '') return false;
+  const base = { PATH: env.PATH, HOME: env.HOME, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: LENS_EMPTY_GIT_CONFIG };
+  const checkAttr = (childEnv) => spawnSync('git', ['-C', cwd, 'check-attr', 'diff', '--', '.'], { env: childEnv, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  try {
+    const control = checkAttr(base);
+    if (!control || control.error || control.status !== 0) return false;
+    const probe = checkAttr({ ...base, GIT_ATTR_SOURCE: UNRESOLVABLE_ATTR_SOURCE });
+    if (!probe || probe.error || typeof probe.status !== 'number' || probe.status === 0) return false;
+    return /GIT_ATTR_SOURCE/.test(String(probe.stderr || ''));
+  } catch {
+    return false;
+  }
+}
+
 // The command forms the lens-reviewer may run, for its appended system prompt. Derived from
 // LENS_GIT_RULES, so the note and the allow list cannot drift.
 function lensAdmittedFormsNote() {
@@ -732,4 +768,4 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, LENS_EMPTY_GIT_CONFIG, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensGitEnv, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, LENS_EMPTY_GIT_CONFIG, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensGitEnv, gitHonoursAttrSource, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
