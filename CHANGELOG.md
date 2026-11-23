@@ -53,6 +53,42 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.177.0](https://github.com/thn-inc/claude-tweaks/compare/v6.176.0...v6.177.0) (2026-11-23)
+
+
+### Features
+
+* Admit driver records by risk and ceremony with the… ([#6018](https://github.com/thn-inc/claude-tweaks/issues/6018)) ([4e1bdbd](https://github.com/thn-inc/claude-tweaks/commit/4e1bdbdaf35bbbc7175cd2140a51075ebaee4f40))
+* Answer a record held for a planning question with an… ([#6059](https://github.com/thn-inc/claude-tweaks/issues/6059)) ([f19f8e5](https://github.com/thn-inc/claude-tweaks/commit/f19f8e580ac3f26f43e65b5a02b25da5ce0201b3))
+* Choose review lenses per run in code from the diff's… ([#6001](https://github.com/thn-inc/claude-tweaks/issues/6001)) ([eb00cc2](https://github.com/thn-inc/claude-tweaks/commit/eb00cc2db6480ed93e077dbac958e162c4c7ad8f))
+* Launch the driver implementer at the record's profile… ([#5997](https://github.com/thn-inc/claude-tweaks/issues/5997)) ([4e556aa](https://github.com/thn-inc/claude-tweaks/commit/4e556aaa4086f63a30fdad434f5df9650c90191f))
+* List the agent's planning calls in the acceptance… ([#6054](https://github.com/thn-inc/claude-tweaks/issues/6054)) ([d6996c1](https://github.com/thn-inc/claude-tweaks/commit/d6996c1718e465722a19e4b31eeda1b18ee04480))
+* Plan and review in /specify's shaping mode under… ([#6056](https://github.com/thn-inc/claude-tweaks/issues/6056)) ([639b48d](https://github.com/thn-inc/claude-tweaks/commit/639b48d5fd7831676c3988ef6da64b4a716226d7))
+* Plan each sub-issue in /specify's decomposition mode… ([#6057](https://github.com/thn-inc/claude-tweaks/issues/6057)) ([095ae02](https://github.com/thn-inc/claude-tweaks/commit/095ae02420f217cf36457ceff6985b0df8e16916))
+* Replay archived lens reviewers on any model and effort… ([#5991](https://github.com/thn-inc/claude-tweaks/issues/5991)) ([ba36160](https://github.com/thn-inc/claude-tweaks/commit/ba36160166f14e7c664218b130229a2773997f00))
+* Reuse a valid specify-time plan in /build and skip Spec… ([#6060](https://github.com/thn-inc/claude-tweaks/issues/6060)) ([0df6b5e](https://github.com/thn-inc/claude-tweaks/commit/0df6b5e9e419cdfb09c9b94170f15b724dda06ff))
+* Settle plan-review detail questions in code and ask only… ([#6051](https://github.com/thn-inc/claude-tweaks/issues/6051)) ([ffbf60b](https://github.com/thn-inc/claude-tweaks/commit/ffbf60bd943d576c60b119299b2cc4626ee2675f))
+* Store a reviewed plan on refs/claude-tweaks/plans/{n}… ([#6052](https://github.com/thn-inc/claude-tweaks/issues/6052)) ([54f4990](https://github.com/thn-inc/claude-tweaks/commit/54f499079bb43ad331f4bf4a3ce008da8db9ee00))
+* Take the standard lane's implementer profile from the… ([#5999](https://github.com/thn-inc/claude-tweaks/issues/5999)) ([6b97395](https://github.com/thn-inc/claude-tweaks/commit/6b97395f0526c00ae08dddc34e8446907b729c3c))
+* Tell specify which records a plan-less lane will take ([#6053](https://github.com/thn-inc/claude-tweaks/issues/6053)) ([2e0b297](https://github.com/thn-inc/claude-tweaks/commit/2e0b297e10929750a69e2de1fa951a2214dad3ec))
+
+### Highlights
+* Cloud sessions without the gh CLI know whether they can resolve a decision comment, instead of stopping at an undocumented gap.
+* Review can pick its lens reviewers per run from what the diff changed and how often each lens has found something in this repository, when `review-lens-selection: adaptive` is set.
+* Made each build pick its implementer model from the record's size and file count through one shared rule, and move a stuck task to the next model up once.
+* Made the pipeline driver start small records on the cheapest model and retry a failed attempt once on the next model up, before handing the record to the full pipeline.
+* Maintainer tooling only, nothing ships: the review replay can replay archived lens reviewers on any model and effort, and score each arm's findings against what the review confirmed.
+* A record held for a planning question is finished by running /claude-tweaks:specify on it: it asks just those questions and marks the record ready.
+* With `plan-at-specify: on`, a build reuses the plan specify already wrote and reviewed, skipping its own plan step when nothing has changed.
+* With `plan-at-specify: on`, decomposing a design doc also plans and reviews each sub-issue.
+* Internal: reconcile deletes a closed record's stored plan.
+* With `plan-at-specify: on`, /claude-tweaks:specify writes and reviews the plan while you're there, asks only questions that need you, and stores the plan for the build.
+* The acceptance packet lists every planning call the agent made for you, so you can check them when you accept the work.
+* Plan review can stop asking about low-level details: with `planning-decisions: asked-classes` it settles them itself, records each call, and asks only design-level, hard-to-undo or contradictory questions.
+* Internal: a check that tells specify which records will never need a written plan.
+* Internal: a store that keeps a reviewed plan beside its record and says whether it is still valid.
+* The pipeline driver can be set to take records above low risk or outside the fast-lane ceremony, with its reviewer on, and always leaves them for a human to merge.
+
 ## [6.176.0](https://github.com/thn-inc/claude-tweaks/compare/v6.175.0...v6.176.0) (2026-11-22)
 
 

@@ -113,7 +113,7 @@ const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
 const { laneBounds, eligibilityOptions } = require('./lane-bounds');
-const { widenings } = require('../express/eligibility');
+const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta, mergeWorker } = require('./review');
 const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
@@ -143,6 +143,8 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
 // The three express-driver-max-* keys are the driver lane's bounds (#5224, lane-bounds.js's laneBounds and this file's driverLineBound).
+// express-driver-protected-paths (#6019) is not a bound: `reviewer` lets a merge-time protected Key File
+// through eligibility and check, behind the reviewer step and a human merge.
 // The last five, express-driver-models, model-profiles, model-ceiling, model-effort and implementer-tier,
 // are the model and effort each worker launches with (#5917, #5942 and #5997, launch.js's roleLaunch);
 // the policy step refuses a run whose roles do not resolve.
@@ -151,6 +153,7 @@ const POLICY_KEYS = Object.freeze([
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
   'auto-merge-max-lines', 'express-driver-review',
   'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines', 'express-driver-max-risk',
+  'express-driver-protected-paths',
   ...MODEL_POLICY_KEYS,
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
@@ -305,6 +308,12 @@ function driverLineBound(ctx) {
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
 }
 
+// Whether check gets --protected-paths reviewer (#6019): the key says reviewer AND the reviewer step is on
+// for this record, so a protected path never passes without the reviewer.
+function driverProtectedPathsFlag(ctx) {
+  return ctx.shared.policy['express-driver-protected-paths'].value === 'reviewer' && Boolean(ctx.reviewer) && ctx.reviewer.on === true;
+}
+
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
 // bounds. It also makes the record's one reviewRequired call (ctx.reviewer, #5224): admission, the check
 // flag and the review step read that answer, never a second call. A refusal names the reviewer reason
@@ -319,7 +328,7 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
   // What the record is admitted beyond (#6018). A refused record reports none, so --check never names a
   // widening for a record it refused; it never reaches merge either.
   const eligible = Boolean(verdict) && verdict.eligible === true;
-  ctx.widenedBy = eligible ? widenings({ labels: ctx.issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony }) : [];
+  ctx.widenedBy = eligible ? widenedByFor(ctx.issue.labels, ctx.keyFiles, opts) : [];
   ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy: ctx.widenedBy });
   if (!eligible) {
     const reasons = [...((verdict && verdict.reasons) || [])];
@@ -1320,17 +1329,23 @@ function logDecisionFile(ctx, deps, fileName, text, step, extraArgs) {
 // (no escalation line landed, so the normal path would not know the record left the lane).
 // Escalate is a `pre-push` stop. `head` is kept as-is: whether it may pass is the push
 // step's guard, which a malformed envelope must never get through. The driver's line bound rides
-// as --max-lines only when driverLineBound gives one (#5224).
+// as --max-lines only when driverLineBound gives one (#5224). It rides --protected-paths reviewer only when
+// driverProtectedPathsFlag says so (#6019); under the flag a proceed whose bounds.protectedPaths is non-empty,
+// or is not an array at all (fail closed), adds `protected-path` to ctx.widenedBy, so merge stops at
+// widened-admission (merge-entry's detail reads `admitted widened by protected-path`, as for an
+// eligibility-time one). ctx.widenedBy is touched only when it is an array.
 const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const n = ctx.record;
   const bound = driverLineBound(ctx);
+  const protectedFlag = driverProtectedPathsFlag(ctx);
   const recordFile = path.join(ctx.runDir, 'record.json');
   // The record's comments are untrusted text and grow with the thread; check reads only these fields.
   const { number, title, body, labels, state } = ctx.issue;
   deps.writeFile(recordFile, JSON.stringify({ number, title, body, labels, state }));
   const r = deps.node(binScript('express-lane.js'),
     ['check', '--run', ctx.runDir, '--issue', String(n), '--integration-branch', ctx.shared.ref, '--record-json', recordFile,
-      ...(bound === null ? [] : ['--max-lines', String(bound)])],
+      ...(bound === null ? [] : ['--max-lines', String(bound)]),
+      ...(protectedFlag ? ['--protected-paths', 'reviewer'] : [])],
     { cwd: ctx.wt, timeout: CLI_TIMEOUT_MS, env: deps.env });
   if (r.code !== 0) {
     const text = `#${n} express-lane.js check exited ${r.code}: ${neutralize(firstLine(r.stderr)) || 'no output'}`;
@@ -1359,10 +1374,17 @@ const checkStep = defineStep(STEP.check, STOP_CLASSES.PRE_PUSH, async (ctx, deps
   }
   const bounds = envelope.bounds && typeof envelope.bounds === 'object' ? envelope.bounds : {};
   ctx.check = { action: 'proceed', head: envelope.head, configSet: envelope.configSet, mergeVerification: envelope.mergeVerification, bounds };
+  if (protectedFlag && Array.isArray(ctx.widenedBy) && !ctx.widenedBy.includes('protected-path')
+    && (!Array.isArray(bounds.protectedPaths) || bounds.protectedPaths.length > 0)) {
+    ctx.widenedBy.push('protected-path');
+  }
   if (!ctx.checkLogged) {
     const k = Array.isArray(bounds.changedFiles) ? bounds.changedFiles.length : 0;
+    // The same note cli.js's own proceed line carries (#6019), in the same position.
+    const protectedNote = Array.isArray(bounds.protectedPaths) && bounds.protectedPaths.length > 0
+      ? `; protected path(s) left for the reviewer and a human merge: ${bounds.protectedPaths.map((p) => neutralize(String(p))).join(', ')}` : '';
     const log = logDecisionFile(ctx, deps, 'check-proceed.txt',
-      `#${n} proceed — ${k} changed file(s), ${neutralize(String(bounds.implLines))} implementation line(s) within bounds; runner stamp verifies HEAD ${neutralize(String(envelope.head))}.`,
+      `#${n} proceed — ${k} changed file(s), ${neutralize(String(bounds.implLines))} implementation line(s) within bounds${protectedNote}; runner stamp verifies HEAD ${neutralize(String(envelope.head))}.`,
       'Express lane check', []);
     if (log.code !== 0) {
       return { status: 'fail', detail: `check's proceed line not logged: log-decision.js exited ${log.code} (${neutralize(firstLine(log.stderr)) || 'no output'})` };
