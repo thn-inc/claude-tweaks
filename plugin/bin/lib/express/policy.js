@@ -1,10 +1,12 @@
 // bin/lib/express/policy.js — the express lane's (#4025) policy-read seam: the real
 // git/file/policy readers and the merge-sensitive-paths list parse that cli.js (the
-// verbs) and queue.js (dispatch's queue-pull) both need, and the `protected-paths` read from the main checkout. Kept out of cli.js so the
-// queue-pull path loads this small module, not the whole CLI graph.
+// verbs) and queue.js (dispatch's queue-pull) both need, and the `protected-paths` read from
+// the main checkout. Kept out of cli.js so the queue-pull path loads this small module, not the
+// whole CLI graph.
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyConfig, LIST_ELEMENT_PATTERNS } = require('../policy-schema');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
@@ -65,25 +67,39 @@ function defaultReadFile(p) {
 // `protected-paths` is read from the MAIN checkout's policy.yml, never the cwd's: a record builds in a linked
 // worktree whose own policy.yml it can edit, and a list read there would let a record shrink its own protected
 // set. A `.git` file that is not a linked worktree's (a --separate-git-dir checkout, a submodule) leaves
-// mainCheckoutRoot null; when git reports the git dir equal to the common dir (a non-linked checkout) its
-// toplevel is the main checkout, so a configured list still applies (`git worktree list` is no help there: it
-// names the separate git dir). A linked worktree is never read. Otherwise the entry is invalid (-> the shipped
-// list) with one stderr warning, a fresh object each time; any throw is the same invalid entry.
+// mainCheckoutRoot null, and the main checkout is then found through git: its toplevel when the git dir equals
+// the common dir (a non-linked checkout), or, from a linked worktree, the `core.worktree` a submodule records
+// in the common dir's config. A linked worktree of a --separate-git-dir checkout records no work-tree path, so
+// it is never read: the entry is invalid (-> the shipped list) with one stderr warning, as it is when git
+// fails; a fresh object each time.
+function fallbackMainRoot(cwd) {
+  const [gitDir, commonDir, top] = defaultGit(['rev-parse', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd }).split('\n').map((s) => s.trim());
+  if (!gitDir || !commonDir) return null;
+  const common = path.resolve(cwd, commonDir);
+  if (path.resolve(cwd, gitDir) === common) return top || null;
+  let configured = '';
+  try { configured = defaultGit(['config', '--get', 'core.worktree'], { cwd }).trim(); } catch { return null; }
+  return configured ? path.resolve(common, configured) : null;
+}
+
+function gitFailure(err) {
+  const first = String((err && err.stderr) || '').split('\n').map((s) => s.trim()).find(Boolean);
+  if (first) return first;
+  if (err && err.status != null) return `git exited ${err.status}`;
+  return (err && (err.code || err.message)) || 'error';
+}
+
 function resolveProtectedPathsEntry(cwd = process.cwd()) {
   const invalid = (why) => {
     process.stderr.write(`express-policy: protected-paths not read (${why}) — shipped list applies\n`);
     return { value: [], source: 'default', invalid: true };
   };
   try {
-    let main = mainCheckoutRoot(cwd);
-    if (main === null) {
-      const [gitDir, commonDir, top] = defaultGit(['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'], { cwd }).split('\n').map((s) => s.trim());
-      main = gitDir && gitDir === commonDir && top ? top : null;
-    }
+    const main = mainCheckoutRoot(cwd) || fallbackMainRoot(cwd);
     if (!main) return invalid('no main checkout resolved');
     return resolvePolicyConfig({ git: (args) => defaultGit(args, { cwd: main }), readFile: defaultReadFile, keys: ['protected-paths'], cwd: main }).result['protected-paths'];
   } catch (err) {
-    return invalid(`read failed: ${err && err.code ? err.code : 'error'}`);
+    return invalid(`read failed: ${gitFailure(err)}`);
   }
 }
 

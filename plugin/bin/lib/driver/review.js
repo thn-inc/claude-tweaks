@@ -398,9 +398,9 @@ const fsReady = (opts) => {
 // patterns are each written in one case (`CODEOWNERS` upper, the rest lower); a project glob is
 // matched as written, in the same three spellings of the path (as given, lowered, raised), and a
 // mixed-case glob relies on the canonical-path variant when the directory exists. The sensitive
-// globs are compared lowered on both sides. A setting that is not a list of strings fails closed. The protected side tests the union of the shipped list and
-// the project's resolved protected-paths (protectedPathGlobs; absent means the shipped list alone),
-// so a project can never open an evidence path onto a shipped protected path.
+// globs are compared lowered on both sides. A setting that is not a list of strings fails closed.
+// The protected side tests the union of the shipped list and the project's resolved protected-paths
+// (protectedPathGlobs; absent means the shipped list alone), so a project can never open an evidence path onto a shipped protected path.
 function isProtectedOrSensitive(p, sensitivePaths = [], protectedPathGlobs) {
   if (!Array.isArray(sensitivePaths) || !sensitivePaths.every((g) => typeof g === 'string')) return true;
   if (protectedPathGlobs !== undefined && (!Array.isArray(protectedPathGlobs) || !protectedPathGlobs.every((g) => typeof g === 'string'))) return true;

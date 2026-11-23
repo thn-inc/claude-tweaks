@@ -170,6 +170,65 @@ test('a --separate-git-dir checkout (no linked worktree, no main root) still rea
   assert.deepStrictEqual(globsFrom(work), ['infra/**']);
 });
 
+// The entry and every stderr write while it resolved, from `cwd`.
+function entryWithStderr(cwd) {
+  const writes = [];
+  const real = process.stderr.write;
+  process.stderr.write = (chunk) => { writes.push(String(chunk)); return true; };
+  try { return { entry: resolveProtectedPathsEntry(cwd), writes }; } finally { process.stderr.write = real; }
+}
+const WARNING = /^express-policy: protected-paths not read \(.+\) — shipped list applies\n$/;
+const INVALID_ENTRY = { value: [], source: 'default', invalid: true };
+
+function separateGitDirRepo() {
+  const dir = fs.realpathSync(scratchDir('ct-sepgit-'));
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(work);
+  fixtureGit(['init', '-q', '--separate-git-dir', path.join(dir, 'admin'), work]);
+  fixtureGit(['-C', work, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  return work;
+}
+
+test('a linked worktree of a --separate-git-dir checkout never reads its own list: the warned shipped-list fallback', () => {
+  const work = separateGitDirRepo();
+  writePolicy(work, 'protected-paths: infra/**\n');
+  const wt = path.join(path.dirname(work), 'linked');
+  fixtureGit(['-C', work, 'worktree', 'add', '-q', wt, '-b', 'linked-branch']);
+  writePolicy(wt, 'protected-paths: []\n');
+  const { entry, writes } = entryWithStderr(wt);
+  assert.deepStrictEqual(entry, INVALID_ENTRY);
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0], WARNING);
+  assert.ok(writes[0].includes('no main checkout resolved'), writes[0]);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry), SHIPPED_PROTECTED_PATHS);
+});
+
+test('a linked worktree of a submodule reads the submodule main checkout recorded as core.worktree', () => {
+  const upstream = gitRepo();
+  const parent = gitRepo();
+  fixtureGit(['-C', parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', upstream, 'mod']);
+  const sub = path.join(parent, 'mod');
+  writePolicy(sub, 'protected-paths: infra/**\n');
+  const wt = path.join(fs.realpathSync(scratchDir('ct-sublinked-')), 'wt');
+  fixtureGit(['-C', sub, 'worktree', 'add', '-q', wt, '-b', 'sub-linked-branch']);
+  writePolicy(wt, 'protected-paths: []\n');
+  const { entry, writes } = entryWithStderr(wt);
+  assert.deepStrictEqual(entry, { value: 'infra/**', source: 'policy' });
+  assert.deepStrictEqual(writes, []);
+  // The submodule's own main checkout reads itself.
+  assert.deepStrictEqual(entryWithStderr(sub).entry, { value: 'infra/**', source: 'policy' });
+});
+
+test('the warning fires once, with its wording, when no repository answers; the reason names git\'s own line', () => {
+  const dir = fs.realpathSync(scratchDir('ct-nogit-'));
+  const { entry, writes } = entryWithStderr(dir);
+  assert.deepStrictEqual(entry, INVALID_ENTRY);
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0], WARNING);
+  assert.ok(!writes[0].includes('read failed: error'), writes[0]);
+  assert.ok(/not a git repository|git exited/.test(writes[0]), writes[0]);
+});
+
 test('the mixed-key real call: a worktree [] never reaches protected-paths, merge-sensitive-paths still resolves', () => {
   const main = gitRepo();
   const wt = harnessWorktreeOf(main, 'rec');
