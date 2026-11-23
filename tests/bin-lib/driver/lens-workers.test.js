@@ -245,7 +245,8 @@ test("the launcher's log carries every failed side", async (t) => {
   assert.deepStrictEqual(keyed.slice(2, 4).sort(), [['3b', 'A', true, false, null], ['3b', 'B', true, false, null]]);
   assert.deepStrictEqual(keyed.slice(4), [['3f', 'A', false, true, 'excluded'], ['3f', 'B', false, true, 'excluded'], ['3b', 'A', false, true, 'platform'], ['3b', 'B', false, true, 'platform']]);
   const launched = lines.find((l) => l.launched);
-  assert.deepStrictEqual(Object.keys(launched), ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason']);
+  assert.deepStrictEqual(Object.keys(launched).slice(0, 12), ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason']);
+  assert.deepStrictEqual(Object.keys(lines.find((l) => !l.launched)), ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason']);
   assert.strictEqual(launched.kind, 'worker');
   assert.strictEqual(launched.agentType, 'lens-reviewer');
   assert.strictEqual(launched.metaModel, 'haiku');
@@ -394,4 +395,70 @@ test('a missing deps.runner is refused once, up front, with a TypeError', async 
   const input = baseInput(t);
   await assert.rejects(runLensWorkers(input, {}), { name: 'TypeError', message: 'deps.runner is required' });
   assert.deepStrictEqual(logLines(input.runDir), []);
+});
+
+// Task 4 (#6000): the token fields a launched record carries, which timing reads.
+const USAGE = { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 300, cache_creation_input_tokens: 40 };
+const FULL_KEYS = ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason',
+  'agentId', 'transcriptModel', 'parentAgentId', 'spawnDepth', 'tokens', 'firstTurnTokens', 'costUsd', 'notFound', 'workflowRunId', 'workflowPhase'];
+
+test('a launched record carries the envelope usage as tokens, its session id and cost; an unlaunched one carries none of that', async (t) => {
+  const { runner } = fakeRunner(({ lens: l, side }) => resultOut(`reply ${l} ${side}`, { usage: USAGE, session_id: `sess-${l}-${side}`, total_cost_usd: 0.25 }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1), lens('3f', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [] });
+  const lines = logLines(input.runDir);
+  const launched = lines.find((l) => l.launched);
+  assert.deepStrictEqual(Object.keys(launched), FULL_KEYS);
+  assert.deepStrictEqual(launched.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+  assert.strictEqual(launched.agentId, 'sess-3a-A');
+  assert.strictEqual(launched.costUsd, 0.25);
+  assert.strictEqual(launched.notFound, null);
+  assert.strictEqual(launched.firstTurnTokens, null);
+  const unlaunched = lines.find((l) => !l.launched);
+  assert.deepStrictEqual(Object.keys(unlaunched), FULL_KEYS.slice(0, 12));
+});
+
+test('firstTurnTokens is the first assistant turn of the worker transcript, found by cwd and session id', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: '/cfg' } });
+  const seen = [];
+  const locateTranscripts = (q) => { seen.push(q); return [{ path: '/t/sess-x.jsonl', mtimeMs: 1 }]; };
+  const readUsage = async () => [{ role: 'user', turnStart: false }, { role: 'assistant', turnStart: true, inputTokens: 7, cacheRead: 11, cacheCreate: 13 }, { role: 'assistant', turnStart: true, inputTokens: 1, cacheRead: 1, cacheCreate: 1 }];
+  await runLensWorkers(input, { runner, locateTranscripts, readUsage });
+  assert.deepStrictEqual(seen, [{ cwd: input.cwd, sessionId: 'sess-x', configDir: '/cfg' }]);
+  assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, 31);
+});
+
+test('an unreadable worker transcript leaves firstTurnTokens null and the envelope totals standing', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [{ path: '/t', mtimeMs: 1 }], readUsage: async () => { throw new Error('EACCES'); } });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.firstTurnTokens, null);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+});
+
+test('a failed worker with no usage in its envelope is launched with tokens null and a notFound, and a fallback agentId', async (t) => {
+  const { runner } = fakeRunner(() => ({ code: 1, stdout: '' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const start = Date.UTC(2026, 10, 23, 12, 0, 0);
+  await runLensWorkers({ ...input, now: () => start }, { runner });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.launched, true);
+  assert.strictEqual(rec.failed, true);
+  assert.strictEqual(rec.tokens, null);
+  assert.strictEqual(rec.notFound, 'no usage in the worker envelope');
+  assert.strictEqual(rec.costUsd, null);
+  assert.strictEqual(rec.agentId, `lens-3a-A-${start}`);
+});
+
+test("a denied worker's record carries reason denied and its tokens", async (t) => {
+  const gitDenial = [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git diff HEAD~1 HEAD' } }];
+  const { runner } = fakeRunner(() => resultOut('No findings.', { permission_denials: gitDenial, usage: USAGE }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [] });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.reason, 'denied');
+  assert.strictEqual(rec.failed, true);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
 });

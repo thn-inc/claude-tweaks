@@ -515,3 +515,136 @@ test('scopeDispatchesTo drops every scoped agent, even one whose parent is scope
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Headless lens workers in timing.json dispatches (#6000 Task 4).
+const { runLensWorkers } = require('../../../plugin/bin/lib/driver/lens-workers');
+const { WORKER_DISPATCHES_FILE, readWorkerDispatches } = require('../../../plugin/bin/lib/timing/transcript');
+
+function workerRunDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-workers-'));
+  fs.writeFileSync(path.join(dir, 'events.jsonl'), [
+    { skill: 'claude-tweaks:flow', ts: '2026-11-23T12:00:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:review', ts: '2026-11-23T12:05:00.000Z', type: 'skill_invoked' },
+    { skill: 'claude-tweaks:wrap-up', ts: '2026-11-23T12:40:00.000Z', type: 'skill_invoked' },
+  ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  return dir;
+}
+const USAGE = { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 300, cache_creation_input_tokens: 40 };
+let sessionCounter = 0;
+const fakeChild = (usage, brief) => {
+  const out = { type: 'result', subtype: 'success', is_error: false, num_turns: 1, total_cost_usd: 0.1, permission_denials: [], session_id: `sess-${brief}-${sessionCounter += 1}`, structured_output: { text: 'reply' } };
+  if (usage) out.usage = usage;
+  return { pid: 1, kill() {}, exited: Promise.resolve({ code: 0, signal: null, stdout: JSON.stringify(out), stderr: '' }) };
+};
+async function runWorkers(dir, { lenses, startAt, usage = USAGE, platform = 'darwin' }) {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-wcwd-'));
+  const settingsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-timing-wset-'));
+  let clock = startAt;
+  try {
+    return await runLensWorkers({
+      lenses, runDir: dir, cwd, bundleText: 'B', readPaths: [], attrSource: '4b825dc642cb6eb9a060e54bf8d69288fbee4904', settingsDir, platform,
+      policy: {}, env: { PATH: '/nonexistent', HOME: '/h', USER: 'u' }, gitHonoursAttrSource: true, now: () => (clock += 1000),
+    }, { runner: (call) => fakeChild(usage, /brief for (\S+)/.exec(call.input)[1]), locateTranscripts: () => [] });
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(settingsDir, { recursive: true, force: true });
+  }
+}
+const lensArg = (name, reviewers = 2) => ({ lens: name, brief: `brief for ${name}`, model: 'haiku', reviewers });
+const T0 = Date.UTC(2026, 10, 23, 12, 10, 0);
+
+test('AC6.1: lens worker tokens appear in timing.json dispatches for a run that used the launcher', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a')], startAt: T0 });
+    const r = await deriveTiming(dir, { transcriptPaths: [path.join(dir, 'no-such-session.jsonl')], wantTokens: true });
+    assert.equal(r.ok, true);
+    const d = r.timing.dispatches;
+    assert.equal(d.items.length, 2);
+    for (const item of d.items) {
+      assert.equal(item.kind, 'worker');
+      assert.deepEqual(item.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+      assert.equal(item.role, 'lens reviewer');
+      assert.equal(item.tier, 'fast');
+      assert.equal('procedureFileRows' in item, false);
+    }
+    assert.equal(d.byRole['lens reviewer'].dispatches, 2);
+    assert.deepEqual(d.byRole['lens reviewer'].tokens, { input: 200, output: 40, cacheRead: 600, cacheCreate: 80 });
+    assert.equal(d.byTier.fast.dispatches, 2);
+    assert.ok(Array.isArray(d.notFoundDirs) && d.notFoundDirs.length > 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('two launcher runs append: timing.json counts both rounds', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a')], startAt: T0 });
+    await runWorkers(dir, { lenses: [lensArg('3a')], startAt: T0 + 600000 });
+    const r = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    assert.equal(r.timing.dispatches.items.length, 4);
+    assert.equal(r.timing.dispatches.byRole['lens reviewer'].dispatches, 4);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no subagents dir but worker items still yields dispatches, not { notFound }', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0 });
+    const withWorkers = await collectDispatches([path.join(dir, 'gone.jsonl')], [], dir, { workerItems: readWorkerDispatches(dir).items });
+    assert.equal(withWorkers.notFound, undefined);
+    assert.equal(withWorkers.items.length, 1);
+    assert.match(withWorkers.notFoundDirs[0], /no subagents\/ directory/);
+    const without = await collectDispatches([path.join(dir, 'gone.jsonl')], [], dir, {});
+    assert.match(without.notFound, /no subagents\/ directory/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed worker with no usage is listed with tokens null and counted in no bucket', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0, usage: null });
+    const r = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    const d = r.timing.dispatches;
+    assert.equal(d.items.length, 1);
+    assert.equal(d.items[0].tokens, null);
+    assert.equal(d.items[0].notFound, 'no usage in the worker envelope');
+    assert.deepEqual(d.byRole, {});
+    assert.deepEqual(d.byTier, {});
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('launched: false lines (excluded, platform) are not dispatches', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0 });
+    await runWorkers(dir, { lenses: [lensArg('3f', 1), lensArg('3b', 1)], startAt: T0 + 60000, platform: 'linux' });
+    assert.equal(fs.readFileSync(path.join(dir, WORKER_DISPATCHES_FILE), 'utf8').trim().split('\n').length, 3);
+    const r = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    assert.equal(r.timing.dispatches.items.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a worker outside the run window is excluded and counted; a malformed log line is a timing note', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0 });
+    await runWorkers(dir, { lenses: [lensArg('3b', 1)], startAt: Date.UTC(2026, 10, 24, 12, 0, 0) });
+    fs.appendFileSync(path.join(dir, WORKER_DISPATCHES_FILE), 'garbage\n');
+    const r = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    assert.equal(r.timing.dispatches.items.length, 1);
+    assert.equal(r.timing.dispatches.excludedOutsideWindow, 1);
+    assert.ok(r.notes.some((n) => /^dispatches: .*line 3 is not a JSON object/.test(n)), JSON.stringify(r.notes));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

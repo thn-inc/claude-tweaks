@@ -40,7 +40,7 @@
 // (an env-authenticated host's failure, #5259, was not): any other launch failure is `launch`,
 // which is still `failed: true`.
 //
-// The launcher's log, WORKER_DISPATCHES_FILE (`worker-dispatches.jsonl`) in the run directory,
+// The launcher's log, WORKER_DISPATCHES_FILE (`worker-dispatches.jsonl`, defined in timing/transcript.js, which reads it) in the run directory,
 // is appended, never rewritten: one JSON line per side as that side settles (not after all of
 // them), launched or not, under `withLock` on `{runDir}/worker-dispatches.jsonl.lock` so two
 // launcher runs on one run directory cannot interleave lines. The lock fails closed and never
@@ -49,6 +49,18 @@
 // reason }`; `launched` is whether the runner was called for that side (false for `excluded`,
 // `platform`, a `roleLaunch` throw and a `launchWorker` refusal, each with `startTs === endTs`
 // and `wallClockMs: 0` when nothing was attempted). This module is the file's only writer.
+// A launched record also carries the token fields timing reads (`kind: 'worker'` marks it as
+// a headless worker, never a transcript-backed subagent): `agentId` (the envelope's session id,
+// else `lens-{lens}-{side}-{startMs}`), `transcriptModel`, `parentAgentId` and `spawnDepth`
+// (null), `tokens` (`{ input, output, cacheRead, cacheCreate }`), `firstTurnTokens`, `costUsd`,
+// `notFound` and `workflowRunId` / `workflowPhase` (null). Usage source: the envelope's `usage`
+// (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) is
+// the total, so `tokens` is null with `notFound: 'no usage in the worker envelope'` when the
+// envelope has none; `firstTurnTokens` (the first assistant turn's input + cacheRead +
+// cacheCreate, the context the worker opened with) comes from the worker's own transcript
+// (`locateTranscripts({ cwd, sessionId })`, then `readUsage`) and is null when that cannot be
+// found or read. `timing/transcript.js`'s `readWorkerDispatches` reads these lines into
+// `timing.json` `dispatches`; a `launched: false` line is never a dispatch.
 // An append that fails is returned in `logFailures` and never changes the reply. The run
 // directory is never inside the reviewed worktree (the CLI refuses that), so this write keeps
 // Q1.
@@ -65,12 +77,12 @@ const { FINDING_LENS_CLASS } = require('../console/finding-path');
 const { LENS_REPLY_SCHEMA, SANDBOX_PROBED_PLATFORMS, lensAdmittedFormsNote, gitHonoursAttrSource } = require('./roles');
 const { launchWorker } = require('./worker');
 const { roleLaunch } = require('./launch');
+const { locateTranscripts, readUsage, WORKER_DISPATCHES_FILE } = require('../timing/transcript');
 
 const LENS_WORKER_CONCURRENCY = 4;
 const LENS_WORKER_TIMEOUT_MS = 900000;
 const EXCLUDED_LENSES = Object.freeze(['3f']);
 const FAILURE_REASONS = Object.freeze(['launch', 'auth', 'timeout', 'blank', 'platform', 'excluded', 'denied']);
-const WORKER_DISPATCHES_FILE = 'worker-dispatches.jsonl';
 const ROLE = 'lens-reviewer';
 // See the header: the captured "Not logged in · Please run /login" result string.
 const AUTH_FAILURE = /^Not logged in\b/;
@@ -122,6 +134,30 @@ function classifyFailure(envelope) {
   return null;
 }
 
+const NO_USAGE = 'no usage in the worker envelope';
+const num = (v) => Number(v) || 0;
+
+// envelope usage -> the dispatch `tokens` shape, or null when the envelope carried none.
+function tokensOf(usage) {
+  if (usage === null || typeof usage !== 'object' || Array.isArray(usage)) return null;
+  return { input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens), cacheCreate: num(usage.cache_creation_input_tokens) };
+}
+
+// The worker's own transcript -> its first assistant turn's context tokens, or null when the
+// transcript cannot be found or read (best effort: the envelope totals stand without it).
+async function firstTurnTokensOf({ cwd, sessionId, env, locate, readRows }) {
+  if (typeof sessionId !== 'string') return null;
+  try {
+    const found = locate({ cwd, sessionId, ...(env && env.CLAUDE_CONFIG_DIR ? { configDir: env.CLAUDE_CONFIG_DIR } : {}) });
+    if (!Array.isArray(found) || found.length === 0) return null;
+    const rows = await readRows(found[0].path);
+    const first = rows.find((r) => r.role === 'assistant' && r.turnStart);
+    return first ? first.inputTokens + first.cacheRead + first.cacheCreate : null;
+  } catch {
+    return null;
+  }
+}
+
 // One side's log line, appended under the lock (see the header). `appendFile` is a seam so a
 // test can act between the lock's acquisition and the write.
 function appendWorkerRecord(runDir, record, { env = process.env, appendFile = fs.appendFileSync } = {}) {
@@ -144,6 +180,8 @@ async function runLensWorkers(input, deps = {}) {
   const resolveLaunch = deps.roleLaunch || roleLaunch;
   const append = deps.appendRecord || ((dir, record) => appendWorkerRecord(dir, record, { env }));
   const aborted = deps.aborted || (() => false);
+  const locate = deps.locateTranscripts || locateTranscripts;
+  const readRows = deps.readUsage || readUsage;
   const active = deps.active || new Set();
   const iso = (ms) => new Date(ms).toISOString();
 
@@ -153,7 +191,7 @@ async function runLensWorkers(input, deps = {}) {
   const records = [];
   const logFailures = [];
 
-  const settle = (i, { text, reason, detail = null, launched, startMs, endMs }) => {
+  const settle = (i, { text, reason, detail = null, launched, startMs, endMs, envelope = null, firstTurnTokens = null }) => {
     const slot = slots[i];
     const failed = reason !== null;
     outcomes[i] = { lens: slot.lens, side: slot.side, text: failed ? null : text, failed };
@@ -162,6 +200,15 @@ async function runLensWorkers(input, deps = {}) {
       kind: 'worker', launched, lens: slot.lens, side: slot.side, description: `lens ${slot.lens} ${slot.side}`,
       agentType: ROLE, metaModel: slot.model, startTs: iso(startMs), endTs: iso(endMs), wallClockMs: endMs - startMs, failed, reason,
     };
+    if (launched) {
+      const sessionId = envelope && typeof envelope.sessionId === 'string' ? envelope.sessionId : null;
+      const tokens = tokensOf(envelope && envelope.usage);
+      Object.assign(record, {
+        agentId: sessionId || `lens-${slot.lens}-${slot.side}-${startMs}`, transcriptModel: null, parentAgentId: null, spawnDepth: null,
+        tokens, firstTurnTokens, costUsd: envelope && typeof envelope.costUsd === 'number' ? envelope.costUsd : null,
+        notFound: tokens === null ? NO_USAGE : null, workflowRunId: null, workflowPhase: null,
+      });
+    }
     records.push(record);
     try {
       append(runDir, record);
@@ -221,8 +268,9 @@ async function runLensWorkers(input, deps = {}) {
     let reason;
     let text = null;
     let detail = null;
+    let envelope = null;
     try {
-      const envelope = await launch({
+      envelope = await launch({
         role: ROLE, cwd, prompt: composeLensPrompt(bundleText, slot.brief), claudeMdText, model: slot.model, effort,
         readPaths, attrSource, schema: LENS_REPLY_SCHEMA, ceilings: { wallClockMs: LENS_WORKER_TIMEOUT_MS },
         settingsDir, platform, env,
@@ -236,7 +284,9 @@ async function runLensWorkers(input, deps = {}) {
     } finally {
       if (handle !== null) active.delete(handle);
     }
-    settle(i, { text, reason, detail, launched, startMs, endMs: now() });
+    const endMs = now();
+    const firstTurnTokens = launched ? await firstTurnTokensOf({ cwd, sessionId: envelope && envelope.sessionId, env, locate, readRows }) : null;
+    settle(i, { text, reason, detail, launched, startMs, endMs, envelope, firstTurnTokens });
   };
 
   let next = 0;
