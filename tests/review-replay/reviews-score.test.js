@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { run, makeWriteRepo } = require('../../tools/review-replay');
+const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
+const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
 const { armLabel, toPosix, REVIEWS_MANIFEST_FILE } = require('../../tools/review-replay/schema');
 const { scratchDir } = require('../helpers/tmp-dir');
 const { buildReviewsFixture, cleanEnv } = require('./reviews-fixture');
@@ -330,9 +332,6 @@ test('score-reviews exits 2 when --out or --transcripts is missing', async () =>
   assert.equal(await run({ argv: ['score-reviews', '--transcripts', root], deps }), 2);
   assert.match(deps.errs.join('\n'), /score-reviews requires --transcripts/);
 });
-
-const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
-const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
 
 test('parseReviewItems: one item per counted line, located by its first path:line', () => {
   const text = ['### Issues', '#### Important (Should Fix)', '- src/x.js:10: null deref when y is unset', '- `/abs/src/a.js:3` and src/b.js:9 drift', '#### Minor', '1. naming could be clearer', '2. None.', '### Strengths', '- src/z.js:1 is tidy'].join('\n');

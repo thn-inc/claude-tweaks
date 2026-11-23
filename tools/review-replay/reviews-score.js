@@ -10,7 +10,7 @@ const { bump } = require('./util.js');
 const { replaySlots, readJson, stripTree, emptyCost, addCost } = require('./score.js');
 const { parseFindings, near } = require('./counterfactual.js');
 const { parseLensReport, SEVERITIES, LOCATION_RE } = require('../pipeline-cost-report/reviews.js');
-const { SEVERITY_RE, HEADING_RE, ITEM_RE } = require('../pipeline-cost-report/guards.js');
+const { walkReviewItems } = require('../pipeline-cost-report/guards.js');
 const {
   REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE, isControlArm, validateReviewsManifest,
 } = require('./schema.js');
@@ -184,34 +184,19 @@ function scoreReviews(opts, deps) {
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
 
-// { items } or null exactly when parseReviewCounts is null: the same walk, one Item per counted line, each with every
-// `path:line` in its bare text (`path`/`line` are the first, or null).
+// { items } or null exactly when parseReviewCounts is null (both ride guards.js's walkReviewItems): one Item per
+// counted line, each with every `path:line` in its bare text (`path`/`line` are the first, or null).
 function parseReviewItems(text) {
-  const items = [];
-  let seen = false;
-  let current = null;
-  for (const line of String(text).split(/\r?\n/)) {
-    const sev = SEVERITY_RE.exec(line);
-    if (sev) {
-      seen = true;
-      current = sev[1].toLowerCase();
-      continue;
-    }
-    if (HEADING_RE.test(line)) {
-      current = null;
-      continue;
-    }
-    if (!current) continue;
-    const item = ITEM_RE.exec(line);
-    if (!item) continue;
-    const bare = item[2].replace(/[*`]/g, '').replace(/\.+\s*$/, '').trim();
-    if (/^(none|n\/a)$/i.test(bare)) continue;
-    const locations = [...bare.matchAll(new RegExp(LOCATION_RE.source, 'g'))].map((m) => ({ path: m[1], line: Number(m[2]) }));
-    items.push({
-      sev: current, text: bare, path: locations.length ? locations[0].path : null, line: locations.length ? locations[0].line : null, locations,
-    });
-  }
-  return seen ? { items } : null;
+  const walked = walkReviewItems(text);
+  if (!walked) return null;
+  return {
+    items: walked.map(({ sev, bare }) => {
+      const locations = [...bare.matchAll(new RegExp(LOCATION_RE.source, 'g'))].map((m) => ({ path: m[1], line: Number(m[2]) }));
+      return {
+        sev, text: bare, path: locations.length ? locations[0].path : null, line: locations.length ? locations[0].line : null, locations,
+      };
+    }),
+  };
 }
 
 // A whole-branch reply: its severity headings, else an explicit "No issues" line as an empty review, else null.

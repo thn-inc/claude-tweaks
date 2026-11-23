@@ -414,6 +414,8 @@ test('shaPairOf and pointerPathOf stay linear on long runs', () => {
     () => rw.shaPairOf('base '.repeat(50000)),
     () => rw.shaPairOf(' '.repeat(200000)),
     () => rw.shaPairOf('a'.repeat(200000)),
+    // Many sha-bearing "base" lines and no head: a lazy base-to-head scan restarts from each one (quadratic).
+    () => rw.shaPairOf('base 44200e4559 '.repeat(20000)),
     () => rw.pointerPathOf(marker + ' '.repeat(200000)),
     () => rw.pointerPathOf(marker + 'a'.repeat(200000)),
     () => rw.pointerPathOf('(it is your prompt' + ' '.repeat(200000)),
