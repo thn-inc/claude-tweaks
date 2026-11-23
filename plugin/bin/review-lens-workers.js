@@ -221,7 +221,7 @@ async function run(argv, overrides = {}) {
       lenses: input.lenses, runDir, cwd: o.cwd, bundleText, readPaths, attrSource, settingsDir, platform, policy, env: deps.env, now: deps.now,
       ...(honours === undefined ? {} : { gitHonoursAttrSource: honours }),
     }, {
-      runner: deps.runner, launchWorker: deps.launchWorker, roleLaunch: deps.roleLaunch, appendRecord, active, aborted: () => signalled !== null,
+      runner: deps.runner, launchWorker: deps.launchWorker, roleLaunch: deps.roleLaunch, locateTranscripts: deps.locateTranscripts, readUsage: deps.readUsage, appendRecord, active, aborted: () => signalled !== null,
       ...(deps.timers ? { timers: deps.timers } : {}),
     });
     const first = await Promise.race([work.then((result) => ({ result })), signalSeen.then((sig) => ({ sig }))]);

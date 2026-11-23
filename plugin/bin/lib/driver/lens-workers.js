@@ -57,8 +57,10 @@
 // (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) is
 // the total, so `tokens` is null with `notFound: 'no usage in the worker envelope'` when the
 // envelope has none; `firstTurnTokens` (the first assistant turn's input + cacheRead +
-// cacheCreate, the context the worker opened with) comes from the worker's own transcript
-// (`locateTranscripts({ cwd, sessionId })`, then `readUsage`) and is null when that cannot be
+// cacheCreate, the context the worker opened with: `readUsage`'s `contextTokens`) comes from the worker's own
+// transcript (`locateTranscripts` over the canonical cwd, in the config dir of the env the worker ran with,
+// then `readUsage`; the canonical-path slug is read from the projects directory names on macOS, where
+// sessions whose cwd is under /tmp are named `-private-tmp-...`, not an observed symlinked-cwd launch) and is null when that cannot be
 // found or read. `timing/transcript.js`'s `readWorkerDispatches` reads these lines into
 // `timing.json` `dispatches`; a `launched: false` line is never a dispatch.
 // An append that fails is returned in `logFailures` and never changes the reply. The run
@@ -73,6 +75,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { withLock } = require('../file-lock');
+const { canonicalRealpath } = require('../path-guard');
 const { FINDING_LENS_CLASS } = require('../console/finding-path');
 const { LENS_REPLY_SCHEMA, SANDBOX_PROBED_PLATFORMS, lensAdmittedFormsNote, gitHonoursAttrSource } = require('./roles');
 const { launchWorker } = require('./worker');
@@ -147,12 +150,17 @@ function tokensOf(usage) {
 // transcript cannot be found or read (best effort: the envelope totals stand without it).
 async function firstTurnTokensOf({ cwd, sessionId, env, locate, readRows }) {
   if (typeof sessionId !== 'string') return null;
+  // The worker's config dir, from the env it ran with (never this process's): CLAUDE_CONFIG_DIR, else HOME/USERPROFILE + .claude.
+  const home = env && (env.HOME || env.USERPROFILE);
+  const configDir = env && env.CLAUDE_CONFIG_DIR ? env.CLAUDE_CONFIG_DIR : (home ? path.join(home, '.claude') : null);
+  if (configDir === null) return null;
   try {
-    const found = locate({ cwd, sessionId, ...(env && env.CLAUDE_CONFIG_DIR ? { configDir: env.CLAUDE_CONFIG_DIR } : {}) });
+    // Claude Code names the transcript directory after the canonical cwd (probe note in the header).
+    const found = locate({ cwd: canonicalRealpath(cwd) || cwd, sessionId, configDir });
     if (!Array.isArray(found) || found.length === 0) return null;
     const rows = await readRows(found[0].path);
     const first = rows.find((r) => r.role === 'assistant' && r.turnStart);
-    return first ? first.inputTokens + first.cacheRead + first.cacheCreate : null;
+    return first ? first.contextTokens : null;
   } catch {
     return null;
   }

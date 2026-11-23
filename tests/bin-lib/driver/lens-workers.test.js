@@ -423,7 +423,7 @@ test('firstTurnTokens is the first assistant turn of the worker transcript, foun
   const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: '/cfg' } });
   const seen = [];
   const locateTranscripts = (q) => { seen.push(q); return [{ path: '/t/sess-x.jsonl', mtimeMs: 1 }]; };
-  const readUsage = async () => [{ role: 'user', turnStart: false }, { role: 'assistant', turnStart: true, inputTokens: 7, cacheRead: 11, cacheCreate: 13 }, { role: 'assistant', turnStart: true, inputTokens: 1, cacheRead: 1, cacheCreate: 1 }];
+  const readUsage = async () => [{ role: 'user', turnStart: false }, { role: 'assistant', turnStart: true, contextTokens: 31 }, { role: 'assistant', turnStart: true, contextTokens: 3 }];
   await runLensWorkers(input, { runner, locateTranscripts, readUsage });
   assert.deepStrictEqual(seen, [{ cwd: input.cwd, sessionId: 'sess-x', configDir: '/cfg' }]);
   assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, 31);
@@ -461,4 +461,36 @@ test("a denied worker's record carries reason denied and its tokens", async (t) 
   assert.strictEqual(rec.reason, 'denied');
   assert.strictEqual(rec.failed, true);
   assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+});
+
+// Fix round 1 (#6000 Task 4 review).
+test("the transcript lookup uses the worker env's config dir: HOME/.claude when CLAUDE_CONFIG_DIR is unset, never this process's", async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const seen = [];
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = '/process-cfg-must-not-be-used';
+  t.after(() => { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; });
+  await runLensWorkers(input, { runner, locateTranscripts: (q) => { seen.push(q); return []; } });
+  assert.deepStrictEqual(seen.map((q) => q.configDir), [path.join('/h', '.claude')]);
+});
+
+test('with no CLAUDE_CONFIG_DIR, HOME or USERPROFILE in the worker env the lookup is skipped', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], env: { PATH: HERMETIC_PATH, USER: 'u' } });
+  let calls = 0;
+  await runLensWorkers(input, { runner, locateTranscripts: () => { calls += 1; return []; } });
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, null);
+});
+
+test('the transcript lookup slugs the canonical cwd, a symlinked one included', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const real = tmp(t, 'lens-real-cwd-');
+  const link = path.join(tmp(t, 'lens-link-'), 'cwd-link');
+  fs.symlinkSync(real, link, 'dir');
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], cwd: link });
+  const seen = [];
+  await runLensWorkers(input, { runner, locateTranscripts: (q) => { seen.push(q); return []; } });
+  assert.deepStrictEqual(seen.map((q) => q.cwd), [real]);
 });

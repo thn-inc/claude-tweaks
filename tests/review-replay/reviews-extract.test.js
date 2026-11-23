@@ -487,3 +487,9 @@ test('USAGE names both new commands', async () => {
   assert.ok(err.includes('extract-reviews --runs <root> --out <dir> --role lens'), err);
   assert.ok(err.includes('score-reviews --out <dir> --transcripts <workflow dir>'), err);
 });
+
+test('a headless worker item (kind: worker) is not a lens dispatch the replay can rerun', () => {
+  const { ROLES } = require('../../tools/review-replay/reviews-extract');
+  assert.equal(ROLES.lens.isDispatch({ role: 'lens reviewer', description: 'Review lens 3a correctness A' }), true);
+  assert.equal(ROLES.lens.isDispatch({ role: 'lens reviewer', kind: 'worker', description: 'lens 3a A' }), false);
+});

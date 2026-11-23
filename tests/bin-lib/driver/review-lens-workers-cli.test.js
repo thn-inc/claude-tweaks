@@ -67,6 +67,7 @@ function deps(fx, extra = {}) {
     gitHonoursAttrSource: () => true,
     resolvePolicy: () => ({}),
     onSignal: () => () => {},
+    locateTranscripts: () => [], // hermetic: never read the real ~/.claude/projects
     ...extra,
   };
 }

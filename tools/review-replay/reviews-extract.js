@@ -31,7 +31,8 @@ const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 // What a --role replays: which timing.json items are its dispatches, and the { lens, side } slot each one fills.
 const ROLES = {
   lens: {
-    isDispatch: (item) => item.role === 'lens reviewer',
+    // A headless worker (`kind: 'worker'`, #6000) has no subagent transcript to replay from.
+    isDispatch: (item) => item.role === 'lens reviewer' && item.kind !== 'worker',
     slotOf: (item) => {
       const desc = String(item.description || '');
       const lens = LENS_RE.exec(desc);

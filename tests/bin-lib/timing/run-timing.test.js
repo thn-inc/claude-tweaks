@@ -648,3 +648,36 @@ test('a worker outside the run window is excluded and counted; a malformed log l
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('no subagents dir and every worker outside the window: the excluded count survives, not { notFound }', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: Date.UTC(2026, 10, 24, 12, 0, 0) });
+    const r = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    const d = r.timing.dispatches;
+    assert.equal(d.notFound, undefined);
+    assert.deepEqual(d.items, []);
+    assert.equal(d.excludedOutsideWindow, 1);
+    const direct = await collectDispatches([], [], dir, { workerExcludedOutsideWindow: 2 });
+    assert.equal(direct.excludedOutsideWindow, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('worker items merge with the subagent items sorted by startTs', async () => {
+  const dir = workerRunDir();
+  try {
+    const sub = path.join(dir, 'sess', 'subagents');
+    fs.mkdirSync(sub, { recursive: true });
+    for (const [id, ts] of [['late', '2026-11-23T12:30:00.000Z'], ['early', '2026-11-23T12:01:00.000Z']]) {
+      fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ spawnDepth: 1, description: `implement ${id}` }));
+      fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), JSON.stringify({ timestamp: ts, message: { role: 'assistant', id: `m-${id}`, model: 'claude-test', content: [], usage: { input_tokens: 1, output_tokens: 1 } } }) + '\n');
+    }
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0 });
+    const d = await collectDispatches([path.join(dir, 'sess.jsonl')], [], dir, { workerItems: readWorkerDispatches(dir).items });
+    assert.deepEqual(d.items.map((i) => (i.kind === 'worker' ? 'worker' : i.agentId)), ['early', 'worker', 'late']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
