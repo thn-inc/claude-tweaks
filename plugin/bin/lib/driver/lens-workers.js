@@ -56,13 +56,15 @@
 // `notFound` and `workflowRunId` / `workflowPhase` (null). Usage source: the envelope's `usage`
 // (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) is
 // the total, so `tokens` is null with `notFound: 'no usage in the worker envelope'` when the
-// envelope has none; `firstTurnTokens` (the first assistant turn's input + cacheRead +
-// cacheCreate, the context the worker opened with: `readUsage`'s `contextTokens`) comes from the worker's own
-// transcript (`locateTranscripts` over the canonical cwd, in the config dir of the env the worker ran with,
-// then `readUsage`; the canonical-path slug is read from the projects directory names on macOS, where
-// sessions whose cwd is under /tmp are named `-private-tmp-...`, not an observed symlinked-cwd launch) and is null when that cannot be
-// found or read. `timing/transcript.js`'s `readWorkerDispatches` reads these lines into
-// `timing.json` `dispatches`; a `launched: false` line is never a dispatch.
+// envelope has none; `firstTurnTokens` is `readUsage`'s `contextTokens` of the worker's first
+// assistant turn (input + cacheRead + cacheCreate, the context the worker opened with), read from
+// the worker's own transcript (`locateTranscripts` over the canonical cwd, in the config dir of the
+// env the worker ran with, then `readUsage`) and null when that cannot be found or read. The
+// canonical-path slug is read from the projects directory names on macOS, where sessions whose cwd
+// is under /tmp are named `-private-tmp-...`, not an observed symlinked-cwd launch. The config-dir
+// fallback (HOME before USERPROFILE) is unprobed on win32 and moot today: off
+// SANDBOX_PROBED_PLATFORMS no worker starts. `timing/transcript.js`'s `readWorkerDispatches`
+// reads these lines into `timing.json` `dispatches`; a `launched: false` line is never a dispatch.
 // An append that fails is returned in `logFailures` and never changes the reply. The run
 // directory is never inside the reviewed worktree (the CLI refuses that), so this write keeps
 // Q1.
