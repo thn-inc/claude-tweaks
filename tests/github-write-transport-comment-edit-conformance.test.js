@@ -24,7 +24,7 @@ function pinned(region, patterns, label) {
   assert.deepEqual(missing, [], `${label}: missing ${missing.join(' | ')}`);
   assertEachPatternGoesRed(region, patterns, missingFactsOf(patterns));
 }
-const f = (s, fact) => [lit(s), fact || s];
+const f = (s) => [lit(s), s];
 
 test('row: the comment edit maps to update_issue_comment', () => {
   pinned(lineStarting(transport(), '| Edit an existing comment |'), [
