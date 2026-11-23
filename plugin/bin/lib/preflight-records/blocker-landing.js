@@ -3,20 +3,29 @@
 // CLOSED blocked-by prerequisite as satisfied even when the commit that closed
 // it never reached the integration branch (a PR merged into `production`, say,
 // while the run builds on `dev`). This module judges each out-of-run blocker
-// with one of five verdicts: `open`, `landed`, `unlanded`, `not-applicable`
+// with one of six verdicts: `open`, `landed`, `unlanded`, `not-applicable`
 // (closed NOT_PLANNED / DUPLICATE — nothing was meant to land), and
 // `undetermined` (this one blocker cannot be judged: unresolvable number, no
-// candidate commit, a failed reachability probe, or a closing-PR read cut at
-// first:10 with nothing reachable). Each result is exactly
-// `{ blocker, verdict, commit, via }`; `via` says why — closer-pr, closer-commit
+// candidate commit, a failed reachability probe, an unreadable changed-file
+// list, or a closing-PR read cut at first:10 with nothing reachable), and
+// `hollow` (#6142: closed, and every reachable candidate commit touches no Key
+// File of the blocker — or, with no Key Files, only bookkeeping paths — so the
+// closing PR landed paperwork, not the work). Each result is exactly
+// `{ blocker, verdict, commit, via }` — `hollow` adds `pr`, the PR whose merge
+// commit is the named candidate (null for a direct Commit closer); `via` says why
+// — closer-pr, closer-commit
 // or closing-pr-ref (where the deciding commit came from), state, state-reason,
-// no-candidate, probe-failed, references-truncated, not-found, records-json,
+// no-candidate, probe-failed, files-unreadable, references-truncated, not-found, records-json,
 // cross-repository, or cross-repository-state-unreadable. The last two (#4793)
 // belong to a native blocker that lives in ANOTHER repository
 // (classifyCrossRepository): its result adds a fifth key, `repository`
 // (`owner/name`), present only there, and its `open` verdict can come from them
 // too — its number names that repository's issue, so it is never queried or
 // probed here.
+//
+// A reachable candidate counts as landing only when its changed files (REST
+// commits API, previous_filename included) touch a Key File of the blocker (see
+// isHollow); the blocker is `landed` when ANY reachable candidate is non-hollow.
 //
 // Candidate commits are the UNION of the recorded closer (a merged PR's
 // mergeCommit, or a closing Commit) and every merged closedByPullRequests
@@ -52,12 +61,50 @@
 'use strict';
 
 const { errorText } = require('./preflight-records');
+const { extractKeyFiles } = require('../issues/grouping');
 
 const NOT_APPLICABLE_REASONS = new Set(['NOT_PLANNED', 'DUPLICATE']);
 
 function result(blocker, verdict, commit, via) {
   return { blocker, verdict, commit, via };
 }
+
+// Paths a closing commit may touch without delivering a blocker's work (#6142).
+const BOOKKEEPING_PATH_RE = /^(?:\.claude-tweaks\/pipelines\/|docs\/superpowers\/plans\/|docs\/plans\/[^/]+-ledger\.md$)/;
+
+// A Key File entry keeps its first backticked span verbatim: strip a trailing
+// `:N`, `:N-M` or `#L…` suffix; a trailing `/` prefix-matches; `*` globs
+// (`**` spans directories, `*` stays in one segment); anything else is equality.
+function keyMatches(file, rawKey) {
+  const key = String(rawKey).replace(/(?:#L.*|:\d+(?:-\d+)?)$/, '');
+  if (!key) return false;
+  if (key.includes('*')) {
+    let re = '';
+    for (let i = 0; i < key.length; i++) {
+      if (key[i] === '*') {
+        if (key[i + 1] === '*') {
+          if (key[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+        } else re += '[^/]*';
+      } else re += key[i].replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${re}$`).test(file);
+  }
+  if (key.endsWith('/')) return file.startsWith(key);
+  return file === key;
+}
+
+// files: a commit's changed paths (read successfully); keys: the blocker's Key
+// Files. With keys, hollow = no file matches one (an empty list included); with
+// none, hollow = a non-empty list that is all bookkeeping (an empty list is not).
+function isHollow(files, keys) {
+  if (keys.length > 0) return !files.some((f) => keys.some((k) => keyMatches(f, k)));
+  return files.length > 0 && files.every((f) => BOOKKEEPING_PATH_RE.test(f));
+}
+
+const keyFilesOf = (node) => extractKeyFiles({
+  body: node && node.body,
+  labels: ((node && node.labels && Array.isArray(node.labels.nodes)) ? node.labels.nodes : []).map((l) => l && l.name),
+});
 
 // blockers: number[] -> the aliased query string, or null for empty/non-array.
 // Each blocker is interpolated, so one that is not a positive safe integer throws.
@@ -70,7 +117,7 @@ function buildBlockerLandingQuery(blockers) {
   const bad = blockers.findIndex((n) => !(Number.isSafeInteger(n) && n > 0));
   if (bad !== -1) throw new Error(`invalid blocker number: ${String(blockers[bad])}`);
   const fields = blockers
-    .map((n) => `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
+    .map((n) => `b${n}: issue(number:${n}){ number state stateReason body labels(first:100){ nodes{ name } } timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
     .join(' ');
   return `query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ ${fields} } }`;
 }
@@ -127,18 +174,57 @@ function compareArgs({ owner, repo, host, integrationBranch, sha }) {
   return args;
 }
 
+// The changed-files read for a candidate commit: filename plus previous_filename
+// (a rename away from a Key File still touches it), one path per line.
+function commitFilesArgs({ owner, repo, host, sha }) {
+  const bad = repoSegmentError(owner, repo);
+  if (bad) throw new Error(bad);
+  const args = ['api', '--paginate', `repos/${owner}/${repo}/commits/${sha}`, '--jq', '.files[] | .filename, (.previous_filename // empty)'];
+  if (host && host !== 'github.com') args.push('--hostname', host);
+  return args;
+}
+
+// The PR number whose merge commit is `sha`, among the closer and the references.
+function prForSha(node, sha) {
+  const events = (node && node.timelineItems && Array.isArray(node.timelineItems.nodes)) ? node.timelineItems.nodes : [];
+  const closer = events.length && events[events.length - 1] && events[events.length - 1].closer;
+  if (closer && closer.__typename === 'PullRequest' && mergedOid(closer) === sha) return closer.number;
+  const refs = (node && node.closedByPullRequestsReferences && Array.isArray(node.closedByPullRequestsReferences.nodes))
+    ? node.closedByPullRequestsReferences.nodes : [];
+  const hit = refs.find((r) => mergedOid(r) === sha);
+  return hit ? hit.number : null;
+}
+
 // A b{n} alias value that is an issue object: non-null, non-array.
 const isIssueNode = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 // blocker, its b{n} node (anything else when a NOT_FOUND named it), sha ->
-// reachability map -> one result. Rules apply in order.
-function classifyBlocker(blocker, node, reach) {
+// reachability map, optional sha -> string[]|null changed-files map (null = the
+// read failed; absent map = no hollow judgment) -> one result. Rules apply in order.
+function classifyBlocker(blocker, node, reach, files) {
   if (!isIssueNode(node)) return result(blocker, 'undetermined', null, 'not-found');
   if (node.state === 'OPEN') return result(blocker, 'open', null, 'state');
   if (NOT_APPLICABLE_REASONS.has(node.stateReason)) return result(blocker, 'not-applicable', null, 'state-reason');
   const candidates = candidateCommits(node);
   if (!candidates.length) return result(blocker, 'undetermined', null, 'no-candidate');
-  const landed = candidates.find((c) => reach.get(c.sha) === 'reachable');
+  const reachable = candidates.filter((c) => reach.get(c.sha) === 'reachable');
+  if (files && reachable.length) {
+    const keys = keyFilesOf(node);
+    const read = (c) => files.get(c.sha);
+    const solid = reachable.find((c) => Array.isArray(read(c)) && !isHollow(read(c), keys));
+    if (solid) return result(blocker, 'landed', solid.sha, solid.via);
+    // No reachable candidate is non-hollow: fail closed before claiming hollow.
+    const unreadable = reachable.find((c) => !Array.isArray(read(c)));
+    if (unreadable) return result(blocker, 'undetermined', unreadable.sha, 'files-unreadable');
+    const probeFailed = candidates.find((c) => reach.get(c.sha) !== 'unreachable' && reach.get(c.sha) !== 'reachable');
+    if (probeFailed) return result(blocker, 'undetermined', probeFailed.sha, 'probe-failed');
+    const cut = node.closedByPullRequestsReferences;
+    if (cut && cut.pageInfo && cut.pageInfo.hasNextPage === true) {
+      return result(blocker, 'undetermined', reachable[0].sha, 'references-truncated');
+    }
+    return { ...result(blocker, 'hollow', reachable[0].sha, reachable[0].via), pr: prForSha(node, reachable[0].sha) };
+  }
+  const landed = reachable[0];
   if (landed) return result(blocker, 'landed', landed.sha, landed.via);
   const failed = candidates.find((c) => reach.get(c.sha) !== 'unreachable');
   if (failed) return result(blocker, 'undetermined', failed.sha, 'probe-failed');
@@ -261,16 +347,19 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
     return { results: null, error: `GraphQL response has no node for ${missing.join(', ')} and no NOT_FOUND error naming it` };
   }
 
-  // One compare call per distinct candidate sha. Only a CLOSED blocker that
-  // carries code is probed — the same cases classifyBlocker's rules 1-3 leave
-  // to rule 4 onward (keep the two in step). A blocker stops probing at its
-  // first reachable candidate: classifyBlocker reads `landed` off the first
-  // reachable one in candidate order, so later probes could not change it.
+  // One compare call per distinct candidate sha, and one commits read per
+  // distinct REACHABLE sha. Only a CLOSED blocker that carries code is probed —
+  // the same cases classifyBlocker's rules 1-3 leave to rule 4 onward (keep the
+  // two in step). A blocker stops probing at its first reachable candidate whose
+  // files read succeeded and touch its Key Files (#6142 Q1): a hollow or
+  // unreadable reachable candidate never ends the loop, a later one may land it.
   const reach = new Map();
+  const files = new Map();
   const probeErrors = [];
   for (const n of blockers) {
     const node = repository[`b${n}`];
     if (!node || node.state !== 'CLOSED' || NOT_APPLICABLE_REASONS.has(node.stateReason)) continue;
+    const keys = keyFilesOf(node);
     for (const { sha } of candidateCommits(node)) {
       if (!reach.has(sha)) {
         try {
@@ -280,15 +369,26 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
           probeErrors.push({ sha, message: errorText(err) });
         }
       }
-      if (reach.get(sha) === 'reachable') break;
+      if (reach.get(sha) !== 'reachable') continue;
+      if (!files.has(sha)) {
+        try {
+          const out = runner(commitFilesArgs({ owner, repo, host, sha }));
+          files.set(sha, String(out).split('\n').map((l) => l.trim()).filter(Boolean));
+        } catch (err) {
+          files.set(sha, null);
+          probeErrors.push({ sha, message: errorText(err) });
+        }
+      }
+      const read = files.get(sha);
+      if (Array.isArray(read) && !isHollow(read, keys)) break;
     }
   }
   const results = new Map();
-  for (const n of blockers) results.set(n, classifyBlocker(n, repository[`b${n}`], reach));
+  for (const n of blockers) results.set(n, classifyBlocker(n, repository[`b${n}`], reach, files));
   return { results, error: null, probeErrors };
 }
 
 module.exports = {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, classifyCrossRepository, undeterminedAll, classifyFromState, fetchBlockerLanding, recoveredResponse,
+  BOOKKEEPING_PATH_RE, commitFilesArgs, isHollow, classifyBlocker, classifyCrossRepository, undeterminedAll, classifyFromState, fetchBlockerLanding, recoveredResponse,
 };

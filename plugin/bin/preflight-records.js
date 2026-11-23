@@ -35,7 +35,8 @@
 // problem is exit 2, as for --records-json, and the two flags are mutually
 // exclusive (exit 2).
 // --blocker-landing (#4553) adds records[n].blockerLanding [{blocker, verdict,
-// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] —
+// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry and
+// `pr` on a `hollow` verdict (#6142)] —
 // for each record, the landing verdict of every blocker that is
 // NOT one of the positional numbers (an in-run blocker is ordered by the DAG,
 // never judged here), in blockedBy order, [] when none; the verdicts are

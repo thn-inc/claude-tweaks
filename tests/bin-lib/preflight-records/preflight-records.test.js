@@ -800,6 +800,7 @@ test('defaultRunner bounds its gh call (the compare fan-out and the batched Grap
 });
 
 const isCompare = (args) => args[0] === 'api' && /\/compare\//.test(args[1]);
+const isCommitFiles = (args) => args[0] === 'api' && args.some((x) => /\/commits\//.test(x));
 const gqlQuery = (args) => (args.find((a) => typeof a === 'string' && a.startsWith('query=')) || '');
 
 const closedBlocker = (oid, { reason = 'COMPLETED', number = 90 } = {}) => ({
@@ -811,7 +812,7 @@ const closedBlocker = (oid, { reason = 'COMPLETED', number = 90 } = {}) => ({
 });
 
 // Records 10 (no edges) and 11 (blocked by in-run #10 and out-of-run #5).
-function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra = {} } = {}) {
+function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra = {}, files = {} } = {}) {
   const calls = [];
   const issues = {
     10: issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }),
@@ -823,6 +824,7 @@ function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra =
     const hit = Object.values(issues).find((i) => isIssueView(args, i.number));
     if (hit) return JSON.stringify(hit);
     if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) return JSON.stringify({ data: { repository } });
+    if (isCommitFiles(args)) return (files[args[2].split('/').pop()] || ['src/impl.js']).join('\n');
     if (isCompare(args)) {
       const sha = args[1].split('...').pop();
       if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
@@ -835,7 +837,7 @@ function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra =
 
 // Native-mode landing fixture: each record's native blockers given as [number, repo, state].
 // `bodies` (record number -> body text) overrides a record's default body.
-function nativeLandingFixture(blockersByRecord, { repository = {}, statuses = {}, bodies = {} } = {}) {
+function nativeLandingFixture(blockersByRecord, { repository = {}, statuses = {}, bodies = {}, files = {} } = {}) {
   const calls = [];
   const runner = (args) => {
     calls.push(args);
@@ -850,6 +852,7 @@ function nativeLandingFixture(blockersByRecord, { repository = {}, statuses = {}
       }
       return JSON.stringify({ data: { repository: repo } });
     }
+    if (isCommitFiles(args)) return (files[args[2].split('/').pop()] || ['src/impl.js']).join('\n');
     if (isCompare(args)) {
       const sha = args[1].split('...').pop();
       if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
@@ -1201,6 +1204,17 @@ test('--blocker-landing: a blocker shared by two records is queried once and rep
   const queries = calls.filter(isGraphQL).map(gqlQuery);
   assert.equal(queries.length, 1);
   assert.equal((queries[0].match(/b5: issue/g) || []).length, 1);
+});
+
+test('--blocker-landing prints hollow with pr (#6142)', () => {
+  const { runner } = landingFixture({
+    repository: { b5: closedBlocker('eee555', { number: 90 }) },
+    files: { eee555: ['docs/superpowers/plans/x.md'] },
+  });
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'hollow', commit: 'eee555', via: 'closer-pr', pr: 90 }]);
 });
 
 test('AC11.2: a native-mode record with no out-of-run blockers makes no blocker-landing query and no compare call', () => {
