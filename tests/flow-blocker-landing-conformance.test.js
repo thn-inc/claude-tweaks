@@ -343,7 +343,7 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
 const RUN_FACTS = [
   { re: /preflight-records\.js" \{n\} --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, msg: '2.7b runs the --blocker-landing call with $INTEGRATION_BRANCH', from: ' --blocker-landing --integration-branch "$INTEGRATION_BRANCH"', to: ' --integration-branch "$INTEGRATION_BRANCH"' },
   { re: /BLOCKED[^\n]*before Step 2\.8 claims/, msg: '2.7b stops before Step 2.8 claims', from: / before Step 2\.8 claims/, to: ' before the build' },
-  { re: /`open` or `unlanded` is BLOCKED — a STOP before Step 2\.8 claims/, msg: '2.7b: open and unlanded are both BLOCKED before Step 2.8 claims', from: '`open` or `unlanded` is BLOCKED', to: '`open` proceeds; `unlanded` is BLOCKED' },
+  { re: /`open`, `unlanded` or `hollow` is BLOCKED — a STOP before Step 2\.8 claims/, msg: '2.7b: open, unlanded and hollow are all BLOCKED before Step 2.8 claims', from: '`open`, `unlanded` or `hollow` is BLOCKED', to: '`open` proceeds; `unlanded` is BLOCKED' },
   { re: /`undetermined` proceeds/, msg: '2.7b: undetermined proceeds', from: '`undetermined` proceeds', to: '`undetermined` is BLOCKED too' },
   { re: /`undetermined` proceeds, holding that file's per-blocker `SKIP`/, msg: '2.7b: undetermined holds the per-blocker SKIP', from: ", holding that file's per-blocker `SKIP`", to: '' },
   { re: /`multispec-dependency-ordering\.md`'s out-of-run verdict table/, msg: '2.7b applies the out-of-run verdict table', from: "`multispec-dependency-ordering.md`'s out-of-run verdict table", to: 'the verdict table' },
@@ -496,7 +496,7 @@ function cardRow(text) {
 
 const SECOND_CALL_FACT = "AC6.1: a second call's continuation reports blocked";
 const CARD_FACTS = [
-  [/`open` or `unlanded` out-of-run blocker/, 'AC1.1: the row names both stopping verdicts'],
+  [/`open`, `unlanded` or `hollow` out-of-run blocker/, 'AC1.1: the row names every stopping verdict'],
   [/gate `blocker-landing`/, 'AC1.1: the row names the gate'],
   [/when the run already holds claims \(a continuation re-running the pre-claim checks\), the claims rules below still apply/, "AC5.1: a continuation's held claims keep the claims rules"],
   [/`OUTCOME: build-test-blocked`, one `ISSUE #\{n\}: failed:blocker-landing` line per target, and `STATUS: BLOCKED`/, 'AC2.1: the dispatch report line'],
@@ -535,12 +535,12 @@ test('AC1.1: failure-cards.md is loaded on the blocker-landing stop', () => {
   assert.deepEqual(missingFactsOf(LOADED_BY_FACTS)(loadedBy(mutated)), [LOADED_BY_FACTS[0][1]]);
 });
 
-const GATE_SENTENCE = "An `open` or `unlanded` verdict's stop is gate `blocker-landing`";
+const GATE_SENTENCE = "An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`";
 function assertRoutesToGate(text) {
   const section = outOfRunSection(text);
   assert.match(
     section,
-    /An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `\/claude-tweaks:dispatch` report it per `failure-cards\.md`'s blocker-landing row\./,
+    /An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`; under `\/claude-tweaks:dispatch` report it per `failure-cards\.md`'s blocker-landing row\./,
     'ordering section routes the open and unlanded stops to the blocker-landing gate',
   );
   requireOrder(section, ['| `undetermined` |', GATE_SENTENCE, 'A failed blocker query is not']);
@@ -549,7 +549,7 @@ test('AC1.1: the out-of-run section names the open and unlanded stops as gate bl
   const text = readText(ORDERING);
   assertRoutesToGate(text);
   assert.throws(
-    () => assertRoutesToGate(mutate(text, /An `open` or `unlanded` verdict's stop is gate[^\n]*\n\n/, '')),
+    () => assertRoutesToGate(mutate(text, /An `open`, `unlanded` or `hollow` verdict's stop is gate[^\n]*\n\n/, '')),
     /ordering section routes the open and unlanded stops/,
   );
   // Permutation, not deletion: the sentence moves directly below the failed-query line.
@@ -638,4 +638,22 @@ test('cross-repository entries are named {repository}#{blocker} in the stop line
     () => assertDagSkipsQualified(mutate(text, '`owner/name#N`', '`#N`')),
     { message: 'the DAG step names a qualified `owner/name#N` blocked-by entry' },
   );
+});
+
+// #6142 — the hollow verdict is named on every flow-side surface that enumerates the stopping verdicts.
+test('#6142: the hollow verdict is a hard fail with its own stop card, and every flow-side verdict enumeration names it', () => {
+  const ordering = readText(ORDERING);
+  const row = verdictRow(outOfRunSection(ordering), 'hollow');
+  assert.match(row, /hard fail — stop before Step 2\.8 claims, render the card below/, 'hollow row is a hard fail before claims');
+  assert.match(ordering, /^Blocker landed hollow — stopping before any claim\.$/m, 'the hollow stop card exists');
+  assert.match(ordering, /touched none of its Key Files \(or only pipeline bookkeeping\)/, 'the card names the cause');
+  assert.match(ordering, /closed by \{commit\}/, 'a null pr reads closed by {commit}');
+  assert.match(ordering, /gh issue reopen \{blocker\}/, 'the card offers the reopen escape');
+  const here = (p) => readText(path.join(FLOW_DIR, p));
+  assert.match(here('validation.md'), /`open`, `unlanded` or `hollow` is BLOCKED/, 'validation.md names hollow');
+  assert.match(here('SKILL.md'), /an `open`\/`unlanded`\/`hollow` out-of-run blocker/, 'flow SKILL.md names hollow');
+  assert.match(here('failure-cards.md'), /`open`, `unlanded` or `hollow` out-of-run blocker/, 'failure-cards.md names hollow');
+  const docs = path.join(__dirname, '..', 'docs');
+  assert.match(readText(path.join(docs, 'skill-graph.md')), /`open`\/`unlanded`\/`hollow`\/`landed`/, 'skill-graph names hollow');
+  assert.match(readText(path.join(docs, 'journeys', 'stop-a-run-whose-closed-blocker-never-landed-4553.md')), /The six verdicts are `open`, `landed`, `unlanded`, `hollow`/, 'the journey names six verdicts');
 });

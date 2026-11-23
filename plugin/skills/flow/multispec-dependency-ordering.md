@@ -40,6 +40,7 @@ If record 159 depends on record 142 (not in the run list) — via `blocked-by:` 
 |---|---|
 | `open` | hard fail — stop before Step 2.8 claims: "159 depends on 142 which is still open and not in this run" |
 | `unlanded` | hard fail — stop before Step 2.8 claims, render the card below |
+| `hollow` | hard fail — stop before Step 2.8 claims, render the card below |
 | `landed` | satisfied |
 | `not-applicable` | satisfied (closed `NOT_PLANNED`/`DUPLICATE`, no code) |
 | `undetermined` | proceed — the landing could not be judged for this blocker; once the run directory exists (after Step 3's Manifesto write, as `multispec-merge-gate.md` times its entries) write one `SKIP` per blocker |
@@ -50,7 +51,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sec
 
 `{text-file}` holds one line, `condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the integration branch is git-derived, so the text never passes through shell quoting. With several blockers, write the file, log it, then rewrite it for the next blocker.
 
-An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `/claude-tweaks:dispatch` report it per `failure-cards.md`'s blocker-landing row.
+An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`; under `/claude-tweaks:dispatch` report it per `failure-cards.md`'s blocker-landing row.
 
 An entry with `via: cross-repository` or `via: cross-repository-state-unreadable` is a blocker in another repository, linked natively or declared by a `Blocked by owner/name#N` body line; its `repository` key holds `owner/name`, and its number names that repository's issue, so write it as `{repository}#{blocker}`. An `open` entry stops as the table says, its stop line naming `{repository}#{blocker}`; with `via: cross-repository-state-unreadable` the stop line reads "159 depends on {repository}#{blocker} (state unreadable) — read as open (fail closed)". An `undetermined` entry writes the SKIP line `condition: {repository}#{blocker} lives in another repository (via cross-repository) → fallback: proceeded without judging its landing — blocker landing reads only this repository's integration branch` (#4793, Decisions Q1 and Q5).
 
@@ -77,6 +78,20 @@ gh api -X DELETE "repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by/$(gh a
 # Escape 2 — work-links: body-text: rewrite the record body without the "Blocked by #{blocker}" line:
 gh issue view {n} --json body -q .body | grep -vE "^Blocked by #{blocker}([^0-9]|$)" | gh issue edit {n} --body-file -
 ```
+
+The `hollow` stop card:
+
+```
+Blocker landed hollow — stopping before any claim.
+  #{n} is blocked by #{blocker}, closed by #{pr} ({commit}), which touched none of its Key Files (or only pipeline bookkeeping).
+
+# Escape 1 — reopen the blocker so its implementation is built:
+gh issue reopen {blocker}
+
+# Escape 2 — remove the edge (escape 2 above), then re-run.
+```
+
+With `pr: null` (a direct Commit closer) the clause reads `closed by {commit}`.
 
 A cherry-picked landing reads `unlanded` (different sha) — confirm by hand, then take escape 2.
 

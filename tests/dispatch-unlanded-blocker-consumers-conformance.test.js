@@ -38,7 +38,7 @@ function requireOrder(text, markers) {
 // --- blocked-exclusion-report.md ---------------------------------------------------------------------
 
 const REPORT_START = "Then read the same file's `reason: 'unlanded-blocker'`";
-const REPORT_CHUNKS = 4; // unlanded intro, unlanded line, malformed intro, malformed line
+const REPORT_CHUNKS = 5; // unlanded intro, unlanded line, hollow block, malformed intro, malformed line
 const TARGET_MISSING_LINE = '`#{number} excluded — named target {path}';
 const EXCEPTION = '**Exception — the headless drain steady state.**';
 
@@ -52,6 +52,10 @@ function reportParagraphs(text) {
 const REPORT_FACTS = [
   [/`reason: 'unlanded-blocker'` entries \(`records: \[number\], detail: \{blockers: \[\{blocker, commit\}\]\}` each, #4792/, 'reads the unlanded-blocker entries'],
   [/under the same exception and empty-array rules below/, 'inherits the headless-silence and empty rules'],
+  [/`#\{number\} waits — blocker #\{blocker\} was closed by #\{pr\} with no implementation`/, 'hollow: the report line mirrors the CLI AUTO line'],
+  [/`verdict: 'hollow'`/, 'hollow: names the verdict that selects the line'],
+  [/with `pr: null`, `closed by \{commit\}` in place of `#\{pr\}`/, 'hollow: a null pr names the commit'],
+  [/one line naming every blocker, each clause in its own verdict's wording, in `detail\.blockers` order/, 'hollow: a mixed record renders one line in detail order'],
   [/`#\{number\} excluded — blocker not landed: #\{blocker\} \(closing commit \{commit\}\), … — eligible again once it reaches the integration branch`/, 'AC3.1: the report line names blocker, commit and when it is eligible again'],
   [/Then its `reason: 'malformed-blocker'` entries \(`records: \[number\], detail: \{cause\}` each, #4792/, 'AC4.3: reads the malformed-blocker entries'],
   [/`#\{number\} excluded — malformed blocker declaration: \{cause\} — eligible again once its blocker declaration can be checked`/, 'AC4.2 AC4.3: the malformed record has its own report line'],
@@ -64,12 +68,12 @@ test('AC3.1 AC4.3: blocked-exclusion-report.md renders unlanded-blocker and malf
   const region = reportRegion(REPORT);
   assert.deepEqual(reportMissing(region), []);
   assertEachPatternGoesRed(region, REPORT_FACTS, reportMissing);
-  // The slice is exactly the four chunks: the line after them is the Exception paragraph.
+  // The slice is exactly the five chunks: the line after them is the Exception paragraph.
   const { chunks, at } = reportParagraphs(REPORT);
   assert.ok(chunks[at + REPORT_CHUNKS].startsWith(EXCEPTION), 'the report paragraph is followed by the Exception paragraph');
 
   assertReportPlacement(REPORT);
-  // Permutation, not deletion: the four chunks move below the Exception paragraph.
+  // Permutation, not deletion: the five chunks move below the Exception paragraph.
   const rest = chunks.filter((_, i) => i < at || i >= at + REPORT_CHUNKS);
   const exceptionAt = rest.findIndex((c) => c.startsWith(EXCEPTION));
   const moved = [...rest.slice(0, exceptionAt + 1), ...chunks.slice(at, at + REPORT_CHUNKS), ...rest.slice(exceptionAt + 1)].join('\n\n');
@@ -99,6 +103,7 @@ test("AC4.3: the malformed-blocker report line's cause is a cause the CLI writes
 const NOTES_PASS_PREFIX = '**Unlanded-blocker pass (#4792).**';
 const NOTES_FACTS = [
   [/A blocker linked natively or declared by a `Blocked by owner\/name#N` body line in another repository is never in-run, whatever its number/i, '#4793: a foreign number is never in-run'],
+  [/a `hollow` verdict excludes too/, 'hollow: the pass paragraph says a hollow verdict excludes too'],
   [/its `AUTO` line naming it `owner\/name#N`/, '#4793: the kept line names a CLOSED foreign blocker owner/name#N'],
 ];
 const notesMissing = missingFactsOf(NOTES_FACTS);
@@ -203,4 +208,12 @@ test("plugin-structure.md describes queue-pull-notes.md's pass-placement section
   const moved = stripped.replace('\n## Commands\n', `\n## Commands\n${rowLines.join('\n')}\n`);
   assert.notEqual(moved, stripped);
   assert.equal(dispatchRow(moved), '', 'a dispatch row outside the sub-files section is not found');
+});
+
+// #6142 — the hollow verdict is named on the dispatch-side verdict enumerations.
+test('#6142: dispatch SKILL.md, settle-and-merge.md and queue-pull-script.md name the hollow verdict', () => {
+  const dir = path.join(ROOT, 'plugin', 'skills', 'dispatch');
+  assert.match(readText(path.join(dir, 'SKILL.md')), /no `unlanded`\/`hollow` out-of-run blocker/, 'SKILL.md queue line');
+  assert.match(readText(path.join(dir, 'settle-and-merge.md')), /on an `open`, `unlanded` or `hollow` out-of-run blocker/, 'settle special case');
+  assert.match(collapse(readText(path.join(dir, 'queue-pull-script.md'))), /judges `unlanded` or `hollow`/, 'queue-pull-script reason bullet');
 });
