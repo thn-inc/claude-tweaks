@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('../../helpers/read-skill');
 
 const lib = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const relaunch = require(path.join(lib, 'driver', 'relaunch'));
@@ -162,7 +163,7 @@ test('cannotCompletePrompt fences the neutralized reason', () => {
 });
 
 test('header lists the three outcomes and never requires steps.js', () => {
-  const src = fs.readFileSync(path.join(lib, 'driver', 'relaunch.js'), 'utf8');
+  const src = readText(path.join(lib, 'driver', 'relaunch.js'));
   const header = src.split('\n').filter((l) => l.startsWith('//')).join('\n');
   for (const word of ['relaunch: true', 'no-step-up', 'clamped', 'never requires `steps.js`']) assert.ok(header.includes(word), word);
   assert.ok(!/require\([^)]*steps/.test(src));
