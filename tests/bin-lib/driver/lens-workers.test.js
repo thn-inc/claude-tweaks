@@ -389,3 +389,9 @@ test('an aborted run starts no further side, and a running worker sits in deps.a
   assert.strictEqual(logLines(input.runDir).length, 4);
   assert.deepStrictEqual(out.reply.reviewers.slice(4).map((r) => r.failed), [true, true]);
 });
+
+test('a missing deps.runner is refused once, up front, with a TypeError', async (t) => {
+  const input = baseInput(t);
+  await assert.rejects(runLensWorkers(input, {}), { name: 'TypeError', message: 'deps.runner is required' });
+  assert.deepStrictEqual(logLines(input.runDir), []);
+});

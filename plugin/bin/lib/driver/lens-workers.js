@@ -138,6 +138,8 @@ async function runLensWorkers(input, deps = {}) {
     lenses, runDir, cwd, bundleText, readPaths, attrSource, settingsDir,
     platform = process.platform, policy, env = process.env, now = Date.now,
   } = input;
+  // No default runner: a missing one is a caller bug, refused once rather than as a launch failure per side.
+  if (typeof deps.runner !== 'function') throw new TypeError('deps.runner is required');
   const launch = deps.launchWorker || launchWorker;
   const resolveLaunch = deps.roleLaunch || roleLaunch;
   const append = deps.appendRecord || ((dir, record) => appendWorkerRecord(dir, record, { env }));

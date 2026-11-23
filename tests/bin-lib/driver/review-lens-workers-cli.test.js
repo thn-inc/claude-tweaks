@@ -289,3 +289,49 @@ test('script entry: --help exits 0 and a call with no flags exits 2', () => {
   assert.strictEqual(bare.code, 2);
   assert.match(bare.stderr, /--run is required/);
 });
+
+// Fix round 1 (#6000 task review).
+test('a policy that cannot be read is exit 2 with a stderr line, no worker started', async (t) => {
+  const fx = fixture(t);
+  const { runner, calls } = fakeRunner();
+  const res = await call(fx, argv(fx, plainCheckout(t)), { runner, resolvePolicy: () => { throw new Error('policy.yml: bad yaml'); } });
+  assert.strictEqual(res.code, 2);
+  assert.strictEqual(res.stdout, '');
+  assert.strictEqual(res.stderr, 'review-lens-workers: policy unreadable: policy.yml: bad yaml\n');
+  assert.strictEqual(calls.length, 0);
+});
+
+test('a worker that ignores SIGTERM is sent SIGKILL after the kill grace', async (t) => {
+  const fx = fixture(t, { lenses: [lens('3b', 1)] });
+  const handlers = {};
+  const onSignal = (sig, fn) => { handlers[sig] = fn; return () => {}; };
+  // SIGTERM is ignored; only SIGKILL ends the child.
+  const { runner, calls } = fakeRunner((c, n, record) => new Promise((resolve) => { record.die = (sig) => { if (sig === 'SIGKILL') resolve({ code: null, signal: sig, stdout: '', stderr: '' }); }; }));
+  t.after(() => { for (const c of calls) if (c.die) c.die('SIGKILL'); });
+  const pending = call(fx, argv(fx, plainCheckout(t)), { runner, onSignal, killGraceMs: 20 });
+  for (let i = 0; i < 2000 && calls.length < 1; i += 1) await new Promise((r) => setTimeout(r, 1));
+  handlers.SIGTERM();
+  const res = await pending;
+  assert.strictEqual(res.code, 143);
+  assert.strictEqual(res.stdout, '');
+  assert.deepStrictEqual(calls[0].kills, ['SIGTERM', 'SIGKILL']);
+});
+
+test('a worker-written stderr detail is cut to STDERR_DETAIL_MAX characters', async (t) => {
+  const fx = fixture(t, { lenses: [lens('3b', 1)] });
+  const { runner } = fakeRunner(() => ({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'x'.repeat(500) }) }));
+  const res = await call(fx, argv(fx, plainCheckout(t)), { runner });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(res.stderr, `review-lens-workers: lens 3b A failed: launch (${'x'.repeat(200)}…)\n`);
+});
+
+test('when every lens is excluded, the GIT_ATTR_SOURCE probe and its line are skipped', async (t) => {
+  const fx = fixture(t, { lenses: [lens('3f')] });
+  let probes = 0;
+  const { runner, calls } = fakeRunner();
+  const res = await call(fx, argv(fx, plainCheckout(t)), { runner, gitHonoursAttrSource: () => { probes += 1; return false; } });
+  assert.strictEqual(res.code, 0);
+  assert.strictEqual(probes, 0);
+  assert.strictEqual(calls.length, 0);
+  assert.strictEqual(res.stderr, 'review-lens-workers: lens 3f A failed: excluded\nreview-lens-workers: lens 3f B failed: excluded\n');
+});

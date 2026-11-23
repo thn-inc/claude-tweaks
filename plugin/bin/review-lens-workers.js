@@ -27,18 +27,20 @@
 //
 // Stdout: the reply JSON on one line. Stderr: one `review-lens-workers: lens {lens} {side}
 // failed: {reason}` line per failed side (a worker-written detail, when the envelope carries
-// one, follows in parentheses, stripped of control characters and neutralized), and one
+// one, follows in parentheses, stripped of control characters, neutralized and cut to
+// STDERR_DETAIL_MAX characters), and one
 // `review-lens-workers: log append failed for lens {lens} {side}: {reason}` line per log
 // append that failed, which never changes the reply or the exit code.
 //
 // Exit codes: 0 the reply was printed; 2 a malformed call (an unknown flag, any of the four
 // flags missing or empty, an unreadable or unparseable lens file, an unreadable bundle, an
-// `inputRefusal`, a refused --run, a --cwd that is not an absolute existing directory inside a
+// `inputRefusal`, a refused --run, a policy that cannot be read, a --cwd that is not an absolute existing directory inside a
 // git work tree, a --run inside --cwd, a failed git derivation). A refused --run takes exit 2,
 // not the sanctioned writers' 3, per the #4027 split: the spec fixes this CLI's codes to 0
 // and 2, and no caller branches on a distinct run-dir code. On POSIX a SIGINT or SIGTERM
 // forwards SIGTERM to every running worker, waits for their launches to settle (bounded by the
-// launcher's kill grace) so each still logs its record, prints nothing on stdout, and exits
+// launcher's kill grace) so each still logs its record, sends SIGKILL to any worker still running
+// after the grace, prints nothing on stdout, and exits
 // 130 (SIGINT) or 143 (SIGTERM), so a dispatcher never reads an interrupted run as a reply.
 
 const fs = require('node:fs');
@@ -53,7 +55,7 @@ const { MODEL_POLICY_KEYS, roleLaunch } = require('./lib/driver/launch');
 const { SANDBOX_PROBED_PLATFORMS, gitHonoursAttrSource } = require('./lib/driver/roles');
 const { launchWorker, defaultRunner, KILL_GRACE_MS } = require('./lib/driver/worker');
 const { defaultResolvePolicy } = require('./lib/express/policy');
-const { inputRefusal, runLensWorkers, appendWorkerRecord } = require('./lib/driver/lens-workers');
+const { inputRefusal, runLensWorkers, appendWorkerRecord, EXCLUDED_LENSES } = require('./lib/driver/lens-workers');
 
 const USAGE = 'Usage: review-lens-workers.js --run <run-dir> --lenses-file <json> --cwd <reviewed-worktree> --bundle <file> [--help]\n' +
   '  exit 0 the reply was printed; 2 a malformed call; 130/143 interrupted (SIGINT/SIGTERM), nothing printed\n';
@@ -61,6 +63,8 @@ const FLAGS = { '--run': 'run', '--lenses-file': 'lensesFile', '--cwd': 'cwd', '
 const GIT_TIMEOUT_MS = 30000;
 // C0 and C1 controls (ESC among them), so no terminal sequence a worker wrote reaches stderr.
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+// The longest worker-written detail a stderr line carries, after neutralizing; a longer one is cut and ends in `…`.
+const STDERR_DETAIL_MAX = 200;
 
 function parseArgs(argv) {
   const o = {};
@@ -83,7 +87,8 @@ function errText(err) {
 
 // A worker-written string, safe for one stderr line.
 function safeText(text) {
-  return neutralize(String(text).replace(CONTROL_CHARS, ' '));
+  const clean = neutralize(String(text).replace(CONTROL_CHARS, ' '));
+  return clean.length > STDERR_DETAIL_MAX ? clean.slice(0, STDERR_DETAIL_MAX) + '…' : clean;
 }
 
 function realGit(args, { cwd, env, input = '' }) {
@@ -174,13 +179,18 @@ async function run(argv, overrides = {}) {
 
   const platform = deps.platform;
   let honours;
-  if (SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+  // Skipped when every lens is excluded: no worker could start, so the probe and its line say nothing.
+  const anyLaunchable = input.lenses.some((l) => !EXCLUDED_LENSES.includes(l.lens));
+  if (anyLaunchable && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
     honours = deps.gitHonoursAttrSource({ cwd: o.cwd, env: deps.env }) === true;
     if (!honours) deps.stderr(`review-lens-workers: the git in ${o.cwd} does not honour GIT_ATTR_SOURCE, which the lens-reviewer's pinned git environment needs; no worker starts\n`);
   }
 
   let policy;
-  try { policy = deps.resolvePolicy(MODEL_POLICY_KEYS, { runDir }); } catch { policy = undefined; }
+  try { policy = deps.resolvePolicy(MODEL_POLICY_KEYS, { runDir }); } catch (e) {
+    deps.stderr(`review-lens-workers: policy unreadable: ${errText(e)}\n`);
+    return 2;
+  }
 
   let settingsDir;
   try { settingsDir = fs.mkdtempSync(path.join(deps.tmpdir(), 'review-lens-workers-')); } catch (e) { return usageError(`settings directory not created: ${errText(e)}`); }
@@ -217,6 +227,10 @@ async function run(argv, overrides = {}) {
       const grace = new Promise((resolve) => { timer = setTimeout(resolve, deps.killGraceMs); });
       await Promise.race([work.then(() => {}, () => {}), grace]);
       clearTimeout(timer);
+      // A worker still running past the grace ignored SIGTERM: escalate, then return without waiting.
+      for (const h of active) {
+        try { h.kill('SIGKILL'); } catch { /* already gone */ }
+      }
       return first.sig === 'SIGINT' ? 130 : 143;
     }
     const { reply, failures, logFailures } = first.result;
