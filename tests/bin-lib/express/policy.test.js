@@ -89,3 +89,166 @@ test('express policy merges a factory model-profiles row', { skip: STUB_SKIP }, 
   }
   assert.deepStrictEqual(resolved['model-profiles'].value, { standard: { model: 'opus' }, fast: { model: 'haiku' } });
 });
+
+// --- protected-paths (#6020): read from the main checkout, never the record's worktree ---
+
+const { gitRepo, harnessWorktreeOf, fixtureGit } = require('../../helpers/git-fixtures');
+const { protectedPathGlobsOf, resolveProtectedPathsEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'policy.js'));
+const { SHIPPED_PROTECTED_PATHS, evaluateRecordEligibility } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
+const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+
+function writePolicy(dir, text) {
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+}
+
+function entryFrom(dir) {
+  const saved = process.cwd();
+  process.chdir(dir);
+  try { return defaultResolvePolicy(['protected-paths'])['protected-paths']; } finally { process.chdir(saved); }
+}
+
+function globsFrom(dir) {
+  const saved = process.cwd();
+  process.chdir(dir);
+  try { return protectedPathGlobsOf(defaultResolvePolicy(['protected-paths'])['protected-paths']); } finally { process.chdir(saved); }
+}
+
+test('AC5.2: unset, absent and unreadable policy.yml all yield the shipped list through the real resolver', () => {
+  const absent = gitRepo();
+  assert.deepStrictEqual(globsFrom(absent), SHIPPED_PROTECTED_PATHS);
+  const unrelated = gitRepo();
+  writePolicy(unrelated, 'merge-verification: off\n');
+  assert.deepStrictEqual(globsFrom(unrelated), SHIPPED_PROTECTED_PATHS);
+  const unreadable = gitRepo();
+  fs.mkdirSync(path.join(unreadable, '.claude-tweaks', 'policy.yml'), { recursive: true });
+  assert.deepStrictEqual(globsFrom(unreadable), SHIPPED_PROTECTED_PATHS);
+});
+
+test('AC5.1, AC10.1 (real resolver): malformed values yield the shipped list, never []', () => {
+  for (const raw of ['["infra/**"]', '""', 'infra/**,', 'app/[slug]/**']) {
+    const main = gitRepo();
+    writePolicy(main, `protected-paths: ${raw}\n`);
+    assert.strictEqual(entryFrom(main).invalid, true, raw);
+    assert.deepStrictEqual(globsFrom(main), SHIPPED_PROTECTED_PATHS, raw);
+  }
+  for (const [raw, want] of [['[]', []], ['infra/**', ['infra/**']], ['no/such/**', ['no/such/**']]]) {
+    const main = gitRepo();
+    writePolicy(main, `protected-paths: ${raw}\n`);
+    assert.deepStrictEqual(globsFrom(main), want, raw);
+  }
+});
+
+test('AC8.1 (resolver half): from a linked worktree the main checkout\'s value wins', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: infra/**\n');
+  assert.deepStrictEqual(globsFrom(wt), SHIPPED_PROTECTED_PATHS);
+  const record = { number: 1, title: 't', labels: [{ name: 'risk:low' }, { name: 'size:low' }, { name: 'ceremony:fast-lane' }, { name: 'type:task' }], body: '## Technical Approach\n\n### Key Files\n\n- `package.json` (modify)\n' };
+  const verdict = evaluateRecordEligibility(record, { enabled: true, integrationModel: 'pr-first', protectedPathGlobs: globsFrom(wt) });
+  assert.ok(verdict.reasons.includes('protected path: package.json'), JSON.stringify(verdict.reasons));
+  const main2 = gitRepo();
+  const wt2 = harnessWorktreeOf(main2, 'rec');
+  writePolicy(main2, 'protected-paths: infra/**\n');
+  writePolicy(wt2, 'protected-paths: []\n');
+  assert.deepStrictEqual(globsFrom(wt2), ['infra/**']);
+});
+
+test('Review Focus 2: a worktree [] never reaches a main checkout with no policy.yml', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: []\n');
+  assert.deepStrictEqual(resolveProtectedPathsEntry(wt), { value: [], source: 'default' });
+});
+
+test('a --separate-git-dir checkout (no linked worktree, no main root) still reads its own configured list', () => {
+  const dir = fs.realpathSync(scratchDir('ct-sepgit-'));
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(work);
+  fixtureGit(['init', '-q', '--separate-git-dir', path.join(dir, 'admin'), work]);
+  writePolicy(work, 'protected-paths: infra/**\n');
+  assert.deepStrictEqual(globsFrom(work), ['infra/**']);
+});
+
+// The entry and every stderr write while it resolved, from `cwd`.
+function entryWithStderr(cwd) {
+  const writes = [];
+  const real = process.stderr.write;
+  process.stderr.write = (chunk) => { writes.push(String(chunk)); return true; };
+  try { return { entry: resolveProtectedPathsEntry(cwd), writes }; } finally { process.stderr.write = real; }
+}
+const WARNING = /^express-policy: protected-paths not read \(.+\) — shipped list applies\n$/;
+const INVALID_ENTRY = { value: [], source: 'default', invalid: true };
+
+function separateGitDirRepo() {
+  const dir = fs.realpathSync(scratchDir('ct-sepgit-'));
+  const work = path.join(dir, 'work');
+  fs.mkdirSync(work);
+  fixtureGit(['init', '-q', '--separate-git-dir', path.join(dir, 'admin'), work]);
+  fixtureGit(['-C', work, 'commit', '--allow-empty', '-m', 'init', '-q']);
+  return work;
+}
+
+test('a linked worktree of a --separate-git-dir checkout never reads its own list: the warned shipped-list fallback', () => {
+  const work = separateGitDirRepo();
+  writePolicy(work, 'protected-paths: infra/**\n');
+  const wt = path.join(path.dirname(work), 'linked');
+  fixtureGit(['-C', work, 'worktree', 'add', '-q', wt, '-b', 'linked-branch']);
+  writePolicy(wt, 'protected-paths: []\n');
+  const { entry, writes } = entryWithStderr(wt);
+  assert.deepStrictEqual(entry, INVALID_ENTRY);
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0], WARNING);
+  assert.ok(writes[0].includes('no main checkout resolved'), writes[0]);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry), SHIPPED_PROTECTED_PATHS);
+});
+
+test('a linked worktree of a submodule reads the submodule main checkout recorded as core.worktree', () => {
+  const upstream = gitRepo();
+  const parent = gitRepo();
+  fixtureGit(['-C', parent, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', upstream, 'mod']);
+  const sub = path.join(parent, 'mod');
+  writePolicy(sub, 'protected-paths: infra/**\n');
+  const wt = path.join(fs.realpathSync(scratchDir('ct-sublinked-')), 'wt');
+  fixtureGit(['-C', sub, 'worktree', 'add', '-q', wt, '-b', 'sub-linked-branch']);
+  writePolicy(wt, 'protected-paths: []\n');
+  const { entry, writes } = entryWithStderr(wt);
+  assert.deepStrictEqual(entry, { value: 'infra/**', source: 'policy' });
+  assert.deepStrictEqual(writes, []);
+  // The submodule's own main checkout reads itself.
+  assert.deepStrictEqual(entryWithStderr(sub).entry, { value: 'infra/**', source: 'policy' });
+});
+
+test('the warning fires once, with its wording, when no repository answers; the reason names git\'s own line', () => {
+  const dir = fs.realpathSync(scratchDir('ct-nogit-'));
+  const { entry, writes } = entryWithStderr(dir);
+  assert.deepStrictEqual(entry, INVALID_ENTRY);
+  assert.strictEqual(writes.length, 1);
+  assert.match(writes[0], WARNING);
+  assert.ok(!writes[0].includes('read failed: error'), writes[0]);
+  assert.ok(/not a git repository|git exited/.test(writes[0]), writes[0]);
+});
+
+test('the mixed-key real call: a worktree [] never reaches protected-paths, merge-sensitive-paths still resolves', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: []\n');
+  const saved = process.cwd();
+  process.chdir(wt);
+  let out;
+  try { out = defaultResolvePolicy(['merge-sensitive-paths', 'protected-paths']); } finally { process.chdir(saved); }
+  assert.deepStrictEqual(out['protected-paths'], { value: [], source: 'default' });
+  assert.ok(out['merge-sensitive-paths'], 'merge-sensitive-paths entry present');
+});
+
+test('protectedPathGlobsOf keys on invalid and source, from real resolver replies', () => {
+  const entry = (policyRaw) => resolvePolicyKeys(['protected-paths'], { policyRaw })['protected-paths'];
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: ""\n')), SHIPPED_PROTECTED_PATHS);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: []\n')), []);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: infra/**, **/package.json\n')), ['infra/**', '**/package.json']);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: ["infra/**"]\n')), SHIPPED_PROTECTED_PATHS);
+  assert.deepStrictEqual(protectedPathGlobsOf({ value: ['infra/**'], source: 'policy' }), ['infra/**']);
+  for (const e of [undefined, { value: undefined, source: 'policy' }, { value: 'a b', source: 'policy' }, { value: ['infra/**', 'a b'], source: 'policy' }]) {
+    assert.deepStrictEqual(protectedPathGlobsOf(e), SHIPPED_PROTECTED_PATHS, JSON.stringify(e));
+  }
+});

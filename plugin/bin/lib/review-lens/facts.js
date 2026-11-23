@@ -28,7 +28,7 @@
 // newFiles / newModules: a path added (status A or C) / an added `source` file.
 //
 // riskPathTouched — Reading A (#6001 plan-review decision): any protected path (`express/eligibility.js`'s
-// `isProtectedPath`), or any record Risk-flag, or — only when `riskPolicy.controlMode === true` — a path matching a
+// `isProtectedPath` on the shipped list, `SHIPPED_PROTECTED_PATHS`, not a project's `protected-paths`), or any record Risk-flag, or — only when `riskPolicy.controlMode === true` — a path matching a
 // `risk-path-globs` list (`issues/blast-radius.js`'s `isSensitivePath`). This mirrors `readRiskPolicy`
 // (`plugin/bin/lib/policy.js`), which consults `risk-path-globs` only after `isControlModeOn`, as
 // `plugin/bin/accept-park.js`'s `decide` does. `riskPolicy` is `readRiskPolicy`'s result, or `{ error }` when that
@@ -256,7 +256,7 @@ function computeFacts({ cwd, base, head = 'HEAD', riskFlags = [], riskPolicy, gi
       const controlMode = Boolean(riskPolicy && riskPolicy.controlMode === true);
       if (controlMode && riskPolicy.globsInvalid) throw new Error('risk-path-globs is invalid while control mode is on');
       const touched = entries.flatMap((e) => (e.oldPath === e.path ? [e.path] : [e.path, e.oldPath]));
-      if (riskFlags.length > 0 || touched.some(isProtectedPath)) return true;
+      if (riskFlags.length > 0 || touched.some((p) => isProtectedPath(p))) return true;
       if (!controlMode) return false;
       const globs = Object.values(riskPolicy.pathGlobs || {}).flat();
       return touched.some((p) => isSensitivePath(p, globs));
