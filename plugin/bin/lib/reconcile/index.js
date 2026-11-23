@@ -8,6 +8,8 @@
 // check re-verifies state immediately before writing. Safe by these
 // per-check properties, not by a global lock.
 'use strict';
+const path = require('path');
+const HOLLOW_CHECK_NOT_APPLICABLE = ['not-github-issues', 'no-remote'];
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { findNonCanonicalRunDirs } = require('../hooks/context');
 const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReapWorktrees } = require('../hooks/worktree-reap');
@@ -16,7 +18,7 @@ const { mirrorFastForward } = require('./mirror-ff');
 const { redTipCheck } = require('./red-tip');
 const { reapMerged, prefetchReapPrStates } = require('./reap-merged');
 const { releaseMerged } = require('./release-merged');
-const { postMerge, prefetchPostMergePrStates } = require('./post-merge');
+const { postMerge, detectHollowMerges, prefetchPostMergePrStates } = require('./post-merge');
 const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
@@ -547,7 +549,32 @@ async function reconcileInner(opts, state) {
   // of hazard `bin/lib/hooks/session-start.js` already documents for its
   // own stale-run-scan-before-reap ordering.
   if (overBudget(DISPATCH_ORDER.slice(3))) return result;
-  if (checks.includes('release')) {
+  // A PR merged while its run was still in flight (#6143) must not be settled: release, post-merge and
+  // archive each skip the runs listed here. Fails closed: a setup failure (bar the not-applicable ones
+  // below) or an uncaught throw skips all three for this pass, never an empty hold set. Detection and release read the one `prStates` resolver.
+  let hollowRunDirs = [];
+  let hollowRunIds = [];
+  let hollowCheckFailed = false;
+  if (checks.includes('release') || checks.includes('post-merge') || checks.includes('archive')) {
+    try {
+      const h = await detectHollowMerges({ cwd: root, prStates, dryRun });
+      // `not-github-issues` and `no-remote`: this project has no GitHub work records to comment on or no
+      // PR to ask about, so the check has nothing to hold. Treating them as a failed check would skip
+      // archive for every such project, which never had the hazard.
+      if (h.failure && !HOLLOW_CHECK_NOT_APPLICABLE.includes(h.failure)) {
+        hollowCheckFailed = true;
+        result.skipped.push({ check: 'release,post-merge,archive', reason: 'hollow-merge-check-failed', detail: h.detail ? `${h.failure}: ${h.detail}` : h.failure });
+      } else if (!h.failure) {
+        hollowRunDirs = h.hollowRunDirs;
+        hollowRunIds = hollowRunDirs.map((d) => path.basename(d));
+        result.hollowMerges = h.entries;
+      }
+    } catch (e) {
+      hollowCheckFailed = true;
+      result.skipped.push({ check: 'release,post-merge,archive', reason: 'hollow-merge-check-failed', detail: String(e && e.message ? e.message : e).split('\n')[0].slice(0, 200) });
+    }
+  }
+  if (checks.includes('release') && !hollowCheckFailed) {
     // Release performs one write kind (a conditional-overwrite of the claim
     // blob) with no meaningful "preview" — unlike ff/reap/archive, there is
     // no local state to diff against. dry-run skips it outright rather than
@@ -555,7 +582,7 @@ async function reconcileInner(opts, state) {
     if (dryRun) {
       result.skipped.push({ check: 'release', reason: 'dry-run-not-supported' });
     } else {
-      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
+      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates, hollowRunIds }));
       if (r.failure) {
         result.skipped.push({ check: 'release', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
       } else {
@@ -573,11 +600,11 @@ async function reconcileInner(opts, state) {
   // backstop stays the recovery). Reads GitHub only, so it is not gated on the shared fetch.
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   let postMergeDeferred = [];
-  if (checks.includes('post-merge')) {
+  if (checks.includes('post-merge') && !hollowCheckFailed) {
     const r = await timePhase('post-merge', async () => {
       await warm(prefetchPostMergePrStates);
       // The pass budget, checked between runs: a catch-up or several armed merges must not run past it.
-      return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
+      return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded(), hollowRunDirs });
     });
     if (r.failure) {
       result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
@@ -586,9 +613,11 @@ async function reconcileInner(opts, state) {
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];
     }
   }
+  // A hollow run stays in place whether or not post-merge ran: archive must not move its run dir.
+  postMergeDeferred = [...new Set([...postMergeDeferred, ...hollowRunDirs])];
 
   if (overBudget(DISPATCH_ORDER.slice(5))) return result;
-  if (checks.includes('archive')) {
+  if (checks.includes('archive') && !hollowCheckFailed) {
     const r = await timePhase('archive', async () => {
       await warm((r, states) => prefetchArchivePrStates(r, states, { cache: runIntegrityCache }));
       return archiveMerged({

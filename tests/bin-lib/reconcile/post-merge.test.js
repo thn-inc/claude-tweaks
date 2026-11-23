@@ -2584,6 +2584,18 @@ test('hollow merge: a definitive byBranch answer (no PR, gh-absent, pr-not-found
   }
 });
 
+test('hollow merge: a byBranch object answer without a positive integer number ({ number: 0 }, {}) gives no entry and no lookup', async () => {
+  const { root } = branchRunFixture();
+  for (const answer of [{ number: 0 }, {}, { number: -3 }, { number: 4.5 }]) {
+    const gh = hollowGh();
+    const byNumberCalls = [];
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async (n) => { byNumberCalls.push(n); return merged(); }, byBranch: () => answer } });
+    assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, JSON.stringify(answer));
+    assert.equal(gh.calls.length, 0);
+    assert.deepEqual(byNumberCalls, [], 'no PR-state lookup for a non-PR answer');
+  }
+});
+
 test('hollow merge: a transient PR-state answer (network-failure) holds the run as hollow-check-failed with no gh call', async () => {
   for (const answer of ['network-failure']) {
     const root = mainCheckout();

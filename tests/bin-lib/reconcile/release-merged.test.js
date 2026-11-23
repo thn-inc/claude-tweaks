@@ -1561,3 +1561,52 @@ test('a throwing prefetch never changes release\'s verdicts', { skip: STUB_SKIP 
   assert.deepStrictEqual(thrown, baseline);
   assert.equal(thrown.released.length, 3);
 });
+
+// #6143: a run whose PR merged while it was in flight is held whole — the same fixture as the #1378
+// grant-strip test above (the AC5 baseline: MERGED + closing releases and strips), with the run listed.
+test('hollow-merge: a listed runId is skipped, no tombstone write, no label edit', { skip: STUB_SKIP }, async () => {
+  const root = fs.realpathSync(scratchDir('ct-release-hollow-'));
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/w.git'], { cwd: root });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'init'], { cwd: root });
+  const wtPath = path.join(root, '.worktrees', 'wt-run-hollow');
+  execFileSync('git', ['worktree', 'add', '-q', '-b', 'run-hollow-branch', wtPath], { cwd: root });
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-hollow');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active', worktree: wtPath }));
+  const liveContent = JSON.stringify({
+    runId: 'run-hollow', sessionId: 's1', claimedAt: new Date().toISOString(), ttlHours: 72, host: 'h',
+  });
+  const apiCalls = [];
+  const ghApi = (args) => {
+    apiCalls.push(args.join(' '));
+    if (args[0].includes('/git/trees/claims-registry')) {
+      return { stdout: JSON.stringify({ truncated: false, entries: [{ name: 'issue-22.json', sha: 'live-sha' }] }), failure: null, status: null };
+    }
+    if (args[0].includes('/contents/claims/issue-22.json')) {
+      return { stdout: JSON.stringify({ content: liveContent, sha: 'live-sha' }), failure: null, status: null };
+    }
+    return { stdout: '', failure: null, status: null };
+  };
+  const wrapperDir = scratchDir('ct-release-hollow-ghwrap-');
+  const wrapperPath = path.join(wrapperDir, 'gh');
+  const logPath = path.join(wrapperDir, 'gh-calls.log');
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\necho "$@" >> "${logPath}"\ncat <<'EOF'\n[{"number":56,"state":"MERGED","mergedAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","closingIssuesReferences":[{"number":22,"repository":{"name":"w","owner":{"login":"acme"}}}]}]\nEOF\n`,
+  );
+  fs.chmodSync(wrapperPath, 0o755); // root-safe: makes a spy script executable, not a permission-denial simulation
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${wrapperDir}${path.delimiter}${originalPath}`;
+  try {
+    const result = await releaseMerged({ cwd: root, ghApi, hollowRunIds: ['run-hollow'] });
+    assert.deepEqual(result.released, []);
+    assert.deepEqual(result.skipped, [{ issueNumber: 22, runId: 'run-hollow', reason: 'hollow-merge' }]);
+    assert.deepEqual(apiCalls.filter((c) => c.includes('/labels/')), [], 'no label edit (bot:in-progress or grant)');
+    const ghCalls = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+    assert.ok(!/(^|\s)(-X|--method)\s+(PUT|DELETE|POST|PATCH)/m.test(ghCalls), `no write through the gh runner, saw: ${ghCalls}`);
+    assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), 'no grant-strip log entry');
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});

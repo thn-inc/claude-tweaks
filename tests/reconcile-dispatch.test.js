@@ -998,3 +998,58 @@ test('AC4.1: SessionStart passes no budgetMs (default budget); the background pa
   assert.ok(bgLine, 'background reconcile call site found');
   assert.ok(bgLine.includes('budgetMs: BACKGROUND_BUDGET_MS'), 'the background pass runs under its own ceiling, not the 18 s hot-path default');
 });
+
+// #6143: the hollow-merge check (a PR merged while its run was in flight) holds the run through release,
+// post-merge and archive, and fails closed.
+test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive as a hold, kept out of archive, and shown in the summary', async () => {
+  const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
+  const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
+  const { r, order, releaseOpts, postMergeOpts, archiveOpts, hollowOpts } = await reconcileWithAsyncMerge(['release', 'archive'], {
+    hollow: async () => ({ entries: [entry], hollowRunDirs: [runDir] }),
+  });
+  assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
+  assert.deepEqual(releaseOpts.hollowRunIds, ['2026-11-23T1-hollow']);
+  assert.deepEqual(postMergeOpts.hollowRunDirs, [runDir]);
+  assert.deepEqual(archiveOpts.postMergeDeferred, [runDir], 'archive leaves the hollow run dir in place');
+  assert.equal(hollowOpts.prStates, releaseOpts.prStates, 'detection and release read ONE per-pass PR-state resolver');
+  assert.equal(hollowOpts.prStates, postMergeOpts.prStates);
+  assert.deepEqual(r.hollowMerges, [entry]);
+  assert.ok(formatSummary(r).split('\n').includes(
+    'hollow merge held: PR #77 (run 2026-11-23T1-hollow) — build unfinished; claim, auto:build and run dir kept; commented on #5',
+  ));
+});
+
+test('AC5.1 (#6143): a clean pass hands release, post-merge and archive empty hold sets and prints no hollow line', async () => {
+  const { r, releaseOpts, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['release', 'archive']);
+  assert.deepEqual(releaseOpts.hollowRunIds, []);
+  assert.deepEqual(postMergeOpts.hollowRunDirs, []);
+  assert.deepEqual(archiveOpts.postMergeDeferred, []);
+  assert.deepEqual(r.hollowMerges, []);
+  assert.ok(!formatSummary(r).includes('hollow'));
+});
+
+test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post-merge and archive for the pass', async () => {
+  const failing = [async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }), async () => { throw new Error('boom'); }];
+  for (const hollow of failing) {
+    const { r, order, archiveCalled } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow });
+    assert.deepEqual(order, [], 'none of release, post-merge, archive ran');
+    assert.equal(archiveCalled, false);
+    assert.equal(r.skipped.filter((s) => s.check === 'release,post-merge,archive' && s.reason === 'hollow-merge-check-failed').length, 1);
+    assert.ok(formatSummary(r).split('\n').some((l) => l.startsWith('skipped: release,post-merge,archive — hollow-merge-check-failed')));
+  }
+});
+
+test('(#6143): a project with no GitHub work records or no remote has nothing to hold, so the three checks still run', async () => {
+  for (const failure of ['not-github-issues', 'no-remote']) {
+    const { r, order } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
+    assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive'], failure);
+    assert.ok(!r.skipped.some((s) => s.reason === 'hollow-merge-check-failed'));
+  }
+});
+
+test('(#6143): a hollow-check-failed entry with no PR still renders its summary line', () => {
+  assert.equal(
+    formatSummary({ hollowMerges: [{ runDir: '/r', runId: 'run-x', pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'x' }], skipped: [] }),
+    'hollow-merge check failed for run run-x; held this pass',
+  );
+});
