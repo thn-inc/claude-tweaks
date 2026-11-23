@@ -992,6 +992,7 @@ test('gitHonoursAttrSource: a git that ignores the variable, a failed control, a
     ['the probe has a spawn error', ok, { status: null, error: new Error('ETIMEDOUT'), stderr: 'GIT_ATTR_SOURCE' }],
     ['the probe is killed by a signal', ok, { status: null, signal: 'SIGTERM', stderr: 'GIT_ATTR_SOURCE' }],
     ['spawnSync throws', new Error('boom'), honour],
+    ['the probe exits 0 although its stderr names GIT_ATTR_SOURCE', ok, { status: 0, stdout: '', stderr: 'warning: GIT_ATTR_SOURCE\n' }],
   ];
   for (const [label, control, probe] of cases) {
     assert.strictEqual(gitHonoursAttrSource({ cwd: '/r', spawnSync: fake(control, probe).spawnSync, env }), false, label);
