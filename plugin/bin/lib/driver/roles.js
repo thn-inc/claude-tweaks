@@ -195,11 +195,19 @@
 // and returns one free-text reply (LENS_REPLY_SCHEMA), and it has no Write or Edit tool
 // and no network on any platform. Its generated settings (`lensReviewerSettings`) are
 // `defaultMode: dontAsk` with a closed allow list. On a sandbox-probed platform the list
-// is Read, Grep, Glob and the four git forms in LENS_GIT_RULES (`git diff`, `git show` and
-// `git log`, each with `--no-ext-diff --no-textconv` pinned, and `git grep`); the deny list
-// is the implementer's plus every flag of those forms that writes a file (`--output`), runs a
-// program (`--ext-diff`, `--textconv`, `git grep -O`/`--open-files-in-pager`, `git -c`) or
-// reads outside the working directory (`--no-index`), plus Edit and Write; the read block is
+// is Read, Grep, Glob and the three git forms in LENS_GIT_RULES (`git diff`, `git show` and
+// `git log`, each with `--no-ext-diff --no-textconv` pinned); the deny list is the
+// implementer's plus the flags of those forms that write a file (`--output`), run a program
+// (`--ext-diff`, `--textconv`) or read outside the working directory (`--no-index`), plus Edit
+// and Write. Three deny rules are backstops, not live controls, because no allow rule admits
+// the command they name: `git -c *` (no allow rule starts with `git -c`), and
+// `git grep * -O*` and `* --open-files-in-pager*` (git grep is not admitted). `git grep` was
+// dropped from the allow list in Task 1's review: it runs a program through `-O<prog>` as its
+// first argument, bundled (`-nO<prog>`), or through an abbreviated long option
+// (`--open=<prog>`), and turns on configured textconv through `--textc`; git accepts those
+// abbreviations for grep (the diff family rejects them), so no deny pattern closes it. The
+// worker's rights, not its prompt, are what contain it, and the Grep tool covers
+// working-tree search. The read block is
 // on; and the sandbox block is the implementer's, with `allowRead` set to the caller's
 // `readPaths` (the reviewed worktree's git common dir) and `filesystem.denyWrite` set to the
 // working directory. Off the probed platforms the allow list is Read alone, there is no
@@ -408,12 +416,11 @@ const LENS_GIT_RULES = deepFreeze([
   'Bash(git diff --no-ext-diff --no-textconv *)',
   'Bash(git show --no-ext-diff --no-textconv *)',
   'Bash(git log --no-ext-diff --no-textconv *)',
-  'Bash(git grep *)',
 ]);
 // The implementer's deny rules plus every flag of the admitted forms that writes a file
-// (`--output`), runs a program (`--ext-diff`, `--textconv`, `git grep -O`/
-// `--open-files-in-pager`, `git -c`) or reads outside the working directory (`--no-index`),
-// and the two file-writing tools.
+// (`--output`), runs a program (`--ext-diff`, `--textconv`) or reads outside the working
+// directory (`--no-index`), and the two file-writing tools. The `git grep` and `git -c`
+// rules are backstops only: no allow rule admits either command (see the header).
 const LENS_DENY = deepFreeze([
   ...IMPLEMENTER_DENY,
   'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)',

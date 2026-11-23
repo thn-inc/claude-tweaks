@@ -649,7 +649,7 @@ test('POLICY_DRIVER_ROLES: exactly the four spec roles, each in ROLES', () => {
 });
 
 // The lens-reviewer role (#6000): a read-only headless lens reviewer.
-const LENS_GIT = ['Bash(git diff --no-ext-diff --no-textconv *)', 'Bash(git show --no-ext-diff --no-textconv *)', 'Bash(git log --no-ext-diff --no-textconv *)', 'Bash(git grep *)'];
+const LENS_GIT = ['Bash(git diff --no-ext-diff --no-textconv *)', 'Bash(git show --no-ext-diff --no-textconv *)', 'Bash(git log --no-ext-diff --no-textconv *)'];
 const LENS_DENY = [...DENY, 'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)', 'Bash(* --open-files-in-pager*)', 'Bash(git grep * -O*)', 'Bash(git -c *)', 'Edit', 'Write'];
 const LENS_DARWIN = {
   permissions: { defaultMode: 'dontAsk', allow: ['Read', 'Grep', 'Glob', ...LENS_GIT], deny: LENS_DENY, blockReadsOutsideWorkingDirectories: true },
@@ -730,7 +730,7 @@ function assertNoteListsRules(note, rules) {
 test('Q2: the admitted-forms note lists every lens git allow rule and nothing else', () => {
   const note = lensAdmittedFormsNote();
   assertNoteListsRules(note, LENS_GIT_RULES);
-  for (const form of ['git diff --no-ext-diff --no-textconv', 'git show --no-ext-diff --no-textconv', 'git log --no-ext-diff --no-textconv', 'git grep']) {
+  for (const form of ['git diff --no-ext-diff --no-textconv', 'git show --no-ext-diff --no-textconv', 'git log --no-ext-diff --no-textconv']) {
     assert.ok(note.split('\n').includes(form), form);
   }
   // Order: read-only reviewer, the forms, the Read tool, no rephrasing.
@@ -743,6 +743,23 @@ test('Q2: the admitted-forms note lists every lens git allow rule and nothing el
   for (const op of ['`;`', '`&&`', '`|`']) assert.ok(note.includes(op), op);
   // Negative control: a rule list with one rule dropped yields a note the assertion rejects.
   assert.throws(() => assertNoteListsRules(note, LENS_GIT_RULES.slice(1)));
+});
+
+test('git grep is not admitted: no allow rule and no note line (it runs a program through -O, --open=, bundled -nO)', () => {
+  for (const platform of ['darwin', 'linux', 'win32']) {
+    const allow = lensReviewerSettings({ platform, readPaths: [] }).permissions.allow;
+    assert.deepStrictEqual(allow.filter((r) => r.startsWith('Bash(git grep')), [], platform);
+  }
+  assert.deepStrictEqual(LENS_GIT_RULES.filter((r) => r.startsWith('Bash(git grep')), []);
+  assert.deepStrictEqual(lensAdmittedFormsNote().split('\n').filter((l) => l.startsWith('git grep')), []);
+});
+
+test('every settings role has a builder, so settingsFor never reaches its no-builder throw', () => {
+  for (const [role, spec] of Object.entries(ROLES)) {
+    if (!spec.settings) continue;
+    const s = settingsFor(role, { testCommand: 'node --test', platform: 'darwin', readPaths: [] });
+    assert.ok(s && typeof s.permissions === 'object', role);
+  }
 });
 
 test('settingsFor dispatches by role', () => {
