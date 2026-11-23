@@ -237,10 +237,8 @@ test('AC1.1: every housekeeping arm site composes with the record-less --houseke
   assert.match(step3, /--housekeeping/, 'pr-first-merge.md Step 3 documents the record-less form');
   assert.match(step3, /--housekeeping[^\n]*branch 1|branch 1[^\n]*--housekeeping/, "the record-less form covers every composer fence, branch 1's immediate-merge degrade included");
   assert.ok(read('plugin/skills/tidy/step-7-5-worktree-always.md').includes(HK_CALL), 'tidy Step 7.5 carries the full record-less command');
-  for (const rel of ['plugin/skills/tidy/actions-github-issues.md', 'plugin/skills/wrap-up/residue-sweep.md']) {
-    assert.match(read(rel), /--housekeeping/, `${rel} names the record-less form`);
-  }
-  assert.doesNotMatch(read('plugin/skills/wrap-up/residue-sweep.md'), /not its degrade chain/, "residue-sweep runs Step 3 branch 1's immediate-merge degrade (record Decision)");
-  // go-red: the pre-change Step 3 composer line is record-only
-  assert.doesNotMatch('node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"', /--housekeeping/);
+  assert.match(read('plugin/skills/tidy/actions-github-issues.md'), /housekeeping-marker flavor composes with Step 3's record-less `--housekeeping` form/, 'Arm ready PR splits the flavors: marker flavor composes record-less');
+  const sweep = read('plugin/skills/wrap-up/residue-sweep.md');
+  assert.match(sweep, /record-less `--housekeeping` form[^\n]*Step 3 branch 1's degrade/, "residue-sweep composes record-less and runs Step 3 branch 1's degrade");
+  assert.doesNotMatch(sweep, /not its degrade chain/, "residue-sweep runs Step 3 branch 1's immediate-merge degrade (record Decision)");
 });

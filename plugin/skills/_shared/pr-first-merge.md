@@ -298,7 +298,7 @@ Before Step 3, for each `Fixes` record: `node "${CLAUDE_PLUGIN_ROOT}/bin/accept-
 
 No fence below runs until Step 2.9 lets the merge through, whichever Step 2.5 route led here. Exempt: a caller with no `Fixes` record (tidy's housekeeping arm) or one running Step 3 alone behind its own `parked` guard (dispatch close-out, `/claude-tweaks:accept`).
 
-**Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`). Marker-stamped PR: every composer fence, branch 1's included, takes `--housekeeping` in place of `{issue-list}`, `--tag`, `--keep-open`.
+**Creation-time caller:** tidy's Step 7.5 arm runs Step 2.5, then these fences where it routes; Red path, Conflict path and ready+comment degrades become leave-unarmed + report (`tidy/step-7-5-worktree-always.md`). Marker-stamped PR: every composer fence, branch 1's included, takes `--housekeeping` and drops `{issue-list}`, `--tag`, `--keep-open`.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue-list} --tag {tag} --keep-open {keep-open} --pr {pr-number} --out-dir "{subject-dir}"
