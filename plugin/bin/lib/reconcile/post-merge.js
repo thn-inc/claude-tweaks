@@ -67,13 +67,24 @@
 // or `no-pr-states` (the caller passed no usable PR-state resolver: a bug, never
 // a transient answer). `unknown-host` adds `detail`, the refusal text naming the
 // `GH_HOST=…` opt-in; `postMergeOne`'s entry carries the same `detail`.
+//
+// `detectHollowMerges` (#6143) finds a hollow merge: a MERGED PR whose first-line run marker names a
+// non-terminal run whose build or test phase has not finished (lib/flow/inflight-run.js's inFlightPhase,
+// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (an unreadable
+// body, run state or decisions.md, any throw while checking it) is held as `hollow-check-failed`, never
+// settled. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
+// must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge it
+// posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
+// each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
+// on that record again. A PR with no run marker, or one naming another run, gets no entry and settles as
+// today. A setup failure returns `failure` with empty sets; the caller then fails the whole pass closed.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { execFileSyncTimed } = require('./timing');
 const { listRunDirsWithState, readRunState } = require('../hooks/context');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { repoSpecOf } = require('../hooks/git-exec');
+const { repoSpecOf, runGit } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys, POLICY_KEYS } = require('../policy-schema');
 const { locatePolicyFile } = require('../policy-file');
@@ -84,12 +95,21 @@ const { resolveWithin } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { closeBelowFloorParents, DELIBERATE_SKIP_REASONS } = require('../issues/below-floor-parent-close');
 const { closingLinks, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
+const { parseWorktreeList } = require('../hooks/worktree-reap');
+const { fallbackBranch } = require('../hooks/run-integrity');
+const { inFlightPhase } = require('../flow/inflight-run');
+const { readRunDecisions } = require('../phase-exit/exit-record');
+const { firstLineRunId } = require('../flow/pr-checklist');
+const { neutralizeClosingPhrases } = require('../flow/closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
 const PARENT_STEP = 'reconcile post-merge parent-close';
 // A transient failure's retry line: a different location from MARKER_STEP, so it is never a marker.
 const ATTEMPT_STEP = 'reconcile post-merge attempt';
 const MAX_ATTEMPTS = 3;
+// detectHollowMerges' per-record comment marker: its location, and the section it is written under.
+const HOLLOW_STEP = 'reconcile hollow-merge';
+const HOLLOW_SECTION = '/reconcile';
 // A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
 // An unreadable own claim (a non-ENOENT read error in heartbeatClaim) is reported with it too: an accepted
 // mislabel, the safe stop being the point.
@@ -567,7 +587,7 @@ async function processCandidate({
 }
 
 async function postMerge({
-  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
+  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, hollowRunDirs = [], deps = {},
 } = {}) {
   const entries = [];
   const deferred = [];
@@ -575,13 +595,137 @@ async function postMerge({
   if (ctx.failure) return { entries, deferred, failure: ctx.failure, ...(ctx.detail ? { detail: ctx.detail } : {}) };
   // A missing resolver is a caller bug; the per-run catch must never relabel it a transient network failure.
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
+  // detectHollowMerges' held runs: never settled this pass, so archive keeps them too.
+  const hollow = new Set((Array.isArray(hollowRunDirs) ? hollowRunDirs : []).map((d) => path.resolve(d)));
 
   for (const { dir, state } of candidateRuns(ctx.root)) {
+    if (hollow.has(path.resolve(dir))) {
+      const pr = state && state.pr && state.pr.number;
+      entries.push({ runDir: dir, pr: Number.isInteger(pr) ? pr : null, action: 'skipped', reason: 'hollow-merge' });
+      deferred.push(dir);
+      continue;
+    }
     const { entry, defer } = await processCandidate({ dir, state, ctx, prStates, dryRun, now, budgetExceeded, deps });
     if (entry) entries.push(entry);
     if (defer) deferred.push(dir);
   }
   return { entries, deferred };
+}
+
+// Pure: the hollow-merge comment posted on each record.
+function hollowCommentText({ pr, runId, mergedAt, phase }) {
+  return `Reconcile: PR #${pr} (run ${runId}) was merged at ${mergedAt} while the run's ${phase} phase was unfinished — a hollow merge. The claim, the auto:build grant and the run directory are left in place; the code this record asked for may not have landed. Reopen this record if the merge closed it, then resume or settle the run.`;
+}
+
+// Pure: the marker text's prefix for one record.
+const hollowMarkerPrefix = (pr, n) => `hollow merge of PR #${pr} commented on #${n}`;
+
+// Pure: does this decisions.md text already mark record `n` commented for PR `pr` (any section)? The prefix is
+// matched with its following space, so `#61`'s marker never reads as `#6143`'s.
+function hollowMarked(decisionsText, pr, n) {
+  const prefix = `${hollowMarkerPrefix(pr, n)} `;
+  return String(decisionsText).split('\n').some((line) => {
+    const entry = parseEntry(line.replace(/\r$/, ''));
+    return Boolean(entry) && entry.location === HOLLOW_STEP && entry.action.startsWith(prefix);
+  });
+}
+
+// The run's PR number: run-state's `pr.number`, else the PR `prStates.byBranch` finds for the run's branch
+// (the live worktree entry's branch for `state.worktree`, else fallbackBranch — releaseMerged's join). null
+// when neither gives one. `worktrees` is a lazy reader of the parsed `git worktree list`.
+function hollowCandidatePr(root, dir, state, prStates, worktrees) {
+  const stamped = state && state.pr && state.pr.number;
+  if (Number.isInteger(stamped) && stamped > 0) return stamped;
+  if (typeof prStates.byBranch !== 'function') return null;
+  const wtEntry = state && state.worktree
+    ? worktrees().find((w) => path.resolve(w.path) === path.resolve(state.worktree))
+    : null;
+  const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
+  if (!branch) return null;
+  const found = prStates.byBranch(branch);
+  const number = found && typeof found === 'object' ? found.number : null;
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+// The hollow-merge check (see the header). -> { entries, hollowRunDirs, failure? }. Each entry is
+// { runDir, runId, pr, action: 'held', reason: 'hollow-merge' | 'hollow-check-failed', phase?, records?,
+// commented?, detail? }. Spawns only through setupContext's `timedGh` (`deps.gh` in tests); `deps.readSpecNumber`
+// is the config.yml seam.
+async function detectHollowMerges({
+  cwd, prStates, dryRun = false, deps = {},
+} = {}) {
+  const entries = [];
+  const hollowRunDirs = [];
+  const ctx = setupContext({ cwd, deps });
+  if (ctx.failure) return { entries, hollowRunDirs, failure: ctx.failure, ...(ctx.detail ? { detail: ctx.detail } : {}) };
+  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, hollowRunDirs, failure: 'no-pr-states' };
+  const { root, owner, repo, timedGh } = ctx;
+  const specNumberOf = deps.readSpecNumber || readSpecNumber;
+  const slug = `${owner}/${repo}`.toLowerCase();
+  let worktreeList = null;
+  const worktrees = () => {
+    if (!worktreeList) {
+      const listed = runGit(['worktree', 'list', '--porcelain'], root);
+      worktreeList = listed.failure ? [] : parseWorktreeList(listed.stdout);
+    }
+    return worktreeList;
+  };
+
+  // Non-terminal runs only: a `clean` run is never in flight.
+  for (const { dir, state } of listRunDirsWithState(root)) {
+    const pr = hollowCandidatePr(root, dir, state, prStates, worktrees);
+    if (pr === null) continue;
+    const prState = await prStates.byNumberAsync(pr);
+    if (!prState || typeof prState !== 'object' || prState.state !== 'MERGED') continue;
+    const runId = path.basename(dir);
+    const commented = [];
+    try {
+      const view = JSON.parse(timedGh(['pr', 'view', String(pr), '--json', 'body,closingIssuesReferences,mergedAt']));
+      if (!view || typeof view !== 'object' || typeof view.body !== 'string') throw new Error(`gh pr view ${pr}: no body in the response`);
+      if (firstLineRunId(view.body) !== runId) continue; // not this run's PR: it settles as today
+      // inFlightPhase reads a missing state as not in flight; for a marker-bearing PR that would settle it unchecked.
+      if (!state || typeof state !== 'object') throw new Error(`${runId}: run-state.json is missing or unreadable`);
+      const phase = inFlightPhase({ runState: state, body: view.body, readDecisions: () => readRunDecisions(dir) });
+      if (!phase) continue;
+      const closing = (Array.isArray(view.closingIssuesReferences) ? view.closingIssuesReferences : [])
+        .filter((r) => {
+          const login = r && r.repository && r.repository.owner && r.repository.owner.login;
+          return Boolean(login) && `${login}/${r.repository.name}`.toLowerCase() === slug;
+        })
+        .map((r) => Number(r.number))
+        .filter((n) => Number.isInteger(n) && n > 0);
+      let records = [...new Set(closing)];
+      if (records.length === 0) {
+        const spec = specNumberOf(dir);
+        records = spec ? [Number(spec)] : [];
+      }
+      const mergedAt = view.mergedAt || prState.mergedAt;
+      if (!dryRun) {
+        for (const n of records) {
+          if (hollowMarked(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), pr, n)) continue;
+          const { text } = neutralizeClosingPhrases(hollowCommentText({ pr, runId, mergedAt, phase }), { owner, repo });
+          timedGh(['issue', 'comment', String(n), '--body-file', '-'], text);
+          commented.push(n);
+          appendEntry({
+            runDir: dir,
+            section: HOLLOW_SECTION,
+            entry: formatEntry({
+              status: 'AUTO', now: Date.now(), step: HOLLOW_STEP, text: `${hollowMarkerPrefix(pr, n)} (merged ${mergedAt}, ${phase} unfinished)`,
+            }),
+            createParent: false,
+          });
+        }
+      }
+      entries.push({ runDir: dir, runId, pr, action: 'held', reason: 'hollow-merge', phase, records, commented });
+    } catch (e) {
+      entries.push({
+        runDir: dir, runId, pr, action: 'held', reason: 'hollow-check-failed', detail: boundDetail(oneLine(e && e.message ? e.message : e)),
+        ...(commented.length > 0 ? { commented } : {}),
+      });
+    }
+    hollowRunDirs.push(dir);
+  }
+  return { entries, hollowRunDirs };
 }
 
 // Is this run dir under `{main checkout}/.claude-tweaks/pipelines/archive/`? Real paths on both sides.
@@ -961,7 +1105,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, isSupersededEntry, supersededChanges, supersededChangesLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
+  postMerge, postMergeOne, detectHollowMerges, HOLLOW_STEP, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, isSupersededEntry, supersededChanges, supersededChangesLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
