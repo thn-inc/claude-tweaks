@@ -253,7 +253,7 @@ test('review: gh absent without update_issue_comment writes nothing, and a hold 
     f('With `gh` absent and no `update_issue_comment` tool in the session, write nothing and stop here'),
     f('The outcome is `held — answering needs gh or the MCP update_issue_comment tool`'),
   ], 'gh-absent refusal');
-  assert.ok(!readText(path.join(ROOT, 'plugin/skills/specify/planning-answer.md')).includes('maps no MCP call'), 'planning-answer.md still says the transport maps no MCP call');
+  assert.ok(!lit('maps no MCP call').test(readText(path.join(ROOT, 'plugin/skills/specify/planning-answer.md'))), 'planning-answer.md still says the transport maps no MCP call');
   pinned(sec('## Kept plan'), [f('A `{hold-file}` holding no question re-plans whatever the check prints')], 'empty hold re-plans');
 });
 
