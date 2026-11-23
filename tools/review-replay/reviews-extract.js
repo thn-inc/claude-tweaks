@@ -194,6 +194,19 @@ function confirmedOf(unitDir, lens, fs) {
   return { findings, unlocated: all.length - findings.length };
 }
 
+// One run input's text, from the run's directory; for a run read from `{runs}/archive/{run}`, an input absent there is
+// read from `{runs}/{run}`, where an archived run keeps its `work/`. Throws when neither holds it (run-input-gone).
+function readRunInput(r, i, fs) {
+  const own = path.join(r.dir, i.member || '', i.rel);
+  try {
+    return fs.readFileSync(own, 'utf8');
+  } catch (e) {
+    const archive = path.dirname(r.dir);
+    if (path.basename(archive) !== 'archive') throw e;
+    return fs.readFileSync(path.join(path.dirname(archive), path.basename(r.dir), i.member || '', i.rel), 'utf8');
+  }
+}
+
 const inputKey = (i) => `${i.member ? `${i.member}/` : ''}${i.rel}`;
 
 // One slot's texts: its copies (bundle, spec, procedure) beside the repository and its prompt per arm, every one
@@ -283,7 +296,7 @@ function examineDispatch(r, item, c, deps, member) {
   for (const i of inputs) {
     if (i.kind === 'scratch') continue;
     try {
-      i.source = fs.readFileSync(path.join(r.dir, i.member || '', i.rel), 'utf8');
+      i.source = readRunInput(r, i, fs);
     } catch {
       return { slot, unitKey, rows, reason: 'run-input-gone' };
     }
@@ -530,4 +543,4 @@ function writeOutputs(w, deps) {
   return 0;
 }
 
-module.exports = { extractReviews, ROLES, existsOnDisk, renderSlot, promptOf, strippedReply };
+module.exports = { extractReviews, ROLES, existsOnDisk, renderSlot, promptOf, strippedReply, readRunInput };

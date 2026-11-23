@@ -544,10 +544,43 @@ describe('branch roles', () => {
     const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
     assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 'tp', tier: 'standard', reason: 'prompt-file-gone' }]);
     assert.deepEqual(fixture.slots.map((s) => s.agentId), ['t1', 't2']);
-    for (const f of filesUnder(path.join(x.out, 'prompts'))) {
-      assert.ok(!path.relative(x.out, f).includes('tp'), f);
-      assert.ok(!read(f).includes('task-2-review-prompt'), f);
-    }
+    // Each slot is written once per user arm (one here) and once for its own control arm.
+    const files = filesUnder(path.join(x.out, 'prompts'));
+    assert.equal(files.length, fixture.slots.length * 2);
+    const prompts = x.json(schema.REVIEWS_MANIFEST_FILE).arms.flatMap((a) => a.prompts);
+    assert.equal(prompts.length, files.length);
+    const slotOf = new Map(fixture.slots.map((s) => [s.name, s.agentId]));
+    assert.ok(prompts.every((p) => slotOf.has(p.name) && slotOf.get(p.name) !== 'tp'), JSON.stringify(prompts.map((p) => p.name)));
+    for (const f of files) assert.ok(!read(f).includes('task-2-review-prompt'), f);
+  });
+
+  test('an archived run reads a run input its archive directory lacks from the top-level run directory', async () => {
+    const aRoot = scratchDir('rr-branch-archive-');
+    const ax = buildBranchFixture(aRoot);
+    const top = path.join(ax.runsRoot, RUNB);
+    const archived = path.join(ax.runsRoot, 'archive', RUNB);
+    fs.mkdirSync(path.dirname(archived), { recursive: true });
+    fs.renameSync(top, archived);
+    // As an archived run is kept: timing.json under archive/{run}, work/ left at the top-level {run}.
+    fs.mkdirSync(top);
+    fs.renameSync(path.join(archived, 'work'), path.join(top, 'work'));
+    const extractAt = async (name) => {
+      const out = path.join(aRoot, name);
+      const deps = makeDeps(ax.mainRoot);
+      const code = await run({ argv: ['extract-reviews', '--runs', ax.runsRoot, '--out', out, '--role', 'whole-branch', '--transcripts', ax.transcripts, '--arm', 'name=a,profile=fast', '--select', RUNB], deps });
+      return { code, deps, out };
+    };
+    const x = await extractAt('out');
+    assert.equal(x.code, 0, x.deps.errs.join('\n'));
+    const fixture = JSON.parse(read(path.join(x.out, schema.REVIEWS_FIXTURE_FILE)));
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['wb']);
+    const copy = path.join(x.out, 'repos', `${RUNB}--r1`, 'whole-branch--7-spec.md');
+    assert.equal(read(copy), read(path.join(top, 'work', '7-spec.md')));
+    // Absent from both directories, the input is gone.
+    fs.rmSync(path.join(top, 'work'), { recursive: true });
+    const y = await extractAt('out-gone');
+    assert.equal(y.code, 3);
+    assert.deepEqual(JSON.parse(y.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 'wb', tier: 'capable', reason: 'run-input-gone' }]);
   });
 
   test('--role task: a pointer prompt whose file exists replays that file', async () => {

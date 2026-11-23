@@ -263,10 +263,24 @@ function shaPairOf(text) {
   return range ? { base: range[1], head: range[2] } : null;
 }
 
-// The file path a pointer prompt names after `(it is your prompt …):`, on that line or the next; null when absent.
+// Whether a trimmed line is one absolute path and nothing else (`/…`, `~/…`, `X:\…` or `X:/…`). A path may hold a
+// space (`Code Workspaces`), so a line with spaces still counts when every piece after the first carries a `/`, `\` or
+// `.`: `/tmp/x is your prompt` does not, `/Users/x/Code Workspaces/r/p.md` does. Split, not one regex, to stay linear.
+function isLonePath(line) {
+  if (!/^(?:\/|~\/|[A-Za-z]:[\\/])\S/.test(line)) return false;
+  return line.split(/[ \t]+/).slice(1).every((piece) => /[/\\.]/.test(piece));
+}
+
+// The file path a pointer prompt names: after `(it is your prompt …):`, on that line or the next; else, in a prompt
+// that says its instructions are in or from "this file", the one line that is a lone absolute path. Null when neither
+// holds, or when such a prompt has no lone path line or more than one.
 function pointerPathOf(text) {
-  const m = /\(it is your prompt\b[^)\n]*\):[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/.exec(String(text));
-  return m ? m[1].trimEnd() : null;
+  const t = String(text);
+  const m = /\(it is your prompt\b[^)\n]*\):[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/.exec(t);
+  if (m) return m[1].trimEnd();
+  if (!/\b(?:in|from) this file\b|\bRead this file\b/i.test(t)) return null;
+  const paths = t.split(/\r?\n/).map((l) => l.trim()).filter(isLonePath);
+  return paths.length === 1 ? paths[0] : null;
 }
 
 module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths, shaPairOf, pointerPathOf };

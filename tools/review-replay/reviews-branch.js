@@ -15,7 +15,7 @@ const { parseReviewItems, parseBranchReply } = require('./reviews-score.js');
 const { parseTaskVerdict } = require('../pipeline-cost-report/reviews.js');
 const { isWholeBranch } = require('../pipeline-cost-report/guards.js');
 // reviews-extract.js requires this module lazily, so this top-level require never sees a partial export.
-const { renderSlot, promptOf, strippedReply } = require('./reviews-extract.js');
+const { renderSlot, promptOf, strippedReply, readRunInput } = require('./reviews-extract.js');
 
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
@@ -88,7 +88,7 @@ function examineBranch(r, item, c, deps, row) {
   for (const i of inputs) {
     if (i.kind === 'scratch') continue;
     try {
-      i.source = fs.readFileSync(path.join(r.dir, i.member || '', i.rel), 'utf8');
+      i.source = readRunInput(r, i, fs);
     } catch {
       return { tier, reason: 'run-input-gone' };
     }

@@ -408,6 +408,26 @@ test('pointerPathOf: path on the next line, with spaces', () => {
   assert.equal(rw.pointerPathOf('You are reviewing one task.'), null);
 });
 
+test('pointerPathOf: a "this file" prompt with the path alone on its own line, in the archive\'s other wordings', () => {
+  const file = '/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-2-review-prompt.md';
+  for (const lead of [
+    'Your complete instructions for this review are in this file. Read it first and follow it exactly:',
+    'Read your full review instructions from this file first and follow them exactly — it is your complete prompt.',
+    'You are a task reviewer. Read this file first — it is your complete instructions:',
+    'Your full instructions are in this file; read it first, in one Read call, and follow it exactly:',
+  ]) {
+    assert.equal(rw.pointerPathOf(`${lead}\n\n  ${file}  \n\n[Effort: high — x.]\nReply read-only.`), file, lead);
+  }
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\nC:\\Users\\x\\p.md'), 'C:\\Users\\x\\p.md');
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n~/sdd/p.md'), '~/sdd/p.md');
+});
+
+test('pointerPathOf: a "this file" prompt with no lone path line, or two, is not a pointer', () => {
+  assert.equal(rw.pointerPathOf('Check the null guard in this file.\nWORKTREE: /Users/x/r\nSee /tmp/x is your prompt'), null);
+  assert.equal(rw.pointerPathOf('Your instructions are in this file:\n/tmp/a/p.md\n/tmp/b/q.md'), null);
+  assert.equal(rw.pointerPathOf('Review the change.\n/tmp/a/p.md'), null, 'a lone path line alone does not make a pointer');
+});
+
 test('shaPairOf and pointerPathOf stay linear on long runs', () => {
   const marker = '(it is your prompt): ';
   const inputs = [
@@ -419,6 +439,10 @@ test('shaPairOf and pointerPathOf stay linear on long runs', () => {
     () => rw.pointerPathOf(marker + ' '.repeat(200000)),
     () => rw.pointerPathOf(marker + 'a'.repeat(200000)),
     () => rw.pointerPathOf('(it is your prompt' + ' '.repeat(200000)),
+    // The "this file" scan: one long would-be path line of many space-separated pieces, and many short lines.
+    () => rw.pointerPathOf('in this file\n/' + 'a '.repeat(100000)),
+    () => rw.pointerPathOf('in this file\n' + '/a/b.md\n'.repeat(50000)),
+    () => rw.pointerPathOf('in this file ' + ' \t'.repeat(100000)),
   ];
   for (const f of inputs) {
     const t0 = Date.now();
