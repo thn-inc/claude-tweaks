@@ -330,3 +330,39 @@ test('score-reviews exits 2 when --out or --transcripts is missing', async () =>
   assert.equal(await run({ argv: ['score-reviews', '--transcripts', root], deps }), 2);
   assert.match(deps.errs.join('\n'), /score-reviews requires --transcripts/);
 });
+
+const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
+const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
+
+test('parseReviewItems: one item per counted line, located by its first path:line', () => {
+  const text = ['### Issues', '#### Important (Should Fix)', '- src/x.js:10: null deref when y is unset', '- `/abs/src/a.js:3` and src/b.js:9 drift', '#### Minor', '1. naming could be clearer', '2. None.', '### Strengths', '- src/z.js:1 is tidy'].join('\n');
+  const { items } = parseReviewItems(text);
+  assert.deepEqual(items.map((i) => [i.sev, i.path, i.line]), [['important', 'src/x.js', 10], ['important', '/abs/src/a.js', 3], ['minor', null, null]]);
+  assert.deepEqual(items[1].locations, [{ path: '/abs/src/a.js', line: 3 }, { path: 'src/b.js', line: 9 }]);
+  assert.equal(items[0].text, 'src/x.js:10: null deref when y is unset');
+  assert.deepEqual(parseReviewCounts(text), { critical: 0, important: 2, minor: 1 });
+});
+
+test('parseReviewItems agrees with parseReviewCounts', () => {
+  const texts = [
+    ['### Issues', '#### Important', '- src/x.js:10: bad', '#### Minor', '1. nit', '2. None.'].join('\n'),
+    '#### Critical\n\n#### Important\nNone.\n#### Minor\n',
+    '**Important**\n- src/x.js:1 bad',
+    '',
+  ];
+  for (const t of texts) {
+    const counts = parseReviewCounts(t);
+    const parsed = parseReviewItems(t);
+    assert.equal(parsed === null, counts === null);
+    if (counts === null) continue;
+    for (const sev of ['critical', 'important', 'minor']) {
+      assert.equal(parsed.items.filter((i) => i.sev === sev).length, counts[sev]);
+    }
+  }
+});
+
+test('parseBranchReply: headings, "No issues", neither', () => {
+  assert.deepEqual(parseBranchReply('#### Critical (Must Fix)\nNone.\n').items, []);
+  assert.deepEqual(parseBranchReply('Reviewed it all. No issues found.').items, []);
+  assert.equal(parseBranchReply('**Important**\n- src/x.js:1 bad'), null);
+});

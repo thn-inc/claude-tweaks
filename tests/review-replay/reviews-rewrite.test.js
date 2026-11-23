@@ -390,3 +390,35 @@ test('win32: the leak barrier flags a native main-checkout path and a native for
   ]);
   assert.deepStrictEqual(rw.unrewrittenPaths(text, { mainRoot: winRoot, runName: 'R', platform: 'linux' }), []);
 });
+
+test('shaPairOf: Base/Head lines, a sha-less "base" first, and the two-dot fallback', () => {
+  assert.deepEqual(rw.shaPairOf('## Diff Under Review\nBase 44200e4559, Head b90d38882a. Diff file: x'), { base: '44200e4559', head: 'b90d38882a' });
+  assert.deepEqual(rw.shaPairOf('the review base after a catch-up.\nBase d5346c1c99056b72f56bd2172d720bd6a609fa5b (the merge commit). Head 6a7e879f6f.'), { base: 'd5346c1c99056b72f56bd2172d720bd6a609fa5b', head: '6a7e879f6f' });
+  assert.deepEqual(rw.shaPairOf('Fix diff (b90d38882a..c7e979dbd4), read once'), { base: 'b90d38882a', head: 'c7e979dbd4' });
+  assert.equal(rw.shaPairOf('SCOPE: origin/main...HEAD'), null);
+  assert.equal(rw.shaPairOf('Base 44200e4559 only'), null);
+});
+
+test('pointerPathOf: path on the next line, with spaces', () => {
+  const p = 'Read your full review instructions from this file and follow them exactly (it is your prompt; nothing else is):\n/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-3-review-prompt.md\n\n[Effort: high — x.]';
+  assert.equal(rw.pointerPathOf(p), '/Users/x/Code Workspaces/r/.superpowers/sdd/t/task-3-review-prompt.md');
+  assert.equal(rw.pointerPathOf('(it is your prompt): /tmp/p.txt  '), '/tmp/p.txt');
+  assert.equal(rw.pointerPathOf('You are reviewing one task.'), null);
+});
+
+test('shaPairOf and pointerPathOf stay linear on long runs', () => {
+  const marker = '(it is your prompt): ';
+  const inputs = [
+    () => rw.shaPairOf('base '.repeat(50000)),
+    () => rw.shaPairOf(' '.repeat(200000)),
+    () => rw.shaPairOf('a'.repeat(200000)),
+    () => rw.pointerPathOf(marker + ' '.repeat(200000)),
+    () => rw.pointerPathOf(marker + 'a'.repeat(200000)),
+    () => rw.pointerPathOf('(it is your prompt' + ' '.repeat(200000)),
+  ];
+  for (const f of inputs) {
+    const t0 = Date.now();
+    f();
+    assert.ok(Date.now() - t0 < 500);
+  }
+});

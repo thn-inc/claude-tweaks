@@ -248,4 +248,25 @@ function unrewrittenPaths(text, { mainRoot, runName, outDir, exists, platform })
   return [...found, ...foreignRootPaths(t, root, skip, exists)];
 }
 
-module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths };
+// { base, head } from a prompt's `Base {sha} … Head {sha}` lines (the first sha-bearing "base" and the first "head
+// {sha}" after it), else a `{sha}..{sha}` / `{sha}...{sha}` range; null when neither names two shas.
+function shaPairOf(text) {
+  const t = String(text);
+  const base = /\bbase[ \t]+([0-9a-f]{7,40})\b/i.exec(t);
+  if (base) {
+    const headRe = /\bhead[ \t]+([0-9a-f]{7,40})\b/ig;
+    headRe.lastIndex = base.index + base[0].length;
+    const head = headRe.exec(t);
+    if (head) return { base: base[1], head: head[1] };
+  }
+  const range = /(?<![0-9A-Za-z])([0-9a-f]{7,40})\.\.\.?([0-9a-f]{7,40})(?![0-9A-Za-z])/.exec(t);
+  return range ? { base: range[1], head: range[2] } : null;
+}
+
+// The file path a pointer prompt names after `(it is your prompt …):`, on that line or the next; null when absent.
+function pointerPathOf(text) {
+  const m = /\(it is your prompt\b[^)\n]*\):[ \t]*(?:\r?\n[ \t]*)?(\S[^\r\n]*)/.exec(String(text));
+  return m ? m[1].trimEnd() : null;
+}
+
+module.exports = { scanView, rangeOf, originRefsOf, runInputsOf, worktreePathsOf, stripEffortLines, rewriteShas, rewriteText, unrewrittenPaths, shaPairOf, pointerPathOf };
