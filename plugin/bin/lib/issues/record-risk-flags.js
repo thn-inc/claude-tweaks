@@ -189,6 +189,12 @@ function parseRiskFlags(body, opts) {
   return { flags: canonicalOrder(slugs), status: 'ok', reason: null, unconfirmed, raw };
 }
 
+// value, { extraCategories } -> parseRiskFlags' result for a body whose only line is `Risk-flags: {value}`: a bare
+// value read by the line's own rules (bin/review-lens-select.js's --risk-flags), so no caller composes the line.
+function parseRiskFlagsValue(value, opts) {
+  return parseRiskFlags(`Risk-flags: ${value}`, opts);
+}
+
 function flagLineFor(flags) {
   return `Risk-flags: ${flags.length > 0 ? flags.join(', ') : RISK_FLAGS_NONE}`;
 }
@@ -461,6 +467,6 @@ function appendRiskProofGotcha(body, slugs) {
 module.exports = {
   // MARKER_LINE_RE is exported for /backlog refine's Step 3.7 pre-filter, so its narrowing
   // detects the same marker lines parseRiskFlags does.
-  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, RISK_FLAG_LINE_KEYS, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, MARKER_LINE_RE, RISK_FLAG_LINE_KEYS, parseRiskFlags, parseRiskFlagsValue, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
   parseTripwireFlags, addTripwireRiskFlags, carryTripwireFlags,
 };

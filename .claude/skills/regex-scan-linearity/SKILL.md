@@ -116,6 +116,7 @@ Run the perf suite: `npm run test:perf`.
 | Probing only real-archive lines | #4581's real `decisions.md` oracle (1414 lines) never exposed the 158 s case; a 200k-character token did |
 | Re-running only the changed side after a shared-grammar change | #4632's reader-side loosening, merged as-is, would have made the writer's scan quadratic (82 s, 12 s); only re-running the writer's probe caught it |
 | A timing case with no verdict assertion | A fix that returns early on the long input passes the clock and changes the answer |
+| A `perf/` case that drives a capped scan through a cheap stub of the callback the cap protects | The stub costs almost nothing per call, so the case stays inside its budget with the cap removed and pins nothing. #5991's `perf/review-replay-rewrite-linearity.test.js` fed `unrewrittenPaths` a Map-backed `exists` at 8000 markers; with a real `statSync` predicate the uncapped scan took 1878 ms at 16000 markers and ran out of heap at 32000. Pin the cap timing-free in `tests/` with a spy that records each argument's length ("the exists predicate is never handed a checkout prefix longer than the path cap" in `tests/review-replay/reviews-rewrite.test.js`), and watch it go red with the cap removed |
 
 ## Reference
 
