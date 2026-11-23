@@ -241,9 +241,9 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
   - `AC4.1 (detection): a merged PR whose marker names an active run with build unchecked and no build phase-exit record is held, commented once, and marked`. Expect one `issue comment` call on the closing record, one marker line, the entry `{action:'held', reason:'hollow-merge', phase:'build'}`, and the run dir in `hollowRunDirs`.
   - `AC4.2 (detection): build finished (exit recorded) but test unfinished is held with phase 'test'`.
   - A second `detectHollowMerges` call on the same fixture: held again, with zero new comments.
-  - `AC5 (detection): a merged PR whose phases are all checked yields no entry`. Also, a `clean` run is never read (no `gh` call).
-  - `AC6 (detection): a non-terminal run whose decisions.md records the build and test phase exits yields no entry, even with both rows unchecked`.
-  - `AC7 (detection)` cases:
+  - `AC5.1 (detection): a merged PR whose phases are all checked yields no entry`. Also, a `clean` run is never read (no `gh` call).
+  - `AC6.1 + AC6.2 (detection): a non-terminal run whose decisions.md records the build and test phase exits yields no entry, even with both rows unchecked`.
+  - `AC7.1 + AC7.2 (detection)` cases:
     - a body read that throws gives `hollow-check-failed`, held, with no comment and no marker;
     - a missing `decisions.md` with build unchecked gives `hollow-check-failed`, held;
     - a `deps` seam that throws mid-check (for example `readSpecNumber`) gives `hollow-check-failed`, held, and the other runs are still judged;
@@ -280,8 +280,8 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
 - [ ] **Step 2: Write failing tests.**
   - release-merged: `hollow-merge: a listed runId is skipped, no tombstone write, no label edit`. Assert the fake `ghApi`/runner saw no write. An unlisted run releases exactly as before.
   - index level, `AC4.1: a merged PR whose marker names an active run with build unchecked leaves the claim, auto:build and the run directory in place, posts one comment, and appears in the summary`. Drive `reconcile()` with the existing stub seams so detection reports the run hollow. Assert that `releaseMerged` received `hollowRunIds`, that the run dir still exists unarchived, that `result.hollowMerges` has the entry, and that `formatSummary(result)` contains `hollow merge held: PR #`.
-  - index level, `AC5: a merged PR whose run is clean and whose phases are all checked settles exactly as today`. Detection finds nothing; release, post-merge and archive receive empty hollow sets; the summary has no hollow line.
-  - index level, `AC7: the whole hollow-merge check failing holds release, post-merge and archive`. Stub detection to return `failure`, then to throw. In both cases none of the three is called, `result.skipped` holds `hollow-merge-check-failed`, and the run dir is not archived.
+  - index level, `AC5.1: a merged PR whose run is clean and whose phases are all checked settles exactly as today`. Detection finds nothing; release, post-merge and archive receive empty hollow sets; the summary has no hollow line.
+  - index level, `AC7.1: the whole hollow-merge check failing holds release, post-merge and archive`. Stub detection to return `failure`, then to throw. In both cases none of the three is called, `result.skipped` holds `hollow-merge-check-failed`, and the run dir is not archived.
 - [ ] **Step 3: Run** the touched test files. Expect FAIL.
 - [ ] **Step 4: Implement** the three modifications.
 - [ ] **Step 5: Run** `node --test tests/bin-lib/reconcile/release-merged.test.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile-dispatch.test.js tests/reconcile.test.js tests/reconcile-archive-residue.test.js` plus the index-level file. Expect PASS.
