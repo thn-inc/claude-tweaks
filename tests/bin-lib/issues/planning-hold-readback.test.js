@@ -92,9 +92,9 @@ test('AC1.1: kept → needs:decision kept', () => {
 });
 
 test('AC1.1: re-held → held', () => {
-  const r = readBack(reheld());
+  const r = readBack(reheld({ answered: 2 }));
   assert.equal(r.ok, true);
-  assert.equal(r.outcome, 'held — 1 answered, 1 re-held');
+  assert.equal(r.outcome, 'held — 2 answered, 1 re-held');
   assert.equal(r.next, 'held-or-failed');
   assert.deepEqual(r.assertions.map((a) => a.id), ['labels', 'rehold', 'resolved', 'plan-line', 'plan-check']);
 });
@@ -105,8 +105,10 @@ test('AC1.1: each assertion mis-decided goes red', () => {
     ['answered m=0 without ready', base({ labels: [] }), ['labels']],
     ['kept with ready', keptInput({ labels: ['ready'] }), ['labels']],
     ['kept with both labels', keptInput({ labels: ['ready', 'needs:decision'] }), ['labels']],
+    ['kept with neither label', keptInput({ labels: [] }), ['labels']],
     ['re-held with ready', reheld({ labels: ['needs:decision', 'ready'] }), ['labels']],
     ['re-held with other questions', reheld({ reheldQuestions: ['Other?'] }), ['rehold']],
+    ['re-held hold carries fewer questions than re-held', reheld({ reheldQuestions: ['Retry?', 'Zeta?'] }), ['rehold']],
     ['re-held, fresh hold resolved', reheld({ comments: [resolvedHold(), freshHold({ body: '**Resolved:** x\n' + hold() })] }), ['rehold']],
     ['resolved id missing', base({ resolvedIds: ['IC_missing'] }), ['resolved']],
     ['hold comment not resolved', base({ comments: [{ ...resolvedHold(), body: '<!-- needs-decision: specify -->\nold' }] }), ['resolved']],

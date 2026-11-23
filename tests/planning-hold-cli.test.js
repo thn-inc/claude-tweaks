@@ -166,9 +166,27 @@ test('readback: labels file as strings and readback object labels as {name}', ()
   const r = call(kept);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(JSON.parse(r.stdout).ok, true);
+  const named = call(rbArgs({ branch: 'kept', readback: { labels: [{ name: 'needs:decision' }], body: recBody, comments: [resolvedHold] } }));
+  assert.equal(named.code, 0, named.stderr);
+  assert.equal(JSON.parse(named.stdout).ok, true);
   const none = call(rbArgs({ branch: 'kept', readback: { comments: [resolvedHold] } }));
   assert.equal(none.code, 1);
   assert.match(none.stderr, /no labels/);
+});
+
+test('readback: --labels-file wins over the readback object labels', () => {
+  const readback = { labels: [{ name: 'needs:decision' }], body: recBody, comments: [resolvedHold] };
+  const r = call(rbArgs({ readback, labels: ['ready'] }));
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).ok, true);
+});
+
+test('readback: every --resolved-ids element is checked', () => {
+  const argv = rbArgs();
+  argv[argv.indexOf('--resolved-ids') + 1] = 'IC_h,IC_missing';
+  const r = call(argv);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).failed, ['resolved']);
 });
 
 test('readback: plan-check file empty or not JSON -> failed assertion, exit 0', () => {
@@ -240,6 +258,9 @@ test('readback: malformed payloads exit 1', () => {
   const badReheld = rbArgs({ branch: 're-held', readback: [resolvedHold], labels: ['needs:decision'] });
   badReheld[badReheld.indexOf('--reheld-file') + 1] = jsonFile({ a: 1 });
   assert.equal(call(badReheld).code, 1);
+  const nonString = rbArgs({ branch: 're-held', readback: [resolvedHold], labels: ['needs:decision'] });
+  nonString[nonString.indexOf('--reheld-file') + 1] = jsonFile(['Retry?', 3]);
+  assert.equal(call(nonString).code, 1);
 });
 
 test('readback: argv errors exit 2', () => {
@@ -248,6 +269,8 @@ test('readback: argv errors exit 2', () => {
     'missing --record': [without(rbArgs(), '--record'), /^planning-hold\.js: --record is required$/m],
     '--branch bogus': [set(rbArgs(), '--branch', 'bogus'), /^planning-hold\.js: --branch must be one of answered, kept, re-held$/m],
     '--record 0': [set(rbArgs(), '--record', '0'), /^planning-hold\.js: --record must be a positive integer$/m],
+    '--record abc': [set(rbArgs(), '--record', 'abc'), /^planning-hold\.js: --record must be a positive integer$/m],
+    '--other-unresolved x': [set(rbArgs(), '--other-unresolved', 'x'), /^planning-hold\.js: --other-unresolved must be a non-negative integer$/m],
     '--answered -1': [set(rbArgs(), '--answered', '-1'), /^planning-hold\.js: --answered must be a non-negative integer$/m],
     '--resolved-ids a,,b': [set(rbArgs(), '--resolved-ids', 'a,,b'), /^planning-hold\.js: --resolved-ids has an empty element$/m],
     '--other-unresolved with kept': [[...rbArgs({ branch: 'kept' }), '--other-unresolved', '1'], /^planning-hold\.js: --other-unresolved is allowed only with --branch answered$/m],
