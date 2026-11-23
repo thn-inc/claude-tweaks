@@ -4,7 +4,9 @@
 // prompt's own sha pair (the first sha the base, the second the head); its prompt is the transcript's first user
 // message, or the file a one-line pointer prompt names, read as the reviewer saw it. Its archived findings are the
 // verdict (task) and each Critical, Important and Minor item with its location, every path the prompt's worktrees or the
-// main checkout prefix stripped first. Rendering, the leak barrier and the writes are reviews-extract.js's, shared
+// main checkout prefix stripped first. `--role task-vs-branch` replays the run's first whole-branch prompt at the head
+// each qualifying task review reviewed and, as its control, at the whole-branch prompt's own head, scored on that task
+// review's Critical and Important items. Rendering, the leak barrier and the writes are reviews-extract.js's, shared
 // with the lens role.
 
 const path = require('path');
