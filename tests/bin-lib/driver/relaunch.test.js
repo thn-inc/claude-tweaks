@@ -165,6 +165,70 @@ test('cannotCompletePrompt fences the neutralized reason', () => {
   assert.ok(cannotCompletePrompt(undefined).includes('(no reason given)'));
 });
 
+// --- the effort ladder (#6002): planRelaunch under `ladder: true` ---------------------------------
+// A roleLaunch stand-in: standard at medium, capable at max (clamped to high by nextAttempt).
+const LADDER_LAUNCH = { fast: { model: M('fast'), effort: null }, standard: { model: M('standard'), effort: 'medium' }, capable: { model: M('capable'), effort: 'max' } };
+const ladderLaunch = (table = LADDER_LAUNCH) => (_role, _policy, { profile }) => {
+  if (!Object.hasOwn(table, profile)) { const e = new Error('x'); e.code = MODEL_REFUSED_CODE; throw e; }
+  return table[profile];
+};
+const ladderPlan = (over, table) => planRelaunch({ model: M('standard'), policy: {}, ladder: true, ...over }, { roleLaunchFn: ladderLaunch(table) });
+
+test('planRelaunch (ladder): a first red run steps effort on the same profile', () => {
+  assert.deepStrictEqual(ladderPlan({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'red-tests' }), { relaunch: true, to: 'standard', effort: 'medium', escalations: 1 });
+});
+
+test('planRelaunch (ladder): the second escalation steps the profile at its launchEffort, clamped to high', () => {
+  assert.deepStrictEqual(ladderPlan({ profile: 'standard', effort: 'medium', escalations: 1, trigger: 'red-tests' }), { relaunch: true, to: 'capable', effort: 'high', escalations: 2 });
+  assert.deepStrictEqual(ladderPlan({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'cannot-complete' }), { relaunch: true, to: 'capable', effort: 'high', escalations: 1 });
+});
+
+test('planRelaunch (ladder): no profile above reads as no-step-up with today\'s note', () => {
+  const r = ladderPlan({ profile: 'capable', model: M('capable'), effort: 'high', escalations: 1, trigger: 'red-tests' });
+  assert.deepStrictEqual(r, { relaunch: false, noRelaunch: 'no-step-up', note: 'no relaunch: no profile above capable' });
+});
+
+test('planRelaunch (ladder): a step-up resolving to the same model reads as clamped with today\'s note', () => {
+  const r = ladderPlan({ profile: 'standard', effort: 'medium', escalations: 1, trigger: 'red-tests' }, { ...LADDER_LAUNCH, capable: { model: M('standard'), effort: 'medium' } });
+  assert.deepStrictEqual(r, { relaunch: false, noRelaunch: 'clamped', note: `no relaunch: capable resolves to ${M('standard')}, the first attempt's model` });
+});
+
+test('planRelaunch (ladder): an unresolvable step-up still relaunches (its launch refuses itself)', () => {
+  const { capable, ...rest } = LADDER_LAUNCH;
+  assert.deepStrictEqual(ladderPlan({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'cannot-complete' }, rest), { relaunch: true, to: 'capable', effort: null, escalations: 1 });
+});
+
+test('planRelaunch (ladder): an unknown profile refuses as DRIVER_MODEL_REFUSED', () => {
+  assert.throws(() => ladderPlan({ profile: 'turbo', effort: 'low', escalations: 0, trigger: 'red-tests' }), (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier'));
+});
+
+test('planRelaunch (inherit): ladder false keeps today\'s result, no effort or escalations', () => {
+  const r = planRelaunch({ profile: 'standard', model: M('standard'), effort: 'low', escalations: 0, trigger: 'red-tests', policy: {}, ladder: false }, { roleLaunchFn: ladderLaunch() });
+  assert.deepStrictEqual(r, { relaunch: true, to: 'capable' });
+});
+
+test('relaunchNote (ladder): each side renders profile@effort, two relaunches joined', () => {
+  const one = { history: [{ trigger: 'red-tests', from: 'standard', to: 'standard', fromEffort: 'low', toEffort: 'medium' }] };
+  assert.strictEqual(relaunchNote(one), 'after one relaunch (red-tests, standard@low to standard@medium)');
+  const two = { history: [...one.history, { trigger: 'red-tests', from: 'standard', to: 'capable', fromEffort: 'medium', toEffort: 'medium' }] };
+  assert.strictEqual(relaunchNote(two), 'after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable@medium)');
+  // A null effort renders the profile alone, so an inherit history reads as today's note.
+  assert.strictEqual(relaunchNote({ history: [{ trigger: 'red-tests', from: 'fast', to: 'standard', fromEffort: null, toEffort: null }] }), 'after one relaunch (red-tests, fast to standard)');
+  assert.strictEqual(relaunchNote({ history: [{ trigger: 'cannot-complete', from: 'fast', to: null, fromEffort: null, toEffort: null }] }), 'after one relaunch (cannot-complete, fast to no profile)');
+});
+
+test('the attempt-3 prompts say "previous attempt"; attempt 2 is byte-identical to the default', () => {
+  const failing = { files: ['a.test.js'], lines: ['not ok 1'] };
+  assert.strictEqual(redTestsPrompt(failing, { attempt: 2 }), redTestsPrompt(failing));
+  assert.strictEqual(redTestsPrompt(null, { attempt: 2 }), redTestsPrompt(null));
+  assert.strictEqual(cannotCompletePrompt('x', { attempt: 2 }), cannotCompletePrompt('x'));
+  for (const p of [redTestsPrompt(failing, { attempt: 3 }), redTestsPrompt(null, { attempt: 3 }), cannotCompletePrompt('x', { attempt: 3 })]) {
+    assert.ok(p.includes('Your previous attempt') && !p.includes('Your first attempt'), p);
+  }
+  assert.strictEqual(redTestsPrompt(failing, { attempt: 3 }), redTestsPrompt(failing).replace('Your first attempt', 'Your previous attempt'));
+  assert.strictEqual(cannotCompletePrompt('x', { attempt: 3 }), cannotCompletePrompt('x').replace('Your first attempt', 'Your previous attempt'));
+});
+
 test('header lists the three outcomes and never requires steps.js', () => {
   const src = readText(path.join(lib, 'driver', 'relaunch.js'));
   const header = src.split('\n').filter((l) => l.startsWith('//')).join('\n');

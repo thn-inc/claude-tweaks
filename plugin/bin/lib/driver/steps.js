@@ -67,24 +67,31 @@
 // under `.claude-tweaks/pipelines/`; and a red run's tree. CI on push is the backstop.
 //
 // The implementer relaunch (#5997; relaunch.js decides and writes the prompt): under `implementer-tier:
-// record` a failed first attempt is relaunched once, one profile up, on two triggers only: the worker step
-// ending `cannot-complete` (its uncommitted edits stay in the worktree, nothing resets them) and the table's
-// test step ending red (`failing-test`). A red run relaunches whatever state it left the tree in (Decision Q1):
-// no tree is read first, and the relaunch commit stages whatever git reports changed, test-written bytes
-// included, for the second test run, check and CI to judge. No relaunch when the first profile has no step-up
-// (`noRelaunch: 'no-step-up'`) or the step-up resolves to the first attempt's model (`'clamped'`); the
+// record` with `model-effort: inherit` a failed first attempt is relaunched once, one profile up; under the
+// effort ladder (#6002, `record` with `model-effort: profile`, effortLadder) a failed attempt is relaunched
+// while ctx.implementer.escalations is below 2, so at most twice, each step chosen by nextAttempt (effort
+// first, after red tests, then the profile). Triggers: the worker step ending `cannot-complete` (its
+// uncommitted edits stay in the worktree, nothing resets them) and the table's test step ending red
+// (`failing-test`); under the ladder also the first relaunch's worker ending `cannot-complete` and its test
+// step ending red, which queue the second. A red run relaunches whatever state it left the tree in (Decision
+// Q1): no tree is read first, and the relaunch commit stages whatever git reports changed, test-written bytes
+// included, for the next test run, check and CI to judge. No relaunch when the current profile has no step-up
+// (`noRelaunch: 'no-step-up'`) or the step-up resolves to the current attempt's model (`'clamped'`); the
 // triggering line keeps its stop and names why. A step-up that does not resolve is a refused relaunch
-// (Decision Q2): DRIVER_MODEL_REFUSED, no worker line, the stop's detail naming the relaunch. The trigger
-// queues relaunchSteps() through the result's `then` (run.js walks them under their own names): the
-// relaunch worker (attempt 2, `escalatedFrom`, `trigger`), the core commit step (after red tests it extends
-// ctx.changedFiles with the first commit's paths first), the core test step; check runs once, after it, from
-// the table, whose commit and test entries then skip. ctx.worker is merged (cost, turns and denials summed),
-// ctx.implementer is overwritten (the fix round launches on the relaunch's profile). Each queued step's stops
-// are its own, propagated unchanged with `; after one relaunch (…)` on the detail: the worker step's (a
-// refusal with no line, a moved HEAD, a new index flag, a fail, `cannot-complete`), the commit step's (`no
-// changed files`, an empty title, a failed git call) and the test step's (red tests, which never relaunch
-// again, a scope refusal, a tree or flag stop, no verdict). The review fix round runs the core steps, so it
-// never skips or relaunches. Driver-only: express-lane.md has no counterpart.
+// (Decision Q2): DRIVER_MODEL_REFUSED, no worker line, the stop's detail naming the relaunch. A first
+// attempt's trigger queues relaunchSteps() through the result's `then` (run.js walks them under their own
+// names): the relaunch worker (attempt 2 or 3, `escalatedFrom`, `trigger`, its own `effort`), the core commit
+// step (it extends ctx.changedFiles with the paths committed before it), the core test step; a relaunch
+// worker's trigger queues the worker alone, ahead of the commit and test already queued. check runs once,
+// after the final test, from the table, whose commit and test entries then skip. ctx.worker is merged (cost,
+// turns and denials summed over every launch), ctx.implementer is overwritten (the fix round launches on the
+// last relaunch's profile and, under the ladder, effort), ctx.relaunch names the current relaunch plus its
+// `history`. Each queued step's stops are its own, propagated unchanged with `; after one relaunch (…)` (`;
+// after two relaunches (…)` after the second) on the detail: the worker step's (a refusal with no line, a
+// moved HEAD, a new index flag, a fail, `cannot-complete`), the commit step's (`no changed files`, an empty
+// title, a failed git call) and the test step's (red tests, which relaunch again only as above, a scope
+// refusal, a tree or flag stop, no verdict). The review fix round runs the core steps, so it never skips or
+// relaunches. Driver-only: express-lane.md has no counterpart.
 //
 // Every external call goes through `deps`; nothing here reads process state.
 //
@@ -116,7 +123,7 @@ const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta, mergeWorker } = require('./review');
-const { startEffort, riskOf } = require('../model-profiles/implementer-tier');
+const { startEffort, riskOf, MAX_ESCALATIONS } = require('../model-profiles/implementer-tier');
 const { normalizeLabelNames } = require('../issues/record');
 const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
@@ -905,9 +912,10 @@ function relaunchesOnCannotComplete(rule, result) {
   return rule === 'record' && !!result && result.status === 'stop' && !!result.cannotComplete && typeof result.cannotComplete === 'object';
 }
 // What ctx.implementer records after a worker-step launch that resolved a model (a read: no interruptClass rung).
-// `effort` is the launch's own (a level or null); `escalations` is the steps up taken so far, one less than the attempt (#6002).
-function setImplementer(ctx, rule, model, profile, attempt, effort = null) {
-  if (typeof model === 'string') ctx.implementer = { rule, profile, model, attempt, effort, escalations: attempt - 1 };
+// `effort` is the launch's own (a level or null); `escalations` is the steps up taken so far (#6002): the
+// relaunch passes its plan's (nextAttempt's under the ladder, 1 under record + inherit).
+function setImplementer(ctx, rule, model, profile, attempt, effort = null, escalations = attempt - 1) {
+  if (typeof model === 'string') ctx.implementer = { rule, profile, model, attempt, effort, escalations };
 }
 // The effort ladder is on only under `implementer-tier: record` with `model-effort: profile` (#6002).
 function effortLadder(policy) {
@@ -1222,7 +1230,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   const flagStop = newIndexFlagStop(ctx, deps);
   if (flagStop) return flagStop;
   // A red run's tree is not read here (#5454): the record stops on it with nothing pushed, or, under
-  // implementer-tier record, the relaunch commit stages that tree and the second run's tree check reads it (#5997).
+  // implementer-tier record, the relaunch commit stages that tree and the next run's tree check reads it (#5997).
   if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
   // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
   const treeStop = testTreeStop(ctx, deps);
@@ -1236,32 +1244,51 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
 });
 
 // The relaunch's trigger (#5997, see the header): `result` with a relaunch queued after it (it then does not
-// halt), or `result` as it was plus why there is none. Never a second relaunch. A refusal planRelaunch throws
-// (a stepUp throw) is a relaunch whose launch is refused: a queued worker step returns it with no line, as a
-// refused relaunch launch does. `prompt` is called only when the relaunch is queued.
-function relaunchOrStop(ctx, result, trigger, prompt) {
+// halt), or `result` as it was plus why there is none. Under record + inherit never a second relaunch (the
+// one-shot ctx.relaunch guard, ctx.implementer.escalations unread); under the effort ladder (#6002) a relaunch
+// while ctx.implementer.escalations is below MAX_ESCALATIONS. A refusal planRelaunch throws (a stepUp or
+// nextAttempt throw) is a relaunch whose launch is refused: a queued worker step returns it with no line, as a
+// refused relaunch launch does. `prompt(attempt)` is called only when the relaunch is queued. `steps` is what
+// the relaunch queues: relaunchSteps() from a first attempt's trigger; the worker alone from the relaunch
+// worker step, whose commit and test steps are already queued behind it.
+function relaunchOrStop(ctx, result, trigger, prompt, steps = relaunchSteps()) {
   const { implementer } = ctx;
-  if (ctx.relaunch !== null || !implementer || typeof implementer.model !== 'string') return result;
+  if (!implementer || typeof implementer.model !== 'string') return result;
+  const ladder = effortLadder(ctx.shared.policy);
+  if (ladder ? !(implementer.escalations < MAX_ESCALATIONS) : ctx.relaunch !== null) return result;
   const from = implementer.profile;
+  // Each relaunch so far, for the note: under record + inherit both efforts are null, so it reads as #5997's.
+  const history = ctx.relaunch !== null && Array.isArray(ctx.relaunch.history) ? ctx.relaunch.history : [];
+  const fromEffort = ladder ? implementer.effort : null;
   let plan;
   try {
-    plan = planRelaunch({ profile: from, model: implementer.model, policy: ctx.shared.policy });
+    plan = planRelaunch({
+      profile: from, model: implementer.model, policy: ctx.shared.policy,
+      ...(ladder ? { ladder, effort: implementer.effort, escalations: implementer.escalations, trigger } : {}),
+    });
   } catch (err) {
     if (!err || err.code !== MODEL_REFUSED_CODE) throw err;
     // No profile to step up to: `to` is null here and in the note (relaunchNote renders null).
-    ctx.relaunch = { trigger, from, to: null, prompt: null, ran: false, firstChangedFiles: null };
+    ctx.relaunch = {
+      trigger, from, to: null, prompt: null, ran: false, firstChangedFiles: null,
+      effort: null, escalations: ladder ? implementer.escalations + 1 : 1, history: [...history, { trigger, from, to: null, fromEffort, toEffort: null }],
+    };
     const detail = `${err.message}; ${relaunchNote(ctx.relaunch)}`;
     return { ...result, halt: false, then: [refusedRelaunchStep(detail)] };
   }
   if (!plan.relaunch) {
     return { ...result, detail: result.detail ? `${result.detail}; ${plan.note}` : plan.note, extra: { ...(result.extra || {}), noRelaunch: plan.noRelaunch } };
   }
+  const effort = ladder ? plan.effort : null;
+  const escalations = ladder ? plan.escalations : 1;
   ctx.relaunch = {
-    trigger, from, to: plan.to, prompt: prompt(), ran: false,
-    // The first commit's paths, which the relaunch commit extends; none after cannot-complete (nothing was committed).
-    firstChangedFiles: trigger === TRIGGERS.redTests && Array.isArray(ctx.changedFiles) ? [...ctx.changedFiles] : null,
+    trigger, from, to: plan.to, prompt: prompt(escalations + 1), ran: false,
+    // The paths committed so far, which the relaunch commit extends: the first commit's (and, before a second
+    // relaunch, the first relaunch commit's union); none when nothing was committed yet (a first cannot-complete).
+    firstChangedFiles: Array.isArray(ctx.changedFiles) ? [...ctx.changedFiles] : null,
+    effort, escalations, history: [...history, { trigger, from, to: plan.to, fromEffort, toEffort: effort }],
   };
-  return { ...result, halt: false, then: relaunchSteps() };
+  return { ...result, halt: false, then: steps };
 }
 
 // The relaunch worker step a refused plan queues: its refusal, no line.
@@ -1276,42 +1303,53 @@ function withRelaunchNote(ctx, result) {
   return { ...result, detail: result.detail ? `${result.detail}; ${note}` : note };
 }
 
-// ctx.worker once the relaunch's envelope came back: cost, turns and denials summed over both launches. After
-// red tests the two summaries concatenate (the relaunch reports its fix alone); after cannot-complete the
-// relaunch's summary covers the whole change, so the first's could-not-complete reason never opens the PR summary.
+// ctx.worker once the relaunch's envelope came back: cost, turns and denials summed over every launch so far
+// (`first` is the merge of the earlier ones). After red tests the summaries concatenate (the relaunch reports
+// its fix alone); after cannot-complete the relaunch's summary covers the whole change, so the stuck attempt's
+// could-not-complete reason never opens the PR summary.
 function relaunchWorker(first, second, trigger) {
   const merged = mergeWorker(first, second, 'Relaunch');
   return trigger === TRIGGERS.cannotComplete ? { ...merged, summary: second.summary } : merged;
 }
 
-// The relaunch launch (attempt 2): the first prompt plus the relaunch's, on the stepped-up profile. Its line is
-// the worker step's plus `escalatedFrom` and `trigger`. A launcher throw that resolved a model is reported as
-// workerStep reports it; any other throw is a `fail` naming the relaunch.
+// The relaunch launch (attempt 2, or 3 under the effort ladder): the first prompt plus the newest relaunch's
+// only, on the planned profile and, under the ladder, the planned effort. Its line is the worker step's plus
+// `escalatedFrom` (the previous attempt's profile) and `trigger`. A launcher throw that resolved a model is
+// reported as workerStep reports it; any other throw is a `fail` naming the relaunch. Under the ladder the
+// first relaunch's cannot-complete is a trigger: it queues this step alone, its commit and test steps
+// already queued behind it, so they run once, after the next attempt.
 const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const { relaunch } = ctx;
   relaunch.ran = true;
+  const ladder = effortLadder(ctx.shared.policy);
+  const attempt = relaunch.escalations + 1;
   const marks = { escalatedFrom: relaunch.from, trigger: relaunch.trigger };
   const first = ctx.worker;
   let result;
   try {
     // A blank line after the first prompt, as the fix round's prompt opens with one.
-    result = await runImplementer(ctx, deps, { extraPrompt: `\n${relaunch.prompt}`, profile: relaunch.to });
+    result = await runImplementer(ctx, deps, { extraPrompt: `\n${relaunch.prompt}`, profile: relaunch.to, ...(ladder ? { effort: relaunch.effort } : {}) });
   } catch (err) {
     const failed = launchThrowFail(ctx, err);
     if (failed === null) return withRelaunchNote(ctx, { status: 'fail', detail: (err && err.message) || String(err) });
-    setImplementer(ctx, 'record', failed.extra.model, failed.extra.profile, 2, failed.extra.effort);
-    return withRelaunchNote(ctx, { ...failed, extra: { ...failed.extra, attempt: 2, ...marks } });
+    setImplementer(ctx, 'record', failed.extra.model, failed.extra.profile, attempt, failed.extra.effort, relaunch.escalations);
+    return withRelaunchNote(ctx, { ...failed, extra: { ...failed.extra, attempt, ...marks } });
   }
   // runImplementer sets ctx.worker once an envelope came back, whatever its status.
   if (ctx.worker !== first) ctx.worker = relaunchWorker(first, ctx.worker, relaunch.trigger);
   const extra = result.extra || {};
-  setImplementer(ctx, 'record', extra.model, extra.profile ?? null, 2, extra.effort);
+  setImplementer(ctx, 'record', extra.model, extra.profile ?? null, attempt, extra.effort, relaunch.escalations);
   // `attempt` rides with the marks even when no model resolved (a HEAD unreadable before the launch).
-  return withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, attempt: 2, ...marks } });
+  const line = withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, attempt, ...marks } });
+  if (ladder && ctx.implementer.escalations === 1 && relaunchesOnCannotComplete('record', result)) {
+    return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, (n) => cannotCompletePrompt(result.cannotComplete.summary, { attempt: n }), [relaunchWorkerStep]);
+  }
+  return line;
 });
 
-// The core commit step after the relaunch. After red tests it extends ctx.changedFiles: the first commit's paths,
-// then the relaunch commit's new ones, first seen first (the union review.js's fixRound builds).
+// The core commit step after a relaunch. It extends ctx.changedFiles: the paths committed before the relaunch
+// (none after a first cannot-complete), then this commit's new ones, first seen first (the union review.js's
+// fixRound builds).
 const relaunchCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const result = await commitStep.run(ctx, deps);
   const first = ctx.relaunch.firstChangedFiles;
@@ -1323,10 +1361,15 @@ const relaunchCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async 
   return withRelaunchNote(ctx, result);
 });
 
-// The core test step after the relaunch: never a trigger (at most one relaunch per record).
-const relaunchTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => withRelaunchNote(ctx, await testStep.run(ctx, deps)));
+// The core test step after a relaunch. Its red tests are a trigger only under the effort ladder and only after
+// the first relaunch (escalations 1), queueing the second; after the second, and under record + inherit, never.
+const relaunchTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const result = withRelaunchNote(ctx, await testStep.run(ctx, deps));
+  if (result.reason !== 'failing-test' || !effortLadder(ctx.shared.policy) || ctx.implementer.escalations !== 1) return result;
+  return relaunchOrStop(ctx, result, TRIGGERS.redTests, (n) => redTestsPrompt(failingTests({ runDir: ctx.runDir, wt: ctx.wt, deps }), { attempt: n }));
+});
 
-// The one relaunch helper: the steps a trigger queues. check stays once, in the table, after the final test.
+// The relaunch helper: the steps a first attempt's trigger queues. check stays once, in the table, after the final test.
 function relaunchSteps() {
   return [relaunchWorkerStep, relaunchCommitStep, relaunchTestStep];
 }

@@ -4171,8 +4171,9 @@ const reportReplies = (get) => [
   [(c) => c.kind === 'readFile' && c.args[0] === REPORT_PATH, RED_REPORT],
 ];
 // A record-tier run whose first implementer launch replies `first` and its relaunch `second`; the relaunch leaves
-// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean.
-function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
+// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean. `replies`
+// (#6002), when given, answers the n-th launch with its n-th entry in place of `first` and `second`.
+function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, replies = null, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
   let h = null;
   h = harness({
     ...over,
@@ -4181,9 +4182,10 @@ function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunc
       ...script,
       issue,
       [isImplementerLaunch, (c) => {
-        if (implementerCalls(h).length === 1) return pick(first, c);
-        h.fx.dirty += relaunchDirty;
-        return pick(second, c);
+        const n = implementerCalls(h).length;
+        if (n > 1) h.fx.dirty += relaunchDirty;
+        if (replies !== null) return pick(replies[Math.min(n, replies.length) - 1], c);
+        return pick(n === 1 ? first : second, c);
       }],
       [onGit('commit'), () => { h.fx.committed = true; h.fx.dirty = ''; return ''; }],
       ...(report ? reportReplies(() => h) : []),
@@ -4537,6 +4539,130 @@ test('#5997: the fix round never relaunches or skips', async () => {
   assert.deepEqual([final.stop.step, final.stop.reason], [STEP.review, 'failing-test']);
   assert.ok(final.stop.detail.startsWith('fix round test: red tests'), final.stop.detail);
   assert.ok(noRelaunchKey(h));
+});
+
+// --- the implementer effort ladder's relaunches (#6002, Task 4) -----------------------------------
+// relaunchRig under the ladder on a risk:low size:medium record: standard at low effort first.
+// The first `count` test runs red: one entry, since the harness answers a call with the first entry that matches
+// and a second nthCall entry never sees the calls the first one took.
+const redRuns = (count) => { let seen = 0; return [(c) => isVerifyCall(c) && (seen += 1) <= count, RED_VERIFY]; };
+const ladderRig = ({ policy = {}, ...over } = {}) => relaunchRig({ issue: MEDIUM_LOW_RISK, ...over, policy: { ...LADDER, ...policy } });
+const launchModelEffort = (h) => implementerCalls(h).map((c) => [c.args[0].model, c.args[0].effort ?? null]);
+const TWO_RELAUNCH_NOTE = 'after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable@medium)';
+
+test('#6002 AC4.1: two red runs climb low → medium on standard → capable', async () => {
+  const h = ladderRig({ script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.deepEqual(lines.map((l) => [l.attempt, l.effort, l.profile]), [[1, 'low', 'standard'], [2, 'medium', 'standard'], [3, 'medium', 'capable']]);
+  assert.deepEqual(lines.slice(1).map((l) => [l.escalatedFrom, l.trigger]), [['standard', 'red-tests'], ['standard', 'red-tests']]);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 10), [
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok'],
+  ]);
+  assert.equal(h.lines().filter((l) => l.step === STEP.check).length, 1);
+  const tests = h.lines().filter((l) => l.step === STEP.test);
+  assert.equal(tests[1].detail, 'red tests; after one relaunch (red-tests, standard@low to standard@medium)', 'the second test line names the relaunch it follows');
+  assert.ok(noRelaunchKey(h));
+});
+
+test('#6002 AC4.2: a third red run leaves as #5997\'s second failure does', async () => {
+  const control = relaunchRig({ script: [[isVerifyCall, RED_VERIFY]] });
+  await run(['#7'], control.deps);
+  const h = ladderRig({ script: [redRuns(3)] });
+  await run(['#7'], h.deps);
+  const [want, got] = [lastLine(control), lastLine(h)];
+  assert.deepEqual([got.outcome, got.stop.class, got.stop.reason, got.stop.step], [want.outcome, want.stop.class, want.stop.reason, want.stop.step]);
+  assert.equal(escalateReason(h), escalateReason(control));
+  assert.ok(escalateReason(h) !== null);
+  assert.equal(got.stop.detail, `red tests; ${TWO_RELAUNCH_NOTE}`);
+  assert.ok(got.stop.detail.includes('after two relaunches ('));
+  assert.equal(implementerCalls(h).length, 3);
+  assert.equal(verifyCalls(h).length, 3);
+});
+
+test('#6002 AC4.3: a first cannot-complete goes straight to capable', async () => {
+  const h = ladderRig({ replies: [STUCK, ENVELOPE] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.deepEqual(launchModelEffort(h)[1], [M('capable'), 'medium']);
+  const [, line] = workerLines(h);
+  assert.deepEqual([line.trigger, line.attempt, line.escalatedFrom, line.effort], ['cannot-complete', 2, 'standard', 'medium']);
+});
+
+test('#6002: red then cannot-complete climbs to capable', async () => {
+  const h = ladderRig({ script: [redRun(1)], replies: [ENVELOPE, STUCK, ENVELOPE] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.equal(lines[1].effort, 'medium');
+  assert.deepEqual(lines.map((l) => [l.status, l.attempt]), [['ok', 1], ['stop', 2], ['ok', 3]]);
+  assert.deepEqual([lines[2].trigger, lines[2].escalatedFrom], ['cannot-complete', 'standard']);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 8), [
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok'],
+  ], 'the stuck attempt queues one worker: the queued commit and test run once, after attempt 3');
+  // Attempt 2's edits are never committed alone: one commit after the first attempt, one after the third.
+  assert.equal(h.lines().filter((l) => l.step === STEP.commit).length, 2);
+});
+
+test('#6002 AC5.1: model-effort inherit keeps one relaunch with no effort', async () => {
+  const h = relaunchRig({ issue: MEDIUM_LOW_RISK, script: [redRuns(2)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), null], [M('capable'), null]]);
+  assert.ok(lastLine(h).stop.detail.includes('after one relaunch (red-tests, standard to capable)'), lastLine(h).stop.detail);
+  assert.ok(!lastLine(h).stop.detail.includes('@'));
+});
+
+test('#6002: a clamped profile step after an effort step ends the ladder with noRelaunch clamped', async () => {
+  const h = ladderRig({ policy: { 'model-ceiling': 'standard' }, script: [redRuns(2)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium']]);
+  const last = h.lines().filter((l) => l.step === STEP.test).at(-1);
+  assert.equal(last.noRelaunch, 'clamped');
+  assert.ok(last.detail.includes(`no relaunch: capable resolves to ${M('standard')}`), last.detail);
+  assert.equal(lastLine(h).stop.step, STEP.test);
+});
+
+test('#6002: the second relaunch\'s changedFiles is all three commits\' paths', async () => {
+  let h = null;
+  const dirtying = (d) => () => { h.fx.dirty += d; return { ...ENVELOPE }; };
+  // Neither relaunch touches a.js, the first commit's only path, nor the second b.js: both survive only through the union.
+  h = ladderRig({ relaunchDirty: '', replies: [ENVELOPE, dirtying(' M b.js\0'), dirtying('?? c.js\0')], script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(gitAddPaths(h), [['a.js'], ['b.js'], ['c.js']]);
+  assert.ok(summaryText(h).includes('express lane: a.js, b.js, c.js;'), summaryText(h));
+});
+
+test('#6002: the final line\'s costUsd sums all three launches', async () => {
+  const half = { ...ENVELOPE, costUsd: 0.5 };
+  for (const over of [{ script: [redRuns(2)], replies: [ENVELOPE, half, half] }, { script: [redRun(1)], replies: [ENVELOPE, { ...STUCK, costUsd: 0.5 }, half] }]) {
+    const h = ladderRig(over);
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.equal(implementerCalls(h).length, 3);
+    assert.equal(lastLine(h).costUsd, 1.25);
+    assert.equal(lastLine(h).turns, 9);
+  }
+});
+
+test('#6002: the attempt-3 prompt carries the first prompt and only the newest relaunch text', async () => {
+  const h = ladderRig({ script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, , third] = implementerCalls(h).map((c) => c.args[0].prompt);
+  assert.ok(third.startsWith(first), 'the first prompt opens the attempt-3 prompt');
+  assert.ok(third.includes('Your previous attempt'));
+  assert.ok(!third.includes('Your first attempt'));
+  assert.equal(third.split('Relaunch.').length, 2, 'exactly one Relaunch. paragraph');
+  assert.ok(third.slice(first.length).startsWith('\nRelaunch.'));
+});
+
+test('#6002 AC7.1 (ladder): no launch above high', async () => {
+  const h = ladderRig({ policy: { 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'max' } } }, script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h).map(([, e]) => e), ['low', 'medium', 'high']);
+  assert.equal(workerLines(h)[2].effort, 'high');
 });
 
 test('AC7.1: every worker line carries the model its launch was given', async () => {
@@ -5666,6 +5792,17 @@ test('#5997: docs/driver.md documents the record profile, the one relaunch and t
   }
   const events = section('Event lines');
   for (const part of ['`profile`', '`attempt`']) assert.ok(events.includes(part), `Event lines names ${part}`);
+});
+
+test('#6002: docs/driver.md documents the effort ladder', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('**Effort ladder (#6002).**');
+  assert.notEqual(start, -1, 'the Effort ladder paragraph exists');
+  const para = docs.slice(start, docs.indexOf('\n\n', start));
+  for (const part of ['`attempt`', '`3`', 'model-effort: inherit', 'cannot-complete', 'red tests', 'Standard implementer at low effort (#6002)']) {
+    assert.ok(para.includes(part), `the Effort ladder paragraph names ${part}`);
+  }
+  assert.ok(docs.includes('four implementer launches per record'), 'the ceilings bullet names the ladder\'s worst case');
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
