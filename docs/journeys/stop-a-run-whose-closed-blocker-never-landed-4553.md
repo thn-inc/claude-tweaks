@@ -45,7 +45,7 @@ files:
 
 ### 3. An open, unlanded or hollow blocker stops the run before claiming
 - **URL:** `plugin/skills/flow/multispec-dependency-ordering.md` out-of-run verdict table and unlanded card
-- **Action:** `open`, `unlanded` and `hollow` are hard fails before Step 2.8 claims (a `hollow` stop prints its own card with a reopen escape). The unlanded card names `#{n}`, `#{blocker}`, `{commit}` and `origin/{integration-branch}`. It gives two escapes, one command per line:
+- **Action:** `open`, `unlanded` and `hollow` are hard fails before Step 2.8 claims (a `hollow` stop prints its own card, which first asks the reader to check for an implementation PR merged off the integration branch, then offers a reopen escape). The unlanded card names `#{n}`, `#{blocker}`, `{commit}` and `origin/{integration-branch}`. It gives two escapes, one command per line:
   1. Land it: `git fetch origin {integration-branch} {commit}`, `git switch`, `git merge --ff-only`, `git merge {commit}`, `git push`.
   2. Remove the `blocked-by` edge, natively or by deleting the body's `Blocked by #{blocker}` line.
 - **Should feel:** Decisive and actionable. The stop names exactly what is missing and how to fix it from a stale checkout.
@@ -82,5 +82,5 @@ files:
 - Created during #4553's build (run 2026-10-31T234545-record-4553): `blocker-landing.js`, `preflight-records.js --blocker-landing` / `--blocker-states-json`, `materialize.js --check`'s `bodyBlockedBy`, multi-spec Validation step 3, and single-record substep 2.7b.
 - Updated during #4792's build (run 2026-11-03T163449-record-4792): Step 6, the dispatch-side non-failing settle and teardown skip.
 - Updated during #4793's build and wrap-up (run 2026-11-03T225844-record-4793): steps 1, 2 and 5 cover a blocker in another repository, natively linked or body-declared; see `block-a-record-on-another-repositorys-issue-4793.md`.
-- Updated during #6142's build (run 2026-11-23T162611-record-6142): the `hollow` verdict (steps 1 and 3) — a reachable closing commit that touched none of the blocker's Key Files stops the run, and the queue pull holds its dependent.
+- Updated during #6142's build (run 2026-11-23T162611-record-6142): the `hollow` verdict (success state, steps 2 and 3) — a reachable closing commit that touched none of the blocker's Key Files stops the run, and the queue pull holds its dependent.
 - Related: `learn-why-a-named-record-wont-dispatch-3084.md` (the queue pull's `unlanded-blocker` / `malformed-blocker` exclusions), `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the in-run merge-state gate, riding the same pre-flight call), `handle-a-failed-multispec-preflight-3351.md` (exit 1/2 handling).
