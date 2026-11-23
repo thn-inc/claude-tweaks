@@ -143,7 +143,7 @@ test('the home file is exempt from the walk', () => {
 // Over each file with comments blanked (literals kept). Recall limits: a key reached through a
 // computed key (`['reason' + 'Code']`), a value held in a local constant, a value assembled from
 // two literals, and a `.actor === 'agent'` comparison (a read, not a write) are not seen.
-const VOCAB_VALUES = [...REASON_CODES.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'agent', 'script', 'person', 'rule:[^\'"`\\n]*'].join('|');
+const VOCAB_VALUES = [...REASON_CODES.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'agent', 'script', 'person', 'rule:[^\\s:\'"`]+'].join('|');
 const VOCAB_SITE = new RegExp(`(?<![\\w$])['"]?(?:reasonCode|actor)['"]?\\s*(?::|=(?![=>]))\\s*(['"\`])(?:${VOCAB_VALUES})\\1`, 'g');
 
 // -> { sites: [{ line, text }], verdict }
@@ -215,4 +215,28 @@ test('the vocab walk goes red when a call site spells a reason code', () => {
     ? `${real}\nemit({ reasonCode: 'other' });\n`
     : readText(path.join(BIN, rel))));
   assert.deepEqual(offenders, [`${target}:${plantedLine}: emit({ reasonCode: 'other' });`]);
+});
+
+test('vocab scanner needs a non-empty rule id without whitespace or colon, as ACTORS does', () => {
+  assert.deepEqual(vocabLines([
+    "emit({ actor: 'rule:' });",
+    "emit({ actor: 'rule:a b' });",
+    "emit({ actor: 'rule:a:b' });",
+  ].join('\n')), []);
+});
+
+// Both walks turn a stripper verdict other than ok into an offender line, not a clean file.
+const MISPARSE_FIXTURE = "if (cond) /'/.test(cond); const b = 'p//q'; emit({ station: 'build' });";
+const UNPARSEABLE_FIXTURE = "const x = ; emit({ station: 'build' });";
+
+test('the station walk reports a stripper mis-parse and an unparseable file as offenders', () => {
+  assert.deepEqual(offendersIn(['x.js'], () => MISPARSE_FIXTURE), [`x.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+  assert.deepEqual(offendersIn(['x.js'], () => UNPARSEABLE_FIXTURE), [`x.js: ${STRIPPER_VERDICT_MESSAGES.unparseable}`, `x.js:1: ${UNPARSEABLE_FIXTURE}`]);
+});
+
+test('the vocab walk reports a stripper mis-parse and an unparseable file as offenders', () => {
+  const misparsed = MISPARSE_FIXTURE.replace("station: 'build'", "reasonCode: 'other'");
+  const unparseable = UNPARSEABLE_FIXTURE.replace("station: 'build'", "reasonCode: 'other'");
+  assert.deepEqual(vocabOffendersIn(['x.js'], () => misparsed), [`x.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+  assert.deepEqual(vocabOffendersIn(['x.js'], () => unparseable), [`x.js: ${STRIPPER_VERDICT_MESSAGES.unparseable}`, `x.js:1: ${unparseable}`]);
 });
