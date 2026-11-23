@@ -14,6 +14,7 @@ const { runLensWorkers, classifyFailure, composeLensPrompt, appendWorkerRecord, 
 const { ENV_ALLOW } = require(path.join(LIB, 'driver', 'worker.js'));
 const { lensAdmittedFormsNote, lensGitEnv } = require(path.join(LIB, 'driver', 'roles.js'));
 const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { readText } = require('../../helpers/read-skill');
 
 const COORDINATION = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'review-coordination.js');
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -74,7 +75,7 @@ function baseInput(t, extra = {}) {
 }
 const logLines = (runDir) => {
   let text = '';
-  try { text = fs.readFileSync(path.join(runDir, WORKER_DISPATCHES_FILE), 'utf8'); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  try { text = readText(path.join(runDir, WORKER_DISPATCHES_FILE)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
   return text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
 };
 async function waitFor(cond, what) {
