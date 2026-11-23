@@ -12,7 +12,7 @@ const { normalizeLabelNames, parseRecordFacets, typeOf } = require('../issues/re
 const { shapeGate, liftMetadata } = require('../issues/materialize-format');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { fileMatchesFrontendPredicate } = require('../design-detect/index');
-const { classifyDiffFiles, isSensitivePath, globToRegExp } = require('../issues/blast-radius');
+const { classifyDiffFiles, isSensitivePath, globToRegExp, canonicalPath } = require('../issues/blast-radius');
 const { CEREMONY_TIERS } = require('../issues/record-vocabulary');
 
 const EXPRESS_MAX_KEY_FILES = 3;
@@ -138,14 +138,6 @@ const PROTECTED_FAMILIES = Object.freeze([
   Object.freeze({ glob: '**/.claude-tweaks/verify-scope.json', buildTime: true }),
 ]);
 const SHIPPED_PROTECTED_PATHS = Object.freeze(PROTECTED_FAMILIES.map((fam) => fam.glob));
-
-// A path in comparison form: `\` as `/`, `.` and `..` segments resolved, no leading `./`.
-// A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
-// as the file it names; git's own paths are already in this form.
-function canonicalPath(p) {
-  const posix = nodePath.posix.normalize(String(p).replace(/\\/g, '/'));
-  return posix.startsWith('./') ? posix.slice(2) : posix;
-}
 
 // globToRegExp's `.` skips line terminators (\n, \r, U+2028, U+2029), which a path from `git diff -z` or a Key
 // File may carry; the dotAll flag keeps the shipped list exactly as the pre-#6020 `(^|\/)…` regexes matched.

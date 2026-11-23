@@ -62,8 +62,7 @@
 
 const { errorText } = require('./preflight-records');
 const { extractKeyFiles } = require('../issues/grouping');
-const { globToRegExp } = require('../issues/blast-radius');
-const { canonicalPath } = require('../express/eligibility');
+const { globToRegExp, canonicalPath } = require('../issues/blast-radius');
 
 const NOT_APPLICABLE_REASONS = new Set(['NOT_PLANNED', 'DUPLICATE']);
 

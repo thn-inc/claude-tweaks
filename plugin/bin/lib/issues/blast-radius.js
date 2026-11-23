@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('path');
+
 // Pure: the mechanical half of assess-agent-autonomy's merge-check verdict mode. Classifies a
 // diff's files (test vs. implementation, sensitive vs. not) and reduces that to the summary the
 // merge-check verdict weighs as one input alongside review findings and diff content — never a pass/fail gate on its
@@ -158,4 +160,12 @@ function blastRadiusSummary(classifiedFiles) {
   return summary;
 }
 
-module.exports = { classifyDiffFiles, blastRadiusSummary, isSensitivePath, globToRegExp, isPromptProsePath, PROMPT_PROSE_DIRS };
+// A path in comparison form: `\` as `/`, `.` and `..` segments resolved, no leading `./`.
+// A Key File comes from record text, so `plugin/skills/x/../_shared/a.md` must be judged
+// as the file it names; git's own paths are already in this form.
+function canonicalPath(p) {
+  const posix = path.posix.normalize(String(p).replace(/\\/g, '/'));
+  return posix.startsWith('./') ? posix.slice(2) : posix;
+}
+
+module.exports = { classifyDiffFiles, blastRadiusSummary, isSensitivePath, globToRegExp, canonicalPath, isPromptProsePath, PROMPT_PROSE_DIRS };
