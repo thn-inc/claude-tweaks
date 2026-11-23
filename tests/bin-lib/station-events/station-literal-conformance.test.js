@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
-const { STATIONS } = require('../../../plugin/bin/lib/station-events/stations');
+const { STATIONS, REASON_CODES } = require('../../../plugin/bin/lib/station-events/stations');
 
 // #5902: stations.js is the one home of station names, so a name correction is a one-file
 // change. This scan walks plugin/bin and flags a known station name written as the value of a
@@ -133,4 +133,86 @@ test('the same walk goes red when a call site spells a station', () => {
 
 test('the home file is exempt from the walk', () => {
   assert.deepEqual(offendersIn([HOME_REL], () => "emit({ station: 'build' });"), []);
+});
+
+// Record #6146: stations.js is also the one home of the reason codes (REASON_CODES) and the actor
+// words (`agent`, `script`, `person`, `rule:{name}`). This scan flags one written as the value of
+// a `reasonCode` or `actor` key or property outside that file. Call sites name a code through
+// REASON_CODES or a helper.
+//
+// Over each file with comments blanked (literals kept). Recall limits: a key reached through a
+// computed key (`['reason' + 'Code']`), a value held in a local constant, a value assembled from
+// two literals, and a `.actor === 'agent'` comparison (a read, not a write) are not seen.
+const VOCAB_VALUES = [...REASON_CODES.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'agent', 'script', 'person', 'rule:[^\'"`\\n]*'].join('|');
+const VOCAB_SITE = new RegExp(`(?<![\\w$])['"]?(?:reasonCode|actor)['"]?\\s*(?::|=(?![=>]))\\s*(['"\`])(?:${VOCAB_VALUES})\\1`, 'g');
+
+// -> { sites: [{ line, text }], verdict }
+function vocabSites(raw) {
+  const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
+  const rows = src.split('\n');
+  const sites = [];
+  for (const m of src.matchAll(VOCAB_SITE)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    sites.push({ line, text: rows[line - 1].trim().slice(0, 100) });
+  }
+  return { sites, verdict };
+}
+
+// Same shape as offendersIn, over vocabSites.
+function vocabOffendersIn(files, read) {
+  const offenders = [];
+  for (const rel of files) {
+    if (rel === HOME_REL) continue;
+    const { sites, verdict } = vocabSites(read(rel));
+    if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
+    for (const s of sites) offenders.push(`${rel}:${s.line}: ${s.text}`);
+  }
+  return offenders;
+}
+
+const vocabLines = (src) => vocabSites(src).sites.map((s) => s.line);
+
+test('vocab scanner flags a reason code or actor literal as a reasonCode/actor value (proves it can go red)', () => {
+  assert.deepEqual(vocabLines([
+    "emit({ reasonCode: 'test-failed' });",
+    'p.actor = "script";',
+    "emit({ 'actor': 'rule:auto' });",
+    'emit({ reasonCode: `unspecified` });',
+  ].join('\n')), [1, 2, 3, 4]);
+});
+
+test('vocab scanner ignores comments, comparisons, other keys and non-vocabulary values', () => {
+  assert.deepEqual(vocabLines([
+    "// reasonCode: 'other'",
+    "if (p.actor === 'agent') {}",
+    "emit({ reason: 'other' });",
+    'emit({ actor: ACTOR });',
+    "emit({ reasonCode: 'failed: test' });",
+  ].join('\n')), []);
+});
+
+test('vocab scanner reports a stripper mis-parse', () => {
+  const misparsed = ["if (cond) /'/.test(cond); const b = 'p//q'; emit({ reasonCode: 'other' });"].join('\n');
+  assert.equal(vocabSites(misparsed).verdict, 'misparsed', STRIPPER_VERDICT_MESSAGES.misparsed);
+  assert.equal(vocabSites("const x = ; emit({ reasonCode: 'other' });").verdict, 'unparseable');
+  assert.equal(vocabSites("emit({ reasonCode: 'other' });").verdict, 'ok');
+});
+
+test('AC1.9: no call site spells a reason code or actor literal outside stations.js', () => {
+  const files = listJs(BIN);
+  assert.ok(files.length >= FILE_FLOOR, `expected at least ${FILE_FLOOR} plugin/bin files, saw ${files.length}: the walk lost files`);
+  assert.deepEqual(vocabOffendersIn(files, (rel) => readText(path.join(BIN, rel))), [], 'name the reason code through REASON_CODES and the actor through stations.js, not as a string');
+});
+
+test('the vocab walk goes red when a call site spells a reason code', () => {
+  const files = listJs(BIN);
+  const target = 'release-claim.js';
+  assert.ok(files.includes(target), `${target} is not under plugin/bin: update the planted file`);
+  const real = readText(path.join(BIN, target));
+  const plantedLine = real.split('\n').length + 1;
+  const offenders = vocabOffendersIn(files, (rel) => (rel === target
+    ? `${real}\nemit({ reasonCode: 'other' });\n`
+    : readText(path.join(BIN, rel))));
+  assert.deepEqual(offenders, [`${target}:${plantedLine}: emit({ reasonCode: 'other' });`]);
 });
