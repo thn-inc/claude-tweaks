@@ -8,17 +8,53 @@
 const { evaluateRecordEligibility, widenings } = require('./eligibility');
 const { defaultResolvePolicy, sensitivePathsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
+const crypto = require('node:crypto');
 
-const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
-
-const FIRST_KEYS = ['express-lane', 'express-driver'];
+const FIRST_KEYS = ['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'];
 const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review'];
 const ROUTINGS = ['on', 'off', 'split'];
+const UNREADABLE = '<unreadable>';
+
+// The one list of policy keys that decide how the queue is grouped: every key this
+// module requests. The queue-order cache's settings fingerprint hashes exactly these.
+const GROUPING_INPUTS = Object.freeze([...FIRST_KEYS, ...SECOND_KEYS]);
+
+// values: { [key]: raw resolved value } -> 16 hex chars. Only own keys of GROUPING_INPUTS count,
+// in list order; the sensitive-path list is normalized, sorted and deduped so a reordered
+// or comma-string spelling of the same set hashes alike; undefined hashes as null.
+function groupingFingerprint(values) {
+  const pairs = GROUPING_INPUTS.filter((key) => Object.prototype.hasOwnProperty.call(values, key)).map((key) => {
+    let value = values[key];
+    if (key === 'merge-sensitive-paths') {
+      // An unreadable list must not throw out of the policy read; it hashes as a sentinel no real list equals.
+      try { value = [...new Set(sensitivePathsOf({ value }))].sort(); } catch { value = UNREADABLE; }
+    }
+    return [key, value === undefined ? null : value];
+  });
+  return crypto.createHash('sha256').update(JSON.stringify(pairs)).digest('hex').slice(0, 16);
+}
+
+const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint: groupingFingerprint({}), keepSingleton: () => false });
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
 const oneLine = (err) => collapse(err && err.message);
 
-// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, keepSingleton }.
+// The raw resolved value of each requested key, so a key added to FIRST_KEYS or SECOND_KEYS
+// reaches the fingerprint with no further edit.
+// A throwing read records its error in `failed` when given (the caller rethrows it where the old code did) and hashes as a sentinel.
+const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
+  try { return [k, result[k] && result[k].value]; } catch (err) {
+    if (!failed) throw err;
+    failed[k] = err;
+    return [k, UNREADABLE];
+  }
+}));
+
+// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, fingerprint, keepSingleton }.
+// `fingerprint` is groupingFingerprint over every value the resolver calls returned, the
+// queue-order cache's key beside the `grouping` stamp (#6062): a policy change that leaves
+// the queue unchanged must not replay a stale order. A failed read carries
+// groupingFingerprint({}).
 // Two resolver calls, project policy only (no run dir exists at queue-pull time).
 // The first reads `express-lane` and `express-driver`; the second, made only when
 // either half is on, reads the keys the halves need: the lanes are opt-in, and an
@@ -41,8 +77,10 @@ function expressQueuePolicy(deps = {}) {
 
   let expressOn;
   let routing;
+  let read;
   try {
     const first = resolvePolicy(FIRST_KEYS, { runDir: null });
+    read = valuesOf(FIRST_KEYS, first);
     expressOn = first['express-lane'].value === true;
     routing = first['express-driver'].value;
   } catch (err) {
@@ -53,14 +91,17 @@ function expressQueuePolicy(deps = {}) {
     return DISABLED;
   }
   const driverOn = routing !== 'off';
-  if (!expressOn && !driverOn) return DISABLED;
+  if (!expressOn && !driverOn) return { enabled: false, grouping: groupingMode(false), fingerprint: groupingFingerprint(read), keepSingleton: () => false };
 
   let expressOpts;
   let policy;
   try {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
+    const failed = {};
+    Object.assign(read, valuesOf(SECOND_KEYS, policy, failed));
     if (expressOn) {
-      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+      if (failed['merge-sensitive-paths']) throw failed['merge-sensitive-paths'];
+      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);
@@ -102,6 +143,7 @@ function expressQueuePolicy(deps = {}) {
   return {
     enabled: expressOn,
     grouping: groupingMode(expressOn, driverOn),
+    fingerprint: groupingFingerprint(read),
     keepSingleton: (issue) => {
       if (expressOn) {
         try {
@@ -122,4 +164,4 @@ function expressQueuePolicy(deps = {}) {
   };
 }
 
-module.exports = { expressQueuePolicy };
+module.exports = { expressQueuePolicy, GROUPING_INPUTS, groupingFingerprint };
