@@ -55,6 +55,9 @@ Check B hit `plugin/skills/_shared/autonomy-ceiling.md` (its ceiling table descr
 
 ### Task 1: Policy key, derivation, tests and schema prose
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/policy-schema.js` (row after `housekeeping-auto-merge` ~line 145; new derive function after `deriveHousekeepingAutoMerge` ~line 659; apply in `resolvePolicyKeys` beside the housekeeping branch ~line 877)
 - Test: `tests/resolve-policy-lib.test.js` (new block right after the housekeeping-auto-merge block, before `// --- merge-authorization`)
@@ -65,6 +68,7 @@ Check B hit `plugin/skills/_shared/autonomy-ceiling.md` (its ceiling table descr
 - Modify: `plugin/skills/help/policy.md:59` (new Derived-default table row after housekeeping's)
 - Modify: `plugin/skills/_shared/policy-schema-coverage.md:102` (policyOnly bullet: add `` `learned-skills-auto-merge` (#6109) ``)
 - Modify: `docs/journeys/resolve-a-policy-key.md:48` (policyOnly red-flags list: add `` `learned-skills-auto-merge`, #6109 ``)
+- Modify: `docs/journeys/review-project-policy.md:32` (step 2 Should understand: add the new key's `computed (derived from autonomy and control-mode)` wording to the derived-default list, and say it is advanced-tier so the core-only Notable-defaults finding does not surface its unset derived value)
 
 **Interfaces:**
 - Produces: `deriveLearnedSkillsAutoMerge(sources, refusedKeys) -> boolean` (module-private, like its sibling).
@@ -85,6 +89,9 @@ test('a run-config control-mode: on does not veto (control-mode is policyOnly)',
 test('a factory control-mode: on does not veto (control-mode is factory-refused)', () => { /* policyRaw unattended, factoryRaw 'control-mode: on\n' -> true/default */ });
 test('AC3.1 (a): a run-config value never sets the key (policyOnly)', () => { /* policyRaw supervised, runConfigRaw '...: true\n' -> false/default */ });
 test('AC3.1 (b): a run-config autonomy: unattended never turns the default on', () => { /* policyRaw 'autonomy: supervised\n', runConfigRaw 'autonomy: unattended\n' -> false/default */ });
+test('factory autonomy: unattended alone derives true (factory is read)', () => { /* factoryRaw 'autonomy: unattended\n', no policyRaw -> true/default */ });
+test('policy autonomy: supervised over factory unattended derives false', () => { /* policyRaw supervised, factoryRaw unattended -> false/default */ });
+test('a factory learned-skills-auto-merge: true is honored (factory-settable)', () => { /* factoryRaw 'learned-skills-auto-merge: true\n' -> { value: true, source: 'factory' } */ });
 test('set-but-invalid at unattended keeps invalid: true and derives true', () => { /* '...: maybe\nautonomy: unattended\n' -> { value: true, source: 'default', invalid: true } */ });
 ```
 
@@ -108,9 +115,10 @@ Expected: PASS (these fail until the doc row exists — do Step 5 first if namin
 
 - [ ] **Step 5: Prose registration**
   - `policy-schema.md` row (≤ 600 B, summary NOT verbatim): `` | `learned-skills-auto-merge` | `policy.yml` only (`policyOnly`) | Not yet read — the learned-skills drain (`/claude-tweaks:wrap-up`'s `learned-skills-pr.md`) and `_shared/github-pr-scan.md` item 9, wired by sibling sub-issues | derived: `true` at `autonomy: unattended` unless `control-mode: on`, else `false` | When true, wrap-up's learned-skills PR merges once CI is green with no human review. Explicit value wins both ways; malformed → derived value with `invalid: true` | ``
-  - Shape B paragraph: change "(`housekeeping-auto-merge`, #580)" to name both keys, e.g. "(`housekeeping-auto-merge`, #580; `learned-skills-auto-merge`, #6109)", and keep "derived from `autonomy`" wording valid for both.
+  - Shape B paragraph: change "(`housekeeping-auto-merge`, #580)" to name both keys, e.g. "(`housekeeping-auto-merge`, #580; `learned-skills-auto-merge`, #6109)", and name the derive functions of both. Reword its closing `/claude-tweaks:help` sentence so it stays true for both (plan-review settlement, Reading A): help renders an explicitly-set B default as `computed (derived from autonomy)` for `housekeeping-auto-merge` and `computed (derived from autonomy and control-mode)` for `learned-skills-auto-merge`; the Notable-defaults finding covers core-tier keys only, so it surfaces `housekeeping-auto-merge`'s unset/derived divergence and not the advanced-tier `learned-skills-auto-merge`'s. `help/policy.md`'s Notable-defaults rule is not changed.
   - `help/policy.md` row: `` | `learned-skills-auto-merge` (B) | `computed (derived from autonomy and control-mode)` | `deriveLearnedSkillsAutoMerge()`'s result | `_shared/policy-schema-read-path.md`'s Shape B paragraph | ``
   - policyOnly lists in `policy-schema-coverage.md:102` and `docs/journeys/resolve-a-policy-key.md:48`.
+  - `docs/journeys/review-project-policy.md` step 2 Should understand: add the new key's computed wording beside the three listed, plus one clause that it is advanced-tier, so an unset derived `true` is not in Notable defaults.
   - Byte check: `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,600; then `node plugin/bin/context-cost-report.js --plugin-root plugin` shows no rail breach (Gotcha verify step).
 
 - [ ] **Step 6: Go-red controls (AC4.1)** — in the worktree, temporarily replace `=== 'unattended'` with `=== 'never'` in the derive function: AC1.1 (a) must fail. Restore. Temporarily drop the `&& ... !== 'on'` clause: AC1.1 (d) must fail. Restore. Temporarily make the autonomy read's skip `() => false` (run-config consulted): AC3.1 (b) must fail. Restore. Record all three outputs (test name + `not ok`) in the task report.
@@ -120,11 +128,13 @@ Expected: PASS (these fail until the doc row exists — do Step 5 first if namin
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugin/bin/lib/policy-schema.js tests/resolve-policy-lib.test.js tests/policy.test.js tests/policy-schema.test.js tests/resolve-policy-control-mode.test.js plugin/skills/_shared/policy-schema.md plugin/skills/_shared/policy-schema-read-path.md plugin/skills/help/policy.md plugin/skills/_shared/policy-schema-coverage.md docs/journeys/resolve-a-policy-key.md
+git add plugin/bin/lib/policy-schema.js tests/resolve-policy-lib.test.js tests/policy.test.js tests/policy-schema.test.js tests/resolve-policy-control-mode.test.js plugin/skills/_shared/policy-schema.md plugin/skills/_shared/policy-schema-read-path.md plugin/skills/help/policy.md plugin/skills/_shared/policy-schema-coverage.md docs/journeys/resolve-a-policy-key.md docs/journeys/review-project-policy.md
 git commit -m "Add the learned-skills-auto-merge policy key — derived true only at unattended without control mode, refs #6109"
 ```
 
 ### Task 2: ADR 0040
+
+**Role:** integration
 
 **Files:**
 - Create: `docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md`
