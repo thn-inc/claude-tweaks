@@ -20,7 +20,7 @@ Scope keywords: isWholeBranch, LOCATION_RE, REVIEW_EXCLUSION_REASONS, extractRev
 - Archived items with no location are counted as `unlocated`, outside every share. A share's denominator is located items; the unit of a slot is one task review.
 - The `[Effort: …]` line is removed by `stripEffortLines` (the lens role's canonical match). The whole-branch prompt's "What Was Implemented" text is never edited.
 - No task reviewer prompt or reply text reaches a `task-vs-branch` prompt (AC2).
-- Exclusion reasons added: `prompt-file-gone`, `no-whole-branch-prompt`, `no-merge-base`. Every exclusion row goes through `extractReviews`' `exclude`, which throws on an unlisted reason.
+- Exclusion reasons added: `prompt-file-gone`, `no-whole-branch-prompt`, `no-merge-base`, `items-unparsed`. Every exclusion row goes through `extractReviews`' `exclude`, which throws on an unlisted reason.
 - Lens role behaviour, output and tests stay byte-identical; `--lens`/`--max-per-lens` with a branch role exits 2 (`--lens applies to --role lens only`).
 - Governing skill `regex-scan-linearity` (scoped to `plugin/bin/`, so it does not bind `tools/`; its probe rule is followed for the two new regexes anyway): "Feed the function a long run of characters its pattern accepts, without the terminator that ends a match, and time it." and fix shape 3 "A `\s` that crosses newlines under `/m`… Fix: `[ \t]`". The new regexes use `[ \t]` and find the head with a second regex started at the base match's end, never a lazy `[\s\S]*?` between the two.
 - Governing skill `git-ground-truth-test-env`: fixture git runs with `cleanEnv()` (no inherited `GIT_*`), as `reviews-fixture.js` already does; `makeWriteRepo` is reused unchanged.
@@ -29,8 +29,10 @@ Scope keywords: isWholeBranch, LOCATION_RE, REVIEW_EXCLUSION_REASONS, extractRev
 
 ### Decisions this plan takes beyond the spec text (logged as premise lines)
 
+Decisions 1, 3 and 4 were put to the user at plan review and decided as written below; the spec's `## Plan Review Clarifications` section records them.
+
 1. **Range base for a `task-vs-branch` slot.** The spec says base = the whole-branch prompt's base. On real runs that base can be origin/main merged in by the pre-review catch-up, which the task-reviewed head predates (run `2026-11-19T154019-spec-5957`: whole-branch base `d5346c1c99` is neither ancestor nor descendant of task head `b90d38882a`; the whole-branch head `6a7e879f6f` merges both). Diffing that base against the task head would show main's newer commits as reverted. Rule: base = the whole-branch base when it is an ancestor of the task-reviewed head, else `git merge-base {wbBase} {taskHead}`; no merge base → exclusion `no-merge-base`. The slot records `baseFrom: 'whole-branch' | 'merge-base'`. The prompt still names the whole-branch shas, mapped to the replay shas.
-2. **Severity grammar.** The per-item parser keeps `parseReviewCounts`' heading grammar (`#… Critical|Important|Minor`). Probe over this repository's archive (2026-11-23): of 270 `Needs fixes` task replies with a verdict, 257 use headings and 13 use bold labels (`**Important**`); of 273 whole-branch replies with a transcript, 251 use headings, 9 bold labels, 11 neither. A bold-label task reply has no parsed items, so it yields no `task-vs-branch` slot; a bold-label replayed whole-branch reply is `could-not-parse`. The journey says so.
+2. **Severity grammar.** The per-item parser keeps `parseReviewCounts`' heading grammar (`#… Critical|Important|Minor`). Probe over this repository's archive (2026-11-23): of 270 `Needs fixes` task replies with a verdict, 257 use headings and 13 use bold labels (`**Important**`); of 273 whole-branch replies with a transcript, 251 use headings, 9 bold labels, 11 neither. A bold-label `Needs fixes` task reply has no parsed items (`parseReviewItems` null): `--role task` keeps its slot (the verdict still scores) and marks it `itemsUnparsed: true`, which the `task` section counts outside every denominator; `--role task-vs-branch` excludes it as `items-unparsed`. A bold-label replayed whole-branch reply is `could-not-parse`. The journey says so.
 3. **AC1 vs AC7.** AC1's "exactly one slot" is the one slot at the task-reviewed head (`at: 'task-head'`); AC7's control adds the `at: 'final-head'` sibling, so the role writes two slots per qualifying review.
 4. **Final head of the control** = the whole-branch prompt's own head (the prompt replayed exactly as archived).
 5. **"A task-review prompt range ends after the fix"** (Gotchas): the fixture holds a `re-review` dispatch whose range ends at the fix commit; the test asserts it yields no slot and the `task-vs-branch` slot's head is the pre-fix commit.
@@ -135,7 +137,7 @@ Expected: PASS, 0 fail.
 **Files:**
 - Create: `tools/review-replay/reviews-branch.js`
 - Modify: `tools/review-replay/reviews-extract.js` (role rows, routing, `writeOutputs` generalised)
-- Modify: `tools/review-replay/schema.js` (three reasons)
+- Modify: `tools/review-replay/schema.js` (four reasons)
 - Modify: `tools/review-replay.js` (`USAGE` roles, header comment for extract-reviews)
 - Modify: `tests/review-replay/reviews-fixture.js` (add `buildBranchFixture`)
 - Test: `tests/review-replay/reviews-extract.test.js`
@@ -146,9 +148,9 @@ Expected: PASS, 0 fail.
 - Produces: `ROLES` in `reviews-extract.js` with keys `lens`, `task`, `whole-branch`, `task-vs-branch`; each branch row is `{ kind: 'branch', key }`, the lens row gains `kind: 'lens'`.
 - Produces: `reviews-branch.js` exports `selectBranchSlots(r: {run, dir}, dispatches: {item, member}[], c, deps, exclude) -> Slot[]` and `promptFor(item, c, fs) -> { prompt, transcript, file } | { reason }`.
 - Produces: a branch `Slot` = `{ role, name, run, agentId, prompt, inputs, archivedBase, archivedHead, promptBase, promptHead, archivedTier, archivedEffort, originRefs, lens: null, side: null, verdict, items, taskTier, at, baseFrom, taskAgentId }` (the last four `null` outside `task-vs-branch`). `archivedBase/Head` are the repository's two trees; `promptBase/Head` are the full shas the prompt names, mapped to the replay shas.
-- Produces: `buildBranchFixture(root, { pointer: null|'present'|'gone', catchUp: false, noWholeBranch: false, wbUnusableFirst: false }) -> { mainRoot, runsRoot, transcripts, runName, worktree, B, T1, T2, F, M, W }`.
+- Produces: `buildBranchFixture(root, { pointer: null|'present'|'gone', catchUp: false, noWholeBranch: false, wbUnusableFirst: false, boldLabel: false }) -> { mainRoot, runsRoot, transcripts, runName, worktree, B, T1, T2, F, M, W }`.
 - Produces in `reviews-fixture.json`: `role`; slots carry `role, verdict, taskTier, at, baseFrom, taskAgentId, archivedTier, archivedEffort, controlArm, repoKey`; exclusion rows carry `tier` when known. Totals for branch roles: `{ reviews, byArchivedTier }`.
-- Produces in `archived-reports.json`: `reports[name] = { role, run, verdict, items, unlocated, taskTier, at }` for branch roles (no `confirmed`, no `runRows`).
+- Produces in `archived-reports.json`: `reports[name] = { role, run, verdict, items, itemsUnparsed, unlocated, taskTier, at }` (`itemsUnparsed: true` for a `Needs fixes` task reply whose `parseReviewItems` is null, Decision 2) for branch roles (no `confirmed`, no `runRows`).
 
 - [ ] **Step 1: Write `buildBranchFixture` and the failing tests**
 
@@ -181,7 +183,7 @@ test('--role whole-branch: one slot, items archived, prompt rewritten', …); //
 test('--lens with a branch role exits 2', …); // err includes '--lens applies to --role lens only'
 ```
 
-In `reviews-schema.test.js`: the three new reasons are listed.
+In `reviews-schema.test.js`: the four new reasons are listed. Add a `--role task` test on `buildBranchFixture(root, { boldLabel: true })`: a `Needs fixes` reply with bold-label severities only (extra item `t3`, present only under `boldLabel`, tier `standard`, prompt `Base {T1}, Head {T2}`, reply `**Important**\n- src/x.js:4 off by one\n\nTask quality: Needs fixes`) keeps its slot with `itemsUnparsed: true` and `items: []`.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -247,7 +249,8 @@ test('AC7.1 (extract half): two slots for the Needs fixes review, task head and 
 test('the re-review range ending after the fix is not read as the pre-fix head', …); // no slot from 'rr2'; task-head tree is T2 (Decision 5)
 test('catch-up base: whole-branch base not an ancestor of the task head → merge-base', …); // catchUp: task-head slot baseFrom 'merge-base', repo base tree = B; final-head baseFrom 'whole-branch', repo (M, W)
 test('no usable whole-branch prompt excludes the task reviews', …); // noWholeBranch and wbUnusableFirst: t2 excluded { reason: 'no-whole-branch-prompt', tier: 'capable' }; exit 3 (no slot)
-test('an Approved review and a Minor-only Needs fixes review yield no slot and no exclusion', …);
+test('an Approved review and a Minor-only Needs fixes review yield no slot and no exclusion, and count in totals.notQualifying', …);
+test('a bold-label Needs fixes review (boldLabel fixture, t3) is excluded as items-unparsed', …);
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -257,7 +260,7 @@ Expected: FAIL after Step 1 — `--role task-vs-branch` selects no slot.
 
 - [ ] **Step 3: Implement in `reviews-branch.js`**
 
-Per run: the whole-branch prompt comes from the first `isWholeBranch` dispatch only; it is usable when it passes Task 2's checks (tier, transcript, pointer, sha pair, both shas in the clone, run inputs, barrier). Per `task review` dispatch: tier, prompt, pointer, verdict `needs-fixes` with at least one `critical`/`important` item (else skipped, no row), `shaPairOf(prompt).head` (`no-sha-range` when null), head in clone (`commit-not-in-clone`), whole-branch usable (`no-whole-branch-prompt`). Base: `git merge-base --is-ancestor {wbBase} {taskHead}` exit 0 → `wbBase`, `baseFrom: 'whole-branch'`; exit 1 → `git merge-base {wbBase} {taskHead}` (`no-merge-base` when it fails), `baseFrom: 'merge-base'`; the final-head sibling applies the same rule to `wbHead`. Both slots: `prompt` = the whole-branch prompt, `promptBase/Head` = the whole-branch full shas, `archivedTier/Effort` = the whole-branch dispatch's, `taskTier` = the task review's tier. Repositories are shared per (run, base, head) as today.
+Per run: the whole-branch prompt comes from the first `isWholeBranch` dispatch only; it is usable when it passes Task 2's checks (tier, transcript, pointer, sha pair, both shas in the clone, run inputs, barrier). Per `task review` dispatch: tier, prompt, pointer, verdict `needs-fixes` (`report-unparsed` when `parseTaskVerdict` is null), items parsed (`items-unparsed` when `parseReviewItems` is null), at least one `critical`/`important` item (else not qualifying: no row, counted in `totals.notQualifying`), `shaPairOf(prompt).head` (`no-sha-range` when null), head in clone (`commit-not-in-clone`), whole-branch usable (`no-whole-branch-prompt`). Base: `git merge-base --is-ancestor {wbBase} {taskHead}` exit 0 → `wbBase`, `baseFrom: 'whole-branch'`; exit 1 → `git merge-base {wbBase} {taskHead}` (`no-merge-base` when it fails), `baseFrom: 'merge-base'`; the final-head sibling applies the same rule to `wbHead`. Both slots: `prompt` = the whole-branch prompt, `promptBase/Head` = the whole-branch full shas, `archivedTier/Effort` = the whole-branch dispatch's, `taskTier` = the task review's tier. Repositories are shared per (run, base, head) as today.
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -266,7 +269,7 @@ Expected: PASS, 0 fail.
 
 - [ ] **Step 5: Real-input probe**
 
-Run the Task 2 Step 5 probe command with `--role task-vs-branch` on `2026-11-17T060227-record-5580`. Independent count (scratch probe 2026-11-23): that run has 4 task reviews with `Needs fixes`, at least one Critical/Important heading item and a sha pair, and its first whole-branch prompt pairs `f88beb9ecb..483397098f`. Reconcile: task-head slots + `task-vs-branch` exclusion rows for task reviews = 4, final-head slots = task-head slots; report each slot's `baseFrom`. Then run once over the whole archive (no `--select`) and record `totals` and `excluded` by reason; the scratch probe found 159 qualifying task reviews with a sha pair in 73 runs whose first whole-branch prompt has one, an upper bound for task-head slots.
+Run the Task 2 Step 5 probe command with `--role task-vs-branch` on `2026-11-17T060227-record-5580`. Independent count (scratch probe 2026-11-23): that run has 4 task reviews with `Needs fixes`, at least one Critical/Important heading item and a sha pair, and its first whole-branch prompt pairs `f88beb9ecb..483397098f`. Reconcile against every `task review` dispatch of the run (independent count over its `timing.json`): task-head slots + task-review exclusion rows + `totals.notQualifying` = that count, final-head slots = task-head slots, and task-head slots + rows for reasons after the verdict check (`no-sha-range`, `commit-not-in-clone`, `no-whole-branch-prompt`, `no-merge-base`, `unrewritten-path`) = 4; report each slot's `baseFrom`. Then run once over the whole archive (no `--select`) and record `totals` and `excluded` by reason; the scratch probe found 159 qualifying task reviews with a sha pair in 73 runs whose first whole-branch prompt has one, an upper bound for task-head slots.
 
 - [ ] **Step 6: Commit**
 
@@ -277,6 +280,7 @@ Run the Task 2 Step 5 probe command with `--role task-vs-branch` on `2026-11-17T
 ### Task 4: `score-reviews` `task` and `wholeBranch` sections
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tools/review-replay/reviews-score.js`
@@ -285,7 +289,7 @@ Run the Task 2 Step 5 probe command with `--role task-vs-branch` on `2026-11-17T
 **Interfaces:**
 - Consumes: fixture `role`, slot `verdict`/`taskTier`/`at`, reports `items`/`unlocated`; Task 1 parsers; `near`.
 - Produces: `scoreReviews` routes on `fixture.role`: `lens` → today's scorer unchanged; branch roles → one scorer each, sharing the manifest/`replaySlots`/cost/effort prelude. Output top level for branch roles: `{ notes, role, fixture: { selected: { total, byArchivedTier }, excludedByReason, excludedByTier }, unidentifiedAgents, unidentifiedCost, arms }`; each arm `{ scored, notJudged, notJudgedByReason, cost, minutes, recordedEffort, effortFieldsDiffer, task | wholeBranch | taskVsBranch }`.
-- `task` = `{ reviews, verdict: { agree, disagree, share, byArchivedTier: { [tier]: { agree, disagree, share } } }, recall: { caught, of, share, unlocated }, itemsBySeverity: { critical, important, minor }, itemsPerReview: { critical, important, minor } }` — recall over archived `critical`+`important` items with a location; `unlocated` counts every archived item of any severity with none.
+- `task` = `{ reviews, verdict: { agree, disagree, share, byArchivedTier: { [tier]: { agree, disagree, share } } }, recall: { caught, of, share, unlocated, itemsUnparsed }, itemsBySeverity: { critical, important, minor }, itemsPerReview: { critical, important, minor } }` — recall over archived `critical`+`important` items with a location; `unlocated` counts every archived item of any severity with none; `itemsUnparsed` counts reviews whose archived report has `itemsUnparsed: true`, which add nothing to `of`.
 - `wholeBranch` = `{ reviews, recall: { caught, of, share, unlocated }, itemsBySeverity, itemsPerReview, withCriticalOrImportant: { n, share } }` — recall over every located archived item.
 - An item is caught when any of its `locations` is `near` any location of any replay item. Replay reply parsing: task → `parseTaskVerdict` (null → `could-not-parse`) and `parseReviewItems` for items (null → no items); whole-branch → `parseBranchReply` (null → `could-not-parse`). Exit 3 when any arm has `notJudged > 0`.
 
@@ -305,6 +309,7 @@ test('wholeBranch: recall of located items, the Critical-or-Important share, "No
 test('wholeBranch: a bold-label-only reply is could-not-parse', …);
 test('an item citing two locations is caught by a replay item near its second', …); // Review Focus 4
 test('fixture summary: selected and excluded per reason and per archived tier', …);
+test('task: an itemsUnparsed review scores its verdict and counts in recall.itemsUnparsed, not in of', …);
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -328,6 +333,7 @@ Expected: PASS, 0 fail.
 ### Task 5: `score-reviews` `taskVsBranch` section, CLI header and journey
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tools/review-replay/reviews-score.js`
@@ -337,7 +343,7 @@ Expected: PASS, 0 fail.
 
 **Interfaces:**
 - Consumes: Task 3's `at`, `taskTier`, `items`; Task 4's prelude and caught rule.
-- Produces: `taskVsBranch` = `{ reviews: { taskHead, finalHead }, caught: { caught, of, share, unlocated, bySeverity: { critical: {caught, of, share}, important: {…} }, byTaskTier: { [tier]: {caught, of, share} } }, baselineRecall: { caught, of, share, bySeverity }, notRaised: [{ run, taskReview, repeat, path, line, severity, text }] }` — `caught` from `at: 'task-head'` slots, `baselineRecall` from `at: 'final-head'` slots, `notRaised` lists each located item a task-head repeat did not raise (`taskReview` = the task-head slot name).
+- Produces: `taskVsBranch` = `{ reviews: { taskHead, finalHead }, caught: { caught, of, share, unlocated, bySeverity: { critical: {caught, of, share}, important: {…} }, byTaskTier: { [tier]: {caught, of, share} } }, baselineRecall: { caught, of, share, bySeverity }, notRaised: [{ run, taskReview, repeat, path, line, severity, text }] }` — `caught` from `at: 'task-head'` slots, `baselineRecall` from `at: 'final-head'` slots, `notRaised` lists each located item a task-head repeat did not raise (`taskReview` = the task-head slot's run-less name `s.name`, e.g. `task-vs-branch`, beside `run`).
 
 - [ ] **Step 1: Write the failing tests**
 
