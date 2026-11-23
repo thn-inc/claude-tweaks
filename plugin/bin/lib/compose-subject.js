@@ -353,8 +353,8 @@ function run(argv, deps = realDeps) {
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec, injected);
   const slug = repoSlug(repoSpec);
 
-  // Record-less form (#5208): the PR itself is the only source — no record loop, so the record
-  // checks below see an empty list and pass.
+  // Record-less form (#5208): the PR itself is the only source — parseArgs left `numbers` empty,
+  // so the record loop below does not run and the record checks see an empty list and pass.
   let housekeepingPr = null;
   if (opts.housekeeping) {
     let rawPr;
@@ -381,7 +381,7 @@ function run(argv, deps = realDeps) {
   }
 
   const records = [];
-  for (const n of (opts.housekeeping ? [] : opts.numbers)) {
+  for (const n of opts.numbers) {
     const viewArgs = (fields) => ['issue', 'view', String(n), '--repo', slug, '--json', fields];
     let raw;
     let issueTypeFieldRejected = false;
