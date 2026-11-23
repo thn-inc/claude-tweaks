@@ -314,8 +314,6 @@ const BRANCH_SCORERS = { task: TASK_SCORER, 'whole-branch': WHOLE_BRANCH_SCORER,
 
 // The fixture's selected slots and its excluded rows, per archived tier and per reason.
 function branchFixtureSummary(fixture) {
-  const byArchivedTier = {};
-  for (const s of fixture.slots) bump(byArchivedTier, s.archivedTier);
   const excludedByReason = {};
   const excludedByTier = {};
   for (const e of fixture.excluded) {
@@ -330,6 +328,8 @@ function branchFixtureSummary(fixture) {
     const { slots, notQualifying } = fixture.totals;
     return { selected: { total: heads.length, byTaskTier, slots, notQualifying }, excludedByReason, excludedByTier };
   }
+  const byArchivedTier = {};
+  for (const s of fixture.slots) bump(byArchivedTier, s.archivedTier);
   return { selected: { total: fixture.slots.length, byArchivedTier }, excludedByReason, excludedByTier };
 }
 

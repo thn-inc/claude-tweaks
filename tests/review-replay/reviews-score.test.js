@@ -586,7 +586,9 @@ test('taskVsBranch: fixture summary counts task reviews, not slots, and reports 
   assert.equal(selected.total, 1);
   assert.deepEqual(selected.byTaskTier, { capable: 1 });
   assert.equal(selected.slots, 2);
-  assert.equal(typeof selected.notQualifying, 'number');
+  const written = JSON.parse(fs.readFileSync(path.join(x.out, 'reviews-fixture.json'), 'utf8'));
+  assert.equal(selected.notQualifying, written.totals.notQualifying);
+  assert.equal(selected.slots, written.totals.slots);
 });
 
 test('taskVsBranch: a not-raised item records the repeat that missed it', async () => {
