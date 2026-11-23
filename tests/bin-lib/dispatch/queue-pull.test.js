@@ -560,7 +560,7 @@ test('#5227 queuePull runs every registry pass in order and returns the final gr
       'dispatch-unlanded-blockers.js': (args) => ({ status: 0, stdout: fs.readFileSync(args[args.indexOf('--groups') + 1], 'utf8'), stderr: '' }),
     }),
     queueOrder: { readOrder: () => null, writeOrder: () => ({ ok: true }) },
-    expressQueuePolicy: () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false }),
+    expressQueuePolicy: () => ({ enabled: false, grouping: 'per-record', fingerprint: 'off-fp', keepSingleton: () => false }),
     createClaimReader: () => ({ read: () => ({ content: null }) }),
     onPass: (id) => seen.push(id),
     stderr: () => {},
@@ -3423,7 +3423,7 @@ function recordingExpress() {
   const seen = { calls: 0, kept: [] };
   const dep = () => {
     seen.calls += 1;
-    return { enabled: true, grouping: 'recorded-grouping', keepSingleton: (c) => { seen.kept.push(c.number); return c.number === 9101; } };
+    return { enabled: true, grouping: 'recorded-grouping', fingerprint: 'recorded-fp', keepSingleton: (c) => { seen.kept.push(c.number); return c.number === 9101; } };
   };
   return { seen, dep };
 }
@@ -3438,8 +3438,15 @@ test('#5230 express: the grouping pass, the write-back blob and the cache check 
   assert.ok(express.seen.kept.includes(9101), 'keepSingleton was asked about #9101');
   assert.equal(miss.store.written.length, 1);
   assert.equal(miss.store.written[0].blob.grouping, 'recorded-grouping', 'the write-back blob stamps the policy grouping');
+  assert.equal(miss.store.written[0].blob.fingerprint, 'recorded-fp', 'the write-back blob stamps the policy settings fingerprint (#6062)');
 
   const blob = miss.store.written[0].blob;
+  const otherFp = pull(SFast(), {
+    persisted: { ...blob, excluded: [{ number: 9999, blockedBy: [1] }] },
+    deps: { expressQueuePolicy: () => ({ ...recordingExpress().dep(), fingerprint: 'other-fp' }) },
+  });
+  assert.equal(otherFp.state.cacheHit, false, 'a blob written under other grouping settings is never reused (#6062)');
+  assert.ok(!otherFp.json('dispatch-exclusions.json').some((e) => e.records.includes(9999)), 'AC8: a fingerprint miss recomputes the blocker exclusions, it does not replay the persisted ones');
   const hit = pull(SFast(), { persisted: blob, deps: { expressQueuePolicy: recordingExpress().dep } });
   assert.equal(hit.state.cacheHit, true, 'the cache check compares the blob against the policy grouping');
   assert.deepEqual(groupNumbers(hit), [[9101], [9102, 9103]]);
