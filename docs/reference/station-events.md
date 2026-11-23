@@ -32,7 +32,7 @@ Which code performs each station transition today, read from the files (record #
 | `shape` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions` | `exited` | `passed` (`ready` added) | the label and direction only |
 | `authorize` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/station-events/blockers.js:makeBlockerSnapshotSink` | `entered` (`ready` added), `exited` (`auto:build` added), `blockers` | `passed` on the exit | the label and direction; a blocker snapshot carries `blockedBy`, `openBlockerIds`, `crossRepoBlockers` |
 | `release` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition` | `entered` (`auto:build` added), `exited` (`bot:in-progress` added, or the claim landing) | `passed` | none beyond the label |
-| `build` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/claim-targets/claim-targets.js:emitStation`; `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition`; `plugin/bin/lib/claim-targets/claim-targets.js:emitRollbackExit`; `plugin/bin/release-claim.js:run`; `plugin/bin/accept-park.js:parkSteps`; `plugin/bin/pr-early-open.js:run`; `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `entered` (`bot:in-progress` added, the claim), `started` (driver `worker` step; `pr_opened` fact), `session_bound`, `exited` (a claim release, a rollback, a driver `worker` exit) | claim release: from the release reason (`outcomeForReleaseReason`); rollback: `abandoned`; park hand-forward: `passed`; driver `worker`: from step status (`ok` passed, `fail` failed, `stop` returned) | the release reason string (`reason`: `never-started: ...` on rollback, `awaiting-local-acceptance` on the park hand-forward, the caller's reason on a release); the driver step's status only |
+| `build` | `plugin/bin/apply-refine-labels.js:emitLabelTransitions`; `plugin/bin/lib/claim-targets/claim-targets.js:emitStation`; `plugin/bin/lib/claim-targets/claim-targets.js:emitInProgressTransition`; `plugin/bin/lib/claim-targets/claim-targets.js:emitRollbackExit`; `plugin/bin/release-claim.js:run`; `plugin/bin/accept-park.js:parkSteps`; `plugin/bin/pr-early-open.js:run`; `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `entered` (`bot:in-progress` added, the claim), `started` (driver `worker` step; `pr_opened` fact), `session_bound`, `exited` (a claim release, a rollback, a driver `worker` exit) | claim release: from the release reason (`outcomeForReleaseReason`); rollback: `abandoned`; park hand-forward: `passed`; driver `worker`: from step status (`ok` passed, `fail` failed, `stop` returned) | the release reason string (`reason`: `never-started: ...` on rollback, `awaiting-local-acceptance` on the park hand-forward, the caller's reason on a release), plus `link` on a release-claim exit and `sweptBy` / `sweptBySession` on a swept release; the driver step's status only |
 | `test` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `test` step) | from step status (`ok`, `fail`, `stop`) | none beyond the step's status |
 | `review` | `plugin/bin/lib/station-events/driver-mirror.js:stationEventsFor` | `started`, `exited` (driver `review` step); `session_bound` for a review fix session is filed under `build` | from step status | none beyond the step's status |
 | `polish` | none | none | none | none |
@@ -57,16 +57,32 @@ Confirmed order: `intake` → `shape` → `authorize` → `release` → `build` 
 
 Basis: the hub node database (local hub Postgres, table `station_visits`; the query takes `lead(station) over (partition by work_order_key order by entered_at, id)`, last 28 days, pairs with n >= 10, run 2026-11-23): 14,899 visits over 3,196 work orders.
 
-| pair | n | pair | n | pair | n |
-|------|---|------|---|------|---|
-| intake→shape | 3132 | build→intake | 212 | build→accept | 79 |
-| shape→authorize | 3132 | build→build | 166 | wrap-up→polish | 62 |
-| release→build | 1920 | polish→test | 138 | polish→wrap-up | 60 |
-| authorize→release | 1467 | test→wrap-up | 130 | build→wrap-up | 33 |
-| build→release | 469 | wrap-up→build | 123 | test→test | 22 |
-| authorize→intake | 213 | build→polish | 112 | intake→intake | 21 |
-| wrap-up→wrap-up | 105 | build→authorize | 19 | release→authorize | 14 |
-| release→polish | 14 | authorize→build | 13 | test→polish | 11 |
+| pair | n |
+|------|---|
+| intake→shape | 3132 |
+| shape→authorize | 3132 |
+| release→build | 1920 |
+| authorize→release | 1467 |
+| build→release | 469 |
+| authorize→intake | 213 |
+| build→intake | 212 |
+| build→build | 166 |
+| polish→test | 138 |
+| test→wrap-up | 130 |
+| wrap-up→build | 123 |
+| build→polish | 112 |
+| wrap-up→wrap-up | 105 |
+| build→accept | 79 |
+| wrap-up→polish | 62 |
+| polish→wrap-up | 60 |
+| build→wrap-up | 33 |
+| test→test | 22 |
+| intake→intake | 21 |
+| build→authorize | 19 |
+| release→authorize | 14 |
+| release→polish | 14 |
+| authorize→build | 13 |
+| test→polish | 11 |
 
 Visits per station: authorize 3167, intake 3154, shape 3132, release 2322, build 2295, wrap-up 336, polish 199, test 173, accept 122; `review` and `merge` have 0 visits.
 
