@@ -952,7 +952,20 @@ test('reconcile(): the console check is wired in and reachable via ALL_CHECKS on
   git(['commit', '-q', '-m', 'seed'], dir);
   git(['remote', 'add', 'origin', 'https://github.com/example/example.git'], dir);
 
-  const r = await reconcile({ cwd: dir });
+  // #6162: the GitHub-health preflight is answered here, not by a live `gh api rate_limit`, so the wiring this test
+  // pins does not depend on gh credentials (the driver's test step runs with none).
+  const preflight = require('../plugin/bin/lib/reconcile/preflight');
+  const originalHealth = preflight.ghHealthCheck;
+  const originalHealthAsync = preflight.ghHealthCheckAsync;
+  preflight.ghHealthCheck = () => ({ ok: true, reason: null });
+  preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
+  let r;
+  try {
+    r = await reconcile({ cwd: dir });
+  } finally {
+    preflight.ghHealthCheck = originalHealth;
+    preflight.ghHealthCheckAsync = originalHealthAsync;
+  }
   assert.notStrictEqual(r.console, null, 'the console check must have run under pr-first');
   assert.deepStrictEqual(r.console, { ready: [], skipped: [] });
 });
