@@ -13,10 +13,12 @@
 // still-captured entry a MERGED PR already shipped (a run that died after the merge, before its
 // manifest write) is recorded landed against that PR: one of its commits carries this run's id and the
 // entry's id in its trailers, and that commit's own diff has the entry's patch's `git patch-id
-// --stable`. Its commits are read through `gh api` (every page, every merged PR on the head name) and
-// their objects fetched from refs/pull/{n}/head, never from the deleted branch. A failed PR lookup,
-// fetch or commit read fails closed: every remaining entry is staged naming the failed read, and nothing
-// is built. With no open PR, the entries a merged PR did not ship are staged naming it.
+// --stable`. Its commits are read through `gh api` (every page, every merged PR on the head name; GitHub
+// lists at most 250 commits per PR, so an entry beyond that cap stages, the safe direction) and their
+// objects fetched from refs/pull/{n}/head, never from the deleted branch. A failed PR lookup, fetch or
+// commit read fails closed: every remaining entry is staged naming the failed read, and nothing is
+// built. With no open PR, the entries a merged PR did not ship are staged naming it. An open PR listed
+// while its branch is gone is neither reused nor duplicated: every remaining entry is staged naming it.
 // An existing remote branch is the base only when its PRs say so: an open PR is reused; no PR ever (a
 // crash between push and create) means the branch is this run's own, so it is the base and the PR is
 // opened on it. Either way, every commit on it must carry this run's id and the id of a landed or
@@ -399,7 +401,10 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
     try { rows = listPrs(); } catch (err) {
       return downgradeAll(todo, `could not list the PRs of ${branch} (${firstStderrLine(err)})`);
     }
-    const existingPr = openOf(rows);
+    // An open PR is reused only while its branch exists: one listed with its branch gone is closing
+    // (head deleted) or racing, and is never a base nor a reason to open a second PR beside it.
+    const openRow = openOf(rows);
+    const existingPr = branchExisted ? openRow : null;
     const mergedPrs = rows.filter((r) => r.state === 'MERGED');
 
     // A merged PR may already have shipped captured entries (a run that died after the merge, before
@@ -439,14 +444,20 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
       return finish();
     }
 
-    if (!existingPr) {
+    if (openRow && !branchExisted) {
+      orphanReason = `open PR #${openRow.number} (${openRow.url}) is listed for ${branch}, but the branch is gone from origin; no second PR is opened beside it`;
+    } else if (!existingPr) {
       const merged = mergedPrs[0];
       const closed = rows.find((r) => r.state === 'CLOSED');
-      if (merged) orphanReason = `the earlier learned-skills PR #${merged.number} was merged, so ${branch} is not reused as a base`;
-      else if (closed && branchExisted) orphanReason = `${branch} already exists on origin and PR #${closed.number} was closed; the branch is left untouched`;
+      if (merged) {
+        orphanReason = branchExisted
+          ? `the earlier learned-skills PR #${merged.number} was merged, so ${branch} is not reused as a base`
+          : `the earlier learned-skills PR #${merged.number} was merged; entries it did not ship are staged`;
+      } else if (closed && branchExisted) orphanReason = `${branch} already exists on origin and PR #${closed.number} was closed; the branch is left untouched`;
       // No PR ever: an existing branch is this run's own (a crash between push and create) and stays the base.
     }
-    // A closed or merged PR means the branch's commits were rejected or shipped: never a base.
+    // A closed or merged PR means the branch's commits were rejected or shipped: never a base. An open
+    // PR whose branch is gone is neither reused nor duplicated.
     if (orphanReason) return downgradeAll(todo, orphanReason);
 
     // Every commit on the branch, with the run id and entry id its trailers carry.

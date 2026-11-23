@@ -782,6 +782,8 @@ test('a resumed land with no remote branch records every entry landed against th
   const first = land(landArgs(f), deps(gh.gh).deps);
   loseManifest(f);
   mergeAndDeleteBranch(f, gh);
+  // The run died before its log lines too: the merged path itself must write them.
+  fs.rmSync(path.join(f.runDir, 'decisions.md'));
   const createsBefore = creates(gh);
   const again = deps(gh.gh);
   const res = land(landArgs(f), again.deps);
@@ -797,6 +799,14 @@ test('a resumed land with no remote branch records every entry landed against th
   const m = readManifest(f.runDir);
   assert.deepEqual(m.map((e) => e.status), ['landed', 'landed']);
   assert.deepEqual(m.map((e) => e.pr.number), [77, 77]);
+  const autoLines = decisions(f).split('\n').filter((l) => l.startsWith('- AUTO'));
+  assert.equal(autoLines.length, 2, autoLines.join('\n'));
+  for (const label of ['x/SKILL.md', 'z/SKILL.md']) {
+    assert.ok(autoLines.some((l) => l.includes(`update to ${label} (adds a note) on learned-skills PR #77.`)), label);
+  }
+  // A second resume writes no AUTO line twice.
+  loseManifest(f);
+  land(landArgs(f), deps(gh.gh).deps);
   assert.equal(decisions(f).split('\n').filter((l) => l.startsWith('- AUTO')).length, 2, 'AUTO lines written once');
 });
 
@@ -806,14 +816,39 @@ test('a merged PR missing one entry\'s commit lands the others and stages only t
   land(landArgs(f), deps(gh.gh).deps);
   loseManifest(f);
   mergeAndDeleteBranch(f, gh, { drop: [idOf(f, X)] });
+  fs.rmSync(path.join(f.runDir, 'decisions.md'));
   const createsBefore = creates(gh);
   const again = deps(gh.gh);
   const res = land(landArgs(f), again.deps);
   assert.deepEqual(res.landed.map((l) => l.target), [Z]);
   assert.deepEqual(res.staged.map((s) => s.target), [X]);
-  assert.match(res.staged[0].reason, /the earlier learned-skills PR #77 was merged/);
+  assert.equal(res.staged[0].reason, 'the earlier learned-skills PR #77 was merged; entries it did not ship are staged');
+  const autoLines = decisions(f).split('\n').filter((l) => l.startsWith('- AUTO'));
+  assert.equal(autoLines.length, 1, autoLines.join('\n'));
+  assert.ok(autoLines[0].includes('update to z/SKILL.md (adds a note) on learned-skills PR #77.'), autoLines[0]);
   assert.deepEqual(pushes(again.gitCalls), []);
   assert.equal(creates(gh), createsBefore);
+});
+
+test('an open PR listed while its branch is gone stages every entry and opens no second PR', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  loseManifest(f);
+  sh(f.origin, ['update-ref', '-d', `refs/heads/${BRANCH}`]);
+  gh.state.prs = [{ number: 77, url: 'https://github.com/o/r/pull/77', state: 'OPEN' }];
+  const createsBefore = creates(gh);
+  const again = deps(gh.gh);
+  const res = land(landArgs(f), again.deps);
+  assert.deepEqual(res.landed, []);
+  assert.equal(res.staged.length, 2);
+  for (const s of res.staged) {
+    assert.equal(s.reason, `open PR #77 (https://github.com/o/r/pull/77) is listed for ${BRANCH}, but the branch is gone from origin; no second PR is opened beside it`);
+  }
+  assert.equal(res.pr, null);
+  assert.deepEqual(pushes(again.gitCalls), []);
+  assert.equal(creates(gh), createsBefore);
+  assert.equal(remoteBranch(f), null, 'the branch is not re-created');
 });
 
 test('with no remote branch and no PR, land builds fresh commits and opens a new PR', (t) => {
