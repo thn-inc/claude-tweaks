@@ -75,16 +75,16 @@ Check B hit `plugin/skills/_shared/autonomy-ceiling.md` (its ceiling table descr
 test('AC1.1 (a): unset + autonomy unattended derives true', () => {
   assert.deepStrictEqual(resolvePolicyKeys([K], { policyRaw: 'autonomy: unattended\n' })[K], { value: true, source: 'default' });
 });
-test('AC1.1 (b) AC3.2: unset + autonomy trusted derives false', () => { /* policyRaw 'autonomy: trusted\n' -> { value: false, source: 'default' } */ });
-test('AC1.1 (c) AC3.2: unset + autonomy supervised derives false', () => { /* 'autonomy: supervised\n' -> false/default */ });
+test('AC1.1 (b) AC4.2: unset + autonomy trusted derives false', () => { /* policyRaw 'autonomy: trusted\n' -> { value: false, source: 'default' } */ });
+test('AC1.1 (c) AC4.2: unset + autonomy supervised derives false', () => { /* 'autonomy: supervised\n' -> false/default */ });
 test('AC1.1 (d): unset + unattended with control-mode: on derives false', () => { /* 'autonomy: unattended\ncontrol-mode: on\n' -> false/default */ });
-test('AC2.1 (a) AC3.2: explicit false at unattended wins', () => { /* 'learned-skills-auto-merge: false\nautonomy: unattended\n' -> { value: false, source: 'policy' } */ });
-test('AC2.1 (b) AC3.2: explicit true at supervised wins', () => { /* 'learned-skills-auto-merge: true\nautonomy: supervised\n' -> { value: true, source: 'policy' } */ });
+test('AC2.1 (a) AC4.2: explicit false at unattended wins', () => { /* 'learned-skills-auto-merge: false\nautonomy: unattended\n' -> { value: false, source: 'policy' } */ });
+test('AC2.1 (b) AC4.2: explicit true at supervised wins', () => { /* 'learned-skills-auto-merge: true\nautonomy: supervised\n' -> { value: true, source: 'policy' } */ });
 test('explicit true under control-mode: on wins (#580)', () => { /* '...: true\nautonomy: unattended\ncontrol-mode: on\n' -> true/policy */ });
 test('a run-config control-mode: on does not veto (control-mode is policyOnly)', () => { /* policyRaw unattended, runConfigRaw 'control-mode: on\n' -> true/default */ });
 test('a factory control-mode: on does not veto (control-mode is factory-refused)', () => { /* policyRaw unattended, factoryRaw 'control-mode: on\n' -> true/default */ });
-test('AC3 (a): a run-config value never sets the key (policyOnly)', () => { /* policyRaw supervised, runConfigRaw '...: true\n' -> false/default */ });
-test('AC3 (b): a run-config autonomy: unattended never turns the default on', () => { /* policyRaw 'autonomy: supervised\n', runConfigRaw 'autonomy: unattended\n' -> false/default */ });
+test('AC3.1 (a): a run-config value never sets the key (policyOnly)', () => { /* policyRaw supervised, runConfigRaw '...: true\n' -> false/default */ });
+test('AC3.1 (b): a run-config autonomy: unattended never turns the default on', () => { /* policyRaw 'autonomy: supervised\n', runConfigRaw 'autonomy: unattended\n' -> false/default */ });
 test('set-but-invalid at unattended keeps invalid: true and derives true', () => { /* '...: maybe\nautonomy: unattended\n' -> { value: true, source: 'default', invalid: true } */ });
 ```
 
@@ -113,7 +113,7 @@ Expected: PASS (these fail until the doc row exists — do Step 5 first if namin
   - policyOnly lists in `policy-schema-coverage.md:102` and `docs/journeys/resolve-a-policy-key.md:48`.
   - Byte check: `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,600; then `node plugin/bin/context-cost-report.js --plugin-root plugin` shows no rail breach (Gotcha verify step).
 
-- [ ] **Step 6: Go-red controls (AC3.1)** — in the worktree, temporarily replace `=== 'unattended'` with `=== 'never'` in the derive function: AC1.1 (a) must fail. Restore. Temporarily drop the `&& ... !== 'on'` clause: AC1.1 (d) must fail. Restore. Temporarily make the autonomy read's skip `() => false` (run-config consulted): AC3 (b) must fail. Restore. Record all three outputs (test name + `not ok`) in the task report.
+- [ ] **Step 6: Go-red controls (AC4.1)** — in the worktree, temporarily replace `=== 'unattended'` with `=== 'never'` in the derive function: AC1.1 (a) must fail. Restore. Temporarily drop the `&& ... !== 'on'` clause: AC1.1 (d) must fail. Restore. Temporarily make the autonomy read's skip `() => false` (run-config consulted): AC3.1 (b) must fail. Restore. Record all three outputs (test name + `not ok`) in the task report.
 
 - [ ] **Step 7: Run the impacted tests again** (Step 4 command plus `tests/context-cost.test.js` and any `rail:` suite touching `_shared/`): PASS.
 
@@ -140,11 +140,11 @@ git commit -m "Add the learned-skills-auto-merge policy key — derived true onl
   - Why `unattended` alone turns the default on: the setting is the maintainer's own consent to unreviewed merges; `control-mode: on` vetoes an unset default; an explicit key always wins.
   - "Green" = every check on the PR head completed successfully; no checks, only skipped checks, or pending checks count as not green.
   - A bad merge is undone with `git revert` of its squash commit.
-- [ ] **Step 3: Verify (AC4.1)** — `grep -c "#5290\|#6088" docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` ≥ 2, and run `node --test tests/` suites matching `decisions` / `adr` if any (`git grep -l "docs/decisions" -- tests`).
+- [ ] **Step 3: Verify (AC5.1)** — `grep -c "#5290\|#6088" docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` ≥ 2, and run `node --test tests/` suites matching `decisions` / `adr` if any (`git grep -l "docs/decisions" -- tests`).
 - [ ] **Step 4: Commit** — `git commit -m "Record the learned-skills review-floor reversal in an ADR — refs #6109"`
 
-### Final verification (AC5.1)
+### Final verification (AC6.1)
 
-Waived AC3.1: proven by Task 1 Step 6's go-red mutation controls (a revert-and-observe proof, not a committed test); the implementer quotes all three failing outputs in its report.
+Waived AC4.1: the seen-failing clause is proven by Task 1 Step 6's go-red mutation controls (a revert-and-observe proof, not a committed test); the implementer quotes all three failing outputs in its report.
 
-Waived AC5.1: `npm test -- --full` is run by the build's Common Step 5 / `/claude-tweaks:test` runner, not by a task.
+Waived AC6.1: `npm test -- --full` is run by the build's Common Step 5 / `/claude-tweaks:test` runner, not by a task.
