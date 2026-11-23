@@ -1,6 +1,6 @@
 # Pipeline economy — Phase 7 driver admission trial
 
-Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: verdict rule committed; trial values on `main`; candidate list frozen; no record driven yet.
+Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: paused on #6162 since 2026-11-23T16:17Z. Five frozen records handled, none driven to a PR (0 of 20).
 
 ## Verdict rule
 
@@ -230,13 +230,32 @@ Written before the first driven record. None of this changes the verdict rule ab
 - **Skips.** A frozen record that is no longer admitted when its turn comes (an open PR appeared, a blocker opened, a claim is contested, its labels changed) is listed under Replaced with the reason `drive.js` gave, and the next record on the list takes its place. Other sessions' dispatch drains run under the same policy and may take frozen records first.
 - **Review reports.** Each driven PR's two reports are saved under `docs/superpowers/specs/phase-7-trial-reviews/` as the verdict rule names them.
 
+## Trial paused: the driver's test step is red for a reason outside the records (#6162)
+
+Paused 2026-11-23T16:17Z, after the first two records the driver took both stopped at its test step.
+
+Two tests on `main` pass only when `gh` has credentials: `tests/bin-lib/hooks/reconcile-background.test.js:182` and `tests/console-execute.test.js:944`. The driver runs its test step with an empty `GH_CONFIG_DIR` and no token, so any record whose impact selection includes either file stops as `red tests`, whatever it changed. CI sets `GH_TOKEN` and passes. On `main` at `4c6072baac`, the two files give 112 of 112 passing in the normal environment and 110 of 112 without credentials; the whole suite without credentials gives 35,690 passing, 2 failing and 20 skipped of 35,712.
+
+- #3822 was stopped by exactly these two tests. Its change touched neither file, and its relaunch prompt lists both as the failing files.
+- #4617 had `reconcile-background.test.js` among the four failing files of its first run. What its second run failed on cannot be read back: the driver removed the worktree that held the report.
+
+Driving on would escalate more frozen records to the standard lane for the same reason, so no further record is driven until #6162 is fixed on `main`. The two stops stay under Replaced, as the verdict rule says; both are attributed to #6162 there, and neither says anything about the admission values.
+
 ## Driven records
 
-Pending.
+None yet (0 of 20).
 
 ## Replaced
 
-None yet.
+In the order handled. "Not admitted at its turn" rows cost nothing: `drive.js --check` refused them and `drive.js` was not run.
+
+| List # | Record | Size | Risk | Widened by | What happened | Minutes | Implementer cost | Run |
+|---|---|---|---|---|---|---|---|---|
+| 1 | #4617 | medium | medium | risk, ceremony, protected-path | Stopped before its PR: `express-escalated` at the test step, `red tests; after one relaunch (red-tests, standard to capable)`. See #6162. The record carries the driver's escalation comment, which keeps the driver from taking it again until the comment is deleted. | 9.6 | $0.97 | `2026-11-23T160121-drive-4617` |
+| 2 | #6143 | medium | medium | risk, protected-path | Not admitted at its turn: `record has an open PR` (#6157, another session's dispatch run). | | | |
+| 3 | #6145 | medium | low | ceremony | Not admitted at its turn: `record has an open PR` (#6158, another session's dispatch run). | | | |
+| 4 | #6146 | medium | low | ceremony | Not admitted at its turn: `record has an open PR` (#6159, another session's dispatch run). | | | |
+| 5 | #3822 | low | low | protected-path | Stopped before its PR: `express-escalated` at the worker step. The first run's tests were red on the two #6162 tests alone, and the relaunched worker reported it could not fix them inside the Key Files. The escalation comment failed to post (a GitHub GraphQL error), so the record carries no escalation marker. | 4.4 | $0.38 | `2026-11-23T161206-drive-3822` |
 
 ## Guard results
 
