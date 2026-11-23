@@ -13,10 +13,10 @@ files:
 
 # Replay Archived Lens Reviews Across Tiers
 
-**Persona:** a maintainer who wants to change which model tier or effort `/review`'s lens reviewers run at (a cheaper tier, a lower effort, a reworded lens prompt). They need to know what the change does to the findings before it ships, and they want a measurement over real past reviews, not a guess.
-**Goal:** rerun archived lens reviewer dispatches in clean repositories at one or more arms (tier and effort), then get, per lens, how many of the review's confirmed findings each arm raised, how its rows relate to the archived reviewers' rows, and what the control arm says about how reproducible a reviewer is.
+**Persona:** a maintainer who wants to change which model tier or effort `/review`'s lens reviewers run at (a cheaper tier, a lower effort, a reworded lens prompt). The same maintainer may instead be deciding whether SDD's task reviews or whole-branch review earn their cost, and then replays those reviewers (the task and whole-branch section below). They need to know what the change does to the findings before it ships, and they want a measurement over real past reviews, not a guess.
+**Goal:** rerun archived lens reviewer dispatches in clean repositories at one or more arms (tier and effort), then get, per lens, how many of the review's confirmed findings each arm raised, how its rows relate to the archived reviewers' rows, and what the control arm says about how reproducible a reviewer is. For the task and whole-branch roles, get the share of the archived items each arm raised, and for `task-vs-branch` the share of a task review's located findings a whole-branch review raised (`caught`) beside its final-head control (`baselineRecall`).
 **Entry point:** `node tools/review-replay.js extract-reviews --runs .claude-tweaks/pipelines --out <dir> --role lens --transcripts <claude projects dir> --arm name=haiku,profile=fast,repeat=1`, run in the main checkout, where the archived run directories live.
-**Success state:** `score-reviews` exits 0. That means every replayed reviewer produced a reply that parsed as a lens report. The maintainer posts, per lens, the arm's confirmed recall, its `new` rows and its agreement with the reference arm, each set beside `control`'s `fidelity`.
+**Success state:** `score-reviews` exits 0. That means every replayed reviewer produced a reply that parsed as its role's report. The maintainer posts, per lens, the arm's confirmed recall, its `new` rows and its agreement with the reference arm, each set beside `control`'s `fidelity`; for `task-vs-branch`, `caught` beside `baselineRecall`, with the extract's exclusion counts.
 
 ## Steps
 

@@ -1,6 +1,6 @@
 ---
 name: regex-scan-linearity
-description: Use when writing or changing a regex or hand-written scan in plugin/bin/ that runs over text of unbounded length — a decision-log line, a commit message, a repo source file, a Bash command — or a grammar shared between a writer and a reader. Covers probing the adversarial inputs before review, the three super-linear shapes this repo has hit and their fixes, and pinning linearity in perf/ rather than tests/. Keywords - regex, linear, quadratic, backtracking, ReDoS, lookbehind, tempered token, perf/, linearity budget, npm run test:perf, wall-clock-budget-conformance.
+description: Use when writing or changing a regex or hand-written scan in plugin/bin/ or a maintainer tool under tools/ that runs over text of unbounded length — a decision-log line, a commit message, a repo source file, a Bash command, an archived prompt or reply — or a grammar shared between a writer and a reader. Covers probing the adversarial inputs before review, the three super-linear shapes this repo has hit and their fixes, and pinning linearity in perf/ rather than tests/. Keywords - regex, linear, quadratic, backtracking, ReDoS, lookbehind, tempered token, perf/, linearity budget, npm run test:perf, wall-clock-budget-conformance.
 ---
 
 # Regex scan linearity
