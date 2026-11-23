@@ -100,6 +100,9 @@ function startEffort({ risk, launchEffort } = {}) {
 }
 
 function nextAttempt({ profile, effort, escalations, trigger, resolveProfile } = {}) {
+  if (typeof profile !== 'string' || !Object.hasOwn(PROFILES, profile)) {
+    throw new Error(`implementer-tier: unknown profile ${describe(profile)}`);
+  }
   if (!TRIGGERS.includes(trigger)) {
     throw new Error(`implementer-tier: unknown trigger ${describe(trigger)} — expected ${TRIGGERS.join(', ')}`);
   }

@@ -157,9 +157,28 @@ test('nextAttempt is null at capable and when the step-up resolves to the same m
   assert.strictEqual(nextAttempt({ profile: 'standard', effort: 'medium', escalations: 1, trigger: 'red-tests', resolveProfile: same }), null);
 });
 
-test('nextAttempt refuses bad input', () => {
+test('nextAttempt refuses bad input with a per-case message', () => {
   const ok = { profile: 'standard', effort: 'low', escalations: 0, trigger: 'red-tests', resolveProfile };
-  for (const bad of [{ trigger: 'red' }, { escalations: 3 }, { escalations: -1 }, { escalations: 1.5 }, { effort: 'extreme' }, { resolveProfile: undefined }]) {
-    assert.throws(() => nextAttempt({ ...ok, ...bad }), /^Error: implementer-tier: /, JSON.stringify(bad));
+  const cases = [
+    [{ trigger: 'red' }, /^Error: implementer-tier: unknown trigger "red"/],
+    [{ escalations: 3 }, /^Error: implementer-tier: invalid escalations 3/],
+    [{ escalations: -1 }, /^Error: implementer-tier: invalid escalations -1/],
+    [{ escalations: 1.5 }, /^Error: implementer-tier: invalid escalations 1\.5/],
+    [{ effort: 'extreme' }, /^Error: implementer-tier: unknown effort "extreme"/],
+    [{ resolveProfile: undefined }, /^Error: implementer-tier: resolveProfile must be a function/],
+    [{ profile: 'bogus' }, /^Error: implementer-tier: unknown profile "bogus"/],
+    [{ profile: undefined }, /^Error: implementer-tier: unknown profile undefined/],
+  ];
+  for (const [bad, re] of cases) assert.throws(() => nextAttempt({ ...ok, ...bad }), re, JSON.stringify(bad));
+});
+
+test('an input effort above the cap takes the profile step, never a rung above high', () => {
+  for (const effort of ['xhigh', 'max']) {
+    assert.deepStrictEqual(step({ profile: 'standard', effort, escalations: 0, trigger: 'red-tests' }), { profile: 'capable', effort: 'medium', escalations: 1 });
   }
+});
+
+test('a step-up target with a null launchEffort returns effort null', () => {
+  const rp = (n) => (n === 'capable' ? { model: 'opus', launchEffort: null } : TABLE[n]);
+  assert.deepStrictEqual(nextAttempt({ profile: 'standard', effort: 'high', escalations: 0, trigger: 'blocked', resolveProfile: rp }), { profile: 'capable', effort: null, escalations: 1 });
 });
