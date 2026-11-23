@@ -79,7 +79,7 @@ From `.claude/skills/skill-prose-conformance-tests/SKILL.md`:
   - `nextAttempt({ profile, effort, escalations, trigger, resolveProfile }) → { profile, effort, escalations } | null`, where `resolveProfile(profileName) → { model: string|null, launchEffort: string|null }`.
 - Consumes: `stepUp` (same module), `EFFORT_SCALE` (`./profiles`).
 
-Rules (the spec's Deliverables 1-2, exactly):
+Rules (the spec's Deliverables 1-2, exactly; Deliverable 2's signature — with `trigger`, returning `escalations` — supersedes the shorter `nextAttempt({ profile, effort, escalations, resolveProfile }) → { profile, effort }` line in the spec's Data / API Surface, which predates it; a step-up's effort is the new profile's own resolved `launchEffort`, never re-derived from `risk`):
 - `startEffort`: `null` when `launchEffort` is `null`/`undefined`. Otherwise `base` = `launchEffort` clamped to `high` (`xhigh`/`max` → `high`). `risk: 'low'` → the lower of `low` and `base`; `risk: 'medium'` → the lower of `medium` and `base`; any other risk → `base`. A `launchEffort` outside `EFFORT_SCALE` throws `implementer-tier: unknown launchEffort …` (this module never falls back).
 - `nextAttempt`: throws (message prefixed `implementer-tier: `, value through `describe`) on a `trigger` not in `TRIGGERS`, `escalations` not a safe integer in 0..2, an `effort` that is neither `null` nor in `EFFORT_SCALE`, or a non-function `resolveProfile`. Returns `null` when `escalations >= 2`. With `escalations === 0`, trigger `red-tests`/`fix-round-failed`, and `effort` not `null` and below `high`: `{ profile, effort: <next EFFORT_SCALE level>, escalations: 1 }` (no `resolveProfile` call). Otherwise: `to = stepUp(profile)`; `null` → `null`; when `resolveProfile(to).model === resolveProfile(profile).model` → `null`; else `{ profile: to, effort: <resolveProfile(to).launchEffort clamped to high, null stays null>, escalations: escalations + 1 }`.
 
@@ -111,6 +111,7 @@ Rules (the spec's Deliverables 1-2, exactly):
 ### Task 2: The CLI's `startEffort` and `next`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/implementer-tier.js`
@@ -119,24 +120,26 @@ Rules (the spec's Deliverables 1-2, exactly):
 
 **Interfaces:**
 - Consumes: Task 1's `startEffort`, `nextAttempt`, `TRIGGERS`; `resolve` (`./lib/model-profiles/profiles`); `locatePolicyFile` (`./lib/policy-file`); `parsePolicyModelConfig` (`./lib/model-profiles/policy-fragment`) — the same policy read `plugin/bin/resolve-profile.js` lines 69-75 do, so the CLI's efforts equal what `resolve-profile.js {profile}` returns as `launchEffort` for the SDD dispatch.
-- Produces: stdout JSON `{ profile, stepUp, rule, size, keyFileCount, startEffort, next }` (existing five keys first, unchanged). `next` is `null` or `{ profile, effort, escalations }`.
+- Produces: stdout JSON `{ profile, stepUp, rule, size, keyFileCount, startEffort, next, ladder }` (existing five keys first, unchanged). `next` is `null` or `{ profile, effort, escalations }`. `ladder` is `true` exactly when `rule` is `record` and the resolved `model-effort` is `profile` — the effort ladder is active — and `false` otherwise; it is what Task 5 gates on, never `startEffort`, which is also `null` for a Fast profile under an active ladder.
 
 Rules:
 - New flags `--attempt-profile <profile>`, `--attempt-effort <low|medium|high|inherit>` (`inherit` = `null`), `--escalations <0|1|2>`, `--trigger <red-tests|fix-round-failed|blocked|cannot-complete>`: all four or none, else exit 2 naming the missing ones; an invalid value is exit 2. USAGE line and header comment updated.
 - `risk` is read from the spec header like `size` (same `headerLines`), but never errors: zero lines, two or more lines, or a value outside `low|medium|high` → missing.
 - `startEffort` = `startEffort({ risk, launchEffort: resolve(p, { policy }).launchEffort })` where `p` is `--from`'s profile when given (a `**Role:**` marker's task, spec Decisions Reading A), else the computed `profile`; `null` when `p` is null. Under `model-effort: inherit` (or unset) `launchEffort` is `null`, so `startEffort` is `null`.
-- `next` = `null` without the four flags, and `null` whenever `startEffort` would be `null` because `model-effort` is not `profile` (spec: "under `model-effort: inherit` both are `null`"); otherwise `nextAttempt({ profile: attemptProfile, effort: attemptEffort, escalations, trigger, resolveProfile: (p) => { const r = resolve(p, { policy }); return { model: r.model, launchEffort: r.launchEffort }; } })`.
+- `ladder` = `rule === 'record' && <resolved model-effort> === 'profile'`.
+- `next` = `null` without the four flags, and `null` whenever `ladder` is `false` (spec: "under `model-effort: inherit` both are `null`"); otherwise `nextAttempt({ profile: attemptProfile, effort: attemptEffort, escalations, trigger, resolveProfile: (p) => { const r = resolve(p, { policy }); return { model: r.model, launchEffort: r.launchEffort }; } })`.
 - An unreadable or malformed `policy.yml` → exit 1 with the parse message (mirrors resolve-profile.js); a missing one → empty policy (read with `readFileSync`, `ENOENT` → none; no `existsSync`).
 
 - [ ] **Step 1: Write the failing tests** (append to the CLI test file; reuse its spec-file and policy fixtures; where the file has no policy fixture, write a `policy.yml` into the scratch cwd the test already passes through deps):
   - `AC1.1 (CLI): startEffort under model-effort profile follows risk` — policy `model-effort: profile` + `model-profiles: { standard: { effort: medium } }`, `--rule record`, spec `size: medium` + 3 Key Files: `risk: low` → `startEffort: 'low'`; `risk: medium` → `'medium'`; no risk line → `'medium'`.
-  - `AC1.2 (CLI): model-effort inherit gives null startEffort and null next, the rest unchanged` — same spec without `model-effort`; with all four attempt flags: `{ profile: 'standard', stepUp: 'capable', rule: 'record', size: 'medium', keyFileCount: 3, startEffort: null, next: null }` exactly.
+  - `AC1.2 (CLI): model-effort inherit gives null startEffort and null next, the rest unchanged` — same spec without `model-effort`; with all four attempt flags: `{ profile: 'standard', stepUp: 'capable', rule: 'record', size: 'medium', keyFileCount: 3, startEffort: null, next: null, ladder: false }` exactly.
+  - `ladder is true for a Fast build under record + profile` — policy `model-effort: profile`, `--rule record`, spec `size: low` + 1 Key File (Fast): `startEffort: null`, `ladder: true`; with `--attempt-profile fast --attempt-effort inherit --escalations 0 --trigger red-tests` → `next` `{ profile: 'standard', effort: 'medium', escalations: 1 }`; under `--rule lane` with the same policy → `ladder: false`.
   - `AC2.1 (CLI): next takes the effort rung` — `--attempt-profile standard --attempt-effort low --escalations 0 --trigger red-tests` → `next` `{ profile: 'standard', effort: 'medium', escalations: 1 }`.
   - `AC3.1 (CLI): next for blocked is the profile step` — `--attempt-effort low --escalations 0 --trigger blocked` → `{ profile: 'capable', effort: 'medium', escalations: 1 }`.
   - `Decision Q1 (Reading A, CLI): --from sets the profile startEffort is computed against` — `model-effort: profile`, `risk: low`, build profile `standard`: `--from fast` → `startEffort: null` (Fast's `launchEffort` is `null`); `--from capable` with `model-profiles: { capable: { effort: high } }` and `risk: medium` → `'medium'`; `--from capable` with `risk: high` → `'high'`; `profile` and `keyFileCount` unchanged by `--from`.
-  - `public-contract: the five existing keys keep their order and values` — `Object.keys(out).slice(0, 5)` equals `['profile', 'stepUp', 'rule', 'size', 'keyFileCount']` and the last two keys are `['startEffort', 'next']`.
+  - `public-contract: the five existing keys keep their order and values` — `Object.keys(out).slice(0, 5)` equals `['profile', 'stepUp', 'rule', 'size', 'keyFileCount']` and the last three keys are `['startEffort', 'next', 'ladder']`.
   - `the attempt flags are all-or-none` — three of four → exit 2; `--escalations 3` → exit 2; `--attempt-effort xhigh` → exit 2.
-  - Update line 125's expected object with `startEffort: null, next: null`.
+  - Update line 125's expected object with `startEffort: null, next: null, ladder: false`.
 
 - [ ] **Step 2: Run to verify they fail** — `node --test tests/bin-lib/model-profiles/implementer-tier-cli.test.js` → FAIL on the new tests.
 
@@ -146,7 +149,7 @@ Rules:
 
 - [ ] **Step 5: Commit** — `Report startEffort and the next attempt from implementer-tier.js — refs #6002`.
 
-Proof(public-contract): the CLI test pins the five pre-existing output keys first, in order and with unchanged values, the two new keys appended last, and the exact pre-change object plus `startEffort: null, next: null` under `model-effort: inherit`, so no existing consumer of the JSON sees a changed or reordered field.
+Proof(public-contract): the CLI test pins the five pre-existing output keys first, in order and with unchanged values, the three new keys appended last, and the exact pre-change object plus `startEffort: null, next: null, ladder: false` under `model-effort: inherit`, so no existing consumer of the JSON sees a changed or reordered field.
 
 ---
 
@@ -174,7 +177,7 @@ Proof(public-contract): the CLI test pins the five pre-existing output keys firs
 
 Rules:
 - `workerStep`: under `effortLadder`, after `profile` resolves, `effort = startEffort({ risk: parseRecordFacets(ctx.issue.labels).risk, launchEffort: roleLaunch('implementer', policy, { profile }).effort })` (a `roleLaunch` throw here is the same no-line refusal as a launch-time model refusal); pass it to `runImplementer`. Not under the ladder: pass no `effort` (today's behavior byte-for-byte).
-- `fixWorkerLaunch`: under `rule === 'record'` pass `effort: ctx.implementer.effort` beside `profile`; under `lane` pass neither.
+- `fixWorkerLaunch`: under `effortLadder(policy)` pass `effort: ctx.implementer.effort` beside `profile`; under `record` + inherit pass `profile` only (no `effort` key, so `launchTracked` keeps `roleLaunch`'s effort byte-for-byte, as the Step 1 characterization test pins); under `lane` pass neither.
 - The worker line's `effort` field already carries `launch.effort`; nothing new on the line in this task.
 
 - [ ] **Step 1: Characterization first (established maturity)** — add `#6002 characterization: record + inherit launch opts are unchanged` to run.test.js: under `RECORD_TIER` with `model-effort` unset, capture the first implementer launch's `{ model, effort }` and the fix round's (use `fixRig` with `RECORD_TIER`), assert `effort === null`/undefined as today. Run it — PASS on the unmodified code.
@@ -219,7 +222,7 @@ Rules:
 - Produces: `planRelaunch({ profile, model, effort, escalations, trigger, policy, ladder }, { roleLaunchFn })` → `{ relaunch: true, to, effort, escalations } | { relaunch: false, noRelaunch, note }` (throws the DRIVER_MODEL_REFUSED refusal as today on a `stepUp` throw).
 
 Rules:
-- `ladder` false (record + inherit): `planRelaunch` behaves exactly as today (one profile step; `effort` absent from the result); `relaunchOrStop` keeps its one-shot guard. Every existing `#5997` test passes unmodified.
+- `ladder` false (record + inherit): `planRelaunch` behaves exactly as today (one profile step; `effort` and `escalations` absent from the result); `relaunchOrStop` keeps its one-shot `ctx.relaunch` guard and never reads `ctx.implementer.escalations`; the relaunch's `setImplementer` records `escalations: 1` itself (no `nextAttempt` output to copy), so `ctx.implementer.escalations` is never `undefined` after a launch. Every existing `#5997` test passes unmodified.
 - `ladder` true: `planRelaunch` calls `nextAttempt` with `resolveProfile = (p) => { try { const l = roleLaunchFn('implementer', policy, { profile: p }); return { model: l.model, launchEffort: l.effort }; } catch (_) { return { model: null, launchEffort: null }; } }` (an unresolvable step-up then plans a relaunch whose own launch refuses, Decision Q2 as today). `null` → `noRelaunch: 'no-step-up'` when `stepUp(profile)` is `null`, else `'clamped'`, with today's note texts.
 - Guard: under the ladder `relaunchOrStop` queues while `ctx.implementer.escalations < 2`; the queued relaunch worker step (its `cannot-complete` stop) and the queued relaunch test step (its `failing-test` stop) are triggers under the ladder when `ctx.implementer.escalations === 1` — i.e. the second relaunch; after attempt 3 nothing queues. Under `lane`/inherit the queued steps stay never-triggers.
 - `ctx.relaunch` keeps today's fields for the current relaunch and adds `effort` (the relaunch's), `escalations` (1 or 2) and `history: [{ trigger, from, to }]`; `firstChangedFiles` before the second relaunch is the union so far (first commit's paths, then the relaunch commit's new ones).
@@ -257,6 +260,7 @@ Rules:
 ### Task 5: The standard lane's ladder in `build/dispatch.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/dispatch.md` (line 14's `Implementer profile (#5999)` paragraph)
@@ -265,18 +269,19 @@ Rules:
 - Test: `tests/build-implementer-tier-conformance.test.js`; check `tests/dispatch-no-stash-conformance.test.js` (pins `implementer-tier.js --spec-file` on the same paragraph) stays green.
 
 **Interfaces:**
-- Consumes: Task 2's CLI flags and JSON keys (`startEffort`, `next`, `--attempt-profile`, `--attempt-effort`, `--escalations`, `--trigger`).
+- Consumes: Task 2's CLI flags and JSON keys (`startEffort`, `next`, `ladder`, `--from`, `--attempt-profile`, `--attempt-effort`, `--escalations`, `--trigger`).
 
 Rules — the prose (dispatcher voice, the paragraph's existing style):
 1. The profile log line becomes `` `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}) effort {startEffort}. Reversibility: n/a.` `` with "`{startEffort}` is `inherit` when `null`" (AC6.1).
 2. A new sentence block `**Effort ladder (#6002).**` placed after the `**Escalation (#5999).**` paragraph's last sentence, before `**Child-prompt _shared bundle (#4359).**`:
-   - Applies when the CLI's `rule` is `record`, no `profile=` token (or its `tier=` alias) was given, and `startEffort` is not `null` (`model-effort: profile`); it then replaces the #5999 escalation; with `startEffort` `null`, #5999's paragraph applies unchanged.
+   - Applies when the CLI's `rule` is `record`, no `profile=` token (or its `tier=` alias) was given, and the CLI's `ladder` is `true` (`model-effort: profile`); it then replaces the #5999 escalation; with `ladder` `false`, #5999's paragraph applies unchanged. A Fast build under an active ladder has `startEffort` `null` and still climbs it (its first escalation is the profile step).
    - Every per-task implementer dispatch sets the Agent tool's `effort` parameter to `startEffort`, per `_shared/subagent-dispatch-core.md`'s Dispatching rule (#5941). A `**Role:**` marker's task starts from the marker's own profile instead (spec Decisions, Reading A): its effort is the `startEffort` of a second call, the same arguments plus `--from {marker profile}` (Task 2: `--from` sets the profile `startEffort` is computed against), never the build profile's — so a Fast marker starts with no effort (no `effort` parameter, no effort rung, its first escalation the profile step) and a Capable marker at its risk-allowed level capped at Capable's own effort.
    - Same two triggers as #5999 (`blocked`: a `STATUS: BLOCKED` reply; `fix-round-failed`: the re-review of the task's first fix round fails); same fresh-implementer rule.
    - The next attempt is the `next` of a second call, pinned whole: `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}" --attempt-profile {profile} --attempt-effort {effort} --escalations {n} --trigger {trigger}` (plus `--run "$PIPELINE_RUN_DIR"` when set), `{profile}`/`{effort}` the task's current attempt (`inherit` for no effort), `{n}` the count of the task's `task {k} implementer escalated` lines in `decisions.md` (no run dir: SDD's `progress.md`); its model via `resolve-profile.js {next.profile}`, its `effort` parameter `next.effort` (none when `null`).
    - At most two escalations per task; a `null` `next` (two escalations, no step-up, or a step-up to the same model) gets SDD's own handling at the task's last profile and effort, as do fix rounds after an escalation.
-   - Log each: `` `AUTO {time} — task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger}). Reversibility: n/a.` `` (AC6.2); no line for a `null` `next` (AC6.3).
-3. handoff-template.md lines 56-57: the profile line gains ` effort {startEffort}`; add the ladder's escalation-line shape beside the #5999 one.
+   - Log each: `` `AUTO {time} — task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger}). Reversibility: n/a.` `` (AC6.2); a `null` effort renders as `inherit` on either side (`fast@inherit`), the same token `--attempt-effort` takes, since the task's current `{effort}` is read back from its latest escalation line; no line for a `null` `next` (AC6.3).
+   - A task whose profile a `**Role:**` marker set also logs, at its first dispatch, `` `AUTO {time} — task {k} implementer start {profile}@{effort} (role: {role}). Reversibility: n/a.` `` (`inherit` for a `null` effort), so the done-when can attribute its start effort from run logs alone (plan review, settled after an answered round: Reading B); a task on the build's own profile logs no start line — the per-build `implementer profile` line covers it.
+3. handoff-template.md lines 56-57: the profile line gains ` effort {startEffort}`; add the ladder's escalation-line shape and the marker task's start-line shape beside the #5999 one.
 
 - [ ] **Step 1: Write the failing tests** — in `tests/build-implementer-tier-conformance.test.js`, update `PROFILE_LINE` to the new literal; add patterns (each a `lit(...)` of one exact phrase, each matching exactly once in `DISPATCH`), with fact names carrying clause ids:
   - the ladder CLI call literal above → `'AC2.1 AC3.1 (lane): names the next-attempt CLI call'`
@@ -285,7 +290,9 @@ Rules — the prose (dispatcher voice, the paragraph's existing style):
   - "At most two escalations per task" → `'AC6.3: at most two escalations'`
   - the marker clause "plus `--from {marker profile}`" in the Effort ladder block → `'Decision Q1: a Role-marker task starts at its own profile's startEffort'`
   - "a `null` `next`" clause → `'AC6.3: past the ladder, SDD's own handling'`
-  - "`startEffort` is not `null`" gate → `'AC5.1 (lane): inherit keeps #5999'`
+  - "the CLI's `ladder` is `true`" gate → `'AC5.1 (lane): inherit keeps #5999'`
+  - "renders as `inherit` on either side" → `'AC6.2: a null effort renders as inherit'`
+  - the marker task's `task {k} implementer start {profile}@{effort} (role: {role})` line → `'Deliverable 6: a Role-marker task logs its start effort'`
   - `"{startEffort}` is `inherit` when `null`" → `'AC6.1: inherit printed for null'`
   The existing `assertEachPatternGoesRed` test then proves each new fact goes red alone.
   Add `AC6.1: handoff-template names the effort on the profile line` (a `missingFactsOf` over handoff-template.md with the two line shapes) and a go-red control per fact via `assertEachPatternGoesRed`.
