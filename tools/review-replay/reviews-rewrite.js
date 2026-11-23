@@ -60,9 +60,11 @@ function rangeOf(text) {
   return { base: baseMatch ? baseMatch[1] : null, head: headMatch ? headMatch[1] : null };
 }
 
+// The origin/{name} refs a text names, once each. A ref ends at a `..` or `...` range (no git ref name holds `..`), or
+// before a space, quote, backtick, paren, comma or the end.
 function originRefsOf(text) {
   const out = [];
-  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.\.|[\s`'"),]|$)/g)) {
+  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),]|$)/g)) {
     if (!out.includes(m[1])) out.push(m[1]);
   }
   return out;

@@ -429,11 +429,19 @@ function extractReviews(opts, deps) {
     bump(perLens, s.lens);
     return true;
   });
-  // The lens role counts slots per lens; a branch role per archived tier.
+  // The lens role counts slots per lens; task and whole-branch per archived tier; task-vs-branch counts task reviews
+  // (its task-head slots) per task-review tier, each beside its final-head control slot.
   const by = {};
-  for (const s of slots) bump(by, role.kind === 'lens' ? s.lens : s.archivedTier);
-  const totals = { reviews: slots.length, [role.kind === 'lens' ? 'byLens' : 'byArchivedTier']: by, ...(hasOwn(c, 'notQualifying') ? { notQualifying: c.notQualifying } : {}) };
-  if (slots.length === 0 || (requested.minReviews !== undefined && slots.length < requested.minReviews)) {
+  let totals;
+  if (role.key === 'task-vs-branch') {
+    const heads = slots.filter((s) => s.at === 'task-head');
+    for (const s of heads) bump(by, s.taskTier);
+    totals = { reviews: heads.length, slots: slots.length, byTaskTier: by, notQualifying: c.notQualifying };
+  } else {
+    for (const s of slots) bump(by, role.kind === 'lens' ? s.lens : s.archivedTier);
+    totals = { reviews: slots.length, [role.kind === 'lens' ? 'byLens' : 'byArchivedTier']: by };
+  }
+  if (slots.length === 0 || (requested.minReviews !== undefined && totals.reviews < requested.minReviews)) {
     deps.err(JSON.stringify({ shortfall: { requested, available: totals }, excluded }));
     return EXIT_SHORTFALL;
   }

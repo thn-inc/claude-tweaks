@@ -30,6 +30,19 @@ test('rangeOf returns nulls for a symbolic range', () => {
   assert.deepStrictEqual(rw.originRefsOf('git diff origin/main...HEAD'), ['main']);
 });
 
+test('originRefsOf: a ref ends at a three-dot range or a space, quote, backtick, paren, comma or the end, once per name', () => {
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/main...HEAD'), ['main']);
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/feat/x...HEAD'), ['feat/x']);
+  for (const after of [' ', '\'', '"', '`', ')', ',', '']) assert.deepStrictEqual(rw.originRefsOf(`base origin/main${after}`), ['main'], JSON.stringify(after));
+  assert.deepStrictEqual(rw.originRefsOf('origin/main and (origin/dev) then origin/main, origin/v1.2_x-y'), ['main', 'dev', 'v1.2_x-y']);
+  assert.deepStrictEqual(rw.originRefsOf('no refs here'), []);
+});
+
+test('originRefsOf: a two-dot range also ends the ref (git ref names never hold `..`)', () => {
+  assert.deepStrictEqual(rw.originRefsOf('git log origin/main..main'), ['main']);
+  assert.deepStrictEqual(rw.originRefsOf('git diff origin/feat/x..HEAD'), ['feat/x']);
+});
+
 test('runInputsOf classifies the four kinds', () => {
   const text = [
     main + '/.claude-tweaks/pipelines/R/review-ctx/context.md',

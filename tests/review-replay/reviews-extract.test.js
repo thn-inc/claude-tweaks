@@ -691,7 +691,7 @@ describe('branch roles', () => {
       assert.deepEqual([r.role, r.verdict, r.itemsUnparsed, r.unlocated, r.taskTier, r.at], ['task-vs-branch', 'needs-fixes', false, 0, 'capable', s.at]);
     }
     assert.deepEqual(fixture.excluded, []);
-    assert.deepEqual(fixture.totals, { reviews: 2, byArchivedTier: { capable: 2 }, notQualifying: 1 });
+    assert.deepEqual(fixture.totals, { reviews: 1, slots: 2, byTaskTier: { capable: 1 }, notQualifying: 1 });
   });
 
   test('the re-review range ending after the fix is not read as the pre-fix head', async () => {
@@ -718,20 +718,46 @@ describe('branch roles', () => {
     assert.ok(text.includes(`Base ${repoOf(x, head).replayBase} (the review base). Head ${repoOf(x, head).replayHead}.`), text);
   });
 
-  test('a whole-branch base with no merge base with the task head excludes the review as no-merge-base', async () => {
-    const bRoot = scratchDir('rr-branch-nmb-');
+  // Extracts task-vs-branch with the git seam failing the `git merge-base` calls on the task head T2 that `fail` names
+  // by mode ('--is-ancestor', or the plain 'merge-base'), each with the exit status it maps to.
+  async function extractFailingMergeBase(fail) {
+    const bRoot = scratchDir('rr-branch-mb-');
     const bx = buildBranchFixture(bRoot);
-    const out = path.join(bRoot, 'out');
     const deps = makeDeps(bx.mainRoot);
     const real = deps.git;
     deps.git = (args) => {
-      // Neither an ancestor nor sharing a merge base: both merge-base calls on the task head fail.
-      if (args[0] === 'merge-base' && args[args.length - 1] === bx.T2) throw Object.assign(new Error('exit 1'), { status: 1 });
+      const mode = args[1] === '--is-ancestor' ? '--is-ancestor' : 'merge-base';
+      if (args[0] === 'merge-base' && args[args.length - 1] === bx.T2 && fail[mode] !== undefined) throw Object.assign(new Error(`git exited ${fail[mode]}`), { status: fail[mode] });
       return real(args);
     };
+    const out = path.join(bRoot, 'out');
     const code = await run({ argv: ['extract-reviews', '--runs', bx.runsRoot, '--out', out, '--role', 'task-vs-branch', '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast'], deps });
-    assert.equal(code, 3);
-    assert.deepEqual(JSON.parse(deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-merge-base' }]);
+    const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+    return { code, deps, json, bx };
+  }
+
+  test('a whole-branch base with no merge base with the task head excludes the review as no-merge-base', async () => {
+    // Neither an ancestor nor sharing a merge base: both calls exit 1.
+    const x = await extractFailingMergeBase({ '--is-ancestor': 1, 'merge-base': 1 });
+    assert.equal(x.code, 3);
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-merge-base' }]);
+  });
+
+  test('--is-ancestor exit 1 takes the merge-base path', async () => {
+    const x = await extractFailingMergeBase({ '--is-ancestor': 1 });
+    ok(x);
+    const head = x.json(schema.REVIEWS_FIXTURE_FILE).slots.find((s) => s.at === 'task-head');
+    assert.equal(head.baseFrom, 'merge-base');
+    assert.equal(x.json(schema.REVIEWS_FIXTURE_FILE).repos.find((r) => r.key === head.repoKey).archivedBase, x.bx.B);
+  });
+
+  test('a merge-base failure other than exit 1 fails the extract, not a no-merge-base row', async () => {
+    // The plain merge-base call is reached only after --is-ancestor says "not an ancestor" (exit 1).
+    for (const fail of [{ '--is-ancestor': 128 }, { '--is-ancestor': 1, 'merge-base': 128 }]) {
+      const x = await extractFailingMergeBase(fail);
+      assert.equal(x.code, 1, JSON.stringify(fail));
+      assert.ok(x.deps.errs.join('\n').includes('git exited 128'), x.deps.errs.join('\n'));
+    }
   });
 
   test('no usable whole-branch prompt excludes the task reviews', async () => {
@@ -740,7 +766,7 @@ describe('branch roles', () => {
       assert.equal(x.code, 3, JSON.stringify(opts));
       const err = JSON.parse(x.deps.errs.join('\n'));
       assert.deepEqual(err.excluded, [{ run: RUNB, agentId: 't2', tier: 'capable', reason: 'no-whole-branch-prompt' }], JSON.stringify(opts));
-      assert.deepEqual(err.shortfall.available, { reviews: 0, byArchivedTier: {}, notQualifying: 1 });
+      assert.deepEqual(err.shortfall.available, { reviews: 0, slots: 0, byTaskTier: {}, notQualifying: 1 });
     }
   });
 
@@ -750,7 +776,7 @@ describe('branch roles', () => {
     assert.equal(x.code, 3);
     const err = JSON.parse(x.deps.errs.join('\n'));
     assert.deepEqual(err.excluded, []);
-    assert.deepEqual(err.shortfall.available, { reviews: 0, byArchivedTier: {}, notQualifying: 2 });
+    assert.deepEqual(err.shortfall.available, { reviews: 0, slots: 0, byTaskTier: {}, notQualifying: 2 });
   });
 
   test('an Approved review listing an Important item is not qualifying', async () => {
@@ -773,6 +799,14 @@ describe('branch roles', () => {
     ]);
     // Same (run, base, head) as t2's: the repositories are shared.
     assert.equal(fixture.repos.length, 2);
+    assert.deepEqual(fixture.totals, { reviews: 2, slots: 4, byTaskTier: { capable: 1, standard: 1 }, notQualifying: 1 });
+  });
+
+  test('--min-reviews counts task reviews, not slots', async () => {
+    const x = await extractBranch('task-vs-branch', { pointer: 'present' }, ['--min-reviews', '3']);
+    assert.equal(x.code, 3, 'two task reviews, four slots');
+    assert.deepEqual(JSON.parse(x.deps.errs.join('\n')).shortfall.available, { reviews: 2, slots: 4, byTaskTier: { capable: 1, standard: 1 }, notQualifying: 1 });
+    ok(await extractBranch('task-vs-branch', { pointer: 'present' }, ['--min-reviews', '2']));
   });
 
   test('the whole-branch review\'s own reply is never read: an unparseable one still supplies the prompt', async () => {

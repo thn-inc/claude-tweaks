@@ -6,7 +6,9 @@
 // verdict (task) and each Critical, Important and Minor item with its location, every path the prompt's worktrees or the
 // main checkout prefix stripped first. `--role task-vs-branch` replays the run's first whole-branch prompt at the head
 // each qualifying task review reviewed and, as its control, at the whole-branch prompt's own head, scored on that task
-// review's Critical and Important items. Rendering, the leak barrier and the writes are reviews-extract.js's, shared
+// review's Critical and Important items. Its totals count task reviews, not slots: `reviews` (task-head slots, also what
+// --min-reviews and a shortfall's `available.reviews` count), `slots` (both kinds), `byTaskTier` and `notQualifying`
+// (task reviews that are not a Needs fixes with a Critical or Important item). Rendering, the leak barrier and the writes are reviews-extract.js's, shared
 // with the lens role.
 
 const path = require('path');
@@ -69,21 +71,28 @@ function promptFor(item, c, fs) {
   return { prompt: named, transcript, file };
 }
 
+// An archived dispatch's tier, prompt and reply read through `readReply` -> { reason, tier? } (the first check it
+// fails: no-archived-tier, no-transcript, prompt-file-gone, report-unparsed) or { tier, prompt, transcript, reply }.
+// With no readReply (the whole-branch prompt task-vs-branch replays) the reply is not read: it has no findings of its own.
+function archivedReply(item, c, deps, readReply) {
+  const tier = item.tier;
+  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { reason: 'no-archived-tier' };
+  const got = promptFor(item, c, deps.fs);
+  if (got.reason) return { tier, reason: got.reason };
+  const { prompt, transcript, file } = got;
+  if (!readReply) return { tier, prompt, transcript, reply: { verdict: null, items: [], itemsUnparsed: false } };
+  const raw = lastAssistantText(file, deps.fs);
+  const reply = raw === null ? null : readReply(strippedReply(raw, prompt, c.mainRoot));
+  if (reply === null) return { tier, reason: 'report-unparsed' };
+  return { tier, prompt, transcript, reply };
+}
+
 // One branch dispatch -> { reason, tier? } (the first check it fails) or { candidate }.
 function examineBranch(r, item, c, deps, row) {
   const fs = deps.fs;
-  const tier = item.tier;
-  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { reason: 'no-archived-tier' };
-  const got = promptFor(item, c, fs);
-  if (got.reason) return { tier, reason: got.reason };
-  const { prompt, transcript, file } = got;
-  // A row with no readReply (the whole-branch prompt task-vs-branch replays) has no archived findings of its own.
-  let reply = { verdict: null, items: [], itemsUnparsed: false };
-  if (row.readReply) {
-    const raw = lastAssistantText(file, fs);
-    reply = raw === null ? null : row.readReply(strippedReply(raw, prompt, c.mainRoot));
-    if (reply === null) return { tier, reason: 'report-unparsed' };
-  }
+  const got = archivedReply(item, c, deps, row.readReply);
+  if (got.reason) return got;
+  const { tier, prompt, transcript, reply } = got;
   const pair = shaPairOf(prompt);
   if (pair === null) return { tier, reason: 'no-sha-range' };
   const resolved = [];
@@ -147,18 +156,19 @@ function selectBranchSlots(r, dispatches, c, deps, exclude) {
 
 // The base of a range from the whole-branch base `wbBase` to `head`: wbBase when it is an ancestor of head, else their
 // merge base (a run that merged main in before its whole-branch review) -> { base, baseFrom }, or null when the two
-// share no merge base (no-merge-base).
+// share no merge base (no-merge-base). Only git's exit 1 means "not an ancestor" or "no merge base": any other failure
+// is rethrown, so a broken clone fails the extract instead of passing for an answer.
 function rangeBase(wbBase, head, deps) {
   try {
     deps.git(['merge-base', '--is-ancestor', wbBase, head]);
     return { base: wbBase, baseFrom: 'whole-branch' };
-  } catch {
-    // Exit 1: not an ancestor.
+  } catch (e) {
+    if (!(e && e.status === 1)) throw e;
   }
   try {
-    const base = String(deps.git(['merge-base', wbBase, head])).trim();
-    return base ? { base, baseFrom: 'merge-base' } : null;
-  } catch {
+    return { base: String(deps.git(['merge-base', wbBase, head])).trim(), baseFrom: 'merge-base' };
+  } catch (e) {
+    if (!(e && e.status === 1)) throw e;
     return null;
   }
 }
@@ -178,19 +188,15 @@ function wholeBranchOf(r, dispatches, c, deps) {
 // fixes one with no Critical or Important item), or { pair }: the whole-branch prompt `wb` replayed at the head the
 // task review reviewed and at wb's own head, each scored on the task review's Critical and Important items.
 function examineTaskReview(r, item, c, deps, wb) {
-  const tier = item.tier;
-  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { reason: 'no-archived-tier' };
-  const got = promptFor(item, c, deps.fs);
-  if (got.reason) return { tier, reason: got.reason };
-  const raw = lastAssistantText(got.file, deps.fs);
-  const reply = raw === null ? null : BRANCH_ROLES.task.readReply(strippedReply(raw, got.prompt, c.mainRoot));
-  if (reply === null) return { tier, reason: 'report-unparsed' };
+  const got = archivedReply(item, c, deps, BRANCH_ROLES.task.readReply);
+  if (got.reason) return got;
+  const { tier, prompt, reply } = got;
   if (reply.verdict !== 'needs-fixes') return { notQualifying: true };
   if (reply.itemsUnparsed) return { tier, reason: 'items-unparsed' };
   const items = reply.items.filter((i) => i.sev === 'critical' || i.sev === 'important');
   if (items.length === 0) return { notQualifying: true };
   // The prompt's own head is the task's commit before its fix round: the fix is re-reviewed under `re-review`.
-  const shas = shaPairOf(got.prompt);
+  const shas = shaPairOf(prompt);
   if (shas === null) return { tier, reason: 'no-sha-range' };
   let taskHead;
   try {
