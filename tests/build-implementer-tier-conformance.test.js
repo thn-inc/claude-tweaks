@@ -20,12 +20,19 @@ const lit = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
 const CLI_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"';
 const PROFILE_LINE =
-  '`AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.`';
+  '`AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}) effort {startEffort}. Reversibility: n/a.`';
+const LADDER_CALL =
+  'node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}" --attempt-profile {profile} --attempt-effort {effort} --escalations {n} --trigger {trigger}';
+const LADDER_ESCALATION_LINE =
+  '`AUTO {time} — task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger}). Reversibility: n/a.`';
+const START_LINE =
+  '`AUTO {time} — task {k} implementer start {profile}@{effort} (role: {role}). Reversibility: n/a.`';
 const ESCALATION_LINE =
   '`AUTO {time} — task {k} implementer escalated {from} → {to} ({trigger}). Reversibility: n/a.`';
 
 const PATTERNS = [
-  [lit(CLI_CALL), 'AC9.1: names the CLI call'],
+  // The trailing `` ` once`` keeps this fact off the ladder call, which extends CLI_CALL.
+  [lit(`${CLI_CALL}\` once`), 'AC9.1: names the CLI call'],
   [
     lit("(`{spec-file}`: the materialized `{run-dir}/work/{n}-spec.md`, the worktree's copy in `worktree` mode)"),
     "spec file is the worktree's copy in worktree mode",
@@ -35,6 +42,16 @@ const PATTERNS = [
     'per-task review reads the ACs from {spec-file}',
   ],
   [lit(PROFILE_LINE), 'AC6.1: one implementer profile line'],
+  [lit('`{startEffort}` is `inherit` when `null`'), 'AC6.1: inherit printed for null'],
+  [lit(LADDER_CALL), 'AC2.1 AC3.1 (lane): names the next-attempt CLI call'],
+  [lit(LADDER_ESCALATION_LINE), 'AC6.2: effort-ladder escalation line'],
+  [lit("sets the Agent tool's `effort` parameter to `startEffort`"), 'AC6.1: dispatch at startEffort'],
+  [lit('At most two escalations per task'), 'AC6.3: at most two escalations'],
+  [lit('plus `--from {marker profile}`'), 'Decision Q1: a Role-marker task starts at its own profile\'s startEffort'],
+  [lit('a `null` `next`'), "AC6.3: past the ladder, SDD's own handling"],
+  [lit("the CLI's `ladder` is `true`"), 'AC5.1 (lane): inherit keeps #5999'],
+  [lit('renders as `inherit` on either side'), 'AC6.2: a null effort renders as inherit'],
+  [lit(START_LINE), 'Deliverable 6: a Role-marker task logs its start effort'],
   [
     lit('Log once, skipped when `decisions.md` already holds an `implementer profile` line (a resumed build)'),
     'AC6.2: a resumed build logs no second profile line',
@@ -171,4 +188,21 @@ test('AC8.2 control: stripping the CLI name or re-adding the old mapping turns e
   assert.notEqual(noCli, SIZE_ROW, 'the CLI name is not in the size row');
   assert.deepStrictEqual(sizeRowFacts(noCli), ['AC8.2: names the CLI']);
   assert.deepStrictEqual(sizeRowFacts(`${SIZE_ROW} ${OLD_MAPPING}`), ['AC8.2: no prose mapping']);
+});
+
+// AC6.1: the standalone handoff's profile section names the effort and both ladder line shapes.
+const HANDOFF = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'handoff-template.md'));
+const HANDOFF_PATTERNS = [
+  [lit('- implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}) effort {startEffort}'), 'AC6.1: handoff profile line names the effort'],
+  [lit('- task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger})'), 'AC6.2: handoff names the ladder escalation line'],
+  [lit('- task {k} implementer start {profile}@{effort} (role: {role})'), 'Deliverable 6: handoff names the marker start line'],
+];
+const handoffMissing = missingFactsOf(HANDOFF_PATTERNS);
+
+test('AC6.1: handoff-template names the effort on the profile line', () => {
+  assert.deepStrictEqual(handoffMissing(HANDOFF), []);
+});
+
+test('AC6.1: removing any one handoff fact turns exactly that fact red', () => {
+  assertEachPatternGoesRed(HANDOFF, HANDOFF_PATTERNS, handoffMissing);
 });
