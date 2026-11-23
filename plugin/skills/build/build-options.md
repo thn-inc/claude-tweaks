@@ -44,7 +44,7 @@ When `.claude-tweaks/policy.yml` sets `execution-strategy: subagent-only` (or `b
 
 | Token | Effect |
 |---|---|
-| `profile=fast` / `profile=standard` / `profile=capable` | Overrides the `size:`-derived per-task implementer profile for this run only (see Common Step 2). |
+| `profile=fast` / `profile=standard` / `profile=capable` | Overrides the per-task implementer profile `bin/implementer-tier.js` picks for this run only (see Common Step 2). |
 | `profile=frontier` (or the `tier=frontier` alias) | The human-typed hardest-build opt-in — reachable **only** via this literal typed token, never auto-selected. Full guard statement (canonical): `skills/build/dispatch.md` (read from Common Step 2) — cited here, not restated. |
 
 **Two distinct bounds, not one.** `profile=frontier` requires the `subagent` execution strategy (`dispatch.md`'s strategy-precondition step) — this is a *sequential-dispatch* requirement satisfying the Subagent Contract's no-parallel-fan-out rule for Frontier, and it bounds nothing about spend by itself. The actual **cost bound** is the separate `frontier-run-cap` policy key (`.claude-tweaks/policy.yml`, default `3` — `_shared/subagent-dispatch-core.md`'s Model Selection section), enforced per dispatch by `bin/resolve-profile.js`.

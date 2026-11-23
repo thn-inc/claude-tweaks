@@ -260,12 +260,13 @@ test('AC3: evidence shape', () => {
 // canonicalRealpath (an existing path otherwise resolves to itself, a missing one to null).
 const WT = path.resolve('/wt');
 const at = (rel) => path.join(WT, ...rel.split('/'));
-function pathOpts({ types = {}, real = {}, sensitivePaths = [] } = {}) {
+function pathOpts({ types = {}, real = {}, sensitivePaths = [], protectedPathGlobs } = {}) {
   const typeOf = new Map([[WT, 'directory'], ...Object.entries(types).map(([rel, t]) => [at(rel), t])]);
   const realOf = new Map(Object.entries(real).map(([rel, r]) => [rel === '' ? WT : at(rel), r]));
   return {
     wt: WT,
     sensitivePaths,
+    protectedPathGlobs,
     deps: {
       lstatType: (p) => ({ type: typeOf.get(p) || 'missing', code: null }),
       canonicalRealpath: (p) => (realOf.has(p) ? realOf.get(p) : (typeOf.has(p) ? p : null)),
@@ -1594,6 +1595,21 @@ test('AC4: the run\'s merge-sensitive paths reach the path rules', async () => {
   assert.strictEqual(evidenceSpawns(open.calls).length, 1);
 });
 
+test('#6020: the review pass passes the resolved protected-paths to the path rules', async () => {
+  const finding = () => reviewFinding(0, { evidence: { path: 'infra/a.test.js', content: CONTENT } });
+  const rig = passRig({ findings: [finding()] });
+  rig.ctx.shared.policy = { ...POLICY, 'protected-paths': resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: infra/**\n' })['protected-paths'] };
+  const out = await rig.run();
+  assert.strictEqual(out.result, null);
+  assert.deepStrictEqual(out.counts, { returned: 1, reproduced: 0, discarded: 1 });
+  assert.strictEqual(ofKind(rig.calls, 'writeFileExclusive').length, 0);
+  assert.strictEqual(evidenceSpawns(rig.calls).length, 0);
+  // The same finding without the key is written and run.
+  const open = passRig({ findings: [finding()] });
+  await open.run();
+  assert.strictEqual(evidenceSpawns(open.calls).length, 1);
+});
+
 test('Task5: the reviewer launch and the worker step share one win32 bin and one ceiling rule (launch.js)', async () => {
   const steps = require(path.join(LIB, 'driver', 'steps.js'));
   const launch = require(path.join(LIB, 'driver', 'launch.js'));
@@ -1912,7 +1928,7 @@ async function fixOnDisk(t, swap) {
     testCommand: 'npm test',
     isRunArtifact: isPipelineArtifact,
     indexFlagCheck: () => null,
-    launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
+    launchImplementer: async (ctx) => { steps.push('launch'); swap(wt, outside, state, rig.ctx); ctx.worker = { title: 'Fix', summary: 'Fixed.' }; return { status: 'ok' }; },
     commit: { run: async (ctx) => { steps.push('commit'); ctx.changedFiles = untracked(); for (const p of ctx.changedFiles) { committed.add(p); atHead.set(p, fs.readFileSync(path.join(wt, ...p.split('/')), 'utf8')); } return { status: 'ok' }; } },
     test: { run: async () => { steps.push('test'); return { status: 'ok' }; } },
     check: { run: async () => { steps.push('check'); return { status: 'ok' }; } },
@@ -1943,6 +1959,16 @@ test('AC9: the rewrite never writes through a parent the fix worker pointed out 
   assert.deepStrictEqual(treeOf(ancestor.outside), ['tests', path.join('tests', 'new'), path.join('tests', 'new', 'r0.test.js')]);
   assert.strictEqual(fs.statSync(path.join(ancestor.outside, 'tests', 'new', 'r0.test.js')).ino, ancestor.state.ino);
   assert.deepStrictEqual(ancestor.steps, ['launch']);
+});
+
+test('#6020: the fix-round rewrite passes the resolved protected-paths to the path rules', async (t) => {
+  const protect = resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: tests/new/**\n' })['protected-paths'];
+  // The list takes effect after the review pass confirmed the finding, so only the rewrite site can refuse it.
+  const refused = await fixOnDisk(t, (wt, outside, state, ctx) => { ctx.shared.policy = { ...ctx.shared.policy, 'protected-paths': protect }; });
+  assert.strictEqual(refused.res.detail, `evidence path refused before the rewrite: protected-or-sensitive: ${FINDING_0_TEXT}`);
+  assert.deepStrictEqual(refused.steps, ['launch']);
+  const open = await fixOnDisk(t, () => {});
+  assert.strictEqual(open.res.status, 'ok', open.res.detail);
 });
 
 test('AC9: the rewrite replaces whatever the fix worker left at the leaf with the recorded bytes', async (t) => {
@@ -2000,4 +2026,23 @@ test('reviewRequired: off still decides alone for a widened record; unreadable w
   // A record beyond the express bounds keeps today's reasons whatever the widening says.
   assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: ['risk'] }), { on: true, reason: 'size medium is beyond size:low' });
   assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: 'risk' }), { on: true, reason: 'size medium is beyond size:low' });
+});
+
+test('AC3.1 (guard half): protected-paths [] still refuses an evidence path under hooks/', () => {
+  assert.strictEqual(pathRuleViolation('hooks/a.test.js', pathOpts({ protectedPathGlobs: [] })), 'protected-or-sensitive');
+});
+
+test('AC7.1, AC7.2: with a list passed the guard tests the shipped list and the list', () => {
+  const opts = pathOpts({ protectedPathGlobs: ['infra/**'] });
+  for (const p of ['hooks/a.test.js', 'infra/a.test.js', '.github/x.test.js']) assert.strictEqual(pathRuleViolation(p, opts), 'protected-or-sensitive', p);
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', opts), null);
+});
+
+test('AC9.2 (guard half): the union keeps the three case spellings', () => {
+  const opts = pathOpts({ protectedPathGlobs: ['infra/**'] });
+  for (const p of ['INFRA/a.test.js', 'Infra/a.test.js']) assert.strictEqual(pathRuleViolation(p, opts), 'protected-or-sensitive', p);
+});
+
+test('a protectedPathGlobs that is not a list of strings fails closed', () => {
+  for (const bad of ['infra/**', [5]]) assert.strictEqual(pathRuleViolation('tests/a.test.js', pathOpts({ protectedPathGlobs: bad })), 'protected-or-sensitive', JSON.stringify(bad));
 });

@@ -10,7 +10,9 @@
 //             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
 //             the envelope's `head` carries for the push) or an escalation line under
 //             ## /express-lane. `--max-lines` (the driver's flag) replaces
-//             `auto-merge-max-lines` as the line bound.
+//             `auto-merge-max-lines` as the line bound. The protected-path list is the
+//             `protected-paths` policy key read from the main checkout (never the worktree);
+//             gate reads it the same way.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
@@ -49,7 +51,7 @@ const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-c
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
+const { expressGateOptions, protectedPathGlobsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // A changed path is raw git bytes (a newline is legal) bound for a decisions.md line; the driver's
@@ -297,7 +299,7 @@ function runGate(deps, flags) {
   let policy;
   let decisionsText = '';
   try {
-    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths'], { runDir: flags['--run'] || null });
+    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths', 'protected-paths'], { runDir: flags['--run'] || null });
     if (decisionsFile) decisionsText = readDecisions(deps, decisionsFile);
   } catch (err) {
     deps.stderr(`express-lane.js: could not read policy or decisions.md: ${err && err.message}\n`);
@@ -359,7 +361,8 @@ function runCheck(deps, flags) {
     // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
     // replaces the line limit.
     const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines, reportProtectedPaths: flags['--protected-paths'] === 'reviewer' });
+    const protectedPathGlobs = protectedPathGlobsOf(deps.resolvePolicy(['protected-paths'], { runDir })['protected-paths']);
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, protectedPathGlobs, maxLines, reportProtectedPaths: flags['--protected-paths'] === 'reviewer' });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
