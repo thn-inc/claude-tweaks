@@ -400,7 +400,7 @@ const fsReady = (opts) => {
 function isProtectedOrSensitive(p, sensitivePaths = []) {
   if (!Array.isArray(sensitivePaths) || !sensitivePaths.every((g) => typeof g === 'string')) return true;
   const lower = p.toLowerCase();
-  if ([p, lower, p.toUpperCase()].some(isProtectedPath)) return true;
+  if ([p, lower, p.toUpperCase()].some((s) => isProtectedPath(s))) return true;
   return isSensitivePath(p, sensitivePaths) || isSensitivePath(lower, sensitivePaths.map((g) => g.toLowerCase()));
 }
 
