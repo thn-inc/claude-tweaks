@@ -685,6 +685,42 @@ test('landingExclusions carries a cross-repository verdict\'s repository on its 
   });
 });
 
+test('landingExclusions maps a hollow verdict to an unlanded-blocker entry carrying verdict and pr, in landing order beside an unlanded one', () => {
+  const envelope = { records: {
+    11: { blockerLanding: [{ blocker: 6000, verdict: 'hollow', commit: '46e21cbf6', via: 'closer-pr', pr: 6061 }] },
+    12: { blockerLanding: [
+      { blocker: 5, verdict: 'unlanded', commit: 'a', via: 'closer-pr' },
+      { blocker: 6000, verdict: 'hollow', commit: '46e21cbf6', via: 'closer-pr', pr: 6061 },
+      { blocker: 7, verdict: 'hollow', commit: 'c', via: 'commit', pr: null },
+    ] },
+  } };
+  assert.deepEqual(landingExclusions(envelope, [11, 12]), {
+    exclusions: [
+      { reason: 'unlanded-blocker', records: [11], detail: { blockers: [{ blocker: 6000, commit: '46e21cbf6', verdict: 'hollow', pr: 6061 }] } },
+      { reason: 'unlanded-blocker', records: [12], detail: { blockers: [
+        { blocker: 5, commit: 'a' },
+        { blocker: 6000, commit: '46e21cbf6', verdict: 'hollow', pr: 6061 },
+        { blocker: 7, commit: 'c', verdict: 'hollow', pr: null },
+      ] } },
+    ],
+    undetermined: [],
+  });
+});
+
+test('CLI: a hollow blocker excludes its dependent with the no-implementation AUTO line, naming the commit when there is no closing PR', (t) => {
+  const mk = (verdicts) => stub({ status: 0, stdout: JSON.stringify({ records: { 10: { blockerLanding: [] }, 6003: { blockerLanding: verdicts } } }), stderr: '' });
+  const groups = [[R10], [rec(6003, 'Blocked by #6000\n')]];
+  const r = exec(t, { groups, preflight: mk([{ blocker: 6000, verdict: 'hollow', commit: '46e21cbf6', via: 'closer-pr', pr: 6061 }]) });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.groups, [[R10]]);
+  assert.deepEqual(r.exclusions, [{ reason: 'unlanded-blocker', records: [6003], detail: { blockers: [{ blocker: 6000, commit: '46e21cbf6', verdict: 'hollow', pr: 6061 }] } }]);
+  assert.match(r.stderr, /^AUTO — dispatch: #6003 waits — blocker #6000 was closed by #6061 with no implementation$/m);
+  assert.doesNotMatch(r.stderr, /is not on origin/);
+
+  const r2 = exec(t, { groups, preflight: mk([{ blocker: 6000, verdict: 'hollow', commit: '46e21cbf6', via: 'commit', pr: null }]) });
+  assert.match(r2.stderr, /^AUTO — dispatch: #6003 waits — blocker #6000 was closed by 46e21cbf6 with no implementation$/m);
+});
+
 test('withoutExcluded leaves the input arrays unmutated', () => {
   const groups = [[{ number: 1 }, { number: 2 }], [{ number: 3 }]];
   const frozen = JSON.stringify(groups);
