@@ -2311,6 +2311,22 @@ test('#4303: the cd after an assignment word that never closes is not followed',
       assert.deepStrictEqual(gitCommand.commandWord(t, undefined, '/r'), { index: -1, dir: '/r', unprovable: false, split: false }, t.join(' '));
     }
   });
+
+  // #4244 (ADR 0028): the compound keywords, read from the record's list. bash runs the command after each.
+  test('#4244: the exported compound-keyword set matches the record\'s list', () => {
+    assert.deepStrictEqual([...gitCommand.COMPOUND_KEYWORDS].sort(),
+      ['case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'if', 'in', 'then', 'until', 'while']);
+    assert.ok(Object.isFrozen(gitCommand.COMPOUND_KEYWORDS));
+  });
+
+  test('#4244: a write or commit after a compound keyword reports its /main target', () => {
+    includesFor(['if true; then cp x /main/f.js; fi', 'for f in a; do cp x /main/f.js; done', 'while false; do :; done; cp x /main/f.js',
+      'case x in x) cp a /main/f.js;; esac', 'if false; then :; else cp x /main/f.js; fi', 'until true; do :; done; cp x /main/f.js',
+      'if false; then :; elif true; then cp x /main/f.js; fi', 'if cp x /main/f.js; then :; fi', 'then cp x /main/f.js'], MAIN_F);
+    assert.deepStrictEqual(gitCommand.gitTargets('if true; then git -C /main commit -m x; fi', '/r'), [{ action: 'commit', dir: path.resolve('/main') }]);
+    // A quoted keyword is a command name, never skipped.
+    assert.deepStrictEqual(files('"then" cp x /main/f.js'), []);
+  });
 }
 
 // #4149: the write walk cuts at an unquoted lone `&`, so the command after it is

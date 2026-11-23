@@ -821,6 +821,12 @@ const PATH_PREFIX_WORDS = Object.freeze(['doas', 'env', 'nice', 'nohup', 'sudo',
 // The ones that run a following `cd` builtin in the current shell (commandWord's `shellOnly`).
 const SHELL_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'time']);
 
+// #4244 (ADR 0028): the compound keywords that structure a list: `in` follows `for NAME` or `case WORD`
+// and is no command-position word, so only COMMAND_LEAD_KEYWORDS (the ones a command follows) are
+// skipped by commandWord. The prefixes `!`/`time` and the cd forms are other records'. Pinned by the tests.
+const COMPOUND_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'for', 'do', 'done', 'case', 'esac', 'in']);
+const COMMAND_LEAD_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'while', 'until', 'do']);
+
 // How each prefix word reads its options, each per its own manual (bash's builtins, GNU and BSD
 // env/nice/time, sudo(8), doas(1)): `value` the short letters that take a value (readShortCluster),
 // `stop` the short letters after which no command runs from a known cwd (a lookup, a shell, an
@@ -961,6 +967,12 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
     }
     if (i >= t.length) return noCommand();
     const word = t[i];
+    // A bare compound keyword at command position (`then cp x /M/b`) is no command: the one after it is.
+    // The cd lead (shellOnly) leaves them: a cd in a body is #4572's.
+    if (!shellOnly && COMMAND_LEAD_KEYWORDS.includes(word) && raw[i] === word && spanKinds[i] === 'b'.repeat(word.length)) {
+      i += 1;
+      continue;
+    }
     let name = STRIPPED_PREFIX_WORDS.includes(word) ? word : null;
     if (name === null && !shellOnly && word.includes('/')) {
       const base = word.slice(word.lastIndexOf('/') + 1);
@@ -3964,7 +3976,7 @@ function mkdirTargets(command, cwd, opts) {
 module.exports = {
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The stripped command prefixes and their reader (#4448), reused by later recognisers.
-  STRIPPED_PREFIX_WORDS, commandWord,
+  STRIPPED_PREFIX_WORDS, commandWord, COMPOUND_KEYWORDS,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };
