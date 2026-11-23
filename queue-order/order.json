@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-23T15:13:56.486Z",
+  "computedAt": "2026-11-23T15:23:32.660Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 6109,
-        "updatedAt": "2026-11-23T15:13:05Z",
+        "updatedAt": "2026-11-23T15:18:38Z",
         "state": "OPEN"
       },
       {
@@ -49,8 +49,8 @@
         "state": "OPEN"
       },
       {
-        "number": 5999,
-        "updatedAt": "2026-11-23T11:56:23Z",
+        "number": 6000,
+        "updatedAt": "2026-11-23T15:21:32Z",
         "state": "OPEN"
       },
       {
@@ -75,12 +75,12 @@
       },
       {
         "number": 5270,
-        "updatedAt": "2026-11-12T19:15:27Z",
+        "updatedAt": "2026-11-23T15:19:39Z",
         "state": "OPEN"
       },
       {
         "number": 5208,
-        "updatedAt": "2026-11-23T15:12:49Z",
+        "updatedAt": "2026-11-23T15:18:15Z",
         "state": "OPEN"
       },
       {
@@ -876,8 +876,8 @@
     ],
     [
       {
-        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Current State\n\n`review-lens-dispatch` (`plugin/bin/lib/policy-schema.js`, #5599) takes `task` (default) or `workflow`. The workflow path falls back to the Task dispatch whenever the Workflow tool is absent, which includes every review run inside a dispatched or continuation agent (`/claude-tweaks:dispatch` runs review inside a Task agent), per #5825.\n\n#6000 in this decomposition adds a `lens-reviewer` role and `plugin/bin/review-lens-workers.js`, which runs lens briefs as headless `claude -p` workers and returns the workflow script's reply shape. A headless worker is started through Bash, so it is reachable from inside a Task agent, where the Workflow tool is not.\n\n## Deliverables\n\n1. A third value `worker` for `review-lens-dispatch` (additive; `task` stays the default), added with `.claude/skills/policy-key-addition`.\n2. Step 3 prose for the worker path in a new sub-file (proposed `plugin/skills/review/step3-worker-dispatch.md`), with one pointer line in `step3-lens-dispatch.md`: compose each lens brief once, write the lenses file, call the launcher (its interface is read from the merged #6000: `--run <dir> --lenses-file <json>`, the workflow script's reply shape), and settle with `review-coordination.js settle-lens-replies` exactly as the workflow path does. Lens 3f is never sent to the launcher (#6000's launcher rejects it); the dispatcher routes 3f to the Task path in the same review and settles every reply set in one `settle-lens-replies` call. With `review-lens-selection: adaptive`, the lens set comes from the selection CLI.\n3. Fallback to the Task dispatch with one `Step 3 lens dispatch (worker fallback)` `SKIP` line naming the condition (no `claude` binary, launch error, every worker failed, settle exit 2). The unit of fallback is the lens: only lenses whose workers failed or timed out re-dispatch on the Task path, and their replies merge into the same single `settle-lens-replies` call as the worker replies. A settle exit 2 caused by one of the two fail-closed reply shapes stays a stop, exactly as on the workflow path, and never re-dispatches. Two acceptance criteria below cover the partial and settle-exit-2 cases. Lenses kept off the worker path (3f, if the role record keeps it off) dispatch on the Task path in the same review.\n4. One real review run on the worker path at build: per lens, worker first-turn tokens, total tokens and confirmed findings, quoted in the PR beside the numbers of a paired re-run of the same diff on the Task path (a single sample, labelled anecdotal, since lens output varies run to run). The repository opts in by setting `review-lens-dispatch: worker` in its committed `.claude-tweaks/policy.yml`, which is what the parked record's trigger counts.\n5. File a parked measurement record (Defer-reason: blocked-external; trigger: 20 worker-path reviews after this repository opts in, or 30 days): per lens pair, confirmed findings and total tokens on the worker path against the Task path, the Haiku-lens 100k ceiling checked, and the fallback share by condition; outcome a default-flip record or a stated reason to keep the current default. Fallback counts by condition are read from the `worker fallback` `SKIP` lines in `decisions.md`.\n\n## Acceptance Criteria\n\n- [ ] With `review-lens-dispatch: task` or `workflow`, Step 3 is unchanged (prose pins and the existing workflow-path tests stay green).\n- [ ] With `worker`, Step 3 calls the launcher and settles through `settle-lens-replies`; a stubbed launcher failure logs one `worker fallback` `SKIP` line and the review completes on the Task path.\n- [ ] With `worker`, a review where one lens's workers fail and the others succeed re-dispatches only the failed lens on the Task path and settles all replies in one `settle-lens-replies` call; the succeeded lenses are not run twice.\n- [ ] With `worker`, a settle exit 2 caused by one of the two fail-closed reply shapes stops the review exactly as on the workflow path and logs no `worker fallback` line.\n- [ ] A review run inside a Task agent (the `/claude-tweaks:dispatch` shape) takes the worker path rather than falling back, shown by a dispatched probe (a Task agent runs the review with `worker` set; the evidence is no `worker fallback` line and launcher output in the run directory) that states its preconditions (`claude` on PATH, auth inherited) and its expected outcome when they fail.\n- [ ] An older build reading `review-lens-dispatch: worker` resolves to the `task` path with no hard failure, shown by a probe or the older build's resolver test. `worker` is a permanent third value. Its removal condition, written beside the key in `policy-schema.js`, is tied to #5825's outcome. If #5825 flips the default to `workflow`, `worker` stays only if this record's parked measurement shows it cheaper than `workflow` with no fewer confirmed findings; otherwise it is removed one minor release after that ruling. This repository's committed `.claude-tweaks/policy.yml` must not set `worker` until a release carrying the value has shipped and is the installed plugin.\n- [ ] A mixed review (3f on the Task path, the other lenses on workers) settles through one `settle-lens-replies` call, shown by a test with a stubbed launcher.\n- [ ] The build's real run reports every Haiku lens worker under 100k total tokens (the design's own ceiling), or the PR says which one was over and by how much; an overrun is reported, not a build failure.\n- [ ] The parked measurement record is filed and linked.\n\n## Release Note\n\nReview can run its lens reviewers as lightweight headless workers with `review-lens-dispatch: worker`, including when review runs inside a dispatched agent.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — add `worker` to `review-lens-dispatch`\n- `plugin/skills/_shared/policy-schema.md` — document the value\n- `plugin/skills/review/step3-worker-dispatch.md` — new Step 3 sub-file\n- `plugin/skills/review/step3-lens-dispatch.md` — one pointer line only\n- `plugin/bin/review-coordination.js` — only if `settle-lens-replies` needs a worker source tag\n- `tests/` — the pins and size checks over `step3-lens-dispatch.md` and its sub-files; the build names them in the plan and checks whether the new sub-file counts against the read rail\n\n## Gotchas\n\n- `step3-lens-dispatch.md` is 48,911 B, within 10% of the 52,500 B read rail: new prose goes in the sub-file.\n- The key's removal condition (`policy-schema.js` comment, #5599) names `task` and `workflow`; update it to state what happens to `worker`. Expand-contract: a run on an older plugin reading `worker` must not break. Check what an older build's policy audit does with an unknown value (#5825 found it reports the key unrecognised).\n- `settle-lens-replies` leaves two real reply shapes fail-closed (#5836, #5599 comments). The worker path inherits them; do not loosen them here.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n\n## Decision Rationale\n\n- **Why a third dispatch value and not a replacement.** #5825 decides whether `workflow` becomes the default. The worker path is measured beside it, not instead of it.\n- **Why the worker path matters most inside dispatched agents.** There the workflow path always falls back, so without workers a dispatched review keeps the 51k-token Task agents.\n\nOrigin: Phase 10, `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`. Blocked by #6000 and #6001 (the #5825 blocker was dropped by the maintainer on 2026-11-21; see #6005). Do not opt this repository into `worker` before #5825 has ruled.\n\n\n<!-- work-fingerprint: pipeline-economy:phase-10-lens-worker-dispatch -->\nwork-fingerprint: pipeline-economy:phase-10-lens-worker-dispatch\n**Related:** #5825, #5836, #5481\n\n\n",
-        "createdAt": "2026-11-21T17:36:56Z",
+        "body": "Surface: backend\nRisk-flags: auth\n\n## Current State\n\nReview lens reviewers run as in-session Task agents (`plugin/skills/review/step3-lens-dispatch.md`) or as agents of the plugin workflow `review-lens-fanout` (`plugin/workflows/review-lens-fanout.js`, opt-in via `review-lens-dispatch: workflow`). The design (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, `## Evidence`) measured a median first-turn prompt of about 51k tokens for an in-session subagent against about 6k for a driver worker. Phase 10 asks for lens reviewers \"launched as lean workers, so a Haiku lens stays under 100k tokens.\"\n\nThe driver already launches lean headless workers: `plugin/bin/lib/driver/worker.js` (the `claude -p` launcher, `--restricted`, generated `--settings`, the envelope) and `plugin/bin/lib/driver/roles.js` (per-role tool lists and settings, with the probed-platform rules in its header). Its reviewer role (`plugin/bin/lib/driver/review.js`) is read-only. No role fits a review lens: a lens must read the review context bundle, the files in scope, and `git diff/show/log` output for the reviewed range.\n\nThe workflow script's return shape `{ started, lenses: [{lens, reviewers}], reviewers: [{lens, side, text, failed}] }` is what `review-coordination.js settle-lens-replies` reads.\n\n## Deliverables\n\n1. A `lens-reviewer` role in `roles.js`: Read, plus Grep/Glob where probed per platform (see #5258), plus read-only git commands (`git diff`, `git show`, `git log`, `git grep`) only on sandbox-probed platforms with the sandbox block `roles.js` already generates. No Write, no Edit, no network. On a platform outside `SANDBOX_PROBED_PLATFORMS` the role has no Bash, so a lens brief that needs `git show` or `git log` cannot run there: the launcher marks that side `failed: true` with the reason `platform`, and the dispatcher falls back to the Task path (never an empty review). The probe covers repository-config-driven program starts as well as flags: textconv and external diff via `.gitattributes`, `core.pager`, `core.fsmonitor`, `-c` and `GIT_*` environment, `git grep --open-files-in-pager`, with `--no-ext-diff` and `--no-textconv` pinned where the probe needs them; the role header says that widening the allow list means re-probing. The effort for the role comes from #5942's mechanism. Load `.claude/skills/headless-worker-launch` first and follow it: probe what each allowed command can write or start, not only that denied commands are denied, and record the results in the module header with CLI version, platform and date.\n2. A launcher CLI (proposed `plugin/bin/review-lens-workers.js --run <dir> --lenses-file <json>`): input = the same `{ lenses: [{ lens, brief, model, reviewers }] }` the workflow script takes; it launches one worker per side with the brief as the prompt and the lens's model, in parallel with a named concurrency bound and a named per-worker timeout (both constants in the module header, values chosen at build), `side` labelled exactly as `plugin/workflows/review-lens-fanout.js` labels it, and prints the workflow script's return shape so `settle-lens-replies` reads it unchanged. A worker that fails, times out or returns blank text is `text: null, failed: true` with a `reason` (`launch`, `auth`, `timeout`, `blank`, `platform`) on stderr and in the launcher's log, not in the reply shape; a model reply of \"No findings.\" is a valid reply, never `blank`; one worker's failure never touches another's reply. The launcher's exit code is 0 when it printed the reply shape, and 2 on a malformed call.\n3. Token accounting: every lens worker's usage is counted in the run's `timing.json` (`dispatches`), as #5597 did for workflow agents, so a worker path never looks cheaper than it is. The launcher is the writer; the usage source (the worker envelope or its transcript) and the entry fields, including first-turn tokens and a `kind: worker` tag, are chosen at build and documented in the module header.\n4. A live smoke test (opt-in, like `tests/bin-lib/driver/worker.test.js`'s AC7): one Haiku lens worker on an archived lens brief and context bundle; quote its first-turn prompt tokens and total tokens. Target: total under 100k (the design's own ceiling for a Haiku lens; an overrun is reported in the PR, not a build failure). The fixture is a named archived brief with a large diff, and the opt-in switch is the same environment variable `worker.test.js` uses for AC7. The launcher rejects a lens `3f` entry before any worker starts: that side returns `failed: true` with `reason: excluded`, pinned by a unit test. The worker-path dispatcher (#6003) routes 3f to the Task path.\n\n## Acceptance Criteria\n\n- [ ] The `lens-reviewer` role's tool list and settings are pinned by unit tests; on a platform not in `SANDBOX_PROBED_PLATFORMS` it has no Bash at all.\n- [ ] The launcher run with an auth-failure fake yields `failed: true`, never `text: \"\"`, and a platform outside `SANDBOX_PROBED_PLATFORMS` yields `failed: true` with reason `platform`.\n- [ ] The probe matrix covers the repository-config vectors named in Deliverable 1, each with a negative test, and the role's effort is set through #5942's mechanism and pinned by a test.\n- [ ] Each allowed git command was probed for writes (including `--output=<path>`) and program starts under the generated settings, and the module header records the result, CLI version, platform and date.\n- [ ] The launcher's output for a two-lens, four-worker fake runner is byte-equal in shape to what `settle-lens-replies` accepts; a fake worker that exits non-zero yields `failed: true` for that side only.\n- [ ] Lens worker tokens appear in `timing.json` `dispatches` for a run that used the launcher.\n- [ ] The live smoke result (first-turn and total tokens for one Haiku lens worker) is quoted in the PR.\n- [ ] A lens worker runs with the reviewed worktree as its working directory, and the context bundle reaches it inlined in the prompt; the launcher writes nothing into the reviewed worktree. A test pins both.\n- [ ] A worker whose envelope records a permission denial for a git command is `failed: true` with reason `denied`, even when its text is \"No findings.\"; a fake-runner test pins it.\n- [ ] The launcher's worker environment pins git configuration and `GIT_ATTR_SOURCE` as the built-in read-only command Decision states; a probe with a repository configured with an external diff and a textconv driver shows which program starts remain, and `roles.js`'s header records them as the accepted sandbox-contained residual risk.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/driver/roles.js` — new `lens-reviewer` role\n- `plugin/bin/lib/driver/worker.js` — reuse the launcher; no behaviour change for existing roles\n- `plugin/bin/review-lens-workers.js` — new launcher CLI\n- `plugin/bin/lib/timing/transcript.js` — count headless lens workers (or the module #5597 changed)\n\n## Gotchas\n\n- #5942 (launch driver workers at their role's effort) edits `roles.js` and `worker.js` and has a pipeline run in flight; build after it merges and take its effort mechanism for the new role.\n- Lens 3f's discrimination checks create a scratch checkout and run tests (`step3-lens-dispatch.md`, \"Lens 3f scratch checkout\"). A read-only role cannot do that. 3f stays off the worker path unless a probe shows a contained right; say which in the PR.\n- Headless worker authentication on env-authenticated hosts is undecided (#5259); the launcher must report a launch failure as a failure, never as an empty review.\n- A lens brief embeds untrusted diff text; the worker's rights, not the prompt, are what contain it. The `auth` flag here means the worker's launch credentials and rights: no credential beyond what `claude -p` needs reaches the generated settings, and no network is granted.\n- The reply shape is a contract with `settle-lens-replies` (`review-coordination.js`) shared by the workflow script and this launcher: the build adds a test that runs both producers' output through it, so neither can drift alone.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n\n## Decision Rationale\n\n- **Why reuse the driver's launcher.** Its rights were probed and recorded (`roles.js` header); a second launcher would need the same probes and would drift.\n- **Why the workflow script's return shape.** One settle path (`settle-lens-replies`) for every dispatcher keeps pairing and logging in tested code.\n\n**Decision (plan review Q1, working directory):** Reading A. The worker runs in the reviewed worktree, so relative paths, `git grep` and an unranged `git diff`/`git show` all see the reviewed branch. The launcher inlines the context bundle in the prompt rather than copying it into the worktree, so the reviewed tree is never written to.\n\n**Decision (plan review Q2, admitted git forms):** Reading A. The launcher appends one fixed system-prompt note (`--append-system-prompt-file`) listing the exact admitted command forms and telling the worker to run them as written. Because a refused read could still end in \"No findings.\", a worker whose envelope records a git permission denial is `failed: true` with reason `denied` (added to Deliverable 2's reason list), so the dispatcher falls back instead of counting an empty review.\n\n**Decision (plan review Q3, effort):** Reading A, keeping the criterion as written. The effort comes from `roleLaunch('lens-reviewer', policy)`, the role's own `DRIVER_ROLE_PROFILES` row, and a test pins that row. No per-lens effort helper.\n\n**Decision (Task 2 probe, built-in read-only git commands):** Pin the git environment in the launcher, then accept whatever the sandbox still contains as a stated residual in the `roles.js` lens-reviewer header. The CLI's own read-only command table admits bare `git diff`, `git log -p` and `git show` with no allow rule, and they start the external diff, textconv or fsmonitor program the repository's config names. No deny rule is added for them, since it would also refuse the pinned forms. Instead the launcher's worker environment stops git reading system and global config and overrides the program-starting keys (for example `diff.external`, `core.attributesFile`, `core.fsmonitor`) through `GIT_CONFIG_COUNT` entries, and sets `GIT_ATTR_SOURCE`. A live probe against a repository configured with an external diff and a textconv driver then records which program starts remain (the last acceptance criterion). Those that remain are the accepted residual. Why the residual is acceptable: the programs come from the user's own git config, so the reviewed change can only choose among already-configured programs through its tracked `.gitattributes`; the Task 2 probe (CLI 2.1.325, git 2.56.0, macOS, 2026-11-23) showed each such program's write outside the working directory and its network reach refused by the sandbox; and that residual is narrower than the implementer role's, which already runs worker-written code under the same sandbox. Bash stays on the role on sandbox-probed platforms only, as Deliverable 1 states. Resume from the pushed Tasks 1-2 on branch `worktree-dispatch-record-6000` (`89f4b46be`), not from scratch.\n\n**Decision (built-in read-only git commands, maintainer 2026-11-23, hub item 1119):** Sandbox plus pinned environment. Claude Code 2.1.325 runs bare `git diff`, `git log -p` and `git show` without an allow rule, and those can start external diff or textconv programs that the repository's git configuration names. (1) The launcher neutralises what the environment can before any worker starts: no system or global git config (`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` pointed at an empty file), `diff.external` cleared and textconv disabled through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, and `GIT_ATTR_SOURCE` set to the empty tree. A probe pins each setting with a negative test. (2) Whatever program start the probe still shows is accepted as a stated residual risk, contained by the sandbox (no writes outside it, no network), and written into `roles.js`'s header with the CLI version, platform and date. A diff can name a driver in `.gitattributes` but cannot define what it runs, which only repository configuration can do.\n\nOrigin: Phase 10, `docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`. Blocked by #5942 (the #5825 blocker was dropped by the maintainer on 2026-11-21; see #6005).\n\n\n<!-- work-fingerprint: pipeline-economy:phase-10-lens-worker-role -->\nwork-fingerprint: pipeline-economy:phase-10-lens-worker-role\n**Related:** #5941, #5258, #5250, #5259\n\n",
+        "createdAt": "2026-11-21T17:36:11Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -892,10 +892,10 @@
             "color": "8B5CF6"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -914,12 +914,36 @@
             "name": "ceremony:standard",
             "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
             "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADEgcf9A",
+            "name": "fix-on-worktree-dispatch-record-6019",
+            "description": "Fixed on worktree-dispatch-record-6019, not yet on the default branch",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADEgi2JQ",
+            "name": "fix-on-worktree-dispatch-record-5997",
+            "description": "Fixed on worktree-dispatch-record-5997, not yet on the default branch",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADEgngeg",
+            "name": "fix-on-worktree-flow-spec-6100",
+            "description": "Fixed on worktree-flow-spec-6100, not yet on the default branch",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADEg1HWQ",
+            "name": "fix-on-worktree-dispatch-record-6062",
+            "description": "Fixed on worktree-dispatch-record-6062, not yet on the default branch",
+            "color": "FBCA04"
           }
         ],
-        "number": 6003,
+        "number": 6000,
         "state": "OPEN",
-        "title": "Run review lenses as lean headless workers behind review-lens-dispatch: worker",
-        "updatedAt": "2026-11-23T07:27:22Z",
+        "title": "Add a read-only lens reviewer worker role and a launcher that runs lens briefs as headless workers",
+        "updatedAt": "2026-11-23T15:21:32Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1163,78 +1187,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full from #4589\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/flow/context-handoff.md` picks its branch from the run, not from the caller: \"Then take the branch that matches the run, by the same `dispatched` read Step 4 used to build `--next-steps`\" (line 33; probe `git grep -n -F -e \"by the same \\`dispatched\\` read\" origin/main -- plugin/skills/flow/context-handoff.md` matched on origin/main at 01a50fabe). A run whose `run-state.json` carries `dispatched: true` always takes the Dispatched call branch: stop before the next step and report `OUTCOME: handoff` / `NEXT_STEPS:` for a dispatcher to continue.\n\nOn #4589 (run 2026-11-01T190716-record-4589) the dispatched run was orphaned and a human resumed it with a typed `PIPELINE_RUN_DIR=… /claude-tweaks:flow \"#4589\" build`. After the test gate the gauge printed `over: true` (200,622 of 200,000 tokens) with a handoff path; the `dispatched` read printed `dispatched`, so the session stopped and rendered an `OUTCOME: handoff` block addressed to a dispatcher that did not exist. The human then had to paste the resume line, and the resumed session (still over the cap) hand-split the remainder: review and polish went to a fresh Agent, wrap-up ran in the session because its Review Console needs the human. Neither step is what the file prescribes for this caller.\n\n## Deliverables\n\n1. `context-handoff.md` (and `SKILL.md` Step 4 item 4 where it cites the branch) select the Dispatched call branch only when this agent is itself a dispatcher-launched Task call, not whenever the run is dispatch-bound. A dispatched call's prompt already starts with the `[dispatch-prompt: {run-id} {call}]` marker (#4589, `plugin/bin/lib/dispatch/task-prompt.js`), which is a candidate signal; a session with no such prompt (a human-typed or Routine-typed `/flow`) takes the Top-level run branch.\n2. On the Top-level branch for a dispatch-bound run, `--next-steps` and the handed-off steps exclude `wrap-up`, as for any top-level run, so the Review Console stays in the human's session.\n\n## Acceptance Criteria\n\n- [ ] A human-typed `/claude-tweaks:flow` resume of a `dispatched: true` run that crosses the context cap hands its remaining non-wrap-up steps to one fresh Agent and runs `wrap-up` itself; it never renders `OUTCOME: handoff`.\n- [ ] A `/claude-tweaks:dispatch` Task call (prompt starting with the dispatch-prompt marker) that crosses the cap still stops and reports `OUTCOME: handoff` / `NEXT_STEPS:` exactly as today.\n- [ ] A prose test pins both branch conditions in `context-handoff.md`.\n\n## Release Note\n\nA human resuming a dispatched pipeline run no longer gets stranded with a dispatcher-only handoff block when the session crosses its context cap.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/flow/context-handoff.md` — modify\n- `plugin/skills/flow/SKILL.md` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-12T18:11:53Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 5270,
-        "state": "OPEN",
-        "title": "Pick flow's context-handoff branch from the caller, not the run's dispatched flag",
-        "updatedAt": "2026-11-12T19:15:27Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -11241,9 +11193,14 @@
       ]
     },
     {
+      "number": 6003,
+      "blockedBy": [
+        6000
+      ]
+    },
+    {
       "number": 6002,
       "blockedBy": [
-        5999,
         5997
       ]
     },
