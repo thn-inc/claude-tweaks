@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps,
+  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps, USAGE,
 } = require('../../plugin/bin/lib/compose-subject.js');
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
@@ -49,7 +49,7 @@ const FAKE_CTX = { cwd: () => PHANTOM_CWD, env: INJECTED_ENV, homeDir: () => PHA
 
 function fakeDeps({
   records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
-  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null,
+  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null, prView = null,
 } = {}) {
   const out = { stdout: '', stderr: '', calls: [], gitCalls: [], files: {}, dirs: [] };
   const deps = {
@@ -58,6 +58,11 @@ function fakeDeps({
     remoteUrl,
     runner: (args) => {
       out.calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view') {
+        if (prView === null) throw new Error('gh pr view must not be called');
+        if (prView instanceof Error) throw prView;
+        return JSON.stringify(prView);
+      }
       if (args[0] === 'pr') {
         assert.deepEqual(args.slice(0, 2), ['pr', 'diff']);
         if (prFiles instanceof Error) throw prFiles;
@@ -1263,4 +1268,62 @@ test('AC8.1: realDeps.pinGhHost reads the origin and hosts.yml from the injected
   // An injected home with no hosts.yml leaves the origin host unknown, so the explicit host is pinned.
   _resetGhHostCache();
   assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => PHANTOM_HOME, stderr: () => {} }), GHE_HOST);
+});
+
+const HK_PR = { number: 5207, title: 'Prune 111 completed execution plans', body: '<!-- tidy-housekeeping-pr -->\nTidy housekeeping.' };
+
+test('AC2.1: --housekeeping --pr {n} --out-dir {d} exits 0 and writes a chore subject and a body with no Release-Note or Fixes line', () => {
+  const { deps, out } = fakeDeps({ prView: HK_PR });
+  const code = run(['--housekeeping', '--pr', '5207', '--out-dir', '/tmp/hk'], deps);
+  assert.equal(code, 0, out.stderr);
+  const title = 'chore: Prune 111 completed execution plans (#5207)';
+  assert.equal(out.files[nodePath.join(nodePath.resolve(PHANTOM_CWD, '/tmp/hk'), 'title.txt')], title);
+  const body = out.files[nodePath.join(nodePath.resolve(PHANTOM_CWD, '/tmp/hk'), 'body.md')];
+  assert.equal(body, 'Prune 111 completed execution plans');
+  assert.equal(out.stdout, `'${title}'\n`);
+  assert.deepEqual(out.calls[0].slice(0, 3), ['pr', 'view', '5207']);
+  assert.ok(out.calls[0].includes('acme/repo'));
+  assert.ok(!out.calls.some((c) => c[0] === 'issue'), 'no gh issue view in the record-less form');
+});
+
+test('AC2.2: --pr {n} with no <n> and no --housekeeping still exits 1 with missing <n> argument', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['--pr', '5207', '--out-dir', '/tmp/hk'], deps), 1);
+  assert.match(out.stderr, /^missing <n> argument\n/);
+  assert.equal(out.calls.length, 0);
+});
+
+test('--housekeeping usage errors: with a record number, --keep-open, --range, or without --pr — exit 1, no gh call', () => {
+  for (const argv of [['5207', '--housekeeping', '--pr', '1'], ['--housekeeping', '--pr', '1', '--keep-open', '2'], ['--housekeeping', '--range', 'a...b'], ['--housekeeping']]) {
+    const { deps, out } = fakeDeps({ prView: HK_PR });
+    assert.equal(run(argv, deps), 1, argv.join(' '));
+    assert.equal(out.calls.length, 0, argv.join(' '));
+  }
+});
+
+test('--housekeeping refuses a PR body with no housekeeping marker (exit 1), accepts the wrap-up-residue-pr marker', () => {
+  const plain = fakeDeps({ prView: { ...HK_PR, body: 'Fixes #12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], plain.deps), 1);
+  assert.match(plain.out.stderr, /no housekeeping marker/);
+  const residue = fakeDeps({ prView: { ...HK_PR, body: '<!-- wrap-up-residue-pr -->' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], residue.deps), 0, residue.out.stderr);
+});
+
+test('--housekeeping neutralizes a closing phrase in the PR title', () => {
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, title: 'Prune plans (closes #12)' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.doesNotMatch(`${title}\n${body}`, /closes #12/);
+});
+
+test('--housekeeping: a failed or unparseable gh pr view exits 3', () => {
+  assert.equal(run(['--housekeeping', '--pr', '5207'], fakeDeps({ prView: new Error('boom') }).deps), 3);
+  const bad = fakeDeps({ prView: HK_PR });
+  const runner = bad.deps.runner;
+  bad.deps.runner = (args) => (args[1] === 'view' ? 'not json' : runner(args));
+  assert.equal(run(['--housekeeping', '--pr', '5207'], bad.deps), 3);
+});
+
+test('USAGE advertises --housekeeping', () => {
+  assert.match(USAGE, /--housekeeping/);
 });

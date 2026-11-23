@@ -14,12 +14,17 @@
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--housekeeping] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
 // `--keep-open` (#4199) names numbers from that list the merge must not
 // close: each still counts for the subject, Type aggregation and Release
 // Note, but its body line is `Refs #n`. Without it the output is unchanged.
+// `--housekeeping --pr <n>` (#5208) is the record-less form for tidy's and wrap-up residue-sweep's
+// housekeeping PRs, which link no record: it reads the PR with `gh pr view`, composes a `chore:`
+// subject from its title (closing phrases neutralized) with no Release-Note or Fixes line, and
+// takes no <n>, --keep-open or --range. A PR body carrying neither `<!-- tidy-housekeeping-pr -->`
+// nor `<!-- wrap-up-residue-pr -->` is refused (exit 1); a failed or unparseable read exits 3.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
 // body; no trailing newline on any of them), creating <dir> recursively, and
@@ -64,7 +69,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { composeSubject, ComposeSubjectError } = require('./release/subject');
+const { composeSubject, composeHousekeepingSubject, ComposeSubjectError } = require('./release/subject');
+const { neutralizeClosingPhrases } = require('./flow/closing-links');
 const { hiddenByUnclosedFence } = require('./markdown-blocks');
 const { UNCLOSED_FENCE_PREFIX } = require('./issues/materialize-format');
 const {
@@ -78,7 +84,11 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]\n';
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--housekeeping] [--help]\n';
+
+// A housekeeping PR's own marker — the record-less form refuses a PR without one (#5208). Same
+// pair _shared/github-pr-scan.md's HOUSEKEEPING_MARKER matches.
+const HOUSEKEEPING_MARKER = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/;
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -102,10 +112,11 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, keepOpen: [], outDir: null, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, keepOpen: [], outDir: null, housekeeping: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
+    if (a === '--housekeeping') { opts.housekeeping = true; continue; }
     if (a === '--keep-open') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
@@ -132,6 +143,13 @@ function parseArgs(argv) {
       if (part.trim() === '' || !isPos(n)) return { error: `malformed record number: ${JSON.stringify(part)}` };
       opts.numbers.push(n);
     }
+  }
+  if (opts.housekeeping) {
+    if (opts.numbers.length) return { error: '--housekeeping takes no <n> argument' };
+    if (opts.keepOpen.length) return { error: '--housekeeping takes no --keep-open' };
+    if (opts.pr === null) return { error: '--housekeeping requires --pr' };
+    if (opts.range !== null) return { error: '--range and --pr are mutually exclusive' };
+    return opts;
   }
   if (opts.numbers.length === 0) return { error: 'missing <n> argument' };
   if (opts.range !== null && opts.pr !== null) return { error: '--range and --pr are mutually exclusive' };
@@ -334,8 +352,29 @@ function run(argv, deps = realDeps) {
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec, injected);
   const slug = repoSlug(repoSpec);
 
+  // Record-less form (#5208): the PR itself is the only source — no record loop, so the record
+  // checks below see an empty list and pass.
+  let housekeepingPr = null;
+  if (opts.housekeeping) {
+    let rawPr;
+    try {
+      rawPr = deps.runner(['pr', 'view', String(opts.pr), '--repo', slug, '--json', 'number,title,body'], injected);
+    } catch (err) {
+      deps.stderr(`compose-subject.js: gh pr view ${opts.pr} failed: ${errMessage(err)}\n`);
+      return 3;
+    }
+    try { housekeepingPr = JSON.parse(rawPr); } catch {
+      deps.stderr(`compose-subject.js: gh pr view ${opts.pr} returned unparseable JSON\n`);
+      return 3;
+    }
+    if (!housekeepingPr || typeof housekeepingPr !== 'object' || !HOUSEKEEPING_MARKER.test(housekeepingPr.body || '')) {
+      deps.stderr(`compose-subject.js: PR #${opts.pr} carries no housekeeping marker (<!-- tidy-housekeeping-pr --> or <!-- wrap-up-residue-pr -->) — the record-less form is for housekeeping PRs only\n`);
+      return 1;
+    }
+  }
+
   const records = [];
-  for (const n of opts.numbers) {
+  for (const n of (opts.housekeeping ? [] : opts.numbers)) {
     const viewArgs = (fields) => ['issue', 'view', String(n), '--repo', slug, '--json', fields];
     let raw;
     let issueTypeFieldRejected = false;
@@ -429,7 +468,12 @@ function run(argv, deps = realDeps) {
 
   let composed;
   try {
-    composed = composeSubject({
+    composed = opts.housekeeping ? composeHousekeepingSubject({
+      title: neutralizeClosingPhrases(String(housekeepingPr.title ?? ''), { owner: repoSpec.owner, repo: repoSpec.repo }).text,
+      number: Number(opts.pr),
+      scope,
+      tag: opts.tag,
+    }) : composeSubject({
       type: aggregateType(records),
       title: subjectRecord.title,
       number: subjectRecord.number,
