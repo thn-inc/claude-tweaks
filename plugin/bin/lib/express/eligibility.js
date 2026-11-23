@@ -152,11 +152,10 @@ function isProtectedPath(path) {
 }
 
 // The families declared buildTime above, derived from PROTECTED_FAMILIES (#6019) so a new family must
-// declare its kind; applied only to a path also protected.
+// declare its kind. Every build-time family is also a protected family.
 const BUILD_TIME_PROTECTED_RES = Object.freeze(PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.re));
 
 function isBuildTimeProtectedPath(path) {
-  if (!isProtectedPath(path)) return false;
   const normalized = canonicalPath(path);
   return BUILD_TIME_PROTECTED_RES.some((re) => re.test(normalized));
 }
