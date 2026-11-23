@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill files, Node 18+ `node --test` conformance suites, `plugin/bin/implementer-tier.js` (read only).
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-22T113201-record-5999/work/5999-spec.md` (record #5999)
+**Spec:** `.claude-tweaks/pipelines/2026-11-23T115413-record-5999/work/5999-spec.md` (record #5999; resumed 2026-11-23 — the 2026-11-22 run merged only its bookkeeping, no implementation)
 
 Scope keywords: size:`-derived, corresponding model profile, size-based profile selection, Not yet used. Picks an implementer, no build calls it yet, No build calls the CLI yet
 
@@ -16,12 +16,13 @@ Scope keywords: size:`-derived, corresponding model profile, size-based profile 
 
 - Every bin path inside skill instruction text is spelled `${CLAUDE_PLUGIN_ROOT}/bin/...`; a skill reference inside an instruction uses the fully-qualified `/claude-tweaks:{skill}` form (SDD is `/superpowers:subagent-driven-development`).
 - Read `docs/skill-authoring.md` before editing any `plugin/skills/**/*.md` file, and `.claude/skills/skill-prose-conformance-tests/SKILL.md` before writing the conformance test.
-- `RAIL_BYTES` = 52,500 (`plugin/bin/lib/skill-audit/budgets.js`) is the only blocking size limit. Measured on the merge base `306070988b`: `dispatch.md` 45,430 B (7,070 B headroom); `materialize.md` 41,837 B; `build-options.md` 12,315 B; `handoff-template.md` 6,339 B; `plan-authoring-checks.md` **52,497 B (3 B headroom)** — its edit must add zero net bytes (`wc -c` after ≤ 52,497). Target net growth of `dispatch.md` ≤ 1,000 B (spec Gotcha); never trade a pinned literal below for bytes.
+- `RAIL_BYTES` = 52,500 (`plugin/bin/lib/skill-audit/budgets.js`) is the only blocking size limit. Measured on the merge base `b8811c277a`: `dispatch.md` 45,636 B (6,864 B headroom); `materialize.md` 41,888 B; `build-options.md` 12,315 B; `handoff-template.md` 6,339 B; `plan-authoring-checks.md` **52,497 B (3 B headroom)** — its edit must add zero net bytes (`wc -c` after ≤ 52,497). Target net growth of `dispatch.md` ≤ 1,000 B (spec Gotcha); never trade a pinned literal below for bytes.
 - Many open records edit `dispatch.md` (#5434, #5439, #5668): edit by anchor text, never by line number.
 - Copy each prescribed `decisions.md` line verbatim, status word included — both are `AUTO` lines:
   - `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.`
   - `AUTO {time} — task {k} implementer escalated {from} → {to} ({trigger}). Reversibility: n/a.` with `{trigger}` being `blocked` or `fix-round-failed`.
 - The escalated dispatch is a fresh implementer, never a `SendMessage` resume (a resume keeps the first agent's model).
+- Spec Decisions (binding): **Q1 Reading A** — after this record's one escalation, SDD's own fix-loop schedule (rounds 1-3 resume, round-4 fresh agent one profile up) runs unchanged; add no instruction overriding it. **Q2 Reading B** — escalation is off whenever the `profile=` token is given (the token sets every dispatch, "it always wins"); "steps up from that profile" applies to a `**Role:**` marker's profile only, never the token's.
 - Under `implementer-tier: lane` (the default) behaviour is unchanged: the CLI's `lane` answer equals the old prose mapping, `effort:` fallback included.
 - Spec-path correction (premise reversed, logged in `decisions.md`): the spec's `--spec-file "{run-dir}/work/{n}-spec.md"` is written in `dispatch.md` as `--spec-file "{spec-file}"`, `{spec-file}` being the materialized spec Common Step 1.5 passes as `--spec` — in worktree mode the worktree's copy, since `$PIPELINE_RUN_DIR` (the main checkout's run dir) holds no `work/` (verified: this run's main-checkout run dir has no `work/`).
 - Governing-skill quotes (verbatim):
@@ -35,7 +36,7 @@ Scope keywords: size:`-derived, corresponding model profile, size-based profile 
 
 The public-contract risk proof sits in Task 3 Step 4 (the step that re-runs the reader grep).
 
-Check B scope sweep: `docs/superpowers/plans/2026-11-21-implementer-tier.md` matches the `Not yet used. Picks an implementer` / `no build calls it yet` keywords — it is #5996's historical plan, append-only history: no change.
+Check B scope sweep: `docs/superpowers/plans/2026-11-21-implementer-tier.md` (#5996) and `docs/superpowers/plans/2026-11-22-driver-implementer-relaunch.md` (#5997) match the `Not yet used. Picks an implementer` / `no build calls it yet` keywords — both are other records' historical plans, append-only history: no change.
 
 ## Review Focus
 
@@ -61,7 +62,7 @@ Check B scope sweep: `docs/superpowers/plans/2026-11-21-implementer-tier.md` mat
 | AC8.2 | Task 2 test `AC8.2` |
 | AC9.1 | Task 1 test `AC9.1` (message-matched go-red control removing the CLI call) |
 
-AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control check): `git grep -n -c -F "low\` → Fast, \`medium\` → Standard, \`high\` → Capable" -- plugin/skills/build/dispatch.md` run at base `306070988b` prints `plugin/skills/build/dispatch.md:1` — the search matches its own target. No exclusion pathspec needed: it is scoped to one named path outside `.claude-tweaks/`.
+AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control check): `git grep -n -c -F "low\` → Fast, \`medium\` → Standard, \`high\` → Capable" -- plugin/skills/build/dispatch.md` run at base `b8811c277a` prints `plugin/skills/build/dispatch.md:1` — the search matches its own target. No exclusion pathspec needed: it is scoped to one named path outside `.claude-tweaks/`.
 
 ---
 
@@ -97,6 +98,7 @@ AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control chec
   | `AC5.2: step-up from the task's own profile` | `--from {task's profile}` |
   | `AC5.1: once-per-task check reads decisions.md` | `` `task {k} implementer escalated` `` and `decisions.md` in the same sentence |
   | `AC5.3: escalation gated on rule: record` | `` Only when the CLI printed `rule: record` `` |
+  | `AC3.2: no escalation under the profile= token` | `` and no `profile=` token was given `` |
   | `escalation line` | the verbatim escalation line (Global Constraints) |
   | `AC3.1 AC3.2: precedence` | `` precedence is `profile=` token, then marker, then the CLI's profile `` |
   | `AC8.1: no prose size mapping` | negative fact: implement as a pattern-free check in its own test — `assert.ok(!DISPATCH.includes('`low` → Fast, `medium` → Standard, `high` → Capable'))` plus a go-red control that appends that literal to a copy and asserts the same check function throws with its own message |
@@ -120,7 +122,7 @@ AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control chec
 
   Replace the anchored span (old text: `**subagent** (default): Check the materialized header's \`size:\` field … invoke \`/superpowers:subagent-driven-development\` with no profile override.`) with text carrying, in this order, every fact below. Keep the existing `No floor raises git-running implementers to Standard (#4559): …re-propose it only with new evidence.` sentence byte-identical (pinned AC9.2 in `tests/dispatch-no-stash-conformance.test.js`). Reference draft (tighten freely; every pinned literal must survive):
 
-  > **subagent** (default): **Implementer profile (#5999).** A record build (Spec Mode) runs `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"` once, adding `--run "$PIPELINE_RUN_DIR"` when it is set (`{spec-file}`: the materialized spec Common Step 1.5 passes as `--spec`). Invoke `/superpowers:subagent-driven-development` with an explicit instruction to default every per-task implementer dispatch in this spec to its `profile`, overriding that skill's own per-task complexity heuristic for this spec's tasks; a `null` profile means no override. A non-zero exit, a missing spec file included, stops the build before the first dispatch with the CLI's message — never a fallback mapping. A design-doc build runs no CLI and gets no override. Log once per record build, via `log-decision.js --status AUTO --section "/build"`: `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.` No floor raises git-running implementers to Standard (#4559): … (unchanged). **One escalation per task (#5999).** Only when the CLI printed `rule: record`, in the same invocation instruction, also direct it that a task's next implementer dispatch is a fresh implementer, never a `SendMessage` resume (a resume keeps the first agent's model), one profile up, on exactly two triggers: its implementer replies `STATUS: BLOCKED`, or the re-review of the task's first fix round fails. An initial task review asking for a fix, `NEEDS_CONTEXT` and `DONE_WITH_CONCERNS` are not triggers. The profile is the same CLI call's `stepUp` with `--from {task's profile}` (the `**Role:**` marker's or `profile=` token's profile when one set the task's), resolved through `resolve-profile.js` as every dispatch is; its brief carries the task text, the review findings or `BLOCKED` reason, and the task's current diff. Once per task: a task whose `task {k} implementer escalated` line is already in `decisions.md` (no run dir: SDD's `progress.md`), so the count survives a context handoff, a `null` `stepUp`, or a step-up resolving to the same model gets SDD's own handling, unchanged. Log each the same way: `AUTO {time} — task {k} implementer escalated {from} → {to} ({trigger}). Reversibility: n/a.`, `{trigger}` being `blocked` or `fix-round-failed`. With no run dir, the Step 7 handoff lists both lines.
+  > **subagent** (default): **Implementer profile (#5999).** A record build (Spec Mode) runs `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"` once, adding `--run "$PIPELINE_RUN_DIR"` when it is set (`{spec-file}`: the materialized spec Common Step 1.5 passes as `--spec`). Invoke `/superpowers:subagent-driven-development` with an explicit instruction to default every per-task implementer dispatch in this spec to its `profile`, overriding that skill's own per-task complexity heuristic for this spec's tasks; a `null` profile means no override. A non-zero exit, a missing spec file included, stops the build before the first dispatch with the CLI's message — never a fallback mapping. A design-doc build runs no CLI and gets no override. Log once per record build, via `log-decision.js --status AUTO --section "/build"`: `AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.` No floor raises git-running implementers to Standard (#4559): … (unchanged). **One escalation per task (#5999).** Only when the CLI printed `rule: record` and no `profile=` token was given, in the same invocation instruction, also direct it that a task's next implementer dispatch is a fresh implementer, never a `SendMessage` resume (a resume keeps the first agent's model), one profile up, on exactly two triggers: its implementer replies `STATUS: BLOCKED`, or the re-review of the task's first fix round fails. An initial task review asking for a fix, `NEEDS_CONTEXT` and `DONE_WITH_CONCERNS` are not triggers. The profile is the same CLI call's `stepUp` with `--from {task's profile}` (the `**Role:**` marker's profile when one set the task's), resolved through `resolve-profile.js` as every dispatch is; its brief carries the task text, the review findings or `BLOCKED` reason, and the task's current diff. Once per task: a task whose `task {k} implementer escalated` line is already in `decisions.md` (no run dir: SDD's `progress.md`), so the count survives a context handoff, a `null` `stepUp`, or a step-up resolving to the same model gets SDD's own handling, unchanged. Log each the same way: `AUTO {time} — task {k} implementer escalated {from} → {to} ({trigger}). Reversibility: n/a.`, `{trigger}` being `blocked` or `fix-round-failed`. With no run dir, the Step 7 handoff lists both lines.
 
 - [ ] **Step 4: Re-point the two precedence mentions in the same file**
 
@@ -206,7 +208,7 @@ AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control chec
 - Modify: `plugin/bin/lib/policy-schema.js:284-285`
 - Modify: `tests/resolve-policy-control-mode.test.js:313`
 - Modify: `plugin/skills/_shared/policy-schema-model-profiles.md:15`
-- Modify: `docs/plugin-structure.md:402`
+- Modify: `docs/plugin-structure.md:405`
 
 **Interfaces:**
 - Consumes: Task 1's `dispatch.md` (the first consumer).
@@ -224,7 +226,7 @@ AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control chec
   - `policy-schema.js:285` summary: `"Not yet used. Picks an implementer's work profile …"` → `"Picks an implementer's work profile from the record's size and Key File count, or from size alone as today."`
   - `policy-schema.js:284` comment: replace `No build calls the CLI yet; #5997 (driver) and #5999 (standard lane) wire the first consumers and drop the \`Not yet used\` marker and the NOT_YET_USED entry.` with `First consumer: build/dispatch.md's subagent procedure (#5999); the driver's is #5997.`
   - `policy-schema-model-profiles.md:15`: `— no build calls it yet (#5997 driver, #5999 standard lane)` → `— called by \`/build\`'s subagent procedure (\`build/dispatch.md\`, #5999); the driver's call is #5997`.
-  - `docs/plugin-structure.md:402`: `no build calls it yet (#5997, #5999)` → `called once per record build by \`/build\`'s \`dispatch.md\` (#5999; the driver, #5997)`.
+  - `docs/plugin-structure.md:405`: `no build calls it yet (#5997, #5999)` → `called once per record build by \`/build\`'s \`dispatch.md\` (#5999; the driver, #5997)`.
 
 - [ ] **Step 4: Run the tests and the reader grep**
 
@@ -233,7 +235,7 @@ AC8.1 absence-grep control (per plan-authoring-checks' Absence-grep control chec
   Run: `git grep -n -i -e "no build calls" -e "Not yet used. Picks an implementer" -- plugin docs tests ':!docs/superpowers/plans' ':!docs/plans'` — Expected: no output.
   Run: `git grep -n -F -e "implementer escalated" -e "implementer profile" -- plugin tests tools` — Expected: hits only in prose/tests (dispatch.md, handoff-template.md, build-options.md, `_shared/policy-schema.md`, the new test), no parser under `plugin/bin`; paste the output into the commit message body for the PR.
 
-  Proof(public-contract): the two new `decisions.md` line shapes are `AUTO` lines already covered by `_shared/auto-decision-log.md`'s entry schema, and no reader parses them — `git grep -n -F -e "implementer escalated" -e "implementer profile" -- plugin tests tools` at base `306070988b` hits only prose (`_shared/policy-schema.md:176`, `build-options.md:47`, `dispatch.md`), no parser, and this step re-runs it after the change. The `lane` default keeps every build's profiles: `tests/bin-lib/model-profiles/implementer-tier-cli.test.js` AC6.2/AC6.3/AC11.1 pin `lane` = `low`→fast, `high`→capable and the `effort:` fallback, and Task 1's test pins that `dispatch.md` forwards that answer.
+  Proof(public-contract): the two new `decisions.md` line shapes are `AUTO` lines already covered by `_shared/auto-decision-log.md`'s entry schema, and no reader parses them — `git grep -n -F -e "implementer escalated" -e "implementer profile" -- plugin tests tools` at base `b8811c277a` hits only prose (`_shared/policy-schema.md:186`, `build-options.md:47`), no parser, and this step re-runs it after the change. The `lane` default keeps every build's profiles: `tests/bin-lib/model-profiles/implementer-tier-cli.test.js` AC6.2/AC6.3/AC11.1 pin `lane` = `low`→fast, `high`→capable and the `effort:` fallback, and Task 1's test pins that `dispatch.md` forwards that answer.
 
 - [ ] **Step 5: Commit**
 
