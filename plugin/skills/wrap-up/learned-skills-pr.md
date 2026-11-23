@@ -54,7 +54,7 @@ Run this once when any finding was captured. Pick the verb by `integration-model
   node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" stage --run "{run}" --worktree "{worktree}" --reason "integration-model is local-merge" --merge-base "{merge-base}"
   ```
 
-Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}` through git plumbing on a temp index, so the worktree's own branch, index and files are never touched. It then pushes that branch and opens one ready PR, or reuses the open one on a resumed run. A patch that cannot ride it (a failed `git apply --check`, push or PR create) is staged instead.
+Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}` through git plumbing on a temp index, so the worktree's own branch, index and files are never touched. It then pushes that branch and opens one ready PR, or reuses the open one on a resumed run. A resumed run also recognises entries a merged learned-skills PR already shipped: each is recorded landed against that merged PR, never re-opened or re-staged. A patch that cannot ride it (a failed `git apply --check`, push or PR create) is staged instead.
 
 The CLI writes the log lines itself: one AUTO line per landed finding, in `skill-curation.md`'s learned-skills PR shape, and one STAGED line per finding of each staged entry, each under its own row, all naming the entry's one stage path. Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary. A stage whose gate wrote the description-only form, or could not run, logs `_shared/staged-patch.md`'s own line for that case instead of the STAGED shape. Hand-log the AUTO lines only on a top-level `logFailed: true`, and a STAGED line only on that `staged[]` row's `logFailed: true`.
 
@@ -71,7 +71,7 @@ The CLI writes the log lines itself: one AUTO line per landed finding, in `skill
 
 Match each finding to the output by the `id` its `capture` printed. Findings that shared one capture share one entry, so they share its commit:
 
-- **Landed** (`landed[]`): `action` stays `applied`. Set `commit` to `landed[].commit`, shortened to the hash its AUTO line prints, and `pr` to `pr.url`.
+- **Landed** (`landed[]`): `action` stays `applied`. Set `commit` to `landed[].commit`, shortened to the hash its AUTO line prints, and `pr` to the row's own `pr.url` when it carries one (a merged PR that already shipped it), else the top-level `pr.url`.
 - **Staged** (`staged[]`): set `action: "staged"` and `stagePath` to the absolute `staged[].stagePath`, and remove `commit`. A staged finding carries no `pr`.
 - **Superseded**: the edit rides the run branch. Its `commit` is the run-branch commit made above.
 

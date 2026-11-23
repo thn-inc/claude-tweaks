@@ -216,9 +216,9 @@ test('AC11.1: build/dispatch.md forwards the no-stash rule to every dispatch tha
   assert.throws(() => assertForwardedToEveryMember(doctored), /missing: whole-branch-fix/);
 });
 
-test('AC9.1/AC9.2: build/dispatch.md keeps low → Fast and records the no-profile-floor decision', () => {
+test('AC9.1/AC9.2: build/dispatch.md takes the profile from implementer-tier.js and records the no-profile-floor decision', () => {
   const claims = [
-    ['AC9.1', /`low` → Fast, `medium` → Standard, `high` → Capable/],
+    ['AC9.1', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/implementer-tier\.js" --spec-file/],
     ['AC9.2', /No floor raises git-running implementers to Standard \(#4559\)/],
   ];
   const assertProfileClaims = (text) => {
@@ -227,7 +227,7 @@ test('AC9.1/AC9.2: build/dispatch.md keeps low → Fast and records the no-profi
   assertProfileClaims(BUILD_DISPATCH);
   // Go-red controls: mutate each claim and the assertion function itself must throw, naming it.
   const mutations = [
-    ['AC9.1', '`low` → Fast, `medium` → Standard, `high` → Capable', '`low` → Standard, `medium` → Standard, `high` → Capable'],
+    ['AC9.1', 'node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file', ''],
     ['AC9.2', 'No floor raises git-running implementers to Standard (#4559)', ''],
   ];
   for (const [ac, from, to] of mutations) {

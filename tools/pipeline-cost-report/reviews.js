@@ -529,7 +529,39 @@ const STAGED_RE = /^- STAGED .*Step 3 Routing: .*finding/i;
 const CONSOLE_ITEM_RE = /Console item/;
 const DEFERRED_RE = /→ digest|routed to digest|materiality-floor|routed below floor/i;
 const DISMISSED_RE = /dropped: refuted by tiebreak|→ declined|Don't fix|not fixed/i;
-const LOCATION_RE = /([\w./@-]+\.[\w]+):(\d+)/;
+const isWordCode = (c) => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+const isPathCode = (c) => isWordCode(c) || c === 46 || c === 47 || c === 64 || c === 45;
+const isDigitCode = (c) => c >= 48 && c <= 57;
+
+// Every `path.ext:line` in text, in order, at most `max` of them, each as a match array [whole, path, line digits] with
+// its `index`: the matches a global /([\w./@-]+\.[\w]+):(\d+)/ finds, by one linear pass. That regex retries its path
+// class from every position of a long token (quadratic, perf/review-replay-branch-linearity.test.js). A match's path is
+// always a whole run of the class, since the `:` after it is outside the class, so each run is tested once: it is a path
+// when its last non-word character is a `.` with a run character before it and a word character after it, and a `:`
+// and a digit follow the run. A match resumes the scan after its digits, as the regex's lastIndex does.
+function locationMatches(text, max = Infinity) {
+  const s = String(text);
+  const out = [];
+  let i = 0;
+  while (i < s.length && out.length < max) {
+    if (!isPathCode(s.charCodeAt(i))) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    let lastNonWord = -1;
+    for (; i < s.length && isPathCode(s.charCodeAt(i)); i += 1) if (!isWordCode(s.charCodeAt(i))) lastNonWord = i;
+    if (lastNonWord > start && lastNonWord < i - 1 && s[lastNonWord] === '.' && s[i] === ':' && isDigitCode(s.charCodeAt(i + 1))) {
+      let end = i + 2;
+      while (end < s.length && isDigitCode(s.charCodeAt(end))) end += 1;
+      const m = [s.slice(start, end), s.slice(start, i), s.slice(i + 1, end)];
+      m.index = start;
+      out.push(m);
+      i = end;
+    }
+  }
+  return out;
+}
 const ROUTING_CLASSES = ['fixed', 'dismissed', 'staged', 'deferred'];
 const ROUTING_PRECEDENCE = ['fixed', 'staged', 'deferred', 'dismissed'];
 
@@ -550,7 +582,7 @@ function routedLocations(text) {
   const routed = new Map();
   for (const line of text.split(/\r?\n/)) {
     const cls = classifyRouting(line);
-    const loc = cls && LOCATION_RE.exec(line);
+    const loc = cls && locationMatches(line, 1)[0];
     if (!loc) continue;
     const key = `${loc[1]}:${loc[2]}`;
     const have = routed.get(key);
@@ -677,4 +709,4 @@ function collectReviews({ runs, since, until, roots, n }, { fsImpl = fs } = {}) 
   };
 }
 
-module.exports = { lensIdOf, compareStrings, SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };
+module.exports = { lensIdOf, compareStrings, locationMatches, SEVERITIES, PLAN_KINDS, parseTaskVerdict, parsePlanReview, parseLensReport, walkRuns, readVerdicts, isHumanStop, collectTaskReview, collectPlanReview, lensAgentsOf, collectLensAgents, collectPerRun, classifyRouting, collectOutcomes, collectYield, collectReviews };

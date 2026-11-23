@@ -75,9 +75,10 @@ function selectColumns(runs, { split, n, fsImpl = fs } = {}) {
   return { before: n > 0 ? before.slice(-n) : [], after: after.slice(0, Math.max(n, 0)) };
 }
 
-// { critical, important, minor } or null when the text has none of the three headings.
-function parseReviewCounts(text) {
-  const counts = { critical: 0, important: 0, minor: 0 };
+// [{ sev, bare }] — one per counted item line, `bare` its text without emphasis marks or a trailing period — or null
+// when the text has none of the three headings. The one walk parseReviewCounts and the replay's item parser share.
+function walkReviewItems(text) {
+  const items = [];
   let seen = false;
   let current = null;
   for (const line of String(text).split(/\r?\n/)) {
@@ -96,9 +97,18 @@ function parseReviewCounts(text) {
     if (!item) continue;
     const bare = item[2].replace(/[*`]/g, '').replace(/\.+\s*$/, '').trim();
     if (/^(none|n\/a)$/i.test(bare)) continue;
-    counts[current] += 1;
+    items.push({ sev: current, bare });
   }
-  return seen ? counts : null;
+  return seen ? items : null;
+}
+
+// { critical, important, minor } or null when the text has none of the three headings.
+function parseReviewCounts(text) {
+  const items = walkReviewItems(text);
+  if (!items) return null;
+  const counts = { critical: 0, important: 0, minor: 0 };
+  for (const { sev } of items) counts[sev] += 1;
+  return counts;
 }
 
 // { items, sessions } | null (absent). Throws when the file exists but is not a usable timing.json.
@@ -385,4 +395,4 @@ async function collectGuards({ runs, split, n, roots, repo }, { fsImpl = fs, gh 
   return { split, runs: n, before: await read(columns.before), after: await read(columns.after) };
 }
 
-module.exports = { selectColumns, resolveRun, membersOf, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };
+module.exports = { selectColumns, resolveRun, membersOf, isWholeBranch, walkReviewItems, parseReviewCounts, readTiming, readReport, collectWholeBranch, collectFirstPass, keyFilesOf, collectPostMergeBugs, collectGuards };

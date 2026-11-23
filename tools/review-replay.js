@@ -37,6 +37,13 @@
 // decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
 // slots at the tier and effort they were archived at: `control` when every selected slot shares one (tier, effort),
 // otherwise `control.{tier}.{effort|none}` per group. A user arm named `control` or `control.*` exits 2.
+// Three branch roles replay other reviewers the same way, with the range taken from the prompt's own `Base {sha} …
+// Head {sha}` pair and --lens/--max-per-lens refused (tools/review-replay/reviews-branch.js). --role task replays each
+// archived `task review` dispatch, its prompt read from the file a one-line pointer prompt names when it is one
+// (`prompt-file-gone` when that file no longer exists), its archived verdict and located items kept. --role whole-branch
+// replays each whole-branch review dispatch (guards.js's isWholeBranch), its Critical, Important and Minor items kept.
+// --role task-vs-branch replays the run's whole-branch prompt against the head each `Needs fixes` task review reviewed,
+// beside a control slot at the whole-branch prompt's own head, scored on that task review's items.
 //
 // score-reviews: reads the Workflow's replies from --transcripts and, per arm and lens, prints the confirmed findings the
 // replay reviewers raised (recall, per slot and summed, over first passes only: a slot whose `ordinal` in
@@ -49,6 +56,12 @@
 // the archived rows, the figure an arm's numbers are read against; `fixture.byLens` repeats what the extraction selected
 // and excluded per lens (tools/review-replay/reviews-score.js). A reply that is missing, recorded at another effort than its
 // arm's, or not a lens report is notJudged; a `No findings` reply is a scored review with zero rows.
+// For the branch roles the same command prints one section per arm, keyed by role, over the archived reviewer's own items
+// (a replay is caught by location: any location of an item within 5 lines of any replay location):
+// `task` scores each replayed task review's verdict against the archived one and its located items' recall;
+// `wholeBranch` scores the replayed review's items against the archived whole-branch review's located items;
+// `taskVsBranch` scores a whole-branch replay at a Needs fixes task review's head (`caught`, with `notRaised` items) beside
+// its final-head control (`baselineRecall`). A reply that is missing, unparsed or at another effort is notJudged (exit 3).
 //
 // Exit codes (as tools/driver-merge-check-eval.js): 0 ok; 1 a runtime failure; 2 a malformed invocation; 3 not a clean
 // result (extract shortfall or empty set, score with any notJudged, counterfactual with an unreadable transcript, a
@@ -76,8 +89,8 @@ const USAGE = [
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
   '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',
-  '       node tools/review-replay.js extract-reviews --runs <root> --out <dir> --role lens --transcripts <dir> --arm name=<id>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
-  '               [--select <name,...>] [--lens <id,...>] [--max-per-lens <n>] [--min-reviews <n>]',
+  '       node tools/review-replay.js extract-reviews --runs <root> --out <dir> --role lens|task|whole-branch|task-vs-branch --transcripts <dir> --arm name=<id>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
+  '               [--select <name,...>] [--lens <id,...>] [--max-per-lens <n>] (--role lens only) [--min-reviews <n>]',
   '       node tools/review-replay.js score-reviews --out <dir> --transcripts <workflow dir> [--reference <arm>]',
 ].join('\n');
 const COMMAND_FLAGS = {

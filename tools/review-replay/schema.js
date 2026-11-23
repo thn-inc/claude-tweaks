@@ -112,7 +112,7 @@ const REVIEWS_MANIFEST_KEYS = ['schemaVersion', 'kind', 'arms'];
 const REVIEWS_ARM_KEYS = ['name', 'profile', 'model', 'effort', 'repeat', 'prompts'];
 const REVIEWS_PROMPT_KEYS = ['file', 'name', 'run', 'lens', 'side', 'repo'];
 
-// Why a run, or one of its reviewer slots, is left out of the lens replay set.
+// Why a run, or one of its reviewer slots, is left out of the reviewer replay set.
 const REVIEW_EXCLUSION_REASONS = [
   'no-decisions',
   'decisions-unreadable',
@@ -128,6 +128,12 @@ const REVIEW_EXCLUSION_REASONS = [
   'report-unparsed',
   'timing-unreadable',
   'no-timing',
+  // The branch roles (task, whole-branch, task-vs-branch).
+  'prompt-file-gone',
+  'pointer-ambiguous',
+  'no-whole-branch-prompt',
+  'no-merge-base',
+  'items-unparsed',
 ];
 
 // The problems with a reviews manifest object, as strings; an empty list is a valid manifest.

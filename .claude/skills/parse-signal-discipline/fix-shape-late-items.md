@@ -327,3 +327,20 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     with `Object.hasOwn`, write with `Object.defineProperty` (`ownGet`/`ownSet`), and keep the
     ordinary `{}` so `deepStrictEqual` against expected objects still holds. Grep every lookup
     keyed by parsed text when fixing one, and pin `__proto__` and `constructor` keys through each.
+
+33. **A reader that sorts items into in-sample, excluded and out-of-population owes the membership decision before any exclusion check, so an item that was never in the population cannot read as lost.** An
+    exclusion reason says "this item belonged in the sample and the tool could not use it". When
+    an input check runs before the population filter, an out-of-population item that also fails
+    the check gets that reason, and the exclusion count overstates what the tool lost. #5992's
+    task-vs-branch role (`tools/review-replay/reviews-branch.js`'s `archivedReply`) takes only task
+    reviews that asked for fixes with a Critical or Important item, but its plan ordered the tier,
+    prompt and pointer checks before the verdict. Over the real archive it reported 223
+    `prompt-file-gone` exclusions, 179 of them Approved reviews that never qualified. Every task
+    passed on fixtures, and the whole-branch review caught it by running the archive. `2817fce998`
+    reads the raw reply first through a `qualifies` predicate: a parsed reply that does not qualify
+    counts as `notQualifying` whatever its tier or prompt, and only qualifying reviews go on to the
+    exclusion checks. A reply the membership read cannot parse still goes on to them, so a
+    could-not-read stays an exclusion. Decide membership from the rawest input that settles it,
+    and pin an out-of-population item that also fails an input check: it must count as out of the
+    population with no exclusion row (`tests/review-replay/reviews-extract.test.js`'s
+    "qualification is read before the prompt and tier").
