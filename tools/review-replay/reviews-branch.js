@@ -221,14 +221,15 @@ function selectTaskVsBranch(r, dispatches, c, deps, exclude) {
       c.notQualifying += 1;
       continue;
     }
-    if (!x.reason) {
-      const k = slots.length / 2 + 1;
-      const name = k === 1 ? c.role.key : `${c.role.key}.${k}`;
-      [x.pair[0].name, x.pair[1].name] = [name, `${name}--final`];
-      if (x.pair.some((s) => leaks(s, r, c))) x.reason = 'unrewritten-path';
-      else slots.push(...x.pair);
+    if (x.reason) {
+      exclude(excludeRow(r, item, x));
+      continue;
     }
-    if (x.reason) exclude(excludeRow(r, item, x));
+    // No barrier here: wholeBranchOf ran it on the same prompt and inputs, which differ only in names under --out.
+    const k = slots.length / 2 + 1;
+    const name = k === 1 ? c.role.key : `${c.role.key}.${k}`;
+    [x.pair[0].name, x.pair[1].name] = [name, `${name}--final`];
+    slots.push(...x.pair);
   }
   return slots;
 }
