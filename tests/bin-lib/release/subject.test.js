@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { composeSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } = require('../../../plugin/bin/lib/release/subject.js');
+const { composeSubject, composeHousekeepingSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } = require('../../../plugin/bin/lib/release/subject.js');
 
 test('type mapping: feature→feat, bug→fix, task→chore', () => {
   assert.equal(TYPE_PREFIX.feature, 'feat');
@@ -204,4 +204,32 @@ test('scope (#3028): type(scope): prefix counted inside the 72-char budget; blan
   const fortyScope = composeSubject({ type: 'feature', title: 'Add the thing that is long enough to need truncating here', number: 3028, scope: 'a'.repeat(40), releaseNote: 'N.' }).title;
   assert.ok(fortyScope.startsWith(`feat(${'a'.repeat(40)}): `), fortyScope);
   assert.ok(fortyScope.length <= SUBJECT_BUDGET, fortyScope);
+});
+
+test('composeHousekeepingSubject: chore subject from the PR title, body has no Release-Note and no Fixes/Refs line', () => {
+  const out = composeHousekeepingSubject({ title: 'Prune 111 completed execution plans', number: 5207 });
+  assert.equal(out.title, 'chore: Prune 111 completed execution plans (#5207)');
+  assert.equal(out.body, 'Prune 111 completed execution plans');
+  assert.doesNotMatch(out.body, /Release-Note:|^(Fixes|Refs) #/m);
+  const tagged = composeHousekeepingSubject({ title: 'Prune plans', number: 9, tag: 'housekeeping', scope: 'tidy' });
+  assert.equal(tagged.title, 'chore(tidy): Prune plans (#9)');
+  assert.equal(tagged.body, 'Prune plans\n\n[housekeeping]');
+});
+
+test('composeHousekeepingSubject: a Conventional-Commits-shaped title loses its prefix, an over-long one truncates within the budget', () => {
+  assert.equal(composeHousekeepingSubject({ title: 'chore(tidy)!: Prune plans', number: 9 }).title, 'chore: Prune plans (#9)');
+  const long = composeHousekeepingSubject({ title: 'Prune '.repeat(30).trim(), number: 5207 });
+  assert.ok(long.title.length <= SUBJECT_BUDGET, long.title);
+  assert.ok(long.title.endsWith('… (#5207)'), long.title);
+});
+
+test('composeHousekeepingSubject: only a Conventional-Commits type prefix is stripped; a prefix-only title is empty', () => {
+  assert.equal(composeHousekeepingSubject({ title: 'Note: keep this word', number: 9 }).title, 'chore: Note: keep this word (#9)');
+  assert.throws(() => composeHousekeepingSubject({ title: 'chore:', number: 9 }), (err) => err instanceof ComposeSubjectError);
+});
+
+test('composeHousekeepingSubject: throws ComposeSubjectError on a bad number, an empty title, or a bad scope', () => {
+  for (const bad of [{ title: 'T', number: 0 }, { title: '  ', number: 9 }, { title: 'T', number: 9, scope: 'a b' }]) {
+    assert.throws(() => composeHousekeepingSubject(bad), (err) => err instanceof ComposeSubjectError);
+  }
 });
