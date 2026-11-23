@@ -35,6 +35,10 @@ Scope keywords: unlanded, blockerLanding, landingExclusions
 
 ### Task 1: `hollow` verdict in `blocker-landing.js` (+ `preflight-records.js` doc)
 
+**Review risk:** high — decision logic (six-verdict classifier, four-rung fail-closed ordering) and per-sha caches shared across blockers.
+
+**Key File entry matching (plan review):** `extractKeyFileEntries` keeps the first backticked span verbatim, so an entry can carry a line suffix or be a glob. Normalize each key before matching: strip a trailing `:N`, `:N-M` or `#L…` suffix; an entry ending `/` prefix-matches; an entry containing `*` glob-matches (`**` spans directories, `*` stays within one segment); any other entry matches by equality. Add `isHollow` unit cases `(['x.js'], ['x.js:37-39'])` false, `(['plugin/skills/foo/a.md'], ['plugin/skills/foo/*.md'])` false, `(['plugin/skills/foo/sub/a.md'], ['plugin/skills/foo/*.md'])` true.
+
 **Files:**
 - Modify: `plugin/bin/lib/preflight-records/blocker-landing.js` (query, `classifyBlocker`, `fetchBlockerLanding`, header comment's verdict list)
 - Modify: `plugin/bin/preflight-records.js:37-39` (header comment: `--blocker-landing` entries carry `pr` on a `hollow` verdict)
@@ -86,7 +90,7 @@ Scope keywords: unlanded, blockerLanding, landingExclusions
 ### Task 3: name `hollow` on every verdict-enumerating prose surface
 
 **Files:**
-- Modify: `plugin/skills/flow/multispec-dependency-ordering.md` (verdict table: `| \`hollow\` | hard fail — stop before Step 2.8 claims, render the card below |` after `unlanded`; the "An `open` or `unlanded` verdict's stop" sentence → `open`, `unlanded` or `hollow`; add a short `hollow` stop card after the `unlanded` card: `Blocker landed hollow — stopping before any claim.` / `#{n} is blocked by #{blocker}, closed by #{pr} ({commit}), which touched none of its Key Files (or only pipeline bookkeeping).` / escape: reopen the blocker (`gh issue reopen {blocker}`) or remove the edge (escape 2 above))
+- Modify: `plugin/skills/flow/multispec-dependency-ordering.md` (verdict table: `| \`hollow\` | hard fail — stop before Step 2.8 claims, render the card below |` after `unlanded`; the "An `open` or `unlanded` verdict's stop" sentence → `open`, `unlanded` or `hollow`; add a short `hollow` stop card after the `unlanded` card: `Blocker landed hollow — stopping before any claim.` / `#{n} is blocked by #{blocker}, closed by #{pr} ({commit}), which touched none of its Key Files (or only pipeline bookkeeping).` — with `pr: null` the clause reads `closed by {commit}` / escape: reopen the blocker (`gh issue reopen {blocker}`) or remove the edge (escape 2 above))
 - Modify: `plugin/skills/flow/validation.md:92` (`open` or `unlanded` → `open`, `unlanded` or `hollow`; render that file's stop card for `unlanded`/`hollow`)
 - Modify: `plugin/skills/flow/SKILL.md:146` (`open`/`unlanded` → `open`/`unlanded`/`hollow`)
 - Modify: `plugin/skills/flow/failure-cards.md:12` (blocker-landing row names `hollow`)
@@ -94,7 +98,7 @@ Scope keywords: unlanded, blockerLanding, landingExclusions
 - Modify: `plugin/skills/dispatch/SKILL.md:113` (`no \`unlanded\`` → `no \`unlanded\`/\`hollow\``)
 - Modify: `plugin/skills/dispatch/queue-pull-script.md:12` (judges `unlanded` → `unlanded` or `hollow`; byte-neutral or shrinking — trim elsewhere in the same bullet)
 - Modify: `plugin/skills/dispatch/queue-pull-notes.md` (unlanded-blocker pass paragraph: one clause that a `hollow` verdict excludes too)
-- Modify: `plugin/skills/dispatch/blocked-exclusion-report.md` (after the unlanded line: an entry whose blocker carries `verdict: 'hollow'` renders `#{number} waits — blocker #{blocker} was closed by #{pr} with no implementation`)
+- Modify: `plugin/skills/dispatch/blocked-exclusion-report.md` (after the unlanded line: an entry whose blocker carries `verdict: 'hollow'` renders `#{number} waits — blocker #{blocker} was closed by #{pr} with no implementation`; with `pr: null`, `closed by {commit}` in place of `#{pr}` (Task 2's CLI fallback); a mixed record — one exclusion whose `detail.blockers` holds both unlanded and hollow entries — renders one line naming every blocker, each clause in its own verdict's wording, in `detail.blockers` order)
 - Modify: `docs/skill-graph.md:387` (the `blockerLanding` verdict list gains `hollow`)
 - Modify: `docs/journeys/stop-a-run-whose-closed-blocker-never-landed-4553.md` (the verdict list — six verdicts — and step 3's hard-fail sentence name `hollow`; one Updated-during-build line for #6142)
 - Test: `tests/flow-blocker-landing-conformance.test.js`, `tests/dispatch-unlanded-blocker-consumers-conformance.test.js` (update `REPORT_CHUNKS` and its pinned facts), `tests/settle-blocker-landing-stop-conformance.test.js` if it pins the verdict pair
