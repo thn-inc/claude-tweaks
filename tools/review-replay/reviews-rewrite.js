@@ -60,12 +60,20 @@ function rangeOf(text) {
   return { base: baseMatch ? baseMatch[1] : null, head: headMatch ? headMatch[1] : null };
 }
 
+// Whether git check-ref-format takes refs/remotes/origin/{name}, for a name of originRefsOf's characters with its
+// trailing dots stripped: no empty component, none starting with `.` or ending with `.lock`.
+const gitTakesRef = (name) => name.split('/').every((seg) => seg !== '' && !seg.startsWith('.') && !seg.endsWith('.lock'));
+
 // The origin/{name} refs a text names, once each. A ref ends at a `..` or `...` range (no git ref name holds `..`), or
-// before a space, quote, backtick, paren, comma or the end.
+// before a space, quote, backtick, paren, comma, colon, semicolon or the end; a sentence's trailing dots are not part of
+// it. A name git would refuse is dropped, since writing it would fail the replay repository.
 function originRefsOf(text) {
   const out = [];
-  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),]|$)/g)) {
-    if (!out.includes(m[1])) out.push(m[1]);
+  for (const m of String(text).matchAll(/\borigin\/([A-Za-z0-9._\/-]+?)(?=\.\.|[\s`'"),:;]|$)/g)) {
+    let end = m[1].length;
+    while (end > 0 && m[1][end - 1] === '.') end--; // a backward scan: a `\.+$` regex is quadratic on a long dot run
+    const name = m[1].slice(0, end);
+    if (gitTakesRef(name) && !out.includes(name)) out.push(name);
   }
   return out;
 }

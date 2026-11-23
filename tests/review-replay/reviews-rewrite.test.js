@@ -43,6 +43,29 @@ test('originRefsOf: a two-dot range also ends the ref (git ref names never hold 
   assert.deepStrictEqual(rw.originRefsOf('git diff origin/feat/x..HEAD'), ['feat/x']);
 });
 
+test('originRefsOf: characterization of the forms it accepts (each a ref git check-ref-format takes)', () => {
+  const cases = [
+    ['git diff origin/main...HEAD', ['main']], ['git log origin/main..main', ['main']], ['origin/main...', ['main']],
+    ['base origin/main ', ['main']], ['base origin/main\t', ['main']], ['base origin/main\nnext', ['main']],
+    ['`git diff origin/main...HEAD`', ['main']], ['`origin/main`', ['main']], ['(origin/main)', ['main']],
+    ['origin/feat/x.y_z-1 ', ['feat/x.y_z-1']], ['origin/v1.2', ['v1.2']], ['origin/a./b ', ['a./b']], ['origin/a.lockx ', ['a.lockx']],
+    ['github.com/origin/main ', ['main']], ['xorigin/main ', []],
+    ['origin/dev and origin/main...HEAD, origin/dev', ['dev', 'main']],
+  ];
+  for (const [text, refs] of cases) assert.deepStrictEqual(rw.originRefsOf(text), refs, JSON.stringify(text));
+});
+
+test('originRefsOf: sentence dots, `:` and `;` end a ref; a capture git check-ref-format refuses is dropped', () => {
+  const cases = [
+    ['origin/main.', ['main']], ['diff against origin/main. Then', ['main']], ['origin/v1.2.', ['v1.2']],
+    ['origin/main:', ['main']], ['git show origin/main:src/x.js', ['main']], ['origin/main;', ['main']], ['origin/main; then', ['main']],
+    // Refused by git, so never written: a component starting with `.`, a `.lock` component, an empty component.
+    ['origin/x/ ', []], ['origin/.x ', []], ['origin/a/.b ', []], ['origin/x.lock ', []], ['origin/a.lock/b ', []],
+    ['origin//x ', []], ['origin/a//b ', []], ['origin/. ', []], ['origin/.. ', []],
+  ];
+  for (const [text, refs] of cases) assert.deepStrictEqual(rw.originRefsOf(text), refs, JSON.stringify(text));
+});
+
 test('runInputsOf classifies the four kinds', () => {
   const text = [
     main + '/.claude-tweaks/pipelines/R/review-ctx/context.md',
