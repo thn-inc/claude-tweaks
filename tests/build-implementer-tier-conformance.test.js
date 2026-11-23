@@ -27,10 +27,18 @@ const ESCALATION_LINE =
 const PATTERNS = [
   [lit(CLI_CALL), 'AC9.1: names the CLI call'],
   [
-    lit("(`{spec-file}`: the materialized `work/{n}-spec.md`, the worktree's copy in `worktree` mode)"),
+    lit("(`{spec-file}`: the materialized `{run-dir}/work/{n}-spec.md`, the worktree's copy in `worktree` mode)"),
     "spec file is the worktree's copy in worktree mode",
   ],
+  [
+    lit('`## Acceptance Criteria` section — read from `{spec-file}`, never re-fetched'),
+    'per-task review reads the ACs from {spec-file}',
+  ],
   [lit(PROFILE_LINE), 'AC6.1: one implementer profile line'],
+  [
+    lit('Log once, skipped when `decisions.md` already holds an `implementer profile` line (a resumed build)'),
+    'AC6.2: a resumed build logs no second profile line',
+  ],
   [
     lit("A non-zero exit, a missing spec file included, stops the build before the first dispatch with the CLI's message"),
     'AC7.1: non-zero exit stops before the first dispatch',
