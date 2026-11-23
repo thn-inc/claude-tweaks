@@ -158,9 +158,9 @@ Vectors (each one probe case, evidence from the transcript's `tool_use`/`tool_re
   - `AC2.2: off SANDBOX_PROBED_PLATFORMS every side fails with reason platform and no worker starts` — `platform: 'linux'`; runner never called.
   - `3f is excluded before any worker starts` — lenses `3b`,`3f`; 3f sides `failed: true`, reason `excluded`, runner called only for 3b.
   - `blank: whitespace text is blank; "No findings." is a reply` — two fakes, neither with denials.
-  - `AC9.1: a git permission denial fails the side with reason denied even when the text is "No findings."` — fake result `{ subtype: 'success', structured_output: { text: 'No findings.' }, permission_denials: [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git diff HEAD~1 HEAD' } }] }`; side `{text: null, failed: true}`, reason `denied`; a sibling side with no denials keeps its text.
-  - `AC8.1 (Q1): the worker runs in the reviewed worktree with the bundle inlined and writes nothing there` — the fake runner records `options.cwd` (equals the passed worktree) and `input` (starts with `<review-context>\n` + the bundle text and ends with the brief); a recursive listing of the worktree with each entry's size and mtime is deep-equal before and after the run, and `git -C <worktree> status --porcelain` is empty after.
-  - `AC8.2 (Q2): every worker launches with the admitted-forms note` — the fake runner reads the file after `--append-system-prompt-file` in `args` before cleanup; its text equals `lensAdmittedFormsNote()`.
+  - `AC9.1/AC9.2: a git permission denial fails the side with reason denied even when the text is "No findings."` — fake result `{ subtype: 'success', structured_output: { text: 'No findings.' }, permission_denials: [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git diff HEAD~1 HEAD' } }] }`; side `{text: null, failed: true}`, reason `denied`; a sibling side with no denials keeps its text.
+  - `AC8.1/AC8.2/AC8.3 (Q1): the worker runs in the reviewed worktree with the bundle inlined and writes nothing there` — the fake runner records `options.cwd` (equals the passed worktree) and `input` (starts with `<review-context>\n` + the bundle text and ends with the brief); a recursive listing of the worktree with each entry's size and mtime is deep-equal before and after the run, and `git -C <worktree> status --porcelain` is empty after.
+  - `Q2 note: every worker launches with the admitted-forms note` — the fake runner reads the file after `--append-system-prompt-file` in `args` before cleanup; its text equals `lensAdmittedFormsNote()`.
   - `AC3.2 (Q3): the launch effort is the role's, the model the lens's` — two lenses with models `haiku` and `sonnet` under `model-effort: profile`; argv for both has the lens's `--model` and no `--effort` (the `fast` row has no dial); a stubbed `roleLaunch` returning `effort: 'high'` (injected via `deps.roleLaunch`) yields `--effort high` on both.
   - `readPaths carries the git common dir for a linked worktree` (CLI test with a real temp repo and `git worktree add`; the fake runner's settings text has `allowRead` equal to `[<common dir>]`; for a plain checkout `allowRead` is `[]`).
   - `timeout: a worker past LENS_WORKER_TIMEOUT_MS fails with reason timeout` (fake timers).
@@ -224,14 +224,14 @@ Proof(auth): every lens worker launches through `launchWorker`, whose `buildEnv`
 | AC3.1 (probe matrix, negative tests), AC4.1 | 2 |
 | AC3.2 (effort through #5942's `roleLaunch`, Decision Q3) | 1 (row pin), 3 (launch argv) |
 | Deliverable 2, AC2.1, AC2.2, AC5.1, AC5.2, 3f exclusion | 3 |
-| AC8.1 (Decision Q1: worktree cwd, inlined bundle, no writes) | 3 |
-| AC9.1, AC8.2 (Decision Q2: `denied`, admitted-forms note) | 1 (note), 3 (launch, classify) |
+| AC8.1, AC8.2, AC8.3 (Decision Q1: worktree cwd, inlined bundle, no writes) | 3 |
+| AC9.1, AC9.2 (Decision Q2: `denied`); Q2 admitted-forms note | 1 (note), 3 (launch, classify) |
 | Deliverable 3, AC6.1 | 4 |
 | Deliverable 4, AC7.1 | 5 |
 | Gotcha: reply-shape contract test across both producers | 3 |
 | Gotcha: 3f stays off the worker path (say which in the PR) | 3 (excluded), PR text |
 
-AC ids: AC1.1/AC1.2 = criteria 1; AC2.1/AC2.2 = criterion 2; AC3.1/AC3.2 = criterion 3; AC4.1 = criterion 4; AC5.1/AC5.2 = criterion 5; AC6.1 = criterion 6; AC7.1 = criterion 7; AC8.1/AC8.2 = criterion 8 and Decision Q2's note; AC9.1 = criterion 9.
+AC ids: AC1.1/AC1.2 = criteria 1; AC2.1/AC2.2 = criterion 2; AC3.1/AC3.2 = criterion 3; AC4.1 = criterion 4; AC5.1/AC5.2 = criterion 5; AC6.1 = criterion 6; AC7.1 = criterion 7; AC8.1/AC8.2/AC8.3 = criterion 8; AC9.1/AC9.2 = criterion 9; the Q2 note test carries no AC id (Decision Q2).
 
 Waived plugin/bin/lib/driver/review.js: read only for context (its reviewer role is unchanged).
 Waived plugin/skills/review/step3-lens-dispatch.md: read in Task 5 to compose the fixture brief; unchanged (the dispatcher that routes to this launcher is #6003).
