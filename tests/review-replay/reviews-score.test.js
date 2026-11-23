@@ -7,7 +7,7 @@ const { execFileSync } = require('child_process');
 const { run, makeWriteRepo } = require('../../tools/review-replay');
 const { parseReviewItems, parseBranchReply } = require('../../tools/review-replay/reviews-score');
 const { parseReviewCounts } = require('../../tools/pipeline-cost-report/guards');
-const { armLabel, toPosix, REVIEWS_MANIFEST_FILE } = require('../../tools/review-replay/schema');
+const { armLabel, toPosix, REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE } = require('../../tools/review-replay/schema');
 const { scratchDir } = require('../helpers/tmp-dir');
 const { buildReviewsFixture, buildBranchFixture, cleanEnv } = require('./reviews-fixture');
 
@@ -586,7 +586,7 @@ test('taskVsBranch: fixture summary counts task reviews, not slots, and reports 
   assert.equal(selected.total, 1);
   assert.deepEqual(selected.byTaskTier, { capable: 1 });
   assert.equal(selected.slots, 2);
-  const written = JSON.parse(fs.readFileSync(path.join(x.out, 'reviews-fixture.json'), 'utf8'));
+  const written = JSON.parse(fs.readFileSync(path.join(x.out, REVIEWS_FIXTURE_FILE), 'utf8'));
   assert.equal(selected.notQualifying, written.totals.notQualifying);
   assert.equal(selected.slots, written.totals.slots);
 });
