@@ -395,6 +395,8 @@ test('shaPairOf: Base/Head lines, a sha-less "base" first, and the two-dot fallb
   assert.deepEqual(rw.shaPairOf('## Diff Under Review\nBase 44200e4559, Head b90d38882a. Diff file: x'), { base: '44200e4559', head: 'b90d38882a' });
   assert.deepEqual(rw.shaPairOf('the review base after a catch-up.\nBase d5346c1c99056b72f56bd2172d720bd6a609fa5b (the merge commit). Head 6a7e879f6f.'), { base: 'd5346c1c99056b72f56bd2172d720bd6a609fa5b', head: '6a7e879f6f' });
   assert.deepEqual(rw.shaPairOf('Fix diff (b90d38882a..c7e979dbd4), read once'), { base: 'b90d38882a', head: 'c7e979dbd4' });
+  assert.deepEqual(rw.shaPairOf('Head 1111111aaa was stale. Base 44200e4559, Head b90d38882a.'), { base: '44200e4559', head: 'b90d38882a' });
+  assert.equal(rw.shaPairOf('Head 1111111aaa then Base 44200e4559 only'), null);
   assert.equal(rw.shaPairOf('SCOPE: origin/main...HEAD'), null);
   assert.equal(rw.shaPairOf('Base 44200e4559 only'), null);
 });
