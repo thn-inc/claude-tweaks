@@ -362,8 +362,18 @@ test('parseReviewItems agrees with parseReviewCounts', () => {
 
 test('parseBranchReply: headings, "No issues", neither', () => {
   assert.deepEqual(parseBranchReply('#### Critical (Must Fix)\nNone.\n').items, []);
-  assert.deepEqual(parseBranchReply('Reviewed it all. No issues found.').items, []);
+  assert.deepEqual(parseBranchReply('Reviewed it all.\nNo issues found.').items, []);
   assert.equal(parseBranchReply('**Important**\n- src/x.js:1 bad'), null);
+});
+
+test('parseBranchReply: "No issues" counts only at a line start, after optional bullets or emphasis', () => {
+  for (const text of ['No issues found.', 'Reviewed it all.\n- **No issues.**', '## No issues', '> *no issues* in this branch']) {
+    assert.deepEqual(parseBranchReply(text), { items: [] }, JSON.stringify(text));
+  }
+  // Mid-sentence, it is no verdict: a heading-less reply raising an issue beside it does not parse.
+  for (const text of ['Reviewed it all. No issues found.', 'There are no issues with naming, but **Important:** src/x.js:1 is wrong.']) {
+    assert.equal(parseBranchReply(text), null, JSON.stringify(text));
+  }
 });
 
 // ---- the task and whole-branch roles
@@ -481,7 +491,7 @@ test('wholeBranch: recall of located items, the Critical-or-Important share, "No
   const important = await scoreReviews(x, workflow(x, () => '#### Important\n- src/y.js:40 far\n'));
   assert.deepEqual(important.json.arms.a.wholeBranch.recall, { caught: 0, of: 1, share: 0, unlocated: 0 });
   assert.deepEqual(important.json.arms.a.wholeBranch.withCriticalOrImportant, { n: 1, share: 1 });
-  const none = await scoreReviews(x, workflow(x, () => 'Reviewed it. No issues found.'));
+  const none = await scoreReviews(x, workflow(x, () => 'Reviewed it.\nNo issues found.'));
   assert.equal(none.code, 0, none.deps.errs.join('\n'));
   assert.deepEqual(none.json.arms.a.wholeBranch.itemsBySeverity, { critical: 0, important: 0, minor: 0 });
   assert.equal(none.json.arms.a.wholeBranch.recall.caught, 0);

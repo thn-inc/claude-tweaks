@@ -392,11 +392,12 @@ function parseReviewItems(text) {
   };
 }
 
-// A whole-branch reply: its severity headings, else an explicit "No issues" line as an empty review, else null.
+// A whole-branch reply: its severity headings, else an explicit "No issues" line (at the line start, after optional
+// bullets or emphasis, so "no issues with naming, but …" mid-sentence is no verdict) as an empty review, else null.
 function parseBranchReply(text) {
   const parsed = parseReviewItems(text);
   if (parsed) return parsed;
-  return String(text).split(/\r?\n/).some((l) => /no issues/i.test(l)) ? { items: [] } : null;
+  return String(text).split(/\r?\n/).some((l) => /^\W*no issues\b/i.test(l)) ? { items: [] } : null;
 }
 
 module.exports = { scoreReviews, parseReviewItems, parseBranchReply, NOTES };
