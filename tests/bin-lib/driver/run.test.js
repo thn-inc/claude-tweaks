@@ -352,12 +352,13 @@ const POLICY = {
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
   'express-driver-max-risk': 'low',
-  // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
-  // model-profiles block or ceiling set, and model-effort inherit.
+  // #5917's model keys (#5942's model-effort, #5997's implementer-tier), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
+  // model-profiles block or ceiling set, model-effort inherit, and implementer-tier lane.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
   'model-profiles': null,
   'model-ceiling': null,
   'model-effort': 'inherit',
+  'implementer-tier': 'lane',
 };
 
 function issueFor(n) {
