@@ -10,7 +10,9 @@
 //             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
 //             the envelope's `head` carries for the push) or an escalation line under
 //             ## /express-lane. `--max-lines` (the driver's flag) replaces
-//             `auto-merge-max-lines` as the line bound.
+//             `auto-merge-max-lines` as the line bound. The protected-path list is the
+//             `protected-paths` policy key read from the main checkout (never the worktree);
+//             gate reads it the same way.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
@@ -49,20 +51,24 @@ const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-c
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
+const { expressGateOptions, protectedPathGlobsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+// A changed path is raw git bytes (a newline is legal) bound for a decisions.md line; the driver's
+// copy of the proceed note neutralizes it the same way (steps.js checkStep).
+const { neutralize } = require('../driver/events');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
 const USAGE = [
   'usage: express-lane.js gate (--issue <n> | --records-json <file>) [--run <dir>] [--repo owner/name]',
-  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>]',
+  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>] [--protected-paths reviewer]',
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
   '       express-lane.js plan-lane (--issue <n> | --record-json <file>) [--repo owner/name]',
   "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
+  "       --protected-paths reviewer: the pipeline driver's flag (bin/drive.js); merge-time protected paths are reported in bounds.protectedPaths, not refused",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
   '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
   '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout\'s .claude-tweaks/pipelines, or (escalate) decisions.md unwritable;',
@@ -100,7 +106,7 @@ const NO_HEAD = 'the runner stamp names no HEAD sha';
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
-  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines'],
+  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines', '--protected-paths'],
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
   samples: ['--every', '--repo'],
@@ -131,6 +137,7 @@ function parseArgs(argv) {
   if (flags['--issue'] !== undefined) flags['--issue'] = positiveInt('--issue', flags['--issue']);
   if (flags['--every'] !== undefined) flags['--every'] = positiveInt('--every', flags['--every']);
   if (flags['--max-lines'] !== undefined) flags['--max-lines'] = positiveInt('--max-lines', flags['--max-lines']);
+  if (flags['--protected-paths'] !== undefined && flags['--protected-paths'] !== 'reviewer') throw new UsageError(`--protected-paths must be reviewer, got "${flags['--protected-paths']}"`);
   if (flags['--repo'] !== undefined && !REPO_RE.test(flags['--repo'])) throw new UsageError(`--repo must be owner/name, got "${flags['--repo']}"`);
   if (flags['--reason'] !== undefined && !ESCALATION_REASONS.includes(flags['--reason'])) {
     throw new UsageError(`--reason must be one of ${ESCALATION_REASONS.join('|')}`);
@@ -292,7 +299,7 @@ function runGate(deps, flags) {
   let policy;
   let decisionsText = '';
   try {
-    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths'], { runDir: flags['--run'] || null });
+    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths', 'protected-paths'], { runDir: flags['--run'] || null });
     if (decisionsFile) decisionsText = readDecisions(deps, decisionsFile);
   } catch (err) {
     deps.stderr(`express-lane.js: could not read policy or decisions.md: ${err && err.message}\n`);
@@ -354,7 +361,8 @@ function runCheck(deps, flags) {
     // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
     // replaces the line limit.
     const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines });
+    const protectedPathGlobs = protectedPathGlobsOf(deps.resolvePolicy(['protected-paths'], { runDir })['protected-paths']);
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, protectedPathGlobs, maxLines, reportProtectedPaths: flags['--protected-paths'] === 'reviewer' });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
@@ -362,7 +370,9 @@ function runCheck(deps, flags) {
   if (!bounds.withinBounds) return escalate(deps, runDir, n, 'out-of-bounds', bounds.violations.join('; '), state);
 
   const k = bounds.changedFiles.length;
-  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD ${head}.`);
+  const protectedNote = Array.isArray(bounds.protectedPaths) && bounds.protectedPaths.length > 0
+    ? `; protected path(s) left for the reviewer and a human merge: ${bounds.protectedPaths.map((p) => neutralize(String(p))).join(', ')}` : '';
+  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds${protectedNote}; runner stamp verifies HEAD ${head}.`);
   // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
   // stability): eligibility required pr-first, and the merge steps that follow must not
   // re-detect it, where a transient `gh` failure would flip the run to local-merge.

@@ -21,7 +21,7 @@ Today's path is Step 5 as it reads without this file: the Express lane paragraph
 ## Order
 
 1. Step 4 mints `{minted-run-dir}`, and Step 5 creates and enters the group's worktree, its Worktree-resume check included.
-2. Run `drive.js --check` before any bind, because its verdict decides the bind's form. One plain foreground command; it writes nothing and prints one line, `{"record":N,"admitted":bool,"reasons":[…],"widenedBy":[…]}` (exit 0: a verdict printed, admitted or not; `widenedBy` lists `risk` and/or `ceremony` for a record admitted beyond low risk or fast-lane ceremony, readers ignore keys they do not know):
+2. Run `drive.js --check` before any bind, because its verdict decides the bind's form. One plain foreground command; it writes nothing and prints one line, `{"record":N,"admitted":bool,"reasons":[…],"widenedBy":[…]}` (exit 0: a verdict printed, admitted or not; `widenedBy` lists `risk`, `ceremony` and/or `protected-path` for a record admitted beyond low risk, fast-lane ceremony or with a protected Key File, readers ignore keys they do not know):
 
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/drive.js" --check {n}

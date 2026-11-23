@@ -356,6 +356,20 @@ Records #6051 (the asked-classes split: `_shared/planning-decisions.md`, the `pl
 - **Waits for:** Phases 7 and 8.
 - **Expected effect:** the main session's share of cost, 41% today, goes to zero for driver records.
 
+## Phase 13: Specified
+
+Records #6117 (the budget loop's own drain-PR list and the hold), #6118 (the `worker-stop` ending and a settle without the escalation marker), #6119 (the `express-driver-runner` policy value, under which dispatch's session drain leaves driver-routable records to the script job) and #6120 (the Dispatch script-job trial in this repository), under parent #6116. Every leaf is blocked by #6019, #6020, #6021 and #5571, the Phase 7 and Phase 8 records not yet built. #6118 is blocked by #6117; #6119 by #6117 and #6062; #6120 by #6117, #6118 and #6119.
+
+- **What "stop handling it lacks" turned out to be:** the loop ends early only on a claim stop. A worker that cannot launch, for a cause every later record shares (an expired login, a usage limit, a missing `claude`), settles each record as `express-escalated`, and the escalation marker then keeps the driver from taking the record again. Under `--budget all`, one expired login would empty the driver lane.
+- **Decided while specifying:**
+  - The loop's list holds only PRs this budget run opened, as a dispatch drain's merge-time hold does. A failed write, or a record that left no final line, makes every later record hold as `in-flight-unreadable`.
+  - A shared cause is a `launch-error`, a structured auth or limit signal in the result object if a live probe finds one, or two consecutive implementer launches ending `launch-error` or `fail`/`exit`. Ceiling and schema failures stay per-record.
+  - A shared-cause stop reuses the pre-push cleanup without the marker. On a two-in-a-row stop, the loop deletes the marker it posted on the first record. A record that hits a shared-cause stop on a second firing is escalated as usual, so it reaches a person.
+  - Without a session-drain exclusion, a dispatch session would still walk driver records, and the expected effect would not hold. The exclusion reuses #6011's `driverRoutable` predicate, never excludes a record carrying the escalation marker, and prints the records it leaves to the job on every pull. It has no staleness bound. The default stays `session`.
+  - The trial starts with a `--budget 1` smoke firing, and it aborts when guard 1 or guard 3 regresses or when two firings in a row end `worker-stop`.
+- **Not covered:** Dispatch-side code (thn-inc/dispatch), and env-variable authentication for workers (#5259).
+- **Done when:** over #6120's trial, no dispatch session holds a `drive.js` call for a record the job could take, every admitted record is driven or carries a logged reason, and the three quality guards are no worse.
+
 ## Phase 14 — Review replay
 
 ## Phase 14: Specified

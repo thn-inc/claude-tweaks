@@ -55,13 +55,14 @@ files:
 - **Should feel:** Unambiguous about what happened and what to do next.
 - **Should understand:**
   - The writes run in order — plan stored, body written, hold comment resolved, `needs:decision` removed, `ready` stamped — and stop at the first failure with the record still held.
+  - After the writes, the record is re-fetched and `planning-hold.js readback` checks it: the labels for the branch taken, the resolved hold comments, exactly one `Plan:` line matching the stored plan, and `plan-store.js check`'s verdict. It prints one JSON line whose `outcome` is the row's text and whose `next` picks the Next Actions line. A failed check is shown as `failed — read-back ({what failed}); …`, with the same re-run or by-hand guidance as a failed write.
   - `answered — {k} planning question(s), ready (Plan: …)` recommends `/claude-tweaks:flow #N`.
   - When another unit's decision comment is still open, `needs:decision` stays and no `ready` is stamped. Next Actions names that comment for its owner and recommends neither `/specify` nor `/flow`, because a re-run would resolve it unanswered.
   - A failure before the hold comment is resolved says to re-run `/claude-tweaks:specify #N`. A failure after it points at checking the decision comments and removing `needs:decision` by hand.
-- **Red flags:** `ready` stamped while another unit's decision is open. A re-run recommended after the hold was already resolved. Two `Plan:` lines.
+- **Red flags:** `ready` stamped while another unit's decision is open. A re-run recommended after the hold was already resolved. Two `Plan:` lines. An outcome reported without a `readback` verdict behind it.
 
 ## Origin
 
-Built for record #6059 (answering a planning-held record with an interactive `/claude-tweaks:specify`). It finishes the hold written by #6056 (`plan-a-record-while-shaping-it-6056.md`, step 5) and uses the plan store from #6052 (`store-a-reviewed-plan-beside-its-record-6052.md`).
+Built for record #6059 (answering a planning-held record with an interactive `/claude-tweaks:specify`). It finishes the hold written by #6056 (`plan-a-record-while-shaping-it-6056.md`, step 5) and uses the plan store from #6052 (`store-a-reviewed-plan-beside-its-record-6052.md`). Record #6100 moved step 4's read-back checks and outcome choice into the tested `planning-hold.js readback` verb.
 
 - Step 1's gh-absent bullet updated for #6101: the hold-comment edit maps to the GitHub MCP `update_issue_comment` tool (`_shared/github-write-transport.md`'s comment-edit row), so a cloud session without `gh` answers the hold; only a session lacking that tool too still refuses before its first write.
