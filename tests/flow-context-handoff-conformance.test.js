@@ -89,13 +89,11 @@ const CONTEXT_CAP_FACTS = [
   [/`--keep-going` only under the `keep-going` token/, '--keep-going only under the keep-going token'],
   [/`--no-stories` only under the `no-stories` token/, '--no-stories only under the no-stories token'],
   [/a later record's list can still hold `build`/, 'why: a later record can still run build'],
-  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
   [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
-  [/A read against `spec-\{N\}\/` prints nothing/, 'why: a per-spec read prints nothing'],
   [/a record past its list, failed under `keep-going`, or `not-run` is `none`/, 'none for a finished, failed or not-run record'],
   [/the current record takes its remaining steps/, 'the current record takes its remaining steps'],
   [/a later record takes its full list with `test` written out before `review`/, 'a later record writes test out before review'],
-  [/leaves `wrap-up` off every list/, 'a run not bound dispatched leaves wrap-up off every list'],
+  [/A session not launched as a dispatch Task call \(`context-handoff\.md`'s branch rule\) leaves `wrap-up` off every list/, 'a session not launched as a dispatch Task call leaves wrap-up off every list'],
   [/skips the gauge when only `wrap-up` steps remain/, 'it skips the gauge when only wrap-up steps remain'],
   [/Result handling is `context-handoff\.md`'s/, 'result handling is context-handoff.md\'s'],
 ];
@@ -152,8 +150,14 @@ const STEP_FOUR_FACTS = [
 ];
 
 const PARENT_RUN_FACTS = [
-  [/the `dispatched` read targets `\$MULTISPEC_PARENT_DIR`/, 'the dispatched read targets the parent'],
   [/`\{run\}` and `handoff\.json` are the parent's/, '{run} and handoff.json are the parent\'s'],
+];
+
+// #5270: the branch follows the caller's dispatch-prompt marker, never run-state dispatched.
+const CALLER_BRANCH_FACTS = [
+  [/Take the Dispatched call branch only when this agent's own prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/, 'the Dispatched call branch only with the marker'],
+  [/With no such prompt \(a human-typed or Routine-typed `\/flow`, whatever `run-state\.json` says\), take the Top-level run branch/, 'no marker takes the Top-level run branch, whatever run-state says'],
+  [/matches the caller, not the run's `dispatched` flag/, 'the branch matches the caller, not the dispatched flag'],
 ];
 
 const STEPS_COMPLETE_FACTS = [
@@ -483,17 +487,12 @@ test('context-handoff.md states which runs gauge in which form, and the interact
   assert.match(c, /\*\*Not under `interactive`\.\*\*/);
 });
 
-test('context-handoff.md: an empty dispatched read lands on the top-level branch', () => {
-  const r = region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result');
-  assert.match(r, /Top-level run branch/);
-});
-
-test('context-handoff.md: the branch follows the caller (dispatch-prompt marker), not the run dispatched flag (#5270)', () => {
-  const r = region(read(HANDOFF), '## Reading the result', '\n## Dispatched call', 'reading the result');
-  assert.match(r, /matches the caller, not the run's `dispatched` flag/);
-  assert.match(r, /Dispatched call branch only when this agent's own prompt starts with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
-  assert.match(r, /human-typed or Routine-typed `\/flow`, whatever `run-state.json` says[^\n]*take the Top-level run branch/);
-  const n = region(read(HANDOFF), '## Top-level run', '\n```', 'top-level branch');
+test('AC1.1/AC2.1/AC3.1: the handoff branch follows the caller\'s dispatch-prompt marker, not run-state dispatched (#5270)', () => {
+  const t = read(HANDOFF);
+  assertEachFactGoesRed(CALLER_BRANCH_FACTS, squash(region(t, '## Reading the result', '\n## Dispatched call', 'reading the result')));
+  const d = region(t, '\n## Dispatched call', '\n## Top-level run', 'dispatched branch');
+  assert.match(d, /\[dispatch-prompt: \{run-id\} \{call\}\]/);
+  const n = region(t, '## Top-level run', '\n```', 'top-level branch');
   assert.match(n, /even on a `dispatched: true` run/);
   assert.match(stepFourItem(), /does not start with the `\[dispatch-prompt: \{run-id\} \{call\}\]` marker/);
 });

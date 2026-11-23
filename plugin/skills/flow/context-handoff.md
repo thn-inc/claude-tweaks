@@ -30,7 +30,7 @@ A gauge failure never stops the run, and the gauge itself logs every non-null `r
 
 `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run}" --status AUTO --step "Step 4 context cap" --text "context {contextTokens} tokens over cap {cap}; steps {next-steps} handed to a fresh agent from handoff.json" --reversibility n/a`
 
-Then take the branch that matches the caller, not the run's `dispatched` flag: a human-resumed `dispatched: true` run has no dispatcher to hand back to (#5270). Take the Dispatched call branch only when this agent's own prompt starts with the `[dispatch-prompt: {run-id} {call}]` marker (`dispatch/task-prompt.md`). With no such prompt (a human-typed or Routine-typed `/flow`, whatever `run-state.json` says), it prints nothing of the kind: take the Top-level run branch. In a multi-spec run `{run}` and `handoff.json` are the parent's (`multi-spec.md`'s Context cap).
+Then take the branch that matches the caller, not the run's `dispatched` flag: a human-resumed `dispatched: true` run has no dispatcher to hand back to (#5270). Take the Dispatched call branch only when this agent's own prompt starts with the `[dispatch-prompt: {run-id} {call}]` marker (`dispatch/task-prompt.md`). With no such prompt (a human-typed or Routine-typed `/flow`, whatever `run-state.json` says), take the Top-level run branch. In a multi-spec run `{run}` and `handoff.json` are the parent's (`multi-spec.md`'s Context cap).
 
 ## Dispatched call
 
