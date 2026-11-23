@@ -39,9 +39,10 @@ const TRUNCATED_MARKER = '[failure output truncated]';
 
 const MISSING_REPORT_PROMPT = 'Relaunch. Your first attempt is committed, and the driver\'s test step found failing tests, but the driver could not read which ones. Run the tests that cover your change to find them, then fix the code inside the Key Files and the limits above, and report the commit title and summary of this fix alone.';
 
-// The two no-relaunch results, with #5997's note texts.
+// The two no-relaunch results, with #5997's note texts. Under the ladder the clamp names the current attempt's
+// model, since a second escalation's current attempt is not the first.
 const noStepUp = (profile) => ({ relaunch: false, noRelaunch: NO_RELAUNCH.noStepUp, note: `no relaunch: no profile above ${profile}` });
-const clamped = (to, model) => ({ relaunch: false, noRelaunch: NO_RELAUNCH.clamped, note: `no relaunch: ${to} resolves to ${model}, the first attempt's model` });
+const clamped = (to, model, which = 'first') => ({ relaunch: false, noRelaunch: NO_RELAUNCH.clamped, note: `no relaunch: ${to} resolves to ${model}, the ${which} attempt's model` });
 
 // `effort`, `escalations` and `trigger` are read only under `ladder`.
 function planRelaunch({ profile, model, effort, escalations, trigger, policy, ladder = false }, { roleLaunchFn = roleLaunch } = {}) {
@@ -83,7 +84,7 @@ function planLadder({ profile, model, effort, escalations, trigger, policy }, ro
   }
   if (next === null) {
     const to = stepUp(profile);
-    return to === null ? noStepUp(profile) : clamped(to, model);
+    return to === null ? noStepUp(profile) : clamped(to, model, 'current');
   }
   return { relaunch: true, to: next.profile, effort: next.effort, escalations: next.escalations };
 }

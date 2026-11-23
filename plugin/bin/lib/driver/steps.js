@@ -1255,7 +1255,10 @@ function relaunchOrStop(ctx, result, trigger, prompt, steps = relaunchSteps()) {
   const { implementer } = ctx;
   if (!implementer || typeof implementer.model !== 'string') return result;
   const ladder = effortLadder(ctx.shared.policy);
-  if (ladder ? !(implementer.escalations < MAX_ESCALATIONS) : ctx.relaunch !== null) return result;
+  // The ladder's bound reads ctx.relaunch as well: an attempt whose launch resolved no model leaves
+  // ctx.implementer at the attempt before it, while ctx.relaunch.escalations is set before any queue is returned.
+  const below = (n) => n < MAX_ESCALATIONS;
+  if (ladder ? !(below(implementer.escalations) && (ctx.relaunch === null || below(ctx.relaunch.escalations))) : ctx.relaunch !== null) return result;
   const from = implementer.profile;
   // Each relaunch so far, for the note: under record + inherit both efforts are null, so it reads as #5997's.
   const history = ctx.relaunch !== null && Array.isArray(ctx.relaunch.history) ? ctx.relaunch.history : [];

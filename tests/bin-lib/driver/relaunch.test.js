@@ -188,9 +188,9 @@ test('planRelaunch (ladder): no profile above reads as no-step-up with today\'s 
   assert.deepStrictEqual(r, { relaunch: false, noRelaunch: 'no-step-up', note: 'no relaunch: no profile above capable' });
 });
 
-test('planRelaunch (ladder): a step-up resolving to the same model reads as clamped with today\'s note', () => {
+test('planRelaunch (ladder): a step-up resolving to the same model reads as clamped naming the current attempt', () => {
   const r = ladderPlan({ profile: 'standard', effort: 'medium', escalations: 1, trigger: 'red-tests' }, { ...LADDER_LAUNCH, capable: { model: M('standard'), effort: 'medium' } });
-  assert.deepStrictEqual(r, { relaunch: false, noRelaunch: 'clamped', note: `no relaunch: capable resolves to ${M('standard')}, the first attempt's model` });
+  assert.deepStrictEqual(r, { relaunch: false, noRelaunch: 'clamped', note: `no relaunch: capable resolves to ${M('standard')}, the current attempt's model` });
 });
 
 test('planRelaunch (ladder): an unresolvable step-up still relaunches (its launch refuses itself)', () => {

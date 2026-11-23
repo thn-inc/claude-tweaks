@@ -4658,6 +4658,51 @@ test('#6002: the attempt-3 prompt carries the first prompt and only the newest r
   assert.ok(third.slice(first.length).startsWith('\nRelaunch.'));
 });
 
+test('#6002: after a first cannot-complete reaches capable, a second failure has no step-up', async () => {
+  for (const [name, over, step] of [
+    ['cannot-complete twice', { replies: [STUCK, STUCK] }, STEP.worker],
+    ['cannot-complete then red', { replies: [STUCK, ENVELOPE], script: [redRuns(1)] }, STEP.test],
+  ]) {
+    const h = ladderRig(over);
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 2, name);
+    const line = h.lines().filter((l) => l.step === step && l.status !== 'ok').at(-1);
+    assert.equal(line.noRelaunch, 'no-step-up', name);
+    assert.ok(line.detail.includes('no relaunch: no profile above capable'), `${name}: ${line.detail}`);
+    assert.equal(lastLine(h).stop.step, step, name);
+  }
+});
+
+test('#6002: a second-escalation step-up that does not resolve is a refused relaunch noting both relaunches', async () => {
+  const h = ladderRig({
+    script: [redRuns(2)],
+    policy: {
+      'express-driver-models': { ...POLICY['express-driver-models'], reviewer: 'standard' },
+      'model-profiles': { standard: { effort: 'medium' }, capable: { model: 'no-such-model', effort: 'medium' } },
+    },
+  });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium']]);
+  assert.equal(workerLines(h).length, 2, 'the refused relaunch writes no worker line');
+  const final = lastLine(h);
+  assert.equal(final.stop.step, STEP.worker);
+  assert.ok(final.stop.detail.startsWith('no model for driver role implementer'), final.stop.detail);
+  assert.ok(final.stop.detail.endsWith('; after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable)'), final.stop.detail);
+});
+
+test('#6002: the ladder bound reads ctx.relaunch too, so an attempt that set no implementer cannot queue a fourth launch', () => {
+  const policy = { 'implementer-tier': { value: 'record' }, 'model-effort': { value: 'profile' } };
+  // Attempt 3 resolved no model, so ctx.implementer still holds attempt 2 (escalations 1); ctx.relaunch holds the second relaunch.
+  const ctx = {
+    implementer: { rule: 'record', profile: 'standard', model: M('standard'), attempt: 2, effort: 'medium', escalations: 1 },
+    relaunch: { trigger: 'red-tests', from: 'standard', to: 'capable', escalations: 2, ran: true, history: [] },
+    shared: { policy }, changedFiles: ['a.js'],
+  };
+  const line = { status: 'stop', reason: 'failing-test', detail: 'red tests', halt: true };
+  const r = relaunchOrStop(ctx, line, 'red-tests', () => assert.fail('no fourth relaunch is planned'));
+  assert.equal(r, line, 'the result comes back as it was, nothing queued');
+});
+
 test('#6002 AC7.1 (ladder): no launch above high', async () => {
   const h = ladderRig({ policy: { 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'max' } } }, script: [redRuns(2)] });
   assert.equal(await run(['#7'], h.deps), 0);
