@@ -650,7 +650,7 @@ test('POLICY_DRIVER_ROLES: exactly the four spec roles, each in ROLES', () => {
 
 // The lens-reviewer role (#6000): a read-only headless lens reviewer.
 const LENS_GIT = ['Bash(git diff --no-ext-diff --no-textconv *)', 'Bash(git show --no-ext-diff --no-textconv *)', 'Bash(git log --no-ext-diff --no-textconv *)'];
-const LENS_DENY = [...DENY, 'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)', 'Bash(* --open-files-in-pager*)', 'Bash(git grep * -O*)', 'Bash(git -c *)', 'Edit', 'Write'];
+const LENS_DENY = [...DENY, 'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)', 'Bash(* --show-signature*)', 'Bash(*%G*)', 'Bash(git grep *)', 'Bash(git status *)', 'Bash(git blame *)', 'Bash(* --open-files-in-pager*)', 'Bash(git -c *)', 'Edit', 'Write'];
 const LENS_DARWIN = {
   permissions: { defaultMode: 'dontAsk', allow: ['Read', 'Grep', 'Glob', ...LENS_GIT], deny: LENS_DENY, blockReadsOutsideWorkingDirectories: true },
   sandbox: { enabled: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, failIfUnavailable: true, network: { allowedDomains: [], strictAllowlist: true }, filesystem: { allowRead: ['/repo/.git'], denyWrite: ['.'] } },
@@ -752,6 +752,159 @@ test('git grep is not admitted: no allow rule and no note line (it runs a progra
   }
   assert.deepStrictEqual(LENS_GIT_RULES.filter((r) => r.startsWith('Bash(git grep')), []);
   assert.deepStrictEqual(lensAdmittedFormsNote().split('\n').filter((l) => l.startsWith('git grep')), []);
+});
+
+// The probe matrix's negative unit tests (#6000 Task 2): each vector's command is not
+// admitted by the darwin lens-reviewer rules. A test-side reading of a `Bash(<pattern>)`
+// rule: `*` matches any run of characters, anchored at both ends. A compound command is
+// admitted only when every part is (the CLI splits on `;`, `&&`, `||` and `|`).
+const LENS_P = '--no-ext-diff --no-textconv';
+function lensRuleMatches(rule, command) {
+  const m = /^Bash\((.*)\)$/s.exec(rule);
+  if (!m) return false;
+  // A trailing ` *` also matches the bare command (`Bash(git status *)` admits `git status`).
+  const optionalTail = m[1].endsWith(' *');
+  const pattern = optionalTail ? m[1].slice(0, -2) : m[1];
+  const body = pattern.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+  return new RegExp('^' + body + (optionalTail ? '( .*)?' : '') + '$', 's').test(command);
+}
+function lensVerdict(command) {
+  const { allow, deny } = lensReviewerSettings({ platform: 'darwin', readPaths: ['/repo/.git'] }).permissions;
+  const parts = command.split(/;|&&|\|\||\|/).map((p) => p.trim()).filter(Boolean);
+  return parts.map((part) => ({
+    part,
+    allowedBy: allow.filter((r) => lensRuleMatches(r, part)),
+    deniedBy: deny.filter((r) => lensRuleMatches(r, part)),
+  }));
+}
+const lensAdmitted = (command) => lensVerdict(command).every((v) => v.allowedBy.length > 0 && v.deniedBy.length === 0);
+// The rule matcher itself: it admits the pinned forms, so a "not admitted" verdict below is
+// the rules' doing, not a matcher that admits nothing.
+test('AC3.1 matcher control: the pinned forms are admitted and a bare touch is not', () => {
+  for (const c of ['git diff ' + LENS_P + ' HEAD~1 HEAD', 'git log ' + LENS_P + ' -1', 'git show ' + LENS_P + ' HEAD']) assert.ok(lensAdmitted(c), c);
+  assert.ok(!lensAdmitted('touch x'));
+});
+test('AC3.1 vector 1: --output on the diff family is not admitted by the lens-reviewer rules', () => {
+  assert.ok(LENS_DENY.includes('Bash(* --output*)'));
+  for (const c of ['git diff ' + LENS_P + ' HEAD~1 HEAD --output=out.txt', 'git log ' + LENS_P + ' -1 --output=out.txt', 'git show ' + LENS_P + ' HEAD --output=out.txt']) {
+    const [v] = lensVerdict(c);
+    assert.deepStrictEqual(v.deniedBy, ['Bash(* --output*)'], c);
+    assert.ok(!lensAdmitted(c), c);
+  }
+});
+test('AC3.1 vector 2: git diff without the pinned flags is not admitted by the lens-reviewer rules', () => {
+  for (const c of ['git diff HEAD~1 HEAD', 'git log -1', 'git show HEAD', 'git diff --no-textconv HEAD~1 HEAD', 'git diff --no-ext-diff HEAD~1 HEAD']) {
+    assert.deepStrictEqual(lensVerdict(c)[0].allowedBy, [], c);
+  }
+});
+test('AC3.1 vector 3: an external diff program is not admitted by the lens-reviewer rules', () => {
+  for (const rule of LENS_GIT_RULES) assert.ok(rule.includes(' --no-ext-diff '), rule);
+  assert.ok(LENS_DENY.includes('Bash(* --ext-diff*)'));
+});
+test('AC3.1 vector 4: a textconv filter is not admitted by the lens-reviewer rules', () => {
+  for (const rule of LENS_GIT_RULES) assert.ok(rule.includes(' --no-textconv '), rule);
+  assert.ok(LENS_DENY.includes('Bash(* --textconv*)'));
+});
+test('AC3.1 vector 5: a pager is not admitted by the lens-reviewer rules', () => {
+  for (const c of ['git -p log ' + LENS_P + ' -1', 'git --paginate log ' + LENS_P + ' -1', 'GIT_PAGER=x git log ' + LENS_P + ' -1', 'PAGER=x git log ' + LENS_P + ' -1']) {
+    assert.deepStrictEqual(lensVerdict(c)[0].allowedBy, [], c);
+  }
+});
+test('AC3.1 vector 6: core.fsmonitor is not admitted by the lens-reviewer rules outside the sandbox', () => {
+  const s = lensReviewerSettings({ platform: 'darwin', readPaths: ['/repo/.git'] });
+  assert.strictEqual(s.sandbox.enabled, true);
+  assert.strictEqual(s.sandbox.allowUnsandboxedCommands, false);
+  assert.strictEqual(s.sandbox.autoAllowBashIfSandboxed, false);
+  assert.deepStrictEqual(s.sandbox.network, { allowedDomains: [], strictAllowlist: true });
+  assert.deepStrictEqual(s.sandbox.filesystem.denyWrite, ['.']);
+});
+test('AC3.1 vector 7: git -c config is not admitted by the lens-reviewer rules', () => {
+  const c = 'git -c core.pager=/tmp/x log ' + LENS_P + ' -1';
+  const [v] = lensVerdict(c);
+  assert.deepStrictEqual(v.allowedBy, [], c);
+  assert.deepStrictEqual(v.deniedBy, ['Bash(git -c *)'], c);
+});
+test('AC3.1 vector 8: an environment prefix is not admitted by the lens-reviewer rules', () => {
+  for (const c of ['GIT_EXTERNAL_DIFF=/tmp/x git diff ' + LENS_P + ' HEAD~1 HEAD', 'GIT_CONFIG_COUNT=1 git log ' + LENS_P + ' -1', 'env GIT_EXTERNAL_DIFF=/tmp/x git diff ' + LENS_P + ' HEAD~1 HEAD']) {
+    assert.deepStrictEqual(lensVerdict(c)[0].allowedBy, [], c);
+  }
+});
+// Vectors 9 and 16: the CLI's own read-only table admits `git grep`, `git status` and
+// `git blame` with no allow rule (live probe, CLI 2.1.325), and each started a configured
+// program, so a missing allow rule is not enough: a deny rule must name the command.
+test('AC3.1 vector 9: git grep in every form is not admitted by the lens-reviewer rules', () => {
+  for (const c of ['git grep -Oecho x', 'git grep -nOecho x', 'git grep --open=echo x', 'git grep --open-files-in-pager=echo x', 'git grep --textc x', 'git grep x']) {
+    const [v] = lensVerdict(c);
+    assert.deepStrictEqual(v.allowedBy, [], c);
+    assert.ok(v.deniedBy.includes('Bash(git grep *)'), c);
+  }
+});
+test('AC3.1 vector 16: git status and git blame are not admitted by the lens-reviewer rules', () => {
+  for (const [c, rule] of [['git status --short', 'Bash(git status *)'], ['git status', 'Bash(git status *)'], ['git blame a.txt', 'Bash(git blame *)']]) {
+    const [v] = lensVerdict(c);
+    assert.deepStrictEqual(v.allowedBy, [], c);
+    assert.ok(v.deniedBy.includes(rule), c);
+  }
+});
+test('AC3.1 vector 10: git diff --no-index is not admitted by the lens-reviewer rules', () => {
+  const c = 'git diff ' + LENS_P + ' --no-index /etc/hosts x';
+  assert.deepStrictEqual(lensVerdict(c)[0].deniedBy, ['Bash(* --no-index*)']);
+  assert.ok(!lensAdmitted(c));
+});
+test('AC3.1 vector 11: a compound command\'s second half is not admitted by the lens-reviewer rules', () => {
+  for (const c of ['git log ' + LENS_P + ' -1; touch x', 'git log ' + LENS_P + ' -1 && touch x', 'git log ' + LENS_P + ' -1 | tee x']) {
+    const verdict = lensVerdict(c);
+    assert.ok(verdict[0].allowedBy.length > 0, c);
+    assert.deepStrictEqual(verdict[1].allowedBy, [], c);
+    assert.ok(!lensAdmitted(c), c);
+  }
+});
+// Vector 14: the deny list does not name the abbreviations; git itself refuses them for the
+// diff family (parse-options turns abbreviation off there). Asked of a real git, in a
+// hermetic repository with no system or global config.
+test('AC3.1 vector 14: abbreviated long options on the diff family are rejected by git, so nothing is written or started', (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const cp = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-abbrev-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(dir, 'none'), GIT_CEILING_DIRECTORIES: path.dirname(dir) };
+  const git = (args) => cp.spawnSync('git', args, { cwd: dir, env, encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(git(['init', '-q']).status, 0);
+  for (const [i, text] of ['one\n', 'two\n'].entries()) {
+    fs.writeFileSync(path.join(dir, 'a.txt'), text);
+    assert.strictEqual(git(['add', 'a.txt']).status, 0);
+    assert.strictEqual(git(['-c', 'user.name=p', '-c', 'user.email=p@example.invalid', 'commit', '-qm', 'c' + i]).status, 0);
+  }
+  for (const args of [
+    ['diff', '--no-ext-diff', '--no-textconv', '--outp=out14.txt', 'HEAD~1', 'HEAD'],
+    ['log', '--no-ext-diff', '--no-textconv', '--ext', 'HEAD', '-1'],
+    ['show', '--no-ext-diff', '--no-textconv', '--textc', 'HEAD'],
+    ['log', '--no-ext-diff', '--no-textconv', '--show-sig', '-1'],
+  ]) {
+    // Admitted by the rules (the deny list names none of these spellings)...
+    assert.ok(lensAdmitted('git ' + args.join(' ')), args.join(' '));
+    // ...and refused by git before it does anything.
+    const r = git(args);
+    assert.ok(r.status === 128 || r.status === 129, args.join(' ') + ' exited ' + r.status + ': ' + r.stderr);
+    assert.match(r.stderr, /unrecognized argument|usage: git/, args.join(' '));
+  }
+  assert.ok(!fs.existsSync(path.join(dir, 'out14.txt')), 'out14.txt was written');
+});
+test('AC3.1 vector 15: a later flag that overrides a pinned one, or starts signature verification, is not admitted by the lens-reviewer rules', () => {
+  for (const [c, rule] of [
+    ['git show ' + LENS_P + ' --ext-diff HEAD', 'Bash(* --ext-diff*)'],
+    ['git log ' + LENS_P + ' -p --ext-diff -1', 'Bash(* --ext-diff*)'],
+    ['git show ' + LENS_P + ' --textconv HEAD', 'Bash(* --textconv*)'],
+    ['git log ' + LENS_P + ' --show-signature -1', 'Bash(* --show-signature*)'],
+    ['git show ' + LENS_P + ' --show-signature HEAD', 'Bash(* --show-signature*)'],
+    ['git log ' + LENS_P + ' --format=%GS -1', 'Bash(*%G*)'],
+    ['git log ' + LENS_P + ' --pretty=tformat:%G? -1', 'Bash(*%G*)'],
+  ]) {
+    const [v] = lensVerdict(c);
+    assert.ok(v.allowedBy.length > 0, 'the allow rule admits ' + c + ', so the deny rule is what refuses it');
+    assert.deepStrictEqual(v.deniedBy, [rule], c);
+  }
 });
 
 test('every settings role has a builder, so settingsFor never reaches its no-builder throw', () => {

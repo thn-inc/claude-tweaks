@@ -198,10 +198,11 @@
 // is Read, Grep, Glob and the three git forms in LENS_GIT_RULES (`git diff`, `git show` and
 // `git log`, each with `--no-ext-diff --no-textconv` pinned); the deny list is the
 // implementer's plus the flags of those forms that write a file (`--output`), run a program
-// (`--ext-diff`, `--textconv`) or read outside the working directory (`--no-index`), plus Edit
-// and Write. Three deny rules are backstops, not live controls, because no allow rule admits
-// the command they name: `git -c *` (no allow rule starts with `git -c`), and
-// `git grep * -O*` and `* --open-files-in-pager*` (git grep is not admitted). `git grep` was
+// (`--ext-diff`, `--textconv`, `--show-signature`, a `%G` format placeholder) or read outside
+// the working directory (`--no-index`), plus `git grep`, `git status` and `git blame` whole
+// (see "Probe results" below), plus Edit and Write. Two deny rules are backstops, not live
+// controls, because nothing admits the command they name: `git -c *` and
+// `* --open-files-in-pager*`. `git grep` was
 // dropped from the allow list in Task 1's review: it runs a program through `-O<prog>` as its
 // first argument, bundled (`-nO<prog>`), or through an abbreviated long option
 // (`--open=<prog>`), and turns on configured textconv through `--textc`; git accepts those
@@ -216,7 +217,53 @@
 // (`lensAdmittedFormsNote`) is derived from LENS_GIT_RULES, so the admitted forms it names
 // and the allow list cannot drift. Widening the allow list, or dropping a deny rule, means
 // re-probing every form it admits per the headless-worker-launch skill.
-// Probe results: Task 2
+//
+// Probe results (lens-reviewer, #6000). Probed 2026-11-23 with Claude Code CLI 2.1.325 and
+// git 2.56.0 on macOS (darwin), under a claude.ai subscription login, launched with no TTY,
+// through `launchWorker` with the real runner on haiku: the opt-in `AC4.1 (#6000)` live test in
+// `tests/bin-lib/driver/worker.test.js`. Each vector had its own throwaway repository with a
+// signed HEAD and a linked worktree as `cwd`, the common dir as `readPaths`, `* diff=evil` in
+// a tracked `.gitattributes`, and repo config naming a script for `diff.evil.command`,
+// `diff.evil.textconv`, `core.pager`, `core.fsmonitor` and `gpg.program`. Each script printed a
+// sentinel to stderr (which git passes into the Bash tool result) and touched a marker under
+// the system temporary directory; the scripts sat in the common dir, so a program that did not
+// start was not merely unreadable, and a plain-git control before each launch proved every one
+// but the pager (which needs a TTY) starts when asked. Evidence is each launch's transcript
+// (`tool_use`/`tool_result` by `session_id`) plus the envelope `denials`. Vectors the
+// admitted-forms note made the worker decline (7, 8, 9, 11, 16) were settled by a third,
+// rights-only launch without the note. Results:
+// - Denied by a deny rule (in `denials`): `--output=` on diff, log and show (1);
+//   `git -c core.pager=… log …` (7); a `GIT_EXTERNAL_DIFF=…` prefix (8); `git grep -O…`,
+//   `git grep --open=…` and `git grep one` (9); `--no-index /etc/hosts` (10); the chained
+//   `touch` (11, the whole compound refused); a later `--ext-diff` or `--textconv` after the
+//   pinned flags, `--show-signature` and `--format=%GS` (15); `git status --short` and
+//   `git blame a.txt` (16). No file was written and no marker appeared.
+// - Ran with nothing started: the pinned diff, show and log forms (3, 4, 5); the pager never
+//   starts with no TTY. Abbreviations (`--outp=`, `--ext`, `--textc`, and `--show-sig`
+//   off-line) are rejected by git itself (exit 129/128) before anything is written (14); the
+//   deny list does not name them.
+// - Narrowed by this probe: `--show-signature` and `%G` placeholders start `gpg.program` on a
+//   signed commit (plain git, then denied live), and `git grep`, `git status` and `git blame`
+//   ran with no allow rule and started fsmonitor or textconv, so each is now denied whole.
+// - Not closed by any rule (a residual): the CLI's own read-only command table admits bare
+//   `git diff`, `git log -p` and `git show` with no allow rule and no denial (2). Bare
+//   `git diff HEAD~1 HEAD` started the configured external diff, and bare `git log -p` and
+//   `git show HEAD` the textconv filter. The pinned `git diff --no-ext-diff --no-textconv`
+//   with no revisions (a worktree compare) started `core.fsmonitor` (6). A deny rule naming
+//   the bare forms would refuse the pinned ones too, so the allow list does not hold these
+//   programs back; the sandbox does: each program's write outside the working directory
+//   failed (`touch` "Operation not permitted") and its network reach failed (`curl` exit 56).
+//   The programs are the ones the repository's own config names; the reviewed change chooses
+//   among them through its tracked `.gitattributes`.
+// - `filesystem.denyWrite: ['.']` was accepted: every launch returned `ok` (12).
+// - Linked-worktree reads (13): `git log` and `git show` in the pinned forms succeeded from
+//   the worktree with the common dir in `readPaths`, and also with `readPaths: []`, so on this
+//   host the common-dir grant was not needed for these reads (git's own reads of the common
+//   dir went through, apparently the CLI's git carve-out).
+// Not probed: Linux and Windows hosts; other entries of the CLI's read-only table (for
+// example `git cat-file`, `git shortlog`, `git ls-files`) and their textconv or filter flags;
+// `diff.external` and `pager.<cmd>` config; a TTY-attached launch. Widening the allow list,
+// or dropping a deny rule, means re-probing.
 //
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
@@ -418,13 +465,19 @@ const LENS_GIT_RULES = deepFreeze([
   'Bash(git log --no-ext-diff --no-textconv *)',
 ]);
 // The implementer's deny rules plus every flag of the admitted forms that writes a file
-// (`--output`), runs a program (`--ext-diff`, `--textconv`) or reads outside the working
-// directory (`--no-index`), and the two file-writing tools. The `git grep` and `git -c`
-// rules are backstops only: no allow rule admits either command (see the header).
+// (`--output`), runs a program (`--ext-diff`, `--textconv`, and signature verification
+// through `--show-signature` or a `%G` format placeholder, which start `gpg.program`) or
+// reads outside the working directory (`--no-index`), and the two file-writing tools. Then
+// `git grep`, `git status` and `git blame` whole: the CLI's own read-only table admits them
+// with no allow rule, and each started a configured program in the live probe (see the
+// header). The `git -c` and `--open-files-in-pager` rules are backstops only: no allow rule
+// or read-only table entry admits them.
 const LENS_DENY = deepFreeze([
   ...IMPLEMENTER_DENY,
   'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)',
-  'Bash(* --open-files-in-pager*)', 'Bash(git grep * -O*)', 'Bash(git -c *)', 'Edit', 'Write',
+  'Bash(* --show-signature*)', 'Bash(*%G*)',
+  'Bash(git grep *)', 'Bash(git status *)', 'Bash(git blame *)',
+  'Bash(* --open-files-in-pager*)', 'Bash(git -c *)', 'Edit', 'Write',
 ]);
 
 function lensReviewerSettings({ platform, readPaths = [] } = {}) {
