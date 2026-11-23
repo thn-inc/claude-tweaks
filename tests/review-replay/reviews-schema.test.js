@@ -2,6 +2,11 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+const { run, makeWriteRepo } = require('../../tools/review-replay');
+const { scratchDir } = require('../helpers/tmp-dir');
+const { buildBranchFixture, cleanEnv } = require('./reviews-fixture');
 
 const root = path.join(__dirname, '..', '..', 'tools', 'review-replay');
 const schema = require(path.join(root, 'schema.js'));
@@ -57,7 +62,32 @@ test('the shared constants carry the contract values', () => {
   assert.deepStrictEqual(schema.REVIEWS_MANIFEST_KEYS, ['schemaVersion', 'kind', 'arms']);
   assert.deepStrictEqual(schema.REVIEWS_ARM_KEYS, ['name', 'profile', 'model', 'effort', 'repeat', 'prompts']);
   assert.deepStrictEqual(schema.REVIEWS_PROMPT_KEYS, ['file', 'name', 'run', 'lens', 'side', 'repo']);
-  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 14);
+  assert.strictEqual(schema.REVIEW_EXCLUSION_REASONS.length, 18);
+});
+
+test('the branch roles\' exclusion reasons are listed', () => {
+  for (const reason of ['prompt-file-gone', 'no-whole-branch-prompt', 'no-merge-base', 'items-unparsed']) {
+    assert.ok(schema.REVIEW_EXCLUSION_REASONS.includes(reason), reason);
+  }
+});
+
+test('--role task: a Needs fixes reply with bold-label severities only keeps its slot with itemsUnparsed', async () => {
+  const bRoot = scratchDir('rr-bold-');
+  const bx = buildBranchFixture(bRoot, { boldLabel: true });
+  const out = path.join(bRoot, 'out');
+  const errs = [];
+  const git = (args) => execFileSync('git', args, { cwd: bx.mainRoot, env: cleanEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const deps = { fs, git, writeRepo: makeWriteRepo(bx.mainRoot), pluginRoot: path.join(__dirname, '..', '..', 'plugin'), log: () => {}, err: (s) => errs.push(s) };
+  const code = await run({ argv: ['extract-reviews', '--runs', bx.runsRoot, '--out', out, '--role', 'task', '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast'], deps });
+  assert.strictEqual(code, 0, errs.join('\n'));
+  const fixture = JSON.parse(fs.readFileSync(path.join(out, schema.REVIEWS_FIXTURE_FILE), 'utf8'));
+  const slot = fixture.slots.find((s) => s.agentId === 't3');
+  assert.ok(slot, JSON.stringify(fixture.excluded));
+  assert.strictEqual(slot.verdict, 'needs-fixes');
+  const report = JSON.parse(fs.readFileSync(path.join(out, schema.REPORTS_FILE), 'utf8')).reports[slot.name];
+  assert.deepStrictEqual([report.itemsUnparsed, report.items, report.unlocated], [true, [], 0]);
+  const t2 = JSON.parse(fs.readFileSync(path.join(out, schema.REPORTS_FILE), 'utf8')).reports[fixture.slots.find((s) => s.agentId === 't2').name];
+  assert.strictEqual(t2.itemsUnparsed, false);
 });
 
 test('the reused names are exported', () => {

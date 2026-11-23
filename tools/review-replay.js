@@ -37,6 +37,13 @@
 // decisions.md verdict line reaches a prompt, a repository or a copy. Alongside the --arm arms, a control arm reruns the
 // slots at the tier and effort they were archived at: `control` when every selected slot shares one (tier, effort),
 // otherwise `control.{tier}.{effort|none}` per group. A user arm named `control` or `control.*` exits 2.
+// Three branch roles replay other reviewers the same way, with the range taken from the prompt's own `Base {sha} …
+// Head {sha}` pair and --lens/--max-per-lens refused (tools/review-replay/reviews-branch.js). --role task replays each
+// archived `task review` dispatch, its prompt read from the file a one-line pointer prompt names when it is one
+// (`prompt-file-gone` when that file no longer exists), its archived verdict and located items kept. --role whole-branch
+// replays each whole-branch review dispatch (guards.js's isWholeBranch), its Critical, Important and Minor items kept.
+// --role task-vs-branch replays the run's whole-branch prompt against the head each `Needs fixes` task review reviewed,
+// beside a control slot at the whole-branch prompt's own head, scored on that task review's items.
 //
 // score-reviews: reads the Workflow's replies from --transcripts and, per arm and lens, prints the confirmed findings the
 // replay reviewers raised (recall, per slot and summed, over first passes only: a slot whose `ordinal` in
@@ -76,8 +83,8 @@ const USAGE = [
   '               [--select <name,...>] [--min-runs <n>] [--min-findings <n>] [--quota <sev>=<n>,...] [--template <path>] [--dispatch-core <path>]',
   '       node tools/review-replay.js score --out <extract dir> --transcripts <workflow dir> [--reference <arm>]',
   '       node tools/review-replay.js counterfactual --runs <root> --transcripts <dir> [--select <name,...>]',
-  '       node tools/review-replay.js extract-reviews --runs <root> --out <dir> --role lens --transcripts <dir> --arm name=<id>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
-  '               [--select <name,...>] [--lens <id,...>] [--max-per-lens <n>] [--min-reviews <n>]',
+  '       node tools/review-replay.js extract-reviews --runs <root> --out <dir> --role lens|task|whole-branch|task-vs-branch --transcripts <dir> --arm name=<id>,profile=<profile>[,effort=<low|medium|high|xhigh|max>],repeat=<n> [--arm ...]',
+  '               [--select <name,...>] [--lens <id,...>] [--max-per-lens <n>] (--role lens only) [--min-reviews <n>]',
   '       node tools/review-replay.js score-reviews --out <dir> --transcripts <workflow dir> [--reference <arm>]',
 ].join('\n');
 const COMMAND_FLAGS = {

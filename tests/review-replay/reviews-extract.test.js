@@ -1,5 +1,5 @@
 'use strict';
-const { test, before } = require('node:test');
+const { test, before, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +9,7 @@ const schema = require('../../tools/review-replay/schema');
 const { toPosix } = schema;
 const { scratchDir } = require('../helpers/tmp-dir');
 const { runWorkflow } = require('./helpers');
-const { buildReviewsFixture, RUN, RUN_GONE, cleanEnv } = require('./reviews-fixture');
+const { buildReviewsFixture, buildBranchFixture, RUN, RUN_GONE, RUN_BRANCH, cleanEnv } = require('./reviews-fixture');
 const { unrewrittenPaths } = require('../../tools/review-replay/reviews-rewrite');
 const { existsOnDisk } = require('../../tools/review-replay/reviews-extract');
 
@@ -486,4 +486,106 @@ test('USAGE names both new commands', async () => {
   const err = deps.errs.join('\n');
   assert.ok(err.includes('extract-reviews --runs <root> --out <dir> --role lens'), err);
   assert.ok(err.includes('score-reviews --out <dir> --transcripts <workflow dir>'), err);
+});
+
+describe('branch roles', () => {
+  const RUNB = RUN_BRANCH;
+  // Extracts `role` from a fresh branch fixture built with `opts`.
+  async function extractBranch(role, opts = {}, extra = []) {
+    const bRoot = scratchDir('rr-branch-');
+    const bx = buildBranchFixture(bRoot, opts);
+    const out = path.join(bRoot, 'out');
+    const deps = makeDeps(bx.mainRoot);
+    const code = await run({ argv: ['extract-reviews', '--runs', bx.runsRoot, '--out', out, '--role', role, '--transcripts', bx.transcripts, '--arm', 'name=a,profile=fast', ...extra], deps });
+    const json = (name) => JSON.parse(fs.readFileSync(path.join(out, name), 'utf8'));
+    return { code, deps, out, json, bx };
+  }
+  const plainTask = memo(() => extractBranch('task'));
+  const promptOf = (x, name, arm = 'a') => read(x.json(schema.REVIEWS_MANIFEST_FILE).arms.find((a) => a.name === arm).prompts.find((p) => p.name === name).file);
+
+  test('--role task: one slot per task review, verdict and located items archived', async () => {
+    const x = await plainTask();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.equal(fixture.role, 'task');
+    assert.deepEqual(fixture.slots.map((s) => [s.name.split('/').pop(), s.verdict, s.archivedTier]), [['task', 'approved', 'standard'], ['task.2', 'needs-fixes', 'capable']]);
+    assert.deepEqual(fixture.slots.map((s) => [s.role, s.agentId, s.taskTier, s.at, s.baseFrom, s.taskAgentId]), [['task', 't1', null, null, null, null], ['task', 't2', null, null, null, null]]);
+    assert.deepEqual(fixture.totals, { reviews: 2, byArchivedTier: { standard: 1, capable: 1 } });
+    const reports = x.json(schema.REPORTS_FILE);
+    assert.deepEqual(Object.keys(reports), ['schemaVersion', 'reports'], 'no confirmed or runRows for a branch role');
+    const r = reports.reports[`${RUNB}/task.2`];
+    assert.deepEqual(r.items.map((i) => [i.sev, i.path, i.line]), [['important', 'src/x.js', 10], ['minor', null, null]]);
+    assert.equal(r.unlocated, 1);
+    assert.deepEqual([r.role, r.run, r.verdict, r.itemsUnparsed, r.taskTier, r.at], ['task', RUNB, 'needs-fixes', false, null, null]);
+    assert.ok(!JSON.stringify(reports).includes(x.bx.mainRoot), 'no archived path is stored');
+    assert.deepEqual(reports.reports[`${RUNB}/task`].items, []);
+    const slot = fixture.slots.find((s) => s.agentId === 't2');
+    const repo = fixture.repos.find((p) => p.key === slot.repoKey);
+    assert.deepEqual([repo.archivedBase, repo.archivedHead], [x.bx.T1, x.bx.T2]);
+    const text = promptOf(x, `${RUNB}/task.2`);
+    for (const needle of [x.bx.T1, x.bx.T2, x.bx.T1.slice(0, 7), '[Effort:', x.bx.mainRoot]) assert.ok(!text.includes(needle), `the prompt names ${needle}`);
+    assert.ok(text.includes(`Base ${repo.replayBase}, Head ${repo.replayHead}.`), text);
+    const manifest = x.json(schema.REVIEWS_MANIFEST_FILE);
+    assert.deepEqual(schema.validateReviewsManifest(manifest), []);
+    assert.deepEqual(manifest.arms.map((a) => a.name), ['a', 'control.standard.medium', 'control.capable.high']);
+  });
+
+  test('--role task: re-review dispatches are never slots', async () => {
+    const x = await plainTask();
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.ok(![...fixture.slots, ...fixture.excluded].some((s) => s.agentId === 'rr2'));
+    assert.ok(![...fixture.slots, ...fixture.excluded].some((s) => s.agentId === 'wb'), 'nor whole-branch dispatches');
+  });
+
+  test('AC6.1: a pointer prompt whose file is gone is excluded as prompt-file-gone and writes no prompt', async () => {
+    const x = await extractBranch('task', { pointer: 'gone' });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.excluded, [{ run: RUNB, agentId: 'tp', tier: 'standard', reason: 'prompt-file-gone' }]);
+    assert.deepEqual(fixture.slots.map((s) => s.agentId), ['t1', 't2']);
+    for (const f of filesUnder(path.join(x.out, 'prompts'))) {
+      assert.ok(!path.relative(x.out, f).includes('tp'), f);
+      assert.ok(!read(f).includes('task-2-review-prompt'), f);
+    }
+  });
+
+  test('--role task: a pointer prompt whose file exists replays that file', async () => {
+    const x = await extractBranch('task', { pointer: 'present' });
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId]), [[`${RUNB}/task`, 't1'], [`${RUNB}/task.2`, 't2'], [`${RUNB}/task.3`, 'tp']]);
+    const text = promptOf(x, `${RUNB}/task.3`);
+    assert.ok(!text.includes('it is your prompt'), text);
+    assert.equal(text, promptOf(x, `${RUNB}/task.2`), 'the pointer file\'s text, rewritten as t2\'s own prompt is');
+  });
+
+  test('--role whole-branch: one slot, items archived, prompt rewritten', async () => {
+    const x = await extractBranch('whole-branch');
+    ok(x);
+    const fixture = x.json(schema.REVIEWS_FIXTURE_FILE);
+    assert.deepEqual(fixture.slots.map((s) => [s.name, s.agentId, s.role, s.verdict, s.archivedTier, s.archivedEffort]), [[`${RUNB}/whole-branch`, 'wb', 'whole-branch', null, 'capable', 'high']]);
+    assert.deepEqual(fixture.excluded, []);
+    const r = x.json(schema.REPORTS_FILE).reports[`${RUNB}/whole-branch`];
+    assert.deepEqual(r.items.map((i) => [i.sev, i.path, i.line]), [['minor', 'src/y.js', 2]]);
+    assert.equal(r.unlocated, 0);
+    const repo = fixture.repos[0];
+    assert.deepEqual([fixture.repos.length, repo.archivedBase, repo.archivedHead], [1, x.bx.B, x.bx.F]);
+    const text = promptOf(x, `${RUNB}/whole-branch`);
+    assert.ok(text.includes(`Base ${repo.replayBase} (the review base). Head ${repo.replayHead}.`), text);
+    assert.ok(text.includes('## What Was Implemented'), text);
+    for (const needle of [x.bx.B, x.bx.F, '[Effort:', x.bx.mainRoot]) assert.ok(!text.includes(needle), `the prompt names ${needle}`);
+    const spec = path.join(x.out, 'repos', `${RUNB}--r1`, 'whole-branch--7-spec.md');
+    assert.ok(text.includes(`Spec: ${toPosix(spec)}`), text);
+    assert.equal(read(spec), read(path.join(x.bx.runsRoot, RUNB, 'work', '7-spec.md')));
+  });
+
+  test('--lens with a branch role exits 2', async () => {
+    const x = await extractBranch('task', {}, ['--lens', '3a']);
+    assert.equal(x.code, 2);
+    assert.ok(x.deps.errs.join('\n').includes('--lens applies to --role lens only'), x.deps.errs.join('\n'));
+    const y = await extractBranch('whole-branch', {}, ['--max-per-lens', '1']);
+    assert.equal(y.code, 2);
+    assert.ok(y.deps.errs.join('\n').includes('--max-per-lens applies to --role lens only'), y.deps.errs.join('\n'));
+  });
 });

@@ -172,4 +172,120 @@ function buildReviewsFixture(root, { decisions = false, gone = false, repeat = f
   return { mainRoot, runsRoot, transcripts, runName: RUN, B, H, worktree };
 }
 
-module.exports = { buildReviewsFixture, RUN, RUN_GONE, cleanEnv };
+const RUN_BRANCH = '2026-11-03T000000-spec-7';
+
+// A task-review prompt in the shape of the archived task-review prompts: the brief under the worktree, the reviewed
+// range as `Base {sha}, Head {sha}` and an Effort line.
+function taskPrompt({ worktree, n, base, head }) {
+  return [
+    `You are reviewing task ${n} of record #7; a broad whole-branch review happens separately once every task is done.`,
+    '',
+    `WORKTREE: ${worktree}`,
+    `Task brief: ${worktree}/.superpowers/sdd/x/task-${n}-brief.md — read it first.`,
+    `Base ${base}, Head ${head}. Review that range only.`,
+    '[Effort: medium — apply medium-level reasoning depth to this task.]',
+    '',
+    'End with `Task quality: Approved` or `Task quality: Needs fixes`.',
+  ].join('\n');
+}
+
+// buildBranchFixture(root, opts) -> { mainRoot, runsRoot, transcripts, runName, worktree, B, T1, T2, F, M, W }
+// History (on branch `work`): B (src/x.js, src/y.js), T1 (edits src/y.js), T2 (src/x.js line 10 null-unsafe), F (fixes
+// it). Dispatches: t1 (task review of B..T1, Approved), t2 (task review of T1..T2, Needs fixes with a located Important
+// and an unlocated Minor item), rr2 (the re-review of T2..F), wb (the whole-branch review of B..F, one Minor item).
+//   pointer:         null, or a task review tp whose prompt points at {worktree}/.superpowers/sdd/x/task-2-review-prompt.md;
+//                    'present' writes that file with t2's prompt, 'gone' does not
+//   catchUp:         a side commit M off B (adds src/z.js) merged into the branch at F as W; wb reviews M..W
+//   noWholeBranch:   wb has no transcript
+//   wbUnusableFirst: an extra whole-branch item wb0 with no transcript, before wb
+//   boldLabel:       a task review t3 of T1..T2 whose Needs fixes reply has bold-label severities only
+function buildBranchFixture(root, { pointer = null, catchUp = false, noWholeBranch = false, wbUnusableFirst = false, boldLabel = false } = {}) {
+  const mainRoot = path.join(root, 'main checkout', 'repo');
+  const runsRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
+  const transcripts = path.join(root, 'projects');
+  const worktree = `${mainRoot}/.claude/worktrees/flow-spec-7`;
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { cwd: mainRoot, env: cleanEnv(), encoding: 'utf8', windowsHide: true }).trim();
+  const commit = (message) => {
+    git('add', '-A');
+    git('commit', '-q', '-m', message);
+    return git('rev-parse', 'HEAD');
+  };
+  const xLines = (nullAt) => Array.from({ length: 20 }, (_, i) => `const x${i + 1} = ${i + 1 === nullAt ? 'null.value' : i + 1};`).join('\n') + '\n';
+
+  // Every commit first: the run directory, the worktree and the transcripts are written after the last one.
+  fs.mkdirSync(mainRoot, { recursive: true });
+  git('init', '-q', '-b', 'work');
+  put(path.join(mainRoot, 'src', 'x.js'), xLines(null));
+  put(path.join(mainRoot, 'src', 'y.js'), 'let y1 = 1;\nlet y2 = 2;\n');
+  const B = commit('B');
+  put(path.join(mainRoot, 'src', 'y.js'), 'let y1 = 1;\nlet y2 = 2;\nlet y3 = 3;\n');
+  const T1 = commit('T1');
+  put(path.join(mainRoot, 'src', 'x.js'), xLines(10));
+  const T2 = commit('T2');
+  put(path.join(mainRoot, 'src', 'x.js'), xLines(null));
+  const F = commit('F');
+  let M = null;
+  let W = null;
+  if (catchUp) {
+    git('checkout', '-q', '-b', 'side', B);
+    put(path.join(mainRoot, 'src', 'z.js'), 'const z = 1;\n');
+    M = commit('M');
+    git('checkout', '-q', 'work');
+    git('merge', '-q', '--no-ff', '-m', 'W', 'side');
+    W = git('rev-parse', 'HEAD');
+  }
+
+  fs.mkdirSync(worktree, { recursive: true });
+  const runDir = path.join(runsRoot, RUN_BRANCH);
+  put(path.join(runDir, 'work', '7-spec.md'), '# 7: the branch fixture spec\n\nAcceptance: src/x.js line 10 is never null-unsafe.\n');
+
+  const subagents = path.join(transcripts, 'slug', 'sess', 'subagents');
+  const items = [];
+  const dispatch = ({ agentId, description, role, tier, prompt, reply, effort, transcript = true }) => {
+    items.push({ agentId, description, tier, role, tokens: { output: 1 } });
+    if (!transcript) return;
+    put(path.join(subagents, `agent-${agentId}.jsonl`), jsonl([
+      { type: 'user', message: { role: 'user', content: prompt } },
+      { type: 'assistant', effort, message: { role: 'assistant', content: [{ type: 'text', text: reply }] } },
+    ]));
+  };
+  const t2Prompt = taskPrompt({ worktree, n: 2, base: T1, head: T2 });
+  const t2Reply = `### Issues\n#### Important\n- ${worktree}/src/x.js:10: null deref when y is unset\n#### Minor\n- naming could be clearer\n\nTask quality: Needs fixes`;
+
+  dispatch({ agentId: 't1', description: 'Review task 1', role: 'task review', tier: 'standard', effort: 'medium', prompt: taskPrompt({ worktree, n: 1, base: B, head: T1 }), reply: 'The change is small and correct.\n\nTask quality: Approved' });
+  dispatch({ agentId: 't2', description: 'Review task 2', role: 'task review', tier: 'capable', effort: 'high', prompt: t2Prompt, reply: t2Reply });
+  dispatch({ agentId: 'rr2', description: 'Re-review task 2 fixes', role: 're-review', tier: 'standard', effort: 'medium', prompt: `Fix diff (${T2}..${F}) for ${worktree}.`, reply: 'ADDRESSED src/x.js:10' });
+  if (pointer) {
+    const promptFile = `${worktree}/.superpowers/sdd/x/task-2-review-prompt.md`;
+    if (pointer === 'present') put(promptFile, t2Prompt);
+    dispatch({
+      agentId: 'tp', description: 'Review task 2 (pointer)', role: 'task review', tier: 'standard', effort: 'medium',
+      prompt: `Your full review instructions are in this file (it is your prompt): ${promptFile}`, reply: t2Reply,
+    });
+  }
+  if (boldLabel) {
+    dispatch({
+      agentId: 't3', description: 'Review task 2 again', role: 'task review', tier: 'standard', effort: 'medium',
+      prompt: taskPrompt({ worktree, n: 2, base: T1, head: T2 }), reply: '**Important**\n- src/x.js:4 off by one\n\nTask quality: Needs fixes',
+    });
+  }
+  const wbPrompt = [
+    'You are a Senior Code Reviewer reviewing the whole branch of record #7.',
+    '[Effort: high — apply high-level reasoning depth to this task.]',
+    '',
+    '## What Was Implemented',
+    'A null guard in src/x.js and a new binding in src/y.js.',
+    '',
+    `WORKTREE: ${worktree}`,
+    `Spec: ${worktree}/.claude-tweaks/pipelines/${RUN_BRANCH}/work/7-spec.md`,
+    catchUp ? `Base ${M} (the review base). Head ${W}.` : `Base ${B} (the review base). Head ${F}.`,
+  ].join('\n');
+  const wbReply = '#### Critical (Must Fix)\nNone.\n#### Important (Should Fix)\nNone.\n#### Minor (Nice to Have)\n1. src/y.js:2 could be const';
+  if (wbUnusableFirst) dispatch({ agentId: 'wb0', description: 'Whole-branch review', role: 'whole-branch review', tier: 'capable', effort: 'high', prompt: wbPrompt, reply: wbReply, transcript: false });
+  dispatch({ agentId: 'wb', description: 'Whole-branch review', role: 'whole-branch review', tier: 'capable', effort: 'high', prompt: wbPrompt, reply: wbReply, transcript: !noWholeBranch });
+  put(path.join(runDir, 'timing.json'), `${JSON.stringify({ dispatches: { items } }, null, 2)}\n`);
+
+  return { mainRoot, runsRoot, transcripts, runName: RUN_BRANCH, worktree, B, T1, T2, F, M, W };
+}
+
+module.exports = { buildReviewsFixture, buildBranchFixture, RUN, RUN_GONE, RUN_BRANCH, cleanEnv };
