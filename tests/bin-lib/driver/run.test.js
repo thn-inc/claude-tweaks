@@ -6664,8 +6664,8 @@ test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
 
 const REVIEWER_ON = { 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on' };
 const FAST = ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS];
-const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
-const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json'];
+const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS'];
+const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
 const protectedCheck = (protectedPaths, over = {}) => [on('node', /express-lane\.js$/, 'check'), (c) => badProtectedFlag(c) || {
   code: 0, stderr: '', stdout: JSON.stringify(checkProceed({ ...over, bounds: { withinBounds: true, violations: [], implLines: 3, changedFiles: ['a.js'], ...(protectedPaths === undefined ? {} : { protectedPaths }) } })),
 }];

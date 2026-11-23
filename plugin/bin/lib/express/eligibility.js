@@ -114,8 +114,10 @@ const REASONS = Object.freeze({
 //    `.mcp.json`) and the plugin's policy and verify-scope files.
 // Harm model (#6019): the CI/forge, git-hook, `package.json` and agent-config families act at push or
 // build time, before any merge, so no merge-time review can vouch for them (BUILD_TIME_PROTECTED_RES).
-// The rest (hook code, `skills/_shared/`, CODEOWNERS, policy, verify-scope) act only once merged, so the
-// driver may take them behind its reviewer; the express lane never does.
+// So do the policy and verify-scope files: `check` and `verify.js` read them from the PR's own
+// worktree, so a branch editing them would loosen the bounds and checks that judge it. The rest (hook
+// code, `skills/_shared/`, CODEOWNERS) act only once merged, so the driver may take them behind its
+// reviewer; the express lane never does.
 // Each family declares its kind once: buildTime true acts before a merge (see the harm model above).
 const PROTECTED_FAMILIES = Object.freeze([
   Object.freeze({ re: /(^|\/)hooks\//, buildTime: false }),
@@ -131,8 +133,8 @@ const PROTECTED_FAMILIES = Object.freeze([
   Object.freeze({ re: /(^|\/)package\.json$/, buildTime: true }),
   Object.freeze({ re: /(^|\/)\.claude\/settings[^/]*\.json$/, buildTime: true }),
   Object.freeze({ re: /(^|\/)\.mcp\.json$/, buildTime: true }),
-  Object.freeze({ re: /(^|\/)\.claude-tweaks\/policy\.yml$/, buildTime: false }),
-  Object.freeze({ re: /(^|\/)\.claude-tweaks\/verify-scope\.json$/, buildTime: false }),
+  Object.freeze({ re: /(^|\/)\.claude-tweaks\/policy\.yml$/, buildTime: true }),
+  Object.freeze({ re: /(^|\/)\.claude-tweaks\/verify-scope\.json$/, buildTime: true }),
 ]);
 const PROTECTED_PATH_RES = PROTECTED_FAMILIES.map((fam) => fam.re);
 

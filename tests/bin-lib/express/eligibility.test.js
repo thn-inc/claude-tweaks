@@ -553,8 +553,8 @@ test('widenings (#6018)', () => {
 
 // #6019: the pipeline driver may take a merge-time protected path behind its reviewer; build-time families still refuse.
 const REVIEWER = { ...DRIVER, protectedPathsNeedReviewer: true };
-const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
-const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json'];
+const MERGE_TIME = ['plugin/hooks/x.js', 'hooks.js', 'a/hooks.sh', 'plugin/skills/_shared/a.md', 'CODEOWNERS'];
+const BUILD_TIME = ['.github/workflows/ci.yml', '.gitlab-ci.yml', '.circleci/config.yml', '.githooks/pre-commit', '.husky/pre-commit', 'package.json', '.claude/settings.json', '.mcp.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json'];
 const withKey = (p) => record(ELIGIBLE_LABELS, [p]);
 
 test("AC1.1 (#6019, eligibility half): without the option, or with it false, a hooks/, .github/ or package.json Key File gives today's verdict", () => {
@@ -586,7 +586,7 @@ test('AC9.1 (#6019, eligibility half): under the option each build-time Key File
 
 test('BUILD_TIME_PROTECTED_RES is frozen and inside the protected list (#6019)', () => {
   assert.ok(Object.isFrozen(BUILD_TIME_PROTECTED_RES));
-  assert.strictEqual(BUILD_TIME_PROTECTED_RES.length, 8);
+  assert.strictEqual(BUILD_TIME_PROTECTED_RES.length, 10);
   for (const p of [...BUILD_TIME, ...MERGE_TIME]) assert.strictEqual(isProtectedPath(p), true, p);
   for (const p of MERGE_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
   for (const p of BUILD_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), true, p);
