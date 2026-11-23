@@ -18,7 +18,7 @@ const DISPATCH = readText(path.join(ROOT, 'plugin', 'skills', 'build', 'dispatch
 // A literal as a non-global regex, so each fact matches one exact phrase.
 const lit = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
 
-const CLI_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file';
+const CLI_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"';
 const PROFILE_LINE =
   '`AUTO {time} — implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}). Reversibility: n/a.`';
 const ESCALATION_LINE =
@@ -43,7 +43,10 @@ const PATTERNS = [
     'AC4.3: initial review is not a trigger',
   ],
   [lit('a fresh implementer, never a `SendMessage` resume'), 'fresh dispatch, never SendMessage'],
-  [lit("`stepUp` with `--from {task's profile}` (a `**Role:**` marker's profile when one set it)"),'AC5.2: step-up from the task\'s own profile'],
+  [
+    lit("`stepUp` with `--from {task's profile}` (a `**Role:**` marker's profile when one set it)"),
+    "AC5.2: step-up from the task's own profile",
+  ],
   [
     lit("a task whose `task {k} implementer escalated` line is already in `decisions.md` (no run dir: SDD's `progress.md`)"),
     'AC5.1: once-per-task check reads decisions.md',
@@ -66,6 +69,12 @@ test('#5999: removing any one fact turns exactly that fact red', () => {
 test('AC9.1: removing the CLI call turns the suite red', () => {
   const copy = DISPATCH.replace(CLI_CALL, () => '');
   assert.notEqual(copy, DISPATCH, 'the CLI-call literal is not in dispatch.md');
+  assert.deepStrictEqual(missing(copy), ['AC9.1: names the CLI call']);
+});
+
+test('AC9.1: reverting the --spec-file argument to the run-dir path turns the suite red', () => {
+  const copy = DISPATCH.replace('--spec-file "{spec-file}"', () => '--spec-file "{run-dir}/work/{n}-spec.md"');
+  assert.notEqual(copy, DISPATCH, 'the --spec-file "{spec-file}" argument is not in dispatch.md');
   assert.deepStrictEqual(missing(copy), ['AC9.1: names the CLI call']);
 });
 
