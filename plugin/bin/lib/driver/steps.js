@@ -9,7 +9,7 @@
 //
 //   defineStep(name, stopClass, fn) -> { name, run }
 //     fn(ctx, deps) -> Promise<StepResult>, where
-//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip?, noLine? }
+//     StepResult = { status: 'ok'|'stop'|'fail', detail?, halt?, stopClass?, reason?, extra?, skip?, noLine?, then? }
 //   - `stop` means a gate said no; `fail` means a call failed.
 //   - `halt` defaults to `status !== 'ok'`; a step that must never end the record (a
 //     failed summary entry) returns `halt: false`.
@@ -20,6 +20,9 @@
 //   - `skip: true` (an ok result of a step that did not apply) emits no event line and does not halt.
 //   - `noLine: true` (a non-ok result of a step that started nothing, a launch-time model refusal) emits
 //     no event line but still halts and becomes the record's stop.
+//   - `then: Step[]` (#5997) queues steps run.js walks next, under their own names, before the rest of the
+//     table; kept only when the result does not halt (`[]` otherwise and when absent), and an element that is
+//     not a { name: string, run: function } makes the result a `fail` (`step returned an invalid continuation`).
 //   - A throw from fn is `{ status: 'fail', detail: err.message }` with the step's class.
 //
 // The test step runs worker-authored code (the worker's test files) through verify.js. Containment
@@ -63,6 +66,26 @@
 // text. Not covered: ignored files and empty directories, which git status does not list; a tracked file
 // under `.claude-tweaks/pipelines/`; and a red run's tree. CI on push is the backstop.
 //
+// The implementer relaunch (#5997; relaunch.js decides and writes the prompt): under `implementer-tier:
+// record` a failed first attempt is relaunched once, one profile up, on two triggers only: the worker step
+// ending `cannot-complete` (its uncommitted edits stay in the worktree, nothing resets them) and the table's
+// test step ending red (`failing-test`). A red run relaunches whatever state it left the tree in (Decision Q1):
+// no tree is read first, and the relaunch commit stages whatever git reports changed, test-written bytes
+// included, for the second test run, check and CI to judge. No relaunch when the first profile has no step-up
+// (`noRelaunch: 'no-step-up'`) or the step-up resolves to the first attempt's model (`'clamped'`); the
+// triggering line keeps its stop and names why. A step-up that does not resolve is a refused relaunch
+// (Decision Q2): DRIVER_MODEL_REFUSED, no worker line, the stop's detail naming the relaunch. The trigger
+// queues relaunchSteps() through the result's `then` (run.js walks them under their own names): the
+// relaunch worker (attempt 2, `escalatedFrom`, `trigger`), the core commit step (after red tests it extends
+// ctx.changedFiles with the first commit's paths first), the core test step; check runs once, after it, from
+// the table, whose commit and test entries then skip. ctx.worker is merged (cost, turns and denials summed),
+// ctx.implementer is overwritten (the fix round launches on the relaunch's profile). Each queued step's stops
+// are its own, propagated unchanged with `; after one relaunch (…)` on the detail: the worker step's (a
+// refusal with no line, a moved HEAD, a new index flag, a fail, `cannot-complete`), the commit step's (`no
+// changed files`, an empty title, a failed git call) and the test step's (red tests, which never relaunch
+// again, a scope refusal, a tree or flag stop, no verdict). The review fix round runs the core steps, so it
+// never skips or relaunches. Driver-only: express-lane.md has no counterpart.
+//
 // Every external call goes through `deps`; nothing here reads process state.
 //
 // The ci step holds every read other than `pending` or `stale` to a settle window of 2 minutes,
@@ -92,7 +115,8 @@ const { merge } = require('./merge');
 const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenings } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
-const { reviewRecord, treeDelta } = require('./review');
+const { reviewRecord, treeDelta, mergeWorker } = require('./review');
+const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
 const { readClaimExit } = require('./claim-exit');
@@ -143,27 +167,37 @@ function defineStep(name, stopClass, fn) {
     try {
       result = await fn(ctx, deps);
     } catch (err) {
-      return { status: 'fail', detail: (err && err.message) || String(err), halt: true, stopClass, reason: 'fail', extra: {} };
+      return { status: 'fail', detail: (err && err.message) || String(err), halt: true, stopClass, reason: 'fail', extra: {}, then: [] };
     }
     if (!result || !RESULT_STATUSES.has(result.status)) {
-      return { status: 'fail', detail: `step returned an invalid status: ${String(result && result.status)}`, halt: true, stopClass, reason: 'fail', extra: {} };
+      return { status: 'fail', detail: `step returned an invalid status: ${String(result && result.status)}`, halt: true, stopClass, reason: 'fail', extra: {}, then: [] };
     }
     if (result.stopClass !== undefined && !STOP_CLASS_SET.has(result.stopClass)) {
-      return { status: 'fail', detail: `step returned an invalid stop class: ${String(result.stopClass)}`, halt: true, stopClass, reason: 'fail', extra: {} };
+      return { status: 'fail', detail: `step returned an invalid stop class: ${String(result.stopClass)}`, halt: true, stopClass, reason: 'fail', extra: {}, then: [] };
+    }
+    const halt = typeof result.halt === 'boolean' ? result.halt : result.status !== 'ok';
+    // A halting result's `then` is ignored; a kept one must be steps, or the result is a fail.
+    if (!halt && result.then !== undefined && !(Array.isArray(result.then) && result.then.every(isStep))) {
+      return { status: 'fail', detail: 'step returned an invalid continuation', halt: true, stopClass, reason: 'fail', extra: {}, then: [] };
     }
     return {
       status: result.status,
       detail: result.detail,
-      halt: typeof result.halt === 'boolean' ? result.halt : result.status !== 'ok',
+      halt,
       stopClass: result.stopClass || stopClass,
       reason: result.reason || result.status,
       extra: result.extra || {},
       skip: result.skip === true && result.status === 'ok',
       // A refused step that wrote nothing emits no event line (run.js); an ok result never can.
       noLine: result.noLine === true && result.status !== 'ok',
+      then: !halt && Array.isArray(result.then) ? result.then : [],
     };
   }
   return Object.freeze({ name, run: runStep });
+}
+// A table entry's shape: what run.js walks, and what a `then` element must be.
+function isStep(s) {
+  return !!s && typeof s === 'object' && typeof s.name === 'string' && typeof s.run === 'function';
 }
 
 // The integration-branch policy value when non-empty, else origin/HEAD minus `origin/`
@@ -881,7 +915,10 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   }
   const extra = result.extra || {};
   setImplementer(ctx, rule, extra.model, extra.profile ?? null, 1);
-  return { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 1 } : {}) } };
+  const line = { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 1 } : {}) } };
+  // The cannot-complete trigger (#5997): the first worker's edits stay in the worktree as they are.
+  if (rule === 'record' && result.status === 'stop') return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, () => cannotCompletePrompt(ctx.worker && ctx.worker.summary));
+  return line;
 });
 
 // The review fix round's implementer relaunch (#5942): runs `run` (runImplementer; a test seam) and writes
@@ -1158,6 +1195,111 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   // the run itself gave no verdict, so it is a `fail`, not a gate saying no.
   if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
   return { status: 'ok', detail };
+});
+
+// The relaunch's trigger (#5997, see the header): `result` with a relaunch queued after it (it then does not
+// halt), or `result` as it was plus why there is none. Never a second relaunch. A refusal planRelaunch throws
+// (a stepUp throw) is a relaunch whose launch is refused: a queued worker step returns it with no line, as a
+// refused relaunch launch does. `prompt` is called only when the relaunch is queued.
+function relaunchOrStop(ctx, result, trigger, prompt) {
+  const { implementer } = ctx;
+  if (ctx.relaunch !== null || !implementer || typeof implementer.model !== 'string') return result;
+  const from = implementer.profile;
+  let plan;
+  try {
+    plan = planRelaunch({ profile: from, model: implementer.model, policy: ctx.shared.policy });
+  } catch (err) {
+    if (!err || err.code !== MODEL_REFUSED_CODE) throw err;
+    ctx.relaunch = { trigger, from, to: null, prompt: null, ran: false, firstChangedFiles: null };
+    const detail = `${err.message}; ${relaunchNote({ trigger, from, to: 'no profile' })}`;
+    return { ...result, halt: false, then: [refusedRelaunchStep(detail)] };
+  }
+  if (!plan.relaunch) {
+    return { ...result, detail: result.detail ? `${result.detail}; ${plan.note}` : plan.note, extra: { ...(result.extra || {}), noRelaunch: plan.noRelaunch } };
+  }
+  ctx.relaunch = {
+    trigger, from, to: plan.to, prompt: prompt(), ran: false,
+    // The first commit's paths, which the relaunch commit extends; none after cannot-complete (nothing was committed).
+    firstChangedFiles: trigger === TRIGGERS.redTests && Array.isArray(ctx.changedFiles) ? [...ctx.changedFiles] : null,
+  };
+  return { ...result, halt: false, then: relaunchSteps() };
+}
+
+// The relaunch worker step a refused plan queues: its refusal, no line.
+function refusedRelaunchStep(detail) {
+  return defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async () => ({ status: 'fail', detail, noLine: true }));
+}
+
+// A queued step's non-ok result names the relaunch; its status, reason and class stay its own.
+function withRelaunchNote(ctx, result) {
+  if (result.status === 'ok') return result;
+  const note = relaunchNote(ctx.relaunch);
+  return { ...result, detail: result.detail ? `${result.detail}; ${note}` : note };
+}
+
+// ctx.worker once the relaunch's envelope came back: cost, turns and denials summed over both launches. After
+// red tests the two summaries concatenate (the relaunch reports its fix alone); after cannot-complete the
+// relaunch's summary covers the whole change, so the first's could-not-complete reason never opens the PR summary.
+function relaunchWorker(first, second, trigger) {
+  const merged = mergeWorker(first, second, 'Relaunch');
+  return trigger === TRIGGERS.cannotComplete ? { ...merged, summary: second.summary } : merged;
+}
+
+// The relaunch launch (attempt 2): the first prompt plus the relaunch's, on the stepped-up profile. Its line is
+// the worker step's plus `escalatedFrom` and `trigger`. A launcher throw that resolved a model is reported as
+// workerStep reports it; any other throw is a `fail` naming the relaunch.
+const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const { relaunch } = ctx;
+  relaunch.ran = true;
+  const marks = { escalatedFrom: relaunch.from, trigger: relaunch.trigger };
+  const first = ctx.worker;
+  let result;
+  try {
+    result = await runImplementer(ctx, deps, { extraPrompt: relaunch.prompt, profile: relaunch.to });
+  } catch (err) {
+    const failed = launchThrowFail(ctx, err);
+    if (failed === null) return withRelaunchNote(ctx, { status: 'fail', detail: (err && err.message) || String(err) });
+    setImplementer(ctx, 'record', failed.extra.model, failed.extra.profile, 2);
+    return withRelaunchNote(ctx, { ...failed, extra: { ...failed.extra, attempt: 2, ...marks } });
+  }
+  // runImplementer sets ctx.worker once an envelope came back, whatever its status.
+  if (ctx.worker !== first) ctx.worker = relaunchWorker(first, ctx.worker, relaunch.trigger);
+  const extra = result.extra || {};
+  setImplementer(ctx, 'record', extra.model, extra.profile ?? null, 2);
+  return withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 2 } : {}), ...marks } });
+});
+
+// The core commit step after the relaunch. After red tests it extends ctx.changedFiles: the first commit's paths,
+// then the relaunch commit's new ones, first seen first (the union review.js's fixRound builds).
+const relaunchCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  const result = await commitStep.run(ctx, deps);
+  const first = ctx.relaunch.firstChangedFiles;
+  if (Array.isArray(first) && Array.isArray(ctx.changedFiles)) {
+    const union = [...first];
+    for (const p of ctx.changedFiles) if (!union.includes(p)) union.push(p);
+    ctx.changedFiles = union;
+  }
+  return withRelaunchNote(ctx, result);
+});
+
+// The core test step after the relaunch: never a trigger (at most one relaunch per record).
+const relaunchTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => withRelaunchNote(ctx, await testStep.run(ctx, deps)));
+
+// The one relaunch helper: the steps a trigger queues. check stays once, in the table, after the final test.
+function relaunchSteps() {
+  return [relaunchWorkerStep, relaunchCommitStep, relaunchTestStep];
+}
+
+// The table's commit and test entries: skipped once the relaunch has run them. The core commitStep and
+// testStep stay what the review step's fix round runs, so the fix round never skips or relaunches.
+const relaunchRan = (ctx) => ctx.relaunch !== null && ctx.relaunch.ran === true;
+const tableCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => (relaunchRan(ctx) ? { status: 'ok', skip: true } : commitStep.run(ctx, deps)));
+// The red-tests trigger: whatever the tree state after a red run (Decision Q1), so no tree is read before it.
+const tableTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
+  if (relaunchRan(ctx)) return { status: 'ok', skip: true };
+  const result = await testStep.run(ctx, deps);
+  if (result.reason !== 'failing-test' || implementerRule(ctx.shared.policy) !== 'record') return result;
+  return relaunchOrStop(ctx, result, TRIGGERS.redTests, () => redTestsPrompt(failingTests({ runDir: ctx.runDir, wt: ctx.wt, deps })));
 });
 
 // Appends one entry to the run's decisions.md through log-decision.js, the text written to a
@@ -1552,8 +1694,8 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
 });
 
 const STEPS = Object.freeze([
-  policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, commitStep,
-  testStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
+  policyStep, fetchStep, eligibilityStep, admissionStep, claimStep, runDirStep, worktreeStep, workerStep, tableCommitStep,
+  tableTestStep, checkStep, reviewStep, pushStep, prStep, recordPrStep, setConfigStep, summaryStep, ciStep, mergeStep,
 ]);
 
 // The read-only head of STEPS: the steps that decide whether a record is admitted, none of which writes.

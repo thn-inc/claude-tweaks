@@ -4044,6 +4044,318 @@ test('#5997: the fix round launches on the first attempt\'s profile and its line
   assert.equal(Object.hasOwn(fixLine, 'attempt'), false);
 });
 
+// --- the implementer relaunch under implementer-tier record (#5997, Task 5) ----------------------
+const RED_REPORT = readText(path.join(__dirname, '..', '..', 'fixtures', 'driver-relaunch', 'red-report.json'));
+const REPORT_PATH = path.join(MAIN, 'verify-report.json');
+const RED_VERIFY = Object.freeze({ code: 1, stdout: '', stderr: '' });
+const redRun = (n, effect = () => {}) => nthCall(isVerifyCall, n, () => { effect(); return RED_VERIFY; });
+const STUCK = Object.freeze({ ...ENVELOPE, result: { status: 'cannot-complete', title: 'Partial', summary: 'stuck on X' } });
+const FAIL_EXIT = Object.freeze({ ...ENVELOPE, status: 'fail', reason: 'exit', result: null, detail: null });
+const SMALL_RECORD = tierIssue(['risk:low', 'size:low'], keyFilesBody('a.js', 'b.js'));
+// The verify report the red-tests relaunch reads: the run's events file names it, and its bytes are Task 4's red fixture.
+const reportReplies = (get) => [
+  [(c) => c.kind === 'readFile' && calls(get(), 'resolveRunDir').length > 0 && c.args[0] === path.join(runDirOf(get()), 'events.jsonl'), () => `${JSON.stringify({ type: 'verify', reportPath: REPORT_PATH })}\n`],
+  [(c) => c.kind === 'readFile' && c.args[0] === REPORT_PATH, RED_REPORT],
+];
+// A record-tier run whose first implementer launch replies `first` and its relaunch `second`; the relaunch leaves
+// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean.
+function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
+  let h = null;
+  h = harness({
+    ...over,
+    policy: { ...RECORD_TIER, ...policy },
+    script: [
+      ...script,
+      issue,
+      [isImplementerLaunch, (c) => {
+        if (implementerCalls(h).length === 1) return pick(first, c);
+        h.fx.dirty += relaunchDirty;
+        return pick(second, c);
+      }],
+      [onGit('commit'), () => { h.fx.committed = true; h.fx.dirty = ''; return ''; }],
+      ...(report ? reportReplies(() => h) : []),
+    ],
+  });
+  return h;
+}
+const stepPairs = (lines) => lines.map((l) => [l.step, l.status]);
+const unsettled = (h) => h.lines().filter((l) => !SETTLE_STEP_NAMES.includes(l.step));
+const fromFirstWorker = (h) => stepPairs(h.lines().slice(h.lines().findIndex((l) => l.step === STEP.worker)));
+const noRelaunchKey = (h) => h.lines().every((l) => !Object.hasOwn(l, 'noRelaunch'));
+const escalateReason = (h) => {
+  const [c] = calls(h, 'node', /express-lane\.js$/).filter((k) => k.args[1] === 'escalate');
+  return c ? c.args[c.args.indexOf('--reason') + 1] : null;
+};
+const gitAddPaths = (h) => gitCalls(h).filter((c) => c.cwd === WT && gitSub(c)[0] === '--literal-pathspecs').map((c) => c.args.slice(c.args.indexOf('--') + 1));
+const summaryText = (h) => h.files[path.join(runDirOf(h), 'summary.txt')];
+const prSummary = (h) => h.files[path.join(runDirOf(h), 'pr-summary.md')];
+
+test('#5997 run.js: a non-halting result\'s then-steps run next, then the table', async () => {
+  const ok = (name) => defineStep(name, STOP_CLASSES.PRE_PUSH, async () => ({ status: 'ok' }));
+  const [x, y, b, c] = ['x', 'y', 'b', 'c'].map(ok);
+  const h = harness();
+  await driveRecord(7, newShared(), h.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', halt: false, then: [x, y] })), b, c]);
+  assert.deepEqual(stepPairs(h.lines()), [['a', 'stop'], ['x', 'ok'], ['y', 'ok'], ['b', 'ok'], ['c', 'ok'], [FINAL_STEP, 'ok']]);
+  for (const bad of [[x, { name: 'z' }], [x, { name: 1, run: () => {} }], [null], 'x']) {
+    const hb = harness();
+    await driveRecord(7, newShared(), hb.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', halt: false, then: bad })), b]);
+    assert.deepEqual(stepPairs(unsettled(hb)), [['a', 'fail'], [FINAL_STEP, 'fail']], JSON.stringify(bad));
+    assert.equal(hb.lines()[0].detail, 'step returned an invalid continuation');
+  }
+  const hh = harness();
+  await driveRecord(7, newShared(), hh.deps, [defineStep('a', STOP_CLASSES.PRE_PUSH, async () => ({ status: 'stop', then: [x] })), b]);
+  assert.deepEqual(stepPairs(unsettled(hh)), [['a', 'stop'], [FINAL_STEP, 'stop']], 'a halting result\'s then is ignored');
+});
+
+test('#5997 AC3.1: cannot-complete on fast relaunches once on standard with the reason and the edit kept', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(first.args[0].model, M('fast'));
+  assert.equal(second.args[0].model, M('standard'));
+  assert.ok(second.args[0].prompt.includes('stuck on X'), 'the relaunch prompt carries the first worker\'s reason');
+  assert.ok(second.args[0].prompt.includes(first.args[0].prompt), 'the relaunch prompt carries the first prompt');
+  const between = h.calls.slice(h.calls.indexOf(first) + 1, h.calls.indexOf(second));
+  assert.ok(between.filter((c) => c.kind === 'git').every((c) => !c.args.some((a) => ['reset', 'checkout', 'stash', 'restore', 'clean'].includes(a))), 'nothing undoes the first worker\'s edit');
+  const status = gitCalls(h).find((c) => onGit('--no-optional-locks', 'status')(c));
+  assert.equal(status.cwd, WT);
+  assert.ok(h.calls.indexOf(status) > h.calls.indexOf(second), 'the commit reads the tree after the relaunch');
+});
+
+test('#5997 AC3.2: then the commit and test steps run', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 5), [['worker', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok']]);
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger, relaunched.profile, relaunched.model], [2, 'fast', 'cannot-complete', 'standard', M('standard')]);
+  assert.equal(h.lines().filter((l) => l.step === STEP.commit).length, 1);
+  assert.equal(h.lines().filter((l) => l.step === STEP.test).length, 1);
+});
+
+test('#5997 AC4.1: red tests after a fast attempt relaunch once on standard naming the failing files', async () => {
+  const h = relaunchRig({ script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, second] = implementerCalls(h);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(second.args[0].model, M('standard'));
+  assert.ok(second.args[0].prompt.includes('failing.test.js'), second.args[0].prompt);
+  assert.ok(second.args[0].prompt.includes('Failure lines:'));
+  assert.deepEqual(fromFirstWorker(h).slice(0, 6), [['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok']]);
+  const [, relaunched] = workerLines(h);
+  assert.deepEqual([relaunched.attempt, relaunched.escalatedFrom, relaunched.trigger], [2, 'fast', 'red-tests']);
+});
+
+test('#5997 AC4.2: a green second test run continues to check and review', async () => {
+  const h = relaunchRig({ policy: { 'express-driver-review': 'on' }, script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = h.lines();
+  const secondTest = lines.map((l, i) => [l, i]).filter(([l]) => l.step === STEP.test)[1][1];
+  assert.deepEqual(lines.slice(secondTest + 1, secondTest + 4).map((l) => l.step), ['check', 'review', 'push']);
+  assert.equal(lines.filter((l) => l.step === STEP.check).length, 1);
+});
+
+test('#5997: an unreadable report still relaunches with the fixed text', async () => {
+  const h = relaunchRig({ report: false, script: [redRun(1)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, second] = implementerCalls(h);
+  assert.ok(second.args[0].prompt.includes('could not read which ones'));
+  assert.ok(!second.args[0].prompt.includes('Failing test files:'));
+});
+
+test('#5997 AC5.1: a second failure ends as a single failure of its kind does with the key unset', async () => {
+  const cases = [
+    ['red then cannot-complete', { second: STUCK, script: [redRun(1)] }, { script: [[isImplementerLaunch, STUCK]] }],
+    ['cannot-complete then red', { first: STUCK, script: [redRun(1)] }, { script: [redRun(1)] }],
+    ['red twice', { script: [[isVerifyCall, RED_VERIFY]] }, { script: [redRun(1)] }],
+    ['red then worker fail', { second: FAIL_EXIT, script: [redRun(1)] }, { script: [[isImplementerLaunch, FAIL_EXIT]] }],
+  ];
+  for (const [name, relaunched, single] of cases) {
+    const control = harness({ ...single, policy: { 'implementer-tier': undefined } });
+    await run(['#7'], control.deps);
+    const h = relaunchRig(relaunched);
+    await run(['#7'], h.deps);
+    const [want, got] = [lastLine(control), lastLine(h)];
+    assert.deepEqual([got.outcome, got.stop.class, got.stop.reason, got.stop.step], [want.outcome, want.stop.class, want.stop.reason, want.stop.step], name);
+    assert.ok(got.stop.detail.includes('after one relaunch ('), `${name}: ${got.stop.detail}`);
+    assert.equal(escalateReason(h), escalateReason(control), name);
+    assert.ok(escalateReason(h) !== null, name);
+    assert.equal(implementerCalls(h).length, 2, name);
+    assert.ok(verifyCalls(h).length <= 2, name);
+  }
+});
+
+test('#5997 AC6.1: model-ceiling fast — a failed fast attempt is not relaunched and its line names the clamp', async () => {
+  for (const [name, over, single, step] of [
+    ['cannot-complete', { first: STUCK }, { script: [[isImplementerLaunch, STUCK]] }, STEP.worker],
+    ['red tests', { script: [redRun(1)] }, { script: [redRun(1)] }, STEP.test],
+  ]) {
+    const h = relaunchRig({ ...over, policy: { 'model-ceiling': 'fast' } });
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 1, name);
+    const line = h.lines().find((l) => l.step === step && l.status !== 'ok');
+    assert.equal(line.noRelaunch, 'clamped', name);
+    assert.ok(line.detail.includes('no relaunch: standard resolves to'), `${name}: ${line.detail}`);
+    const control = harness({ ...single, policy: { 'implementer-tier': undefined } });
+    await run(['#7'], control.deps);
+    assert.equal(lastLine(h).outcome, lastLine(control).outcome, name);
+  }
+});
+
+// The AC4 run (red, then a green relaunch) followed by a review fix round: fixRig's commit counter counts the
+// first commit and the fix commit, so the relaunch's commit (the second) is answered here.
+function relaunchThenFix() {
+  let h = null;
+  h = fixRig({
+    policy: { 'express-driver-review': 'on', ...RECORD_TIER },
+    script: [
+      SMALL_RECORD,
+      redRun(1),
+      nthCall(isImplementerLaunch, 1, () => ({ ...ENVELOPE })),
+      nthCall(isImplementerLaunch, 2, () => { h.fx.dirty = ' M b.js\0'; return { ...ENVELOPE }; }),
+      nthCall(onGit('commit'), 2, () => { h.fx.dirty = ''; return ''; }),
+      ...reportReplies(() => h),
+    ],
+  });
+  return h;
+}
+
+test('#5997 AC7.1: every implementer launch writes one worker line with model, profile and attempt; the relaunch\'s adds escalatedFrom and trigger', async () => {
+  const h = relaunchThenFix();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const lines = workerLines(h);
+  assert.equal(lines.length, 3);
+  assert.equal(implementerCalls(h).length, 3);
+  assert.deepEqual(lines.map((l) => l.attempt), [1, 2, undefined]);
+  assert.ok(lines.every((l) => typeof l.model === 'string' && typeof l.profile === 'string'));
+  assert.deepEqual(lines.map((l) => [Object.hasOwn(l, 'escalatedFrom'), Object.hasOwn(l, 'trigger')]), [[false, false], [true, true], [false, false]]);
+  assert.equal(lines[2].fix, true);
+});
+
+test('#5997 AC8.1: a first worker fail is not relaunched; after a green relaunch the fix round launches on the relaunch\'s profile', async () => {
+  for (const reason of ['launch-error', 'spend-ceiling']) {
+    const h = relaunchRig({ first: { ...ENVELOPE, status: 'fail', reason, result: null } });
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 1, reason);
+    assert.ok(noRelaunchKey(h), reason);
+    assert.equal(lastLine(h).stop.step, STEP.worker, reason);
+  }
+  const h = relaunchThenFix();
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [, , fix] = implementerCalls(h);
+  assert.equal(fix.args[0].model, M('standard'));
+  assert.equal(workerLines(h)[2].profile, 'standard');
+});
+
+test('#5997: lane never relaunches', async () => {
+  for (const [name, script] of [['cannot-complete', () => [[isImplementerLaunch, STUCK]]], ['red tests', () => [redRun(1)]]]) {
+    const lane = harness({ policy: { 'implementer-tier': 'lane' }, script: [SMALL_RECORD, ...script()] });
+    await run(['#7'], lane.deps);
+    const unset = harness({ policy: { 'implementer-tier': undefined }, script: [SMALL_RECORD, ...script()] });
+    await run(['#7'], unset.deps);
+    assert.equal(implementerCalls(lane).length, 1, name);
+    assert.ok(noRelaunchKey(lane), name);
+    assert.deepEqual(stepPairs(lane.lines()), stepPairs(unset.lines()), name);
+  }
+});
+
+test('#5997 Decision Q1: a red run that changed the tree still relaunches and the relaunch commit includes those bytes', async () => {
+  let h = null;
+  h = relaunchRig({ script: [redRun(1, () => { h.fx.dirty = ' M src/x.js\0?? tmp/out.txt\0'; })] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  const [firstTest] = h.lines().filter((l) => l.step === STEP.test);
+  assert.equal(firstTest.status, 'stop');
+  assert.equal(Object.hasOwn(firstTest, 'noRelaunch'), false);
+  const [, relaunchAdd] = gitAddPaths(h);
+  assert.deepEqual(relaunchAdd, ['src/x.js', 'tmp/out.txt', 'b.js']);
+  assert.equal(verifyCalls(h).length, 2, 'the second test run follows');
+  assert.equal(h.lines().filter((l) => l.step === STEP.test)[1].status, 'ok');
+});
+
+test('#5997 Decision Q2: a stepped-up profile that does not resolve is a refused relaunch', async () => {
+  const h = relaunchRig({
+    first: STUCK,
+    issue: tierIssue(['risk:low', 'size:high'], keyFilesBody('a.js')),
+    policy: {
+      'express-driver-models': { ...POLICY['express-driver-models'], reviewer: 'standard' },
+      'model-profiles': { capable: { model: 'no-such-model' } },
+    },
+  });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 1);
+  assert.equal(implementerCalls(h)[0].args[0].model, M('standard'));
+  assert.deepEqual(stepPairs(workerLines(h)), [['worker', 'stop']], 'the refused relaunch writes no worker line');
+  const final = lastLine(h);
+  assert.equal(final.stop.step, STEP.worker);
+  assert.ok(final.stop.detail.startsWith('no model for driver role implementer'), final.stop.detail);
+  assert.ok(final.stop.detail.includes('after one relaunch (cannot-complete, standard to capable)'), final.stop.detail);
+  assert.ok(noRelaunchKey(h));
+});
+
+test('#5997: a red-tests relaunch\'s changedFiles is both commits\' paths', async () => {
+  const red = relaunchRig({ relaunchDirty: ' M b.js\0 M a.js\0?? c.js\0', script: [redRun(1)] });
+  assert.equal(await run(['#7'], red.deps), 0);
+  assert.deepEqual(gitAddPaths(red), [['a.js'], ['b.js', 'a.js', 'c.js']]);
+  assert.ok(summaryText(red).includes('express lane: a.js, b.js, c.js;'), summaryText(red));
+  const stuck = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], stuck.deps), 0);
+  assert.ok(summaryText(stuck).includes('express lane: a.js;'), summaryText(stuck));
+});
+
+test('#5997: an interrupt during the relaunch launch is reported at the relaunch and runs nothing after it', async () => {
+  let h = null;
+  h = relaunchRig({ script: [redRun(1)], second: () => { h.signals[0]('SIGTERM'); return { ...ENVELOPE }; } });
+  await run(['#7'], h.deps);
+  assert.deepEqual(h.lines().slice(-2).map((l) => [l.step, l.status]), [[STEP.worker, 'fail'], [FINAL_STEP, 'fail']]);
+  assert.equal(h.lines().at(-2).detail, 'interrupted by SIGTERM');
+  assert.equal(lastLine(h).settle, 'interrupted');
+  const after = h.calls.slice(h.calls.indexOf(implementerCalls(h)[1]) + 1);
+  assert.equal(after.filter((c) => c.kind === 'git' && ['commit', '--literal-pathspecs'].includes(gitSub(c)[0])).length, 0);
+  assert.equal(verifyCalls(h).length, 1);
+});
+
+test('#5997: a relaunch worker that moves HEAD fails with the relaunch noted', async () => {
+  let h = null;
+  h = relaunchRig({ first: STUCK, script: [[(c) => isHeadReadInWt(c) && implementerCalls(h).length === 2 && h.calls.at(-2) === implementerCalls(h)[1], `${OTHER_SHA}\n`]] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status], [STEP.worker, 'fail']);
+  assert.ok(final.stop.detail.includes('the worker moved HEAD'), final.stop.detail);
+  assert.ok(final.stop.detail.includes('after one relaunch ('), final.stop.detail);
+  assert.equal(implementerCalls(h).length, 2);
+});
+
+test('#5997: the final line\'s costUsd sums both implementer launches', async () => {
+  for (const over of [{ first: STUCK }, { script: [redRun(1)] }]) {
+    const h = relaunchRig({ ...over, second: { ...ENVELOPE, costUsd: 0.5 } });
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.equal(lastLine(h).costUsd, 0.75);
+    assert.equal(lastLine(h).turns, 6);
+  }
+});
+
+test('#5997: after a cannot-complete relaunch the PR summary is the relaunch\'s alone', async () => {
+  const whole = { ...ENVELOPE, result: { status: 'done', title: 'Do it', summary: 'did the whole thing' } };
+  const stuck = relaunchRig({ first: STUCK, second: whole });
+  assert.equal(await run(['#7'], stuck.deps), 0);
+  assert.equal(prSummary(stuck), 'did the whole thing\n');
+  const fix = { ...ENVELOPE, result: { status: 'done', title: 'Fix it', summary: 'did the fix' } };
+  const red = relaunchRig({ second: fix, script: [redRun(1)] });
+  assert.equal(await run(['#7'], red.deps), 0);
+  assert.equal(prSummary(red), `${ENVELOPE.result.summary} Relaunch: did the fix\n`);
+});
+
+test('#5997: the fix round never relaunches or skips', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [SMALL_RECORD, redRun(2)] });
+  await run(['#7'], h.deps);
+  assert.equal(implementerCalls(h).length, 2, 'the first launch and the fix launch');
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.stop.reason], [STEP.review, 'failing-test']);
+  assert.ok(final.stop.detail.startsWith('fix round test: red tests'), final.stop.detail);
+  assert.ok(noRelaunchKey(h));
+});
+
 test('AC7.1: every worker line carries the model its launch was given', async () => {
   const h = fixRig({ policy: { 'express-driver-review': 'on', 'express-driver-models': FAST_IMPLEMENTER } });
   assert.equal(await run(['#7'], h.deps), 0);
