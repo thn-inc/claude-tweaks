@@ -3988,7 +3988,7 @@ function ghPrLifecycleCalls(command, cwd, opts) {
       raw: quoting.raw.slice(from), leadQuoted: quoting.leadQuoted.slice(from), spanKinds: quoting.spanKinds.slice(from),
     });
     const { pathImpl } = quoting;
-    if (!t.length || pathImpl.basename(t[0]).replace(/\.exe$/i, '') !== GH_PR_LIFECYCLE.program) return;
+    if (!t.length || pathImpl.basename(t[0]).toLowerCase().replace(/\.exe$/, '') !== GH_PR_LIFECYCLE.program) return;
     if (t[1] !== GH_PR_LIFECYCLE.group || !GH_PR_LIFECYCLE.verbs.includes(t[2])) return;
     const verb = t[2];
     const valueFlags = GH_PR_VALUE_FLAGS[verb];
@@ -4001,19 +4001,30 @@ function ghPrLifecycleCalls(command, cwd, opts) {
       if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
       if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
       if (a === '--undo') { undo = true; continue; }
-      const long = a.startsWith('--');
-      const eq = long ? a.indexOf('=') : -1;
-      const name = long ? (eq === -1 ? a : a.slice(0, eq)) : a.slice(0, 2);
-      if (!valueFlags.includes(name)) continue;
-      let value;
-      if (long && eq !== -1) value = a.slice(eq + 1);
-      else if (!long && a.length > 2) value = a.slice(2);
-      else { value = i + 1 < rest.length ? rest[i + 1] : ''; i += 1; }
+      let name;
+      let value = null;
+      if (a.startsWith('--')) {
+        const eq = a.indexOf('=');
+        name = eq === -1 ? a : a.slice(0, eq);
+        if (!valueFlags.includes(name)) continue;
+        value = eq === -1 ? null : a.slice(eq + 1);
+      } else {
+        // pflag reads a short cluster letter by letter: the first value flag takes the rest of the
+        // cluster (one leading `=` dropped) or, when nothing is left, the next word.
+        const at = [...a.slice(1)].findIndex((c) => valueFlags.includes(`-${c}`));
+        if (at === -1) continue;
+        name = `-${a[1 + at]}`;
+        const glued = a.slice(2 + at);
+        value = glued === '' ? null : glued.replace(/^=/, '');
+      }
+      if (value === null) { value = i + 1 < rest.length ? rest[i + 1] : ''; i += 1; }
       if (name === '-R' || name === '--repo') repo = value;
     }
     const known = !lead.unprovable && lead.dir !== null && !(lead.dir instanceof LostCwd);
-    const standIn = lead.dir instanceof LostCwd ? lead.dir : effCwd;
-    const call = { verb, selector, repo, undo, cwd: known ? lead.dir : pathImpl.resolve(driveBase(standIn) || '.'), lost: !known };
+    // A lost cwd's stand-in comes from the walk's own input (its root, or the cwd argument), never from
+    // the hook process's cwd.
+    const standIn = lead.dir instanceof LostCwd ? lead.dir.root : (typeof lead.dir === 'string' ? lead.dir : (effCwd instanceof LostCwd ? effCwd.root : (typeof effCwd === 'string' ? effCwd : String(cwd || '.'))));
+    const call = { verb, selector, repo, undo, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
     // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
     if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
     calls.push(call);

@@ -19,7 +19,7 @@
 // family (`pkill`, `taskkill`, `Stop-Process`, …) alone matches case-insensitively, because
 // `taskkill` and PowerShell cmdlets are case-insensitive on Windows; the other families do
 // not (#4548). One pre-tool-use-only rule is not a guarded program word: a call whose words hold `gh`,
-// `pr` and `merge` or `ready` (GH_PR_LIFECYCLE, #6143) runs the full handler, while any other `gh`
+// `pr` and `merge` or `ready` (GH_PR_LIFECYCLE, #6143; `gh` case-folded, as a case-insensitive filesystem runs `GH`) runs the full handler, while any other `gh`
 // call keeps the skip path.
 //
 // It reads every word and every assignment value, so `G=git; $G push` is
@@ -159,7 +159,7 @@ function shouldRunFull(event, input) {
     const present = commandWords(c);
     // #6143: pre-tool-use only, `gh pr ready|merge` (the in-flight-run merge gate). All three words must
     // appear, so other gh calls keep the skip path; a superset of ghPrLifecycleCalls.
-    if (event === 'pre-tool-use' && present.has(GH_PR_LIFECYCLE.program) && present.has(GH_PR_LIFECYCLE.group)
+    if (event === 'pre-tool-use' && [...present].some((word) => word.toLowerCase() === GH_PR_LIFECYCLE.program) && present.has(GH_PR_LIFECYCLE.group)
       && GH_PR_LIFECYCLE.verbs.some((verb) => present.has(verb))) return true;
     return covered.some((word) => present.has(word)) || (folded !== null && [...present].some((word) => folded.has(word.toLowerCase())));
   });

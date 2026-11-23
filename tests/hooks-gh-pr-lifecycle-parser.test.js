@@ -72,6 +72,33 @@ test('#6143: several calls in one command are each reported', () => {
   assert.deepStrictEqual(pick(ghPrLifecycleCalls('gh pr ready 1 && gh pr merge 2', CWD)).map((c) => c.verb), ['ready', 'merge']);
 });
 
+test('#6143: a lost cwd reports lost: true and a stand-in derived from the cwd argument, never process.cwd()', () => {
+  for (const c of ['cd $X && gh pr merge 5', 'cd - && gh pr merge 5', 'env -C $X gh pr merge 5']) {
+    const [call] = ghPrLifecycleCalls(c, CWD);
+    assert.strictEqual(call.lost, true, c);
+    assert.strictEqual(call.cwd, CWD, c);
+  }
+});
+
+test('#6143: a glued short value drops one leading =, as pflag does', () => {
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge -R=o/r 5', CWD)[0].repo, 'o/r');
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge -Ro/r 5', CWD)[0].repo, 'o/r');
+});
+
+test('#6143: a short cluster ends at its value flag, which takes the next word', () => {
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge -sb x 5', CWD)[0].selector, '5');
+  const [call] = ghPrLifecycleCalls('gh pr merge -sR o/r 5', CWD);
+  assert.strictEqual(call.repo, 'o/r');
+  assert.strictEqual(call.selector, '5');
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge -sd 5', CWD)[0].selector, '5');
+  assert.strictEqual(ghPrLifecycleCalls('gh pr ready -R o/r 5', CWD)[0].selector, '5');
+});
+
+test('#6143: the program name matches case-insensitively', () => {
+  assert.strictEqual(ghPrLifecycleCalls('GH pr merge 5', CWD).length, 1);
+  assert.strictEqual(ghPrLifecycleCalls('GH.EXE pr ready 5', CWD).length, 1);
+});
+
 test('#6143: other gh calls and a quoted word are not matched', () => {
   for (const c of ['gh pr view 5', 'gh issue view 3', 'echo gh pr merge 5', 'gh pr list', 'gh pr', 'gh', 'git pr merge 5', '']) {
     assert.deepStrictEqual(ghPrLifecycleCalls(c, CWD), [], c);
