@@ -239,7 +239,7 @@ test('L11: each write and the read-back fetch cite _shared/github-write-transpor
   pinned(bulletOf(write, '(b)'), [f(`\`issue_write\` (update mode) ${T}`)], 'write b');
   pinned(bulletOf(write, '(c)'), [
     f(`\`issue_write\` (update mode, the complete label array) ${T}`),
-    f('`_shared/github-write-transport.md` maps no MCP call for the comment edit: with `gh` absent it fails, and the label stays'),
+    f('gh absent: `update_issue_comment` with each comment\'s numeric `id` per `_shared/github-write-transport.md`'),
   ], 'write c');
   pinned(bulletOf(write, '(d)'), [f(`\`issue_write\` (update mode, the complete label array) ${T}`)], 'write d');
   pinned(bulletOf(rehold, '(b)'), [f(`\`issue_write\` (update mode) ${T}`)], 're-hold b');
@@ -248,11 +248,12 @@ test('L11: each write and the read-back fetch cite _shared/github-write-transpor
   pinned(sec('## Read-back and outcome'), [f(`gh absent, ${T}, write \`issue_read\` \`get_comments\`\'s array to \`{readback-file}\` and \`get\`\'s \`body\` to \`{readback-body}\` and its \`labels\` to \`{readback-labels}\` (\`--value specify-answer-readback-labels-{n}.json\`), each with the Write tool`)], 'read-back');
 });
 
-test('review: gh absent writes nothing, and a hold with no question re-plans', () => {
+test('review: gh absent without update_issue_comment writes nothing, and a hold with no question re-plans', () => {
   pinned(sec('## Inputs'), [
-    f('With `gh` absent, write nothing and stop here'),
-    f('The outcome is `held — answering needs gh (no MCP mapping for the hold-comment edit)`'),
+    f('With `gh` absent and no `update_issue_comment` tool in the session, write nothing and stop here'),
+    f('The outcome is `held — answering needs gh or the MCP update_issue_comment tool`'),
   ], 'gh-absent refusal');
+  assert.ok(!readText(path.join(ROOT, 'plugin/skills/specify/planning-answer.md')).includes('maps no MCP call'), 'planning-answer.md still says the transport maps no MCP call');
   pinned(sec('## Kept plan'), [f('A `{hold-file}` holding no question re-plans whatever the check prints')], 'empty hold re-plans');
 });
 
