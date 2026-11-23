@@ -85,6 +85,7 @@ function optionalString(v) {
 
 const payloadOf = (event) => (isPlainObject(event.payload) ? event.payload : {});
 const validStationList = (v) => Array.isArray(v) && v.every((st) => STATIONS.includes(st));
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 const validActor = (v) => typeof v === 'string' && ACTORS.test(v);
 
 // Is this an `exited` on the new contract (stations.js, above OUTCOMES)? A pre-contract line is
@@ -92,7 +93,7 @@ const validActor = (v) => typeof v === 'string' && ACTORS.test(v);
 function isNewContractExit(event) {
   if (event.kind !== KIND.EXITED) return false;
   if (event.outcome === OUTCOME.SENT_BACK || event.outcome === OUTCOME.STOPPED) return true;
-  return (event.outcome === OUTCOME.PASSED || event.outcome === OUTCOME.FAILED) && payloadOf(event).actor !== undefined;
+  return (event.outcome === OUTCOME.PASSED || event.outcome === OUTCOME.FAILED) && hasOwn(payloadOf(event), 'actor');
 }
 
 // A payload value for a drop reason; never throws (a Symbol or a null-prototype object would
@@ -113,7 +114,8 @@ function invalidContract(event) {
     if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${show(payload.next)}`;
   }
   if ((event.kind === KIND.HELD || event.kind === KIND.RELEASED) && !HOLD_WHYS.includes(payload.why)) return `payload.why outside the closed set: ${show(payload.why)}`;
-  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && !validStationList(payload.stations)) return `payload.stations is not a list of stations: ${show(payload.stations)}`;
+  const nonEmptyPlan = event.kind === KIND.PLANNED ? Array.isArray(payload.stations) && payload.stations.length > 0 : true;
+  if ((event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED) && (!validStationList(payload.stations) || !nonEmptyPlan)) return `payload.stations is not a list of stations: ${show(payload.stations)}`;
   if (event.kind === KIND.DECIDED && !validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${show(payload.actor)}`;
   return null;
 }
@@ -129,7 +131,8 @@ function contractPayload(event) {
   const original = payload.reasonCode;
   const copy = { ...payload, reasonCode: REASON_UNSPECIFIED };
   if (original !== undefined && original !== null && original !== '') {
-    copy.reasonText = typeof payload.reasonText === 'string' ? `${String(original)}: ${payload.reasonText}` : String(original);
+    const originalText = typeof original === 'string' ? original : show(original);
+    copy.reasonText = typeof payload.reasonText === 'string' ? `${originalText}: ${payload.reasonText}` : originalText;
   }
   return copy;
 }
@@ -139,10 +142,10 @@ function invalidReason(event) {
   if (!isPlainObject(event)) return 'event is not an object';
   if (typeof event.repoName !== 'string' || !REPO_NAME_RE.test(event.repoName)) return 'repoName is not owner/name';
   if (!Number.isInteger(event.recordNumber) || event.recordNumber <= 0) return 'recordNumber is not a positive integer';
-  if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${event.kind}`;
-  if (!STATIONS.includes(event.station)) return `station outside the closed set: ${event.station}`;
-  if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${event.outcome}`;
-  if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${event.lane}`;
+  if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${show(event.kind)}`;
+  if (!STATIONS.includes(event.station)) return `station outside the closed set: ${show(event.station)}`;
+  if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${show(event.outcome)}`;
+  if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${show(event.lane)}`;
   if (typeof event.discriminator !== 'string' || event.discriminator === '') return 'discriminator missing';
   return invalidContract(event);
 }

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
-const { STATIONS, REASON_CODES } = require('../../../plugin/bin/lib/station-events/stations');
+const { STATIONS, REASON_CODES, ACTOR, ACTORS } = require('../../../plugin/bin/lib/station-events/stations');
 
 // #5902: stations.js is the one home of station names, so a name correction is a one-file
 // change. This scan walks plugin/bin and flags a known station name written as the value of a
@@ -202,7 +202,17 @@ test('vocab scanner reports a stripper mis-parse', () => {
 test('AC1.9: no call site spells a reason code or actor literal outside stations.js', () => {
   const files = listJs(BIN);
   assert.ok(files.length >= FILE_FLOOR, `expected at least ${FILE_FLOOR} plugin/bin files, saw ${files.length}: the walk lost files`);
-  assert.deepEqual(vocabOffendersIn(files, (rel) => readText(path.join(BIN, rel))), [], 'name the reason code through REASON_CODES and the actor through stations.js, not as a string');
+  assert.deepEqual(vocabOffendersIn(files, (rel) => readText(path.join(BIN, rel))), [], 'name the reason code through REASON.* and the actor through ACTOR.* (stations.js), not as a string');
+});
+
+test('stations.js names every reason code and actor a call site may need', () => {
+  assert.deepEqual([...REASON_CODES], [
+    'unspecified', 'default-list', 'infrastructure', 'test-failed', 'spec-wrong', 'scope-too-big',
+    'blocked-by-other', 'changes-requested', 'superseded', 'withdrawn', 'ceremony-downgrade',
+    'documents-only', 'other',
+  ]);
+  assert.equal(ACTORS.test(ACTOR.rule('x')), true);
+  assert.equal(ACTORS.test(ACTOR.SCRIPT), true);
 });
 
 test('the vocab walk goes red when a call site spells a reason code', () => {

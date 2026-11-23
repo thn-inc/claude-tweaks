@@ -11,6 +11,7 @@ const { appendGitConfigEnv } = require('../../../tools/run-tests');
 const {
   appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, EXCLUDE_ENTRIES, ensureLocalExclude,
 } = require('../../../plugin/bin/lib/station-events/emit');
+const { REASON_UNSPECIFIED } = require('../../../plugin/bin/lib/station-events/stations');
 
 const FIXED_NOW = () => new Date('2026-11-19T08:00:00.000Z');
 
@@ -469,6 +470,27 @@ test('a drop reason names the field even when the payload value cannot be string
   dropped({ kind: 'held', payload: { why: Object.create(null) } }, /why/);
   dropped({ kind: 'held', payload: { why: Symbol('x') } }, /why/);
   dropped({ kind: 'planned', payload: { stations: [Symbol('x')] } }, /stations/);
+  dropped({ kind: Symbol('x') }, /kind/);
+});
+
+test('a reasonCode that cannot be stringified is normalized, never dropped', () => {
+  const { line } = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: Object.create(null) }));
+  assert.equal(line.payload.reasonCode, REASON_UNSPECIFIED);
+  assert.equal(line.payload.reasonText, '{}');
+  const symbolic = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: Symbol('x'), reasonText: 'why' }));
+  assert.equal(symbolic.line.payload.reasonCode, REASON_UNSPECIFIED);
+  assert.equal(symbolic.line.payload.reasonText, 'symbol: why');
+});
+
+test('a planned line with no stations is dropped; an empty replanned is written', () => {
+  dropped({ kind: 'planned', payload: { stations: [] } }, /stations/);
+  const { line } = writtenLine({ kind: 'replanned', payload: { stations: [] } });
+  assert.deepEqual(line.payload.stations, []);
+});
+
+test('an own actor key puts an exit on the new contract, even when its value is undefined', () => {
+  dropped(exitedEvent('failed', { actor: undefined }), /actor/);
+  dropped(exitedEvent('failed', { actor: null }), /actor/);
 });
 
 test('AC2.1: concurrent appends of a planned and an exited line both land intact', async () => {

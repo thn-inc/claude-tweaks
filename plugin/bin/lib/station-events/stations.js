@@ -51,14 +51,21 @@ const RETIRED_OUTCOMES = Object.freeze(['returned', 'skipped', 'abandoned']);
 
 // Why an exit was not a pass, or why a plan was made. A caller's unknown or missing code is
 // normalized to REASON_UNSPECIFIED by emit.js, never dropped.
-const REASON_UNSPECIFIED = 'unspecified';
-const REASON_CODES = Object.freeze([
-  REASON_UNSPECIFIED, 'default-list', 'infrastructure', 'test-failed', 'spec-wrong', 'scope-too-big',
-  'blocked-by-other', 'changes-requested', 'superseded', 'withdrawn', 'ceremony-downgrade',
-  'documents-only', 'other',
-]);
+// Call sites name a code through REASON.*, never as a string (the literal scan enforces it).
+const REASON = Object.freeze({
+  UNSPECIFIED: 'unspecified', DEFAULT_LIST: 'default-list', INFRASTRUCTURE: 'infrastructure', TEST_FAILED: 'test-failed',
+  SPEC_WRONG: 'spec-wrong', SCOPE_TOO_BIG: 'scope-too-big', BLOCKED_BY_OTHER: 'blocked-by-other',
+  CHANGES_REQUESTED: 'changes-requested', SUPERSEDED: 'superseded', WITHDRAWN: 'withdrawn',
+  CEREMONY_DOWNGRADE: 'ceremony-downgrade', DOCUMENTS_ONLY: 'documents-only', OTHER: 'other',
+});
+const REASON_UNSPECIFIED = REASON.UNSPECIFIED;
+const REASON_CODES = Object.freeze(Object.values(REASON));
 
-// Who made an exit or a decision: `agent`, `script`, `person` or `rule:{name}`.
+// Who made an exit or a decision: `agent`, `script`, `person` or `rule:{name}`. Call sites name
+// an actor through ACTOR.*, never as a string.
+const ACTOR = Object.freeze({
+  AGENT: 'agent', SCRIPT: 'script', PERSON: 'person', rule: (id) => `rule:${id}`,
+});
 const ACTORS = /^(?:agent|script|person|rule:[^\s:]+)$/;
 
 // Why a record is held, on `held` and `released` lines.
@@ -180,7 +187,7 @@ function releaseTransition(reason) {
 }
 
 module.exports = {
-  STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS, PROCESS,
+  STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON, REASON_UNSPECIFIED, REASON_CODES, ACTOR, ACTORS, HOLD_WHYS, PROCESS,
   BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
   PR_OPENED_FACT, PR_OPENED_TRANSITION,
   DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,
