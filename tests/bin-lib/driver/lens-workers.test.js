@@ -6,13 +6,14 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
+const cp = require('node:child_process');
 const path = require('node:path');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const lw = require(path.join(LIB, 'driver', 'lens-workers.js'));
 const { runLensWorkers, classifyFailure, composeLensPrompt, appendWorkerRecord, LENS_WORKER_CONCURRENCY, LENS_WORKER_TIMEOUT_MS, EXCLUDED_LENSES, FAILURE_REASONS, WORKER_DISPATCHES_FILE } = lw;
 const { ENV_ALLOW } = require(path.join(LIB, 'driver', 'worker.js'));
 const { lensAdmittedFormsNote, lensGitEnv } = require(path.join(LIB, 'driver', 'roles.js'));
-const { runCliSync } = require('../../helpers/run-cli');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
 
 const COORDINATION = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'review-coordination.js');
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -493,4 +494,49 @@ test('the transcript lookup slugs the canonical cwd, a symlinked one included', 
   const seen = [];
   await runLensWorkers(input, { runner, locateTranscripts: (q) => { seen.push(q); return []; } });
   assert.deepStrictEqual(seen.map((q) => q.cwd), [real]);
+});
+
+// AC7.1 (#6000): one real haiku lens worker on lens 3b's brief for commit 2601ef2d8d (#5990, a
+// large diff), with an archived lens context bundle inlined. The run dir sits under the main
+// checkout's .claude-tweaks/pipelines/ (a temporary directory outside it is refused by the
+// shape-3 guard) and the reviewed tree is a temporary linked worktree, so --run is outside --cwd.
+// Fixtures: tests/fixtures/review-lens-workers/. The test prints the first-turn and total tokens.
+test('AC7.1 (#6000): live smoke — one haiku lens worker replies and its tokens are recorded', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, (t) => {
+  const SMOKE_COMMIT = '2601ef2d8d';
+  const FIXTURES = path.join(__dirname, '..', '..', 'fixtures', 'review-lens-workers');
+  const here = path.join(__dirname, '..', '..', '..');
+  const git = (args, cwd = here) => {
+    const r = cp.spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+    assert.strictEqual(r.status, 0, 'git ' + args.join(' ') + ' failed: ' + r.stderr);
+    return r.stdout.trim();
+  };
+  const mainRoot = path.dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  const iso = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/:/g, '');
+  const runDir = path.join(mainRoot, '.claude-tweaks', 'pipelines', iso + '-lens-smoke');
+  fs.mkdirSync(runDir, { recursive: true });
+  const worktree = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lens-smoke-wt-'))), 'tree');
+  t.after(() => {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    cp.spawnSync('git', ['worktree', 'remove', '--force', worktree], { cwd: here, windowsHide: true });
+    fs.rmSync(path.dirname(worktree), { recursive: true, force: true });
+  });
+  git(['worktree', 'add', '--detach', worktree, SMOKE_COMMIT]);
+
+  const res = spawnCli(path.join(here, 'plugin', 'bin', 'review-lens-workers.js'), [
+    '--run', runDir, '--lenses-file', path.join(FIXTURES, 'smoke-lens-3b.json'), '--cwd', worktree, '--bundle', path.join(FIXTURES, 'smoke-bundle.md'),
+  ], { env: { ...process.env } });
+  assert.strictEqual(res.code, 0, 'exit ' + res.code + ' stderr: ' + res.stderr);
+  const reply = JSON.parse(res.stdout);
+  assert.strictEqual(reply.reviewers.length, 1);
+  assert.strictEqual(reply.reviewers[0].failed, false, 'stderr: ' + res.stderr);
+  assert.ok(typeof reply.reviewers[0].text === 'string' && reply.reviewers[0].text.trim() !== '');
+  const records = logLines(runDir);
+  assert.strictEqual(records.length, 1);
+  const rec = records[0];
+  assert.notStrictEqual(rec.tokens, null);
+  assert.notStrictEqual(rec.firstTurnTokens, null);
+  assert.strictEqual(rec.reason, null, 'denied or failed: ' + JSON.stringify(rec));
+  const total = rec.tokens.input + rec.tokens.output + rec.tokens.cacheRead + rec.tokens.cacheCreate;
+  console.log('AC7.1 firstTurnTokens=' + rec.firstTurnTokens + ' totalTokens=' + total + ' tokens=' + JSON.stringify(rec.tokens) + ' costUsd=' + rec.costUsd);
+  t.diagnostic('firstTurnTokens=' + rec.firstTurnTokens + ' totalTokens=' + total + (total > 100000 ? ' (over the 100000 target)' : ''));
 });
