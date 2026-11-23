@@ -6,13 +6,13 @@
 'use strict';
 
 const { evaluateRecordEligibility, widenedByFor } = require('./eligibility');
-const { defaultResolvePolicy, sensitivePathsOf } = require('./policy');
+const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } =require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
 
 const DISABLED = Object.freeze({ enabled: false, grouping: groupingMode(false), keepSingleton: () => false });
 
 const FIRST_KEYS = ['express-lane', 'express-driver'];
-const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review'];
+const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths'];
 const ROUTINGS = ['on', 'off', 'split'];
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
@@ -60,7 +60,7 @@ function expressQueuePolicy(deps = {}) {
   try {
     policy = resolvePolicy(SECOND_KEYS, { runDir: null });
     if (expressOn) {
-      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+      expressOpts = { enabled: true, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);

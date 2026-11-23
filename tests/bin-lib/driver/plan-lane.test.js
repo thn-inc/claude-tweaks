@@ -11,6 +11,10 @@ const { evaluateAdmission } = require(path.join(LIB, 'driver', 'admission.js'));
 const { reviewRequired } = require(path.join(LIB, 'driver', 'review.js'));
 const { eligibilityOptions } = require(path.join(LIB, 'driver', 'lane-bounds.js'));
 const { STEPS } = require(path.join(LIB, 'driver', 'steps.js'));
+const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
+
+// The real resolver's reply for protected-paths (a hand-written one would drift from the schema).
+const protectedPathsReply = (policyRaw) => resolvePolicyKeys(['protected-paths'], { policyRaw })['protected-paths'];
 
 const backendFiles = (n) => Array.from({ length: n }, (_, i) => `plugin/bin/lib/plan-lane-fixture/m${i}.js`);
 
@@ -39,10 +43,13 @@ const POLICY_DEFAULTS = {
   'integration-model': 'pr-first',
   'merge-sensitive-paths': [],
 };
-// resolve-policy's shape: { key: { value, source } }.
+// resolve-policy's shape: { key: { value, source } }; protected-paths is the real unset reply unless overridden.
 function policy(overrides = {}) {
   const values = { ...POLICY_DEFAULTS, ...overrides };
-  return Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value, source: 'policy' }]));
+  return {
+    'protected-paths': protectedPathsReply(''),
+    ...Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value, source: 'policy' }])),
+  };
 }
 
 function verdictFor({ labels, keyFiles, opts, pol = policy() }) {
@@ -59,7 +66,7 @@ const MICRO_FILES = ['plugin/bin/lib/plan-lane-fixture/m0.js', 'tests/plan-lane-
 test('POLICY_KEYS and PLAN_LANE_REASONS are frozen and name the stable codes', () => {
   assert.deepStrictEqual([...POLICY_KEYS], [
     'express-driver', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review',
-    'express-driver-protected-paths', 'express-lane', 'integration-model', 'merge-sensitive-paths',
+    'express-driver-protected-paths', 'express-lane', 'integration-model', 'merge-sensitive-paths', 'protected-paths',
   ]);
   assert.ok(Object.isFrozen(POLICY_KEYS));
   assert.ok(Object.isFrozen(R));
@@ -443,4 +450,28 @@ test('a Key Files entry that is not an object with a string path reads key-files
       });
     }
   }
+});
+
+test('#6020 AC5: a malformed protected-paths applies the shipped list in the plan lane', () => {
+  const read = (reply) => verdictFor({ labels: EXPRESS_LABELS, keyFiles: ['plugin/hooks/x.js'], pol: { ...policy(), 'protected-paths': reply } });
+  const unset = read(protectedPathsReply(''));
+  assert.notStrictEqual(unset.lane, 'driver');
+  assert.notStrictEqual(unset.lane, 'express');
+  const invalidReply = protectedPathsReply('protected-paths: ["infra/**"]\n');
+  assert.strictEqual(invalidReply.invalid, true);
+  for (const reply of [invalidReply, { value: 5, source: 'policy' }]) {
+    const v = read(reply);
+    assert.notStrictEqual(v.reason, 'policy-unreadable');
+    assert.deepStrictEqual(v, unset);
+  }
+  assert.deepStrictEqual(read({ error: 'unknown-key' }), { lane: null, reason: 'policy-unreadable' });
+});
+
+test('#6020: a resolved protected-paths list decides the driver and express lanes', () => {
+  const read = (reply, files) => verdictFor({ labels: EXPRESS_LABELS, keyFiles: files, pol: { ...policy(), 'protected-paths': reply } }).lane;
+  const set = { value: 'infra/**', source: 'policy' };
+  const not = (lane) => lane !== 'driver' && lane !== 'express';
+  assert.ok(not(read(protectedPathsReply(''), ['plugin/hooks/x.js'])));
+  assert.ok(!not(read(set, ['plugin/hooks/x.js'])));
+  assert.ok(not(read(set, ['infra/main.tf'])));
 });
