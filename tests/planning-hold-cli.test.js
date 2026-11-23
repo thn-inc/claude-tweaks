@@ -187,6 +187,33 @@ test('readback: relative paths resolve against the injected cwd', () => {
   assert.equal(r.code, 0, r.stderr);
 });
 
+test('readback: re-held relative paths, --reheld-file included, resolve against the injected cwd', () => {
+  const argv = rbArgs({ branch: 're-held', readback: { labels: ['needs:decision'], body: recBody, comments: [resolvedHold, { ...comment, id: 'IC_f', createdAt: '2026-11-23T11:00:00Z', body: realTemplate() }] } });
+  argv[argv.indexOf('--reheld-file') + 1] = jsonFile(['Which store?']);
+  const files = new Set(['--readback-file', '--body-file', '--plan-line-file', '--plan-check-file', '--reheld-file']);
+  const rel = argv.map((a, i) => (files.has(argv[i - 1]) ? path.basename(a) : a));
+  assert.ok(rel.includes(path.basename(argv[argv.indexOf('--reheld-file') + 1])));
+  const r = call(rel);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).ok, true);
+});
+
+test('readback: a nonexistent --plan-check-file is a failed plan-check assertion, exit 0', () => {
+  const argv = rbArgs();
+  argv[argv.indexOf('--plan-check-file') + 1] = 'no-such-file.json';
+  const r = call(argv);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(JSON.parse(r.stdout).failed.includes('plan-check'));
+});
+
+test('readback: a non-JSON --readback-file exits 1 naming --readback-file', () => {
+  const argv = rbArgs();
+  argv[argv.indexOf('--readback-file') + 1] = jsonFile('{oops');
+  const r = call(argv);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /--readback-file: /);
+});
+
 test('readback: unreadable payload files exit 1 naming the argument spelling', () => {
   const flags = ['--readback-file', '--body-file', '--plan-line-file', '--labels-file'];
   for (const flag of flags) {
@@ -218,22 +245,22 @@ test('readback: malformed payloads exit 1', () => {
 test('readback: argv errors exit 2', () => {
   const set = (argv, flag, v) => { const a = argv.slice(); a[a.indexOf(flag) + 1] = v; return a; };
   const cases = {
-    'missing --record': without(rbArgs(), '--record'),
-    '--branch bogus': set(rbArgs(), '--branch', 'bogus'),
-    '--record 0': set(rbArgs(), '--record', '0'),
-    '--answered -1': set(rbArgs(), '--answered', '-1'),
-    '--resolved-ids a,,b': set(rbArgs(), '--resolved-ids', 'a,,b'),
-    '--other-unresolved with kept': [...rbArgs({ branch: 'kept' }), '--other-unresolved', '1'],
-    'answered without --other-unresolved': without(rbArgs(), '--other-unresolved'),
-    're-held without --reheld-file': without(rbArgs({ branch: 're-held' }), '--reheld-file'),
-    '--reheld-file with answered': [...rbArgs(), '--reheld-file', jsonFile([])],
-    'repeated --body-file': [...rbArgs(), '--body-file', 'x'],
-    'unknown --bogus': [...rbArgs(), '--bogus', 'x'],
+    'missing --record': [without(rbArgs(), '--record'), /^planning-hold\.js: --record is required$/m],
+    '--branch bogus': [set(rbArgs(), '--branch', 'bogus'), /^planning-hold\.js: --branch must be one of answered, kept, re-held$/m],
+    '--record 0': [set(rbArgs(), '--record', '0'), /^planning-hold\.js: --record must be a positive integer$/m],
+    '--answered -1': [set(rbArgs(), '--answered', '-1'), /^planning-hold\.js: --answered must be a non-negative integer$/m],
+    '--resolved-ids a,,b': [set(rbArgs(), '--resolved-ids', 'a,,b'), /^planning-hold\.js: --resolved-ids has an empty element$/m],
+    '--other-unresolved with kept': [[...rbArgs({ branch: 'kept' }), '--other-unresolved', '1'], /^planning-hold\.js: --other-unresolved is allowed only with --branch answered$/m],
+    'answered without --other-unresolved': [without(rbArgs(), '--other-unresolved'), /^planning-hold\.js: --other-unresolved is required with --branch answered$/m],
+    're-held without --reheld-file': [without(rbArgs({ branch: 're-held' }), '--reheld-file'), /^planning-hold\.js: --reheld-file is required with --branch re-held$/m],
+    '--reheld-file with answered': [[...rbArgs(), '--reheld-file', jsonFile([])], /^planning-hold\.js: --reheld-file is allowed only with --branch re-held$/m],
+    'repeated --body-file': [[...rbArgs(), '--body-file', 'x'], /^planning-hold\.js: --body-file given more than once$/m],
+    'unknown --bogus': [[...rbArgs(), '--bogus', 'x'], /^planning-hold\.js: unknown argument: --bogus$/m],
   };
-  for (const [name, argv] of Object.entries(cases)) {
+  for (const [name, [argv, message]] of Object.entries(cases)) {
     const r = call(argv);
     assert.equal(r.code, 2, name);
-    assert.match(r.stderr, /planning-hold\.js: /, name);
+    assert.match(r.stderr, message, name);
   }
 });
 

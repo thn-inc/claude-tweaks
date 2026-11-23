@@ -19,9 +19,10 @@
 // not exit 1) and prints one JSON line, readBack's {ok, branch, assertions, failed, outcome, next},
 // exit 0 even when an assertion failed. --other-unresolved is required on answered and refused
 // elsewhere; --reheld-file (a JSON array of question strings) likewise on re-held.
-// Exit vocabulary (both forms) follows bin/find-run-comment.js: 0 = answered (held or not); 1 = payload
+// Exit vocabulary follows bin/find-run-comment.js. Bare form: 0 = answered (held or not); 1 = payload
 // failure, the file unreadable, not JSON, or not one of the two shapes; 2 = invocation
-// failure, a malformed argv (unknown flag, missing or repeated value). A relative path resolves
+// failure, a malformed argv (unknown flag, missing or repeated value). Readback: 0 = the verdict was
+// printed (pass or fail); 1 = a payload failure or the `readback failed:` catch-all; 2 = malformed argv. A relative path resolves
 // against the injected cwd. The entry contract is
 // .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md.
 'use strict';

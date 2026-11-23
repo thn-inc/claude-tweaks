@@ -62,7 +62,13 @@ Posting before resolving keeps a newest unresolved planning hold on the record w
 
 ## Read-back and outcome
 
-After a write, re-fetch with `gh issue view {n} --json labels,body,comments > "{readback-file}"` (`--value specify-answer-readback-{n}.json`) and write its `body` with the Write tool to `{readback-body}` (`--value specify-answer-readback-body-{n}.md`); gh absent, per `_shared/github-write-transport.md`, write `issue_read` `get_comments`'s array to `{readback-file}` and `get`'s `body` to `{readback-body}` and its `labels` to `{readback-labels}` (`--value specify-answer-readback-labels-{n}.json`), each with the Write tool. Write the printed `line` to `{plan-line-file}`, then run `plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base} > "{plan-check-file}"`, writing `{plan-check-file}` (`--value specify-answer-plan-check-{n}.json`); ignore its exit, because the `readback` call below reads its verdict. After `## Re-hold`, also write the re-held question texts as a JSON array with the Write tool to `{reheld-file}` (`--value specify-answer-reheld-{n}.json`). Then read the verdict with one call:
+After a write, re-fetch with `gh issue view {n} --json labels,body,comments > "{readback-file}"` (`--value specify-answer-readback-{n}.json`) and write its `body` with the Write tool to `{readback-body}` (`--value specify-answer-readback-body-{n}.md`); gh absent, per `_shared/github-write-transport.md`, write `issue_read` `get_comments`'s array to `{readback-file}` and `get`'s `body` to `{readback-body}` and its `labels` to `{readback-labels}` (`--value specify-answer-readback-labels-{n}.json`), each with the Write tool. Write the printed `line` to `{plan-line-file}`, then run
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base} > "{plan-check-file}"
+```
+
+writing `{plan-check-file}` (`--value specify-answer-plan-check-{n}.json`); ignore its exit, because the `readback` call below reads its verdict. After `## Re-hold`, also write the re-held question texts as a JSON array with the Write tool to `{reheld-file}` (`--value specify-answer-reheld-{n}.json`). Then read the verdict with one call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/planning-hold.js" readback --record {n} --branch {answered|kept|re-held} --readback-file "{readback-file}" --body-file "{readback-body}" [--labels-file "{readback-labels}"] --plan-line-file "{plan-line-file}" --plan-check-file "{plan-check-file}" --resolved-ids {ids} --answered {k} [--other-unresolved {m}] [--reheld-file "{reheld-file}"]

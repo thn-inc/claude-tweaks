@@ -260,7 +260,7 @@ test('L13: the read-back names a session-tmp path for every file it passes', () 
     f('--readback-file "{readback-file}"'),
     f('`{readback-body}` (`--value specify-answer-readback-body-{n}.md`)'),
     f('the printed `line` to `{plan-line-file}`'),
-    f('plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}'),
+    f('node "${CLAUDE_PLUGIN_ROOT}/bin/plan-store.js" check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}'),
     f('`{plan-check-file}` (`--value specify-answer-plan-check-{n}.json`)'),
     f('`{reheld-file}` (`--value specify-answer-reheld-{n}.json`)'),
   ], 'read-back paths');
@@ -437,6 +437,29 @@ test('twin: the Write and Re-hold outcomes equal readBack\'s templates', () => {
     assert.notEqual(mutated, t);
     assert.ok(!quoted(sec(heading), mutated), `control: ${heading} matched a mutated template`);
   }
+});
+
+// The suffix each failed-outcome template ends with equals the one the Next Actions bullet quotes ("ending `; …`").
+const quotedSuffix = (region, label) => {
+  const line = region.split('\n').find((l) => l.startsWith(`- **${label}:**`));
+  const m = line && line.match(/a `failed — …` one ending `(; [^`]+)`/);
+  if (!m) throw new Error(`no quoted failed suffix in the ${label} bullet`);
+  return m[1];
+};
+const assertFailedSuffixes = (region, templates) => {
+  const hand = quotedSuffix(region, 'Kept needs:decision');
+  const rerun = quotedSuffix(region, 'Held or failed');
+  assert.ok(templates.failedAfterWrite.endsWith(hand), `failedAfterWrite does not end with ${hand}`);
+  assert.ok(templates.failedAfterReHold.endsWith(rerun), `failedAfterReHold does not end with ${rerun}`);
+};
+
+test('twin: the failure templates end with the suffixes the Next Actions bullets quote', () => {
+  const region = sec('## Read-back and outcome');
+  assertFailedSuffixes(region, OUTCOME_TEMPLATES);
+  assert.equal(quotedSuffix(region, 'Held or failed'), '; re-run /claude-tweaks:specify #{n}');
+  // Go-red: a mutated template tail on each side.
+  assert.throws(() => assertFailedSuffixes(region, { ...OUTCOME_TEMPLATES, failedAfterWrite: `${OUTCOME_TEMPLATES.failedAfterWrite}x` }), /failedAfterWrite does not end with/);
+  assert.throws(() => assertFailedSuffixes(region, { ...OUTCOME_TEMPLATES, failedAfterReHold: OUTCOME_TEMPLATES.failedAfterReHold.replace('re-run', 'rerun') }), /failedAfterReHold does not end with/);
 });
 
 test('Review Focus 3: another unit\'s open decision comment keeps needs:decision and withholds ready', () => {

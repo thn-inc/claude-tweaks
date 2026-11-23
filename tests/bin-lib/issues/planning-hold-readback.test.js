@@ -48,18 +48,15 @@ function base(overrides = {}) {
     ...overrides,
   };
 }
+const omit = (obj, ...keys) => Object.fromEntries(Object.entries(obj).filter(([k]) => !keys.includes(k)));
 function reheld(overrides = {}) {
-  const { otherUnresolved, ...rest } = base();
-  void otherUnresolved;
   return {
-    ...rest, branch: 're-held', labels: ['needs:decision'], comments: [resolvedHold(), freshHold()],
+    ...omit(base(), 'otherUnresolved'), branch: 're-held', labels: ['needs:decision'], comments: [resolvedHold(), freshHold()],
     reheldQuestions: ['Retry?'], answered: 1, ...overrides,
   };
 }
 const keptInput = (overrides = {}) => {
-  const { otherUnresolved, ...rest } = base();
-  void otherUnresolved;
-  return { ...rest, branch: 'kept', labels: ['needs:decision'], ...overrides };
+  return { ...omit(base(), 'otherUnresolved'), branch: 'kept', labels: ['needs:decision'], ...overrides };
 };
 
 const T = {
@@ -163,18 +160,20 @@ test('plan-line: CRLF and trailing spaces tolerated', () => {
 
 test('input validation throws TypeError', () => {
   const bad = [
-    base({ branch: 'nope' }),
-    base({ record: 0 }),
-    base({ answered: -1 }),
-    base({ answered: 1.5 }),
-    base({ otherUnresolved: undefined }),
-    keptInput({ otherUnresolved: 0 }),
-    reheld({ reheldQuestions: undefined }),
-    reheld({ reheldQuestions: [] }),
-    base({ reheldQuestions: ['Retry?'] }),
-    base({ labels: 'ready' }),
+    [base({ branch: 'nope' }), 'branch'],
+    [base({ record: 0 }), 'record'],
+    [base({ answered: -1 }), 'answered'],
+    [base({ answered: 1.5 }), 'answered'],
+    [base({ otherUnresolved: undefined }), 'otherUnresolved'],
+    [keptInput({ otherUnresolved: 0 }), 'otherUnresolved'],
+    [reheld({ reheldQuestions: undefined }), 'reheldQuestions'],
+    [reheld({ reheldQuestions: [] }), 'reheldQuestions'],
+    [base({ reheldQuestions: ['Retry?'] }), 'reheldQuestions'],
+    [base({ labels: 'ready' }), 'labels'],
   ];
-  for (const input of bad) assert.throws(() => readBack(input), TypeError);
+  for (const [input, field] of bad) {
+    assert.throws(() => readBack(input), { name: 'TypeError', message: new RegExp(`^readBack: ${field} `) }, field);
+  }
 });
 
 test('OUTCOME_TEMPLATES and NEXT_ACTIONS are the documented constants', () => {

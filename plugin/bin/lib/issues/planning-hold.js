@@ -234,7 +234,7 @@ function planCheckAssertion(input) {
 
 const render = (tpl, vars) => tpl.replace(/\{(k|m|j|n|what|short commit)\}/g, (_, key) => String(vars[key]));
 
-// input: see the field list in #6100's spec. -> { ok, branch, assertions, failed, outcome, next }.
+// input: field list and checks: `validateReadBack` above. -> { ok, branch, assertions, failed, outcome, next }.
 function readBack(input) {
   validateReadBack(input);
   const assertions = [labelsAssertion(input)];
