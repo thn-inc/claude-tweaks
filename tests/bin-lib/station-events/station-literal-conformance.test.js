@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
-const { STATIONS, REASON_CODES, ACTOR, ACTORS } = require('../../../plugin/bin/lib/station-events/stations');
+const { STATIONS, REASON, REASON_CODES, ACTOR, ACTORS } = require('../../../plugin/bin/lib/station-events/stations');
 
 // #5902: stations.js is the one home of station names, so a name correction is a one-file
 // change. This scan walks plugin/bin and flags a known station name written as the value of a
@@ -213,6 +213,17 @@ test('stations.js names every reason code and actor a call site may need', () =>
   ]);
   assert.equal(ACTORS.test(ACTOR.rule('x')), true);
   assert.equal(ACTORS.test(ACTOR.SCRIPT), true);
+});
+
+test('ACTOR values and REASON key names are pinned', () => {
+  const { rule, ...words } = ACTOR;
+  assert.deepEqual(words, { AGENT: 'agent', SCRIPT: 'script', PERSON: 'person' });
+  assert.equal(rule('x'), 'rule:x');
+  assert.deepEqual(Object.keys(REASON), [
+    'UNSPECIFIED', 'DEFAULT_LIST', 'INFRASTRUCTURE', 'TEST_FAILED', 'SPEC_WRONG', 'SCOPE_TOO_BIG',
+    'BLOCKED_BY_OTHER', 'CHANGES_REQUESTED', 'SUPERSEDED', 'WITHDRAWN', 'CEREMONY_DOWNGRADE',
+    'DOCUMENTS_ONLY', 'OTHER',
+  ]);
 });
 
 test('the vocab walk goes red when a call site spells a reason code', () => {
