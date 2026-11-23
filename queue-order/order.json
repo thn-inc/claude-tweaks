@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-23T17:11:23.154Z",
+  "computedAt": "2026-11-23T19:25:49.764Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -34,18 +34,13 @@
         "state": "OPEN"
       },
       {
-        "number": 6146,
-        "updatedAt": "2026-11-23T16:19:10Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6143,
         "updatedAt": "2026-11-23T16:45:03Z",
         "state": "OPEN"
       },
       {
         "number": 6142,
-        "updatedAt": "2026-11-23T16:30:04Z",
+        "updatedAt": "2026-11-23T18:37:56Z",
         "state": "OPEN"
       },
       {
@@ -60,12 +55,7 @@
       },
       {
         "number": 6112,
-        "updatedAt": "2026-11-23T07:26:50Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6062,
-        "updatedAt": "2026-11-23T08:44:01Z",
+        "updatedAt": "2026-11-23T17:27:57Z",
         "state": "OPEN"
       },
       {
@@ -75,7 +65,7 @@
       },
       {
         "number": 6002,
-        "updatedAt": "2026-11-23T16:20:22Z",
+        "updatedAt": "2026-11-23T18:49:38Z",
         "state": "OPEN"
       },
       {
@@ -155,7 +145,7 @@
       },
       {
         "number": 4764,
-        "updatedAt": "2026-11-23T17:09:08Z",
+        "updatedAt": "2026-11-23T17:20:13Z",
         "state": "OPEN"
       },
       {
@@ -690,7 +680,7 @@
       },
       {
         "number": 4108,
-        "updatedAt": "2026-10-30T13:47:11Z",
+        "updatedAt": "2026-11-23T19:25:08Z",
         "state": "OPEN"
       },
       {
@@ -700,12 +690,12 @@
       },
       {
         "number": 4004,
-        "updatedAt": "2026-10-26T14:35:07Z",
+        "updatedAt": "2026-11-23T19:15:14Z",
         "state": "OPEN"
       },
       {
         "number": 3995,
-        "updatedAt": "2026-10-24T05:40:13Z",
+        "updatedAt": "2026-11-23T18:32:12Z",
         "state": "OPEN"
       },
       {
@@ -750,12 +740,12 @@
       },
       {
         "number": 3875,
-        "updatedAt": "2026-10-30T06:35:01Z",
+        "updatedAt": "2026-11-23T18:23:35Z",
         "state": "OPEN"
       },
       {
         "number": 3835,
-        "updatedAt": "2026-10-24T05:39:39Z",
+        "updatedAt": "2026-11-23T17:53:14Z",
         "state": "OPEN"
       },
       {
@@ -800,7 +790,7 @@
       },
       {
         "number": 5232,
-        "updatedAt": "2026-11-16T16:07:48Z",
+        "updatedAt": "2026-11-23T17:22:01Z",
         "state": "CLOSED"
       },
       {
@@ -811,6 +801,174 @@
     ]
   },
   "groups": [
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nMake the driver mirror its step status into station events with the new outcome vocabulary, an actor and a reason code. This is task 5 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E1 | Floor map, emission 1/8: Capture pass: transition code by station, and the station order from real moves | must be merged before this starts (native blocked-by edge) |\n| E2 | Floor map, emission 2/8: Vocabulary and validation | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/stations.js` (`DRIVER_STATUS_OUTCOMES`), `plugin/bin/lib/station-events/driver-mirror.js`, `plugin/bin/lib/driver/run.js`\n- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`\n\nInterfaces:\n\n- Produces: `DRIVER_STATUS_OUTCOMES = { ok: 'passed', fail: 'failed', stop: <per Task 1> }`; driver `exited` lines carry `payload.actor: 'script'` for `ci`/`merge`/`pr` steps and `'agent'` for `worker`/`test`/`review`, and `payload.reasonCode: 'test-failed'` for a failed `test` step, `'infrastructure'` for a failed `ci` step whose failure is classified as infrastructure by the driver, otherwise `'unspecified'`.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `a failed test step mirrors to exited failed with reasonCode test-failed and actor agent`; `a failed ci step classified infrastructure mirrors with reasonCode infrastructure`; `an ok step mirrors to exited passed with actor`; `a step with no known reason mirrors with reasonCode unspecified`.\n2. Review focus, covered by the tests above: A transition whose code path cannot name a reason writes `unspecified` and still writes the `exited` line.\n\n## Release Note\n\nMade driver exits write an outcome with actor and reason code into the station-event file.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `a failed test step mirrors to exited failed with reasonCode test-failed and actor agent`; `a failed ci step classified infrastructure mirrors with reasonCode infrastructure`; `an ok step mirrors to exited passed with actor`; `a step with no known reason mirrors with reasonCode unspecified`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** the mapping in `driver-mirror.js`; use the driver's existing failure classification for `ci`, and write `unspecified` where none exists.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: driver exits carry outcome, actor and reason`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/stations.js`\n- `plugin/bin/lib/station-events/driver-mirror.js`\n- `plugin/bin/lib/driver/run.js`\n- `tests/bin-lib/station-events/driver-mirror.test.js`\n- `tests/bin-lib/driver/run.test.js`\n\n## Gotchas\n\n- Changes the driver status-to-outcome mapping.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-5 -->\nwork-fingerprint: factory-floor-map-emission:emission-5\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n",
+        "createdAt": "2026-11-23T15:43:15Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6149,
+        "state": "OPEN",
+        "title": "Floor map, emission 5/8: The driver's outcomes with actor and reason",
+        "updatedAt": "2026-11-23T16:10:19Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite the plan at the claim: `planOf`, `planEvent` and the `release-claim.js` call that writes one `planned` line per record and run. This is task 3 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E1 | Floor map, emission 1/8: Capture pass: transition code by station, and the station order from real moves | must be merged before this starts (native blocked-by edge) |\n| E2 | Floor map, emission 2/8: Vocabulary and validation | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"The plan is written by claude-tweaks code at the claim, from the same ceremony profile and lane that already decide which steps a flow runs, and written as `planned`. The hub never computes a plan.\"\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Every version of a plan is kept with its reason and cause.\" A plan is never rewritten silently.\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Create: `plugin/bin/lib/station-events/plan.js`, `tests/bin-lib/station-events/plan.test.js`\n- Modify: `plugin/bin/release-claim.js` (the `deps.stationEvent({...})` call near line 220), `tests/bin-lib/release-claim/cli.test.js`\n\nInterfaces:\n\n- Produces: `STARTING_LISTS` (frozen map `listId -> string[]` from Task 1's `## Starting lists`; `standard` is every station); `planOf({ lane: string | null, ceremonyProfile: string | null }): { list: string, stations: string[], reasonCode: string }`; `planEvent({ repoName, recordNumber, lane, ceremonyProfile, sessionId, runId }): object` (an event in the shape `appendStationEvent` takes; kind `planned`, station `build`, payload per the contract, `discriminator` such that the same record in the same run yields the same `eventKey`).\n- Consumes: `PROCESS`, `STATIONS`, `REASON_CODES` from Task 2.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests** in `plan.test.js`: `standard profile gives every station`; `null lane and null profile gives list standard with reason default-list`; `each profile in Task 1's table gives its listed stations` (table-driven from `STARTING_LISTS`); `planEvent is idempotent for the same record and run` (same `eventKey` twice). In `release-claim/cli.test.js`: `a claim writes one planned line carrying the stations and reason`; `claiming the same record again in the same run writes no second planned`.\n2. Review focus, covered by the tests above: A record claimed twice (a retry) writes one `planned`, not two; the second claim writes none unless the plan changed.\n3. Review focus, covered by the tests above: A claim with no ceremony profile or lane (both null) writes `planned` with list `standard` and reason `default-list`, never crashes.\n\n## Release Note\n\nWrote the plan as a planned station event when a record is claimed, once per record and run.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests** in `plan.test.js`: `standard profile gives every station`; `null lane and null profile gives list standard with reason default-list`; `each profile in Task 1's table gives its listed stations` (table-driven from `STARTING_LISTS`); `planEvent is idempotent for the same record and run` (same `eventKey` twice). In `release-claim/cli.test.js`: `a claim writes one planned line carrying the stations and reason`; `claiming the same record again in the same run writes no second planned`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/plan.test.js tests/bin-lib/release-claim/cli.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `planOf` and `planEvent` in `plan.js`; call `planEvent` from the claim path in `release-claim.js` beside the existing `entered`/`started` events, reading `lane` and `ceremonyProfile` from the values the claim already holds (the run manifest writer's inputs in `plugin/bin/lib/run-manifest/write.js`).\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write the plan when a record is claimed`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/plan.js`\n- `tests/bin-lib/station-events/plan.test.js`\n- `plugin/bin/release-claim.js`\n- `tests/bin-lib/release-claim/cli.test.js`\n\n## Gotchas\n\n- Adds a new line written from the claim path in release-claim.js.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-3 -->\nwork-fingerprint: factory-floor-map-emission:emission-3\n\n## Decisions (orchestrator, 2026-11-23)\n\nStarting-list precedence is lane first, as written in `## Starting lists` (merged by the capture pass): *A lane of `driver` selects the list `driver`; otherwise a ceremony profile of `fast-lane` selects `fast-lane`; otherwise the list is `standard`. An absent or unknown lane with an absent profile is `standard`, and the `planned` event carries reason `default-list`.* The lane `express` was not observed and follows the same rule.\nAdded tests for `planOf`: `lane driver with profile fast-lane gives list driver`; `lane driver with a null profile gives driver`; `lane standard with profile fast-lane gives fast-lane`; `lane express with profile fast-lane gives fast-lane`; `lane unknown with a null profile gives standard with reasonCode default-list`.\n",
+        "createdAt": "2026-11-23T15:43:03Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6147,
+        "state": "OPEN",
+        "title": "Floor map, emission 3/8: The plan at the claim",
+        "updatedAt": "2026-11-23T16:09:10Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
     [
       {
         "body": "Surface: backend\nRisk-flags: auth, irreversible-side-effect\n**Related:** #5649, #4366, #5179, #5884\n\n## Current State\n\n- `plugin/bin/learned-skills-pr.js` has `capture`, `land` and `stage` verbs. `land` opens one ready learned-skills PR per run and never merges it; `plugin/skills/wrap-up/learned-skills-pr.md` (\"The PR waits for a human\") and `_shared/github-pr-scan.md` item 9 keep it unarmed.\n- The PRs pile up and conflict (#6088): 36 in a week, median 19h open, ten `DIRTY` at once on 2026-11-22. #6088 dropped the review floor for this PR: it should merge itself once CI is green, under the `learned-skills-auto-merge` policy key (sibling sub-issue).\n- This repo's `main` has no branch protection or rulesets, `allow_auto_merge` is true, and `merge-verification` resolves `merge-when-green`; `_shared/pr-first-merge.md` Step 2.5 therefore degrades a non-`BLOCKED` PR to the `wait` row (bounded 900 s watch, then an immediate `--squash` once green), never an immediate merge. CI takes about 3 minutes.\n- 14 learned-skills merge commits on `main` read `(#undefined)`: a merge title read a field its `--json` call never requested.\n\n## Deliverables\n\n1. A `drain` verb on `plugin/bin/learned-skills-pr.js` (args: `--run`, `--integration-branch`, `--own-pr <n>` optional). It lists every open PR whose body carries `<!-- wrap-up-skills-pr -->`, and for each:\n   - **green** → merges it through `_shared/pr-first-merge.md`'s Step 2.5 gate and Step 3 squash (arms `--auto` only where Step 2.5 says arming holds), with `--delete-branch`;\n   - **checks pending** → for `--own-pr` only, waits within Step 2.5's bounded watch (`MERGE_GATE_WATCH_SECONDS`, 900 s); any other pending PR is left for a later drain;\n   - **`DIRTY`/conflicting** → reported as `conflicting` and left open (the rebuild is a sibling sub-issue that plugs in here);\n   - **red** → left open, reported; no record labels are added (the `refs` records are not this PR's to park — tidy Step 7.5's precedent for a caller with no record).\n   It prints one JSON line `{merged:[…], leftOpen:[{pr, reason}], conflicting:[…]}` and follows the `gh-api-module-pattern` project skill's CLI contract (injectable runner, exit codes in the header).\n   - **Seam:** `drain.js` owns listing, classification and the one merge call; `_shared/pr-first-merge.md` Step 2.5 is the source of the semantics, and a `prose-code-twin-pin` test goes red when Step 2.5's row set changes. A PR of another run has no run dir: it skips the ci-gate write and run-scoped logging and uses only the state read and the merge call; only this run's PR logs to `decisions.md`.\n   - **Green** means `statusCheckRollup` is non-empty, every entry completed with conclusion SUCCESS, NEUTRAL or SKIPPED, and the PR is open and not a draft. An empty rollup is pending, never green.\n   - **Per PR, oldest first:** `mergeStateStatus` is re-read right before the merge, so a sibling turned `DIRTY` by an earlier merge in the same drain is reported `conflicting`; the merge is pinned to the classified `headRefOid` (`--match-head-commit`), and a mismatch is `leftOpen` reason `head-changed`.\n   - **Scope of what it touches:** only an open PR whose head branch is `learned-skills/*` in this repository (not a fork). Any other marker-carrying PR is left alone with reason `not-learned-skills-branch`. An already merged or closed PR (a concurrent drain got there first) is a no-op.\n   - **`leftOpen` reasons** are the closed set `pending`, `timeout`, `red`, `head-changed`, `not-learned-skills-branch`, `no-gh`. Without `gh` the verb merges nothing and reports `no-gh`. An unset or unreadable `learned-skills-auto-merge` resolves `false`.\n   The drain acts on a PR only when all three hold: its head is a same-repository branch named `learned-skills/*` (never a fork: `isCrossRepository` false), its body carries `<!-- wrap-up-skills-pr -->`, and every changed file (`gh pr view --json files`) is under `.claude/skills/`. Any other PR, marker or not, is left open and reported in `leftOpen` with the failed condition as its reason. There is no author-identity check: anyone able to push a same-repository branch already has write access, so an author check would add nothing the branch and path checks do not. Acceptance: a test pins that a marker PR from a fork, on a non-`learned-skills/*` branch, or with a file outside `.claude/skills/` is left open with that reason and never merged.\n2. Merge subject and body come from `compose-subject.js`'s record-less form, which #5208 adds (this unit is blocked by it; the form does not exist on `main` yet) (a `chore:` subject from the PR title, `(#{pr})` appended), extended if needed to accept the `<!-- wrap-up-skills-pr -->` marker; the body carries the PR's `Refs #n` lines and never a `Fixes`. Every value is read from fields the `--json` call requested.\n3. `plugin/skills/wrap-up/learned-skills-pr.md`: when `learned-skills-auto-merge` resolves `true`, run `drain` once at the end of wrap-up (after the Review Console and `record`), passing this run's PR as `--own-pr`. Replace the \"Never armed\" bullet with the new rule, and log each outcome to `decisions.md` per `_shared/auto-decision-log.md` with `[lever: learned-skills-auto-merge={value}]` (`AUTO` for a merge, `SKIP` for a left-open degrade). With the lever `false`, nothing changes.\n4. The final summary's Skills row (rendered by `plugin/bin/lib/wrap-up/engine-render.js`, never hand-composed) and the short-circuit FYI (`plugin/skills/wrap-up/auto-merge-short-circuit.md`) show the drain's outcome for this run's PR: `merged` or `left open: {reason}`. The render shows only the `--own-pr` outcome; other PRs are logged to `decisions.md` only.\n5. `plugin/skills/wrap-up/curation-engine.md` names the drain step where it orders wrap-up's phases.\n6. Every other statement that the learned-skills PR is \"never armed\" or \"waits for a human\" is updated to the new rule: grep the retired phrases repo-wide (`docs/skill-graph.md`, `/help`, `README.md`, the header of `plugin/bin/learned-skills-pr.js`, `learned-skills-pr.md`). `_shared/github-pr-scan.md` item 9 and tidy's arm row are the PR-scan sub-issue's, and are left alone here.\n\n## Acceptance Criteria\n\n- Tests for `drain` with a fake gh runner: a green marker PR is merged with subject `chore: Add learned skill updates from wrap-up of #N (#P)` and a body with `Refs #N` and no `Fixes`; a pending sibling is left untouched; a pending `--own-pr` is watched and merged when it turns green; a red PR is left open with no label writes; a `DIRTY` PR is reported `conflicting`; a PR without the marker is never touched.\n- A test pins that no subject contains `undefined`.\n- Green is pinned: an empty `statusCheckRollup` is left open as `pending`; a head that changes between classification and merge is left open as `head-changed`; a marker PR on a head branch outside `learned-skills/*` is never touched.\n- With `learned-skills-auto-merge: false`, the wrap-up procedure runs no `drain` (conformance test over `learned-skills-pr.md`).\n- In an unprotected repo, a drain never merges a PR whose checks have not all completed green (test through the Step 2.5 path).\n- Each new test was seen failing with its behaviour reverted.\n- `npm test -- --full` passes.\n\n## Release Note\n\nWrap-up now merges its learned-skill update PRs once CI passes (when `learned-skills-auto-merge` is on), so they no longer pile up waiting for a person.\n\n## Technical Approach\n\nPut the drain's logic in a new `plugin/bin/lib/learned-skills/drain.js` beside `land.js`, reusing `learned-skills.js`'s deps seam. Read PR state with `gh pr view --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,title,body,number` (request every field the subject reads). Reuse Step 2.5's existing gate code paths rather than restating them in prose; if Step 2.5 has no callable code twin, call the documented fences from the skill prose and keep `drain` to listing, classifying and the one merge call.\n\n### Key Files\n\n- `plugin/bin/learned-skills-pr.js` — `drain` verb, help text, exit codes\n- `plugin/bin/lib/learned-skills/drain.js` — new: list, classify, merge\n- `plugin/skills/wrap-up/learned-skills-pr.md` — drain step and the replaced never-armed rule\n- `plugin/skills/wrap-up/curation-engine.md` — phase order names the drain\n- `plugin/skills/wrap-up/auto-merge-short-circuit.md` — FYI carries the outcome\n- `plugin/bin/lib/wrap-up/engine-render.js` — Skills row outcome\n- `plugin/bin/lib/compose-subject.js` — record-less form accepts the learned-skills marker, if #5208 does not already\n- `tests/wrap-up-learned-skills-pr.test.js` — conformance updates (it pins the never-armed prose today)\n- `tests/bin-lib/learned-skills/drain.test.js` — new\n\n## Gotchas\n\n- Do not copy `wrap-up/residue-sweep.md`'s bare `gh pr merge --auto` at creation: in an unprotected repo it can merge before CI (#5649).\n- `pr-checks.js` cannot see a merge-conflicted PR (#4366); classify `DIRTY` from `mergeStateStatus`/`mergeable`, not from checks.\n- A PR that turns conflicting during the bounded watch must be reported `conflicting`, not timed out (#5179's concern).\n- When #5884's merge pause lands, the drain is a plugin-driven merge and must honour it.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:merge-green-learned-skills-prs-at-the-end-of-every-wrap-up-w -->\nwork-fingerprint: learned-skills-auto-merge:merge-green-learned-skills-prs-at-the-end-of-every-wrap-up-w\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`, `Proof(irreversible-side-effect): …`.\n\n",
@@ -862,7 +1020,7 @@
         "number": 6112,
         "state": "OPEN",
         "title": "Merge green learned-skills PRs at the end of every wrap-up with a drain verb",
-        "updatedAt": "2026-11-23T07:26:50Z",
+        "updatedAt": "2026-11-23T17:27:57Z",
         "facets": {
           "origin": null,
           "risk": "high",
@@ -1954,6 +2112,90 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\n\n**Related:** #3982, #3995, #4725, #4738\n\n## Current State\n\nThe post-merge Windows check failed on commit ba69ced99 (compared against 22d287f46), after PR #4742. Baseline adjudication attributed `tests/friction-events-cli.test.js` as newly failing. Run: https://github.com/thn-inc/claude-tweaks/actions/runs/41222731872\n\nThree #4704 tests are attributed, at lines 562, 577 and 645. All cover whether the CLI treats its cwd as the main checkout, so comparing `repoRoot` to the worktree path is the likely site.\n\n## Deliverables\n\n1. `tests/friction-events-cli.test.js` passes on Windows, by fixing the product code or the test, whichever the failure turns out to be.\n2. The cause is named in the PR, including whether other tests share it.\n\n## Acceptance Criteria\n\n1. `tests/friction-events-cli.test.js` passes in the Windows workflow on the fixing branch, proven by a run dispatched after the last code change.\n2. The same file still passes on Linux and macOS.\n3. `npm test` passes.\n\n## Release Note\n\nNo user-facing change; this restores the Windows test suite.\n\n## Technical Approach\n\nReproduce it first. Forward-slash and backslash handling is the usual cause here, and swapping `require(\"path\")` for `path.win32` in a preload reproduces most path-string failures locally on unit tests.\n\n### Key Files\n\n- `tests/friction-events-cli.test.js` — the failing suite\n- `plugin/bin/friction-events.js` — the main-checkout check\n\n## Gotchas\n\n- Check that the failure still reproduces on current `main` before building. A later Windows fix may already have cleared it.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after ba69ced99\n\nThe post-merge Windows check failed on commit ba69ced992d524663f37d4a5631fd30325949458 (compared against 22d287f46).\n\n**Merged PR:** #4742 (https://github.com/thn-inc/claude-tweaks/pull/4742)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/41222731872\n\n### Newly failing test files\n- `tests/friction-events-cli.test.js`\n\n### Failure excerpts\n\n#### `tests/friction-events-cli.test.js`\n\n_Excerpts for the 3 test(s) the baseline adjudication attributed as new._\n\n```\nnot ok 13657 - \\#4704: from the main checkout with no session id, no path sibling is unioned\n  ---\n  duration_ms: 1.3017\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:562:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n    + []\n    - [\n```\n\n```\nnot ok 13658 - \\#4704: from the main checkout with no session id, the skipped path sibling is named on stderr; with a session id it is not\n  ---\n  duration_ms: 0.75\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:577:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n    + []\n    - [\n```\n\n```\nnot ok 13664 - \\#4704: repoRoot and the worktree path are compared through the same canonicalizer (case-folding fake: /Main vs /main is the main checkout)\n  ---\n  duration_ms: 1.8266\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\friction-events-cli.test.js:645:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n      [\n        '/run/2026-10-31T100000-adhoc-standalone',\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._",
+        "createdAt": "2026-10-31T17:24:57Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 4764,
+        "state": "OPEN",
+        "title": "Windows regression: 1 test file(s) newly failing after ba69ced99",
+        "updatedAt": "2026-11-23T17:20:13Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
         }
       }
     ],
@@ -7815,84 +8057,6 @@
     ],
     [
       {
-        "body": "Surface: backend\n\nOrigin: wrap-up Review Console, run 2026-10-17T100123-spec-3368-3365/spec-3365: confirmed finding plugin/skills/wrap-up/execution-and-verification.md:28\n\nDefer-reason: needs-human-decision\n\n**Related:** #3878, #3813, #4431, #3256, #3396, #3721, #3873, #3963, #3974, #3976, #3982, #3995, #4244, #4246, #4275, #4292, #4294, #4309, #4310, #4433, #4448, #4471, #4492, #4499, #4587\n\n## Current State\n\nRuling R1 (`plugin/skills/wrap-up/cleanup-procedures-execution.md:73`; `plugin/bin/lib/wrap-up/pack.js:177-184`, `closingRecords`) decides which records a run may close. It allows only records read from materialized headers, the `headers`/`worktree-headers` rungs. On a `manifest`/`worktree-manifest` rung `closingRecords` returns `[]` on purpose: manifest ids include specs that failed or never ran, which must get `Refs`, never `Fixes`. On the `unavailable` rung (no records resolved at all) it also returns `[]`. So an empty array means two different things, and the readers cannot tell them apart.\n\nThree readers treat \"empty\" as \"fall back to this run's Phase 1 identified record\":\n\n- `plugin/skills/wrap-up/execution-and-verification.md:28-34`, the current-branch commit's `Fixes #{issue}` lines. It uses `inputs.closingRecords` \"when non-empty\", otherwise the Phase 1 record. On a manifest rung that stamps `Fixes #N` for a record R1 excluded, and GitHub closes it once the commit reaches the default branch. In a multi-spec current-branch run, that can be a spec that failed or never ran. This is the confirmed finding; it still holds on `main` as of 2026-10-30.\n- `plugin/skills/wrap-up/review-console.md:122`, the `issues` key of `verify-expectations.json`. Same \"non-empty, else Phase 1\" rule, so verify expects that record to close.\n- `plugin/bin/lib/wrap-up/engine-verify.js:442-452` `resolvedIssueNumbers`. When `closingRecords` comes back empty, it falls through to those expectations.\n\nOnly `cleanup-procedures-execution.md`'s Section C step 2 bash distinguishes the cases. It falls back to the worktree-mirror glob only when the field is not an array (`if(!Array.isArray(c))process.exit(1)`).\n\n`tests/wrap-up-record-resolution-conformance.test.js`'s `assertNoGateRestatement` forbids any reader from naming `sources.records`, `worktree-headers` or `HEADER_SOURCES` outside Section C's one definition sentence. So the fix cannot be a prose condition on the source rung; the distinction has to come from the pack.\n\n**Decision (human-approved 2026-10-30):** `closingRecords` carries R1's decision explicitly:\n\n- an array, possibly empty, when records resolved: this is the set the run may close;\n- `null` when no records resolved at all (`unavailable`): the run has no decision, and only then may a reader fall back to the Phase 1 record.\n\n## Deliverables\n\n1. `pack.js`'s `closingRecords({ records, source })` returns `null` on the `unavailable` rung and keeps today's results on the other rungs: `records` on a header rung, `[]` on a manifest rung. Update its comment and the pack's documented field shape. The wrap-up pack conformance docs name `closingRecords` as array-or-null.\n2. `execution-and-verification.md`'s current-branch `Fixes` sentence:\n   - an array, even an empty one, is the set to stamp;\n   - only a `null` field or a pack that could not be produced falls back to the Phase 1 record;\n   - an empty array stamps no `Fixes` line.\n\n   It cites Section C step 2 and never names the source rungs.\n3. `review-console.md` step 11's `issues` sourcing follows the same rule.\n4. `engine-verify.js`'s `resolvedIssueNumbers` returns `closingRecords` whenever it is an array, empty included. It falls through to `verify-expectations.json` only when the value is `null`.\n5. Update the pin at `tests/wrap-up-record-resolution-conformance.test.js:102` and add the cases below.\n\n## Acceptance Criteria\n\n- `closingRecords({ records: [41, 42], source: 'manifest' })` returns `[]`, `closingRecords({ records: [], source: 'unavailable' })` returns `null`, and the header rungs return their records (`tests/bin-lib/wrap-up/pack.test.js`).\n- `resolvedIssueNumbers` on a manifest-rung fixture whose `verify-expectations.json` lists `issues: [41]` returns `[]`. On an `unavailable` fixture with the same file it returns `[41]` (`tests/bin-lib/wrap-up/engine-verify.test.js`).\n- A prose test pins two things in `execution-and-verification.md` and `review-console.md` step 11: an empty `closingRecords` stamps or records nothing, and only a `null` field or a missing pack falls back to the Phase 1 record.\n- `assertNoGateRestatement` still passes for both files: neither names a source rung.\n- Revert each change and show which new test fails (the pack function, `engine-verify.js`, and each prose sentence).\n- `npm test` passes.\n\n## Release Note\n\nA current-branch wrap-up no longer closes the issue of a spec that failed or never ran in a multi-spec run.\n\n## Technical Approach\n\nKeep R1 in one place. The pack already decides it; the bug is that its \"no decision\" and \"decided: none\" outputs look the same. `null` versus `[]` gives readers the distinction without restating the rule, which is what the conformance test enforces. Section C's existing bash already treats a non-array as fall-back, so it needs no change. Confirm that with a test fixture rather than by reading.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/pack.js` — `closingRecords` returns `null` on the `unavailable` rung\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `resolvedIssueNumbers` honours an empty array\n- `plugin/skills/wrap-up/execution-and-verification.md` — current-branch `Fixes` sentence\n- `plugin/skills/wrap-up/review-console.md` — step 11 `issues` sourcing\n- `plugin/skills/wrap-up/cleanup-procedures-execution.md` — read only: Section C step 2 is the definition the readers cite\n- `tests/bin-lib/wrap-up/pack.test.js` — rung cases\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — manifest versus unavailable fallthrough\n- `tests/wrap-up-record-resolution-conformance.test.js` — updated pin and new prose cases\n- `tests/wrap-up-pack-conformance.test.js` — field shape, if it pins `closingRecords` as an array\n\n## Gotchas\n\n- `dispatch/two-call-gate.md` and `wrap-up/cleanup-procedures.md` item 4 also read `inputs.closingRecords`. Both already treat an empty result as \"nothing to stamp\", so they need no change. Check them anyway, and name them in the PR.\n- The pack is produced and read within one run by one plugin version, so a `null` field does not reach an older reader.\n\n## Original request\n\nReview finding (confirmed): plugin/skills/wrap-up/execution-and-verification.md — current-branch Fixes issue set skips Ruling R1's header-source gate\n\nOrigin: wrap-up Review Console, run 2026-10-17T100123-spec-3368-3365/spec-3365: confirmed finding plugin/skills/wrap-up/execution-and-verification.md:28\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nReview lens `3c` reported a finding at `plugin/skills/wrap-up/execution-and-verification.md:28` (severity medium). The claim follows.\n\n```\ncurrent-branch Fixes issue set skips Ruling R1's header-source gate\n```\n\nThe tiebreak confirmed it on e71e18563243d179adb555afe1d1bf7acf956b3d: plugin/skills/wrap-up/execution-and-verification.md:29 `{run-dir}/wrap-up-pack.json`'s `inputs.closingRecords` when non-empty (a multi-spec current-branch`.\n\n## Deliverables\n\n- [ ] fix the finding at the cited location\n\n## Acceptance Criteria\n\n- [ ] the finding no longer holds at `plugin/skills/wrap-up/execution-and-verification.md:28`, or this record is closed with evidence that it never did\n\n## Release Note\n\nNo user-visible change.\n\n_Filed by `review-console` via specShapedBody._\n\n<!-- work-fingerprint: consolefinding-24b57943 -->\nwork-fingerprint: consolefinding-24b57943\n",
-        "createdAt": "2026-10-24T10:39:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4108,
-        "state": "OPEN",
-        "title": "Review finding (confirmed): plugin/skills/wrap-up/execution-and-verification.md — current-branch Fixes issue set skips Ruling R1's header-source gate",
-        "updatedAt": "2026-10-30T13:47:11Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #4038, #3295, #3758, #3835, #3963, #3978, #4102, #4252, #4269, #4345\n\n## Current State\n\n`plugin/skills/design-wrapper/modes/review.md` Step 5.5 (\"Stage decisions findings\") tells the agent to \"write one file to `{run-dir}/staged/`\" for each `target: \"decisions\"` finding (`review.md:465`), and to \"Log one line per file written to `decisions.md`\" (`review.md:496`). It names neither sanctioned writer. When `/claude-tweaks:review` Step 6.5 dispatches this mode from a worktree session, the anchored run dir is in the main checkout, so the worktree-isolation guard refuses both direct writes. The mode's recovery rule (\"If a stage write fails, surface a one-time skip and continue\", `review.md:499`) then drops the finding from the Review Console. In the observed run, the two findings reached the console only because the controller copied them in by hand.\n\nThe same mode carries two more direct `decisions.md` appends that hit the same guard:\n\n- Step 3.8(a): \"Log one line per `../../_shared/auto-decision-log.md`: `AUTO {time} — review Step 3.8: design-critique resolved to …`\" (`review.md:173-174`).\n- `plugin/skills/design-wrapper/modes/review-seed-capture.md:56`: \"Log one `AUTO` entry to `{run-dir}/decisions.md`\" for a seed write.\n\nNo file under `plugin/skills/design-wrapper/` mentions `bin/log-decision.js` or `bin/stage-item.js`. By contrast, the controller-side polish path (`plugin/skills/flow/polish-execution.md`) already stages through `stage-item.js`.\n\nThe sanctioned writers exist: `plugin/bin/stage-item.js` (`--run <run-dir> --id <kind>-<n> --file <path> [--allocate]`) and `plugin/bin/log-decision.js` (`--run <run-dir> --status … --text … [--section …]`).\n\n**Premise correction.** The filed request says `--allocate` \"also covers this mode's 'look for an existing file before allocating' rule.\" It does not. `plugin/bin/lib/stage-item/write.js:105-139` shows that `--allocate` *reallocates* a colliding id to the next free `{kind}-{n}`. It never dedupes by content. Step 5.5's dedupe rule (\"identical `Provider:` + `File:` + `Message:` … overwrite it in place rather than allocating a new number\", `review.md:477-480`) still needs its own lookup. A plain `--allocate` on every write would duplicate a finding on every re-review after polish's re-verify cycle.\n\n## Deliverables\n\n1. Step 5.5 stages each `decisions` finding through `node \"${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js\" --run \"$PIPELINE_RUN_DIR\"`, writing the file body to a scratch path first:\n   - The absence-nudge (`provider: wrapper`) uses the fixed id `design-decision-nudge`, without `--allocate`, so it keeps today's overwrite-in-place semantics.\n   - Other findings first run the existing content-dedupe lookup, which is a read of `{run-dir}/staged/design-decision-*.md`. On a match, write with that file's id and no `--allocate` (a plain overwrite). Without a match, write `--id design-decision-1 --allocate`.\n2. Step 5.5's STAGED line goes through `node \"${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js\" --run \"$PIPELINE_RUN_DIR\" --status STAGED --section \"/review\" --step \"review Step 5.5\" --text \"…\"`. The text keeps today's wording and names the path the CLI actually wrote, which is the reallocated id when `--allocate` renamed it.\n3. Step 3.8(a)'s AUTO lever line and `review-seed-capture.md`'s AUTO seed-write line both go through `bin/log-decision.js` the same way.\n4. The recovery rule stays: a non-zero exit from either CLI is a one-time skip. `decisions_staged` counts only files that `stage-item.js` reported written.\n\n## Acceptance Criteria\n\n1. `review.md` Step 5.5 names `bin/stage-item.js` for every staged-file write and `bin/log-decision.js` for every `decisions.md` line. No instruction in Step 5.5 tells the agent to write under `{run-dir}/` directly.\n2. Step 5.5 keeps the content-dedupe rule. It calls `--allocate` only on the no-match branch and never on the nudge or a dedupe match.\n3. `review.md` Step 3.8(a) and `review-seed-capture.md`'s seed-write logging name `bin/log-decision.js`.\n4. A conformance test asserts AC 1-3 against the live prose of the two files. Reverting either file's edit turns the test red.\n5. `npm test` passes.\n\n## Release Note\n\nDesign review findings are now recorded reliably when the review runs inside an isolated worktree, without being copied over by hand.\n\n## Technical Approach\n\nThis change is prose only, in the two design-wrapper mode files, plus one conformance test. The `$PIPELINE_RUN_DIR` the mode already receives is the anchored main-checkout run dir. Both CLIs anchor it themselves (the gh-api-module-pattern CLI wrapper contract), which is why the guard admits them where a direct `Write` is refused. Match the invocation shape `plugin/skills/flow/polish-execution.md` already uses for its own `stage-item.js` call.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/review.md` — Step 5.5 staging and logging; Step 3.8(a) lever log line\n- `plugin/skills/design-wrapper/modes/review-seed-capture.md` — seed-write AUTO log line\n- `plugin/skills/flow/polish-execution.md` — reference only: the existing `stage-item.js` call shape to mirror\n- `tests/design-wrapper-review-stage-writers.test.js` — new conformance test for AC 4\n\n## Gotchas\n\n- `--allocate` is collision-avoidance, not dedupe (see Current State). Keep the dedupe lookup ahead of the write.\n- `design-decision-nudge` is not a `{kind}-{n}` id. `stage-item.js` refuses `--allocate` on it (exit 2, `plugin/bin/stage-item.js:179`), so the nudge must never pass the flag.\n- The score-history append (`.claude-tweaks/design/score-history.jsonl`, `review.md:412`) and the audit cache (`docs/plans/…-audit.json`, Step 5) write into the worktree, not the anchored run dir. They are outside this record's scope.\n- `tests/release-run-dir-lifecycle-conformance.test.js` pins `design-decision-1.md` as a roster prefix. Keep the `design-decision-` filename prefix unchanged.\n- Related, not duplicated: the `$(...)` snippet shape in `plugin/skills/review/review-effort-derivation.md` is tracked by #3822 and #3737.\n\n## Original request\n\ndesign-wrapper review: staged design-decision files and their decisions.md lines bypass stage-item.js and log-decision.js\n\n**Related:** #4038\n\n**Summary:** design-wrapper's `review` mode writes `staged/design-decision-{n}.md` and its `decisions.md` STAGED line directly, so when it runs as a dispatched agent inside a worktree-isolated session the harness refuses both writes, and the finding is lost unless the controller notices and copies it by hand.\n\n**Kind:** Gap\n\n**Affected component:** `skills/design-wrapper/modes/review.md` (Step 5.5, \"Filename and idempotency\" and the \"Log one line per file written to `decisions.md`\" instruction)\n\n**Use case:**\nIn a `worktree-always` project, `/claude-tweaks:review` Step 6.5 dispatched design-wrapper `review` from a worktree session. The anchored run dir lives in the main checkout, so the worktree-isolation guard refused the agent's direct writes to `staged/design-decision-*.md` and to `decisions.md`. The agent reported \"stage write failed\" and, per the mode's own recovery rule, surfaced a skip, so the two findings reached the Review Console only because the controller copied them in by hand. The plugin already ships the sanctioned writers for this boundary: `bin/stage-item.js` (with `--allocate` for the per-invocation `{n}` counter, which also covers this mode's \"look for an existing file before allocating\" rule) and `bin/log-decision.js`. This mode's instructions name neither.\n\n**Suggested change:**\n1. Point Step 5.5's staging at `node \"${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js\" --run \"$PIPELINE_RUN_DIR\" --id design-decision-{n} --file <scratch> --allocate`, and the STAGED line at `bin/log-decision.js`.\n2. Sweep other staging sites that a dispatched agent may execute for the same direct-write pattern.\n\nRelated, not duplicated here: the `$(...)` snippet shape in `skills/review/review-effort-derivation.md` (`CTX_DIR=$(node … mint --print-dir …)`) is refused by the same guard; that half is tracked by #3822 and #3737.\n\n**Definition:** Clear\n\n**Plugin version:** 6.145.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b3088c2c -->\n",
         "createdAt": "2026-10-24T06:17:39Z",
         "labels": [
@@ -7954,7 +8118,7 @@
         "number": 4004,
         "state": "OPEN",
         "title": "design-wrapper review: staged design-decision files and their decisions.md lines bypass stage-item.js and log-decision.js",
-        "updatedAt": "2026-10-26T14:35:07Z",
+        "updatedAt": "2026-11-23T19:15:14Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8044,7 +8208,7 @@
         "number": 3995,
         "state": "OPEN",
         "title": "Windows regression: 1 test file(s) newly failing after 6c660b23c",
-        "updatedAt": "2026-10-24T05:40:13Z",
+        "updatedAt": "2026-11-23T18:32:12Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8608,90 +8772,12 @@
         "number": 3875,
         "state": "OPEN",
         "title": "Let E1 allow a multi-run reconciliation's conflict-resolution commit without closing sibling runs",
-        "updatedAt": "2026-10-30T06:35:01Z",
+        "updatedAt": "2026-11-23T18:23:35Z",
         "facets": {
           "origin": null,
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nOrigin: ledger resolve gate (whole-branch review of #3329, ledger item 1)\n**Related:** #3876, #3295, #3737, #3740, #3754, #3758, #3812, #3898, #3950, #3963, #3965\n\n## Current State\n\n`plugin/skills/review/step3-lens-dispatch.md` routes a lens agent's findings table through `categorise-reproduction`. A lens agent that replies `STATUS: BLOCKED` or `STATUS: NEEDS_CONTEXT` returns a stated reason instead of findings rows, and only two narrow cases have a rule:\n\n- An absence claim (the reason asserts code is absent) gets #3329's ground-truth check (`step3-lens-dispatch.md:101`).\n- A reproduction-pair partner that dies on a session/usage limit is retried once, then the survivor is treated as a single read (`step3-lens-dispatch.md:96`), as is a hung single-read agent (`:52`).\n\nEvery other `BLOCKED`/`NEEDS_CONTEXT` reason (missing context, unreadable bundle, an unfulfillable instruction) has no routing rule. The status line's format check at `:152` validates the word's position, but nothing says what to do with the reason it carries.\n\nTwo existing rules already answer most of this, so they can be composed rather than invented:\n\n- `_shared/subagent-output-contract.md`'s status table (line 76): `NEEDS_CONTEXT` → \"Provide what was missing; re-dispatch\"; `BLOCKED` → \"Diagnose … Never force-retry with no changes.\"\n- The partner-died rule (`:96`) defines the uncovered-lens outcome: the surviving partner's (or the reviewer's own) single read, findings `unconfirmed` unless elevated by the Direct-verification override, a `STAGED … single-read coverage` line in `decisions.md`, and a one-line coverage caveat carried into the Step 7 summary and the PR verdict comment.\n\n## Deliverables\n\n- [ ] Add one routing rule to the Reproduction dispatch section, beside the partner-died rule, for a lens agent replying `BLOCKED` or `NEEDS_CONTEXT` with a non-absence reason. **Re-prompt that agent once** (`SendMessage`) with what the reason names as missing, when the dispatcher can supply it (a path, a bundle section, a clarified instruction). If the dispatcher cannot supply it, or the re-prompt still ends `BLOCKED`/`NEEDS_CONTEXT`, **treat the lens as single-read coverage exactly as the partner-died rule does**: survivor's or reviewer's own read, findings `unconfirmed`, a `STAGED` coverage line, and the Step 7 / PR-verdict coverage caveat\n- [ ] Extend the partner-died rule's `STAGED` line so its reason slot covers the new cause (for example `{session limit twice | unavailable | timed out | blocked: {reason} | needs-context: {reason}}`), and include the agent's stated reason, truncated, in the coverage caveat\n- [ ] An absence-claim reason still goes through the existing ground-truth check first; the new rule applies only to what that check doesn't cover\n- [ ] Pin the rule in a conformance test with a go-red control, beside `tests/review-absence-claim-ground-truth-conformance.test.js`\n\n## Acceptance Criteria\n\n- `step3-lens-dispatch.md` names the re-prompt-once step for a non-absence `BLOCKED`/`NEEDS_CONTEXT` reply and routes a still-blocked lens to the same single-read coverage outcome the partner-died rule uses\n- The `STAGED` coverage line's reason slot includes `blocked`/`needs-context` causes, and the Step 7 / PR-verdict caveat names the affected lens and its reason\n- A conformance test asserts both, and reverting the new sentence turns it red\n- `step3-lens-dispatch.md` stays under `RAIL_BYTES` (`tests/review-tiebreak-step-conformance.test.js:518`)\n- `npm test` passes\n\n## Release Note\n\nReview no longer drops a lens agent's BLOCKED or NEEDS_CONTEXT reason silently. It asks once more, then reports the lens as single-read coverage.\n\n## Technical Approach\n\nThe open question (re-prompt, stage, or both; how an uncovered lens is reported) resolves by composition. The contract's status table already prescribes \"supply the missing context and re-dispatch\" for `NEEDS_CONTEXT` and \"change something before retrying\" for `BLOCKED`, so the re-prompt is that rule applied once. The partner-died rule already prescribes how a lens with fewer reads than planned is carried into `decisions.md`, Step 7, and the PR verdict, so a still-blocked lens joins that path. Staging the reason as its own Review Console item was rejected: the coverage line is already `STAGED` and carries the reason, and a second item would split one outcome across two rows.\n\nA dispatched reviewer (`/dispatch`'s second Task call) waits under the core file's keep-alive rule and cannot always nudge with `SendMessage`. Where the hung-agent rule (`:52`) already says a dispatched reviewer skips the nudge, mirror that: skip the re-prompt and go straight to single-read coverage.\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — new routing rule beside the partner-died rule; extended STAGED reason slot\n- `tests/review-absence-claim-ground-truth-conformance.test.js` — sibling suite to extend or mirror\n- `tests/review-tiebreak-step-conformance.test.js` — the `RAIL_BYTES` size check on `step3-lens-dispatch.md`\n- `plugin/bin/lib/skill-audit/budgets.js` — `RAIL_BYTES` (52,500) source; read-only\n\n## Gotchas\n\n- Headroom is tight: `step3-lens-dispatch.md` is 50,756 bytes on `origin/main` against a 52,500-byte rail (1,744 bytes free). Measure with `wc -c` before and after; if the rule doesn't fit, extend the partner-died paragraph's existing sentences rather than adding a new paragraph, or move an existing section to a sub-file per the repo's pointer-stub split convention.\n- `dispatch/task-prompt.md` item 7 tells a review-lens unit's downgrade to \"log … the single-read coverage line … from `review/step3-lens-dispatch.md`'s partner-died paragraph\". If that paragraph's wording changes, check item 7's citation still resolves.\n- The reproduction pair compares two agents; a `BLOCKED` reply from one partner while the other returns findings is the common shape. The survivor's findings then follow the existing \"present in only one agent's output → `unconfirmed`\" rule, not a new one.\n\n## Original request\n\nRoute a lens agent's BLOCKED or NEEDS_CONTEXT reason in review's Step 3 dispatch\n\nOrigin: ledger resolve gate (whole-branch review of #3329, ledger item 1)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/skills/review/step3-lens-dispatch.md` routes a lens agent's `findings` table through `categorise-reproduction`, but a lens agent that replies `STATUS: BLOCKED` or `STATUS: NEEDS_CONTEXT` returns a stated reason, not a findings row, so the reason never reaches the pair comparison. The file has a rule for one such case only, a reproduction-pair partner that dies to a session/usage limit (retry once, then treat the survivor as a single read), and a bounded-wait rule for a hung single-read agent.\n\n#3329 added a ground-truth check for the narrow case where a `BLOCKED`/`NEEDS_CONTEXT` reason asserts that code is absent. Every other `BLOCKED`/`NEEDS_CONTEXT` reason (missing context, unreadable bundle, an unfulfillable instruction) still has no routing rule: the dispatcher has no stated way to decide between re-dispatching the agent, staging the reason for the Review Console, or treating the lens as uncovered in the review summary. The gap predates #3329 and was surfaced by its whole-branch review.\n\n## Deliverables\n\n- [ ] Add a routing rule to `step3-lens-dispatch.md`'s Reproduction dispatch section for a lens agent that replies `BLOCKED` or `NEEDS_CONTEXT` with a reason that is not an absence claim: what the dispatcher does with the reason (re-prompt once with the missing context, stage it, or both), and how a lens left uncovered is carried into the review summary and PR verdict comment.\n\n- [ ] Log each outcome to `decisions.md` with a status word from `_shared/auto-decision-log.md`'s vocabulary, so a `STAGED` entry names the artifact it stages.\n\n- [ ] Pin the new rule in a conformance test with a go-red control, beside `tests/review-absence-claim-ground-truth-conformance.test.js`.\n\n- [ ] Check `wc -c` headroom on `step3-lens-dispatch.md` against its size ceiling before adding text.\n\n## Open Question\n\nWhat should the dispatcher do with a lens agent's non-absence `BLOCKED`/`NEEDS_CONTEXT` reason: re-prompt once with the missing context, stage the reason for the Review Console, or both? And how is a lens that stays uncovered carried into Step 7's summary and the PR verdict comment? Resolve this before the deliverables above are built; the answer sets which of them apply.\n\n## Release Note\n\nReview no longer drops a lens agent's BLOCKED or NEEDS_CONTEXT reason silently; the dispatcher routes it and reports any lens left uncovered.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — add the BLOCKED/NEEDS_CONTEXT routing rule\n- `tests/review-absence-claim-ground-truth-conformance.test.js` — sibling suite to extend or mirror for the new pin\n\n_Filed by `ledger resolve gate` via specShapedBody._",
-        "createdAt": "2026-10-20T22:27:11Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 3835,
-        "state": "OPEN",
-        "title": "Route a lens agent's BLOCKED or NEEDS_CONTEXT reason in review's Step 3 dispatch",
-        "updatedAt": "2026-10-24T05:39:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -11035,21 +11121,9 @@
       ]
     },
     {
-      "number": 6149,
-      "blockedBy": [
-        6146
-      ]
-    },
-    {
       "number": 6148,
       "blockedBy": [
         6147
-      ]
-    },
-    {
-      "number": 6147,
-      "blockedBy": [
-        6146
       ]
     },
     {
