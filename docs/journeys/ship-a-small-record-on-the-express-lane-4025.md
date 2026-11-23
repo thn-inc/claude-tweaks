@@ -40,7 +40,7 @@ files:
 - **Should feel:** A straight answer with reasons. No judgment call to second-guess.
 - **Should understand:**
   - The verdict is `eligible: true|false`, and `reasons` names every failed rule verbatim (`risk is not low`, `more than 3 Key Files`, `protected path: …`, `frontend surface`, …).
-  - Protected paths are the same in every project: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
+  - Protected paths default to a shipped list, which a project replaces with `protected-paths` in the main checkout's `policy.yml`: hook code, `skills/_shared/`, CI and forge config (`.github/`, `.gitlab-ci.yml`, `.circleci/`, git hooks), `CODEOWNERS`, `package.json`, the agent's permission files (`.claude/settings*.json`, `.mcp.json`), and the policy and verify-scope files. A Key File is judged as the path it resolves to, so `a/../skills/_shared/x.md` is protected too.
   - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
   - A record carrying a kept risk flag (`Risk-flags: migrations`, or any slug) is ineligible, with the reason `record carries a kept risk flag`, because the lane composes no plan to carry the `Proof(<slug>)` line plan-audit Check G requires. A line that cannot be read counts as every category flagged. `Risk-flags: none` and no line at all do not block the lane (#4618).
@@ -89,4 +89,5 @@ files:
 - Created during build of #4025: the express lane, a single-agent path for eligible trivial records, with an escalation hand-off to `/flow` and post-merge sampling.
 - Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
 - Step 3's `spec: {n}` clause and red flag added during build of #5347 (express runs record their record; see `merge-a-parked-unattended-pr-3784.md` for the merge it unblocks and `gather-the-wrap-up-fact-pack-1930.md` for the pack's `config` rung).
+- Updated during the build of #6020: the protected list is the protected-paths policy value
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).

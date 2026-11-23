@@ -36,6 +36,7 @@ const FACTS = [
   { section: PREAMBLE, re: /`\{branch\}` is what `git -C "\{wt\}" branch --show-current` prints/, name: 'branch from the worktree, not run-state.json' },
   { section: PREAMBLE, re: /`\$PIPELINE_RUN_DIR`, wherever a procedure this file cites reads it, is `\{run-dir\}`/, name: 'M4: $PIPELINE_RUN_DIR is bound to {run-dir}' },
   { section: ELIG, re: /express-lane\.js" gate --issue \{n\} --run "\{run-dir\}"/, name: 'gate verb' },
+  { section: ELIG, re: /The protected-path list is a policy value, `protected-paths`/, name: 'protected list is a policy value' },
   { section: ELIG, re: /The lane requires `gh`: with `gh` absent the express path is never taken/, name: 'the lane requires gh' },
   { section: PROC, re: /express-lane\.js" check --run "\{run-dir\}" --issue \{n\} --integration-branch \{ref\}/, name: 'check verb' },
   { section: PROC, re: /merge-verification [^\n.]*never `off`/, name: 'AC4.1 prose: merge-verification never off' },
