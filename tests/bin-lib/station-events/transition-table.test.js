@@ -4,9 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { STATIONS } = require('../../../plugin/bin/lib/station-events/stations');
+const { readText } = require('../../helpers/read-skill');
 
 const ROOT = path.resolve(__dirname, '../../..');
-const doc = fs.readFileSync(path.join(ROOT, 'docs/reference/station-events.md'), 'utf8');
+const doc = readText(path.join(ROOT, 'docs/reference/station-events.md'));
 
 // The text from the `## {heading}` line to the next `## ` line.
 function section(md, heading) {
@@ -51,7 +52,7 @@ test('AC1.2 every cited code path exists', () => {
       assert.ok(fs.existsSync(file), `${r[0]}: ${m[1]} does not exist`);
       const fn = m[2];
       const defines = new RegExp(`(?:\\bfunction\\s*\\*?\\s*${fn}\\s*\\(|\\b(?:const|let|var)\\s+${fn}\\s*=|^\\s*(?:async\\s+)?${fn}\\s*\\([^)]*\\)\\s*\\{)`, 'm');
-      assert.match(fs.readFileSync(file, 'utf8'), defines, `${r[0]}: ${m[1]} does not define ${fn}`);
+      assert.match(readText(file), defines, `${r[0]}: ${m[1]} does not define ${fn}`);
     }
   }
 });
