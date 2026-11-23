@@ -25,6 +25,10 @@
 // attempt flags (all or none), null without them, when the ladder is off, or
 // when the ladder is spent.
 //
+// Limitation: `startEffort` and `next` resolve the model with policy.yml's `model-stance` only, not the
+// run's `--stance` (Manifesto lever) or session failure-avoidance (`failedModels`), so the same-model
+// check (`next` null) and the start effort can differ from what resolve-profile.js returns for the dispatch.
+//
 // Rule: --rule, else the run's config.yml via --run, else policy.yml, else the
 // schema default (lane). --run is validated even when --rule is passed (a
 // mistyped run id never passes silently); the resolved policy value is then

@@ -4690,7 +4690,7 @@ test('#6002: a second-escalation step-up that does not resolve is a refused rela
   assert.ok(final.stop.detail.endsWith('; after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable)'), final.stop.detail);
 });
 
-test('#6002: the ladder bound reads ctx.relaunch too, so an attempt that set no implementer cannot queue a fourth launch', () => {
+test('#6002: the ladder bound reads ctx.relaunch alone, so an attempt that set no implementer cannot queue a fourth launch', () => {
   const policy = { 'implementer-tier': { value: 'record' }, 'model-effort': { value: 'profile' } };
   // Attempt 3 resolved no model, so ctx.implementer still holds attempt 2 (escalations 1); ctx.relaunch holds the second relaunch.
   const ctx = {

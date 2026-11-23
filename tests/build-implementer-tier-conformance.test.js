@@ -53,6 +53,8 @@ const PATTERNS = [
   [lit('renders as `inherit` on either side'), 'AC6.2: a null effort renders as inherit'],
   [lit('; no line when `next` is `null`'), 'AC6.3: no escalation line for a null next'],
   [lit("Triggers (`blocked`, `fix-round-failed`) and the fresh-implementer rule are the escalation's"), 'ladder keeps the #5999 triggers and fresh-implementer rule'],
+  [lit('except that the re-review of the first fix round after an escalation failing is also `fix-round-failed`'), 'ladder: a second failed fix round reaches the profile step'],
+  [lit('as do fix rounds after the last escalation'), "ladder: SDD's own handling only after the last escalation"],
   [lit('its `effort` parameter `next.effort` (none when `null`)'), 'AC2.1: the next attempt dispatches at next.effort'],
   [lit('(with `--run "$PIPELINE_RUN_DIR"` when set)'), 'AC7.4 (lane): the next-attempt call carries --run'],
   [lit("before any escalation line, its start effort: the profile line's `effort` or the marker start line's"), "AC6.2: the first escalation's current effort is the start effort"],

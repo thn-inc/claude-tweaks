@@ -226,7 +226,13 @@ test('the attempt-3 prompts say "previous attempt"; attempt 2 is byte-identical 
     assert.ok(p.includes('Your previous attempt') && !p.includes('Your first attempt'), p);
   }
   assert.strictEqual(redTestsPrompt(failing, { attempt: 3 }), redTestsPrompt(failing).replace('Your first attempt', 'Your previous attempt'));
-  assert.strictEqual(cannotCompletePrompt('x', { attempt: 3 }), cannotCompletePrompt('x').replace('Your first attempt', 'Your previous attempt'));
+  assert.strictEqual(cannotCompletePrompt('x', { attempt: 3 }), cannotCompletePrompt('x').replace('Your first attempt', 'Your previous attempt').replace('continue from them.', "continue from them. An earlier attempt's work is already committed on this branch."));
+});
+
+test("only the attempt-3 cannot-complete prompt says an earlier attempt's work is already committed", () => {
+  const clause = "An earlier attempt's work is already committed on this branch.";
+  assert.ok(cannotCompletePrompt('x', { attempt: 3 }).includes(clause));
+  assert.ok(!cannotCompletePrompt('x', { attempt: 2 }).includes(clause));
 });
 
 test('header lists the three outcomes and never requires steps.js', () => {

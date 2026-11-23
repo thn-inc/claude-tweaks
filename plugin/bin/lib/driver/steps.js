@@ -69,7 +69,7 @@
 // The implementer relaunch (#5997; relaunch.js decides and writes the prompt): under `implementer-tier:
 // record` with `model-effort: inherit` a failed first attempt is relaunched once, one profile up; under the
 // effort ladder (#6002, `record` with `model-effort: profile`, effortLadder) a failed attempt is relaunched
-// while ctx.implementer.escalations is below 2, so at most twice, each step chosen by nextAttempt (effort
+// while ctx.relaunch.escalations (0 before any relaunch) is below 2, so at most twice, each step chosen by nextAttempt (effort
 // first, after red tests, then the profile). Triggers: the worker step ending `cannot-complete` (its
 // uncommitted edits stay in the worktree, nothing resets them) and the table's test step ending red
 // (`failing-test`); under the ladder also the first relaunch's worker ending `cannot-complete` and its test
