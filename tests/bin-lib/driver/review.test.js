@@ -260,12 +260,13 @@ test('AC3: evidence shape', () => {
 // canonicalRealpath (an existing path otherwise resolves to itself, a missing one to null).
 const WT = path.resolve('/wt');
 const at = (rel) => path.join(WT, ...rel.split('/'));
-function pathOpts({ types = {}, real = {}, sensitivePaths = [] } = {}) {
+function pathOpts({ types = {}, real = {}, sensitivePaths = [], protectedPathGlobs } = {}) {
   const typeOf = new Map([[WT, 'directory'], ...Object.entries(types).map(([rel, t]) => [at(rel), t])]);
   const realOf = new Map(Object.entries(real).map(([rel, r]) => [rel === '' ? WT : at(rel), r]));
   return {
     wt: WT,
     sensitivePaths,
+    protectedPathGlobs,
     deps: {
       lstatType: (p) => ({ type: typeOf.get(p) || 'missing', code: null }),
       canonicalRealpath: (p) => (realOf.has(p) ? realOf.get(p) : (typeOf.has(p) ? p : null)),
@@ -2000,4 +2001,23 @@ test('reviewRequired: off still decides alone for a widened record; unreadable w
   // A record beyond the express bounds keeps today's reasons whatever the widening says.
   assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: ['risk'] }), { on: true, reason: 'size medium is beyond size:low' });
   assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: 'risk' }), { on: true, reason: 'size medium is beyond size:low' });
+});
+
+test('AC3.1 (guard half): protected-paths [] still refuses an evidence path under hooks/', () => {
+  assert.strictEqual(pathRuleViolation('hooks/a.test.js', pathOpts({ protectedPathGlobs: [] })), 'protected-or-sensitive');
+});
+
+test('AC7.1, AC7.2: with a list passed the guard tests the shipped list and the list', () => {
+  const opts = pathOpts({ protectedPathGlobs: ['infra/**'] });
+  for (const p of ['hooks/a.test.js', 'infra/a.test.js', '.github/x.test.js']) assert.strictEqual(pathRuleViolation(p, opts), 'protected-or-sensitive', p);
+  assert.strictEqual(pathRuleViolation('tests/a.test.js', opts), null);
+});
+
+test('AC9.2 (guard half): the union keeps the three case spellings', () => {
+  const opts = pathOpts({ protectedPathGlobs: ['infra/**'] });
+  for (const p of ['INFRA/a.test.js', 'Infra/a.test.js']) assert.strictEqual(pathRuleViolation(p, opts), 'protected-or-sensitive', p);
+});
+
+test('a protectedPathGlobs that is not a list of strings fails closed', () => {
+  for (const bad of ['infra/**', [5]]) assert.strictEqual(pathRuleViolation('tests/a.test.js', pathOpts({ protectedPathGlobs: bad })), 'protected-or-sensitive', JSON.stringify(bad));
 });
