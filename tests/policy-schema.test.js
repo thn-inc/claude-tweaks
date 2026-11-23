@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 121 -> 122, #6019
-  assert.strictEqual(POLICY_KEYS.length, 122);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 122);
+  // Last bump: 122 -> 123, #6019
+  assert.strictEqual(POLICY_KEYS.length, 123);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 123);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -1199,6 +1199,31 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
     const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('review-lens-selection resolves tier by default and for an invalid value, adaptive when set (#6001)', () => {
+  const cases = [[null, 'tier'], ['review-lens-selection: sideways\n', 'tier'], ['review-lens-selection: adaptive\n', 'adaptive']];
+  for (const [policy, expected] of cases) {
+    const repo = tmpRepo();
+    try {
+      if (policy !== null) writePolicy(repo, policy);
+      const r = driverCli(['--values', 'review-lens-selection'], repo);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout.trim(), expected, `policy.yml: ${policy}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+  // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-review-lens-sel-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-selection: adaptive\n');
+    const r = driverCli(['--run', runDir, '--values', 'review-lens-selection'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout.trim(), 'adaptive', r.stderr);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(runDir, { recursive: true, force: true });

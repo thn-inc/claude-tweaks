@@ -115,6 +115,19 @@ lines, and it pins `KEYS.length` to a literal `6`, which is what lets an added o
 red. Import the scanner. Keep the expected count, list, or threshold a literal; a test-local
 constant is fine.
 
+**Retire a stand-in parser once the shipped one lands.** A record that writes a format before any
+code reads it may pin that format with a parser of its own inside the test. When a later record
+ships the real reader, the stand-in becomes a second recognizer, and the two can disagree. #6056
+pinned `specify/planning.md`'s held-questions schema with a hand-typed `HELD_QUESTIONS` and its own
+`parseHeldQuestions` in `tests/specify-planning-conformance.test.js`. #6059 then shipped
+`plugin/bin/lib/issues/planning-hold.js`'s `readPlanningHold` and a writer-reader pin in
+`tests/specify-planning-answer-conformance.test.js`, but left the stand-in in place. They disagree
+on an empty block: the stand-in's test asserts it is malformed, while `readPlanningHold` returns
+`held` with zero questions (the "Review Focus 4" test in `tests/bin-lib/issues/planning-hold.test.js`).
+When you ship the reader, grep `tests/` for the format's marker strings
+(`grep -rn 'held-questions:start' tests/`), move every assertion the stand-in makes onto the real
+reader, and delete the stand-in.
+
 ### An allowlist entry owes a stale-check of its own — lazy-loaded
 
 When a sweep ships with an exemption list, read `advanced-proof-patterns.md`'s "An allowlist entry owes a stale-check of its own" before writing it: every entry needs a stale-check, proved by doctoring the entry both ways, whose failure says *shrink the list*.
@@ -237,6 +250,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 | Banning only a deleted rule's own literal (its number, its old phrase) and calling the retirement swept | Neighbouring prose restates a rule as a consequence in its own reasoning, in words the ban never names. #4468 removed tidy's 15-row scan cap and banned `/15[- ]rows?\b/`, but `plugin/skills/tidy/step-1-records.md` still justified two `info` severities with "Step 6 caps rows highest-severity-first … would permanently evict actionable rows", which the ban could not see. Before writing the ban, grep every file inlined or read beside the changed one for the rule's mechanism words (`cap`, `truncat`, `evict`, `at most`), give each hit a verdict, and pin each reworded site's absence in the same change (`tests/tidy-scan-dispatch-conformance.test.js`) |
 | A retirement sweep whose walk stops at `plugin/` and `docs/` | `.claude/skills/` restates plugin contracts, so a stale claim there survives with the sweep green. #4899's spec named only `plugin/` and `docs/plugin-structure.md`, and `.claude/skills/gh-api-module-pattern/batching-failure-posture.md` kept the old exit 4 claim until review caught it. Add `.claude/skills/` to the walk and assert a file from it reached the list (`tests/flow-claim-preflight.test.js`'s AC8.1; `tests/impeccable-retired-scripts-sweep.test.js`'s `SWEPT_DIRS` walks it too). The grep behind a command-form pin owes the same root |
 | Ending a guard clause's exact-substring anchor short of the clause's own punctuation | A suffix widening keeps the anchor a substring, so the pin stays green while the guard loosens. #4958's `` whose body starts with that marker and whose `authorAssociation` is trusted `` still matched `…is trusted or CONTRIBUTOR.` until review's mutation probe caught it. End the anchor on the delimiter that closes the clause (`is trusted.`, `under every available reading:`), as `SIGNAL_ANCHORS` and `RULE_ANCHORS` in `tests/plan-review-convergence-conformance.test.js` do. This catches a suffix only: a clause inserted mid-sentence still needs a whole-sentence pin (#4964) |
+| Pinning a CLI call spec in skill prose by only the flags that set it apart from its sibling calls (`--status`, `--step`, `--text`) | The required flag every call shares can be missing from all of them with the pin still green, while the CLI exits 2 on each call. #6060's `plugin/skills/build/plan-reuse.md` shipped five `log-decision.js` specs without `--run "$PIPELINE_RUN_DIR"` through two task reviews, because its `FACTS` pinned only `--step` and `--text`; the final review caught it (`ff0cb81cf`). Put the required flag in the same pattern as the distinguishing ones (`` /--run "\$PIPELINE_RUN_DIR" --status SKIP[^\n]*--step "Spec Step 2/ ``). Where the prose states the shared prefix once and lists per-call flags beneath it (`plan-reuse.md`'s "All checks valid" section), pin that prefix sentence too, with a control that strips only `--run` |
 
 ## Advanced proof patterns — lazy-loaded
 
