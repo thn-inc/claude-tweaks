@@ -3,6 +3,7 @@ files:
   - plugin/bin/express-lane.js
   - plugin/bin/lib/express/cli.js
   - plugin/bin/lib/express/eligibility.js
+  - plugin/bin/lib/express/policy.js
   - plugin/bin/lib/express/sampling.js
   - plugin/bin/lib/express/queue.js
   - plugin/skills/_shared/express-lane.md
@@ -44,7 +45,7 @@ files:
   - A `Surface:` of `terminal` counts as a frontend, like `web`, `mobile` and `desktop`.
   - Exit 2 means `gh` is absent, so the lane is never taken.
   - A record carrying a kept risk flag (`Risk-flags: migrations`, or any slug) is ineligible, with the reason `record carries a kept risk flag`, because the lane composes no plan to carry the `Proof(<slug>)` line plan-audit Check G requires. A line that cannot be read counts as every category flagged. `Risk-flags: none` and no line at all do not block the lane (#4618).
-- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that lists only the first failure; an eligible verdict, or an express merge, for a record whose body carries a `Risk-flags:` line naming a slug or one that cannot be read.
+- **Red flags:** An eligible verdict for a record that touches `hooks/` or a merge-sensitive path; a verdict that changes when the record's own branch edits `protected-paths` (the gate reads the main checkout's `policy.yml`); a malformed `protected-paths` value (`["infra/**"]`, an empty element) protecting less than the shipped list; a verdict that lists only the first failure; an eligible verdict, or an express merge, for a record whose body carries a `Risk-flags:` line naming a slug or one that cannot be read.
 
 ### 3. Dispatch and watch one agent ship it
 - **URL:** `/claude-tweaks:dispatch` (or `/claude-tweaks:flow #{n}` for one record, auto mode, worktree strategy, no step list)
