@@ -100,9 +100,8 @@ function riskOf(values) {
 function startEffort({ risk, launchEffort } = {}) {
   const base = clampEffort(launchEffort);
   if (base === null) return null;
-  const ceiling = risk === 'low' ? 'low' : risk === 'medium' ? 'medium' : null;
-  if (ceiling === null) return base;
-  return EFFORT_SCALE[Math.min(EFFORT_SCALE.indexOf(base), EFFORT_SCALE.indexOf(ceiling))];
+  if (risk !== 'low' && risk !== 'medium') return base;
+  return EFFORT_SCALE[Math.min(EFFORT_SCALE.indexOf(base), EFFORT_SCALE.indexOf(risk))];
 }
 
 function nextAttempt({ profile, effort, escalations, trigger, resolveProfile } = {}) {

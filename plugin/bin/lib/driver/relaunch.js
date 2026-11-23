@@ -93,7 +93,10 @@ function planLadder({ profile, model, effort, escalations, trigger, policy }, ro
 // `{profile}` alone when the effort is null (always under record + inherit, so that note reads as #5997's).
 // Without a history the note is built from `r`'s own trigger, from and to. A refused plan (a stepUp throw)
 // has no profile to step up to: its `to` is null, named `no profile`.
-const side = (profile, effort) => (profile === null ? 'no profile' : typeof effort === 'string' ? `${profile}@${effort}` : profile);
+function side(profile, effort) {
+  if (profile === null) return 'no profile';
+  return typeof effort === 'string' ? `${profile}@${effort}` : profile;
+}
 function relaunchNote(r) {
   const entries = Array.isArray(r.history) ? r.history : [r];
   const parts = entries.map((e) => `${e.trigger}, ${side(e.from, e.fromEffort)} to ${side(e.to, e.toEffort)}`);
