@@ -204,13 +204,15 @@ const TASK_SCORER = {
   key: 'task',
   init: () => ({
     reviews: 0, verdict: { agree: 0, disagree: 0, share: null, byArchivedTier: {} },
-    recall: { caught: 0, of: 0, share: null, unlocated: 0, itemsUnparsed: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
+    recall: { caught: 0, of: 0, share: null, unlocated: 0, itemsUnparsed: 0, replayItemsUnparsed: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
   }),
+  // A reply with a verdict line but no parseable items still scores its verdict. For Needs fixes its items are unknown,
+  // never none (as the archive side's reply reading, reviews-branch.js); an Approved reply without headings has none.
   judge(text) {
     const verdict = parseTaskVerdict(text);
     if (verdict === null) return null;
     const parsed = parseReviewItems(text);
-    return { verdict, items: parsed ? parsed.items : [] };
+    return { verdict, items: parsed ? parsed.items : [], itemsUnparsed: parsed === null && verdict === 'needs-fixes' };
   },
   tally(e, { judged, report, tier }) {
     e.reviews += 1;
@@ -220,10 +222,9 @@ const TASK_SCORER = {
     side[key] += 1;
     for (const i of judged.items) e.itemsBySeverity[i.sev] += 1;
     e.recall.unlocated += report.items.filter((i) => i.locations.length === 0).length;
-    if (report.itemsUnparsed) {
-      e.recall.itemsUnparsed += 1;
-      return;
-    }
+    if (judged.itemsUnparsed) e.recall.replayItemsUnparsed += 1;
+    if (report.itemsUnparsed) e.recall.itemsUnparsed += 1;
+    if (judged.itemsUnparsed || report.itemsUnparsed) return;
     const targets = report.items.filter((i) => CI.includes(i.sev) && i.locations.length > 0);
     e.recall.of += targets.length;
     e.recall.caught += caughtItems(targets, replayRows(judged.items));
@@ -233,7 +234,7 @@ const TASK_SCORER = {
     verdict.share = share(verdict.agree, verdict.agree + verdict.disagree);
     for (const t of Object.values(verdict.byArchivedTier)) t.share = share(t.agree, t.agree + t.disagree);
     e.recall.share = share(e.recall.caught, e.recall.of);
-    e.itemsPerReview = perReview(e.itemsBySeverity, e.reviews);
+    e.itemsPerReview = perReview(e.itemsBySeverity, e.reviews - e.recall.replayItemsUnparsed);
   },
 };
 

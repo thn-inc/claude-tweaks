@@ -397,13 +397,15 @@ test('AC5.1: the Approved review replayed as Needs fixes is one verdict disagree
   });
   assert.equal(r.json.arms.a.task.reviews, 2);
   assert.deepEqual(r.json.arms.a.task.itemsBySeverity, { critical: 0, important: 1, minor: 0 });
-  assert.deepEqual(r.json.arms.a.task.itemsPerReview, { critical: 0, important: 0.5, minor: 0 });
+  // The headingless Needs fixes replay of review 1 has unknown items, so it is out of the per-review denominator.
+  assert.deepEqual(r.json.arms.a.task.itemsPerReview, { critical: 0, important: 1, minor: 0 });
+  assert.equal(r.json.arms.a.task.recall.replayItemsUnparsed, 1);
 });
 
 test('AC4.1: the unlocated Minor counts as unlocated 1 and is in no denominator', async () => {
   const x = await extractedBranch('task');
   const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
-  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0 });
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
 });
 
 test('task: a reply with no verdict line is notJudged could-not-parse, exit 3', async () => {
@@ -426,18 +428,31 @@ test('task: a missing reply is notJudged no-reply and adds nothing to the verdic
 test('task: a replay far from the archived Important is not caught', async () => {
   const x = await extractedBranch('task');
   const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : '#### Important\n- src/x.js:16 null\n\nTask quality: Needs fixes')));
-  assert.deepEqual(r.json.arms.a.task.recall, { caught: 0, of: 1, share: 0, unlocated: 1, itemsUnparsed: 0 });
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 0, of: 1, share: 0, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
 });
 
 test('task: an itemsUnparsed review scores its verdict and counts in recall.itemsUnparsed, not in of', async () => {
   const x = await extractedBranch('task', { boldLabel: true });
   const fixture = JSON.parse(fs.readFileSync(path.join(x.out, 'reviews-fixture.json'), 'utf8'));
   const t3 = fixture.slots.find((s) => s.agentId === 't3').name.split('/').pop();
-  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === t3 ? VERDICT('Needs fixes') : slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === t3 ? TASK_FIX : slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
   assert.equal(r.code, 0, r.deps.errs.join('\n'));
   assert.equal(r.json.arms.a.task.reviews, 3);
   assert.equal(r.json.arms.a.task.verdict.agree, 3);
-  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 1 });
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 1, replayItemsUnparsed: 0 });
+});
+
+test('task: a replay with a verdict but unparseable items scores its verdict and is neither found-nothing nor in the item rates', async () => {
+  const x = await extractedBranch('task');
+  const unparsed = '**Important**\n- src/x.js:12 null\n\nTask quality: Needs fixes';
+  const r = await scoreReviews(x, workflow(x, ({ slot }) => (slot === 'task' ? '#### Minor\n- a thing\n\nTask quality: Approved' : unparsed)));
+  assert.equal(r.code, 0, r.deps.errs.join('\n'));
+  const t = r.json.arms.a.task;
+  assert.deepEqual(t.verdict, { agree: 2, disagree: 0, share: 1, byArchivedTier: { standard: { agree: 1, disagree: 0, share: 1 }, capable: { agree: 1, disagree: 0, share: 1 } } });
+  assert.deepEqual(t.recall, { caught: 0, of: 0, share: null, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 1 });
+  assert.deepEqual(t.itemsBySeverity, { critical: 0, important: 0, minor: 1 });
+  assert.deepEqual(t.itemsPerReview, { critical: 0, important: 0, minor: 1 });
+  assert.equal(t.reviews, 2);
 });
 
 test('an item citing two locations is caught by a replay item near its second', async () => {
@@ -451,7 +466,7 @@ test('an item citing two locations is caught by a replay item near its second', 
   fs.writeFileSync(file, JSON.stringify(archived));
   const reply = '#### Important\n- src/q.js:52 other\n\nTask quality: Needs fixes';
   const r = await scoreReviews({ ...x, out: copy }, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : reply)));
-  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0 });
+  assert.deepEqual(r.json.arms.a.task.recall, { caught: 1, of: 1, share: 1, unlocated: 1, itemsUnparsed: 0, replayItemsUnparsed: 0 });
 });
 
 test('wholeBranch: recall of located items, the Critical-or-Important share, "No issues" scores zero items', async () => {
@@ -501,4 +516,21 @@ test('fixture summary: selected and excluded per reason and per archived tier', 
     selected: { total: 2, byArchivedTier: { standard: 1, capable: 1 } }, excludedByReason: { 'prompt-file-gone': 1 }, excludedByTier: { standard: 1 },
   });
   assert.deepEqual(Object.keys(r.json), ['notes', 'role', 'fixture', 'unidentifiedAgents', 'unidentifiedCost', 'arms']);
+});
+
+test('fixture summary: an exclusion with no tier lands under unknown and the per-tier total equals the per-reason total', async () => {
+  const x = await extractedBranch('task', { pointer: 'gone' });
+  // A run-level exclusion carries no tier: add one beside the tiered prompt-file-gone row.
+  const copy = path.join(root, 'tierless');
+  fs.cpSync(x.out, copy, { recursive: true });
+  const file = path.join(copy, 'reviews-fixture.json');
+  const fixture = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fixture.excluded.push({ run: 'run-without-review', reason: 'no-review' });
+  fs.writeFileSync(file, JSON.stringify(fixture));
+  const r = await scoreReviews({ ...x, out: copy }, workflow(x, ({ slot }) => (slot === 'task' ? VERDICT('Approved') : TASK_FIX)));
+  const { excludedByReason, excludedByTier } = r.json.fixture;
+  assert.deepEqual(excludedByTier, { standard: 1, unknown: 1 });
+  assert.deepEqual(excludedByReason, { 'prompt-file-gone': 1, 'no-review': 1 });
+  const sum = (o) => Object.values(o).reduce((n, v) => n + v, 0);
+  assert.equal(sum(excludedByTier), sum(excludedByReason));
 });
