@@ -344,6 +344,8 @@ function extractReviews(opts, deps) {
   const c = {
     role, PROFILES, EFFORT_SCALE, mainRoot: path.resolve(opts.runs, '..', '..'), transcripts: indexTranscripts(opts.transcripts, fs).files,
     exists: existsOnDisk(fs), out, arms,
+    // task-vs-branch: the task reviews that are not a Needs fixes with a Critical or Important item (no slot, no row).
+    ...(role.key === 'task-vs-branch' ? { notQualifying: 0 } : {}),
   };
   // Required here, not at the top: reviews-branch.js requires this module's helpers at its own top level.
   const branch = role.kind === 'branch' ? require('./reviews-branch.js') : null;
@@ -430,7 +432,7 @@ function extractReviews(opts, deps) {
   // The lens role counts slots per lens; a branch role per archived tier.
   const by = {};
   for (const s of slots) bump(by, role.kind === 'lens' ? s.lens : s.archivedTier);
-  const totals = { reviews: slots.length, [role.kind === 'lens' ? 'byLens' : 'byArchivedTier']: by };
+  const totals = { reviews: slots.length, [role.kind === 'lens' ? 'byLens' : 'byArchivedTier']: by, ...(hasOwn(c, 'notQualifying') ? { notQualifying: c.notQualifying } : {}) };
   if (slots.length === 0 || (requested.minReviews !== undefined && slots.length < requested.minReviews)) {
     deps.err(JSON.stringify({ shortfall: { requested, available: totals }, excluded }));
     return EXIT_SHORTFALL;

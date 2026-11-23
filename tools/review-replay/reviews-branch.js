@@ -75,9 +75,13 @@ function examineBranch(r, item, c, deps, row) {
   const got = promptFor(item, c, fs);
   if (got.reason) return { tier, reason: got.reason };
   const { prompt, transcript, file } = got;
-  const raw = lastAssistantText(file, fs);
-  const reply = raw === null ? null : row.readReply(strippedReply(raw, prompt, c.mainRoot));
-  if (reply === null) return { tier, reason: 'report-unparsed' };
+  // A row with no readReply (the whole-branch prompt task-vs-branch replays) has no archived findings of its own.
+  let reply = { verdict: null, items: [], itemsUnparsed: false };
+  if (row.readReply) {
+    const raw = lastAssistantText(file, fs);
+    reply = raw === null ? null : row.readReply(strippedReply(raw, prompt, c.mainRoot));
+    if (reply === null) return { tier, reason: 'report-unparsed' };
+  }
   const pair = shaPairOf(prompt);
   if (pair === null) return { tier, reason: 'no-sha-range' };
   const resolved = [];
@@ -111,27 +115,120 @@ function examineBranch(r, item, c, deps, row) {
   };
 }
 
+// Whether the rendered-text barrier flags slot s: its texts as they will be written, but for the archived shas.
+function leaks(s, r, c) {
+  const texts = renderSlot(s, { mainRoot: c.mainRoot, out: c.out, repoDir: path.join(c.out, 'repos', `${r.run}--r0`), shaMap: {}, arms: c.arms });
+  return [...texts.copies, ...texts.prompts].some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: c.out, exists: c.exists }).length > 0);
+}
+
+const excludeRow = (r, item, x) => ({ run: r.run, ...(item.agentId != null ? { agentId: item.agentId } : {}), ...(x.tier !== undefined ? { tier: x.tier } : {}), reason: x.reason });
+
 // A run's slots for the branch role c.role.key, in dispatch order, named `{role}`, `{role}.2`, …; every dispatch of the
 // role that fails a check goes through `exclude` as { run, agentId, tier (when known), reason }.
 function selectBranchSlots(r, dispatches, c, deps, exclude) {
+  if (c.role.key === 'task-vs-branch') return selectTaskVsBranch(r, dispatches, c, deps, exclude);
   const row = BRANCH_ROLES[c.role.key];
   if (!row) throw new Error(`--role ${c.role.key}: no branch slot selection`);
   const slots = [];
   for (const { item } of dispatches.filter((d) => row.isDispatch(d.item))) {
     const x = examineBranch(r, item, c, deps, row);
-    let reason = x.reason;
-    if (!reason) {
+    if (!x.reason) {
       const s = x.candidate;
       s.name = slots.length === 0 ? c.role.key : `${c.role.key}.${slots.length + 1}`;
-      // The rendered-text barrier on the texts as they will be written, but for the archived shas.
-      const texts = renderSlot(s, { mainRoot: c.mainRoot, out: c.out, repoDir: path.join(c.out, 'repos', `${r.run}--r0`), shaMap: {}, arms: c.arms });
-      const all = [...texts.copies, ...texts.prompts];
-      if (all.some((t) => unrewrittenPaths(t.text, { mainRoot: c.mainRoot, runName: r.run, outDir: c.out, exists: c.exists }).length > 0)) reason = 'unrewritten-path';
+      if (leaks(s, r, c)) x.reason = 'unrewritten-path';
       else slots.push(s);
     }
-    if (reason) {
-      exclude({ run: r.run, ...(item.agentId != null ? { agentId: item.agentId } : {}), ...(x.tier !== undefined ? { tier: x.tier } : {}), reason });
+    if (x.reason) exclude(excludeRow(r, item, x));
+  }
+  return slots;
+}
+
+// The base of a range from the whole-branch base `wbBase` to `head`: wbBase when it is an ancestor of head, else their
+// merge base (a run that merged main in before its whole-branch review) -> { base, baseFrom }, or null when the two
+// share no merge base (no-merge-base).
+function rangeBase(wbBase, head, deps) {
+  try {
+    deps.git(['merge-base', '--is-ancestor', wbBase, head]);
+    return { base: wbBase, baseFrom: 'whole-branch' };
+  } catch {
+    // Exit 1: not an ancestor.
+  }
+  try {
+    const base = String(deps.git(['merge-base', wbBase, head])).trim();
+    return base ? { base, baseFrom: 'merge-base' } : null;
+  } catch {
+    return null;
+  }
+}
+
+// The run's whole-branch prompt for task-vs-branch: its first whole-branch dispatch, checked as --role whole-branch
+// checks it bar its archived reply, else null (no-whole-branch-prompt) — a later whole-branch dispatch never stands in.
+function wholeBranchOf(r, dispatches, c, deps) {
+  const first = dispatches.find((d) => isWholeBranch(d.item));
+  if (!first) return null;
+  const x = examineBranch(r, first.item, c, deps, { readReply: null });
+  if (x.reason) return null;
+  x.candidate.name = c.role.key;
+  return leaks(x.candidate, r, c) ? null : x.candidate;
+}
+
+// One task review for task-vs-branch -> { reason, tier? }, { notQualifying: true } (an Approved review, or a Needs
+// fixes one with no Critical or Important item), or { pair }: the whole-branch prompt `wb` replayed at the head the
+// task review reviewed and at wb's own head, each scored on the task review's Critical and Important items.
+function examineTaskReview(r, item, c, deps, wb) {
+  const tier = item.tier;
+  if (typeof tier !== 'string' || !hasOwn(c.PROFILES, tier)) return { reason: 'no-archived-tier' };
+  const got = promptFor(item, c, deps.fs);
+  if (got.reason) return { tier, reason: got.reason };
+  const raw = lastAssistantText(got.file, deps.fs);
+  const reply = raw === null ? null : BRANCH_ROLES.task.readReply(strippedReply(raw, got.prompt, c.mainRoot));
+  if (reply === null) return { tier, reason: 'report-unparsed' };
+  if (reply.verdict !== 'needs-fixes') return { notQualifying: true };
+  if (reply.itemsUnparsed) return { tier, reason: 'items-unparsed' };
+  const items = reply.items.filter((i) => i.sev === 'critical' || i.sev === 'important');
+  if (items.length === 0) return { notQualifying: true };
+  // The prompt's own head is the task's commit before its fix round: the fix is re-reviewed under `re-review`.
+  const shas = shaPairOf(got.prompt);
+  if (shas === null) return { tier, reason: 'no-sha-range' };
+  let taskHead;
+  try {
+    taskHead = String(deps.git(['rev-parse', '--verify', `${shas.head}^{commit}`])).trim();
+  } catch {
+    return { tier, reason: 'commit-not-in-clone' };
+  }
+  if (wb === null) return { tier, reason: 'no-whole-branch-prompt' };
+  const pair = [];
+  for (const [at, head] of [['task-head', taskHead], ['final-head', wb.promptHead]]) {
+    const b = rangeBase(wb.promptBase, head, deps);
+    if (b === null) return { tier, reason: 'no-merge-base' };
+    pair.push({
+      ...wb, archivedBase: b.base, archivedHead: head, baseFrom: b.baseFrom, at,
+      verdict: reply.verdict, items, itemsUnparsed: false, taskTier: tier, taskAgentId: item.agentId,
+    });
+  }
+  return { pair };
+}
+
+// A run's task-vs-branch slots: per qualifying task review, in dispatch order, `task-vs-branch[.k]` at the task-reviewed
+// head and its control `task-vs-branch[.k]--final` at the whole-branch head. A review that does not qualify counts in
+// c.notQualifying; one that fails a check goes through `exclude`.
+function selectTaskVsBranch(r, dispatches, c, deps, exclude) {
+  const wb = wholeBranchOf(r, dispatches, c, deps);
+  const slots = [];
+  for (const { item } of dispatches.filter((d) => BRANCH_ROLES.task.isDispatch(d.item))) {
+    const x = examineTaskReview(r, item, c, deps, wb);
+    if (x.notQualifying) {
+      c.notQualifying += 1;
+      continue;
     }
+    if (!x.reason) {
+      const k = slots.length / 2 + 1;
+      const name = k === 1 ? c.role.key : `${c.role.key}.${k}`;
+      [x.pair[0].name, x.pair[1].name] = [name, `${name}--final`];
+      if (x.pair.some((s) => leaks(s, r, c))) x.reason = 'unrewritten-path';
+      else slots.push(...x.pair);
+    }
+    if (x.reason) exclude(excludeRow(r, item, x));
   }
   return slots;
 }
