@@ -9,7 +9,7 @@ const path = require('path');
 const { bump } = require('./util.js');
 const { replaySlots, readJson, stripTree, emptyCost, addCost } = require('./score.js');
 const { parseFindings, near } = require('./counterfactual.js');
-const { parseLensReport, SEVERITIES, LOCATION_RE } = require('../pipeline-cost-report/reviews.js');
+const { parseLensReport, parseTaskVerdict, SEVERITIES, LOCATION_RE } = require('../pipeline-cost-report/reviews.js');
 const { walkReviewItems } = require('../pipeline-cost-report/guards.js');
 const {
   REVIEWS_MANIFEST_FILE, REVIEWS_FIXTURE_FILE, REPORTS_FILE, isControlArm, validateReviewsManifest,
@@ -71,6 +71,7 @@ function scoreReviews(opts, deps) {
     return 1;
   }
   const fixture = readJson(fsImpl, path.join(opts.out, REVIEWS_FIXTURE_FILE));
+  if (BRANCH_SCORERS[fixture.role]) return scoreBranchReviews(opts, deps, manifest, fixture);
   const ordinals = new Map(fixture.slots.map((s) => [s.name, s.ordinal]));
   const { reports, confirmed, runRows } = readJson(fsImpl, path.join(opts.out, REPORTS_FILE));
   const firstUserArm = manifest.arms.find((a) => !isControlArm(a.name)) || manifest.arms[0];
@@ -180,6 +181,140 @@ function scoreReviews(opts, deps) {
 
   deps.log(JSON.stringify({
     notes: NOTES, reference, fixture: { byLens: fixtureByLens(fixture) }, fidelity, unidentifiedAgents: unidentified, unidentifiedCost, arms,
+  }, null, 2));
+  return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
+}
+
+// ---- Branch roles: one scorer per role over a shared prelude. A scorer is { key, init(), judge(text), tally(entry, ctx) }:
+// `judge` parses a replay reply (null = could-not-parse); `tally` folds one judged review into the arm's `key` section.
+const BRANCH_NOTES = [
+  'Recall is measured against the archived reviewer\'s own items: it rewards an arm that behaves like the archive, not one that is right.',
+  'A clean repository holds two commits, so git log and git blame differ from the archived review.',
+];
+const CI = ['critical', 'important'];
+const sevCounts = () => ({ critical: 0, important: 0, minor: 0 });
+const perReview = (counts, n) => Object.fromEntries(Object.keys(counts).map((k) => [k, n === 0 ? null : counts[k] / n]));
+// Every location of every replay item, as the rows `near` reads.
+const replayRows = (items) => items.flatMap((i) => i.locations);
+// An archived item is caught when any of its locations is near any replay row.
+const caughtItems = (archived, rows) => archived.filter((i) => i.locations.some((l) => rows.some((r) => near(r, l.path, l.line)))).length;
+const tierCounts = () => ({ agree: 0, disagree: 0 });
+
+const TASK_SCORER = {
+  key: 'task',
+  init: () => ({
+    reviews: 0, verdict: { agree: 0, disagree: 0, share: null, byArchivedTier: {} },
+    recall: { caught: 0, of: 0, share: null, unlocated: 0, itemsUnparsed: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
+  }),
+  judge(text) {
+    const verdict = parseTaskVerdict(text);
+    if (verdict === null) return null;
+    const parsed = parseReviewItems(text);
+    return { verdict, items: parsed ? parsed.items : [] };
+  },
+  tally(e, { judged, report, tier }) {
+    e.reviews += 1;
+    const side = e.verdict.byArchivedTier[tier] || (e.verdict.byArchivedTier[tier] = tierCounts());
+    const key = judged.verdict === report.verdict ? 'agree' : 'disagree';
+    e.verdict[key] += 1;
+    side[key] += 1;
+    for (const i of judged.items) e.itemsBySeverity[i.sev] += 1;
+    e.recall.unlocated += report.items.filter((i) => i.locations.length === 0).length;
+    if (report.itemsUnparsed) {
+      e.recall.itemsUnparsed += 1;
+      return;
+    }
+    const targets = report.items.filter((i) => CI.includes(i.sev) && i.locations.length > 0);
+    e.recall.of += targets.length;
+    e.recall.caught += caughtItems(targets, replayRows(judged.items));
+  },
+  finish(e) {
+    const { verdict } = e;
+    verdict.share = share(verdict.agree, verdict.agree + verdict.disagree);
+    for (const t of Object.values(verdict.byArchivedTier)) t.share = share(t.agree, t.agree + t.disagree);
+    e.recall.share = share(e.recall.caught, e.recall.of);
+    e.itemsPerReview = perReview(e.itemsBySeverity, e.reviews);
+  },
+};
+
+const WHOLE_BRANCH_SCORER = {
+  key: 'wholeBranch',
+  init: () => ({
+    reviews: 0, recall: { caught: 0, of: 0, share: null, unlocated: 0 }, itemsBySeverity: sevCounts(), itemsPerReview: null,
+    withCriticalOrImportant: { n: 0, share: null },
+  }),
+  judge: (text) => parseBranchReply(text),
+  tally(e, { judged, report }) {
+    e.reviews += 1;
+    for (const i of judged.items) e.itemsBySeverity[i.sev] += 1;
+    if (judged.items.some((i) => CI.includes(i.sev))) e.withCriticalOrImportant.n += 1;
+    const located = report.items.filter((i) => i.locations.length > 0);
+    e.recall.unlocated += report.items.length - located.length;
+    e.recall.of += located.length;
+    e.recall.caught += caughtItems(located, replayRows(judged.items));
+  },
+  finish(e) {
+    e.recall.share = share(e.recall.caught, e.recall.of);
+    e.itemsPerReview = perReview(e.itemsBySeverity, e.reviews);
+    e.withCriticalOrImportant.share = share(e.withCriticalOrImportant.n, e.reviews);
+  },
+};
+
+const BRANCH_SCORERS = { task: TASK_SCORER, 'whole-branch': WHOLE_BRANCH_SCORER };
+
+// The fixture's selected slots and its excluded rows, per archived tier and per reason.
+function branchFixtureSummary(fixture) {
+  const byArchivedTier = {};
+  for (const s of fixture.slots) bump(byArchivedTier, s.archivedTier);
+  const excludedByReason = {};
+  const excludedByTier = {};
+  for (const e of fixture.excluded) {
+    bump(excludedByReason, e.reason);
+    bump(excludedByTier, e.tier !== undefined ? e.tier : 'unknown');
+  }
+  return { selected: { total: fixture.slots.length, byArchivedTier }, excludedByReason, excludedByTier };
+}
+
+function scoreBranchReviews(opts, deps, manifest, fixture) {
+  const scorer = BRANCH_SCORERS[fixture.role];
+  const { reports } = readJson(deps.fs, path.join(opts.out, REPORTS_FILE));
+  const tiers = new Map(fixture.slots.map((s) => [s.name, s.archivedTier]));
+  const { mergeUsage } = require(path.join(deps.pluginRoot, 'bin', 'lib', 'timing', 'transcript.js'));
+  const { slots, unidentified, costs, efforts, unidentifiedCost } = replaySlots(deps.fs, opts.transcripts, manifest.arms, mergeUsage);
+  const arms = {};
+  for (const arm of manifest.arms) {
+    arms[arm.name] = { scored: 0, notJudged: 0, notJudgedByReason: {}, cost: emptyCost(), minutes: 0, recordedEffort: {}, effortFieldsDiffer: 0, [scorer.key]: scorer.init() };
+  }
+  for (const { arm, cost } of costs) addCost(arms[arm].cost, cost);
+  for (const { arm, effort, fieldsDiffer } of efforts) {
+    bump(arms[arm].recordedEffort, effort);
+    if (fieldsDiffer) arms[arm].effortFieldsDiffer += 1;
+  }
+  for (const slot of slots.values()) {
+    const a = arms[slot.arm.name];
+    const { prompt } = slot;
+    const text = typeof slot.reply === 'string' ? stripTree(slot.reply, prompt.repo) : null;
+    let reason = null;
+    let judged = null;
+    if (text === null) reason = slot.noReply;
+    else if (slot.arm.effort !== null && slot.efforts.some((e) => e !== slot.arm.effort)) reason = 'effort-mismatch';
+    else if ((judged = scorer.judge(text)) === null) reason = 'could-not-parse';
+    if (reason !== null) {
+      a.notJudged += 1;
+      bump(a.notJudgedByReason, reason);
+      continue;
+    }
+    const report = reports[prompt.name];
+    if (!report) throw new Error(`${REPORTS_FILE}: no archived report for ${prompt.name}`);
+    a.scored += 1;
+    scorer.tally(a[scorer.key], { judged, report, tier: tiers.get(prompt.name) });
+  }
+  for (const a of Object.values(arms)) {
+    a.minutes = Math.round(a.cost.seconds / 60);
+    scorer.finish(a[scorer.key]);
+  }
+  deps.log(JSON.stringify({
+    notes: BRANCH_NOTES, role: fixture.role, fixture: branchFixtureSummary(fixture), unidentifiedAgents: unidentified, unidentifiedCost, arms,
   }, null, 2));
   return Object.values(arms).some((a) => a.notJudged > 0) ? EXIT_NOT_CLEAN : 0;
 }
