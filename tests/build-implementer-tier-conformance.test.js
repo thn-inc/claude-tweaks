@@ -26,6 +26,10 @@ const ESCALATION_LINE =
 
 const PATTERNS = [
   [lit(CLI_CALL), 'AC9.1: names the CLI call'],
+  [
+    lit("(`{spec-file}`: the materialized `work/{n}-spec.md`, the worktree's copy in `worktree` mode)"),
+    "spec file is the worktree's copy in worktree mode",
+  ],
   [lit(PROFILE_LINE), 'AC6.1: one implementer profile line'],
   [
     lit("A non-zero exit, a missing spec file included, stops the build before the first dispatch with the CLI's message"),
@@ -39,7 +43,7 @@ const PATTERNS = [
     'AC4.3: initial review is not a trigger',
   ],
   [lit('a fresh implementer, never a `SendMessage` resume'), 'fresh dispatch, never SendMessage'],
-  [lit("`stepUp` with `--from {task's profile}`"), 'AC5.2: step-up from the task\'s own profile'],
+  [lit("`stepUp` with `--from {task's profile}` (a `**Role:**` marker's profile when one set it)"),'AC5.2: step-up from the task\'s own profile'],
   [
     lit("a task whose `task {k} implementer escalated` line is already in `decisions.md` (no run dir: SDD's `progress.md`)"),
     'AC5.1: once-per-task check reads decisions.md',

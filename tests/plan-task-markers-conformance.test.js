@@ -71,7 +71,7 @@ test('#3378 AC9: dispatch.md\'s task-review mapping cites the identical review-r
   assert.deepStrictEqual([m[1]], TASK_MARKER_RISKS);
 });
 
-test('#3378 AC5: dispatch.md\'s pre-change size:/AC-excerpt/foreground/status-token/tree-immutability paragraphs are unmodified', () => {
+test('#3378 AC5: dispatch.md\'s implementer-profile/AC-excerpt/foreground/status-token/tree-immutability paragraphs are present', () => {
   const text = read('plugin', 'skills', 'build', 'dispatch.md');
   assert.match(text, /default every per-task implementer dispatch in this spec to its `profile`/);
   assert.match(text, /\*\*Forward the spec's Acceptance Criteria to per-task review:\*\*/);
