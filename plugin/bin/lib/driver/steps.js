@@ -1246,7 +1246,7 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
 // The relaunch's trigger (#5997, see the header): `result` with a relaunch queued after it (it then does not
 // halt), or `result` as it was plus why there is none. Under record + inherit never a second relaunch (the
 // one-shot ctx.relaunch guard, ctx.implementer.escalations unread); under the effort ladder (#6002) a relaunch
-// while ctx.implementer.escalations is below MAX_ESCALATIONS. A refusal planRelaunch throws (a stepUp or
+// while ctx.relaunch's escalations (0 before any relaunch) are below MAX_ESCALATIONS. A refusal planRelaunch throws (a stepUp or
 // nextAttempt throw) is a relaunch whose launch is refused: a queued worker step returns it with no line, as a
 // refused relaunch launch does. `prompt(attempt)` is called only when the relaunch is queued. `steps` is what
 // the relaunch queues: relaunchSteps() from a first attempt's trigger; the worker alone from the relaunch
@@ -1255,10 +1255,10 @@ function relaunchOrStop(ctx, result, trigger, prompt, steps = relaunchSteps()) {
   const { implementer } = ctx;
   if (!implementer || typeof implementer.model !== 'string') return result;
   const ladder = effortLadder(ctx.shared.policy);
-  // The ladder's bound reads ctx.relaunch as well: an attempt whose launch resolved no model leaves
+  // The ladder's bound reads ctx.relaunch, not ctx.implementer: an attempt whose launch resolved no model leaves
   // ctx.implementer at the attempt before it, while ctx.relaunch.escalations is set before any queue is returned.
-  const below = (n) => n < MAX_ESCALATIONS;
-  if (ladder ? !(below(implementer.escalations) && (ctx.relaunch === null || below(ctx.relaunch.escalations))) : ctx.relaunch !== null) return result;
+  const escalated = ctx.relaunch === null ? 0 : ctx.relaunch.escalations;
+  if (ladder ? !(escalated < MAX_ESCALATIONS) : ctx.relaunch !== null) return result;
   const from = implementer.profile;
   // Each relaunch so far, for the note: under record + inherit both efforts are null, so it reads as #5997's.
   const history = ctx.relaunch !== null && Array.isArray(ctx.relaunch.history) ? ctx.relaunch.history : [];

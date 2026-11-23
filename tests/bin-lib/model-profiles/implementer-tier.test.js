@@ -157,6 +157,11 @@ test('nextAttempt is null at capable and when the step-up resolves to the same m
   assert.strictEqual(nextAttempt({ profile: 'standard', effort: 'medium', escalations: 1, trigger: 'red-tests', resolveProfile: same }), null);
 });
 
+test('nextAttempt is null at MAX_ESCALATIONS even from a profile that could still step up (#6002)', () => {
+  assert.strictEqual(step({ profile: 'standard', effort: 'medium', escalations: 2, trigger: 'red-tests' }), null);
+  assert.strictEqual(step({ profile: 'fast', effort: null, escalations: 2, trigger: 'cannot-complete' }), null);
+});
+
 test('nextAttempt refuses bad input with a per-case message', () => {
   const ok = { profile: 'standard', effort: 'low', escalations: 0, trigger: 'red-tests', resolveProfile };
   const cases = [
