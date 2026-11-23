@@ -51,7 +51,7 @@ files:
 - **URL:** `node plugin/bin/resolve-policy.js --all`
 - **Action:** Run with no key arguments.
 - **Should feel:** One call replacing key-by-key enumeration — the whole config, self-describing.
-- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers, `trusted-authors` and `learned-skills-auto-merge` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the #4608 record that wires each one drops the marker (#4816).
+- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers, `trusted-authors` and `learned-skills-auto-merge` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the record that wires each one drops the marker (#4816) — a #4608 record, or for `learned-skills-auto-merge` #6088's learned-skills drain sub-issue.
 - **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments; a control-mode key's summary reading as live behavior (no "Not yet used" opener) while no plugin code consumes it.
 
 ### 5. Confirm the enforcement hook honors the same alias — `plugin/bin/lib/policy.js`
