@@ -149,7 +149,7 @@ With `gh` absent, per `_shared/github-write-transport.md`: list the comments wit
 Do this for every unresolved comment found — a record refused by both `backlog-refine` and
 `backlog-grant` concurrently carries two separate `needs:decision`-labeled comments, and both must
 be resolved in this same shaping pass before the label itself is removed below. **Fail closed on
-any mutation failure:** if any `updateIssueComment` call above fails, do not proceed to the
+any mutation failure:** if any comment edit above (`updateIssueComment` or `update_issue_comment`) fails, do not proceed to the
 `--remove-label "needs:decision"` write in the same pass — leave the label in place (an unresolved
 comment must never be silently orphaned by a label removal that didn't actually resolve it) and
 report the failure so it can be retried.

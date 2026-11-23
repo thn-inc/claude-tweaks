@@ -44,7 +44,7 @@ were not copied from a sanitized read: each holds exactly one `&lt;` and one `&g
 marker, with raw quotes everywhere else, and #1350's escaped claim mirror carries a fresh
 `claimPayload` runId and timestamp no earlier read could have supplied. So the escaping happens on
 the MCP write leg, intermittently, between local composition and storage — the cause (tool-call
-serialization or the server) is not yet identified and needs a `gh`-absent reproduction.
+serialization or the server) is not yet identified and needs a `gh`-absent reproduction. The "Edit an existing comment" row is the one exception: an edit must start from the comment's existing body, which exists only on the server. The write-leg escaping hazard still applies to it, so an edited marker may render as visible text; an escaped `needs-decision` marker on a just-resolved comment only drops it from find-by-marker lookups, which resolved comments already fall out of.
 
 **Read back after posting, and repair once.** Read the new comment through `issue_read`
 (`get_comments`). A body that comes back beginning `&lt;!--` was stored escaped (a raw marker never

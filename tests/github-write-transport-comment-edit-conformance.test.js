@@ -55,3 +55,25 @@ test('stamping: the live-comment resolution names its gh-absent path', () => {
     f('A session without that tool fails the edit, and the fail-closed rule below keeps the label'),
   ], 'stamping');
 });
+
+test('marker rule: the comment edit is the one exception to local composition', () => {
+  const text = transport();
+  const start = text.indexOf('### Marker comments on the MCP path');
+  const end = text.indexOf('**Read back after posting');
+  assert.ok(start >= 0 && end > start, 'marker section region not found');
+  pinned(text.slice(start, end), [
+    f('The "Edit an existing comment" row is the one exception'),
+    f("an edit must start from the comment's existing body, which exists only on the server"),
+    f('an escaped `needs-decision` marker on a just-resolved comment only drops it from find-by-marker lookups'),
+  ], 'marker exception');
+});
+
+test('stamping: the fail-closed sentence names both comment-edit forms', () => {
+  const text = readText(path.join(ROOT, 'plugin/skills/specify/shaping-mode-stamping.md'));
+  const start = text.indexOf('**Fail closed on');
+  const end = text.indexOf('### Compose-then-write-once');
+  assert.ok(start >= 0 && end > start, 'fail-closed region not found');
+  pinned(text.slice(start, end), [
+    f('any comment edit above (`updateIssueComment` or `update_issue_comment`) fails'),
+  ], 'fail-closed');
+});
