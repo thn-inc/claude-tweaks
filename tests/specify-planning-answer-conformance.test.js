@@ -109,7 +109,7 @@ test('Ruling 3: a held verdict skips the needs:definition redirect', () => {
 // ---- The answer path: plugin/skills/specify/planning-answer.md (Task 4) ----
 
 const { sectionOf } = require('./helpers/conformance-asserts');
-const { readPlanningHold } = require('../plugin/bin/lib/issues/planning-hold');
+const { readPlanningHold, NEXT_ACTIONS, OUTCOME_TEMPLATES } = require('../plugin/bin/lib/issues/planning-hold');
 
 const answer = () => readText(path.join(ROOT, 'plugin/skills/specify/planning-answer.md'));
 const planning = () => readText(path.join(ROOT, 'plugin/skills/specify/planning.md'));
@@ -159,11 +159,8 @@ test('AC1.1: the answer path asks only the held questions and ends ready, needs:
   ], 'ask');
   pinned(sec('## Read-back and outcome'), [
     f('`gh issue view {n} --json labels,body,comments > "{readback-file}"` (`--value specify-answer-readback-{n}.json`'),
-    f('`ready` present and `needs:decision` absent'),
-    f('the answered hold comment carries `**Resolved:**`, as does each `supersededHolds` comment (`{hold-fresh}`\'s on the `## Write` path, `{hold-file}`\'s on the kept branch and after `## Re-hold`)'),
-    f('the body has exactly one `Plan:` line equal to the printed `line`'),
-    f('against the re-fetched body and `{base}` prints `{"valid": true}`'),
-    f('`answered — {k} planning question(s), ready (Plan: {short commit})`'),
+    f('`--resolved-ids`: the answered hold comment\'s id and each `supersededHolds` comment\'s (`{hold-fresh}`\'s on the `## Write` path, `{hold-file}`\'s on the kept branch and after `## Re-hold`)'),
+    f('--base {base} > "{plan-check-file}"'),
     f('ready` outcome, recommend `/claude-tweaks:flow #{n}`'),
   ], 'read-back');
 });
@@ -259,10 +256,13 @@ test('review: gh absent writes nothing, and a hold with no question re-plans', (
 test('L13: the read-back names a session-tmp path for every file it passes', () => {
   // {readback-file}'s path is pinned with the fetch in AC1.1's read-back pattern.
   pinned(sec('## Read-back and outcome'), [
-    f('`planning-hold.js --comments-file "{readback-file}"`'),
+    f('planning-hold.js" readback'),
+    f('--readback-file "{readback-file}"'),
     f('`{readback-body}` (`--value specify-answer-readback-body-{n}.md`)'),
     f('the printed `line` to `{plan-line-file}`'),
     f('plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}'),
+    f('`{plan-check-file}` (`--value specify-answer-plan-check-{n}.json`)'),
+    f('`{reheld-file}` (`--value specify-answer-reheld-{n}.json`)'),
   ], 'read-back paths');
 });
 
@@ -330,10 +330,81 @@ test('Fix round 4: Re-hold stops always say re-run; the read-back keys its strin
     f('the fresh hold is posted before (d) resolves the old one, so a re-run reads `held`'),
   ], 're-hold failures');
   assert.equal(sec('## Re-hold').split(BYHAND).length - 1, 0, 'Re-hold never names the by-hand string');
+  // #6100: the verb renders a failed assertion's outcome; the prose keys only the verdict-unreadable fallback on the branch.
   failureStrings(sec('## Read-back and outcome'), [
-    f('after `## Re-hold`, `failed — read-back ({what}); re-run /claude-tweaks:specify #{n}`'),
-    f('after `## Write`, which resolved the hold comment, `failed — read-back ({what}); check the decision comments and remove needs:decision by hand once none is unresolved`'),
+    f('after `## Re-hold`, `failed — read-back (verdict unreadable); re-run /claude-tweaks:specify #{n}`'),
+    f('after `## Write`, `failed — read-back (verdict unreadable); check the decision comments and remove needs:decision by hand once none is unresolved`'),
   ], 'read-back failures');
+});
+
+// #6100: the read-back assertions and the outcome choice moved into `planning-hold.js readback`. The frozen
+// pre-change bullets, and the outcome sentence that followed them, are the absence check's control.
+const PRE_CHANGE_READBACK = `- **Answered:** \`ready\` present and \`needs:decision\` absent; with the fresh \`otherUnresolved\` above 0 or on the kept branch, \`needs:decision\` present and no \`ready\`.
+- **Re-held:** \`needs:decision\` present, no \`ready\`, and \`planning-hold.js --comments-file "{readback-file}"\` reads \`held\` with exactly the re-held questions.
+- **Both:** the answered hold comment carries \`**Resolved:**\`, as does each \`supersededHolds\` comment (\`{hold-fresh}\`'s on the \`## Write\` path, \`{hold-file}\`'s on the kept branch and after \`## Re-hold\`), the body has exactly one \`Plan:\` line equal to the printed \`line\`, and \`plan-store.js check --line-file "{plan-line-file}" --spec-file "{readback-body}" --base {base}\` of that line against the re-fetched body and \`{base}\` prints \`{"valid": true}\`.
+
+A failed assertion renders, after \`## Re-hold\`, \`failed — read-back ({what}); re-run /claude-tweaks:specify #{n}\`, and after \`## Write\`, which resolved the hold comment, \`failed — read-back ({what}); check the decision comments and remove needs:decision by hand once none is unresolved\`. Otherwise the outcome is \`answered — {k} planning question(s), ready (Plan: {short commit})\`, or the \`## Write\` or \`## Re-hold\` outcome above;`;
+const RETIRED_READBACK = [
+  '`ready` present and `needs:decision` absent',
+  '`needs:decision` present and no `ready`',
+  'the body has exactly one `Plan:` line',
+  'reads `held` with exactly the re-held questions',
+  '`answered — {k} planning question(s), ready (Plan: {short commit})`',
+  '- **Answered:**',
+  '- **Re-held:**',
+  '- **Both:**',
+];
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const retiredIn = (region) => RETIRED_READBACK.filter((n) => collapse(region).includes(collapse(n)));
+
+test('AC2.1: the read-back names the CLI and states no per-branch label assertion', () => {
+  const region = sec('## Read-back and outcome');
+  pinned(region, [
+    f('planning-hold.js" readback'),
+    f('--branch {answered|kept|re-held}'),
+    f('Next Actions takes the bullet the verdict\'s `next` names'),
+  ], 'read-back verb');
+  assert.deepEqual(retiredIn(region), []);
+  // Control: every retired clause is found in the pre-change text, and each alone turns the live check red.
+  assert.deepEqual(retiredIn(PRE_CHANGE_READBACK), RETIRED_READBACK);
+  for (const n of RETIRED_READBACK) assert.deepEqual(retiredIn(`${region}\n${n}`), [n]);
+});
+
+// Twin: Next Actions' bullet labels and readBack's `next` values name the same four routes.
+const NEXT_LABELS = {
+  '`ready`': 'ready',
+  'Still needs:decision': 'still-needs-decision',
+  'Kept needs:decision': 'kept-needs-decision',
+  'Held or failed': 'held-or-failed',
+};
+function nextActionLabels(region) {
+  return region.split('\n').map((l) => l.match(/^- \*\*(.+?):\*\*/)).filter(Boolean).map(([, label]) => {
+    if (!(label in NEXT_LABELS)) throw new Error(`unmapped Next Actions label: ${label}`);
+    return NEXT_LABELS[label];
+  }).sort();
+}
+
+test('twin: the Next Actions bullet labels equal NEXT_ACTIONS', () => {
+  const region = sec('## Read-back and outcome');
+  const want = [...NEXT_ACTIONS].sort();
+  assert.deepEqual(nextActionLabels(region), want);
+  const heldLine = region.split('\n').find((l) => l.startsWith('- **Held or failed:**'));
+  const noHeld = region.replace(heldLine, '');
+  assert.notEqual(noHeld, region);
+  assert.notDeepEqual(nextActionLabels(noHeld), want);
+  assert.notDeepEqual(nextActionLabels(region), [...NEXT_ACTIONS, 'extra'].sort());
+  assert.throws(() => nextActionLabels(`${region}\n- **Other:** x`), { message: 'unmapped Next Actions label: Other' });
+});
+
+test('twin: the Write and Re-hold outcomes equal readBack\'s templates', () => {
+  const quoted = (region, t) => region.includes(`\`${t}\``);
+  assert.equal(OUTCOME_TEMPLATES.reheld, 'held — {j} answered, {k} re-held');
+  for (const [heading, t] of [['## Write', OUTCOME_TEMPLATES.still], ['## Write', OUTCOME_TEMPLATES.kept], ['## Re-hold', OUTCOME_TEMPLATES.reheld]]) {
+    assert.ok(quoted(sec(heading), t), `${heading} lacks \`${t}\``);
+    const mutated = `${t.slice(0, -1)}#`;
+    assert.notEqual(mutated, t);
+    assert.ok(!quoted(sec(heading), mutated), `control: ${heading} matched a mutated template`);
+  }
 });
 
 test('Review Focus 3: another unit\'s open decision comment keeps needs:decision and withholds ready', () => {
