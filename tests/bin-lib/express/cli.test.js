@@ -12,6 +12,8 @@ const {
 } = require(path.join(LIB, 'express', 'cli.js'));
 const { REASONS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { expressMarker, REVIEW_COMMENT_MARKER } = require(path.join(LIB, 'express', 'sampling.js'));
+const { resolveProtectedPathsEntry } = require(path.join(LIB, 'express', 'policy.js'));
+const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
 const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'blast-radius-cli.js'));
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
@@ -967,4 +969,90 @@ test('#6019: the proceed line is unchanged when the flag finds no protected path
 test('#6019: the USAGE check line names --protected-paths reviewer as the driver flag', () => {
   assert.ok(USAGE.includes('[--max-lines <n>] [--protected-paths reviewer]'));
   assert.match(USAGE, /^ {7}--protected-paths reviewer:/m);
+});
+
+// --- protected-paths (#6020): the resolved list reaches gate and check ---------------
+
+function realFixture() {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'express-7');
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-25T090000-record-7');
+  const shadow = path.join(wt, '.claude-tweaks', 'pipelines', '2026-10-25T090000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(shadow, { recursive: true });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'express-cli-real-'));
+  FIXTURE_ROOTS.push(root);
+  const file = (name, text) => { const p = path.join(root, name); fs.writeFileSync(p, text); return p; };
+  return { root, main, wt, runDir, shadow, file };
+}
+
+function writeMainPolicy(dir, text) {
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+}
+
+// The existing fake for every key but protected-paths, which resolves through the real resolver from cwdDir
+// (or, with `entry`, is a fixed reply).
+function realHarness(fx, cwdDir, over = {}, entry = null) {
+  const base = harness(fx, over);
+  const fakeResolve = base.deps.resolvePolicy;
+  base.deps.resolvePolicy = (keys, opts) => {
+    const out = fakeResolve(keys, opts);
+    if (keys.includes('protected-paths')) out['protected-paths'] = entry || resolveProtectedPathsEntry(cwdDir);
+    return out;
+  };
+  base.deps.blastRadiusConfig = () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 });
+  return base;
+}
+
+function realCheckArgv(fx, keyFiles) {
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: fx.wt, dispatched: true }));
+  const rec = { ...record(7), body: body(keyFiles) };
+  return ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(rec))];
+}
+
+test('AC2.1 (express CLI half): gate passes the resolved list', () => {
+  const fx = realFixture();
+  const records = [{ ...record(7), body: body(['package.json']) }, { ...record(8), body: body(['infra/main.tf']) }];
+  const file = fx.file('records.json', JSON.stringify(records));
+  const h = realHarness(fx, fx.main, {}, { value: 'infra/**', source: 'policy' });
+  assert.strictEqual(run(['gate', '--records-json', file], h.deps), 0);
+  const res = h.json();
+  assert.ok(!res.verdicts[0].reasons.includes('protected path: package.json'), JSON.stringify(res.verdicts[0]));
+  assert.ok(res.verdicts[1].reasons.includes('protected path: infra/main.tf'), JSON.stringify(res.verdicts[1]));
+  assert.ok(h.calls.resolvePolicy[0].keys.includes('protected-paths'));
+});
+
+test('AC4.1 (express half): check reads protected-paths from the fixture repository\'s policy.yml', () => {
+  const fx = realFixture();
+  writeMainPolicy(fx.main, 'protected-paths: infra/**\n');
+  const bad = realHarness(fx, fx.main, { git: fakeGit(fx, numstat([[1, 0, 'infra/main.tf']])) });
+  assert.strictEqual(run(realCheckArgv(fx, ['infra/main.tf']), bad.deps), 0);
+  assert.strictEqual(bad.json().reason, 'out-of-bounds');
+  assert.ok(bad.json().detail.includes('protected path: infra/main.tf'), bad.json().detail);
+  const fx2 = realFixture();
+  writeMainPolicy(fx2.main, 'protected-paths: infra/**\n');
+  const ok = realHarness(fx2, fx2.main, { git: fakeGit(fx2, numstat([[1, 0, 'package.json']])) });
+  assert.strictEqual(run(realCheckArgv(fx2, ['package.json']), ok.deps), 0);
+  assert.strictEqual(ok.json().action, 'proceed');
+  const fx3 = realFixture();
+  const none = realHarness(fx3, fx3.main, { git: fakeGit(fx3, numstat([[1, 0, 'package.json']])) });
+  assert.strictEqual(run(realCheckArgv(fx3, ['package.json']), none.deps), 0);
+  assert.strictEqual(none.json().reason, 'out-of-bounds');
+  assert.ok(none.json().detail.includes('protected path: package.json'), none.json().detail);
+});
+
+test('AC8.1 (check half): a worktree edit removing package.json from the list does not change check\'s verdict', () => {
+  const files = ['package.json', '.claude-tweaks/policy.yml'];
+  const verdict = (withWorktreePolicy) => {
+    const fx = realFixture();
+    if (withWorktreePolicy) writeMainPolicy(fx.wt, 'protected-paths: infra/**\n');
+    const h = realHarness(fx, fx.wt, { git: fakeGit(fx, numstat(files.map((f) => [1, 0, f]))) });
+    assert.strictEqual(run(realCheckArgv(fx, files), h.deps), 0);
+    return h.json();
+  };
+  const without = verdict(false);
+  const withEdit = verdict(true);
+  assert.deepStrictEqual(withEdit, without);
+  assert.ok(withEdit.detail.includes('protected path: package.json'), withEdit.detail);
 });

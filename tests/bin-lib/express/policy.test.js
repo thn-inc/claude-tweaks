@@ -89,3 +89,85 @@ test('express policy merges a factory model-profiles row', { skip: STUB_SKIP }, 
   }
   assert.deepStrictEqual(resolved['model-profiles'].value, { standard: { model: 'opus' }, fast: { model: 'haiku' } });
 });
+
+// --- protected-paths (#6020): read from the main checkout, never the record's worktree ---
+
+const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+const { protectedPathGlobsOf, resolveProtectedPathsEntry } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'policy.js'));
+const { SHIPPED_PROTECTED_PATHS, evaluateRecordEligibility } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
+const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+
+function writePolicy(dir, text) {
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+}
+
+function entryFrom(dir) {
+  const saved = process.cwd();
+  process.chdir(dir);
+  try { return defaultResolvePolicy(['protected-paths'])['protected-paths']; } finally { process.chdir(saved); }
+}
+
+function globsFrom(dir) {
+  const saved = process.cwd();
+  process.chdir(dir);
+  try { return protectedPathGlobsOf(defaultResolvePolicy(['protected-paths'])['protected-paths']); } finally { process.chdir(saved); }
+}
+
+test('AC5.2: unset, absent and unreadable policy.yml all yield the shipped list through the real resolver', () => {
+  const absent = gitRepo();
+  assert.deepStrictEqual(globsFrom(absent), SHIPPED_PROTECTED_PATHS);
+  const unrelated = gitRepo();
+  writePolicy(unrelated, 'merge-verification: off\n');
+  assert.deepStrictEqual(globsFrom(unrelated), SHIPPED_PROTECTED_PATHS);
+  const unreadable = gitRepo();
+  fs.mkdirSync(path.join(unreadable, '.claude-tweaks', 'policy.yml'), { recursive: true });
+  assert.deepStrictEqual(globsFrom(unreadable), SHIPPED_PROTECTED_PATHS);
+});
+
+test('AC5.1, AC10.1 (real resolver): malformed values yield the shipped list, never []', () => {
+  for (const raw of ['["infra/**"]', '""', 'infra/**,', 'app/[slug]/**']) {
+    const main = gitRepo();
+    writePolicy(main, `protected-paths: ${raw}\n`);
+    assert.strictEqual(entryFrom(main).invalid, true, raw);
+    assert.deepStrictEqual(globsFrom(main), SHIPPED_PROTECTED_PATHS, raw);
+  }
+  for (const [raw, want] of [['[]', []], ['infra/**', ['infra/**']], ['no/such/**', ['no/such/**']]]) {
+    const main = gitRepo();
+    writePolicy(main, `protected-paths: ${raw}\n`);
+    assert.deepStrictEqual(globsFrom(main), want, raw);
+  }
+});
+
+test('AC8.1 (resolver half): from a linked worktree the main checkout\'s value wins', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: infra/**\n');
+  assert.deepStrictEqual(globsFrom(wt), SHIPPED_PROTECTED_PATHS);
+  const record = { number: 1, title: 't', labels: [{ name: 'risk:low' }, { name: 'size:low' }, { name: 'ceremony:fast-lane' }, { name: 'type:task' }], body: '## Technical Approach\n\n### Key Files\n\n- `package.json` (modify)\n' };
+  const verdict = evaluateRecordEligibility(record, { enabled: true, integrationModel: 'pr-first', protectedPathGlobs: globsFrom(wt) });
+  assert.ok(verdict.reasons.includes('protected path: package.json'), JSON.stringify(verdict.reasons));
+  const main2 = gitRepo();
+  const wt2 = harnessWorktreeOf(main2, 'rec');
+  writePolicy(main2, 'protected-paths: infra/**\n');
+  writePolicy(wt2, 'protected-paths: []\n');
+  assert.deepStrictEqual(globsFrom(wt2), ['infra/**']);
+});
+
+test('Review Focus 2: a worktree [] never reaches a main checkout with no policy.yml', () => {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'rec');
+  writePolicy(wt, 'protected-paths: []\n');
+  assert.deepStrictEqual(resolveProtectedPathsEntry(wt), { value: [], source: 'default' });
+});
+
+test('protectedPathGlobsOf keys on invalid and source, from real resolver replies', () => {
+  const entry = (policyRaw) => resolvePolicyKeys(['protected-paths'], { policyRaw })['protected-paths'];
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: ""\n')), SHIPPED_PROTECTED_PATHS);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: []\n')), []);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: infra/**, **/package.json\n')), ['infra/**', '**/package.json']);
+  assert.deepStrictEqual(protectedPathGlobsOf(entry('protected-paths: ["infra/**"]\n')), SHIPPED_PROTECTED_PATHS);
+  for (const e of [undefined, { value: undefined, source: 'policy' }, { value: 'a b', source: 'policy' }]) {
+    assert.deepStrictEqual(protectedPathGlobsOf(e), SHIPPED_PROTECTED_PATHS, JSON.stringify(e));
+  }
+});
