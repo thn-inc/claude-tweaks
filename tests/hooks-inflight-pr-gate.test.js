@@ -93,7 +93,7 @@ const ctxFor = (fx, command, over = {}, env = process.env) => ({
 // A readPrBody seam that records every call it is handed.
 function reader(body, number = 123) {
   const calls = [];
-  const fn = (call, ctx) => { calls.push({ call, cwd: ctx.cwd }); return body === null ? null : { body, number }; };
+  const fn = (call) => { calls.push({ call, cwd: call.cwd }); return body === null ? null : { body, number }; };
   fn.calls = calls;
   return fn;
 }
@@ -296,11 +296,56 @@ test('gh pr ready --undo 123 is allowed without reading the PR', async () => {
   assert.strictEqual(read.calls.length, 0);
 });
 
-test('cd /elsewhere && gh pr merge 5 is allowed without reading the PR', async () => {
+test('a cd into the run\'s own checkout, spelled differently, is judged from that cwd and denied', async () => {
+  const fx = await fixture();
+  // The session sits outside any repo; the gh call runs from a symlinked spelling of the checkout.
+  const away = mkTmp('ct-ipg-away-');
+  const link = path.join(mkTmp('ct-ipg-link-'), 'checkout');
+  fs.symlinkSync(fx.project, link, 'dir');
+  const read = reader(bodyFor(fx));
+  const ctx = { ...ctxFor(fx, `cd ${link} && gh pr merge 5`), cwd: away };
+  const reason = denyReason(gate(ctx, { readPrBody: read }));
+  assert.ok(reason && reason.includes(`pipeline run ${R}`), reason);
+  assert.deepStrictEqual(read.calls.map((c) => c.cwd), [link]);
+  assert.strictEqual(gateEvents(fx.runDir).length, 1);
+});
+
+test('a cd into a directory that is not a git checkout is allowed without reading the PR', async () => {
   const fx = await fixture();
   const read = reader(bodyFor(fx));
-  assertAllowedNoEvent(gate(ctxFor(fx, 'cd /elsewhere && gh pr merge 5'), { readPrBody: read }), fx);
+  assertAllowedNoEvent(gate(ctxFor(fx, `cd ${mkTmp('ct-ipg-norepo-')} && gh pr merge 5`), { readPrBody: read }), fx);
   assert.strictEqual(read.calls.length, 0);
+});
+
+test('a lost cwd is skipped without reading the PR', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  // The parser's stand-in for `cd $X` is the session's own cwd, the run's checkout: only `lost` skips it.
+  assertAllowedNoEvent(gate(ctxFor(fx, 'cd $X && gh pr merge 5'), { readPrBody: read }), fx);
+  assert.strictEqual(read.calls.length, 0);
+});
+
+test('a Bash call with no gh pr ready/merge loads none of the PR, run or gh modules', async () => {
+  const fx = await fixture();
+  const lazyMods = [
+    '../plugin/bin/lib/hooks/inflight-pr-gate', '../plugin/bin/lib/hooks/named-run',
+    '../plugin/bin/lib/flow/pr-checklist', '../plugin/bin/lib/flow/pr-body', '../plugin/bin/lib/flow/inflight-run',
+    '../plugin/bin/lib/phase-exit/exit-record', '../plugin/bin/pr-merge-state',
+  ].map((m) => require.resolve(m));
+  const saved = new Map(lazyMods.map((f) => [f, require.cache[f]]));
+  try {
+    for (const f of lazyMods) delete require.cache[f];
+    assert.deepStrictEqual(gate(ctxFor(fx, 'git status && echo gh pr view 5')), {});
+    assert.ok(require.cache[lazyMods[0]], 'the gate module itself must have loaded');
+    assert.deepStrictEqual(lazyMods.slice(1).filter((f) => require.cache[f]), []);
+    // Control: a gh pr merge call loads them.
+    gate(ctxFor(fx, 'gh pr merge 5'), { readPrBody: reader(null) });
+    assert.deepStrictEqual(lazyMods.filter((f) => !require.cache[f]), []);
+  } finally {
+    for (const [f, mod] of saved) {
+      if (mod) require.cache[f] = mod; else delete require.cache[f];
+    }
+  }
 });
 
 test('a selector-less gh pr merge --squash reads the PR with selector null', async () => {
