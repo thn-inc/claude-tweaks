@@ -112,3 +112,142 @@ test('real process: prints the JSON line and exits 0', () => {
   assert.equal(r.code, 0);
   assert.equal(JSON.parse(r.stdout).verdict, 'not-held');
 });
+
+// #6100: the readback verb.
+function textFile(s) {
+  const file = path.join(TMP, `t${seq++}.txt`);
+  fs.writeFileSync(file, s);
+  return file;
+}
+const PLAN = 'Plan: refs/claude-tweaks/plans/7 ' + 'a'.repeat(40) + ' spec-sha256:' + 'b'.repeat(64);
+const resolvedHold = {
+  id: 'IC_h',
+  body: '**Resolved:** answered via /claude-tweaks:specify — 2026-11-23\n<!-- needs-decision: specify -->\nold',
+  authorAssociation: 'OWNER',
+  createdAt: '2026-11-23T10:00:00Z',
+};
+const recBody = `Overview text\n${PLAN}\n\n## Overview\nx\n`;
+
+// A passing answered-branch fixture; each key overrides the matching file or flag.
+function rbArgs(o = {}) {
+  const readback = o.readback ?? { labels: [{ name: 'ready' }], body: recBody, comments: [resolvedHold] };
+  const a = ['readback', '--record', '7', '--branch', o.branch ?? 'answered'];
+  a.push('--readback-file', jsonFile(readback));
+  a.push('--body-file', textFile(recBody));
+  if (o.labels !== undefined) a.push('--labels-file', jsonFile(o.labels));
+  a.push('--plan-line-file', textFile(`${PLAN}\n`));
+  a.push('--plan-check-file', o.planCheck !== undefined ? (typeof o.planCheck === 'string' ? textFile(o.planCheck) : jsonFile(o.planCheck)) : jsonFile({ valid: true, failed: null }));
+  a.push('--resolved-ids', 'IC_h', '--answered', '2');
+  if ((o.branch ?? 'answered') === 'answered') a.push('--other-unresolved', '0');
+  if (o.branch === 're-held') a.push('--reheld-file', jsonFile(['Retry?']));
+  return a;
+}
+const without = (argv, flag) => { const i = argv.indexOf(flag); return argv.filter((_, j) => j !== i && j !== i + 1); };
+
+test('readback: gh-shape readback file, answered -> ready verdict, exit 0', () => {
+  const r = call(rbArgs());
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.stdout.split('\n').filter(Boolean).length, 1);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.next, 'ready');
+  assert.equal(out.ok, true);
+});
+
+test('readback: a failed assertion still exits 0', () => {
+  const r = call(rbArgs({ planCheck: { valid: false, failed: 'hash' } }));
+  assert.equal(r.code, 0);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.ok, false);
+  assert.deepEqual(out.failed, ['plan-check']);
+});
+
+test('readback: labels file as strings and readback object labels as {name}', () => {
+  const kept = rbArgs({ branch: 'kept', readback: [resolvedHold], labels: ['needs:decision'] });
+  const r = call(kept);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).ok, true);
+  const none = call(rbArgs({ branch: 'kept', readback: { comments: [resolvedHold] } }));
+  assert.equal(none.code, 1);
+  assert.match(none.stderr, /no labels/);
+});
+
+test('readback: plan-check file empty or not JSON -> failed assertion, exit 0', () => {
+  for (const planCheck of ['', '{oops']) {
+    const r = call(rbArgs({ planCheck }));
+    assert.equal(r.code, 0, planCheck);
+    assert.ok(JSON.parse(r.stdout).failed.includes('plan-check'), planCheck);
+  }
+});
+
+test('readback: relative paths resolve against the injected cwd', () => {
+  const argv = rbArgs({ labels: ['ready'] });
+  const files = new Set(['--readback-file', '--body-file', '--labels-file', '--plan-line-file', '--plan-check-file']);
+  const rel = argv.map((a, i) => (files.has(argv[i - 1]) ? path.basename(a) : a));
+  const r = call(rel);
+  assert.equal(r.code, 0, r.stderr);
+});
+
+test('readback: unreadable payload files exit 1 naming the argument spelling', () => {
+  const flags = ['--readback-file', '--body-file', '--plan-line-file', '--labels-file'];
+  for (const flag of flags) {
+    const argv = rbArgs({ labels: ['ready'] });
+    argv[argv.indexOf(flag) + 1] = 'no-such-file.json';
+    const r = call(argv);
+    assert.equal(r.code, 1, flag);
+    assert.match(r.stderr, new RegExp(`${flag}: no-such-file\\.json`), flag);
+  }
+  const argv = rbArgs({ branch: 're-held', readback: [resolvedHold], labels: ['needs:decision'] });
+  argv[argv.indexOf('--reheld-file') + 1] = 'no-such-file.json';
+  const r = call(argv);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /--reheld-file: no-such-file\.json/);
+});
+
+test('readback: malformed payloads exit 1', () => {
+  assert.equal(call(rbArgs({ readback: { nope: 1 } })).code, 1);
+  assert.equal(call(rbArgs({ labels: { a: 1 } })).code, 1);
+  assert.equal(call(rbArgs({ labels: [3] })).code, 1);
+  const emptyLine = rbArgs();
+  emptyLine[emptyLine.indexOf('--plan-line-file') + 1] = textFile('\n');
+  assert.equal(call(emptyLine).code, 1);
+  const badReheld = rbArgs({ branch: 're-held', readback: [resolvedHold], labels: ['needs:decision'] });
+  badReheld[badReheld.indexOf('--reheld-file') + 1] = jsonFile({ a: 1 });
+  assert.equal(call(badReheld).code, 1);
+});
+
+test('readback: argv errors exit 2', () => {
+  const set = (argv, flag, v) => { const a = argv.slice(); a[a.indexOf(flag) + 1] = v; return a; };
+  const cases = {
+    'missing --record': without(rbArgs(), '--record'),
+    '--branch bogus': set(rbArgs(), '--branch', 'bogus'),
+    '--record 0': set(rbArgs(), '--record', '0'),
+    '--answered -1': set(rbArgs(), '--answered', '-1'),
+    '--resolved-ids a,,b': set(rbArgs(), '--resolved-ids', 'a,,b'),
+    '--other-unresolved with kept': [...rbArgs({ branch: 'kept' }), '--other-unresolved', '1'],
+    'answered without --other-unresolved': without(rbArgs(), '--other-unresolved'),
+    're-held without --reheld-file': without(rbArgs({ branch: 're-held' }), '--reheld-file'),
+    '--reheld-file with answered': [...rbArgs(), '--reheld-file', jsonFile([])],
+    'repeated --body-file': [...rbArgs(), '--body-file', 'x'],
+    'unknown --bogus': [...rbArgs(), '--bogus', 'x'],
+  };
+  for (const [name, argv] of Object.entries(cases)) {
+    const r = call(argv);
+    assert.equal(r.code, 2, name);
+    assert.match(r.stderr, /planning-hold\.js: /, name);
+  }
+});
+
+test('readback: --help anywhere prints both usage lines', () => {
+  for (const argv of [['readback', '--help'], ['readback', '--record', '-h']]) {
+    const r = call(argv);
+    assert.equal(r.code, 0, argv.join(' '));
+    assert.match(r.stdout, /planning-hold\.js readback --record/);
+    assert.match(r.stdout, /--comments-file <file>/);
+  }
+});
+
+test('real process: readback prints the JSON line', () => {
+  const r = spawnCli(BIN, rbArgs(), { cwd: TMP });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).branch, 'answered');
+});
