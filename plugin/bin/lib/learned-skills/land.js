@@ -328,7 +328,14 @@ function land({ runDir, worktree, record, integrationBranch, mergeBase }, overri
   };
   const finish = () => flushLog(changed ? recordManifest(runDir, manifest, deps, out) : out);
   if (!todo.length) {
-    if (prior) { try { const open = openOf(listPrs()); if (open) out.pr = confirmed(open); } catch { /* unconfirmed: reported as null */ } }
+    // An open PR is confirmed only while its branch is on origin: one listed with its branch gone is closing.
+    if (prior) {
+      try {
+        const open = openOf(listPrs());
+        const listed = open && String(git(['ls-remote', '--heads', '--end-of-options', 'origin', `refs/heads/${branch}`], { timeout: GIT_TIMEOUT_MS }));
+        if (open && listed.split(/\r?\n/).some((l) => l.split(/\s+/)[1] === `refs/heads/${branch}`)) out.pr = confirmed(open);
+      } catch { /* unconfirmed: reported as null */ }
+    }
     return finish();
   }
 

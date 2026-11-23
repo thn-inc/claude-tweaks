@@ -617,6 +617,16 @@ test('nothing to do reports pr null when the earlier PR is no longer open', (t) 
   assert.equal(res.pr, null);
 });
 
+test('nothing to do reports pr null when the open PR is listed but its branch is gone from origin', (t) => {
+  const f = fixture(t);
+  const gh = fakeGh();
+  land(landArgs(f), deps(gh.gh).deps);
+  sh(f.origin, ['update-ref', '-d', `refs/heads/${BRANCH}`]);
+  const res = land(landArgs(f), deps(gh.gh).deps);
+  assert.equal(res.pr, null);
+  assert.deepEqual(res.landed, []);
+});
+
 test('a push failure on resume lands the reused commits and stages only the new ones', (t) => {
   const f = fixture(t, { capturedTargets: [X] });
   const gh = fakeGh();
