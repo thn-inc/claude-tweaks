@@ -6,7 +6,6 @@
 // merge-sensitive-paths) and pass the values in.
 'use strict';
 
-const nodePath = require('path');
 const { extractKeyFiles } = require('../issues/grouping');
 const { normalizeLabelNames, parseRecordFacets, typeOf } = require('../issues/record');
 const { shapeGate, liftMetadata } = require('../issues/materialize-format');
