@@ -73,6 +73,7 @@ function baseInput(t, extra = {}) {
     ...extra,
   };
 }
+const flagValue = (args, flag) => { const i = args.indexOf(flag); return i === -1 ? undefined : args[i + 1]; };
 const logLines = (runDir) => {
   let text = '';
   try { text = readText(path.join(runDir, WORKER_DISPATCHES_FILE)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
@@ -148,6 +149,27 @@ test('classifyFailure: timeout, auth, launch, denied, blank and a reply', () => 
   assert.strictEqual(classifyFailure(ok(' \n\t')), 'blank');
   assert.strictEqual(classifyFailure({ status: 'ok', result: {}, denials: [] }), 'blank');
   assert.strictEqual(classifyFailure(ok('No findings.')), null);
+});
+
+// Whole-branch review finding 1 (#6000): a git command inside a compound or env-prefixed
+// command line is still a git denial; a compound with no git segment is not.
+test('classifyFailure: a denied compound, env-prefixed or cd-prefixed git command is denied', () => {
+  const denied = (command) => classifyFailure({ status: 'ok', result: { text: 'No findings.' }, denials: [{ tool_name: 'Bash', tool_input: { command } }], detail: null });
+  for (const command of [
+    'cd src && git log -1',
+    'GIT_PAGER=cat git log -1',
+    'A=1 B="x y" git diff',
+    "true; git diff HEAD",
+    'ls || git status',
+    'cat a | git hash-object --stdin',
+    'echo a\ngit show HEAD',
+    'echo $(git rev-parse HEAD)',
+    'echo `git rev-parse HEAD`',
+    'sleep 1 & git log',
+  ]) assert.strictEqual(denied(command), 'denied', command);
+  for (const command of ['cat a; ls', 'GIT_DIR=x ls', 'echo git', 'cd git && ls', 'gitk; ls', 'A="unterminated git log']) {
+    assert.strictEqual(denied(command), null, command);
+  }
 });
 
 test('AC2.2: off SANDBOX_PROBED_PLATFORMS every side fails with reason platform and no worker starts', async (t) => {
@@ -440,8 +462,8 @@ test('an unreadable worker transcript leaves firstTurnTokens null and the envelo
   assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
 });
 
-test('a failed worker with no usage in its envelope is launched with tokens null and a notFound, and a fallback agentId', async (t) => {
-  const { runner } = fakeRunner(() => ({ code: 1, stdout: '' }));
+test('a failed worker with no usage in its envelope and no transcript is launched with tokens null and a notFound, and its minted session id', async (t) => {
+  const { runner, calls } = fakeRunner(() => ({ code: 1, stdout: '' }));
   const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
   const start = Date.UTC(2026, 10, 23, 12, 0, 0);
   await runLensWorkers({ ...input, now: () => start }, { runner });
@@ -451,7 +473,48 @@ test('a failed worker with no usage in its envelope is launched with tokens null
   assert.strictEqual(rec.tokens, null);
   assert.strictEqual(rec.notFound, 'no usage in the worker envelope');
   assert.strictEqual(rec.costUsd, null);
+  assert.strictEqual(rec.agentId, flagValue(calls[0].args, '--session-id'));
+  assert.match(rec.agentId, /^[0-9a-f-]{36}$/);
+});
+
+test('a launch that throws keeps the fallback agentId', async (t) => {
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const start = Date.UTC(2026, 10, 23, 12, 0, 0);
+  await runLensWorkers({ ...input, now: () => start }, { runner: () => ({ pid: 1, kill() {}, exited: new Promise(() => {}) }), launchWorker: async (_opts, { runner }) => { runner({}); throw new Error('boom'); } });
+  const [rec] = logLines(input.runDir);
   assert.strictEqual(rec.agentId, `lens-3a-A-${start}`);
+  assert.strictEqual(rec.tokens, null);
+});
+
+// Whole-branch review finding 3 (#6000): a timed-out worker has no result object, so its spend is
+// read from its own transcript, found by the session id the launch minted.
+test("a timed-out worker's tokens are summed from its transcript, found by the minted session id", async (t) => {
+  const { slugForCwd } = require(path.join(LIB, 'timing', 'transcript.js'));
+  const configDir = tmp(t, 'lens-cfg-');
+  const input = baseInput(t, { lenses: [lens('3b', 'haiku', 1)], env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: configDir } });
+  const turn = (id, usage) => JSON.stringify({ timestamp: '2026-11-23T12:00:00.000Z', message: { role: 'assistant', id, model: 'claude-haiku', content: [], usage } });
+  const timers = { setTimeout: (fn, ms) => { if (ms === LENS_WORKER_TIMEOUT_MS) setImmediate(fn); return { ms }; }, clearTimeout: () => {} };
+  const runner = (call) => {
+    const sid = flagValue(call.args, '--session-id');
+    const dir = path.join(configDir, 'projects', slugForCwd(input.cwd));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, sid + '.jsonl'), [
+      JSON.stringify({ timestamp: '2026-11-23T11:59:59.000Z', message: { role: 'user', content: 'go' } }),
+      turn('m1', { input_tokens: 10, output_tokens: 3, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }),
+      turn('m2', { input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 200, cache_creation_input_tokens: 0 }),
+    ].join('\n') + '\n');
+    let die;
+    const exited = new Promise((r) => { die = r; });
+    return { pid: 7, kill(signal) { die({ code: null, signal, stdout: '', stderr: '' }); }, exited, sid };
+  };
+  const seen = [];
+  const out = await runLensWorkers(input, { runner: (call) => { const h = runner(call); seen.push(h.sid); return h; }, timers });
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['timeout']);
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.agentId, seen[0]);
+  assert.deepStrictEqual(rec.tokens, { input: 15, output: 10, cacheRead: 300, cacheCreate: 20 });
+  assert.strictEqual(rec.notFound, null);
+  assert.strictEqual(rec.firstTurnTokens, 130);
 });
 
 test("a denied worker's record carries reason denied and its tokens", async (t) => {
@@ -513,7 +576,7 @@ test('AC7.1 (#6000): live smoke — one haiku lens worker replies and its tokens
   };
   const mainRoot = path.dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
   const iso = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/:/g, '');
-  const runDir = path.join(mainRoot, '.claude-tweaks', 'pipelines', iso + '-lens-smoke');
+  const runDir = path.join(mainRoot, '.claude-tweaks', 'pipelines', iso + '-lens-smoke-' + process.pid);
   fs.mkdirSync(runDir, { recursive: true });
   const worktree = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lens-smoke-wt-'))), 'tree');
   t.after(() => {

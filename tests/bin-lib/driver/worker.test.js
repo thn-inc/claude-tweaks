@@ -836,6 +836,45 @@ test('a timeout envelope still carries the sessionId of a result the child print
   assert.deepStrictEqual([env.status, env.reason, env.sessionId], ['timeout', 'wall-clock-ceiling', OK.session_id]);
 });
 
+// Whole-branch review finding 3 (#6000): a lens-reviewer launch carries a pre-minted session id,
+// so a worker with no result object (a timeout) still has a transcript its spend can be read from.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const sessionIdArg = (args) => { const i = args.indexOf('--session-id'); return i === -1 ? undefined : args[i + 1]; };
+
+test('a lens-reviewer launch passes a fresh --session-id UUID; the envelope falls back to it with no result object', async (t) => {
+  const ids = [];
+  for (let n = 0; n < 2; n += 1) {
+    let finish;
+    const exited = new Promise((resolve) => { finish = resolve; });
+    const calls = [];
+    const runner = (call) => { calls.push(call); return { pid: 4242, kill() { finish({ code: null, signal: 'SIGTERM', stdout: '', stderr: '' }); }, exited }; };
+    const { timers } = instantTimers();
+    const env = await launchWorker(base(t, { role: 'lens-reviewer', schema: LENS_REPLY_SCHEMA, attrSource: EMPTY_TREE, ceilings: { wallClockMs: 1234 } }), { runner, timers });
+    const id = sessionIdArg(calls[0].args);
+    assert.match(String(id), UUID_RE);
+    assert.strictEqual(calls[0].args.filter((a) => a === '--session-id').length, 1);
+    assert.deepStrictEqual([env.status, env.sessionId], ['timeout', id]);
+    ids.push(id);
+  }
+  assert.notStrictEqual(ids[0], ids[1]);
+});
+
+test("a lens-reviewer envelope keeps the result object's own session_id over the minted one", async (t) => {
+  const { runner, calls } = fakeRunner({ code: 0, stdout: JSON.stringify({ ...OK, structured_output: { text: 'reply' } }) });
+  const env = await launchWorker(base(t, { role: 'lens-reviewer', schema: LENS_REPLY_SCHEMA, attrSource: EMPTY_TREE }), { runner });
+  assert.match(String(sessionIdArg(calls[0].args)), UUID_RE);
+  assert.strictEqual(env.sessionId, OK.session_id);
+});
+
+test('no other role is launched with --session-id, and its envelope sessionId stays null with no result object', async (t) => {
+  for (const role of Object.keys(ROLES).filter((r) => r !== 'lens-reviewer')) {
+    const { runner, calls } = fakeRunner({ code: 1, stdout: '', stderr: 'boom' });
+    const env = await launchWorker(base(t, { role }), { runner });
+    assert.ok(!calls[0].args.includes('--session-id'), role);
+    assert.strictEqual(env.sessionId, null, role);
+  }
+});
+
 test('AC4: a POSIX child that ignores SIGTERM gets SIGKILL after KILL_GRACE_MS', async (t) => {
   const { runner, kills } = hungRunner('SIGKILL');
   const { timers, delays } = instantTimers();

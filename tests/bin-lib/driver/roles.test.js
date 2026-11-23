@@ -155,6 +155,16 @@ test('Minor: composeArgs refuses a missing settings file or schema', () => {
   assert.throws(() => composeArgs({ role: 'reviewer', schema: [] }), /schema/);
 });
 
+test('composeArgs appends --session-id last only when a UUID sessionId is given, and refuses any other value', () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const plain = composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform: 'darwin', model: 'haiku' });
+  assert.ok(!plain.includes('--session-id'));
+  assert.deepStrictEqual(composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform: 'darwin', model: 'haiku', sessionId: id }), [...plain, '--session-id', id]);
+  for (const bad of ['', 'abc', '--model', id + ' ', id.toUpperCase().replace(/-/g, ''), 7, null]) {
+    assert.throws(() => composeArgs({ role: 'reviewer', schema: RESULT_SCHEMA, platform: 'darwin', sessionId: bad }), (e) => e instanceof TypeError && /sessionId/.test(e.message), String(bad));
+  }
+});
+
 test('#5942 composeArgs: effort appends --effort {level} after --model', () => {
   for (const lvl of EFFORT_SCALE) {
     const args = composeArgs({ role: 'reviewer', schema: REVIEW_RESULT_SCHEMA, model: 'sonnet', effort: lvl, platform: 'darwin' });

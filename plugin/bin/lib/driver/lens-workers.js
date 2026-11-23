@@ -55,13 +55,16 @@
 // (null), `tokens` (`{ input, output, cacheRead, cacheCreate }`), `firstTurnTokens`, `costUsd`,
 // `notFound` and `workflowRunId` / `workflowPhase` (null). Usage source: the envelope's `usage`
 // (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`) is
-// the total, so `tokens` is null with `notFound: 'no usage in the worker envelope'` when the
-// envelope has none; `firstTurnTokens` is `readUsage`'s `contextTokens` of the worker's first
-// assistant turn (input + cacheRead + cacheCreate, the context the worker opened with), read from
-// the worker's own transcript (`locateTranscripts` over the canonical cwd, in the config dir of the
-// env the worker ran with, then `readUsage`) and null when that cannot be found or read. The
-// canonical-path slug is read from the projects directory names on macOS, where sessions whose cwd
-// is under /tmp are named `-private-tmp-...`, not an observed symlinked-cwd launch. The config-dir
+// the total. With none (a timeout or a launch failure leaves no result object), `tokens` is the
+// sum of the assistant rows of the worker's own transcript, which the launch's pre-minted session
+// id (worker.js) names; `tokens` is null with `notFound: 'no usage in the worker envelope'` only
+// when no transcript can be found or read either. `firstTurnTokens` is `readUsage`'s
+// `contextTokens` of the worker's first assistant turn (input + cacheRead + cacheCreate, the
+// context the worker opened with), read from that transcript (`locateTranscripts` over the
+// canonical cwd, in the config dir of the env the worker ran with, then `readUsage`) and null
+// when it cannot be found or read. Why the canonical path: on macOS a session whose cwd was under
+// /tmp got a projects directory named `-private-tmp-…` (the realpath); a launch from a symlinked
+// cwd was not itself observed. The config-dir
 // fallback (HOME before USERPROFILE) is unprobed on win32 and moot today: off
 // SANDBOX_PROBED_PLATFORMS no worker starts. `timing/transcript.js`'s `readWorkerDispatches`
 // reads these lines into `timing.json` `dispatches`; a `launched: false` line is never a dispatch.
@@ -118,14 +121,57 @@ function composeLensPrompt(bundleText, brief) {
   return '<review-context>\n' + bundleText + '\n</review-context>\n\n' + brief;
 }
 
-// A permission denial for a git command (spec AC9): a Bash denial whose command, trimmed, is
-// `git` or starts with `git `. A denial of any other tool leaves the side's outcome alone.
+// A permission denial for a git command (spec AC9): a Bash denial with any segment of its
+// command that, once its leading `NAME=value` assignments are dropped and it is trimmed, is
+// `git` or starts with `git` and whitespace. Segments split on `;`, `&`, `|`, a line break,
+// `(`, `)` and a backtick, so `cd src && git log`, `true; git diff` and `$(git ...)` count.
+// Over-splitting (a `2>&1`, a separator inside quotes) can only add a segment, so it errs
+// toward `denied`, a failed side. A denial of any other tool leaves the side's outcome alone.
+// One forward pass, no regex over the command (regex-scan-linearity).
+const SEGMENT_SEPARATORS = new Set([';', '&', '|', '\n', '\r', '(', ')', '`']);
+const isNameStart = (c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c === '_';
+const isNameChar = (c) => isNameStart(c) || (c >= '0' && c <= '9');
+const isSpace = (c) => c === ' ' || c === '\t';
+
+// A segment past its leading `NAME=value` assignments (a quoted value may hold spaces); an
+// unterminated quote leaves nothing, since no command follows it.
+function afterAssignments(segment) {
+  let i = 0;
+  for (;;) {
+    while (i < segment.length && isSpace(segment[i])) i += 1;
+    if (!isNameStart(segment[i])) return segment.slice(i);
+    let j = i + 1;
+    while (j < segment.length && isNameChar(segment[j])) j += 1;
+    if (segment[j] !== '=') return segment.slice(i);
+    j += 1;
+    while (j < segment.length && !isSpace(segment[j])) {
+      if (segment[j] === '"' || segment[j] === "'") {
+        const close = segment.indexOf(segment[j], j + 1);
+        if (close === -1) return '';
+        j = close + 1;
+      } else j += 1;
+    }
+    i = j;
+  }
+}
+
+function isGitSegment(segment) {
+  const command = afterAssignments(segment).trim();
+  return command === 'git' || (command.startsWith('git') && /\s/.test(command[3]));
+}
+
 function isGitDenial(denial) {
   if (!denial || typeof denial !== 'object' || denial.tool_name !== 'Bash') return false;
   const command = denial.tool_input && denial.tool_input.command;
   if (typeof command !== 'string') return false;
-  const trimmed = command.trim();
-  return trimmed === 'git' || trimmed.startsWith('git ');
+  let start = 0;
+  for (let i = 0; i <= command.length; i += 1) {
+    if (i === command.length || SEGMENT_SEPARATORS.has(command[i])) {
+      if (isGitSegment(command.slice(start, i))) return true;
+      start = i + 1;
+    }
+  }
+  return false;
 }
 
 // envelope -> null (a reply) | one of the envelope reasons. See the header for `auth`.
@@ -148,9 +194,11 @@ function tokensOf(usage) {
   return { input: num(usage.input_tokens), output: num(usage.output_tokens), cacheRead: num(usage.cache_read_input_tokens), cacheCreate: num(usage.cache_creation_input_tokens) };
 }
 
-// The worker's own transcript -> its first assistant turn's context tokens, or null when the
-// transcript cannot be found or read (best effort: the envelope totals stand without it).
-async function firstTurnTokensOf({ cwd, sessionId, env, locate, readRows }) {
+// The worker's own transcript -> `{ firstTurnTokens, tokens }`: its first assistant turn's
+// context tokens and the sum of its assistant rows' usage (readUsage zeroes a turn's repeat
+// rows, so the sum counts each turn once), or null when the transcript cannot be found or
+// read (best effort: the envelope totals stand without it).
+async function transcriptUsageOf({ cwd, sessionId, env, locate, readRows }) {
   if (typeof sessionId !== 'string') return null;
   // The worker's config dir, from the env it ran with (never this process's): CLAUDE_CONFIG_DIR, else HOME/USERPROFILE + .claude.
   const home = env && (env.HOME || env.USERPROFILE);
@@ -161,8 +209,16 @@ async function firstTurnTokensOf({ cwd, sessionId, env, locate, readRows }) {
     const found = locate({ cwd: canonicalRealpath(cwd) || cwd, sessionId, configDir });
     if (!Array.isArray(found) || found.length === 0) return null;
     const rows = await readRows(found[0].path);
-    const first = rows.find((r) => r.role === 'assistant' && r.turnStart);
-    return first ? first.contextTokens : null;
+    const assistant = rows.filter((r) => r.role === 'assistant');
+    const first = assistant.find((r) => r.turnStart);
+    const tokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
+    for (const r of assistant) {
+      tokens.input += num(r.inputTokens);
+      tokens.output += num(r.outputTokens);
+      tokens.cacheRead += num(r.cacheRead);
+      tokens.cacheCreate += num(r.cacheCreate);
+    }
+    return { firstTurnTokens: first ? first.contextTokens : null, tokens };
   } catch {
     return null;
   }
@@ -201,7 +257,7 @@ async function runLensWorkers(input, deps = {}) {
   const records = [];
   const logFailures = [];
 
-  const settle = (i, { text, reason, detail = null, launched, startMs, endMs, envelope = null, firstTurnTokens = null }) => {
+  const settle = (i, { text, reason, detail = null, launched, startMs, endMs, envelope = null, transcript = null }) => {
     const slot = slots[i];
     const failed = reason !== null;
     outcomes[i] = { lens: slot.lens, side: slot.side, text: failed ? null : text, failed };
@@ -212,10 +268,12 @@ async function runLensWorkers(input, deps = {}) {
     };
     if (launched) {
       const sessionId = envelope && typeof envelope.sessionId === 'string' ? envelope.sessionId : null;
-      const tokens = tokensOf(envelope && envelope.usage);
+      // The envelope's usage is the total; with none (a timeout, a launch failure) the
+      // worker's transcript, when one exists, is summed instead.
+      const tokens = tokensOf(envelope && envelope.usage) || (transcript && transcript.tokens);
       Object.assign(record, {
         agentId: sessionId || `lens-${slot.lens}-${slot.side}-${startMs}`, transcriptModel: null, parentAgentId: null, spawnDepth: null,
-        tokens, firstTurnTokens, costUsd: envelope && typeof envelope.costUsd === 'number' ? envelope.costUsd : null,
+        tokens, firstTurnTokens: transcript ? transcript.firstTurnTokens : null, costUsd: envelope && typeof envelope.costUsd === 'number' ? envelope.costUsd : null,
         notFound: tokens === null ? NO_USAGE : null, workflowRunId: null, workflowPhase: null,
       });
     }
@@ -295,8 +353,8 @@ async function runLensWorkers(input, deps = {}) {
       if (handle !== null) active.delete(handle);
     }
     const endMs = now();
-    const firstTurnTokens = launched ? await firstTurnTokensOf({ cwd, sessionId: envelope && envelope.sessionId, env, locate, readRows }) : null;
-    settle(i, { text, reason, detail, launched, startMs, endMs, envelope, firstTurnTokens });
+    const transcript = launched ? await transcriptUsageOf({ cwd, sessionId: envelope && envelope.sessionId, env, locate, readRows }) : null;
+    settle(i, { text, reason, detail, launched, startMs, endMs, envelope, transcript });
   };
 
   let next = 0;

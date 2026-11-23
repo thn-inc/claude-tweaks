@@ -41,7 +41,7 @@
 // Anything else is `ok`. A "result object" is stdout that parses, after trimming, to
 // an object with `type: "result"`; whenever one exists, `usage`, `turns`, `denials`
 // and `costUsd` are read from it, `sessionId` is its `session_id` when that is a
-// non-empty string (else null), and `spendOverrun` is true exactly when a spend
+// non-empty string (else the pre-minted id of a lens-reviewer launch, below, else null), and `spendOverrun` is true exactly when a spend
 // ceiling was given and the reported cost is above it. The free-text `result` string
 // is never parsed.
 //
@@ -127,6 +127,18 @@
 //   `ok` means only that conforming output arrived; the verdict is `result.status`. A change
 //   to `RESULT_SCHEMA`, the sandbox flags or the Fast profile's model needs a re-probe
 //   (re-run: the opt-in `AC9.1 (#5997)` live probe).
+//
+// Pre-minted session id (#6000 whole-branch review). A `lens-reviewer` launch passes
+// `--session-id <uuid>` (a fresh `crypto.randomUUID()` per launch; `composeArgs` appends it
+// last and refuses a non-UUID), so a worker with no result object (a timeout, a death by
+// signal) still names the transcript its spend can be read from: the envelope's `sessionId`
+// falls back to that id. No other role passes it, so their argv is unchanged. CLI 2.1.325's
+// `claude --help` lists `--session-id <uuid>  Use a specific session ID for the conversation
+// (must be a valid UUID)`. Probed 2026-11-23 on that CLI on macOS (darwin), subscription login,
+// no TTY: one haiku lens-reviewer launch through this launcher under `--safe-mode --restricted`
+// returned `ok` with `session_id` equal to the minted id, its transcript was
+// `{minted}.jsonl` under the canonical cwd's projects directory, and the sum of that
+// transcript's assistant rows (readUsage) equalled the envelope's `usage` field for field.
 //
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
@@ -579,6 +591,9 @@ async function launchWorker(opts, deps = defaultDeps()) {
   // environment"); a missing or malformed attrSource is refused here, before any write.
   // Every other role ignores attrSource and keeps exactly the allow-listed env.
   const gitEnv = role === 'lens-reviewer' ? lensGitEnv({ attrSource: opts.attrSource }) : null;
+  // The lens-reviewer launches under a session id minted here (header, "Pre-minted session
+  // id"), so a launch with no result object still names its transcript. No other role does.
+  const mintedSessionId = role === 'lens-reviewer' ? crypto.randomUUID() : undefined;
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
   const written = [];
@@ -595,7 +610,7 @@ async function launchWorker(opts, deps = defaultDeps()) {
       appendPromptFile = stem + '.append.md';
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform, sessionId: mintedSessionId });
     const childEnv = gitEnv ? { ...buildEnv(env, platform), ...gitEnv } : buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;
@@ -605,7 +620,9 @@ async function launchWorker(opts, deps = defaultDeps()) {
     } catch (err) {
       outcome = { timedOut: false, spawnError: errorOrDefault(err) };
     }
-    return classify(outcome, { schema, spendCeiling });
+    const envelope = classify(outcome, { schema, spendCeiling });
+    if (envelope.sessionId === null && mintedSessionId !== undefined) envelope.sessionId = mintedSessionId;
+    return envelope;
   } finally {
     for (const file of written) {
       try {

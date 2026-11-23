@@ -747,7 +747,12 @@ function toolsFor(role, platform) {
   return spec.tools.filter((tool) => !(spec.settings && unprobed.includes(tool)));
 }
 
-function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
+// A pre-minted session id (`--session-id`, which the CLI requires to be a UUID): absent
+// adds nothing, so a launch without one keeps its argv; anything else but a lowercase
+// UUID is refused. worker.js mints one for the lens-reviewer only (its header says why).
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform, sessionId } = {}) {
   const spec = specFor(role);
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
     throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
@@ -758,6 +763,9 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   assertSpendCeiling(spendCeiling);
   assertEffort(effort);
   if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
+  if (sessionId !== undefined && !(typeof sessionId === 'string' && SESSION_ID_PATTERN.test(sessionId))) {
+    throw new TypeError('sessionId must be a lowercase UUID string, got ' + String(sessionId));
+  }
   const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
   if (spec.settings) args.push('--settings', settingsFile);
   args.push('--permission-prompts', 'none', '--output-format', 'json', '--json-schema', JSON.stringify(schema));
@@ -765,6 +773,7 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   if (spendCeiling !== undefined) args.push('--max-budget-usd', String(spendCeiling));
   if (model) args.push('--model', model);
   if (effort !== undefined && effort !== null) args.push('--effort', effort);
+  if (sessionId !== undefined) args.push('--session-id', sessionId);
   return args;
 }
 
