@@ -28,8 +28,7 @@ Scope keywords: wrap-up-skills-pr, never armed, waits for a human, learned-skill
 
 Decision recorded here (spec ambiguity): the spec lists the closed `leftOpen` reason set as `pending, timeout, red, head-changed, not-learned-skills-branch, no-gh`, but also requires a fork or out-of-scope-file PR to be reported "with the failed condition as its reason", and a refused merge call needs a reason. The closed set is therefore `pending, timeout, red, head-changed, not-learned-skills-branch, cross-repository, no-marker, files-outside-skills, merge-failed, no-gh`, exported as `LEFT_OPEN_REASONS`.
 
-Proof(auth): drain.js merges only a PR passing `scopeProblem` (same repository, `learned-skills/*` head, marker, every file under `.claude/skills/`), pinned by Task 2's AC1.6/AC3.3/scope tests where a fork, a foreign branch, a no-marker PR and an out-of-scope file each record no `pr merge` call.
-Proof(irreversible-side-effect): the one merge call runs only on the strict-green verdict, after a fresh `mergeStateStatus`/`headRefOid` re-read, pinned with `--match-head-commit`; Task 2's AC5.1 test proves an empty, partial or pending rollup in an unprotected repo (mergeStateStatus CLEAN) never reaches `pr merge`.
+`wrap-up/residue-sweep.md` (named in the spec's Gotchas) is read-only here: the drain must not copy its bare `--auto` arm at creation; no edit to it.
 
 ## Review Focus
 
@@ -102,7 +101,9 @@ Proof(irreversible-side-effect): the one merge call runs only on the strict-gree
   - `twin pin: LEVER_ACTIONS rows equal Step 2.5's table Value column` — read `plugin/skills/_shared/pr-first-merge.md`, slice from `## Step 2.5` to the next `## `, parse the `| Value | Green | Pending | Red |` table's first-column backticked values → `['merge-when-green','wait','off']`, `assert.deepEqual(Object.keys(LEVER_ACTIONS).sort(), parsed.sort())`, and assert the header columns are exactly `Value, Green, Pending, Red`; go-red control: the same parser over the section with a row `| \`strict\` | … |` appended yields a mismatch.
 - [ ] **Step 2: Run** `node --test tests/bin-lib/learned-skills/drain.test.js` — Expected: FAIL (`Cannot find module '…/drain'`).
 - [ ] **Step 3: Implement** `drain.js` and `layout.drainPath` per Interfaces. Header comment: module purpose, the reason set, the lever table and that `_shared/pr-first-merge.md` Step 2.5 is the source of the semantics, the one merge call. Follow the `gh-api-module-pattern` project skill (injectable runner, `--repo` and values as discrete argv elements, per-PR fail-safe). Spawn options come from `../learned-skills` realDeps (`windowsHide: true`), and no API the source-scan suites ban (`tests/windows-hide-conformance.test.js`, `tests/path-guard-conformance.test.js`).
-- [ ] **Step 4: Run** the same command — Expected: PASS. Then revert each behavior once (e.g. drop the strict-green check, the pre-merge re-read, the scope check) and see its test go red (AC6).
+  Proof(auth): drain.js merges only a PR passing `scopeProblem` (same repository, `learned-skills/*` head, marker, every file under `.claude/skills/`), pinned by this task's AC1.6/AC3.3/scope tests where a fork, a foreign branch, a no-marker PR and an out-of-scope file each record no `pr merge` call.
+  Proof(irreversible-side-effect): the one merge call runs only on the strict-green verdict, after a fresh `mergeStateStatus`/`headRefOid` re-read, pinned with `--match-head-commit`; this task's AC5.1 test proves an empty, partial or pending rollup in an unprotected repo (mergeStateStatus CLEAN) never reaches `pr merge`.
+- [ ] **Step 4: Run** the same command — Expected: PASS. Then (AC6.1) revert each behavior once (drop the strict-green check, the pre-merge re-read, the scope check, the head pin) and see its test go red; quote the red output in the task report. Every other task does the same for its own new tests.
 - [ ] **Step 5: Commit** `Add the learned-skills drain library — merges green learned-skills PRs through Step 2.5's semantics, refs #6112`.
 
 ### Task 3: `drain` CLI verb
@@ -169,6 +170,7 @@ New section content (facts the tests pin):
 **Files:**
 - Modify: `plugin/bin/learned-skills-pr.js:36` header, `plugin/bin/lib/learned-skills/land.js:4` header and `:278` PR body sentence (→ `Opened ready: wrap-up's drain merges it once CI is green when learned-skills-auto-merge is on; otherwise a human merges or closes it.`), `plugin/bin/lib/reconcile/archive-branches.js:54` comment
 - Modify: `docs/skill-graph.md:807` (the `wrap-up/learned-skills-pr.md` row only — not 809)
+- Modify: `docs/plugin-structure.md:152` (list `drain.js`) and `:318` (`capture|land|stage|drain`), `docs/journeys/review-a-runs-learned-skill-edits-on-their-own-pr-5290.md:24,46` (the PR merges once green under the lever; add an "Updated by #6112" line). `docs/decisions/0040-*.md` is a decision record — history, not edited.
 - Modify: `plugin/bin/lib/policy-schema.js:152` summary (drop `Not yet used.`), `plugin/skills/_shared/policy-schema.md:100` (`Not yet read — …` → names the drain as the reader; no net growth), `docs/journeys/resolve-a-policy-key.md` and `docs/journeys/review-project-policy.md` (drop `learned-skills-auto-merge` from the "Not yet used" lists; add an "Updated by #6112" line)
 - Test: `tests/resolve-policy-control-mode.test.js` (remove `learned-skills-auto-merge` from `NOT_YET_USED`), `tests/bin-lib/learned-skills/land.test.js` (any pin on the body sentence; keep `never armed` assertion meaning "land itself never merges" but rename its message to `land makes no merge call`)
 
@@ -176,4 +178,6 @@ New section content (facts the tests pin):
 - [ ] **Step 2:** Make the edits above.
 - [ ] **Step 3: Verify** `git grep -n -i -E "never armed|never-armed|waits for a human|wait for a human" -- plugin docs/skill-graph.md README.md` lists only lines owned by other mechanisms (dispatch/settle-and-merge, tidy, github-pr-scan, release, pr-first-merge-post-merge, skill-graph 547/809) — none about the learned-skills PR; `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,604.
 - [ ] **Step 4: Run** `node --test tests/resolve-policy-control-mode.test.js tests/policy.test.js tests/bin-lib/learned-skills/land.test.js` and any test file grep finds pinning the edited sentences — Expected: PASS.
+AC7.1 (`npm test -- --full` passes) is proved by `/build`'s Common Step 5 and `/test`, after this task.
+
 - [ ] **Step 5: Commit** `Retire the never-armed wording for learned-skills PRs and mark learned-skills-auto-merge as read, refs #6112`.
