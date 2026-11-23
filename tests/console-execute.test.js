@@ -965,7 +965,11 @@ test('reconcile(): local-merge skips the console check under the same combined s
 
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.console, null);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  // plan-refs runs as the local-merge fallback; this fixture has no origin, so its ls-remote fails.
+  assert.deepStrictEqual(r.skipped, [
+    { check: 'plan-refs', reason: 'no-origin' },
+    { check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' },
+  ]);
 });
 
 test('AC1.1 AC2.1: loading reconcile/index.js in a fresh process does not load wrap-up/pack.js (#4060)', () => {

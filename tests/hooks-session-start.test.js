@@ -753,13 +753,39 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
   fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
-    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3 },
+    completedAt: Date.now(), surfaced: false, summary: { reaped: 1, archivedBranches: 2, prunedRemote: 3, planRefsDeleted: 2 },
   }));
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     out.json.hookSpecificOutput.additionalContext,
-    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin\./,
+    /background reconcile \(from a prior session\) — 1 finished worktree\(s\) removed \(already merged\); 2 local branch\(es\) archived\/deleted; 3 merged remote branch\(es\) deleted on origin; /,
   );
+  assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
+});
+
+test('SessionStart surfaces a prior background pass failed plan-ref deletions, and stays silent at zero', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusFile = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 3 } }));
+  const root = tmpPluginRoot();
+  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  try {
+    process.env.CLAUDE_PLUGIN_ROOT = root;
+    let out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    const hint = out.json.hookSpecificOutput.additionalContext;
+    assert.match(hint, /3 plan ref deletion\(s\) failed on origin — /);
+    assert.ok(hint.includes(`node "${root}/bin/hooks.js" reconcile --checks plan-refs`), 'hint runs the plugin-root hooks.js, not a repo-relative path');
+    assert.doesNotMatch(hint, /--dry-run/);
+    assert.doesNotMatch(hint, / node plugin\/bin\/hooks\.js/);
+    fs.writeFileSync(statusFile, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary: { reaped: 1, planRefsDeleteFailed: 0 } }));
+    out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+    assert.doesNotMatch(out.json.hookSpecificOutput.additionalContext, /plan ref deletion/);
+  } finally {
+    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = orig;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('SessionStart surfaces a prior background pass that failed, with its reason (#4032)', async () => {

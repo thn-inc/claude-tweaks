@@ -60,6 +60,9 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - **A perf file with only a one-long-line case.** The per-task cases all ran one long line, which the unbounded search handles in one pass, so only the whole-branch review's multi-line input exposed it. Put a many-lines case (`'git x\n'.repeat(40000)`) beside the one-long-line case.
 
 #5556's pair-line patterns (`plugin/bin/lib/timing/pair-lines.js`) met shape 2 with several unanchored `.+` groups in one strict pattern: the absence-refuted pattern took 11741 ms on a 22 KB line that repeats its own delimiter (` Evidence: ` and its kin), because each group can take the delimiter and the rest retries. Fix: split the line at its first delimiter and match each half with negated classes, so every character has one reading (1.6 ms at the same size). Pin a repeated-delimiter probe in the pattern's own test with a time bound.
+#5996's brace-list matcher for a record's `Key Files` (`plugin/bin/lib/model-profiles/implementer-tier.js`, `perf/implementer-tier-linearity.test.js`) met a shape the three above do not name:
+
+- **Two negated classes around a literal separator.** `\{[^}]*,[^}]*\}` is polynomial on an unclosed `{` followed by many commas, because the first class can also consume the `,` the pattern then looks for. Exclude the separator and both braces from the first class (`\{[^{},]*,[^{}]*\}`), so each `,` has one place to match, and probe it with `'{' + ','.repeat(n)`.
 
 ### A cap after the call does not bound the call
 

@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
+const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
 const { readText } = require('../../helpers/read-skill');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
@@ -721,6 +721,50 @@ test('extractKeyFilesSection is directly exported and reads a body without an is
 
 test('extractKeyFilesSection returns [] for a body with no Key Files subsection', () => {
   assert.deepStrictEqual(extractKeyFilesSection('## Current State\n\nno key files here\n'), []);
+});
+
+// ── extractKeyFileEntries ─────────────────────────────────────────────────────
+
+test('extractKeyFileEntries returns null when the body has no Key Files heading', () => {
+  assert.strictEqual(extractKeyFileEntries('## Current State\n\nno key files here\n'), null);
+});
+
+test('extractKeyFileEntries reads an empty section as {entries: [], unparsed: 0}', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n### Gotchas\n\n- `x.js`\n'), { entries: [], unparsed: 0 });
+});
+
+test('extractKeyFileEntries counts a section with prose but no list as unparsed 1', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\nsee the plan\n'), { entries: [], unparsed: 1 });
+});
+
+test('extractKeyFileEntries counts a list item with no backticked span as unparsed', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- plain/path.js no backticks\n'), { entries: [], unparsed: 1 });
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `a.js` — ok\n- plain/b.js\n'), { entries: [{ path: 'a.js', note: '— ok' }], unparsed: 1 });
+});
+
+test('extractKeyFileEntries splits the first backticked span from its note and counts a template placeholder as unparsed', () => {
+  assert.deepStrictEqual(
+    extractKeyFileEntries('### Key Files\n\n- `plugin/a.js` — new predicate\n- `{path}` — {what changes}\n'),
+    { entries: [{ path: 'plugin/a.js', note: '— new predicate' }], unparsed: 1 },
+  );
+});
+
+test('extractKeyFileEntries reads an unfilled template section as unparsed 1, not as empty', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `{path}` — {what changes}\n'), { entries: [], unparsed: 1 });
+});
+
+// Expected values are what extractKeyFilesSection returned at e11c6e29c (before extractKeyFileEntries), so they
+// pin that the path view stayed byte-identical, including for a placeholder-only and an empty section.
+test('extractKeyFilesSection keeps its pre-extractKeyFileEntries results', () => {
+  const cases = [
+    ['## Technical Approach\n\n### Key Files\n\n- `src/only.js` — the change\n', ['src/only.js']],
+    ['## Current State\n\nno key files here\n', []],
+    ['### Key Files\n\n- `a.js`\n- plain.js\n- `{path}` — x\n* `b.js` (modify, c)\n\n### Gotchas\n\n- `z.js`\n', ['a.js', 'b.js']],
+    ['### Key Files\n\n- `a/tests/` or `tests/`\n', ['a/tests/']],
+    ['### Key Files\n\n- `{path}` — {what changes}\n', []],
+    ['### Key Files\n\n### Gotchas\n\n- `x.js`\n', []],
+  ];
+  for (const [body, expected] of cases) assert.deepStrictEqual(extractKeyFilesSection(body), expected);
 });
 
 // ── expectsKeyFilesSection (#661) ──────────────────────────────────────────────

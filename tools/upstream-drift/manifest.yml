@@ -336,6 +336,10 @@ dependencies:
         claims: "will rely on (record #5117): executing-plans runs the whole suite after each task — the line the batched affected-set rule overrides"
         upstream-path: "skills/executing-plans/SKILL.md"
         must-match: "make it pass, then run the whole suite."
+      - file: "plugin/skills/specify/planning.md"
+        claims: "will rely on (record #6056): writing-plans ends with a step named Execution Handoff — the step the specify planner prompt tells it to skip once the plan is saved"
+        upstream-path: "skills/writing-plans/SKILL.md"
+        must-match: "## Execution Handoff"
     # fixtures: [] — frozen-artifact rationale: an installed plugin cache dir is
     # immutable post-install, so version movement is the only mechanical change
     # signal; there is no runtime surface to replay (the impeccable-plugin

@@ -53,6 +53,10 @@ Before deleting the design doc, look at every record you wrote with fresh eyes â
 
 When all five checks come back clean, proceed to Step 7. No need to re-review after fixing.
 
+<!-- plan-at-specify:start -->
+**Planning at specify (#6057).** Under `work-backend: github-issues` only, resolve `plan-at-specify` once: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, and only in specify's own session, read `planning.md` in this skill's directory and run its `## Decomposition` entry now, before Step 7. A subagent whose dispatch prompt says its caller plans skips this paragraph: `mechanical-handoff.md`'s caller runs the entry after the handoff returns. Step 9's summary then carries the `### Planning` section that entry names. Any other backend, any other output, or a failed call skips this paragraph and decomposition runs as written. Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice.
+<!-- plan-at-specify:end -->
+
 ---
 
 ## Step 7: Delete Consumed Artifacts (only when fully decomposed)

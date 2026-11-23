@@ -48,6 +48,10 @@ const SITES = [
   { id: 'E1', file: 'plugin/skills/_shared/pr-early-run-lifecycle.md', content: 'holding that one line' },
   { id: 'Q1', file: 'plugin/skills/build/plan-authoring-checks.md', content: 'holding one line carrying the criterion it covers' },
   { id: 'R3', file: 'plugin/skills/build/plan-review.md', content: 'settled after an answered round: {finding} — chose {reading taken}; not {reading not taken}' },
+  { id: 'R4', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'Settled at planning: {finding} — chose {reading}; not {other reading}' },
+  { id: 'R5', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: risk-flags.js add exited {code} ({stderr line}) → fallback: question asked without the flag' },
+  { id: 'R6', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: {control-mode|risk-categories} read failed ({reason}) → fallback: declared categories are the four built-ins' },
+  { id: 'R7', file: 'plugin/skills/build/plan-review-asked-classes.md', content: 'condition: risk-flags.js add exited {code} ({stderr line}) on an answered row → fallback: answered row settled without the flag' },
 ];
 
 const collapse = (text) => text.replace(/\s+/g, ' ');
@@ -137,7 +141,7 @@ const ALLOW = [
   { file: 'plugin/skills/tidy/actions-github-issues.md', placeholder: 'reason', fragment: 'acceptance labeling not landed ({reason})', why: '`{reason}` is a closed enum; the paragraph before it forbids logging a non-bare-word `verify.json` string' },
   { file: 'plugin/skills/tidy/actions-github-issues.md', placeholder: 'command', fragment: 'recommended {command}', why: '`{command}` is the recommendation the skill itself composes (`/claude-tweaks:dispatch close-out #{record}` or `/claude-tweaks:accept #{record}`), not git or user text' },
   { file: 'plugin/skills/build/micro-plan.md', placeholder: 'plan-path', fragment: 'micro-plan composed directly at {plan-path}', why: '`{plan-path}` is an agent-composed `docs/superpowers/plans/...` path, not git or user text' },
-  { file: 'plugin/skills/build/plan-review.md', placeholder: 'ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since', fragment: 'ceremony-profile=fast-lane (roster tag plan-review)', why: 'the braces enumerate literal skip conditions the agent picks from, not a substituted value (the placeholder only matches the file pattern through the words "file references")' },
+  { file: 'plugin/skills/build/plan-reuse.md', placeholder: 'reason', fragment: 'condition: plan-reuse failed: {reason}', why: '`{reason}` is the closed seven-value enum the same section lists (ref|hash|base|files|plan-audit|malformed Plan line|premise), never git or user text' },
 ];
 
 function listSkillFiles(dir) {
