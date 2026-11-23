@@ -3961,7 +3961,68 @@ function mkdirTargets(command, cwd, opts) {
   return targets;
 }
 
+// #6143: `gh pr ready|merge` calls, for the in-flight-run merge gate. The program, group and verbs are
+// the one spelling the Bash prefilter's pre-tool-use reach rule reads too (bash-prefilter.js), so the
+// prefilter stays a superset of this parser.
+const GH_PR_LIFECYCLE = Object.freeze({ program: 'gh', group: 'pr', verbs: Object.freeze(['merge', 'ready']) });
+// The flags that take a value, per verb. A short one also takes it glued (`-Ro/r`).
+const GH_PR_VALUE_FLAGS = Object.freeze({
+  merge: Object.freeze(['-A', '--author-email', '-b', '--body', '-F', '--body-file', '--match-head-commit', '-t', '--subject', '-R', '--repo']),
+  ready: Object.freeze(['-R', '--repo']),
+});
+
+// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, cwd, lost }`. `selector`
+// is the first positional after the verb (null when absent), `repo` the -R/--repo value, `undo` true
+// for --undo. `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
+// a prefix's directory cannot be proved, and `cwd` is then a stand-in (the lost cwd's root, as
+// resolveGitCommand reports it).
+function ghPrLifecycleCalls(command, cwd, opts) {
+  const calls = [];
+  let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  forEachShellSegment(command, cwd, (tokens, effCwd, quoting, again) => {
+    if (!again) pieceStart = calls.length;
+    const lead = commandWord(tokens, quoting, effCwd);
+    if (lead.index === -1) return;
+    const from = lead.index;
+    const t = dropRedirections(tokens.slice(from), {
+      raw: quoting.raw.slice(from), leadQuoted: quoting.leadQuoted.slice(from), spanKinds: quoting.spanKinds.slice(from),
+    });
+    const { pathImpl } = quoting;
+    if (!t.length || pathImpl.basename(t[0]).replace(/\.exe$/i, '') !== GH_PR_LIFECYCLE.program) return;
+    if (t[1] !== GH_PR_LIFECYCLE.group || !GH_PR_LIFECYCLE.verbs.includes(t[2])) return;
+    const verb = t[2];
+    const valueFlags = GH_PR_VALUE_FLAGS[verb];
+    let selector = null;
+    let repo = null;
+    let undo = false;
+    const rest = t.slice(3);
+    for (let i = 0; i < rest.length; i += 1) {
+      const a = rest[i];
+      if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
+      if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
+      if (a === '--undo') { undo = true; continue; }
+      const long = a.startsWith('--');
+      const eq = long ? a.indexOf('=') : -1;
+      const name = long ? (eq === -1 ? a : a.slice(0, eq)) : a.slice(0, 2);
+      if (!valueFlags.includes(name)) continue;
+      let value;
+      if (long && eq !== -1) value = a.slice(eq + 1);
+      else if (!long && a.length > 2) value = a.slice(2);
+      else { value = i + 1 < rest.length ? rest[i + 1] : ''; i += 1; }
+      if (name === '-R' || name === '--repo') repo = value;
+    }
+    const known = !lead.unprovable && lead.dir !== null && !(lead.dir instanceof LostCwd);
+    const standIn = lead.dir instanceof LostCwd ? lead.dir : effCwd;
+    const call = { verb, selector, repo, undo, cwd: known ? lead.dir : pathImpl.resolve(driveBase(standIn) || '.'), lost: !known };
+    // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
+    if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
+    calls.push(call);
+  }, keepLost(opts));
+  return calls;
+}
+
 module.exports = {
+  GH_PR_LIFECYCLE, ghPrLifecycleCalls,
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The stripped command prefixes and their reader (#4448), reused by later recognisers.
   STRIPPED_PREFIX_WORDS, commandWord,

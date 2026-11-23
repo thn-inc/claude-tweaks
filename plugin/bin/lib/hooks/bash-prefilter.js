@@ -18,7 +18,9 @@
 // `echo "git"` running the full handler is an accepted false positive. The process-kill
 // family (`pkill`, `taskkill`, `Stop-Process`, …) alone matches case-insensitively, because
 // `taskkill` and PowerShell cmdlets are case-insensitive on Windows; the other families do
-// not (#4548).
+// not (#4548). One pre-tool-use-only rule is not a guarded program word: a call whose words hold `gh`,
+// `pr` and `merge` or `ready` (GH_PR_LIFECYCLE, #6143) runs the full handler, while any other `gh`
+// call keeps the skip path.
 //
 // It reads every word and every assignment value, so `G=git; $G push` is
 // reached, and any command holding both an assignment and a `$NAME` reference
@@ -37,7 +39,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
+const { GUARDED_PROGRAM_WORDS, GH_PR_LIFECYCLE, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
 const { REFUSAL_SIGNATURES } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
@@ -155,6 +157,10 @@ function shouldRunFull(event, input) {
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
   return readings.some((c) => {
     const present = commandWords(c);
+    // #6143: pre-tool-use only, `gh pr ready|merge` (the in-flight-run merge gate). All three words must
+    // appear, so other gh calls keep the skip path; a superset of ghPrLifecycleCalls.
+    if (event === 'pre-tool-use' && present.has(GH_PR_LIFECYCLE.program) && present.has(GH_PR_LIFECYCLE.group)
+      && GH_PR_LIFECYCLE.verbs.some((verb) => present.has(verb))) return true;
     return covered.some((word) => present.has(word)) || (folded !== null && [...present].some((word) => folded.has(word.toLowerCase())));
   });
 }
