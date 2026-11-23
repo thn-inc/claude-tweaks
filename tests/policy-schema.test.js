@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 120 -> 121, #6056
-  assert.strictEqual(POLICY_KEYS.length, 121);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 121);
+  // Last bump: 123 -> 124, #6020
+  assert.strictEqual(POLICY_KEYS.length, 124);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 124);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {
@@ -945,6 +945,7 @@ const DRIVER_KEYS = [
   { id: 'AC7.2 (#5224)', key: 'express-driver-max-key-files', def: 3, other: 9, policyVal: 5 },
   { id: 'AC7.3 (#5224)', key: 'express-driver-max-lines', def: 40, other: 999, policyVal: 120 },
   { id: 'AC8 (#6018)', key: 'express-driver-max-risk', def: 'low', other: 'high', policyVal: 'medium' },
+  { id: 'AC1 (#6019)', key: 'express-driver-protected-paths', def: 'refuse', other: 'reviewer', policyVal: 'reviewer' },
 ];
 
 // AC7 (#5384): the fresh-project cwd is the only input that yields `off` — this repo's own policy.yml pins `on`.
@@ -992,6 +993,20 @@ test('AC8.1, AC8.2 (#6018): express-driver-max-risk resolves low unset, each enu
   const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
   assert.ok(fs.statSync(path.join(shared, 'policy-schema.md')).size < RAIL_BYTES);
   assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-max-risk` \| /m);
+});
+
+test('AC1.1 (#6019): express-driver-protected-paths resolves refuse unset, each enum value from policy, and a malformed value to refuse with invalid', () => {
+  const key = 'express-driver-protected-paths';
+  assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: '', runConfigRaw: null })[key], { value: 'refuse', source: 'default' });
+  for (const v of ['refuse', 'reviewer']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: v, source: 'policy' });
+  }
+  for (const v of ['Reviewer', 'on', 'true']) {
+    assert.deepStrictEqual(resolvePolicyKeys([key], { policyRaw: `${key}: ${v}\n`, runConfigRaw: null })[key], { value: 'refuse', source: 'default', invalid: true }, v);
+  }
+  const shared = path.join(__dirname, '..', 'plugin', 'skills', '_shared');
+  assert.match(readText(path.join(shared, 'policy-schema-express-driver.md')), /^\| `express-driver-protected-paths` \| /m);
+  assert.ok(readText(path.join(shared, 'policy-schema.md')).includes('| `express-driver-protected-paths` |'));
 });
 
 test('AC8.1: each ceiling resolves its default when unset, at or above the design targets', () => {
@@ -1184,6 +1199,31 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
     const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test('review-lens-selection resolves tier by default and for an invalid value, adaptive when set (#6001)', () => {
+  const cases = [[null, 'tier'], ['review-lens-selection: sideways\n', 'tier'], ['review-lens-selection: adaptive\n', 'adaptive']];
+  for (const [policy, expected] of cases) {
+    const repo = tmpRepo();
+    try {
+      if (policy !== null) writePolicy(repo, policy);
+      const r = driverCli(['--values', 'review-lens-selection'], repo);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.stdout.trim(), expected, `policy.yml: ${policy}`);
+    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+  }
+  // Neither policyOnly nor policySourceExcluded: /claude-tweaks:review Step 3 resolves it with --run, so a run config sets it for one review.
+  const repo = tmpRepo();
+  const runDir = scratchDir('ct-review-lens-sel-run-');
+  try {
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-selection: adaptive\n');
+    const r = driverCli(['--run', runDir, '--values', 'review-lens-selection'], repo);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.strictEqual(r.stdout.trim(), 'adaptive', r.stderr);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(runDir, { recursive: true, force: true });

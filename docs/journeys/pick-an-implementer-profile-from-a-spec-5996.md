@@ -3,6 +3,8 @@ files:
   - plugin/bin/implementer-tier.js
   - plugin/bin/lib/model-profiles/implementer-tier.js
   - plugin/bin/lib/policy-schema.js
+  - plugin/skills/build/dispatch.md
+  - plugin/skills/build/handoff-template.md
   - .claude-tweaks/policy.yml
 ---
 
@@ -35,3 +37,10 @@ files:
 - **Should feel:** Strict: the call fails at once and names the bad path, even though `--rule` already decided the answer.
 - **Should understand:** stderr `implementer-tier: --run dir does not exist or is not a directory: /tmp/no-such-run-5996`, exit 2, no JSON. `--run` is always validated (the record's Reading B decision), through the same anchored-or-outside guard and existence check `resolve-policy.js` uses. A flag given twice (`--rule lane --rule record`) is exit 2 too, and a malformed header (`size: huge`, two `size:` lines) or an invalid `implementer-tier` value in `policy.yml` or the run's `config.yml` is exit 1, naming the value.
 - **Red flags:** Exit 0 with a JSON line (a typo'd run id passed silently); a message that does not name the path or value it refused.
+
+### 4. Watch a build take its profile from the rule — run directory
+- **URL:** `{run-dir}/decisions.md` of a `/claude-tweaks:flow #N` or `/claude-tweaks:build #N` record build (#5999)
+- **Action:** Build a record, then read the run's `## /build` section.
+- **Should feel:** Traceable: one line names the profile every untagged task started on and the inputs that chose it, so there is nothing to reverse-engineer from model names.
+- **Should understand:** Exactly one `implementer profile {profile} (rule: {rule}, size: {size}, key files: {count})` line per build; a resumed build adds no second one. Precedence is the `profile=` token, then a task's `**Role:**` marker, then this profile. Under `record` only, a task whose implementer replies `STATUS: BLOCKED`, or whose first fix round fails re-review, gets one fresh implementer one profile up, logged `task {k} implementer escalated {from} → {to} (blocked|fix-round-failed)`. It happens at most once per task, even across a context handoff. A build given `profile=` (or `tier=`) never escalates. A standalone build with no run dir lists both lines in its handoff's `### Implementer profile (standalone build)` section.
+- **Red flags:** Two `implementer profile` lines in one run; an escalation line under `rule: lane`, or a second one for the same task; a build that proceeds after the CLI exited non-zero (it must stop before the first dispatch and quote the CLI's message).

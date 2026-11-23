@@ -26,12 +26,13 @@ const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety'
 const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
 
 // A `list` row's optional `element` names the rule every comma-separated entry
-// must match (isValidValue): a login, a slug, or a defer-reason. A list row with
+// must match (isValidValue): a login, a slug, a defer-reason, or a glob. A list row with
 // no `element` accepts any text.
 const LIST_ELEMENT_PATTERNS = {
   login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
   slug: /^[a-z0-9][a-z0-9-]*$/,
   'defer-reason': new RegExp(`^(?:${DEFER_REASONS.join('|')})$`), // a Defer-reason: value (#5932), built from DEFER_REASONS so the two never drift
+  glob: /^[^\s"'[\]{}?\\]+$/, // a path glob (#6020): refuses whitespace, quotes, brackets, braces, `?` and a backslash, so a YAML-flow or shell-quoted spelling never becomes one literal glob that protects nothing
 };
 
 // The explicit empty list on a list row with `emptyList: true` (#5932). A blank
@@ -90,6 +91,8 @@ const POLICY_KEYS = [
   // review-lens-dispatch (#5599): how /claude-tweaks:review Step 3 runs its lens reviewers — `task` (parallel Task dispatch) or `workflow` (one plugin workflow script, step3-workflow-dispatch.md). Neither policyOnly nor policySourceExcluded: Step 3 resolves it with --run, so a run config may set it for one review.
   // Removal condition: the `task` value and the key are removed, and `workflow` becomes the only primary path, one minor release after the default flips to `workflow`. The flip is its own record, filed when the parked measurement record (#5599 Deliverable 7) passes; the Task dispatch stays as the fallback for a host without the Workflow tool.
   { key: 'review-lens-dispatch', type: 'enum', values: ['task', 'workflow'], default: 'task', summary: "Picks how review runs its lens reviewers: parallel Task agents, or one plugin workflow script (opt-in, while it is measured).", category: 'pipeline-behavior', tier: 'advanced' },
+  // review-lens-selection (#6001): which lenses /claude-tweaks:review Step 3 dispatches — `tier` (the tier's whole set, unchanged) or `adaptive` (the set bin/review-lens-select.js picks from the diff facts, per-lens history and skip streaks, step3-lens-selection.md). Neither policyOnly nor policySourceExcluded: Step 3 resolves it with --run, so a run config may set it for one review. Its reader ships in this same PR, so it carries no "Not yet used" marker.
+  { key: 'review-lens-selection', type: 'enum', values: ['tier', 'adaptive'], default: 'tier', summary: "Picks whether review runs every lens its tier allows or only those the diff and lens history call for (opt-in).", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'dispatch-retry-ceiling', type: 'integer', default: 3, summary: "Sets how many consecutive autonomous build failures a record tolerates before it is flagged blocked and pulled from auto-pilot.", category: 'merge-safety', tier: 'advanced' },
   { key: 'dispatch-batch-size', type: 'integer', default: 3, summary: "Caps how many queued records one dispatch run works through in sequence before leaving the rest for next time.", category: 'merge-safety', tier: 'advanced' },
   // Deprecated alias for dispatch-batch-size (renamed in #295 — the value is a
@@ -119,6 +122,10 @@ const POLICY_KEYS = [
   { key: 'express-driver-max-lines', type: 'integer', min: 1, default: 40, policyOnly: true, summary: "Diff-line bound the driver's check applies to a record the reviewer step is on for; unset, the express bound applies.", category: 'merge-safety', tier: 'advanced' },
   // #6018: the highest risk label the driver admits. policyOnly because it bounds what autonomous machinery may take on, so a --run config never widens it. A record admitted above risk:low is admitted only with the reviewer step on and always stops at pending-review for a human merge. Factory decision (#6006): factory-settable (not in FACTORY_REFUSED_KEYS), safe as a user-wide default because a widened record needs the reviewer on and always ends at a human merge.
   { key: 'express-driver-max-risk', type: 'enum', values: ['low', 'medium', 'high'], default: 'low', policyOnly: true, summary: "Highest risk label the driver will take on: low, medium or high; above low it needs the reviewer step and a human merge.", category: 'merge-safety', tier: 'advanced' },
+  // #6019: what the driver does with a record whose Key Files touch a protected path. policyOnly because it decides whether autonomous machinery may take a protected path, so a --run config never loosens it. Under `reviewer`, merge-time families (hooks/, hooks.js, hooks.sh, skills/_shared/, CODEOWNERS) pass behind the reviewer step and the record always stops at pending-review for a human merge; build-time families (.github/, .gitlab-ci.yml, .circleci/, .githooks/, .husky/, package.json, .claude/settings*.json, .mcp.json, .claude-tweaks/policy.yml, .claude-tweaks/verify-scope.json) refuse under both values. Factory decision (#6006): factory-settable (not in FACTORY_REFUSED_KEYS), safe as a user-wide default because `reviewer` admits nothing without the reviewer step on and always ends at a human merge.
+  { key: 'express-driver-protected-paths', type: 'enum', values: ['refuse', 'reviewer'], default: 'refuse', policyOnly: true, summary: "What the driver does with a protected path: refuse it, or reviewer to pass merge-time paths behind the reviewer step and a human merge.", category: 'merge-safety', tier: 'advanced' },
+  // #6020: the protected-path list as a policy value; when set it replaces eligibility.js's SHIPPED_PROTECTED_PATHS (unset keeps it, [] protects nothing). policyOnly because it decides what autonomous machinery may merge, so a --run config never shrinks it. Consumers read it from the main checkout (express/policy.js's resolveProtectedPathsEntry), never the record's worktree. A malformed value (element: 'glob'; hashInvalid refuses an inline # that parseFlatLines would cut at) resolves invalid and the shipped list applies, never an empty one. Factory decision (#6006): refused (`FACTORY_REFUSED_KEYS`); Phase 11 makes it a factory floor.
+  { key: 'protected-paths', type: 'list', default: [], element: 'glob', emptyList: true, hashInvalid: true, policyOnly: true, summary: "Root-anchored path globs the express lane and the driver refuse to take; unset keeps the shipped list, and [] protects nothing.", category: 'merge-safety', tier: 'advanced' },
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
@@ -283,8 +290,8 @@ const POLICY_KEYS = [
   { key: 'model-effort', type: 'enum', values: ['inherit', 'profile'], default: 'inherit', policyOnly: true, summary: "Chooses whether a launched agent runs at the harness default effort or at the effort its work profile resolves to.", category: 'models', tier: 'advanced' },
   // express-driver-models (#5917): a block of `role: profile` rows, read by parseDriverModels from policy.yml only, like risk-path-globs. policyOnly: it chooses the model autonomous machinery spends on, so a --run config never sets it. `keys` is the four policy-settable roles; `explorer` is not one, so a row naming it is a schema error.
   { key: 'express-driver-models', type: 'map', keys: POLICY_DRIVER_ROLES, default: POLICY_DRIVER_DEFAULTS, policyOnly: true, summary: "Picks the work profile each pipeline driver worker role launches on; a role left out keeps its shipped default.", category: 'models', tier: 'advanced' },
-  // implementer-tier (#5996): read by plugin/bin/implementer-tier.js. Resolved per run, so not policyOnly: one run may try `record` through its config.yml without changing the project file. Not policySourceExcluded: a standing project opt-in is the point. Not a Manifesto lever, so _shared/auto-mode-contract.md's new-lever checklist does not apply. No build calls the CLI yet; #5997 (driver) and #5999 (standard lane) wire the first consumers and drop the `Not yet used` marker and the NOT_YET_USED entry.
-  { key: 'implementer-tier', type: 'enum', values: ['lane', 'record'], default: 'lane', summary: "Not yet used. Picks an implementer's work profile from the record's size and Key File count, or from size alone as today.", category: 'models', tier: 'advanced' },
+  // implementer-tier (#5996): read by plugin/bin/implementer-tier.js. Resolved per run, so not policyOnly: one run may try `record` through its config.yml without changing the project file. Not policySourceExcluded: a standing project opt-in is the point. Not a Manifesto lever, so _shared/auto-mode-contract.md's new-lever checklist does not apply. First consumer: build/dispatch.md's subagent procedure (#5999); the driver's is #5997.
+  { key: 'implementer-tier', type: 'enum', values: ['lane', 'record'], default: 'lane', summary: "Picks an implementer's work profile from the record's size and Key File count, or from size alone as today.", category: 'models', tier: 'advanced' },
   // Read from /claude-tweaks:research's own `## Input` --mode= flag (IL-24:
   // that file is authoritative for the vocabulary, not this schema).
   { key: 'research-mode', type: 'enum', values: ['quick', 'standard', 'deep', 'ultradeep'], summary: "Sets the default depth of a research run — quick, standard, deep, or ultradeep — when nothing else specifies one.", category: 'pipeline-behavior', tier: 'advanced' },
@@ -448,6 +455,20 @@ function readFileSafe(filePath) {
 function readLocatedPolicy(repoRoot) {
   const policyPath = locatePolicyFile(repoRoot).path;
   return policyPath === null ? null : readFileSafe(policyPath);
+}
+
+// hashInvalid rows (#6020): parseFlatLines cuts a value at its first `#`, which would
+// silently drop every list element after one (`docs/#x/**`). True when the column-0
+// `{key}:` line has a `#` directly after a non-whitespace character in its value; a
+// `#` after whitespace is a comment and parses as usual.
+function hasInlineHash(raw, key) {
+  if (!raw) return false;
+  const prefix = `${key}:`;
+  for (const rawLine of raw.split('\n')) {
+    if (!rawLine.startsWith(prefix)) continue;
+    if (/\S#/.test(rawLine.slice(prefix.length))) return true;
+  }
+  return false;
 }
 
 // Flat `key: value` line matcher, tolerant of a trailing `# comment` and of
@@ -786,7 +807,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       values[alias.replacedBy] = String(migrated);
       renamedFrom[alias.replacedBy] = alias.key;
     }
-    return { name, values, renamedFrom, emptyRenames };
+    return { name, raw, values, renamedFrom, emptyRenames };
   });
 
   const result = {};
@@ -851,7 +872,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, factoryRaw,
       if (factoryHoldsRefused && source.name === 'factory') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
-      if (isValidValue(schemaEntry, raw)) {
+      if (isValidValue(schemaEntry, raw) && !(schemaEntry.hashInvalid && hasInlineHash(source.raw, canonical))) {
         resolved = { value: resolveValue(canonical, raw), source: source.name };
       } else {
         // A typo must never activate a different configured value: resolve to
@@ -1215,7 +1236,7 @@ function auditPolicy(repoRoot) {
   for (const [key, value] of Object.entries(policyEntries)) {
     const schemaEntry = SCHEMA_BY_KEY.get(key);
     if (!schemaEntry) continue;
-    if (!isValidValue(schemaEntry, value)) {
+    if (!isValidValue(schemaEntry, value) || (schemaEntry.hashInvalid && hasInlineHash(policyRaw, key))) {
       invalidValues.push({ key, value, expected: schemaEntry });
     } else if (schemaEntry.policySourceExcluded) {
       sourceExcludedKeys.push({ key, value });

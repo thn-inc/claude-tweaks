@@ -76,8 +76,9 @@
 // rule (eligibility.js's isBeyondExpressBounds, which admission shares), on when the size label is
 // not `low` or the Key Files (the eligibility verdict's own extraction; a non-array counts as
 // beyond) exceed EXPRESS_MAX_KEY_FILES. A record inside those bounds is also on when the caller
-// passes a non-empty `widenedBy` (#6018: admitted above low risk or a non-fast-lane ceremony,
-// eligibility.js's widenings()), and on when `widenedBy` is neither absent nor an array of strings
+// passes a non-empty `widenedBy` (#6018, #6019: eligibility.js's widenings(), admitted above low risk,
+// with a non-fast-lane ceremony or with a protected Key File; a check-time `protected-path` may be
+// added after eligibility), and on when `widenedBy` is neither absent nor an array of strings
 // (admission.js's isReadableWidenedBy); an absent or empty one keeps the inside-bounds off answer.
 // The run asks it once per record, in the eligibility step (ctx.reviewer, #5224), and admission, the
 // check flag and reviewRecord all read that one answer; reviewRecord never calls it, and fails closed
@@ -94,7 +95,8 @@
 //             first (printable ASCII only; Windows aliases and reserved characters, after git's
 //             core.protectNTFS; the glob characters `node --test` expands, so the file run is the
 //             file written), then isTestPath and the protected / merge-sensitive check (the
-//             eligibility gate's own isTestPath, isProtectedPath and isSensitivePath, applied without
+//             eligibility gate's own isTestPath, isProtectedPath (tested against the union of the
+//             shipped list and the project's protected-paths) and isSensitivePath, applied without
 //             regard to letter case, since the input is not git's and the volume may be
 //             case-insensitive), then the file-system rules through deps (lstatType,
 //             canonicalRealpath): the leaf must not exist in any form, the nearest existing ancestor
@@ -224,7 +226,7 @@
 
 const path = require('path');
 const { parseRecordFacets } = require('../issues/record');
-const { EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isProtectedPath } = require('../express/eligibility');
+const { EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isProtectedPath, SHIPPED_PROTECTED_PATHS } = require('../express/eligibility');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
 const { isAncestorOrSelf } = require('../path-guard');
 const { relativeDisplayId } = require('../shared-primitives');
@@ -234,7 +236,7 @@ const { readCeilings, launchTracked } = require('./launch');
 const { STOP_CLASSES, neutralize, normalizeTitle } = require('./events');
 const { fenceFor } = require('../markdown-blocks');
 const { REVIEW_RESULT_SCHEMA } = require('./roles');
-const { sensitivePathsOf } = require('../express/policy');
+const { sensitivePathsOf, protectedPathGlobsOf } = require('../express/policy');
 const { isReadableWidenedBy } = require('./admission');
 
 const MAX_FINDINGS = 5;
@@ -318,7 +320,7 @@ function classifyEvidenceRun({ code, timedOut, tap }) {
 
 // Whether the reviewer runs for this record. keyFiles is the eligibility verdict's own
 // extractKeyFiles result (ctx.keyFiles).
-// widenedBy is eligibility.js's widenings() answer; absent reads as none.
+// widenedBy is eligibility.js's widenings() answer (risk, ceremony and/or protected-path); absent reads as none.
 function reviewRequired({ issue, keyFiles, policyValue, widenedBy } = {}) {
   if (policyValue === 'off') return { on: false, reason: 'express-driver-review is off' };
   if (policyValue === 'on') return { on: true, reason: 'express-driver-review is on' };
@@ -392,14 +394,20 @@ const fsReady = (opts) => {
 };
 
 // The protected and merge-sensitive checks without regard to letter case: the path is the
-// reviewer's, not git's, and on a case-insensitive volume `.GITHUB/` is `.github/`. Each protected
-// pattern is written in one case (`CODEOWNERS` upper, the rest lower), so the path is tried as
-// given, lowered and raised; the sensitive globs are compared lowered on both sides. A setting that
-// is not a list of strings fails closed.
-function isProtectedOrSensitive(p, sensitivePaths = []) {
+// reviewer's, not git's, and on a case-insensitive volume `.GITHUB/` is `.github/`. The shipped
+// patterns are each written in one case (`CODEOWNERS` upper, the rest lower); a project glob is
+// matched as written, in the same three spellings of the path (as given, lowered, raised), and a
+// mixed-case glob relies on the canonical-path variant when the directory exists. The sensitive
+// globs are compared lowered on both sides. A setting that is not a list of strings fails closed.
+// The protected side tests the union of the shipped list and the project's resolved protected-paths
+// (protectedPathGlobs; absent means the shipped list alone), so a project can never open an
+// evidence path onto a shipped protected path.
+function isProtectedOrSensitive(p, sensitivePaths = [], protectedPathGlobs) {
   if (!Array.isArray(sensitivePaths) || !sensitivePaths.every((g) => typeof g === 'string')) return true;
+  if (protectedPathGlobs !== undefined && (!Array.isArray(protectedPathGlobs) || !protectedPathGlobs.every((g) => typeof g === 'string'))) return true;
+  const union = [...SHIPPED_PROTECTED_PATHS, ...(protectedPathGlobs || [])];
   const lower = p.toLowerCase();
-  if ([p, lower, p.toUpperCase()].some(isProtectedPath)) return true;
+  if ([p, lower, p.toUpperCase()].some((s) => isProtectedPath(s, union))) return true;
   return isSensitivePath(p, sensitivePaths) || isSensitivePath(lower, sensitivePaths.map((g) => g.toLowerCase()));
 }
 
@@ -460,7 +468,7 @@ const RESERVED_SEGMENTS = ['.git', 'node_modules'];
 // test file by the eligibility gate's isTestPath.
 const notTestFile = (p) => typeof p !== 'string' || p.length > EVIDENCE_PATH_MAX_CHARS || !isTestFile(p);
 
-// test(p, { wt, sensitivePaths, deps }) is true when p violates the rule.
+// test(p, { wt, sensitivePaths, protectedPathGlobs, deps }) is true when p violates the rule.
 const PATH_RULES = Object.freeze([
   { name: 'empty-or-too-long', test: (p) => typeof p !== 'string' || p === '' || p.length > EVIDENCE_PATH_MAX_CHARS },
   // Printable ASCII only. Anything else can alias on a volume that folds Unicode (APFS reads `ſ` as
@@ -485,7 +493,7 @@ const PATH_RULES = Object.freeze([
   // A kept file under node_modules/ would shadow a dependency.
   { name: 'node-modules-segment', test: (p) => hasSegment(p, ['node_modules']) },
   { name: 'not-test-path', test: notTestFile },
-  { name: 'protected-or-sensitive', test: (p, opts) => isProtectedOrSensitive(p, optsOf(opts).sensitivePaths) },
+  { name: 'protected-or-sensitive', test: (p, opts) => isProtectedOrSensitive(p, optsOf(opts).sensitivePaths, optsOf(opts).protectedPathGlobs) },
   { name: 'exists', test: (p, opts) => !fsReady(opts) || opts.deps.lstatType(absoluteIn(opts.wt, p)).type !== 'missing' },
   { name: 'parent-escapes', test: (p, opts) => resolveCanonical(p, opts) === null },
   {
@@ -499,7 +507,7 @@ const PATH_RULES = Object.freeze([
   },
   {
     name: 'canonical-protected-or-sensitive',
-    test: (p, opts) => { const c = canonicalVariant(p, opts); return c !== null && isProtectedOrSensitive(c, optsOf(opts).sensitivePaths); },
+    test: (p, opts) => { const c = canonicalVariant(p, opts); return c !== null && isProtectedOrSensitive(c, optsOf(opts).sensitivePaths, optsOf(opts).protectedPathGlobs); },
   },
 ].map(Object.freeze));
 
@@ -560,8 +568,8 @@ function fsCall(what, fn) {
 
 // Writes one evidence file (see the header). rel is the validated, `/`-separated path relative to
 // the worktree root.
-function writeEvidence({ wt, rel, content, sensitivePaths, deps }) {
-  const opts = { wt, sensitivePaths, deps };
+function writeEvidence({ wt, rel, content, sensitivePaths, protectedPathGlobs, deps }) {
+  const opts = { wt, sensitivePaths, protectedPathGlobs, deps };
   refuseOnViolation(rel, opts, 'at write time');
   const root = path.resolve(wt);
   const segs = segments(rel);
@@ -878,7 +886,8 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
     }
 
     const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
-    const opts = { wt, sensitivePaths, deps };
+    const protectedPathGlobs = protectedPathGlobsOf(shared.policy['protected-paths']);
+    const opts = { wt, sensitivePaths, protectedPathGlobs, deps };
     const seen = new Set();
     const gitPaths = () => new Set(confirmed.map((c) => c.evidencePath));
     const delta = (expected) => treeDelta({ wt, expected, deps, isRunArtifact });
@@ -914,7 +923,7 @@ async function reviewPass(ctx, deps, { testCommand, isRunArtifact, indexFlagChec
         continue;
       }
       let written;
-      try { written = writeEvidence({ wt, rel, content, sensitivePaths, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence write failed')); }
+      try { written = writeEvidence({ wt, rel, content, sensitivePaths, protectedPathGlobs, deps }); } catch (err) { return stop(ownErrorText(err, 'evidence write failed')); }
       wrote = true;
       current = trackerFor(written);
       // The spelling git reports: an existing parent's on-disk form, the leaf as written.
@@ -1003,15 +1012,15 @@ function mergeWorker(first, fix) {
 
 // Rewrites one kept evidence file from its recorded content (see the header). Throws, with this
 // module's own fixed messages, on any refusal.
-function rewriteEvidence({ wt, c, sensitivePaths, deps }) {
-  const opts = { wt, sensitivePaths, deps };
+function rewriteEvidence({ wt, c, sensitivePaths, protectedPathGlobs, deps }) {
+  const opts = { wt, sensitivePaths, protectedPathGlobs, deps };
   const rule = PATH_RULES.find((r) => r.name !== 'exists' && r.test(c.rel, opts));
   if (rule) throw new Error(`evidence path refused before the rewrite: ${rule.name}`);
   if (resolveCanonical(c.rel, opts) !== c.evidencePath) throw new Error('evidence path no longer resolves where it was confirmed');
   const leaf = deps.lstatType(c.abs).type;
   if (leaf === 'file' || leaf === 'symlink') fsCall('remove', () => deps.rmFile(c.abs));
   else if (leaf !== 'missing') throw new Error('evidence path is not a file before the rewrite');
-  return writeEvidence({ wt, rel: c.rel, content: c.content, sensitivePaths, deps });
+  return writeEvidence({ wt, rel: c.rel, content: c.content, sensitivePaths, protectedPathGlobs, deps });
 }
 
 // Whether the evidence file is tracked at HEAD with the recorded bytes (cat-file reads the stored
@@ -1094,9 +1103,10 @@ async function fixRound(ctx, deps, wiring, pass) {
     }
 
     const sensitivePaths = sensitivePathsOf(shared.policy['merge-sensitive-paths']);
+    const protectedPathGlobs = protectedPathGlobsOf(shared.policy['protected-paths']);
     for (const c of confirmed) {
       try {
-        rewriteEvidence({ wt, c, sensitivePaths, deps });
+        rewriteEvidence({ wt, c, sensitivePaths, protectedPathGlobs, deps });
       } catch (err) {
         return end('fail', ownErrorText(err, 'evidence rewrite failed'), { c });
       }
