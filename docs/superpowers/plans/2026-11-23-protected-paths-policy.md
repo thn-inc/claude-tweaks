@@ -15,9 +15,10 @@ Scope keywords: isProtectedPath, PROTECTED_FAMILIES, SHIPPED_PROTECTED_PATHS, pr
 ## Global Constraints
 
 - **Decisions (maintainer, 2026-11-23, record body):** the key is spelled as a comma-separated string (`protected-paths: infra/**, deploy/**`); bracketed values in the ACs are notation for that string (`["a", "b"]` means `a, b`; `[""]` means an empty element such as `infra/**, ` or `,`); the resolver gets no YAML flow-syntax special case. Glob validity is the strict element rule below.
-- Policy key: `{ key: 'protected-paths', type: 'list', default: [], element: 'glob', emptyList: true, policyOnly: true, category: 'merge-safety', tier: 'advanced' }`. Unset means `SHIPPED_PROTECTED_PATHS`. A set value replaces it, removals included. An explicit `[]` is honoured. A malformed value falls back to the shipped list, never to an empty list ("Fail closed, as `express-driver-max-size`'s unreadable value refuses rather than widening").
+- Policy key: `{ key: 'protected-paths', type: 'list', default: [], element: 'glob', emptyList: true, hashInvalid: true, policyOnly: true, category: 'merge-safety', tier: 'advanced' }`. Unset means `SHIPPED_PROTECTED_PATHS`. A set value replaces it, removals included. An explicit `[]` is honoured. A malformed value falls back to the shipped list, never to an empty list ("Fail closed, as `express-driver-max-size`'s unreadable value refuses rather than widening").
 - **Name decisions.** The key is `protected-paths`. That follows `_shared/policy-key-naming.md` (flat kebab-case, no suffix applies) and parallels the sibling list `merge-sensitive-paths`. It contains the substring of `express-driver-protected-paths` and of `check --protected-paths reviewer`, so every test and grep for the new key anchors on the whole token (`` `protected-paths` ``, `^protected-paths:`, an exact object key), never on a substring. The eligibility option is `protectedPathGlobs`, not the spec's proposed `protectedPaths`: `evaluateDiffBounds`' result already carries a `protectedPaths` key (#6019's reported paths), and one name must not mean two things in one function.
 - **Glob element** `LIST_ELEMENT_PATTERNS.glob = /^[^\s"'[\]{}?\\]+$/`, exactly the maintainer's 2026-11-23 Decision (record body): an element that is empty, or contains whitespace, a quote (`'` or `"`), `[`, `]`, `{`, `}`, `?` or a backslash, makes the whole value invalid, and the shipped list applies. Nothing else is refused: a leading `/` or `./`, or a backtick, is a well-formed glob that matches nothing (project globs match the canonical path, which never starts with `/` or `./`), and AC10 keeps a never-matching glob valid. A YAML-flow `["infra/**"]` is refused (brackets, quotes), so it can never become one literal glob protecting nothing. Accept: `infra/**`, `**/package.json`, `.claude/settings*.json`, `no/such/**`, `%2e%2e/x`, `/infra/**`, `./infra/**`. Refuse: `["infra/**"]`, `""`, `` (empty), `a b`, `x?y`, `{a`, `a]`, `app/[slug]/**`, `a\\b`, `it's`.
+- **Inline `#` (plan review, converged round):** `parseFlatLines` cuts a value at its first `#` (`/^([a-zA-Z0-9_.-]+):\s*([^#]*)/`), so `**/package.json, docs/#x/**, **/hooks/**/*` would resolve to the valid `**/package.json, docs/` and silently drop every later element. The row carries a new flag `hashInvalid: true`: when the source text's column-0 `protected-paths:` line has a `#` directly after a non-whitespace character in its value (`/\S#/` on the text after `protected-paths:`), the entry resolves `{ value: [], source: 'default', invalid: true }` and `onInvalid` fires, exactly as for a failed element. A `#` after whitespace stays a YAML comment (`protected-paths: infra/** # ours` resolves `infra/**`). The check runs per source in `resolvePolicyKeys` (it has the raw text), keyed on the flag, so no other key changes.
 - The shipped list is exactly equivalent to today's regexes. Directory families use `**/{dir}/**/*`, not `**/{dir}/**`, because `globToRegExp` renders a trailing `/**` as also matching the bare parent (`hooks`), and `(^|\/)hooks\//` does not. Probed at authoring with `blast-radius.js`'s `globToRegExp`: 126 generated and named paths, bare directories included, give 0 differences against `PROTECTED_FAMILIES`' regexes at `b8811c277a`. The globs are `**/hooks/**/*`, `**/hooks.js`, `**/hooks.sh`, `**/skills/_shared/**/*`, `**/.github/**/*`, `**/.gitlab-ci.yml`, `**/.circleci/**/*`, `**/.githooks/**/*`, `**/.husky/**/*`, `**/CODEOWNERS`, `**/package.json`, `**/.claude/settings*.json`, `**/.mcp.json`, `**/.claude-tweaks/policy.yml` and `**/.claude-tweaks/verify-scope.json`, in that order, with today's `buildTime` values.
 - Project globs match `canonicalPath(p)`: posix separators, `.`/`..` resolved, no leading `./`. They are root-anchored and case-sensitive. No path is URL-decoded.
 - `REASONS.protectedPath(p)` stays `` `protected path: ${p}` `` (wire contract).
@@ -55,7 +56,7 @@ Classified no-change (Check B keyword hits): `plugin/bin/lib/wrap-up/pack.js` an
 
 The auth risk flag's proof is the `Proof(auth):` line in Task 4 Step 3.
 
-Blocking-verification note: the AC4 driver half (`drive.js --check`) feeds the policy step a `resolvePolicyKeys` reply for the fixture's `policy.yml` text through `run.test.js`'s harness. It does not spawn `drive.js` against a fixture repository: the harness's other keys (integration-model, models) would probe `gh`. The root half is proved on `defaultResolvePolicy` itself (Task 4), which is the function `run.js`'s `realDeps.resolvePolicy` calls.
+Blocking-verification note: the AC4 driver half (`drive.js --check`) runs `run(['--check', '#7'], h.deps)` through `run.test.js`'s harness, whose `on('policy')` answers `protected-paths` with the real `defaultResolvePolicy(['protected-paths'])` evaluated with the process cwd inside a real linked worktree whose own `policy.yml` is edited (Task 5). The harness still fakes the other keys, since a real read of integration-model or the models would probe `gh`. `defaultResolvePolicy` is the function `run.js`'s `realDeps.resolvePolicy` calls, so this is the driver entry point reading the key from a fixture repository with the worktree's `policy.yml` edited (Deliverable 6).
 
 ## Review Focus
 
@@ -64,6 +65,7 @@ Blocking-verification note: the AC4 driver half (`drive.js --check`) feeds the p
 3. Under `express-driver-protected-paths: reviewer`, a project-added glob (`infra/**`) is left for the reviewer and widens by `protected-path`. A build-time family the project keeps still refuses. Task 3 tests both.
 4. A run config must never shrink the list: `protected-paths: []` in `config.yml` with `policy.yml` unset resolves the unset default. Task 1 tests this.
 5. A rename whose `oldPath` matches a project glob (`infra/old.tf` → `src/new.js`) is a `protected path: infra/old.tf` violation under `['infra/**']`. Task 3 tests this.
+6. An inline `#` inside the value (`**/package.json, docs/#x/**, **/hooks/**/*`) resolves `invalid: true`, never the cut `**/package.json, docs/`. Task 1 tests this; a `#` after whitespace stays a comment.
 
 ---
 
@@ -86,6 +88,7 @@ Blocking-verification note: the AC4 driver half (`drive.js --check`) feeds the p
   - `test('glob element accepts globs and refuses the spellings that would match nothing', …)`: the accept and refuse lists from Global Constraints.
   - `test('AC5.1 (resolver half): a malformed value resolves invalid, never a list', …)`: for each of `["infra/**"]`, `app/[slug]/**`, `x?y`, `a\\b` and `infra/*.{tf,yml}`, `one({ policyRaw: `${KEY}: ${v}\n` })` deep-equals `{ value: [], source: 'default', invalid: true }`.
   - `test('AC10.1 (resolver half): an empty element is invalid', …)`: the same result for `""`, `infra/**,` and `infra/**, ""`.
+  - `test('an inline # never cuts the list short', …)`: `**/package.json, docs/#x/**, **/hooks/**/*` and `infra/**#x` each give `{ value: [], source: 'default', invalid: true }`, and `onInvalid` is called once. `infra/** # ours` gives `{ value: 'infra/**', source: 'policy' }`. With `deferral-digest-reasons: blocked-dependency#x` (a row without the flag) the result is unchanged from before this task (`git show` base behavior: `{ value: 'blocked-dependency', source: 'policy' }`).
   - `test('AC10.2 (resolver half): a never-matching glob is valid', …)`: `no/such/**` gives `{ value: 'no/such/**', source: 'policy' }`, and so do `/infra/**` and `./infra/**` (well-formed, matching nothing).
   - `test('unset, a list and [] resolve from policy', …)`: `policyRaw: ''` gives `{ value: [], source: 'default' }`. `infra/**, **/package.json` gives `{ value: 'infra/**, **/package.json', source: 'policy' }`. `[]` gives `{ value: [], source: 'policy' }`.
   - `test('Review Focus 4: a run config never sets or shrinks the list (policyOnly)', …)`: `runConfigRaw: 'protected-paths: []\n'` with `policyRaw: ''` gives `{ value: [], source: 'default' }`. With `policyRaw: 'protected-paths: infra/**\n'` it gives `{ value: 'infra/**', source: 'policy' }`.
@@ -95,13 +98,14 @@ Blocking-verification note: the AC4 driver half (`drive.js --check`) feeds the p
 Run: `node --test tests/policy-protected-paths.test.js tests/policy-schema.test.js`
 Expected: FAIL (key unknown; 123 ≠ 124)
 
-- [ ] **Step 3: Add the element and the row**
+- [ ] **Step 3: Add the element, the `hashInvalid` check and the row**
+  - `hashInvalid`: in `resolvePolicyKeys`, for a requested key whose row has `hashInvalid: true`, find that source text's column-0 line `^protected-paths:` (same column-0 rule as `parseFlatLines`) and test `/\S#/` on the text after the colon. A hit makes that source's value invalid through the existing invalid path (so the factory-refused and policyOnly handling is unchanged).
   - The row's `summary` is exactly `"Root-anchored path globs the express lane and the driver refuse to take; unset keeps the shipped list, and [] protects nothing."` (127 chars). It must not appear verbatim in any `.md` file.
   - The comment above the row: #6020; the list replaces `eligibility.js`'s `SHIPPED_PROTECTED_PATHS` when set; `policyOnly` because it decides what autonomous machinery may merge, so a `--run` config never shrinks it; consumers read it from the main checkout (`express/policy.js`'s `resolveProtectedPathsEntry`), never the record's worktree; a malformed value resolves `invalid` and the shipped list applies.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 Run: `node --test tests/policy-protected-paths.test.js tests/policy-schema.test.js tests/policy-key-naming.test.js tests/policy-schema-metadata.test.js tests/policy.test.js tests/resolve-policy-control-mode.test.js tests/policy-deferral-digest-reasons.test.js`
-Expected: PASS. Then delete the `element: 'glob'` from the row and confirm the AC5.1 and AC10.1 tests go red, then restore it.
+Expected: PASS. Then delete the `element: 'glob'` from the row and confirm the AC5.1 and AC10.1 tests go red, then restore it. Delete `hashInvalid: true` and confirm the inline-# test goes red, then restore it.
 
 - [ ] **Step 5: Commit** `Add the protected-paths policy key — a glob list that replaces the shipped protected list`
 
@@ -233,6 +237,7 @@ Expected: PASS. Then replace `mainCheckoutRoot(cwd)` with `cwd` in `resolveProte
 ### Task 5: The driver reads and passes the key
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/driver/steps.js:118-134` (`POLICY_KEYS` gains `'protected-paths'` after `'express-driver-protected-paths'`; the comment above names it as the protected list, read from the main checkout through `defaultResolvePolicy`)
@@ -247,6 +252,7 @@ Expected: PASS. Then replace `mainCheckoutRoot(cwd)` with `cwd` in `resolveProte
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/driver/run.test.js`
   - `POLICY` gains `'protected-paths': undefined` after `'express-driver-protected-paths'`. The `on('policy')` mapping answers `k === 'protected-paths' && policy[k] === undefined` with `resolvePolicyKeys([k], { policyRaw: '' })[k]`, as it does for `express-driver-protected-paths`.
   - `test('AC2.1, AC4.1 (driver half): --check under protected-paths infra/** stops refusing package.json and refuses infra/main.tf', …)`: assert `resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: infra/**\n' })['protected-paths']` deep-equals `{ value: 'infra/**', source: 'policy' }`, the shape the harness feeds. `widenCheck({ 'protected-paths': 'infra/**' }, ['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS], {}, ['package.json'])`'s reasons exclude `protected path: package.json`. With `['infra/main.tf']` they include `protected path: infra/main.tf`. With the key unset, `package.json` is refused.
+  - `test('AC4.1, Deliverable 6 (driver half): --check reads protected-paths through defaultResolvePolicy from the main checkout', …)`: `main = gitRepo()` with `.claude-tweaks/policy.yml` `protected-paths: infra/**`, `wt = harnessWorktreeOf(main, 'rec')` (`tests/helpers/git-fixtures.js`) with its own `policy.yml` `protected-paths: []`. A custom `on('policy')` script answers `protected-paths` with `defaultResolvePolicy(['protected-paths'])['protected-paths']` (from `express/policy.js`) evaluated after `process.chdir(wt)` (restored in `finally`), and every other key from `POLICY`. `--check` with Key File `infra/main.tf` has `protected path: infra/main.tf`; with `package.json` it has no `protected path:` reason. With main's `policy.yml` removed, `package.json` is refused.
   - `test('AC3.1 (driver half): protected-paths [] protects no Key File', …)`: `widenCheck({ 'protected-paths': [] }, …, ['plugin/hooks/x.js'])`'s reasons have no `protected path:` entry.
   - `test('AC5.1 (driver half): a malformed protected-paths keeps the shipped list', …)`: the entry is `resolvePolicyKeys(['protected-paths'], { policyRaw: 'protected-paths: ["infra/**"]\n' })['protected-paths']` (asserted `invalid: true`), fed by a custom `on('policy')` script shaped like #6018's AC10.1 test. A `package.json` Key File keeps `protected path: package.json`.
 
@@ -265,9 +271,10 @@ Expected: PASS
 ### Task 6: The plan lane and the queue pull read the key
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/driver/plan-lane.js:48-51` (`POLICY_KEYS` appends `'protected-paths'`), `:74-92` (`policyReadable` adds `isReadableSensitivePaths(value('protected-paths'))`; the generic entry check already refuses `invalid`/`error`)
+- Modify: `plugin/bin/lib/driver/plan-lane.js:48-51` (`POLICY_KEYS` appends `'protected-paths'`), `:77-95` (`policyReadable`: the generic entry check keeps refusing a missing entry, a non-object or an `error` key for `protected-paths`, but not `invalid: true` and not an unusable `value` — a malformed value applies the shipped list through `protectedPathGlobsOf`, as the gates do (AC5); plan review, converged round)
 - Modify: `plugin/bin/lib/express/queue.js:15` (`SECOND_KEYS` appends `'protected-paths'`), `:69` (inline `expressOpts` adds `protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths'])`; the driver half gets it through `eligibilityOptions`)
 - Test: `tests/bin-lib/driver/plan-lane.test.js`
 - Test: `tests/bin-lib/express/cli-plan-lane.test.js`
@@ -275,10 +282,10 @@ Expected: PASS
 
 **Interfaces:**
 - Consumes: `protectedPathGlobsOf`, `expressGateOptions` (Task 4); `eligibilityOptions` (Task 5).
-- Produces: plan-lane answers a malformed `protected-paths` as `policy-unreadable`, its unset reply as readable, and computes both lanes with the resolved list. The queue pull's express half and driver half both keep or bundle by the resolved list.
+- Produces: plan-lane answers a malformed `protected-paths` (`invalid: true`, or a value `protectedPathGlobsOf` cannot use) as readable and computes both lanes with the shipped list, an unset reply the same way, and a set list with that list. A missing entry, a non-object or an `error` key stays `policy-unreadable`. The queue pull's express half and driver half both keep or bundle by the resolved list.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/driver/plan-lane.test.js`, `tests/bin-lib/express/cli-plan-lane.test.js` and `tests/bin-lib/express/queue.test.js`
-  - `plan-lane.test.js`: the `POLICY_KEYS` pin appends `'protected-paths'`. `policy()` gives `protected-paths` the real unset reply (`resolvePolicyKeys(['protected-paths'], { policyRaw: '' })['protected-paths']`) unless overridden, and the generic per-key "missing / without value / not an object" loop then covers it. Add cases `'protected-paths invalid: true'` (the real reply for `["infra/**"]`) and `'protected-paths value 5'`, both expecting `policy-unreadable`. `test('#6020: a resolved protected-paths list decides the driver and express lanes', …)`: with labels `risk:low, size:low, ceremony:fast-lane, type:task`, Key File `plugin/hooks/x.js` and `express-driver-protected-paths: refuse`, the lane is neither `driver` nor `express` when the key is unset, is `driver` or `express` under `{ value: 'infra/**', source: 'policy' }`, and Key File `infra/main.tf` is neither under that same value.
+  - `plan-lane.test.js`: the `POLICY_KEYS` pin appends `'protected-paths'`. `policy()` gives `protected-paths` the real unset reply (`resolvePolicyKeys(['protected-paths'], { policyRaw: '' })['protected-paths']`) unless overridden, and the generic per-key "missing / without value / not an object" loop then covers it. Add `test('#6020 AC5: a malformed protected-paths applies the shipped list in the plan lane', …)`: with the real reply for `["infra/**"]` (`invalid: true`) and with `{ value: 5, source: 'policy' }`, the reason is not `policy-unreadable`, and a `plugin/hooks/x.js` Key File under `express-driver-protected-paths: refuse` gets neither `driver` nor `express`, the same lane as unset. `{ error: 'unknown-key' }` for the key stays `policy-unreadable`. `test('#6020: a resolved protected-paths list decides the driver and express lanes', …)`: with labels `risk:low, size:low, ceremony:fast-lane, type:task`, Key File `plugin/hooks/x.js` and `express-driver-protected-paths: refuse`, the lane is neither `driver` nor `express` when the key is unset, is `driver` or `express` under `{ value: 'infra/**', source: 'policy' }`, and Key File `infra/main.tf` is neither under that same value.
   - `cli-plan-lane.test.js`: `POLICY` gains `protected-paths` with the real unset reply (the harness's per-key source must stay `default` for this key). The existing "resolves exactly POLICY_KEYS" test then covers the call.
   - `queue.test.js`: the line 61 `SECOND_KEYS` pin appends `'protected-paths'`. `test('#6020: the express half keeps a protected Key File record only when the resolved list does not protect it', …)`: express on, driver off, an issue whose body lists `plugin/hooks/x.js`. `keepSingleton` is false with the key absent and true with `'protected-paths': 'infra/**'`. Add the same pair for the driver half (express off, `express-driver: on`, refuse mode).
 
@@ -328,7 +335,7 @@ Expected: PASS. Then replace `union` with `protectedPathGlobs || SHIPPED_PROTECT
 
 ### Task 8: The key's prose row and policyOnly lists
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/_shared/policy-schema-express-driver.md` (new row after `express-driver-protected-paths`)
@@ -349,7 +356,7 @@ Expected: FAIL (no row)
   - Comma-separated path globs, matched as `merge-sensitive-paths` globs are. They are root-anchored and case-sensitive over the canonical posix path (no leading `./`): `package.json` protects only the root file, `**/package.json` protects every depth, and a trailing `/**` also matches the bare directory.
   - A set list replaces the shipped list, removals included. `[]` protects nothing.
   - Removing an entry lets the express lane merge a change to that path on green with no human.
-  - Unset or malformed (`invalid: true`: an empty entry, whitespace, a quote, bracket, brace, `?` or backslash, so the YAML-flow `["infra/**"]` is malformed; a glob with a leading `/` or `./` is valid but matches nothing) keeps the shipped list, never an empty one. The resolver returns `{ value: [], source: 'default' }` unset, the raw comma string set, `[]` for `[]`, and `{ value: [], source: 'default', invalid: true }` malformed.
+  - Unset or malformed (`invalid: true`: an empty entry, whitespace, a quote, bracket, brace, `?` or backslash, so the YAML-flow `["infra/**"]` is malformed; a `#` directly after a non-space character is malformed too, since the line parser would cut the value there, while a `#` after a space is a comment; a glob with a leading `/` or `./` is valid but matches nothing) keeps the shipped list, never an empty one. The resolver returns `{ value: [], source: 'default' }` unset, the raw comma string set, `[]` for `[]`, and `{ value: [], source: 'default', invalid: true }` malformed.
   - It is always read from the main checkout's `policy.yml`, so a record's branch cannot change its own list.
   - The driver reviewer's evidence-path guard always keeps the shipped list as well.
   - Under `express-driver-protected-paths: reviewer`, a path the project adds is never build-time.
@@ -364,7 +371,7 @@ Expected: PASS
 
 ### Task 9: Lane prose and the retired-name sweep
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/_shared/express-lane.md:7` (Eligibility: after "never override a verdict by judgment.", add "The protected-path list is a policy value, `protected-paths` (`_shared/policy-schema-express-driver.md`), read from the main checkout's `policy.yml`: unset keeps the shipped list, and a project that removes an entry lets this lane merge changes to that path on green with no human.")
