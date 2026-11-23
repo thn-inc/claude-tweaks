@@ -291,7 +291,8 @@ test('#5997 AC1.1: recordImplementerProfile', () => {
 
 test('#5997: a throw from the rule refuses as DRIVER_MODEL_REFUSED', () => {
   assert.throws(() => recordImplementerProfile({ labels: [], body: '' }, { profileFor: () => { throw new Error('implementer-tier: unknown size "x" @y'); } }),
-    (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier') && !e.message.includes(' @y'));
+    (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier') && !e.message.includes(' @y')
+      && e.message.split('implementer-tier:').length === 2);
   assert.strictEqual(recordImplementerProfile({ labels: [{ name: 'size:huge' }], body: '' }), 'standard');
 });
 

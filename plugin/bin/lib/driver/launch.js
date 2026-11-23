@@ -102,6 +102,12 @@ function roleLaunch(role, policy, { profile: explicit } = {}) {
 // One role's model alone: roleLaunch's `model`.
 const roleModel = (role, policy) => roleLaunch(role, policy).model;
 
+// The refusal for a throw from #5996's implementer-tier functions; their messages already open with `implementer-tier: `.
+function tierRefusal(err) {
+  const msg = neutralize(err.message);
+  return refuse('implementer', msg.startsWith('implementer-tier: ') ? msg : `implementer-tier: ${msg}`);
+}
+
 // The implementer's first profile under `implementer-tier: record` (#5997): the record's size label and
 // Key Files count through #5996's rule. A throw from the rule refuses the launch, never a default profile.
 // `profileFor` is a test seam.
@@ -113,7 +119,7 @@ function recordImplementerProfile({ labels, body }, { profileFor = implementerPr
       rule: 'record',
     });
   } catch (err) {
-    throw refuse('implementer', `implementer-tier: ${neutralize(err.message)}`);
+    throw tierRefusal(err);
   }
 }
 
@@ -177,4 +183,4 @@ async function launchTracked(shared, deps, { minutes, dollars }, { profile: expl
   }
 }
 
-module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, refuse, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, recordImplementerProfile, IMPLEMENTER_TIER_KEY, launchTracked };
+module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, tierRefusal, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, recordImplementerProfile, IMPLEMENTER_TIER_KEY, launchTracked };

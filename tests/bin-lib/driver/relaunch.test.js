@@ -62,7 +62,8 @@ test('planRelaunch: a refused step-up launch still relaunches (the launch refuse
 test('planRelaunch: an unknown profile refuses as DRIVER_MODEL_REFUSED', () => {
   assert.throws(
     () => planRelaunch({ profile: 'turbo', model: 'x', policy: {} }),
-    (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier'),
+    (e) => e.code === MODEL_REFUSED_CODE && e.message.startsWith('no model for driver role implementer: implementer-tier')
+      && e.message.split('implementer-tier:').length === 2,
   );
 });
 
@@ -80,7 +81,10 @@ test('failingTests: null when the report cannot be read', () => {
   const none = depsOf({});
   assert.strictEqual(call(none), null, 'no events file');
   assert.strictEqual(call(depsOf({ [`${RUN}/events.jsonl`]: events({ type: 'worker' }, 'not json') })), null, 'no verify line');
-  assert.strictEqual(call(depsOf({ [`${RUN}/events.jsonl`]: events({ type: 'verify', reportPath: 5 }) })), null, 'reportPath not a string');
+  // Every path reads as a valid red report, so only the string guard on reportPath can yield null.
+  const anyReport = (events) => ({ readFile: (p) => (String(p).endsWith('events.jsonl') ? events : REPORT_TEXT) });
+  assert.strictEqual(call(anyReport(events({ type: 'verify', reportPath: 5 }))), null, 'reportPath not a string');
+  assert.ok(call(anyReport(events({ type: 'verify', reportPath: '/r.json' }))), 'control: a string reportPath reads');
   assert.strictEqual(call(withReport('not json')), null, 'report not JSON');
   assert.strictEqual(call(withReport(reportWith('region', 0))), null, 'all checks green');
   assert.strictEqual(call(depsOf({ [`${RUN}/events.jsonl`]: events({ type: 'verify', reportPath: '/missing.json' }) })), null, 'report missing');
@@ -95,6 +99,14 @@ test('failingTests: reads the last verify line', () => {
   assert.deepStrictEqual(call(deps).lines, ['not ok 1 - new']);
 });
 
+test('failingTests: a file named by two failed checks is listed once, first seen first', () => {
+  const report = JSON.stringify({ checks: {
+    a: { exitCode: 1, failingRegion: '✖ failing tests:\n\ntest at b.test.js:1:1\n✖ one\n\ntest at a.test.js:2:2\n✖ two\n' },
+    b: { exitCode: 2, failingRegion: '✖ failing tests:\n\ntest at a.test.js:3:3\n✖ three\n\ntest at c.test.js:4:4\n✖ four\n' },
+  } });
+  assert.deepStrictEqual(call(withReport(report)).files, ['b.test.js', 'a.test.js', 'c.test.js']);
+});
+
 test('failingTests: a readable report naming no placeable file returns files: [], not null', () => {
   const r = call(withReport(reportWith('not ok 1 - adds\nboom')));
   assert.deepStrictEqual(r, { files: [], lines: ['not ok 1 - adds', 'boom'] });
@@ -102,8 +114,7 @@ test('failingTests: a readable report naming no placeable file returns files: []
 
 test('redTestsPrompt(null) is the fixed text with no report-shaped words', () => {
   const p = redTestsPrompt(null);
-  assert.ok(p.startsWith('Relaunch. Your first attempt is committed, and the driver\'s test step found failing tests, but the driver could not read which ones.'));
-  assert.ok(p.endsWith('report the commit title and summary of this fix alone.'));
+  assert.strictEqual(p, 'Relaunch. Your first attempt is committed, and the driver\'s test step found failing tests, but the driver could not read which ones. Run the tests that cover your change to find them, then fix the code inside the Key Files and the limits above, and report the commit title and summary of this fix alone.');
   assert.ok(!p.includes('Failing test files:') && !p.includes('Failure lines:'));
 });
 
@@ -131,6 +142,8 @@ test('redTestsPrompt: the fenced block is at most 4096 bytes', () => {
   const p = redTestsPrompt({ files: ['a.test.js'], lines: ['x'.repeat(10000)] });
   assert.ok(Buffer.byteLength(between(p)) <= MAX_FAILURE_BYTES);
   assert.ok(Buffer.byteLength(between(p)) > 4000);
+  assert.ok(between(p).endsWith('\n[failure output truncated]'));
+  assert.ok(!redTestsPrompt({ files: [], lines: ['short'] }).includes('truncated'));
 });
 
 test('redTestsPrompt: file names and lines are neutralized', () => {
