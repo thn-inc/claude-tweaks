@@ -587,7 +587,7 @@ function inOwnTmp(fn) {
 
 const T3_PASSES = PASSES.slice(0, 5); // truncate, fetch, blocked, oversized, write-back
 const NOW = new Date('2026-11-12T12:00:00.000Z');
-const EXPRESS_OFF = () => ({ enabled: false, grouping: 'per-record', keepSingleton: () => false });
+const EXPRESS_OFF = () => ({ enabled: false, grouping: 'per-record', fingerprint: 'off-fp', keepSingleton: () => false });
 
 // Runs truncate..write-back over a scenario in a test-owned TMPDIR and returns everything a test
 // asserts on. o: { transport, omit, persisted, writeResult, spawn (CLI overrides), env, inputs,
