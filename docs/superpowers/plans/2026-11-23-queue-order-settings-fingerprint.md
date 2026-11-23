@@ -34,6 +34,8 @@ Scope keywords: cacheUsable, composeOrderBlob, expressQueuePolicy
 
 ### Task 1: Grouping-input list and fingerprint in `express/queue.js`
 
+**Review risk:** high — changes `expressQueuePolicy`'s early-return branches (lanes-off, failed reads) and the first resolver call that gates both lanes.
+
 **Files:**
 - Modify: `plugin/bin/lib/express/queue.js`
 - Test: `tests/bin-lib/express/queue.test.js`
@@ -79,6 +81,8 @@ git commit -m "Add the grouping-input list and settings fingerprint to the queue
 
 ### Task 2: `cacheUsable` and `composeOrderBlob` take the fingerprint
 
+**Review risk:** high — `cacheUsable` decides whether a pull replays persisted groups and exclusions.
+
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-order.js`
 - Test: `tests/bin-lib/dispatch/queue-order.test.js`
@@ -112,7 +116,7 @@ Update the `cacheUsable` and `composeOrderBlob` comments (blob without `fingerpr
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/bin-lib/dispatch/queue-order.test.js`
-Expected: PASS, 0 failures
+Expected: PASS, 0 failures. Interim state, expected until Task 3: both callers still pass the `.grouping` string, so `cacheUsable` misses on every call and any cache-hit test in `tests/bin-lib/dispatch/queue-pull.test.js` is red at this commit; Task 3 Step 4 runs that suite green.
 
 - [ ] **Step 5: Commit**
 
@@ -122,6 +126,8 @@ git commit -m "Key the queue-order cache on the settings fingerprint — refs #6
 ```
 
 ### Task 3: Both queue-pull callers pass and write the fingerprint
+
+**Review risk:** high — changes what both callers write into the cross-version queue-order blob that older plugin versions also read and write.
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/queue-pull.js:587` and `:896`
@@ -152,7 +158,7 @@ Expected: FAIL after Step 1 (the module writes no `fingerprint` and passes a str
 - `queue-pull-script.md:109`: `cacheUsable(persisted, current, require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy())`
 - `queue-pull-script.md:291`: replace `grouping: require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy().grouping,` with `...require('${CLAUDE_PLUGIN_ROOT}/bin/lib/express/queue.js').expressQueuePolicy(),`
 
-No line added or removed in either file. Update `docs/plugin-structure.md`'s `queue-order.js` entry to say `cacheUsable` also refuses a blob whose settings fingerprint (`express/queue.js`'s `groupingFingerprint` over `GROUPING_INPUTS`) differs or is absent (#6062).
+No line added or removed in either file. Accepted window: the write-back spreads a fresh `expressQueuePolicy()` read, while the module's groups used `state.bundleCap`/`state.workLinks` read through the `resolve-policy.js` CLI; a policy edit between those reads stamps the blob with settings the groups were not computed under. This is the same pre-existing window `grouping` already has (every `expressQueuePolicy` call is its own read), and it lasts until a queue record changes. Update `docs/plugin-structure.md`'s `queue-order.js` entry to say `cacheUsable` also refuses a blob whose settings fingerprint (`express/queue.js`'s `groupingFingerprint` over `GROUPING_INPUTS`) differs or is absent (#6062).
 
 - [ ] **Step 4: Run the suites and the rail to verify they pass**
 
