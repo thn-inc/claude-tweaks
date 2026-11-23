@@ -144,6 +144,8 @@ to `QUERY`'s, each with the `Write` tool, then pass them as `{body-file}` and `{
 gh api graphql -F query=@"{query-file}" -f id="{found-id}" -F body=@"{body-file}"
 ```
 
+With `gh` absent, per `_shared/github-write-transport.md`: list the comments with `issue_read` (`get_comments`, paged), keep the set the two commands above select — a `<!-- needs-decision: ` marker, no `**Resolved:**`, and `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`, printing the skip line for every other marker comment — and edit each with `update_issue_comment`, passing its numeric `id` and the prepended body. A session without that tool fails the edit, and the fail-closed rule below keeps the label.
+
 Do this for every unresolved comment found — a record refused by both `backlog-refine` and
 `backlog-grant` concurrently carries two separate `needs:decision`-labeled comments, and both must
 be resolved in this same shaping pass before the label itself is removed below. **Fail closed on

@@ -1,5 +1,5 @@
 'use strict';
-// #6101: pins the issue-comment edit row in _shared/github-write-transport.md and its two callers.
+// #6101: pins the issue-comment edit row in _shared/github-write-transport.md and shaping mode's gh-absent use of it (planning-answer's pins live in specify-planning-answer-conformance.test.js).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -40,4 +40,18 @@ test('rule: a missing mapped tool refuses like an unmapped step', () => {
     f('or one whose mapped tool the session lacks'),
     f("`specify/planning-answer.md`'s Inputs check is the standing example"),
   ], 'rule');
+});
+
+test('stamping: the live-comment resolution names its gh-absent path', () => {
+  const text = readText(path.join(ROOT, 'plugin/skills/specify/shaping-mode-stamping.md'));
+  const start = text.indexOf('**Resolving live `needs:decision` comments');
+  const end = text.indexOf('### Compose-then-write-once');
+  assert.ok(start >= 0 && end > start, 'live-comment resolution region not found');
+  pinned(text.slice(start, end), [
+    f('With `gh` absent, per `_shared/github-write-transport.md`: list the comments with `issue_read` (`get_comments`, paged)'),
+    f('`author_association` `OWNER`, `MEMBER` or `COLLABORATOR`'),
+    f('printing the skip line for every other marker comment'),
+    f('edit each with `update_issue_comment`, passing its numeric `id` and the prepended body'),
+    f('A session without that tool fails the edit, and the fail-closed rule below keeps the label'),
+  ], 'stamping');
 });
