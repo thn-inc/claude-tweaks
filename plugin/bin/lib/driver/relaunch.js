@@ -98,7 +98,9 @@ function failingTests({ runDir, wt, deps }) {
     const report = JSON.parse(String(deps.readFile(reportPath, 'utf8')));
     // verify.js writes `checks` as an object keyed by check name; an array is read alike.
     const raw = report && report.checks;
-    const checks = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : []);
+    let checks = [];
+    if (Array.isArray(raw)) checks = raw;
+    else if (raw && typeof raw === 'object') checks = Object.values(raw);
     const files = [];
     const lines = [];
     let seen = false;
