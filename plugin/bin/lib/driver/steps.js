@@ -108,7 +108,7 @@ const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
 const { buildEnv } = require('./worker');
 const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
-const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, IMPLEMENTER_TIER_KEY, readCeilings, launchTracked, modelPolicyRefusal } = require('./launch');
+const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, IMPLEMENTER_TIER_KEY, readCeilings, launchTracked, modelPolicyRefusal, roleLaunch } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
@@ -116,6 +116,8 @@ const { laneBounds, eligibilityOptions } = require('./lane-bounds');
 const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta, mergeWorker } = require('./review');
+const { startEffort } = require('../model-profiles/implementer-tier');
+const { parseRecordFacets } = require('../issues/record');
 const { planRelaunch, relaunchNote, cannotCompletePrompt, failingTests, redTestsPrompt, TRIGGERS } = require('./relaunch');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
 const { claimLogText, CLAIM_LOG_SECTION, CLAIM_LOG_STEP } = require('../log-decision/claim-log');
@@ -766,7 +768,7 @@ async function runImplementer(ctx, deps, opts = {}) {
   return { ...result, detail: result.detail ? `${result.detail}; ${launch.note}` : launch.note };
 }
 // runImplementer's launch and its checks; `launch.started` is set just before launchTracked is called.
-async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile } = {}, launch) {
+async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile, effort } = {}, launch) {
   const { shared } = ctx;
   // Resolved first, so the HEAD read below stays the call immediately before the launch. Only where
   // the implementer has Bash (#5915): elsewhere it cannot run a command, so nothing is read.
@@ -799,6 +801,7 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile 
       prompt: workerPrompt(ctx, { minutes, dollars, maxLines, tests }) + extraPrompt,
       ...(tests !== null ? { testCommand: tests.command } : {}),
       ...(typeof profile === 'string' ? { profile } : {}),
+      ...(effort !== undefined ? { effort } : {}),
       settingsDir,
     });
     ({ envelope } = launched);
@@ -902,8 +905,14 @@ function relaunchesOnCannotComplete(rule, result) {
   return rule === 'record' && !!result && result.status === 'stop' && !!result.cannotComplete && typeof result.cannotComplete === 'object';
 }
 // What ctx.implementer records after a worker-step launch that resolved a model (a read: no interruptClass rung).
-function setImplementer(ctx, rule, model, profile, attempt) {
-  if (typeof model === 'string') ctx.implementer = { rule, profile, model, attempt };
+// `effort` is the launch's own (a level or null); `escalations` is the steps up taken so far, one less than the attempt (#6002).
+function setImplementer(ctx, rule, model, profile, attempt, effort = null) {
+  if (typeof model === 'string') ctx.implementer = { rule, profile, model, attempt, effort, escalations: attempt - 1 };
+}
+// The effort ladder is on only under `implementer-tier: record` with `model-effort: profile` (#6002).
+function effortLadder(policy) {
+  const entry = policy && policy['model-effort'];
+  return implementerRule(policy) === 'record' && !!entry && entry.value === 'profile';
 }
 // The worker line also names which path the targeted test command took (`tests`, #5915), the launch's
 // `profile` and its `attempt` (1: the first launch, #5997).
@@ -914,9 +923,14 @@ function setImplementer(ctx, rule, model, profile, attempt) {
 const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const rule = implementerRule(ctx.shared.policy);
   let profile;
+  let effort;
   if (rule === 'record') {
     try {
       profile = deps.recordImplementerProfile(ctx.issue);
+      // Under the ladder the first launch starts at the record's effort (#6002); a throw here refuses like a launch-time model refusal.
+      if (effortLadder(ctx.shared.policy)) {
+        effort = startEffort({ risk: parseRecordFacets(ctx.issue.labels || []).risk, launchEffort: roleLaunch('implementer', ctx.shared.policy, { profile }).effort });
+      }
     } catch (err) {
       if (err && err.code === MODEL_REFUSED_CODE) return { status: 'fail', detail: err.message, noLine: true };
       throw err;
@@ -924,17 +938,17 @@ const workerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async (ctx, de
   }
   let result;
   try {
-    result = await runImplementer(ctx, deps, { profile });
+    result = await runImplementer(ctx, deps, { profile, ...(effort !== undefined ? { effort } : {}) });
   } catch (err) {
     const failed = launchThrowFail(ctx, err);
     if (failed !== null) {
-      setImplementer(ctx, rule, failed.extra.model, failed.extra.profile, 1);
+      setImplementer(ctx, rule, failed.extra.model, failed.extra.profile, 1, failed.extra.effort);
       return { ...failed, extra: { ...failed.extra, attempt: 1 } };
     }
     throw err;
   }
   const extra = result.extra || {};
-  setImplementer(ctx, rule, extra.model, extra.profile ?? null, 1);
+  setImplementer(ctx, rule, extra.model, extra.profile ?? null, 1, extra.effort);
   const line = { ...result, extra: { ...extra, tests: ctx.workerTestMode, ...(typeof extra.model === 'string' ? { attempt: 1 } : {}) } };
   // The cannot-complete trigger (#5997): the first worker's edits stay in the worktree as they are.
   // The prompt gets the raw summary: ctx.worker.summary is neutralized already, and cannotCompletePrompt neutralizes.
@@ -954,7 +968,9 @@ async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
   try {
     // The fix round launches on the profile of the attempt that went green under `record` (a relaunch overwrites `ctx.implementer`) (#5997); under `lane` it passes none.
     const profile = ctx.implementer && ctx.implementer.rule === 'record' ? ctx.implementer.profile : undefined;
-    result = await run(ctx, deps, { extraPrompt, profile });
+    // Under the effort ladder it launches at that attempt's effort too (#6002); under record + inherit no `effort` key keeps roleLaunch's.
+    const effort = profile !== undefined && effortLadder(ctx.shared.policy) ? ctx.implementer.effort : undefined;
+    result = await run(ctx, deps, { extraPrompt, profile, ...(effort !== undefined ? { effort } : {}) });
   } catch (err) {
     const failed = ctx.shared.interrupted ? null : launchThrowFail(ctx, err);
     if (failed !== null) ctx.events.emit(STEP.worker, failed.status, deps.now() - t0, failed.detail, { ...failed.extra, fix: true });
@@ -1283,13 +1299,13 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   } catch (err) {
     const failed = launchThrowFail(ctx, err);
     if (failed === null) return withRelaunchNote(ctx, { status: 'fail', detail: (err && err.message) || String(err) });
-    setImplementer(ctx, 'record', failed.extra.model, failed.extra.profile, 2);
+    setImplementer(ctx, 'record', failed.extra.model, failed.extra.profile, 2, failed.extra.effort);
     return withRelaunchNote(ctx, { ...failed, extra: { ...failed.extra, attempt: 2, ...marks } });
   }
   // runImplementer sets ctx.worker once an envelope came back, whatever its status.
   if (ctx.worker !== first) ctx.worker = relaunchWorker(first, ctx.worker, relaunch.trigger);
   const extra = result.extra || {};
-  setImplementer(ctx, 'record', extra.model, extra.profile ?? null, 2);
+  setImplementer(ctx, 'record', extra.model, extra.profile ?? null, 2, extra.effort);
   // `attempt` rides with the marks even when no model resolved (a HEAD unreadable before the launch).
   return withRelaunchNote(ctx, { ...result, extra: { ...extra, tests: ctx.workerTestMode, attempt: 2, ...marks } });
 });
@@ -1743,5 +1759,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule, relaunchOrStop, relaunchesOnCannotComplete,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule, effortLadder, relaunchOrStop, relaunchesOnCannotComplete,
 };

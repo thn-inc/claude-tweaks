@@ -4060,6 +4060,72 @@ test('#5997: the fix round launches on the first attempt\'s profile and its line
   assert.equal(Object.hasOwn(fixLine, 'attempt'), false);
 });
 
+// --- the implementer effort ladder's first launch and fix round (#6002, Task 3) -----------------
+const LADDER = { ...RECORD_TIER, 'model-effort': 'profile', 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'medium' } } };
+const MEDIUM_LOW_RISK = tierIssue(['risk:low', 'size:medium'], keyFilesBody('a.js', 'b.js', 'c.js'));
+const reviewerLaunchEffort = (h) => h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer').args[0].effort;
+
+test('#6002 characterization: record + inherit launch opts are unchanged', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].model, M('standard'));
+  assert.equal(first.args[0].effort ?? null, null);
+  assert.equal(fix.args[0].model, M('standard'));
+  assert.equal(fix.args[0].effort ?? null, null);
+  const [line, fixLine] = workerLines(h);
+  assert.equal(line.effort, null);
+  assert.equal(fixLine.effort, null);
+});
+
+test('#6002 AC4.1 (first launch): risk:low size:medium starts standard at --effort low', async () => {
+  const h = harness({ policy: LADDER, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(workerCall(h).args[0].effort, 'low');
+  assert.equal(workerCall(h).args[0].model, M('standard'));
+  const [line] = workerLines(h);
+  assert.deepEqual([line.effort, line.attempt, line.profile], ['low', 1, 'standard']);
+});
+
+test('#6002 AC1.1 (driver): a risk:medium record starts at medium, an unlabeled-risk record at launchEffort', async () => {
+  for (const labels of [['risk:medium', 'size:medium'], ['size:medium']]) {
+    const h = harness({ policy: LADDER, script: [tierIssue(labels, keyFilesBody('a.js', 'b.js', 'c.js'))] });
+    assert.equal(await run(['#7'], h.deps), 0, labels.join());
+    assert.equal(workerCall(h).args[0].effort, 'medium', labels.join());
+    assert.equal(workerLines(h)[0].effort, 'medium', labels.join());
+  }
+});
+
+test('#6002 AC5.1 (first launch): model-effort inherit passes no effort under record', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(workerCall(h).args[0].effort ?? null, null);
+  assert.equal(workerLines(h)[0].effort, null);
+});
+
+test('#6002: the fix round launches at the green attempt\'s effort and profile; under lane it carries no explicit effort', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...LADDER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].effort, 'low');
+  assert.equal(fix.args[0].effort, 'low');
+  assert.equal(fix.args[0].model, M('standard'));
+  const [, fixLine] = workerLines(h);
+  assert.deepEqual([fixLine.effort, fixLine.profile, fixLine.fix], ['low', 'standard', true]);
+  const lane = fixRig({ policy: { 'express-driver-review': 'on', 'model-effort': 'profile', 'model-profiles': LADDER['model-profiles'] } });
+  assert.equal(await run(['#7'], lane.deps), 0);
+  assert.equal(implementerCalls(lane)[1].args[0].effort, 'medium', 'lane: roleLaunch\'s own effort');
+});
+
+test('#6002 AC7.1 (driver): the reviewer\'s effort is unchanged under the ladder', async () => {
+  const base = fixRig({ policy: { 'express-driver-review': 'on', 'model-effort': 'profile', 'model-profiles': LADDER['model-profiles'] }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], base.deps), 0);
+  const ladder = fixRig({ policy: { 'express-driver-review': 'on', ...LADDER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], ladder.deps), 0);
+  assert.equal(reviewerLaunchEffort(ladder), reviewerLaunchEffort(base));
+  assert.equal(typeof reviewerLaunchEffort(ladder), 'string');
+});
+
 // --- the implementer relaunch under implementer-tier record (#5997, Task 5) ----------------------
 const RED_REPORT = readText(path.join(__dirname, '..', '..', 'fixtures', 'driver-relaunch', 'red-report.json'));
 const REPORT_PATH = path.join(MAIN, 'verify-report.json');

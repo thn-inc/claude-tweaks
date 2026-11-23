@@ -1194,3 +1194,40 @@ test('AC9.1 (#5997): live probe — three implementer launches on the Fast model
   }
   assert.strictEqual(valid, 3);
 });
+
+test('#6002 Gotcha: live probe — three implementer launches on Standard at --effort low return a done envelope', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const { resolve } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+  const { modelProfilesEntry } = require(path.join(LIB, 'model-profiles', 'policy-fragment.js'));
+  const policyRaw = readText(path.join(__dirname, '..', '..', '..', '.claude-tweaks', 'policy.yml'));
+  const keyed = resolvePolicyKeys(['model-ceiling', 'model-effort'], { policyRaw });
+  const policy = { 'model-profiles': modelProfilesEntry(policyRaw).value, 'model-ceiling': keyed['model-ceiling'].value, 'model-effort': keyed['model-effort'].value };
+  const { model } = resolve('standard', { policy, unattended: true });
+  const git = (cwd, ...args) => cp.execFileSync('git', args, { cwd, stdio: 'pipe' });
+  let valid = 0;
+  for (let i = 1; i <= 3; i++) {
+    const cwd = tmp(t);
+    fs.writeFileSync(path.join(cwd, 'greet.js'), "module.exports = function greet(name) {\n  return 'Hello ' + name;\n};\n");
+    git(cwd, 'init', '-q');
+    git(cwd, 'add', 'greet.js');
+    git(cwd, '-c', 'user.name=probe', '-c', 'user.email=probe@example.invalid', 'commit', '-q', '-m', 'Add greet');
+    const prompt = [
+      'Record #0: Make greet add an exclamation mark',
+      '',
+      'Key Files:',
+      '- greet.js',
+      '',
+      'Edit only the Key Files and test files.',
+      "Tests: do not run tests — the driver runs the project's check after it commits your change.",
+      'Limits: the change stays within 20 implementation lines; the launch ends at 5 minutes of wall clock or $1 of spend.',
+      'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
+      '',
+      "Change greet.js so greet('Ann') returns 'Hello Ann!'. Run each command exactly as written, with nothing appended.",
+      '',
+    ].join('\n');
+    const env = await launchWorker({ role: 'implementer', cwd, settingsDir: tmp(t), prompt, model, effort: 'low', testCommand: 'npm test', ceilings: { wallClockMs: 300000, spendCeiling: 1 } }, { runner: worker.defaultRunner });
+    t.diagnostic('launch=' + i + ' model=' + model + ' status=' + env.status + ' reason=' + env.reason + ' result.status=' + (env.result && env.result.status) + ' costUsd=' + env.costUsd);
+    const greet = require(path.join(cwd, 'greet.js'));
+    if (env.status === 'ok' && env.result && env.result.status === 'done' && greet('Ann') === 'Hello Ann!') valid++;
+  }
+  assert.strictEqual(valid, 3);
+});

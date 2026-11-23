@@ -144,12 +144,15 @@ function modelPolicyRefusal(policy) {
 // ceiling kill runs taskkill through the same runner, and that handle must not replace the
 // worker's. shared.activeWorker is reset however the launch ends; a throw reaches the caller.
 // `opts.profile` (optional) goes to roleLaunch and is stripped from what reaches the launcher.
+// `opts.effort` (#6002): `undefined` keeps roleLaunch's effort; any other value, `null` included, is the launch's effort.
 // Resolves `{ envelope, model, effort, profile }`; a launcher throw is rethrown with `model`, `effort` and `profile` attached.
-async function launchTracked(shared, deps, { minutes, dollars }, { profile: explicitProfile, ...opts }) {
+async function launchTracked(shared, deps, { minutes, dollars }, { profile: explicitProfile, effort: explicitEffort, ...opts }) {
   // Resolved before anything is touched: a refusal leaves the runner, the launcher and
   // shared.activeWorker as they were. `model`, `effort` and `profile` are resolved here and `profile` is
-  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`.
-  const { model, effort, profile } = roleLaunch(opts.role, shared.policy, { profile: explicitProfile });
+  // stripped from `opts`, so no caller can override them and the launcher never sees `profile`; `effort` is overridable only through the explicit option.
+  const resolved = roleLaunch(opts.role, shared.policy, { profile: explicitProfile });
+  const { model, profile } = resolved;
+  const effort = explicitEffort === undefined ? resolved.effort : explicitEffort;
   let captured = false;
   const runner = (call) => {
     const handle = deps.runner(call);

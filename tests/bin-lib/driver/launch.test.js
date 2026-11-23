@@ -222,12 +222,26 @@ test('#5942: launchTracked resolves { envelope, model, effort } and a throw carr
   }
 });
 
-test('#5942: the resolved effort wins over an effort in the caller opts', async () => {
+test('#6002: launchTracked passes an explicit effort and returns it; undefined keeps roleLaunch\'s', async () => {
+  const shared = { activeWorker: null, policy: policyFrom('model-effort: profile\n') };
+  for (const [given, want] of [['low', 'low'], [null, null], [undefined, 'high']]) {
+    let got = 'unset';
+    const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: async (o) => { got = o.effort; return 'env'; } };
+    const out = await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', prompt: 'p', effort: given });
+    assert.strictEqual(got, want, String(given));
+    assert.strictEqual(out.effort, want, String(given));
+  }
+});
+
+// #6002 replaces #5942's "resolved effort wins over the caller's": the explicit `effort` option is now the launch's effort
+// (the effort ladder's levels); an `effort` that is not that option still cannot reach the launcher, and the model stays resolved.
+test('#6002: an explicit effort option is the launch effort; the model is still the resolved one', async () => {
   const shared = { activeWorker: null, policy: policyFrom('') };
   let got = null;
   const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', effort: 'max', prompt: 'p' });
-  assert.strictEqual(got.effort, null);
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', effort: 'max', model: 'caller-model', prompt: 'p' });
+  assert.strictEqual(got.effort, 'max');
+  assert.strictEqual(got.model, M('standard'));
 });
 
 test("#5942: model-ceiling standard clamps the reviewer's effort with its model", async () => {
