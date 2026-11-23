@@ -124,6 +124,8 @@ function runReadback(flags, deps) {
     } else {
       throw new PayloadError('no labels: pass --labels-file or a --readback-file object with a labels array');
     }
+    // Deliberately not exit 1: plan-store check treats an undeterminable read as invalid, so an
+    // unreadable, empty or non-JSON plan-check file becomes a failed plan-check assertion.
     let planCheck = null;
     try { planCheck = JSON.parse(load('--plan-check-file')); } catch { planCheck = null; }
     const input = {

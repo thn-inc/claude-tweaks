@@ -201,6 +201,9 @@ function resolvedAssertion(input) {
   const comments = input.comments.filter((c) => c !== null && typeof c === 'object');
   const problems = [];
   for (const id of input.resolvedIds) {
+    // Match both id shapes: `{hold-file}`'s comment.id is ref()'s node_id ?? id (a gh `IC_…` node id),
+    // while a REST/MCP re-read carries a numeric `id` beside `node_id`. Dropping either side stops one
+    // transport's hold comments from matching, and `resolved` goes red on a correctly resolved hold.
     const match = comments.filter((c) => String(ref(c).id) === id || String(c.id) === id);
     if (match.length === 0) problems.push(`${id} (comment not found)`);
     else if (!match.some((c) => bodyOf(c).includes(RESOLVED))) problems.push(`${id} (no ${RESOLVED})`);
@@ -215,6 +218,10 @@ function resolvedAssertion(input) {
 
 function planLineAssertion(input) {
   const parsed = parsePlanLine(input.planLine);
+  // The body must carry the written Plan: line exactly once. A Plan: line inside a code fence is
+  // quoted text, not the record's line, so it is not counted; CRLF bodies and trailing whitespace
+  // (on both the body line and the written line) are tolerated, since gh and MCP re-reads differ there.
+  // Every other unfenced line starting `Plan:` counts, so a stray second one fails (SDD ruling 2, #6100).
   const lines = input.body.replace(/\r\n/g, '\n').split('\n');
   const mask = fencedLineMask(lines);
   const stripTrailing = (line) => line.replace(/[ \t]+$/, '');
@@ -248,6 +255,10 @@ function readBack(input) {
   let outcome;
   let next;
   if (!ok) {
+    // After `## Re-hold` the fresh hold is posted first, so re-running /specify is safe. After `## Write`
+    // (answered or kept) the hold comment is already resolved, so a re-run would read not-held and shape
+    // the record with other decisions unanswered: the guidance is a by-hand check instead
+    // (plugin/skills/specify/planning-answer.md).
     const vars = { what: failed.join(', '), n: record };
     outcome = render(branch === 're-held' ? T.failedAfterReHold : T.failedAfterWrite, vars);
     next = branch === 're-held' ? 'held-or-failed' : 'kept-needs-decision';
