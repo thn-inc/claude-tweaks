@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-23T13:43:15.571Z",
+  "computedAt": "2026-11-23T15:13:56.486Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 6109,
-        "updatedAt": "2026-11-23T07:43:03Z",
+        "updatedAt": "2026-11-23T15:13:05Z",
         "state": "OPEN"
       },
       {
@@ -80,7 +80,7 @@
       },
       {
         "number": 5208,
-        "updatedAt": "2026-11-23T07:48:32Z",
+        "updatedAt": "2026-11-23T15:12:49Z",
         "state": "OPEN"
       },
       {
@@ -798,84 +798,6 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n- Wrap-up's learned-skills PR (`plugin/bin/lib/learned-skills/land.js`, #5290) is never armed: `plugin/skills/wrap-up/learned-skills-pr.md`'s \"The PR waits for a human\" section says `housekeeping-auto-merge` is never read for it, and `plugin/skills/_shared/github-pr-scan.md` item 9 refuses the `<!-- wrap-up-skills-pr -->` marker by name.\n- No policy key expresses \"learned-skill edits may merge without a human\". `housekeeping-auto-merge` (`plugin/bin/lib/policy-schema.js`) means mechanical, low-judgment cleanup and derives its unset default from `autonomy` (`true` at `trusted`/`unattended`).\n- #6088 ruled (2026-11-23) that the human-review floor for the learned-skills PR is dropped: the maintainer does not read these diffs, and 36 PRs in one week piled up and conflicted. That reverses #5290's ruling and needs an ADR. The design is `docs/superpowers/specs/2026-11-23-learned-skills-auto-merge-design.md` (deleted by /specify once decomposed; this body carries what the unit needs).\n\n## Deliverables\n\n1. A new policy key `learned-skills-auto-merge` in `plugin/bin/lib/policy-schema.js`: type boolean, category `merge-safety`, tier `advanced` (the core tier is at its cap), schema default `false`, summary \"Lets wrap-up's learned-skill update PRs merge themselves once CI is green, instead of waiting for a person.\" (opened with the \"Not yet used\" marker that the comment on the key table in `policy-schema.js` requires until a reader is wired; the `drain` sub-issue removes it when it lands)\n2. Its unset default is derived beside `housekeeping-auto-merge`'s derivation in `resolvePolicyKeys`: `true` only when `autonomy` resolves `unattended` and `control-mode` does not resolve `on`; otherwise `false`. An explicit key wins in both directions (#580's rule), including an explicit `true` under `control-mode: on`. `autonomy` is read through the same source walk `deriveHousekeepingAutoMerge` uses; `control-mode` is `policyOnly`, so it is read from the policy file only.\n3. A row in `plugin/skills/_shared/policy-schema.md` naming its readers (the learned-skills `drain` in `plugin/skills/wrap-up/learned-skills-pr.md` and `_shared/github-pr-scan.md` item 9 — both wired by sibling sub-issues), following the `policy-key-addition` project skill's checklist for every registration site, including any \"not yet used\" marker the schema conventions require until a reader lands.\n4. ADR `docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` (next free number; re-check `docs/decisions/` at build time). It records: #5290's ruling quoted (\"an instruction change that merges with no review is what the floor exists to stop\"); the evidence (the maintainer reports not reading these diffs; merges happen in batches minutes apart; 36 PRs in a week, median 19h open; #6083's hand fold of ten conflicting PRs); the decision (the learned-skills PR merges once CI is green under `learned-skills-auto-merge`); and the boundary (a record's own diff, the record-owned run-branch route and console-approved skill updates keep `merge-check`'s agent-instruction floor unchanged). The ADR also states: the decision takes effect only once the `drain` and PR-scan sub-issues land, and the old \"waits for a human\" prose stays authoritative until then; why `unattended` alone turns the default on (the setting is the maintainer's own consent to unreviewed merges, `control-mode: on` vetoes an unset default, and an explicit key always wins); that \"green\" means every check on the PR head completed successfully, with no checks, only skipped checks or pending checks counting as not green; and that a bad merge is undone with `git revert` of its squash commit. Other files cite the ADR by title, not by number. Add it to `docs/REGISTRY.md` if ADRs are registered there.\n\n## Acceptance Criteria\n\n- `node plugin/bin/resolve-policy.js --values learned-skills-auto-merge` prints `true` in a project whose `policy.yml` sets only `autonomy: unattended`, and `false` for `autonomy: trusted`, `autonomy: supervised`, and `autonomy: unattended` with `control-mode: on`.\n- An explicit `learned-skills-auto-merge: false` under `autonomy: unattended` resolves `false`, and an explicit `true` under `autonomy: supervised` resolves `true`.\n- Tests for these six cases (the four derived outcomes plus the two explicit-wins cases) sit beside the existing `housekeeping-auto-merge` derivation tests (`tests/resolve-policy-lib.test.js`), and the unattended `true` case and the `control-mode: on` case were each seen failing with the matching clause of the derivation reverted (the `unattended` clause, the `control-mode` clause); the remaining cases pin the explicit-wins and `false` outcomes.\n- The ADR file exists and cites #5290 and #6088.\n- `npm test -- --full` passes.\n\n## Release Note\n\nAdd a `learned-skills-auto-merge` setting that lets wrap-up's learned-skill update PRs merge on their own once CI passes; it is on by default only at `autonomy: unattended`.\n\n## Technical Approach\n\nMirror `housekeeping-auto-merge`'s entry and derivation exactly; do not reuse that key (it would widen what a housekeeping grant means in every consumer project). Run the `policy-key-addition` skill's checklist.\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — new key entry and derived default\n- `plugin/skills/_shared/policy-schema.md` — new row\n- `docs/decisions/0040-learned-skills-prs-merge-without-review-once-green.md` — new ADR\n- `docs/REGISTRY.md` — ADR registration, if ADRs are listed there\n- `tests/resolve-policy-lib.test.js` — derivation cases\n\n## Gotchas\n\n- `plugin/skills/_shared/policy-schema.md` is 50,555 B against the 52,500 B read rail; keep the row short, and check `node plugin/bin/context-cost-report.js --plugin-root plugin` after the edit.\n- Many open records add policy keys at the same time; expect a merge conflict in `policy-schema.js` and resolve by keeping both entries.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:add-the-learned-skills-auto-merge-policy-key-and-record-the -->\nwork-fingerprint: learned-skills-auto-merge:add-the-learned-skills-auto-merge-policy-key-and-record-the\n",
-        "createdAt": "2026-11-23T07:01:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6109,
-        "state": "OPEN",
-        "title": "Add the learned-skills-auto-merge policy key and record the floor reversal in an ADR",
-        "updatedAt": "2026-11-23T07:43:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\nRisk-flags: none\n\n## Overview\n\nPhase 7 is done when a 20-record trial in this repository runs with the reviewer on, `express-driver-max-size: medium`, a raised `express-driver-max-key-files`, and the new risk and protected-path values, and the quality guards are no worse than the standard lane's (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, Phase 7 \"Done when\"). This record sets those values in `.claude-tweaks/policy.yml`, drives 20 admitted records, and writes the result.\n\nA driver run has no task review and no whole-branch review, so guards 1 and 2 have nothing native to read. The maintainer chose on 2026-11-21 to run `/claude-tweaks:review` on each of the 20 driven PRs before the human merges it. Its Critical/Important share is compared with the standard lane's 70% (guard 1). Guard 3, bug records filed within 14 days naming a file a merged PR changed, is read 14 days after the last merge. Guard 2 (task-review first pass) does not apply to the driver and is reported as not applicable.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Changing any default in `plugin/bin/lib/policy-schema.js`. Defaults change only after this trial, in a separate record.\n- Fixing why admissible records do not reach the driver from `/claude-tweaks:dispatch` (design Phase 8). The trial drives records with `drive.js` directly.\n- Building new report code. `tools/pipeline-cost-report.js` already prints the funnel and guard 3.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #6018 | Admit driver records by risk and ceremony with the reviewer on, ending at pending-review | open |\n| #6019 | Let a protected path require the driver's reviewer instead of refusing | open |\n\n## Current State\n\n- `.claude-tweaks/policy.yml` sets `express-driver: on` and `express-lane: true`. `express-driver-review` is unset (default `beyond-express`).\n- `tools/pipeline-cost-report.js` (#5914, #5916, #5925): the funnel runs `drive.js --check` over every open `ready` + `auto:build` record (`tools/pipeline-cost-report/funnel.js`). Guard 3 is `collectPostMergeBugs` in `tools/pipeline-cost-report/guards.js`, and the committed baseline sits beside the design doc.\n- `plugin/bin/drive.js #N` drives one record. With the reviewer on, every Phase 7 widened record ends at `pending-review`.\n\n## Deliverables\n\n- [ ] `.claude-tweaks/policy.yml` sets, for the trial: `express-driver-review: on`, `express-driver-max-size: medium`, `express-driver-max-key-files` raised (the smallest N that admits every record the pre-trial funnel shows refused only by \"more than 3 Key Files\", recorded with its reason), the risk ceiling key (`express-driver-max-risk`, per #6018's proposal) at `high`, and the protected-path mode (`express-driver-protected-paths`, per #6019's proposal) at `reviewer` (names confirmed against the merged prerequisites). This lands as its own PR before the first driven record.\n- [ ] Before the first record: the funnel output (`node tools/pipeline-cost-report.js` with its funnel section) over the open build-authorized ready records, showing the admitted share. Expected about 61% against 11%.\n- [ ] 20 admitted records driven with `node plugin/bin/drive.js #N`, each to `pending-review` or a stop. For each PR, `/claude-tweaks:review` runs before the human merge, and its Critical/Important count is recorded.\n- [ ] A results file beside the design doc (`docs/superpowers/specs/2026-11-18-pipeline-economy-phase-7-trial.md`) with: admission share before and after, per record (number, size, risk, widenings, outcome, minutes, cost, review Critical/Important count, merged or not), guard 1's share against 70%, guard 2 \"not applicable: the driver has no task review\", and guard 3 once 14 days have passed since the last merge.\n- [ ] A verdict line: whether the guards are no worse. If they are worse, the policy values go back to their defaults in the same PR.\n- [ ] The verdict rule, written into the results file before the first driven record: guard 1 is the share of driven PRs whose `/claude-tweaks:review` report has at least one Critical or Important finding, counted with `parseReviewCounts` in `tools/pipeline-cost-report/guards.js` (the counter behind the 70% baseline). \"No worse\" means at or below 70%, with no margin. Guard 3 is the rate of bug records per merged PR, compared with the guard 3 value in `docs/superpowers/specs/2026-11-18-pipeline-economy-baseline.md` using the rule in `collectPostMergeBugs`, and \"no worse\" means at or below it. Guard 2 is not applicable. A provisional verdict is written after guard 1, and the final verdict after guard 3's read 14 days after the last trial merge. Only records driven to a PR count toward the 20: a record stopped or refused before its PR is listed separately and replaced, and a rejected or closed PR counts, with its review.\n\n\n## Acceptance Criteria\n\n1. The policy PR changes only `.claude-tweaks/policy.yml`, and `node plugin/bin/resolve-policy.js` on main after it prints the five trial values.\n2. The results file lists exactly 20 driven records, each with the per-record columns named in Deliverables filled.\n3. Guard 1 is computed from the 20 `/claude-tweaks:review` reports and printed against 70%. Guard 3 is printed with its read date, at least 14 days after the last trial merge.\n4. The funnel before and after is quoted from the tool's raw output, not summarised.\n5. The record closes only when the verdict line is written and, if the verdict is \"worse\", the policy values are back at their defaults.\n6. The verdict-rule text is committed in the results file before the first driven record's PR exists, so its commit time comes before that PR's creation time.\n7. The provisional verdict line cites guard 1's numerator and denominator. The final verdict line cites guard 3's count, merged-PR count and baseline value.\n\n## Release Note\n\nNo user-visible change: this repository trialled the wider pipeline-driver admission on 20 records and recorded the result.\n\n## Technical Approach\n\nDrive records one at a time with `drive.js`, not through `/claude-tweaks:dispatch`, because dispatch routes only single-record groups to the driver (design Phase 8). Pick the 20 from the funnel's admitted set in queue order. Skip a record only for a logged reason (contested claim, open PR appeared), and note it in the results file. Merge each PR by hand after its review. A Critical finding is fixed or the PR is closed, never merged as is.\n\n### Key Files\n\n- `.claude-tweaks/policy.yml`: the five trial values\n- `docs/superpowers/specs/2026-11-18-pipeline-economy-phase-7-trial.md`: the results file (new)\n\n## Gotchas\n\n- Guard 3 needs 14 days after the last merge. The record stays open (not `bot:in-progress`) until then, with the results file committed as far as it can go.\n- `/claude-tweaks:review` on a driver PR runs outside a `/flow` run directory. Record its report path in the results file so guard 1 can be re-counted.\n- Every widened record ends at `pending-review` by construction. A trial PR that merged on its own is a defect in the merge stop: stop the trial and file it.\n- The five trial values are `express-driver-review`, `express-driver-max-size`, `express-driver-max-key-files`, the risk ceiling key and the protected-path mode; `express-driver-max-lines` stays at its default, and the funnel before and after runs under the same effective settings.\n- The candidate list is frozen at the pre-trial funnel. Fewer than 20 admitted records, or a skip that drops the count, is reported in the results file and the record stays open rather than shrinking the sample.\n- The policy PR and the results file are separate PRs; a \"worse\" verdict reverts the policy values in a third, policy-only PR before the record closes.\n- Record per driven PR whether a fix was applied before merge, so guard 3 can be read split by that flag. Record each `/claude-tweaks:review` report at a fixed path under the results file's directory so guard 1 can be recounted.\n- The new keys are ignored by an older installed build reading the committed `policy.yml`, so sequencing the policy PR after #6018 and #6019 ship is enough.\n\n## Manual Steps\n\n- Merge or reject each of the 20 driven PRs after its review (reason-not-auto: requires-judgment)\n\n<!-- work-fingerprint: pipeline-economy-phase-7:run-the-20-record-driver-admission-trial-in-this-repository -->\nwork-fingerprint: pipeline-economy-phase-7:run-the-20-record-driver-admission-trial-in-this-repository\n",
         "createdAt": "2026-11-21T18:08:15Z",
         "labels": [
@@ -1317,84 +1239,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #4467 (open PR #4586 edits `step-7-5-worktree-always.md` and `pr-first-merge.md` too — sequence after it or rebase), #4462\n\n## Current State\n\nTidy's Step 7.5 `pr-first` branch (`plugin/skills/tidy/step-7-5-worktree-always.md`) arms a housekeeping PR at creation when `housekeeping-auto-merge: true` and `tidy-aggressiveness` is `moderate` or higher. It does this by running `_shared/pr-first-merge.md` Step 3's compose fence: `compose-subject.js {issue-list} --tag {tag} --pr {n} --out-dir …`.\n\nA housekeeping PR (`<!-- tidy-housekeeping-pr -->`) links no record, so `{issue-list}` is empty. `parseArgs` refuses with `missing <n> argument` (`plugin/bin/lib/compose-subject.js:134`) and exits 1, and the fence stops before `gh pr merge --auto`. So the creation-time arm can never succeed. The sweep backstop (`tidy/actions-github-issues.md`'s `## Arm ready PR`) reaches the same Step 3 for the same marker flavors (`<!-- tidy-housekeeping-pr -->` and `<!-- wrap-up-residue-pr -->`), so it fails the same way.\n\nSeen on PR #5207 (2026-11-11, `tidy --approve` on sweep run `2026-11-11T192023-sweep-standalone`). The run logged `arm-failed`, and the PR was armed by hand with a hand-written `chore:` subject. It then merged immediately because main has no required checks, which is #4467's separate concern.\n\n## Deliverables\n\n- `compose-subject.js` gains a record-less form for marker-stamped housekeeping PRs: `--pr {n}` with no `<n>`, gated by an explicit flag (e.g. `--housekeeping`). It emits a Conventional-Commits `chore:` subject and a body derived from the PR title, written to `--out-dir` like the record form.\n- Without that flag, a call with no `<n>` still refuses with `missing <n> argument` (exit 1), so record-linked callers keep failing closed.\n- `tidy/step-7-5-worktree-always.md`'s creation-time arm and `tidy/actions-github-issues.md`'s `## Arm ready PR` use the record-less form for marker-stamped PRs.\n- `_shared/pr-first-merge.md` Step 3 documents the record-less invocation next to the existing fence.\n- Unit tests in `tests/compose-subject.test.js` cover the record-less form and the kept refusal.\n\n## Acceptance Criteria\n\n- A tidy housekeeping PR opened under `housekeeping-auto-merge: true` with `moderate` aggressiveness logs `armed`, not `arm-failed`.\n- `compose-subject.js --housekeeping --pr {n} --out-dir {d}` exits 0 and writes a `chore:` subject and body; `compose-subject.js --pr {n}` with no `<n>` and no flag still exits 1 with `missing <n> argument`.\n- `npm test` passes.\n\n## Release Note\n\nTidy's housekeeping PRs now arm for auto-merge when you have opted in, instead of always being left unarmed.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/compose-subject.js` — modify\n- `plugin/skills/tidy/step-7-5-worktree-always.md` — modify\n- `plugin/skills/tidy/actions-github-issues.md` — modify\n- `plugin/skills/_shared/pr-first-merge.md` — modify\n- `tests/compose-subject.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-11T21:16:32Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5208,
-        "state": "OPEN",
-        "title": "Arm record-less tidy housekeeping PRs — compose-subject.js refuses with no record, so the creation-time arm always fails",
-        "updatedAt": "2026-11-23T07:48:32Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
