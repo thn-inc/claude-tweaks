@@ -61,11 +61,11 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795389464352
+    "lastAuditedMs": 1795416766199
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1795292309886
+    "lastAuditedMs": 1795416768450
   },
   "skill:work-record-facet-rename": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1794651466438
+    "lastAuditedMs": 1795416764245
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
