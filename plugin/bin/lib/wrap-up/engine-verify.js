@@ -451,8 +451,8 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
 // multi-spec spec-{N}/ dir inherits the parent's), falling back to
 // worktreeAtClose for a closed run. Which rungs may close a record is pack.js's
 // closingRecords; its array, empty included, is the answer, and only its
-// `null` (no records resolved) falls through to the expectations fallback
-// below. readdir degrades to [] and headerEntries skips an
+// `null` (no records resolved) or the config rung falls through to the
+// expectations fallback below. readdir degrades to [] and headerEntries skips an
 // unreadable file, so a concurrent reconcile/archive prune reads as "no
 // headers found" rather than throwing.
 const RECORD_DEPS = {
@@ -461,8 +461,11 @@ const RECORD_DEPS = {
 };
 
 function resolvedIssueNumbers(runDir) {
-  const closing = closingRecords(resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir)));
-  if (Array.isArray(closing)) return closing;
+  const resolved = resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir));
+  const closing = closingRecords(resolved);
+  // The config rung (an express run's `spec:` pin) closes nothing via headers, but its PR body
+  // carries its own `Fixes`, so its expectations file still names what carrier-commit checks.
+  if (Array.isArray(closing) && resolved.source !== 'config') return closing;
   const expPath = path.join(runDir, 'verify-expectations.json');
   if (fs.existsSync(expPath)) {
     try {

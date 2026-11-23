@@ -180,7 +180,8 @@ test('AC2.1: the field definition exists, once, in Section C step 2', () => {
 test('engine-verify.js derives its issue set from pack.js closingRecords, with no local header-source set (#3399 Deliverable 2)', () => {
   const src = read('plugin/bin/lib/wrap-up/engine-verify.js');
   assert.doesNotMatch(src, /HEADER_SOURCES|'worktree-headers'/);
-  assert.match(src, /closingRecords\(resolveRecords\(/);
+  assert.match(src, /= resolveRecords\(RECORD_DEPS, runDir/);
+  assert.match(src, /closingRecords\(resolved\)/);
 });
 
 // Section E (AC3)
