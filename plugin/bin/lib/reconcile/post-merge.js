@@ -70,10 +70,11 @@
 //
 // `detectHollowMerges` (#6143) finds a hollow merge: a MERGED PR whose first-line run marker names a
 // non-terminal run whose build or test phase has not finished (lib/flow/inflight-run.js's inFlightPhase,
-// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (a transient
-// PR-state answer — HOLLOW_TRANSIENT_PR_ANSWERS —, an unreadable body, run state or decisions.md, any throw
-// while checking it, from its PR lookup on) is held as `hollow-check-failed`, never settled; the other runs
-// are still judged. A definitive PR-state answer (OPEN, CLOSED, `gh-absent`, `pr-not-found`, …) gives no entry. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
+// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (a by-number
+// or by-branch PR lookup answering TRANSIENT_PR_FAILURE, an unreadable body, run state or decisions.md, any
+// throw while checking it, from its PR lookup on) is held as `hollow-check-failed`, never settled; the other
+// runs are still judged. A definitive answer (OPEN, CLOSED, no PR, `gh-absent`, `pr-not-found`, …) gives no
+// entry. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
 // must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge it
 // posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
 // each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
@@ -141,9 +142,6 @@ const CLAIM_MAX_IDLE_MS = Math.max(5 * 60 * 1000, 2.5 * GH_TIMEOUT_CEILING_MS);
 const CLAIM_ASIDE_MAX_AGE_MS = 60 * 1000;
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
-// The PR-state answers that leave a merge unknown, so detectHollowMerges holds the run instead of settling it:
-// pr-state.js's one transport answer, plus this module's own retryable reasons. pr-state.js exports no list.
-const HOLLOW_TRANSIENT_PR_ANSWERS = new Set([TRANSIENT_PR_FAILURE, TRANSIENT_REASON, 'budget-exhausted']);
 // Step 4.0b skips that are deliberate gate outcomes, not failures: below-floor-parent-close.js's own list,
 // owned by the module that emits them. Every other reason — `gh-failed`, `internal-error`, the step-wide
 // `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
@@ -640,7 +638,7 @@ function hollowMarked(decisionsText, pr, n) {
 
 // The run's PR number: run-state's `pr.number`, else the PR `prStates.byBranch` finds for the run's branch
 // (the live worktree entry's branch for `state.worktree`, else fallbackBranch — releaseMerged's join). null
-// when neither gives one. `worktrees` is a lazy reader of the parsed `git worktree list`.
+// when neither gives one; throws on a transient byBranch answer. `worktrees` is a lazy reader of the parsed `git worktree list`.
 function hollowCandidatePr(root, dir, state, prStates, worktrees) {
   const stamped = state && state.pr && state.pr.number;
   if (Number.isInteger(stamped) && stamped > 0) return stamped;
@@ -651,6 +649,8 @@ function hollowCandidatePr(root, dir, state, prStates, worktrees) {
   const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
   if (!branch) return null;
   const found = prStates.byBranch(branch);
+  // A transient answer leaves the run's PR unknown: the caller holds the run. A definitive one has no PR.
+  if (found === TRANSIENT_PR_FAILURE) throw new Error(`branch ${branch} PR lookup: ${found}`);
   const number = found && typeof found === 'object' ? found.number : null;
   return Number.isInteger(number) && number > 0 ? number : null;
 }
@@ -690,7 +690,7 @@ async function detectHollowMerges({
       const prState = await prStates.byNumberAsync(pr);
       // A transient answer leaves the merge unknown: held. A definitive one (OPEN, CLOSED, `gh-absent`,
       // `pr-not-found`, `invalid-arguments`, `unknown-host`, no answer) is not a hollow merge.
-      if (HOLLOW_TRANSIENT_PR_ANSWERS.has(prState)) throw new Error(`PR #${pr} state lookup: ${prState}`);
+      if (prState === TRANSIENT_PR_FAILURE) throw new Error(`PR #${pr} state lookup: ${prState}`);
       if (!prState || typeof prState !== 'object' || prState.state !== 'MERGED') continue;
       const view = JSON.parse(timedGh(['pr', 'view', String(pr), '--json', 'body,closingIssuesReferences,mergedAt']));
       if (!view || typeof view !== 'object' || typeof view.body !== 'string') throw new Error(`gh pr view ${pr}: no body in the response`);

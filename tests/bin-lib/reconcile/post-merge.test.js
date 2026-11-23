@@ -2544,8 +2544,48 @@ test('hollow merge: an OPEN PR or a definitive lookup failure (gh-absent, pr-not
   assert.equal(gh.calls.length, 0);
 });
 
-test('hollow merge: a transient PR-state answer (network-failure, transient-failure, budget-exhausted) holds the run as hollow-check-failed with no gh call', async () => {
-  for (const answer of ['network-failure', 'transient-failure', 'budget-exhausted']) {
+test('AC7.1 + AC7.2 (detection): a view that parses but carries no string body gives hollow-check-failed, held, with no comment', async () => {
+  for (const parsed of [{}, { body: null }]) {
+    const root = mainCheckout();
+    const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+    const gh = hollowGh({ views: { 11: parsed } });
+    const r = await detect(root, { gh });
+    assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-check-failed', detail: 'gh pr view 11: no body in the response' }], JSON.stringify(parsed));
+    assert.deepEqual(r.hollowRunDirs, [dir]);
+    assert.equal(gh.comments().length, 0);
+  }
+});
+
+function branchRunFixture() {
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  git(root, 'branch', 'feat-6143');
+  const lifecycle = formatEntry({ status: 'AUTO', now: NOW, step: 'PR-early run lifecycle', text: 'PR-early run lifecycle: pushed feat-6143 to origin' });
+  const dir = addRun(root, HR, { pr: null, decisions: `${ONE_LINE_DECISION}${lifecycle}\n` });
+  return { root, dir };
+}
+
+test('hollow merge: a transient byBranch answer for a run with no pr field holds it as hollow-check-failed (pr null)', async () => {
+  const { root, dir } = branchRunFixture();
+  const gh = hollowGh();
+  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranch: () => 'network-failure' } });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'branch feat-6143 PR lookup: network-failure' }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.calls.length, 0);
+});
+
+test('hollow merge: a definitive byBranch answer (no PR, gh-absent, pr-not-found) for a run with no pr field gives no entry', async () => {
+  const { root } = branchRunFixture();
+  for (const answer of [null, 'gh-absent', 'pr-not-found']) {
+    const gh = hollowGh();
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranch: () => answer } });
+    assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, String(answer));
+    assert.equal(gh.calls.length, 0);
+  }
+});
+
+test('hollow merge: a transient PR-state answer (network-failure) holds the run as hollow-check-failed with no gh call', async () => {
+  for (const answer of ['network-failure']) {
     const root = mainCheckout();
     const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
     const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
