@@ -203,7 +203,7 @@ Record the resolved tier and which resolution step produced it, for Step 7's sum
 
 ## Step 3: Code Review
 
-Review changed files through these lenses. Skip lenses that don't apply to the type of change (e.g., skip "Performance" for a docs-only change).
+Review changed files through these lenses. Skip lenses that don't apply to the type of change (e.g., skip "Performance" for a docs-only change) (not under `review-lens-selection: adaptive` — `step3-lens-selection.md`).
 
 The severity scale, category enum, per-lens floors, and the CALIBRATION filter are the shared review-quality criteria — read `_shared/criteria-review-quality.md` (also used by `/claude-tweaks:code-health`'s review lens). The table below is the operative copy:
 
@@ -407,6 +407,6 @@ If no notable learnings emerged, state: "No key learnings — straightforward re
 - Test passing is a hard gate — broken code blocks the entire review. Run `/claude-tweaks:test --source review` to verify.
 - Implementation Hindsight is an action gate — "change now" items must be fixed before passing
 - Code simplification runs on changed files only — never expand scope to unrelated code
-- Skip review lenses that don't apply to the type of change
+- Skip review lenses that don't apply to the type of change (not under `review-lens-selection: adaptive` — `step3-lens-selection.md`)
 - This skill reviews the *current work* — it is not a codebase-wide audit
 - When a confirmed bug finding needs a fix that isn't a one-line mechanical correction, follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before applying the change — don't guess at fixes during routing; once the fix is confirmed, walk the causal-depth chain per the discipline's step 3.
