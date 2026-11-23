@@ -8,12 +8,12 @@
 'use strict';
 
 const { evaluateRecordEligibility, widenedByFor } = require('./eligibility');
-const { defaultResolvePolicy, sensitivePathsOf } = require('./policy');
+const { defaultResolvePolicy, sensitivePathsOf, protectedPathGlobsOf } = require('./policy');
 const { groupingMode } = require('../dispatch/queue-order');
 const crypto = require('node:crypto');
 
 const FIRST_KEYS = ['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'];
-const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review'];
+const SECOND_KEYS = ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths'];
 const ROUTINGS = ['on', 'off', 'split'];
 const UNREADABLE = '<unreadable>';
 
@@ -114,7 +114,7 @@ function expressQueuePolicy(deps = {}) {
     Object.assign(read, valuesOf(SECOND_KEYS, policy, failed));
     if (expressOn) {
       if ('merge-sensitive-paths' in failed) throw failed['merge-sensitive-paths'];
-      expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }) };
+      expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
     }
   } catch (err) {
     return readFailed(SECOND_KEYS, err);

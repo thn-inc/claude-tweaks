@@ -6,8 +6,10 @@ const path = require('node:path');
 const {
   EXPRESS_MAX_KEY_FILES, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
   BOUND_REASONS, SIZE_CEILINGS, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit,
-  RISK_CEILINGS, isReadableRiskCeiling, widenings, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, PROTECTED_FAMILIES,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings, BUILD_TIME_PROTECTED_GLOBS, isBuildTimeProtectedPath, PROTECTED_FAMILIES,
+  SHIPPED_PROTECTED_PATHS, widenedByFor,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
+const { globToRegExp } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'issues', 'blast-radius.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
 const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
 
@@ -584,23 +586,23 @@ test('AC9.1 (#6019, eligibility half): under the option each build-time Key File
   for (const p of [...MERGE_TIME, 'src/a.js']) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
 });
 
-test('BUILD_TIME_PROTECTED_RES is frozen and inside the protected list (#6019)', () => {
-  assert.ok(Object.isFrozen(BUILD_TIME_PROTECTED_RES));
-  assert.strictEqual(BUILD_TIME_PROTECTED_RES.length, 10);
+test('BUILD_TIME_PROTECTED_GLOBS is frozen and inside the protected list (#6019)', () => {
+  assert.ok(Object.isFrozen(BUILD_TIME_PROTECTED_GLOBS));
+  assert.strictEqual(BUILD_TIME_PROTECTED_GLOBS.length, 10);
   for (const p of [...BUILD_TIME, ...MERGE_TIME]) assert.strictEqual(isProtectedPath(p), true, p);
   for (const p of MERGE_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), false, p);
   for (const p of BUILD_TIME) assert.strictEqual(isBuildTimeProtectedPath(p), true, p);
   // Partition: every protected family is matched by at least one probe, and its kind agrees with the
   // probes that match it; a new family with no probe (or a wrong kind) goes red here.
   for (const fam of PROTECTED_FAMILIES) {
-    const hitsBuild = BUILD_TIME.filter((q) => fam.re.test(q));
-    const hitsMerge = MERGE_TIME.filter((q) => fam.re.test(q));
-    assert.ok(hitsBuild.length + hitsMerge.length > 0, `no probe for ${fam.re}`);
-    assert.strictEqual(hitsBuild.length > 0, fam.buildTime, `kind of ${fam.re}`);
-    assert.strictEqual(hitsMerge.length > 0, !fam.buildTime, `kind of ${fam.re}`);
+    const hitsBuild = BUILD_TIME.filter((q) => globToRegExp(fam.glob).test(q));
+    const hitsMerge = MERGE_TIME.filter((q) => globToRegExp(fam.glob).test(q));
+    assert.ok(hitsBuild.length + hitsMerge.length > 0, `no probe for ${fam.glob}`);
+    assert.strictEqual(hitsBuild.length > 0, fam.buildTime, `kind of ${fam.glob}`);
+    assert.strictEqual(hitsMerge.length > 0, !fam.buildTime, `kind of ${fam.glob}`);
   }
   assert.strictEqual(PROTECTED_FAMILIES.length, 15);
-  assert.deepStrictEqual(BUILD_TIME_PROTECTED_RES, PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.re));
+  assert.deepStrictEqual(BUILD_TIME_PROTECTED_GLOBS, PROTECTED_FAMILIES.filter((fam) => fam.buildTime).map((fam) => fam.glob));
 });
 
 test('AC6.1 (#6019): a merge-sensitive Key File refuses under the option exactly as without it', () => {
@@ -683,4 +685,113 @@ test('AC9.2 (#6019, bounds half): build-time paths stay violations under the opt
     assert.ok(out.violations.includes(`protected path: ${p}`), p);
     assert.deepStrictEqual(out.protectedPaths, [], p);
   }
+});
+
+// #6020: the protected list is a glob parameter; the shipped globs answer as the pre-#6020 regexes did.
+const INFRA = ['infra/**'];
+const TODAY_PROTECTED_RES = [
+  /(^|\/)hooks\//,
+  /(^|\/)hooks\.js$/,
+  /(^|\/)hooks\.sh$/,
+  /(^|\/)skills\/_shared\//,
+  /(^|\/)\.github\//,
+  /(^|\/)\.gitlab-ci\.yml$/,
+  /(^|\/)\.circleci\//,
+  /(^|\/)\.githooks\//,
+  /(^|\/)\.husky\//,
+  /(^|\/)CODEOWNERS$/,
+  /(^|\/)package\.json$/,
+  /(^|\/)\.claude\/settings[^/]*\.json$/,
+  /(^|\/)\.mcp\.json$/,
+  /(^|\/)\.claude-tweaks\/policy\.yml$/,
+  /(^|\/)\.claude-tweaks\/verify-scope\.json$/,
+];
+function familyCorpus(glob) {
+  const a = glob.replace(/^\*\*\//, '');
+  if (a.endsWith('/**/*')) {
+    const d = a.slice(0, -5);
+    return [`${d}/x.js`, `a/b/${d}/x.js`, `${d}/a/b/c.js`, d, `${d}/`, `${d}x/x.js`, `x${d}/y.js`];
+  }
+  const fl = a.replace('*', '.local');
+  return [fl, `a/b/${fl}`, `${fl}.bak`, `my-${fl}`];
+}
+
+test('AC1.1: the shipped glob list answers every corpus path as the pre-#6020 regexes do', () => {
+  const named = ['hooks/x.js', 'a/hooks/x.js', 'hooks.js', 'a/b/hooks.sh', '.github/workflows/ci.yml', 'CODEOWNERS', 'docs/CODEOWNERS', 'package.json', 'a/package.json', '.claude/settings.local.json', '.claude-tweaks/policy.yml', '.claude-tweaks/verify-scope.json', 'hooksmith/x.js', 'package.json.bak', 'my-hooks.js', 'hooks', '.github', 'skills/_shared', 'a\n/hooks/x.js', '.github/a\nb/c.yml', '.github/a\u2028b/c.yml', 'x\r/hooks/y.js', 'a\n/package.json', 'a\u2029/skills/_shared/z.md', './hooks/x.js', 'hooks\\x.js', 'a/../package.json', '.github/./ci.yml'];
+  const oldCanonical = (q) => { const n = path.posix.normalize(q.replace(/\\/g, '/')); return n.startsWith('./') ? n.slice(2) : n; };
+  const corpus = [...PROTECTED_FAMILIES.flatMap((fam) => familyCorpus(fam.glob)), ...named];
+  assert.strictEqual(TODAY_PROTECTED_RES.length, 15);
+  assert.strictEqual(PROTECTED_FAMILIES.length, 15);
+  assert.ok(PROTECTED_FAMILIES.every((fam) => fam.glob.startsWith('**/')));
+  assert.deepStrictEqual(SHIPPED_PROTECTED_PATHS, PROTECTED_FAMILIES.map((fam) => fam.glob));
+  assert.ok(Object.isFrozen(SHIPPED_PROTECTED_PATHS));
+  assert.deepStrictEqual(corpus.filter((q) => isProtectedPath(q) !== TODAY_PROTECTED_RES.some((re) => re.test(oldCanonical(q)))), []);
+});
+
+test('AC2.1 (eligibility half): under [infra/**] package.json is not protected and infra/main.tf is', () => {
+  for (const base of [OPTS, DRIVER]) {
+    const o = { ...base, protectedPathGlobs: INFRA };
+    assert.ok(!evaluateRecordEligibility(withKey('package.json'), o).reasons.includes('protected path: package.json'));
+    assert.ok(evaluateRecordEligibility(withKey('infra/main.tf'), o).reasons.includes('protected path: infra/main.tf'));
+    assert.ok(evaluateRecordEligibility(withKey('package.json'), base).reasons.includes('protected path: package.json'));
+  }
+});
+
+test('AC3.1 (eligibility and bounds halves): [] protects nothing', () => {
+  const r = evaluateRecordEligibility(withKey('plugin/hooks/x.js'), { ...OPTS, protectedPathGlobs: [] });
+  assert.ok(!r.reasons.some((x) => x.startsWith('protected path:')));
+  assert.deepStrictEqual(evaluateDiffBounds([f('plugin/hooks/x.js', 3)], { ...BOUNDS, keyFiles: ['plugin/hooks/x.js'], protectedPathGlobs: [] }).violations, []);
+});
+
+test('AC6.1, AC6.2: project globs are root-anchored', () => {
+  assert.strictEqual(isProtectedPath('package.json', ['package.json']), true);
+  assert.strictEqual(isProtectedPath('a/package.json', ['package.json']), false);
+  assert.strictEqual(isProtectedPath('package.json', ['**/package.json']), true);
+  assert.strictEqual(isProtectedPath('a/package.json', ['**/package.json']), true);
+});
+
+test('AC7.1: isProtectedPath refuses a non-array list', () => {
+  const refusal = { name: 'TypeError', message: 'isProtectedPath: list must be an array of globs' };
+  for (const bad of ['infra/**', null, 0]) assert.throws(() => isProtectedPath('a', bad), refusal, String(bad));
+  assert.throws(() => ['hooks/x.js'].some(isProtectedPath), refusal);
+});
+
+test('AC9.1: adversarial spellings answer as their canonical path', () => {
+  for (const q of ['hooks/./x.js', 'a/../hooks/x.js', 'hooks\\x.js', './hooks/x.js', 'hooks/']) {
+    assert.strictEqual(isProtectedPath(q), true, q);
+    assert.ok(evaluateRecordEligibility(withKey(q), OPTS).reasons.includes(`protected path: ${q}`), q);
+  }
+  for (const q of ['infra/./main.tf', 'x/../infra/main.tf', 'infra\\main.tf', './infra/main.tf', 'infra/']) {
+    assert.strictEqual(isProtectedPath(q, INFRA), true, q);
+    assert.ok(evaluateRecordEligibility(withKey(q), { ...OPTS, protectedPathGlobs: INFRA }).reasons.includes(`protected path: ${q}`), q);
+  }
+});
+
+test('AC9.2: eligibility is case-sensitive', () => {
+  assert.strictEqual(isProtectedPath('HOOKS/x.js'), false);
+  assert.strictEqual(isProtectedPath('INFRA/main.tf', INFRA), false);
+});
+
+test('AC9.3: percent-encoding is a literal path, never decoded', () => {
+  assert.strictEqual(isProtectedPath('infra%2fmain.tf', INFRA), false);
+  assert.strictEqual(isProtectedPath('hooks%2fx.js'), false);
+  assert.strictEqual(isProtectedPath('%2e%2e/hooks/x.js'), true);
+});
+
+test('AC10.2 (eligibility half): a never-matching glob protects nothing else', () => {
+  assert.strictEqual(isProtectedPath('hooks/x.js', ['no/such/**']), false);
+  assert.strictEqual(isProtectedPath('package.json', ['no/such/**']), false);
+});
+
+test('Review Focus 3: reviewer mode leaves a project-added path for the reviewer and keeps a build-time family refused', () => {
+  const o = { ...REVIEWER, protectedPathGlobs: ['infra/**', '**/package.json'] };
+  const r = withKey('infra/main.tf');
+  assert.strictEqual(evaluateRecordEligibility(r, o).eligible, true);
+  assert.deepStrictEqual(widenedByFor(r.labels, ['infra/main.tf'], o), ['protected-path']);
+  assert.ok(evaluateRecordEligibility(withKey('package.json'), o).reasons.includes('protected path: package.json'));
+});
+
+test('Review Focus 5: a rename from a project-protected oldPath is a violation', () => {
+  const out = evaluateDiffBounds([{ ...f('src/new.js', 2), oldPath: 'infra/old.tf' }], { ...BOUNDS, keyFiles: ['src/new.js'], protectedPathGlobs: INFRA });
+  assert.ok(out.violations.includes('protected path: infra/old.tf'));
 });

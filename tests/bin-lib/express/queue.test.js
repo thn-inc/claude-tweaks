@@ -58,7 +58,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver', 'dispatch-fastlane-bundle-cap', 'work-links'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-protected-paths', 'express-driver-review', 'protected-paths']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -329,11 +329,13 @@ const FP_BASE = {
   'express-lane': true, 'express-driver': 'on', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text',
   'integration-model': 'pr-first', 'merge-sensitive-paths': ['a/**'], 'express-driver-max-size': 'low',
   'express-driver-max-key-files': 3, 'express-driver-max-risk': 'low', 'express-driver-protected-paths': 'refuse', 'express-driver-review': 'beyond-express',
+  'protected-paths': 'infra/**',
 };
 const FP_CHANGED = {
   'express-lane': false, 'express-driver': 'split', 'dispatch-fastlane-bundle-cap': 2, 'work-links': 'native',
   'integration-model': 'local-merge', 'merge-sensitive-paths': ['b/**'], 'express-driver-max-size': 'medium',
   'express-driver-max-key-files': 4, 'express-driver-max-risk': 'medium', 'express-driver-protected-paths': 'reviewer', 'express-driver-review': 'on',
+  'protected-paths': 'ops/**',
 };
 const fpOf = (values) => expressQueuePolicy({ resolvePolicy: policy(values).resolvePolicy });
 
@@ -470,4 +472,21 @@ test('#6019: with the key refuse the protected-Key-File record keeps today\'s an
 test('#6019: a build-time Key File is never driver-routable under reviewer', () => {
   const p = expressQueuePolicy({ resolvePolicy: policy(PROTECTED_POLICY).resolvePolicy });
   assert.equal(p.keepSingleton(withKeyFile('.github/workflows/ci.yml')), false);
+});
+
+test('#6020: the express half keeps a protected Key File record only when the resolved list does not protect it', () => {
+  const hooks = { number: 30, body: BODY.replace('plugin/skills/init/claude-md-template.md', 'plugin/hooks/x.js'), labels: ELIGIBLE.labels };
+  const base = { 'express-lane': true, 'express-driver': 'off', 'integration-model': 'pr-first', 'merge-sensitive-paths': [] };
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy(base).resolvePolicy }).keepSingleton(hooks), false);
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy({ ...base, 'protected-paths': 'infra/**' }).resolvePolicy }).keepSingleton(hooks), true);
+});
+
+test('#6020: the driver half keeps a protected Key File record only when the resolved list does not protect it', () => {
+  const hooks = { number: 31, body: BODY.replace('plugin/skills/init/claude-md-template.md', 'plugin/hooks/x.js'), labels: ELIGIBLE.labels };
+  const base = {
+    'express-lane': false, 'express-driver': 'on', 'integration-model': 'pr-first', 'merge-sensitive-paths': [],
+    'express-driver-max-size': 'medium', 'express-driver-max-key-files': 3, 'express-driver-review': 'beyond-express', 'express-driver-protected-paths': 'refuse',
+  };
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy(base).resolvePolicy }).keepSingleton(hooks), false);
+  assert.equal(expressQueuePolicy({ resolvePolicy: policy({ ...base, 'protected-paths': 'infra/**' }).resolvePolicy }).keepSingleton(hooks), true);
 });
