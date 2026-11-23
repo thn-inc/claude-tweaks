@@ -18,9 +18,10 @@ Scope keywords: hollow-merge, phaseRowStates, detectHollowMerges, inflight-pr, i
 
 - **In flight** (verbatim from spec): "the run's `run-state.json` is non-terminal, and its `build` or `test` phase has not finished. A phase has finished when either of these holds: its row in the PR's phases checklist is checked; the run's own `decisions.md` records that phase's exit, as the entry `bin/phase-exit.js` writes under that phase's section. The checklist row is only a fast pre-filter. The phase-exit record decides."
 - **Premise reversed:** the spec says `phase-exit.js` writes a local `decisions.md` entry in the same call that flips the row. It does not: on a successful exit it writes nothing (`lib/phase-exit/phase-exit.js` logs only SKIP, refused or failed-push lines; `pr-checklist.js` logs only exits 4 and 5). Task 2 adds the entry: one `AUTO` line, step `Phase exit`, text `{phase} phase exited at {head}`, under `PHASE_SECTIONS[phase]`, written at every phase-exit call before the push, in every route. Expand-contract: runs started on an older release write no such line. Their checked rows still count as finished, so they are judged exactly as the checklist judges them today.
-- **A row absent from the span, or no span at all** (an express body from `composeExpressBody`, or a phase removed with `setPhaseRow --remove`), counts as finished. Only a present, unchecked row sends the predicate to `decisions.md`.
+- **A row absent from the span, or no span at all** (an express body from `composeExpressBody`, or a phase removed with `setPhaseRow --remove`), counts as finished (spec Plan Review Clarifications, settled after an answered round). Only a present, unchecked row sends the predicate to `decisions.md`.
+- **The run's own `decisions.md` is the set** `{runDir}/decisions.md` plus every `{runDir}/spec-{N}/decisions.md` (a multi-spec run's per-spec phase exits land there, `flow/multi-spec.md`). A phase counts as finished when any file in the set records its exit (spec Plan Review Clarifications).
 - "Non-terminal" means `run-state.json` `status !== 'clean'`, the only terminal status `closeRunState` writes.
-- **Gate owner rule** (spec Deliverable 1, Decision follow-ups): the caller is allowed when its `session_id` equals the run-state's `sessionId`, or equals its `dispatchSessionId` (the dispatching session settles and merges a dispatched run, `dispatch/settle-and-merge.md`). **Every caller is allowed when the run-state has no `sessionId`.** The gate fails open when the PR body, the run state or the run's `decisions.md` cannot be read.
+- **Gate owner rule** (spec Deliverable 1, Decision follow-ups, Plan Review Clarifications): the caller is allowed only when its `session_id` equals the run-state's `sessionId`. `dispatchSessionId` is not an owner. A dispatched run's own merge happens after its build and test exits, when it is no longer in flight. **Every caller is allowed when the run-state has no `sessionId`.** The gate fails open when the PR body, the run state or the run's `decisions.md` cannot be read.
 - **Reconcile fails closed** (Deliverable 2, Decision follow-ups): when the check cannot finish for a marker-bearing PR (an unreadable body, run state or `decisions.md`, or a throw while checking that run), the PR is held, not settled, and reported. When the whole hollow-merge check fails (setup failure or an uncaught throw), `release`, `post-merge` and `archive` are all skipped for this pass with `{ check: 'release,post-merge,archive', reason: 'hollow-merge-check-failed' }`. Empty hold sets are never passed after a failed check. A PR whose body has no `claude-tweaks-run:` first-line marker, or whose marker names another run, settles as today.
 - Commit style: `{Verb} {what} — {detail}`, ending with `refs #6143` (never `closes` or `fixes`), plus the line `Claude-Session: https://claude.ai/code/session_019fFofVFgBteo3LWVg8iJ9W`.
 - Project maturity is `established`: "For any task modifying pre-existing behavior, write a full characterization test covering edge cases before changing it — published or external consumers may depend on them."
@@ -87,8 +88,9 @@ Governing project skills (quoted verbatim; read each named SKILL.md under `.clau
 - Produces from `exit-record.js`:
   - `PHASE_EXIT_STEP = 'Phase exit'`;
   - `phaseExitText(phase: string, head: string|null) -> string`, which returns `` `${phase} phase exited at ${head || 'unknown HEAD'}` ``;
+  - `readRunDecisions(runDir: string, fsImpl = fs) -> string[]`: the text of `{runDir}/decisions.md` followed by the text of every `{runDir}/spec-{N}/decisions.md` (`N` all digits, a direct child directory, `lstat` not a symlink), in name order. It throws when `{runDir}/decisions.md` or any present `spec-{N}/decisions.md` cannot be read; a `spec-{N}` directory with no `decisions.md` is skipped.
   - `phaseExitRecorded(decisionsText: string, phase: string) -> boolean`, which is true when, under the `## {PHASE_SECTIONS[phase]}` heading, some line parses via `parseEntry` with `status === 'AUTO'`, `location === PHASE_EXIT_STEP` and an action starting with `` `${phase} phase exited at ` ``. Every `## ` heading with that name counts. A line under another section, a hand-written line, or a `SKIP` line does not count.
-- Produces from `inflight-run.js`: `inFlightPhase({ runState, body, readDecisions }) -> string | null`. It returns null when `runState` is not an object or `runState.status === 'clean'`. For each phase in `uncheckedBuildOrTest(body)`, in order, it returns that phase unless `phaseExitRecorded(readDecisions(), phase)` holds. `readDecisions` is called at most once, and only when some row is unchecked. Its throw propagates, because callers choose fail-open or fail-closed. Null means the run is not in flight.
+- Produces from `inflight-run.js`: `inFlightPhase({ runState, body, readDecisions }) -> string | null`. It returns null when `runState` is not an object or `runState.status === 'clean'`. For each phase in `uncheckedBuildOrTest(body)`, in order, it returns that phase unless `phaseExitRecorded(text, phase)` holds for some `text` in `readDecisions()` (a `string[]`, as `readRunDecisions` returns). `readDecisions` is called at most once, and only when some row is unchecked. Its throw propagates, because callers choose fail-open or fail-closed. Null means the run is not in flight.
 
 - [ ] **Step 1: Characterize.** Run `node --test tests/bin-lib/phase-exit/phase-exit.test.js` and record it green. List which existing tests assert the exact set or count of `appendDecision` calls; they will need the new entry added to their expectations, never removed.
 - [ ] **Step 2: Write the failing tests.**
@@ -101,7 +103,9 @@ Governing project skills (quoted verbatim; read each named SKILL.md under `.clau
     - both rows checked gives `null`, and `readDecisions` is never called;
     - an express body gives `null`;
     - status `clean` gives `null`;
-    - a `readDecisions` throw propagates.
+    - a `readDecisions` throw propagates;
+    - a `build` exit recorded only in a `spec-2` text (the second array element) counts as finished.
+  - `exit-record.test.js` also: `readRunDecisions` on a run dir with `decisions.md`, `spec-1/decisions.md` and `spec-2/` (no file) returns two texts, parent first; a `spec-x/` or symlinked `spec-3` is ignored; a missing parent `decisions.md` throws.
 - [ ] **Step 3: Run** the three files. Expect FAIL.
 - [ ] **Step 4: Implement.** Add `exit-record.js`. In `runPhaseExit`, directly after the worktree validation and the `env.head` read, call `log('AUTO', PHASE_EXIT_STEP, phaseExitText(phase, env.head))`. Add `inflight-run.js`. Add both modules to their file headers and to `docs/plugin-structure.md`.
 - [ ] **Step 5: Run** the three files plus `node --test tests/phase-exit-call-sites-conformance.test.js tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js`. Expect PASS.
@@ -166,7 +170,7 @@ Governing project skills (quoted verbatim; read each named SKILL.md under `.clau
   - `readPrBody(call, ctx) -> { body: string, number: number } | null`;
   - `mainCheckoutRoot`;
   - `readRunState`;
-  - `readDecisions(runDir) -> string`, which throws when unreadable;
+  - `readDecisions(runDir) -> string[]`, default Task 2's `readRunDecisions`, which throws when unreadable;
   - `fsImpl`.
 
   The default `readPrBody` runs `gh pr view [selector] [--repo repo] --json body,number` with `execFileSync('gh', args, ghOptions(args, { cwd: ctx.cwd, env: ctx.env, encoding: 'utf8', stdio: ['ignore','pipe','pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }))`. It returns null on any throw or unparseable output.
@@ -179,7 +183,7 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
 5. A null `namedRunDir` allows.
 6. A null run-state allows.
 7. A run-state with no non-empty string `sessionId` allows.
-8. A caller `session_id` equal to `sessionId` or to `dispatchSessionId` allows.
+8. A caller `session_id` equal to `sessionId` allows. `dispatchSessionId` is not consulted.
 9. `phase = inFlightPhase({ runState, body, readDecisions: () => readDecisions(runDir) })`. A throw from it allows; a null phase allows.
 10. Otherwise, append a `gate-denial` event (`{ tool: 'Bash', gate: GATE, pr: number, phase, ...testTag }`) to the run dir and deny with this reason:
 
@@ -188,7 +192,7 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
 - [ ] **Step 1: Characterize.** Run `node --test tests/hooks-dispatch-prompt-gate.test.js` and record it green before moving `pipelinesDir`.
 - [ ] **Step 2: Write failing tests** in `tests/hooks-inflight-pr-gate.test.js`. Drive them through `pre-tool-use.js`'s `run(ctx, deps)`, with ctx built as `tests/hooks-dispatch-prompt-gate.test.js` builds it. Write the run-state with the real `hooks.js record-worktree` writer via `runCli`, session `S`. Build the PR body with `composePrEarlyBody` (the real writer), and have `deps.readPrBody` return it. Write phase-exit lines into `decisions.md` with `formatEntry` and `appendEntry`, using `PHASE_EXIT_STEP` and `phaseExitText`.
   - `AC1.1: gh pr merge 123 --squash on an active run with build unchecked is denied`. Expect deny JSON whose reason names the run id and session `S`, and a `gate-denial` event in the run's `events.jsonl`.
-  - `AC1.2: the same command from the owning session is allowed` (caller session `S`). Add a `dispatchSessionId` owner case (record-worktree `--dispatch`).
+  - `AC1.2: the same command from the owning session is allowed` (caller session `S`). Add a case where the caller matches only `dispatchSessionId` (record-worktree `--dispatch` from a different session) and is denied.
   - `AC1.3: an unreadable PR is allowed` (`readPrBody` returns null). Also cover the default runner path: `readPrBody` omitted, with `PATH` in the passed env pointing at a stub `gh` that exits 1, is allowed.
   - `AC2.1: gh pr ready 123 behaves the same way as the merge case`: deny for a foreign session, allow for the owner, allow for an unreadable PR.
   - `AC3.1: a run whose run-state has no sessionId is allowed`. Write the run-state fixture by hand with the `sessionId` key absent. Note this in the test as the one hand-written shape, since every real writer stamps it.
@@ -199,6 +203,7 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
     - an express body (no span): allowed;
     - `run-state` status `clean` (written by the real `close-run` writer, or by `closeRunState`): allowed;
     - an unreadable `decisions.md` (`readDecisions` throws) with build unchecked: allowed;
+    - a multi-spec run whose `build` and `test` exits are recorded only in `spec-1/decisions.md`, rows unchecked: allowed;
     - a marker on line 2 only: allowed;
     - a marker naming a missing run, `../x`, or a symlinked run dir: allowed;
     - `gh pr ready --undo 123`: allowed, and `readPrBody` is never called;
@@ -206,7 +211,7 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
     - selector-less `gh pr merge --squash`: `readPrBody` is called with `selector: null`;
     - `-R o/r 5`: `readPrBody` is called with `repo: 'o/r'`;
     - a load fault (a require-cache stub that throws): allowed.
-  - Revert check: for the owner test, the `dispatchSessionId` test, the no-`sessionId` test, the phase-exit-recorded test and the `--undo` test, revert only that clause in `inflight-pr-gate.js` (or `inflight-run.js` for the phase-exit test). Confirm that only that test goes red, and record the observed failure in the commit message body.
+  - Revert check: for the owner test, the no-`sessionId` test, the phase-exit-recorded test and the `--undo` test, revert only that clause in `inflight-pr-gate.js` (or `inflight-run.js` for the phase-exit test). Confirm that only that test goes red, and record the observed failure in the commit message body.
 - [ ] **Step 3: Run** the new file. Expect FAIL (module not found).
 - [ ] **Step 4: Implement.** Add `named-run.js` and switch `dispatch-prompt-gate.js` to it. Implement `inflight-pr-gate.js` with a header comment stating the direction (fails OPEN), the fail-open list, and "Runs read: neither ctx.runDir nor ctx.ownedRun — the run the PR body's first-line marker names, in the main checkout (its run-state.json and decisions.md)". Then wire `runInner`.
 - [ ] **Step 5: Run** `node --test tests/hooks-inflight-pr-gate.test.js tests/hooks-dispatch-prompt-gate.test.js tests/hooks-pre-tool-use.test.js tests/hooks-event-env-conformance.test.js tests/hooks-bash-prefilter.test.js`. Expect PASS. Then run the new file once more with `npx -y node@20 --test tests/hooks-inflight-pr-gate.test.js`.
@@ -224,16 +229,16 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
 - Test: `tests/bin-lib/reconcile/post-merge.test.js`
 
 **Interfaces:**
-- Consumes: Task 2 `inFlightPhase`; `firstLineRunId`.
+- Consumes: Task 2 `inFlightPhase` and `readRunDecisions`; `firstLineRunId`; `fallbackBranch` (`hooks/run-integrity`).
 - Produces: `detectHollowMerges({ cwd, prStates, dryRun = false, deps = {} }) -> Promise<{ entries: Array<{ runDir, runId, pr, action: 'held', reason: 'hollow-merge'|'hollow-check-failed', phase?: string, detail?: string, commented?: number[], records?: number[] }>, hollowRunDirs: string[], failure?: string }>`.
   - It uses the same `setupContext` as `postMerge`. On a setup failure it returns `{ entries: [], hollowRunDirs: [], failure }`, and the caller fails closed (Task 6).
-  - The candidate set is `listRunDirsWithState(root)` (non-terminal runs only) whose state has an integer `pr.number`. Skip any candidate where `prStates.byNumberAsync(pr)` is not `MERGED`; it gets no entry.
+  - The candidate set is `listRunDirsWithState(root)` (non-terminal runs only). The PR is the state's integer `pr.number`; when that is absent, resolve the run's branch as `releaseMerged` does (the live worktree entry's branch for `state.worktree`, else `fallbackBranch(root, runDir, state)` from `hooks/run-integrity`) and take the PR number from `prStates.byBranch(branch)`. No number by either route gives no entry. Skip any candidate where `prStates.byNumberAsync(pr)` is not `MERGED`; it gets no entry.
   - For a MERGED PR, everything below runs inside a per-run `try`. A throw anywhere gives an entry `{ action:'held', reason:'hollow-check-failed', detail }` for that run, and adds the run dir to `hollowRunDirs` with no comment.
   - Read the body with `ctx.timedGh(['pr','view', String(pr), '--json', 'body,closingIssuesReferences,mergedAt'])` (a `deps.gh` fake in tests). A failed or unparseable read gives `hollow-check-failed`.
   - `firstLineRunId(body) !== basename(runDir)` gives no entry: the PR is not this run's, and it settles as today.
-  - `phase = inFlightPhase({ runState: state, body, readDecisions: () => fs.readFileSync(path.join(runDir,'decisions.md'),'utf8') })`. A throw (including ENOENT) gives `hollow-check-failed`. A null phase gives no entry.
+  - `phase = inFlightPhase({ runState: state, body, readDecisions: () => readRunDecisions(runDir) })`. A throw (including ENOENT) gives `hollow-check-failed`. A null phase gives no entry.
   - Otherwise the merge is hollow. `records` are the closing references in this repo (number plus owner/name match, as `prClosesIssue` does); failing that, the run's `config.yml` `spec:` single number (`readSpecNumber`).
-  - Unless `decisions.md` already holds an entry whose location is `HOLLOW_STEP = 'reconcile hollow-merge'`, or `dryRun` is set: post one `gh issue comment {n} --body-file -` per record (body on stdin), then append one `AUTO` entry with step `HOLLOW_STEP` to the run's `decisions.md` via `appendEntry`, naming the PR, the merge time and the commented records.
+  - Unless `dryRun` is set, for each record in `records`: skip it when the run's `decisions.md` already holds, in any section, an entry whose `parseEntry` location is `HOLLOW_STEP = 'reconcile hollow-merge'` and whose action starts with `` `hollow merge of PR #${pr} commented on #${n}` ``. Otherwise post one `gh issue comment {n} --body-file -` (body on stdin) and, right after that comment succeeds, append one `AUTO` entry with step `HOLLOW_STEP`, text `hollow merge of PR #{pr} commented on #{n} (merged {mergedAt}, {phase} unfinished)`, under section `/reconcile`, via `appendEntry`. A comment or append that throws ends the per-run `try` (`hollow-check-failed`, held), and the records already marked are not commented again on the next pass.
   - Comment text: `Reconcile: PR #{pr} (run {runId}) was merged at {mergedAt} while the run's {phase} phase was unfinished — a hollow merge. The claim, the auto:build grant and the run directory are left in place; the code this record asked for may not have landed. Reopen this record if the merge closed it, then resume or settle the run.`
 - `postMerge({..., hollowRunDirs = []})`: a candidate in that set yields the entry `{ action:'skipped', reason:'hollow-merge' }` and is deferred.
 
@@ -241,6 +246,9 @@ Decision per call. Call `ctxLib.requireEnv(ctx)` before the `try`. Deny only whe
   - `AC4.1 (detection): a merged PR whose marker names an active run with build unchecked and no build phase-exit record is held, commented once, and marked`. Expect one `issue comment` call on the closing record, one marker line, the entry `{action:'held', reason:'hollow-merge', phase:'build'}`, and the run dir in `hollowRunDirs`.
   - `AC4.2 (detection): build finished (exit recorded) but test unfinished is held with phase 'test'`.
   - A second `detectHollowMerges` call on the same fixture: held again, with zero new comments.
+  - Two closing records where the second `issue comment` throws: the first record's marker is written, the run is held as `hollow-check-failed`; the next pass comments only on the second record.
+  - A run whose state has no `pr` field but whose branch resolves a MERGED PR through `prStates.byBranch`, with build unchecked: held as `hollow-merge`.
+  - A multi-spec run whose `build` and `test` exits are recorded only in `spec-1/decisions.md`, rows unchecked: no entry.
   - `AC5.1 (detection): a merged PR whose phases are all checked yields no entry`. Also, a `clean` run is never read (no `gh` call).
   - `AC6.1 + AC6.2 (detection): a non-terminal run whose decisions.md records the build and test phase exits yields no entry, even with both rows unchecked`.
   - `AC7.1 + AC7.2 (detection)` cases:
