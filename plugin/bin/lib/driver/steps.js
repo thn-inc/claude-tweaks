@@ -931,7 +931,7 @@ async function fixWorkerLaunch(ctx, deps, extraPrompt, run = runImplementer) {
   const t0 = deps.now();
   let result;
   try {
-    // The fix round launches on the first attempt's profile under `record` (#5997); under `lane` it passes none.
+    // The fix round launches on the profile of the attempt that went green under `record` (a relaunch overwrites `ctx.implementer`) (#5997); under `lane` it passes none.
     const profile = ctx.implementer && ctx.implementer.rule === 'record' ? ctx.implementer.profile : undefined;
     result = await run(ctx, deps, { extraPrompt, profile });
   } catch (err) {
