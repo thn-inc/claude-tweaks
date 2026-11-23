@@ -177,4 +177,4 @@ async function launchTracked(shared, deps, { minutes, dollars }, { profile: expl
   }
 }
 
-module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, recordImplementerProfile, IMPLEMENTER_TIER_KEY, launchTracked };
+module.exports = { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, refuse, readCeilings, roleLaunch, roleModel, modelPolicyRefusal, recordImplementerProfile, IMPLEMENTER_TIER_KEY, launchTracked };
