@@ -70,6 +70,8 @@ test('planRelaunch: an unknown profile refuses as DRIVER_MODEL_REFUSED', () => {
 
 test('relaunchNote names trigger and both profiles', () => {
   assert.strictEqual(relaunchNote({ trigger: 'red-tests', from: 'fast', to: 'standard' }), 'after one relaunch (red-tests, fast to standard)');
+  // A refused plan has no profile to step up to: its null `to` reads as no profile.
+  assert.strictEqual(relaunchNote({ trigger: 'cannot-complete', from: 'fast', to: null }), 'after one relaunch (cannot-complete, fast to no profile)');
 });
 
 test('failingTests: the real red report yields its failing file and lines', () => {

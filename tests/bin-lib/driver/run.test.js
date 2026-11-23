@@ -18,8 +18,9 @@ const {
 } = require(path.join(LIB, 'driver', 'events'));
 const { run, parseArgs, USAGE, driveRecord, newShared, interruptClass, reraiseAfterFlush } = require(path.join(LIB, 'driver', 'run'));
 const {
-  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch,
+  STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN, VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop, testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, relaunchOrStop,
 } = require(path.join(LIB, 'driver', 'steps'));
+const { relaunchNote, cannotCompletePrompt } = require(path.join(LIB, 'driver', 'relaunch'));
 const { ENDED, STATUS_BY_ENDED } = require(path.join(LIB, 'driver', 'budget'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles'));
 const { driverStepsOf } = require('../../../tools/step-yield-report');
@@ -4301,6 +4302,41 @@ test('#5997: a red-tests relaunch\'s changedFiles is both commits\' paths', asyn
   const stuck = relaunchRig({ first: STUCK });
   assert.equal(await run(['#7'], stuck.deps), 0);
   assert.ok(summaryText(stuck).includes('express lane: a.js;'), summaryText(stuck));
+});
+
+test('#5997: a refused plan (a stepUp throw) queues a no-line worker refusal whose note names the same null to', async () => {
+  // An unknown first profile makes the real planRelaunch throw its DRIVER_MODEL_REFUSED refusal (stepUp).
+  const ctx = { relaunch: null, implementer: { rule: 'record', profile: 'turbo', model: 'x' }, shared: { policy: {} }, changedFiles: ['a.js'] };
+  const line = { status: 'stop', detail: 'worker could not complete', halt: true, stopClass: STOP_CLASSES.PRE_PUSH, reason: 'stop', extra: { attempt: 1 } };
+  const r = relaunchOrStop(ctx, line, 'cannot-complete', () => assert.fail('a refused plan composes no prompt'));
+  assert.deepEqual([r.status, r.detail, r.halt, r.then.length], ['stop', 'worker could not complete', false, 1], 'the triggering line is kept, its stop queued');
+  assert.equal(ctx.relaunch.to, null);
+  const [refused] = r.then;
+  assert.equal(refused.name, STEP.worker);
+  const out = await refused.run(ctx, {});
+  assert.deepEqual([out.status, out.noLine, out.halt, out.stopClass], ['fail', true, true, STOP_CLASSES.PRE_PUSH]);
+  assert.ok(out.detail.startsWith('no model for driver role implementer: implementer-tier: unknown profile'), out.detail);
+  assert.ok(out.detail.endsWith(`; ${relaunchNote(ctx.relaunch)}`), 'the note is built from ctx.relaunch itself');
+  assert.ok(out.detail.endsWith('; after one relaunch (cannot-complete, turbo to no profile)'), out.detail);
+});
+
+test('#5997: a relaunch that changes nothing stops at its commit with the relaunch noted', async () => {
+  const h = relaunchRig({ relaunchDirty: '', script: [redRun(1)] });
+  await run(['#7'], h.deps);
+  const final = lastLine(h);
+  assert.deepEqual([final.stop.step, final.status, final.stop.class], [STEP.commit, 'stop', STOP_CLASSES.PRE_PUSH]);
+  assert.equal(final.stop.detail, 'no changed files; after one relaunch (red-tests, fast to standard)');
+  assert.equal(implementerCalls(h).length, 2);
+  assert.equal(verifyCalls(h).length, 1, 'no second test run');
+});
+
+test('#5997: the relaunch prompt follows the first prompt after a blank line', async () => {
+  const h = relaunchRig({ first: STUCK });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, second] = implementerCalls(h);
+  assert.ok(first.args[0].prompt.endsWith('\n'));
+  assert.equal(second.args[0].prompt, `${first.args[0].prompt}\n${cannotCompletePrompt('stuck on X')}`);
+  assert.ok(second.args[0].prompt.includes('\n\nRelaunch.'));
 });
 
 test('#5997: an interrupt during the relaunch launch is reported at the relaunch and runs nothing after it', async () => {

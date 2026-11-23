@@ -59,7 +59,8 @@ function planRelaunch({ profile, model, policy }, { roleLaunchFn = roleLaunch } 
   return { relaunch: true, to };
 }
 
-const relaunchNote = ({ trigger, from, to }) => `after one relaunch (${trigger}, ${from} to ${to})`;
+// A refused plan (a stepUp throw) has no profile to step up to: its `to` is null, named `no profile`.
+const relaunchNote = ({ trigger, from, to }) => `after one relaunch (${trigger}, ${from} to ${to === null ? 'no profile' : to})`;
 
 function cannotCompletePrompt(summary) {
   const reason = typeof summary === 'string' && summary.trim() ? neutralize(summary) : '(no reason given)';

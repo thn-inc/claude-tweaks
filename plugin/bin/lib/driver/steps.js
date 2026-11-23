@@ -1184,7 +1184,8 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   // The run executed worker code: a flag it set outranks the verdict.
   const flagStop = newIndexFlagStop(ctx, deps);
   if (flagStop) return flagStop;
-  // Red tests stop the record with nothing pushed, so their tree is not read (#5454).
+  // A red run's tree is not read here (#5454): the record stops on it with nothing pushed, or, under
+  // implementer-tier record, the relaunch commit stages that tree and the second run's tree check reads it (#5997).
   if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
   // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
   const treeStop = testTreeStop(ctx, deps);
@@ -1210,8 +1211,9 @@ function relaunchOrStop(ctx, result, trigger, prompt) {
     plan = planRelaunch({ profile: from, model: implementer.model, policy: ctx.shared.policy });
   } catch (err) {
     if (!err || err.code !== MODEL_REFUSED_CODE) throw err;
+    // No profile to step up to: `to` is null here and in the note (relaunchNote renders null).
     ctx.relaunch = { trigger, from, to: null, prompt: null, ran: false, firstChangedFiles: null };
-    const detail = `${err.message}; ${relaunchNote({ trigger, from, to: 'no profile' })}`;
+    const detail = `${err.message}; ${relaunchNote(ctx.relaunch)}`;
     return { ...result, halt: false, then: [refusedRelaunchStep(detail)] };
   }
   if (!plan.relaunch) {
@@ -1255,7 +1257,8 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   const first = ctx.worker;
   let result;
   try {
-    result = await runImplementer(ctx, deps, { extraPrompt: relaunch.prompt, profile: relaunch.to });
+    // A blank line after the first prompt, as the fix round's prompt opens with one.
+    result = await runImplementer(ctx, deps, { extraPrompt: `\n${relaunch.prompt}`, profile: relaunch.to });
   } catch (err) {
     const failed = launchThrowFail(ctx, err);
     if (failed === null) return withRelaunchNote(ctx, { status: 'fail', detail: (err && err.message) || String(err) });
@@ -1705,5 +1708,5 @@ const CHECK_STEPS = Object.freeze([policyStep, fetchStep, eligibilityStep, admis
 module.exports = {
   STEPS, CHECK_STEPS, eligibilityOptions, defineStep, TEST_COMMAND, CI_WAIT_BOUND_MS, CI_POLL_INTERVAL_MS, CI_SETTLE_WINDOW_MS, WIN32_CLAUDE_BIN,
   VERIFY_TIMEOUT_MS, NAMED_PATHS_SHOWN, readIndexFlags, ignoreStatStop, newIndexFlagStop,
-  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule,
+  testTreeStop, TEST_TREE_UNREADABLE, fixWorkerLaunch, implementerRule, relaunchOrStop,
 };
