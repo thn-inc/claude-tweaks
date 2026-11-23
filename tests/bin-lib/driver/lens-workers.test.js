@@ -174,12 +174,22 @@ for (const command of [
   'bash -lc "cd x && git log"',
   'echo "$(git rev-parse HEAD)"',
   'echo "`git rev-parse HEAD`"',
+  // Residuals of the structural scan (#6000 review): every shape that hid the command position.
+  'A="$(pwd)" git log',
+  'sudo -u root git log',
+  'nice -n 5 git log',
+  'timeout 5 git log',
+  'stdbuf -oL git log',
+  'bash -o pipefail -c "git log"',
+  'bash -c -- "git log"',
 ]) {
   test(`classifyFailure: ${JSON.stringify(command)} is a git denial`, () => {
     assert.strictEqual(deniedReason(command), 'denied');
   });
 }
-for (const command of ['cat a; ls', 'echo "a;git log"', "grep 'git log' f", 'sh -c "ls; cat a"', 'env A=1 ls', 'time ls', '{ ls; }', 'echo /usr/bin/git']) {
+// Over-matching is the safe direction (the side falls back to the Task path), so a command that
+// merely names git is a denial; only a command that does not name git as a word is not.
+for (const command of ['cat a; ls', 'sh -c "ls; cat a"', 'env A=1 ls', 'time ls', '{ ls; }', 'ls .gitignore', 'git-lfs ls', 'cat gitconfig', 'GIT_DIR=x ls']) {
   test(`classifyFailure: ${JSON.stringify(command)} is not a git denial`, () => {
     assert.strictEqual(deniedReason(command), null);
   });
@@ -201,8 +211,11 @@ test('classifyFailure: a denied compound, env-prefixed or cd-prefixed git comman
     'echo `git rev-parse HEAD`',
     'sleep 1 & git log',
   ]) assert.strictEqual(denied(command), 'denied', command);
-  for (const command of ['cat a; ls', 'GIT_DIR=x ls', 'echo git', 'cd git && ls', 'gitk; ls', 'A="unterminated git log']) {
+  for (const command of ['cat a; ls', 'GIT_DIR=x ls', 'gitk; ls', 'ls .gitattributes']) {
     assert.strictEqual(denied(command), null, command);
+  }
+  for (const command of ['echo git', 'cd git && ls', 'A="unterminated git log']) {
+    assert.strictEqual(denied(command), 'denied', command); // over-match: falls back to the Task path
   }
 });
 
