@@ -23,6 +23,10 @@ description: Use when changing how the timing tooling counts skill-file or compo
 
 A subagent's reads arrive as `procedureFileRows` (`{ ts, procedureFiles }`, transcript order) and enter `joinTokens` as `dispatchFileReads`, which adds to `procedureFiles` only, never to rows, tokens or round trips. Walk `timed` rows, not `keptRows`: `keptRows` puts untimed rows last, and an untimed row books to the dispatch's `startTs`.
 
+### A dispatched run's Task-call files are rows, and they scope the dispatches
+
+For a `dispatched: true` run, at-close adds to `transcriptPaths` the depth-1 Task-call files of the dispatching and resuming sessions whose dispatch prompt names exactly this run (`locateTaskTranscripts`, #5647). Their reads arrive as row `procedureFiles` through `readUsage`, and `dispatchFileReads` skips any dispatch whose `transcriptPath` is one of the paths, so they are not counted twice. Those files sit in the dispatcher session's `subagents/` directory beside its other Task calls. `collectDispatches`'s `scopeDispatchesTo` keeps only the attributed files' descendants from a directory reached only through them; a directory also reached through the run's own transcript keeps its window view minus them. A caller that passes Task-call paths without it books the reads of every other in-window Task call in that directory to this run. `--recount` passes the listed `subagents/agent-*.jsonl` paths (`isAgentTranscriptPath`).
+
 ## Decision Framework
 
 | Change | Do this |
@@ -46,5 +50,6 @@ A subagent's reads arrive as `procedureFileRows` (`{ ts, procedureFiles }`, tran
 - `plugin/bin/lib/timing/turn-class.js` — `readFileKey`, `procedureFileKey`, `contextBundleKey`, `bashProcedureFiles`
 - `plugin/bin/lib/timing/transcript.js` — `readUsage` (row `procedureFiles`), `scanAgentDir` (`procedureFileRows`)
 - `plugin/bin/lib/timing/derive.js` — `joinTokens(…, { dispatchFileReads })`
+- `plugin/bin/lib/timing/run-timing.js` — `collectDispatches` (`scopeDispatchesTo`), `dispatchFileReads`; `transcript.js` — `locateTaskTranscripts`, `isAgentTranscriptPath`
 - `plugin/bin/phase-timing.js`, `tools/efficiency-report.js` (`reviewFilesOf`, `recountRuns`)
 - Tests: `tests/bin-lib/timing/{turn-class,transcript,derive,golden,cli}.test.js`, `tests/efficiency-report.test.js`

@@ -287,4 +287,4 @@ function selectRuns(root, select, fs) {
   return { dirs: missing.length > 0 ? [] : select.map((n) => byName.get(n)), missing };
 }
 
-module.exports = { parseDecisions, matchVerdicts, readRun, readCost, listRuns, selectRuns, LENS_ID };
+module.exports = { parseDecisions, matchVerdicts, readRun, readCost, listRuns, selectRuns, LENS_ID, LENS_RE, SIDE_RE };

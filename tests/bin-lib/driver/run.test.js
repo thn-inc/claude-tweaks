@@ -351,6 +351,7 @@ const POLICY = {
   'express-driver-max-size': 'low',
   'express-driver-max-key-files': 3,
   'express-driver-max-lines': undefined,
+  'express-driver-max-risk': 'low',
   // #5917's model keys (and #5942's model-effort), in launch.js's MODEL_POLICY_KEYS order (the step's request list ends with them): the four-role default map from the real resolver, no
   // model-profiles block or ceiling set, and model-effort inherit.
   'express-driver-models': resolvePolicyKeys(['express-driver-models'], { policyRaw: '' })['express-driver-models'].value,
@@ -477,7 +478,10 @@ function defaultScript(over, fx) {
     [on('node', /pr-checks\.js$/), { code: 0, stderr: '', stdout: JSON.stringify({ state: 'green', headRefOid: HEAD_SHA, headRunCount: 1 }) }],
     [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines' && policy[k] === undefined
       ? { value: policy['auto-merge-max-lines'], source: 'default' }
-      : { value: policy[k], source: 'policy' }]))],
+      // #6018: a policy of undefined is the key unset, which the resolver answers as its default.
+      : k === 'express-driver-max-risk' && policy[k] === undefined
+        ? { value: 'low', source: 'default' }
+        : { value: policy[k], source: 'policy' }]))],
     [on('gh', 'issue', 'view'), (c) => JSON.stringify(issueFor(Number(c.args.at(-1))))],
     [on('git', 'symbolic-ref'), 'origin/main\n'],
     [on('eligibility'), (c) => ({ number: c.args[0].number, eligible: true, reasons: [], keyFiles: ['a.js'], ...pick(over.eligibility, c) })],
@@ -723,7 +727,7 @@ test('eligibility runs with the relaxed ceremony gate and the policy values', as
   assert.deepEqual(issue, issueFor(7));
   assert.deepStrictEqual(opts, {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'local-merge', sensitivePaths: ['plugin/bin/**', 'docs/**'],
-    sizeCeiling: 'low', maxKeyFiles: 3,
+    sizeCeiling: 'low', maxKeyFiles: 3, riskCeiling: 'low', allowAnyCeremony: false,
   });
 });
 
@@ -783,7 +787,7 @@ test('admission reads blockers and linked PRs from the shared repo and passes th
   assert.deepStrictEqual(h.calls.find((c) => c.kind === 'admission').args[0], {
     number: 7, state: 'OPEN', labels: issueFor(7).labels,
     openBlockerRefs: openBlockerRefs(entry), openLinkedPRs: [12], routing: 'on', driverEscalated: false,
-    keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFiles: 3 }, reviewerOn: false,
+    keyFiles: ['a.js'], bounds: { sizeCeiling: 'low', maxKeyFiles: 3 }, reviewerOn: false, widenedBy: [],
     // #5584: issueFor carries no auto:build, and the harness has no terminal on stdin.
     buildAuthority: 'none',
   });
@@ -5231,7 +5235,7 @@ const BETWEEN_BOUNDS = { 'auto-merge-max-lines': 100, 'express-driver-max-lines'
 test('AC12.1 (#5224): one reviewRequired call per record feeds admission, the check flag and the review step', async () => {
   const h = harness({ policy: { 'express-driver-max-lines': 90 }, reviewRequired: () => ({ on: true, reason: 'sentinel' }) });
   assert.equal(await run(['#7', '#8'], h.deps), 0);
-  assert.deepStrictEqual(h.reviewerCalls, [7, 8].map((n) => ({ issue: issueFor(n), keyFiles: ['a.js'], policyValue: 'beyond-express' })));
+  assert.deepStrictEqual(h.reviewerCalls, [7, 8].map((n) => ({ issue: issueFor(n), keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: [] })));
   assert.deepStrictEqual(admissionInputs(h).map((i) => i.reviewerOn), [true, true]);
   assert.deepStrictEqual(checkFlags(h), [['--max-lines', '90'], ['--max-lines', '90']]);
   // The review step reads the same answer: the sentinel turns the reviewer on for both records, so each
@@ -5400,6 +5404,7 @@ test('(#5224) the eligibility step passes the size ceiling and Key File limit it
   await run(['#7'], plain.deps);
   assert.deepStrictEqual(calls(plain, 'eligibility')[0].args[1], {
     enabled: true, allowAbsentCeremony: true, integrationModel: 'pr-first', sensitivePaths: [], sizeCeiling: 'low', maxKeyFiles: 3,
+    riskCeiling: 'low', allowAnyCeremony: false,
   });
   assert.deepStrictEqual(admissionInputs(plain)[0].bounds, { sizeCeiling: 'low', maxKeyFiles: EXPRESS_MAX_KEY_FILES });
 });
@@ -5493,6 +5498,33 @@ test('(#5224) through the real resolver: a malformed express-driver-max-lines fa
   const final = h.lines().at(-1);
   assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
   assert.equal(final.stop.detail, `driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(huge.value)})`);
+});
+
+// #6006: a factory express-driver-max-lines is a set value, exactly as a policy.yml one is.
+const factoryLineReply = (raw, review) => {
+  const { resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const reply = resolvePolicyKeys(['express-driver-max-lines'], { factoryRaw: `express-driver-max-lines: ${raw}\n` })['express-driver-max-lines'];
+  assert.strictEqual(reply.source, 'factory', raw);
+  return [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-lines'
+    ? reply
+    : { value: { ...POLICY, 'express-driver-review': review }[k], source: 'policy' }]))];
+};
+
+test('driver steps: a factory express-driver-max-lines bound is explicit', async () => {
+  const huge = harness({ script: [factoryLineReply('9007199254740993', 'on')] });
+  assert.equal(await run(['#7'], huge.deps), 1);
+  const final = huge.lines().at(-1);
+  assert.deepStrictEqual([final.stop.step, final.status, final.outcome], ['policy', 'fail', 'refused']);
+  assert.match(final.stop.detail, /^driver diff bound not an integer of at least 1: express-driver-max-lines/);
+});
+
+test('driver steps: a factory express-driver-max-lines bound reaches check when the reviewer is on', async () => {
+  const reviewed = harness({ script: [factoryLineReply('120', 'on')] });
+  assert.equal(await run(['#7'], reviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(reviewed), [['--max-lines', '120']]);
+  const unreviewed = harness({ script: [factoryLineReply('120', 'off')] });
+  assert.equal(await run(['#7'], unreviewed.deps), 0);
+  assert.deepStrictEqual(checkFlags(unreviewed), [null]);
 });
 
 test('(#5224) the fix round of a widened record passes the driver bound to its second check', async () => {
@@ -6473,6 +6505,148 @@ test('budget pre-screen: eligibilityOptions is exactly what the eligibility step
   assert.deepEqual(eligibilityOptions(shared.policy), live);
 });
 
+// --- the driver's risk ceiling and ceremony relaxation through the driver (#6018) -------------
+
+// A record whose labels the test names outright (spec-shaped body, so Key Files pass), read by the real gates.
+const widenIssue = (labels, keyFiles = 1) => [on('gh', 'issue', 'view'), (c) => JSON.stringify({
+  ...issueFor(Number(c.args.at(-1))),
+  body: boundsBody(Array.from({ length: keyFiles }, (_, i) => `src/f${i}.js`)),
+  labels: labels.map((name) => ({ name })),
+})];
+const WIDEN_LABELS = ['size:low', 'type:task', 'auto:build'];
+async function widenCheck(policy, labels, extra = {}) {
+  const h = harness({ policy, script: [widenIssue(labels), ...REAL_GATES], ...extra });
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assertWriteFree(h.calls, h.writes());
+  const lines = h.out.join('').split('\n').filter(Boolean);
+  assert.equal(lines.length, 1);
+  return { h, verdict: JSON.parse(lines[0]) };
+}
+const MEDIUM_ON = { 'express-driver-max-risk': 'medium', 'express-driver-review': 'on' };
+
+test('AC2.1 (#6018): --check with express-driver-max-risk medium and the reviewer on admits risk:medium with widenedBy [risk]', async () => {
+  const { verdict } = await widenCheck(MEDIUM_ON, ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] });
+});
+
+test('AC2.2 (#6018): --check refuses risk:high under ceiling medium with the ceiling reason', async () => {
+  const { verdict } = await widenCheck(MEDIUM_ON, ['risk:high', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.equal(verdict.admitted, false);
+  assert.ok(verdict.reasons.includes('risk is not low or medium'), JSON.stringify(verdict));
+  assert.deepStrictEqual(verdict.widenedBy, []);
+});
+
+test('AC2.3 (#6018): --check admits risk:high under ceiling high', async () => {
+  const { verdict } = await widenCheck({ ...MEDIUM_ON, 'express-driver-max-risk': 'high' }, ['risk:high', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] });
+});
+
+test('AC3.2 (#6018): --check with ceiling medium and express-driver-review off refuses risk:medium with the widened reviewer-off reason', async () => {
+  const { verdict } = await widenCheck({ 'express-driver-max-risk': 'medium', 'express-driver-review': 'off' }, ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.equal(verdict.admitted, false);
+  assert.deepStrictEqual(verdict.reasons, [ADMISSION_REASONS.reviewerOffWidened]);
+  assert.deepStrictEqual(verdict.widenedBy, ['risk']);
+});
+
+test('AC5.1 (#6018): express-driver-review on admits ceremony:standard with widenedBy [ceremony]', async () => {
+  const { verdict } = await widenCheck({ 'express-driver-review': 'on' }, ['risk:low', 'ceremony:standard', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['ceremony'] });
+});
+
+test('AC5.2, AC5.3 (#6018): beyond-express (also with a size-widened record whose reviewer is on) and off refuse ceremony:standard with the ceremony reason; ceremony:fastlane refuses under every reviewer value', async () => {
+  const standard = ['risk:low', 'ceremony:standard', ...WIDEN_LABELS];
+  const sizeWidened = ['risk:low', 'ceremony:standard', 'size:medium', 'type:task', 'auto:build'];
+  const rows = [
+    ['beyond-express', { 'express-driver-review': 'beyond-express' }, standard],
+    ['beyond-express, size-widened', { 'express-driver-review': 'beyond-express', 'express-driver-max-size': 'medium' }, sizeWidened],
+    ['off', { 'express-driver-review': 'off' }, standard],
+    ...['on', 'beyond-express', 'off'].map((r) => [`fastlane, ${r}`, { 'express-driver-review': r }, ['risk:low', 'ceremony:fastlane', ...WIDEN_LABELS]]),
+  ];
+  for (const [name, policy, labels] of rows) {
+    const { verdict } = await widenCheck(policy, labels);
+    assert.equal(verdict.admitted, false, name);
+    assert.ok(verdict.reasons.includes('ceremony is not fast-lane'), `${name}: ${JSON.stringify(verdict)}`);
+    assert.deepStrictEqual(verdict.widenedBy, [], name);
+  }
+});
+
+test('AC10.1 (#6018): a malformed express-driver-max-risk value (Medium) falls back to low — --check refuses risk:medium exactly as with the key unset', async () => {
+  const resolved = resolvePolicyKeys(['express-driver-max-risk'], { policyRaw: 'express-driver-max-risk: Medium\n' })['express-driver-max-risk'];
+  assert.deepStrictEqual(resolved, { value: 'low', source: 'default', invalid: true });
+  const malformed = [on('policy'), (c) => Object.fromEntries(c.args.map((k) => [k, k === 'express-driver-max-risk'
+    ? resolved
+    : k === 'express-driver-max-lines'
+      ? { value: POLICY['auto-merge-max-lines'], source: 'default' }
+      : { value: { ...POLICY, 'express-driver-review': 'on' }[k], source: 'policy' }]))];
+  const labels = ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS];
+  const bad = await widenCheck({}, labels, { script: [malformed, widenIssue(labels), ...REAL_GATES] });
+  const unset = await widenCheck({ 'express-driver-review': 'on', 'express-driver-max-risk': undefined }, labels);
+  assert.deepStrictEqual(bad.verdict, unset.verdict);
+  assert.equal(bad.verdict.admitted, false);
+  assert.ok(bad.verdict.reasons.includes('risk is not low'));
+  assert.deepStrictEqual(bad.verdict.widenedBy, []);
+});
+
+test('(#6018) ctx.widenedBy reaches reviewRequired with its real value: a widened record inside the express bounds is admitted under beyond-express, and ceremony:standard under on', async () => {
+  const risk = await widenCheck({ 'express-driver-max-risk': 'medium', 'express-driver-review': 'beyond-express' }, ['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(risk.verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] });
+  assert.deepStrictEqual(risk.h.reviewerCalls.map((o) => o.widenedBy), [['risk']]);
+  const ceremony = await widenCheck({ 'express-driver-review': 'on' }, ['risk:low', 'ceremony:standard', ...WIDEN_LABELS]);
+  assert.deepStrictEqual(ceremony.verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['ceremony'] });
+  assert.deepStrictEqual(ceremony.h.reviewerCalls.map((o) => o.widenedBy), [['ceremony']]);
+});
+
+test('AC7.1 (#6018): the --check verdict line carries widenedBy and an unwidened record prints widenedBy []', async () => {
+  const h = harness();
+  assert.equal(await run(['--check', '#7'], h.deps), 0);
+  assert.deepStrictEqual(JSON.parse(h.out.join('')), { record: 7, admitted: true, reasons: [], widenedBy: [] });
+});
+
+test('AC11.1 (#6018, driver half): a record labelled risk:low and risk:medium, in either order, is admitted under ceiling medium with widenedBy [risk]', async () => {
+  for (const risks of [['risk:low', 'risk:medium'], ['risk:medium', 'risk:low']]) {
+    const { verdict } = await widenCheck(MEDIUM_ON, [...risks, 'ceremony:fast-lane', ...WIDEN_LABELS]);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] }, risks.join());
+  }
+});
+
+test('Review Focus 4 (#6018): a size:medium risk:medium record is widened by risk only', async () => {
+  const { verdict } = await widenCheck({ 'express-driver-max-size': 'medium', 'express-driver-max-risk': 'medium', 'express-driver-review': 'beyond-express' },
+    ['risk:medium', 'ceremony:fast-lane', 'size:medium', 'type:task', 'auto:build']);
+  assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: ['risk'] });
+});
+
+test('the eligibility event names widenedBy only for a widened record (#6018)', async () => {
+  const eligibilityLine = (h) => h.lines().find((l) => l.step === STEP.eligibility);
+  const widened = harness({ policy: MEDIUM_ON, script: [widenIssue(['risk:medium', 'ceremony:fast-lane', ...WIDEN_LABELS]), ...REAL_GATES] });
+  await run(['#7'], widened.deps);
+  assert.deepStrictEqual(eligibilityLine(widened).widenedBy, ['risk']);
+  const plain = harness({ script: [widenIssue(['risk:low', 'ceremony:fast-lane', ...WIDEN_LABELS]), ...REAL_GATES] });
+  await run(['#7'], plain.deps);
+  assert.ok(eligibilityLine(plain));
+  assert.equal('widenedBy' in eligibilityLine(plain), false);
+});
+
+test('mergeStep hands ctx.widenedBy to merge (#6018)', async () => {
+  // A widened record now stops at merge's entry before the supplier. Merge's own label read carries
+  // risk:low, so its live recompute finds nothing: the detail names risk only if the handed array arrived
+  // (a missing handoff reads "widening list missing or unreadable", a [] handoff would not stop at all).
+  const seen = [];
+  const h = mergeHarness({
+    policy: MEDIUM_ON,
+    deps: { judgments: async (mctx) => { seen.push(mctx.widenedBy); return { mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } }; } },
+    script: [
+      [(c) => on('gh', 'issue', 'view')(c) && c.args.at(-1) === 'labels',
+        () => JSON.stringify({ labels: ['risk:low', 'ceremony:fast-lane', 'auto:merge', ...WIDEN_LABELS].map((name) => ({ name })) })],
+      widenIssue(['risk:medium', 'ceremony:fast-lane', 'auto:merge', ...WIDEN_LABELS]), ...REAL_GATES],
+    reconcile: archiveRunDir,
+  });
+  const { final } = await driveRecord(7, newShared(), h.deps, STEPS);
+  assert.deepStrictEqual(seen, []);
+  assert.equal(final.merge.reason, 'widened-admission');
+  const stop = h.lines().find((l) => l.step === 'merge-entry' && l.status === 'stop');
+  assert.equal(stop.detail, 'widened-admission: admitted widened by risk');
+});
+
 // --- --budget through run() (record #5229) ----------------------------------------------------
 
 const budgetPull = (...numbers) => [on('queuePull'), { groups: queueOf(...numbers), exclusions: [] }];
@@ -6866,6 +7040,7 @@ function mergeHarness(over = {}) {
   const isPrView = (fields) => (c) => c.kind === 'gh' && c.args[0] === 'pr' && c.args[1] === 'view' && c.args.includes(fields);
   return harness({
     allowMerge: true,
+    policy: over.policy,
     deps: { judgments: async () => ({ mergeCheck: { verdict: 'auto-merge' }, acceptance: { completed: true } }), ...(over.deps || {}) },
     script: [
       ...(over.script || []),
@@ -7352,13 +7527,13 @@ test('#5232 AC1.1: --check prints one JSON line with the verdict and every reaso
   const text = h.out.join('');
   assert.equal(text.split('\n').filter(Boolean).length, 1);
   assert.ok(text.endsWith('\n'));
-  assert.deepEqual(JSON.parse(text), { record: 7, admitted: true, reasons: [] });
+  assert.deepEqual(JSON.parse(text), { record: 7, admitted: true, reasons: [], widenedBy: [] });
 });
 
 test('#5232 AC1.1: --check on a refused record reports eligibility and admission reasons together', async () => {
   const h = checkHarness(CHECK_CASES.eligibilityRefused, 7);
   assert.equal(await run(['--check', '#7'], h.deps), 0);
-  assert.deepEqual(JSON.parse(h.out.join('')), { record: 7, admitted: false, reasons: ['risk is not low', 'record lacks auto:build'] });
+  assert.deepEqual(JSON.parse(h.out.join('')), { record: 7, admitted: false, reasons: ['risk is not low', 'record lacks auto:build'], widenedBy: [] });
 });
 
 test('#5232 AC4.1: --check under split admits an even record and refuses an odd one', async () => {
@@ -7481,9 +7656,9 @@ async function typedCheck({ labels = TYPED_LABELS, env = {}, tty, readTypedComma
 
 test('(#5584) --check names its record: an ungranted ready record with an accepted typed command is admitted, as drive.js #N admits it', async () => {
   const terminal = await typedCheck({ tty: true });
-  assert.deepStrictEqual(terminal.verdict, { record: 7, admitted: true, reasons: [] });
+  assert.deepStrictEqual(terminal.verdict, { record: 7, admitted: true, reasons: [], widenedBy: [] });
   const session = await typedCheck({ tty: true, env: SESSION_ENV, readTypedCommand: () => ({ answer: 'typed', promptId: 'p-1' }) });
-  assert.deepStrictEqual(session.verdict, { record: 7, admitted: true, reasons: [] });
+  assert.deepStrictEqual(session.verdict, { record: 7, admitted: true, reasons: [], widenedBy: [] });
   assert.equal(session.typedCalls.length, 1);
   assert.equal(session.typedCalls[0].number, 7);
 });
@@ -7496,20 +7671,20 @@ test('(#5584) --check on a refused typed command stays refused and carries the t
   ];
   for (const [name, opts, words] of rows) {
     const { verdict } = await typedCheck(opts);
-    assert.deepStrictEqual(verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.noBuildGrant, `typed command not accepted: ${words}`] }, name);
+    assert.deepStrictEqual(verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.noBuildGrant, `typed command not accepted: ${words}`], widenedBy: [] }, name);
   }
   // A refusal that is not the grant refusal adds no words, as the stop detail adds none.
   const held = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build', 'bot:blocked'], tty: false });
-  assert.deepStrictEqual(held.verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.blocked] });
+  assert.deepStrictEqual(held.verdict, { record: 7, admitted: false, reasons: [ADMISSION_REASONS.blocked], widenedBy: [] });
   // An answer of none with words, refused by admission for another reason only: no words either.
   const other = await typedCheck({ tty: false, deps: { evaluateAdmission: () => ({ admitted: false, reasons: ['express-driver is off'] }) } });
-  assert.deepStrictEqual(other.verdict, { record: 7, admitted: false, reasons: ['express-driver is off'] });
+  assert.deepStrictEqual(other.verdict, { record: 7, admitted: false, reasons: ['express-driver is off'], widenedBy: [] });
 });
 
 test('(#5584) --check on a labelled record is unchanged and never reads the typed command', async () => {
   for (const opts of [{ tty: true }, { tty: false }, { tty: true, env: SESSION_ENV }]) {
     const { verdict, typedCalls } = await typedCheck({ labels: [...TYPED_LABELS, 'auto:build'], readTypedCommand: () => ({ answer: 'none', reason: 'not-typed' }), ...opts });
-    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [] }, JSON.stringify(opts));
+    assert.deepStrictEqual(verdict, { record: 7, admitted: true, reasons: [], widenedBy: [] }, JSON.stringify(opts));
     assert.equal(typedCalls.length, 0, JSON.stringify(opts));
   }
 });

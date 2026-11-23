@@ -625,6 +625,21 @@ test('computeDerivedDefaults: an mcpReachable call still reuses an already-resol
   assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default' });
 });
 
+test('factory integration-model pin runs no forge detection', () => {
+  const { computeDerivedDefaults } = require('../plugin/bin/lib/policy-derived-defaults');
+  const result = resolvePolicyKeys(['integration-model', 'merge-verification'], { factoryRaw: 'integration-model: local-merge\n' });
+  assert.deepEqual(result['integration-model'], { value: 'local-merge', source: 'factory' });
+  let deriveDeps = null;
+  const out = computeDerivedDefaults(result, ['integration-model', 'merge-verification'], '/unused-root', {
+    detectIntegrationModel: () => { throw new Error('forge detection ran for a factory pin'); },
+    resolveIntegrationModel: () => { throw new Error('integration-model re-resolved for a factory pin'); },
+    deriveMergeVerification: (root, mvDeps) => { deriveDeps = mvDeps; return mvDeps.integrationModel() === 'local-merge' ? 'off' : 'merge-when-green'; },
+  });
+  assert.deepEqual(out['integration-model'], { value: 'local-merge', source: 'factory' });
+  assert.equal(deriveDeps.integrationModel(), 'local-merge');
+  assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default' });
+});
+
 test('CLI --run precedence: a run-dir config.yml override wins over the derived AC1 default, and JSON mode reports source "run-config" (#559 M5)', () => {
   const dir = fixtureRepo({ workflow: 'name: ci\non:\n  push:\n    branches: [main]\n  pull_request:\njobs: {}\n' });
   // Sanity: without --run, this fixture derives merge-when-green (AC1).

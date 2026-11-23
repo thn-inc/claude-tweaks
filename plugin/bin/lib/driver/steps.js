@@ -89,7 +89,8 @@ const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, readCeilings, l
 const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
-const { sensitivePathsOf } = require('../express/policy');
+const { laneBounds, eligibilityOptions } = require('./lane-bounds');
+const { widenings } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
@@ -117,7 +118,7 @@ const CI_SETTLE_WINDOW_MS = 2 * 60 * 1000;
 // Read once per run, in the policy step.
 // `auto-merge-max-lines` is the express diff bound check enforces when the driver passes no --max-lines;
 // the worker's prompt states whichever bound check applies.
-// The three express-driver-max-* keys are the driver lane's bounds (#5224, laneBounds and driverLineBound).
+// The three express-driver-max-* keys are the driver lane's bounds (#5224, lane-bounds.js's laneBounds and this file's driverLineBound).
 // The last four, express-driver-models, model-profiles, model-ceiling and model-effort, are the model
 // and effort each worker launches with (#5917 and #5942, launch.js's roleLaunch); the policy step
 // refuses a run whose roles do not resolve.
@@ -125,7 +126,7 @@ const POLICY_KEYS = Object.freeze([
   'express-driver', 'express-driver-wall-clock-minutes', 'express-driver-spend-ceiling-dollars',
   'merge-sensitive-paths', 'integration-model', 'integration-branch', 'verify-suite-slots',
   'auto-merge-max-lines', 'express-driver-review',
-  'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines',
+  'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-lines', 'express-driver-max-risk',
   ...MODEL_POLICY_KEYS,
 ]);
 // The one record read: its JSON feeds eligibility, admission, the worker and check.
@@ -213,6 +214,7 @@ const policyStep = defineStep(STEP.policy, STOP_CLASSES.REFUSED, async (ctx, dep
     // value past 2^53 parses to an unsafe number): fatal here, before any record is claimed, whatever
     // the reviewer answer, so driverLineBound reads only a usable value.
     const lineBound = resolved['express-driver-max-lines'];
+    // `!== 'default'`: a factory value (#6006) is set explicitly, so it is checked like a policy.yml one.
     if (lineBound.source !== 'default' && !(Number.isSafeInteger(lineBound.value) && lineBound.value >= 1)) {
       return fatal(`driver diff bound not an integer of at least 1: express-driver-max-lines (${JSON.stringify(lineBound.value)})`);
     }
@@ -258,11 +260,6 @@ const fetchStep = defineStep(STEP.fetch, STOP_CLASSES.REFUSED, async (ctx, deps)
   return { status: 'ok' };
 });
 
-// The driver lane's record bounds (#5224), as eligibility and admission both get them.
-function laneBounds(policy) {
-  return { sizeCeiling: policy['express-driver-max-size'].value, maxKeyFiles: policy['express-driver-max-key-files'].value };
-}
-
 // The implementation-line bound for check's --max-lines (#5224): express-driver-max-lines when it is
 // set (its source is not the default) and the reviewer is on for the record, else null, so check reads
 // auto-merge-max-lines itself (the express bound is read in one place only). The policy step has already
@@ -270,21 +267,8 @@ function laneBounds(policy) {
 // the prompt and check never disagree.
 function driverLineBound(ctx) {
   const { value, source } = ctx.shared.policy['express-driver-max-lines'];
+  // A factory-sourced bound (#6006) is set, not derived, so it is passed like a policy.yml one.
   return source !== 'default' && ctx.reviewer && ctx.reviewer.on === true ? value : null;
-}
-
-// The options the eligibility step hands deps.evaluateRecordEligibility, lane bounds included, so a
-// caller that pre-screens a record (the budget loop) asks the same question the step does.
-function eligibilityOptions(policy) {
-  const bounds = laneBounds(policy);
-  return {
-    enabled: true,
-    allowAbsentCeremony: true,
-    integrationModel: policy['integration-model'].value,
-    sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
-    sizeCeiling: bounds.sizeCeiling,
-    maxKeyFiles: bounds.maxKeyFiles,
-  };
 }
 
 // Ports express-lane.md's Eligibility section, with the driver's relaxed ceremony gate and the lane
@@ -295,10 +279,15 @@ function eligibilityOptions(policy) {
 const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async (ctx, deps) => {
   const { policy } = ctx.shared;
   const bounds = laneBounds(policy);
-  const verdict = deps.evaluateRecordEligibility(ctx.issue, eligibilityOptions(policy));
+  const opts = eligibilityOptions(policy);
+  const verdict = deps.evaluateRecordEligibility(ctx.issue, opts);
   ctx.keyFiles = (verdict && verdict.keyFiles) || [];
-  ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value });
-  if (!verdict || verdict.eligible !== true) {
+  // What the record is admitted beyond (#6018). A refused record reports none, so --check never names a
+  // widening for a record it refused; it never reaches merge either.
+  const eligible = Boolean(verdict) && verdict.eligible === true;
+  ctx.widenedBy = eligible ? widenings({ labels: ctx.issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony }) : [];
+  ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy: ctx.widenedBy });
+  if (!eligible) {
     const reasons = [...((verdict && verdict.reasons) || [])];
     const reviewer = reviewerGateReason({ labels: ctx.issue.labels, keyFiles: ctx.keyFiles, bounds, reviewerOn: ctx.reviewer && ctx.reviewer.on });
     if (reviewer) reasons.push(reviewer);
@@ -307,7 +296,7 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
     return { status: 'stop', detail: ctx.eligibilityReasons.join('; ') };
   }
   ctx.eligibilityReasons = [];
-  return { status: 'ok' };
+  return ctx.widenedBy.length > 0 ? { status: 'ok', extra: { widenedBy: ctx.widenedBy } } : { status: 'ok' };
 });
 
 // Ports express-lane.md's Eligibility section: the driver lane's admission (state, grants,
@@ -362,6 +351,7 @@ const admissionStep = defineStep(STEP.admission, STOP_CLASSES.REFUSED, async (ct
     keyFiles: ctx.keyFiles,
     bounds: laneBounds(policy),
     reviewerOn: ctx.reviewer ? ctx.reviewer.on : undefined,
+    widenedBy: ctx.widenedBy,
     buildAuthority: auth.authority,
   });
   const extra = { authority: auth.authority };
@@ -1502,7 +1492,7 @@ const mergeStep = defineStep(STEP.merge, STOP_CLASSES.NONE, async (ctx, deps) =>
     head: ctx.check.head, runDir: ctx.runDir, runRoot: ctx.shared.mainRoot, mainCheckout: ctx.shared.mainRoot,
     worktree: ctx.wt, summaryLogged: ctx.summaryLogged,
     inFlightPrsFile: ctx.shared.inFlightPrsFile || null, nearDupPairsFile: ctx.shared.nearDupPairsFile || null,
-    adopted: Boolean(ctx.shared.adopted),
+    adopted: Boolean(ctx.shared.adopted), widenedBy: ctx.widenedBy,
   };
   const mdeps = {
     ...deps,

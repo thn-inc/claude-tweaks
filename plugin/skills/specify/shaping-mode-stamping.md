@@ -194,6 +194,10 @@ Acceptance-target: local           ← interactive path only, when the human cho
 
 **`work-backend: github-issues`:** write the composed body to this run's session-scoped temp file (`_shared/session-tmp-root.md`), run `### Risk flags` (above) on it (`settle` rewrites the file in place, so the `--check` below checks the settled body; a single-record exit-0 run already settled by `shaping-mode.md`'s born-ready paragraph skips this run), then a single call carries both the body and every label change (`--type {t}` under `work-types: native`; swap to `--add-label "type:{t}"` under `work-types: labels`):
 
+<!-- plan-at-specify:start -->
+When `shaping-mode.md`'s Planning at specify paragraph read `planning.md`, run its `## Per-record step` here, once `### Risk flags` has settled the body file and before the `--check` below; it may add `## Overview`, `## Planning Decisions` and a `Plan:` line to that file, and its `## Hold` changes this call's labels for a held record. When it ran, the `--check` and the write's `--body-file` below read its `{body}` in place of `$SPECIFY_SHAPED_BODY` (in a batch, that record's own copy). Otherwise skip this paragraph.
+<!-- plan-at-specify:end -->
+
 ```bash
 SPECIFY_SHAPED_BODY=$(node -e "
   const { sessionTmpPath } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/session-tmp.js');

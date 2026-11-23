@@ -58,7 +58,7 @@ test('express-lane true + pr-first: eligible stays a singleton, risk:medium does
   assert.equal(p.grouping, 'per-record+express');
   assert.equal(p.keepSingleton(ELIGIBLE), true);
   assert.equal(p.keepSingleton(MEDIUM_RISK), false);
-  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-review']]);
+  assert.deepStrictEqual(calls.map((c) => c.keys), [['express-lane', 'express-driver'], ['integration-model', 'merge-sensitive-paths', 'express-driver-max-size', 'express-driver-max-key-files', 'express-driver-max-risk', 'express-driver-review']]);
 });
 
 test('express-lane true + local-merge: the integration model is passed through, so nothing stays a singleton', () => {
@@ -276,3 +276,48 @@ test('a throwing express check still lets the driver half keep the record, with 
 // #5230: the queue pull's three consumers of expressQueuePolicy() (the cache check's grouping, the
 // grouping pass's keepSingleton and the write-back blob's grouping) are pinned through an injected
 // recording policy in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 express: …").
+
+// #6018: the driver half asks the driver's widened question.
+const WIDENED_POLICY = { ...DRIVER_POLICY, 'express-lane': false, 'express-driver-max-size': 'low', 'express-driver-max-key-files': 1, 'express-driver-max-risk': 'medium', 'express-driver-review': 'on' };
+
+test('#6018: the driver half resolves express-driver-max-risk, so the real resolver shape never throws', () => {
+  const sink = stderrSink();
+  const calls = [];
+  // Like the real resolver: an entry only for a key it was asked for.
+  const resolvePolicy = (keys) => {
+    calls.push(keys);
+    return Object.fromEntries(keys.map((k) => [k, { value: WIDENED_POLICY[k], source: 'policy' }]));
+  };
+  const p = expressQueuePolicy({ resolvePolicy, stderr: sink.stderr });
+  assert.ok(calls[1].includes('express-driver-max-risk'));
+  assert.equal(p.keepSingleton(MEDIUM_RISK), true);
+  assert.deepStrictEqual(sink.lines, []);
+});
+
+test('#6018: a risk-widened record is not driver-routable with express-driver-review off', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'off' }).resolvePolicy, stderr: sink.stderr });
+  assert.equal(p.keepSingleton(MEDIUM_RISK), false);
+  assert.deepStrictEqual(sink.lines, []);
+  // A record inside the unwidened lane is unaffected by the reviewer being off.
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('#6018: with express-driver-max-risk at its default (low) the driver half keeps today\'s answer for risk:medium', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-max-risk': 'low' }).resolvePolicy });
+  assert.equal(p.keepSingleton(MEDIUM_RISK), false);
+  assert.equal(p.keepSingleton(ELIGIBLE), true);
+});
+
+test('#6018: an any-ceremony widened record follows the same reviewer rule', () => {
+  const SLOW = issue(3, ['risk:low', 'size:low', 'ceremony:standard', 'type:task']);
+  const on = expressQueuePolicy({ resolvePolicy: policy(WIDENED_POLICY).resolvePolicy });
+  assert.equal(on.keepSingleton(SLOW), true);
+  const off = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'off' }).resolvePolicy });
+  assert.equal(off.keepSingleton(SLOW), false);
+});
+
+test('#6018: under beyond-express a risk-widened record turns the reviewer on and stays driver-routable', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...WIDENED_POLICY, 'express-driver-review': 'beyond-express' }).resolvePolicy });
+  assert.equal(p.keepSingleton(MEDIUM_RISK), true);
+});

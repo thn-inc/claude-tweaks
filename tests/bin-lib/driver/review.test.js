@@ -1967,3 +1967,31 @@ test('AC9: the rewrite replaces whatever the fix worker left at the leaf with th
   assert.strictEqual(lstatType(dir.state.ev).type, 'directory');
   assert.deepStrictEqual(dir.steps, ['launch']);
 });
+
+test('AC4.1 (#6018): beyond-express turns the reviewer on for a risk-widened record inside the express bounds, naming the widening', () => {
+  assert.deepStrictEqual(reviewRequired({
+    issue: { labels: [{ name: 'size:low' }, { name: 'risk:medium' }] }, keyFiles: ['a.js', 'b.js'], policyValue: 'beyond-express', widenedBy: ['risk'],
+  }), { on: true, reason: 'admitted widened by risk' });
+  assert.deepStrictEqual(reviewRequired({
+    issue: { labels: [{ name: 'size:low' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: ['risk', 'ceremony'],
+  }), { on: true, reason: 'admitted widened by risk, ceremony' });
+});
+
+test('AC4.2 (#6018): ceremony:standard with risk:low and no widening keeps today\'s off answer', () => {
+  const issue = { labels: [{ name: 'size:low' }, { name: 'risk:low' }, { name: 'ceremony:standard' }] };
+  const want = { on: false, reason: 'size:low and 2 Key Files are inside the express bounds' };
+  assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js', 'b.js'], policyValue: 'beyond-express', widenedBy: [] }), want);
+  assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js', 'b.js'], policyValue: 'beyond-express' }), want);
+});
+
+test('reviewRequired: off still decides alone for a widened record; unreadable widenings turn it on (#6018)', () => {
+  const issue = { labels: [{ name: 'size:low' }] };
+  assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'off', widenedBy: ['risk'] }), { on: false, reason: 'express-driver-review is off' });
+  assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'on', widenedBy: ['risk'] }), { on: true, reason: 'express-driver-review is on' });
+  for (const widenedBy of ['risk', null, {}, 3, ['risk', 1], [null], [1]]) {
+    assert.deepStrictEqual(reviewRequired({ issue, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy }), { on: true, reason: 'widening facts unreadable' }, JSON.stringify(widenedBy));
+  }
+  // A record beyond the express bounds keeps today's reasons whatever the widening says.
+  assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: ['risk'] }), { on: true, reason: 'size medium is beyond size:low' });
+  assert.deepStrictEqual(reviewRequired({ issue: { labels: [{ name: 'size:medium' }] }, keyFiles: ['a.js'], policyValue: 'beyond-express', widenedBy: 'risk' }), { on: true, reason: 'size medium is beyond size:low' });
+});

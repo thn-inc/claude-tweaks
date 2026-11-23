@@ -13,17 +13,34 @@ const { shapeGate, liftMetadata } = require('../issues/materialize-format');
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { fileMatchesFrontendPredicate } = require('../design-detect/index');
 const { classifyDiffFiles, isSensitivePath } = require('../issues/blast-radius');
+const { CEREMONY_TIERS } = require('../issues/record-vocabulary');
 
 const EXPRESS_MAX_KEY_FILES = 3;
+
+// A label name exactly `ceremony:{tier}` for a recognised tier (case-sensitive, like the vocabulary).
+function isCeremonyTierName(n) {
+  return n.startsWith('ceremony:') && CEREMONY_TIERS.includes(n.slice('ceremony:'.length));
+}
 
 // The size labels each ceiling accepts. The express lane is fixed at `low`; the pipeline
 // driver lane (#5224) may pass `medium`.
 const SIZE_CEILINGS = Object.freeze({ low: Object.freeze(['low']), medium: Object.freeze(['low', 'medium']) });
 
+// The risk labels each ceiling accepts (#6018). The express lane is fixed at `low`; the pipeline
+// driver may pass `medium` or `high` (policy `express-driver-max-risk`).
+const RISK_CEILINGS = Object.freeze({
+  low: Object.freeze(['low']),
+  medium: Object.freeze(['low', 'medium']),
+  high: Object.freeze(['low', 'medium', 'high']),
+});
+
 // The driver lane's bound values as eligibility reads them: a ceiling is an own key of SIZE_CEILINGS
 // (`toString` is not one), and a Key File limit is a safe integer of at least 1.
 function isReadableSizeCeiling(v) {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(SIZE_CEILINGS, v);
+}
+function isReadableRiskCeiling(v) {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(RISK_CEILINGS, v);
 }
 function isReadableKeyFileLimit(v) {
   return Number.isSafeInteger(v) && v >= 1;
@@ -48,11 +65,15 @@ function isInsideLaneBounds({ size, keyFiles, bounds }) {
   return sizeWithinCeiling(size, bounds.sizeCeiling) && keyFilesWithinLimit(keyFiles, bounds.maxKeyFiles);
 }
 
-// Reasons for the two bounds the driver lane can widen. REASONS.size and
-// REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
+// Reasons for the three bounds the driver lane can widen (risk, size, Key Files). REASONS.risk,
+// REASONS.size and REASONS.tooManyKeyFiles are built from these at the express defaults, so the express
 // strings cannot drift from the parameterised ones.
 const BOUND_REASONS = Object.freeze({
-  // A ceiling that is not a SIZE_CEILINGS key gets the unreadable reason, never a throw.
+  risk: (ceiling) => (isReadableRiskCeiling(ceiling)
+    ? `risk is not ${RISK_CEILINGS[ceiling].join(' or ')}`
+    : BOUND_REASONS.riskCeilingUnreadable(ceiling)),
+  riskCeilingUnreadable: (v) => `risk ceiling unreadable: ${String(v)}`,
+  // A ceiling that is not a RISK_CEILINGS / SIZE_CEILINGS key gets the unreadable reason, never a throw.
   size: (ceiling) => (isReadableSizeCeiling(ceiling)
     ? `size is not ${SIZE_CEILINGS[ceiling].join(' or ')}`
     : BOUND_REASONS.sizeCeilingUnreadable(ceiling)),
@@ -65,7 +86,7 @@ const BOUND_REASONS = Object.freeze({
 const REASONS = Object.freeze({
   disabled: 'express-lane disabled',
   notPrFirst: 'integration-model is not pr-first',
-  risk: 'risk is not low',
+  risk: BOUND_REASONS.risk('low'),
   size: BOUND_REASONS.size('low'),
   ceremony: 'ceremony is not fast-lane',
   type: 'no type:* label',
@@ -146,11 +167,13 @@ function isFrontend(body, keyFiles) {
 // the lane composes no plan — parseRiskFlags reads a malformed line as every category
 // flagged, so an unreadable line is ineligible too. sizeCeiling and maxKeyFiles exist for
 // the pipeline driver lane (#5224; its admission is ../driver/admission.js) — every express
-// caller omits them, and an unreadable value refuses rather than falls back.
+// caller omits them, and an unreadable value refuses rather than falls back. riskCeiling and
+// allowAnyCeremony (#6018) are driver-only too: riskCeiling admits risk labels up to the ceiling
+// (an unreadable one refuses), and allowAnyCeremony === true admits any recognised ceremony:* tier.
 function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
-    sizeCeiling, maxKeyFiles,
+    sizeCeiling, maxKeyFiles, riskCeiling, allowAnyCeremony = false,
   } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
@@ -160,7 +183,13 @@ function evaluateRecordEligibility(issue, opts) {
 
   if (enabled !== true) reasons.push(REASONS.disabled);
   if (integrationModel !== 'pr-first') reasons.push(REASONS.notPrFirst);
-  if (facets.risk !== 'low') reasons.push(REASONS.risk);
+  if (riskCeiling === undefined) {
+    if (facets.risk !== 'low') reasons.push(REASONS.risk);
+  } else if (!isReadableRiskCeiling(riskCeiling)) {
+    reasons.push(BOUND_REASONS.riskCeilingUnreadable(riskCeiling));
+  } else if (!RISK_CEILINGS[riskCeiling].includes(facets.risk)) {
+    reasons.push(BOUND_REASONS.risk(riskCeiling));
+  }
   if (sizeCeiling === undefined) {
     if (facets.size !== 'low') reasons.push(REASONS.size);
   } else if (!isReadableSizeCeiling(sizeCeiling)) {
@@ -173,8 +202,12 @@ function evaluateRecordEligibility(issue, opts) {
   // other gates (risk, size, type, Key Files, shape) still apply. It reads raw label names, any
   // spelling, because facets.ceremony is null for an unrecognised label (ceremony:fastlane,
   // Ceremony:fast-lane) as well as an absent one, and an unrecognised label must still refuse.
+  // allowAnyCeremony (#6018) also passes a record whose every ceremony:* label is a recognised tier
+  // spelled exactly (at least one present), so a stray ceremony:fastlane beside ceremony:standard refuses.
+  const ceremonyNames = normalizeLabelNames(labels).filter((n) => /^ceremony:/i.test(n));
   const ceremonyOk = facets.ceremony === 'fast-lane'
-    || (allowAbsentCeremony === true && !normalizeLabelNames(labels).some((n) => /^ceremony:/i.test(n)));
+    || (allowAbsentCeremony === true && ceremonyNames.length === 0)
+    || (allowAnyCeremony === true && ceremonyNames.length > 0 && ceremonyNames.every(isCeremonyTierName));
   if (!ceremonyOk) reasons.push(REASONS.ceremony);
   if (!typeOf(issue || {})) reasons.push(REASONS.type);
   if (normalizeLabelNames(labels).includes('auto:merge-pending')) reasons.push(REASONS.mergePending);
@@ -196,6 +229,19 @@ function evaluateRecordEligibility(issue, opts) {
   if (parseRiskFlags(body).flags.length > 0) reasons.push(REASONS.riskFlags);
 
   return { number: issue && issue.number, eligible: reasons.length === 0, reasons, keyFiles };
+}
+
+// Which of the driver's two widened rules a record actually relies on (#6018): 'risk' when a label
+// names risk:medium or risk:high under a readable ceiling, 'ceremony' when anyCeremony === true and a
+// label names a recognised tier other than fast-lane. It scans every label name, never the parsed
+// facets (which keep only the last match), so a dual-labelled record answers the same in any order.
+// Pure: the driver steps, merge.js and the queue pull call it; admission and review read its result.
+function widenings({ labels, riskCeiling, anyCeremony } = {}) {
+  const names = normalizeLabelNames(labels || []);
+  const out = [];
+  if (isReadableRiskCeiling(riskCeiling) && names.some((n) => n === 'risk:medium' || n === 'risk:high')) out.push('risk');
+  if (anyCeremony === true && names.some((n) => isCeremonyTierName(n) && n !== 'ceremony:fast-lane')) out.push('ceremony');
+  return out;
 }
 
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
@@ -252,5 +298,6 @@ function expressMergeVerification(resolved) {
 
 module.exports = {
   EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings,
   BOUND_REASONS, REASONS, isProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

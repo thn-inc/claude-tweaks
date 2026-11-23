@@ -8,7 +8,7 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 `plugin/bin/lib/hooks/`.
 
 - **Dispatch order is significant, not incidental.** `index.js` runs `mirror → red-tip → console →
-  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → reap`, reap
+  release → post-merge → archive → archive-branches → remote-prune → ledger-residue → plan-refs → reap`, reap
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
   finished with. `post-merge` sits immediately before `archive` because it hands archive the run
@@ -65,10 +65,10 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
 - **The fast/background split (#820 D8).** `bin/lib/hooks/session-start.js`'s `FAST_CHECKS`
   (`mirror`, `red-tip`, `console` — cheap read/detect, run inline on every SessionStart) and
   `bin/hooks.js`'s `BACKGROUND_CHECKS` (`release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`,
-  `ledger-residue`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
+  `ledger-residue`, `plan-refs`, `reap` — write-only/janitorial, run in a detached `reconcile-background` child
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
-  The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
+  The unscoped `hooks.js reconcile` CLI defers four of the eight to that same background pass
   (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them
   and runs inline beside `archive`); an explicit `--checks` call is never deferred.
 
@@ -93,7 +93,13 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `BACKGROUND_CHECKS`, pinned by `tests/bin-lib/hooks/reconcile-background.test.js`); a deferred
    check is then absent from the unscoped CLI's inline set. `plugin/skills/tidy/scan-procedures.md`'s
    Reconcile-first call lists every check explicitly for that reason, and
-   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`.
+   `tests/reconcile-dispatch.test.js` pins that list to `ALL_CHECKS`. A check that joins
+   `CLI_DEFERRED_CHECKS` also joins the prose lists of the background-pass hand-off, which no test
+   pins: `plugin/skills/routine-kickoff/SKILL.md`'s Reconcile step (also its `local-merge` clause,
+   when the check runs there), `plugin/skills/dispatch/SKILL.md`'s second reconcile call, and
+   `plugin/skills/_shared/pr-first-merge-post-merge.md`'s background-pass list (#6055's review found
+   all three stale). A check that pushes a write to origin also takes a reconcile-converged row in
+   `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
    remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
@@ -457,9 +463,9 @@ main loop, landed via #1962/#2226/#2228/#2231):
 skill — it cannot reach an agent session's MCP tools, only `gh`. When `gh` is absent (a cloud
 Routine sandbox with GitHub MCP tools instead of the CLI), every GitHub-dependent check —
 `red-tip`, `reap`, `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune`, `ledger-residue`,
-`console` — is skipped
+`plan-refs`, `console` — is skipped
 via the preflight gate (`ghHealthCheck`/`ghHealthCheckAsync`, `preflight.js`), reported as
-`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console","reason":"preflight-gh-absent"}]}`.
+`{"skipped":[{"check":"red-tip,reap,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,plan-refs,console","reason":"preflight-gh-absent"}]}`.
 `mirror` is the one exception — pure git, no `gh` call — and keeps running.
 
 This is an **accepted gap, not a bug to fix here**: unlike `/claude-tweaks:dispatch`'s own queue-pull
@@ -873,7 +879,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
 - **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
-  `archive-branches`, `remote-prune`, `ledger-residue`, `reap` and `finalize`; only phases that ran
+  `archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
   concurrently (the `gh-pool.js` mappers), so read it as cost, not as a share of the phase.
@@ -938,25 +944,26 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   loop and every per-dir `checkRunIntegrity` spawn `git worktree list` once between them. `reap`
   lists afresh itself, since it removes worktrees.
 - **CLI deferral.** The unscoped `hooks.js reconcile` runs `ALL_CHECKS` minus `CLI_DEFERRED_CHECKS`
-  (`archive-branches`, `remote-prune`, `ledger-residue` — `archive-branches`' and `remote-prune`'s
-  per-branch GraphQL lookups measured 14.8 s and 20.4 s, and `remote-prune` needs the all-refs fetch) and hands those to the detached `reconcile-background`
+  (`archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs` — `archive-branches`' and `remote-prune`'s
+  per-branch GraphQL lookups measured 14.8 s and 20.4 s, `remote-prune` needs the all-refs fetch, and `plan-refs` lists
+  and writes remote refs) and hands those to the detached `reconcile-background`
   pass through `background-spawn.js`'s `spawnBackgroundIfStale`, gated by that pass's own status
   file, as SessionStart does. The JSON gains `background: { checks, spawned, reason }`
   (`reason`: `spawned`, `fresh`, `spawn-failed`, `no-root`, `dry-run`, `not-converged`) and a
-  `skipped` entry `deferred-to-background` for the three; an explicit `--checks` call is never
+  `skipped` entry `deferred-to-background` for the four; an explicit `--checks` call is never
   deferred and carries neither. Nothing is spawned when the pass did not converge —
   `NOT_CONVERGED_REASONS` (`no-repo`, `no-remote`, `fresh-cache`, `local-merge-model`,
   `preflight-gh-absent`, `preflight-github-unreachable`, `reconcile-threw`); report-only skips such
   as `non-canonical-run-dir` or `budget-exceeded` do not count — nor under `--dry-run`, which
-  therefore previews none of the three (`skipped` still names them; `background.reason` reads
+  therefore previews none of the four (`skipped` still names them; `background.reason` reads
   `dry-run`, saying nothing was handed over; an explicit `--checks … --dry-run` previews them). The
   background pass runs under `BACKGROUND_BUDGET_MS` (`budget.js`, 120 s) because the 18 s hot-path
   ceiling skipped its last three checks every pass. Without `remote-prune` the inline set is
   mirror-only-shaped, so the unscoped CLI now takes `mirror`'s single-ref `git fetch origin
   {integration}` (5 s `FETCH_TIMEOUT_MS`, concurrent with preflight) where it used to run
   `fetch --prune origin` (10 s); other `refs/remotes/origin/*` refs refresh when the background
-  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all ten
-  checks explicitly, because the unscoped call defers three.
+  pass's `--prune` fetch runs. `/tidy`'s Reconcile-first call names all eleven
+  checks explicitly, because the unscoped call defers four.
 - **Measured (AC1.1, #4032).** `node plugin/bin/hooks.js reconcile --json`, 20 sequential unscoped
   calls against this repo's main checkout (live network, HEAD baf2964, 2026-10-25): wall time min
   6786 / p50 7266 / p90 7931 / max 8845 ms, against about 52.5 s before (63 s in the record).
@@ -967,6 +974,33 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   120 s ceiling lets finish. A live-network wall-time property of this repo's state, so verified by
   this measurement rather than a committed `npm test` assertion; re-measure after changing any
   contract above.
+
+## Plan refs (#6055)
+
+`plan-refs.js` deletes `refs/claude-tweaks/plans/{n}` on origin once record `{n}` is CLOSED. A
+plan ref is shared state on origin and a pushed deletion is unrecoverable from this checkout, so
+the evidence bar is strict:
+
+- **Listing.** `git ls-remote origin 'refs/claude-tweaks/plans/*'`. Only a ref whose name parses as
+  an exact positive integer counts (`parsePlanRefName`); a non-hex sha claims no record, and the
+  first valid sha per record wins.
+- **State.** One aliased GraphQL batch per 50 records, made in the same call immediately before the
+  pushes. Only a proven `CLOSED` deletes. An open record, a PR number, a missing issue, or a
+  truncated or errored chunk keeps the ref (`record-open`, `state-unreadable`).
+- **Lease.** Each delete is `git push --force-with-lease=<ref>:<sha>` on the sha `ls-remote`
+  observed, so a plan re-written between the listing and the push survives: the push is rejected
+  and the entry is `delete-failed`, carrying git's reason as `detail`.
+- **Dry run.** `would-delete` entries; nothing is pushed.
+- **Whole-check failures** land in `skipped` as `{check: 'plan-refs', reason}`: `local-files-backend`
+  (no GitHub records to be closed), `no-origin` (no `origin` remote at all — the URL probe fails too),
+  `ls-remote-failed` (origin is configured but its listing fails), `origin-unresolvable`, `gh-absent` (no push),
+  `unexpected-error`. The check never throws.
+- **Backend.** Runs under `pr-first` on the background tier, and under `local-merge` as a fallback
+  beside `reap`'s; it is not in the `local-merge-model` skip list. The unscoped CLI defers it to the
+  background pass with the other three CLI-deferred checks; an explicit `--checks plan-refs` runs
+  it inline.
+- **No prerequisite.** It lists `origin` itself and reads no state another check produces, so it
+  has no `PREREQUISITES` entry.
 
 ## Referenced by
 

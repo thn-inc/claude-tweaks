@@ -252,6 +252,44 @@ test('AC2.1: archive-branches on a github.com origin leaves GH_HOST unset and it
   assertBareScreen(lines);
 });
 
+// plan-refs reads record states in one GraphQL batch on the origin host: the real gh runner (ghOptions) spawns
+// the fake gh, `--hostname` rides right after `graphql` on a GHE origin only, and the owner/name pair is bare.
+// ls-remote is answered by an injected git (the fixture's origin is a URL, not a repo); `remote get-url` is real.
+function planRefsLines(t, origin) {
+  const readLog = installFakeGh(t, { 'api-graphql': JSON.stringify({ data: { repository: { i0: { number: 7, state: 'OPEN' } } } }) });
+  const { repo } = makeRepo(t, origin);
+  withoutGhHost(t);
+  const stderr = captureSeamNotes(t);
+  const { planRefs } = require('../plugin/bin/lib/reconcile/plan-refs');
+  const gitRunner = (args) => (args[0] === 'ls-remote'
+    ? `${'a'.repeat(40)}\trefs/claude-tweaks/plans/7\n`
+    : execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+  const result = planRefs({ cwd: repo, dryRun: true, git: gitRunner, readBackend: () => 'github-issues' });
+  stderr.restore();
+  assert.equal(result.failure, null, JSON.stringify(result));
+  assert.deepEqual(result.entries.map((e) => [e.record, e.action, e.reason]), [[7, 'skip', 'record-open']]);
+  return readLog();
+}
+
+test('AC1.1: plan-refs on a *.ghe.com origin reads record states on the origin host with --hostname and a bare owner/name pair', { skip: STUB_SKIP }, (t) => {
+  const lines = planRefsLines(t, GHE_ORIGIN);
+  assertEveryLineReaches(lines, 'acme.ghe.com');
+  const calls = screenCalls(lines);
+  assert.equal(calls.length, 1, `expected one GraphQL batch call, log:\n${lines.join('\n')}`);
+  assert.match(argsOf(calls[0]), /^api graphql --hostname acme\.ghe\.com -f owner=acme -f name=widgets -f query=/);
+  assert.equal(argsOf(calls[0]).split(' --hostname ').length, 2, 'exactly one --hostname');
+});
+
+test('AC2.1: plan-refs on a github.com origin leaves GH_HOST unset and passes no --hostname', { skip: STUB_SKIP }, (t) => {
+  const lines = planRefsLines(t, 'git@github.com:acme/widgets.git');
+  const net = networkLines(lines);
+  assert.ok(net.length >= 1, `expected the batch call, log:\n${lines.join('\n')}`);
+  for (const line of net) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+  const calls = screenCalls(lines);
+  assert.equal(calls.length, 1, `expected one GraphQL batch call, log:\n${lines.join('\n')}`);
+  assert.match(argsOf(calls[0]), /^api graphql -f owner=acme -f name=widgets -f query=/);
+});
+
 function materializeLines(t, origin) {
   const readLog = installFakeGh(t, { 'issue-view': MATERIALIZE_RECORD });
   const { repo, runDir } = makeRepo(t, origin);

@@ -209,7 +209,7 @@ firing and once stranding a firing whose one-shot turn ended waiting on the back
 
 `--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full
 unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
-`remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
+`remote-prune`/`ledger-residue`/`plan-refs` to the background pass), none of which this step's own next
 paragraph describes needing, and `remote-prune`'s inclusion is what forces the full
 `--prune all-refs` fetch (`shared-fetch.js`) instead of the single-ref fetch a `mirror`-only
 request uses. Fast-forwards the mirror (the local integration branch — "mirror" and

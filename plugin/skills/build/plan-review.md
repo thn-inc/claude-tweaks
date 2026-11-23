@@ -79,6 +79,10 @@ End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH
 - **`No findings.`** — log `SCANNED` (`--text "plan review: no findings"`, same command shape) and continue.
 - **A table** — route each row by its Class and Resolution, never on Severity; `low` and `info` findings are logged only and amend nothing (they ride in the `AUTO` entry's text, or, when every row is `low`/`info`, in one `SCANNED` entry naming the count). That rule governs amendments only: a `needs-human` spec-gap row triggers the HARD-GATE at any severity, `low` and `info` included. In a converged round, only a row that survives the convergence rule reaches it (`### Converged round (#4958)` below). A spec-gap row is treated as `needs-human` when its Resolution is anything other than the two defined values, or when it is marked `intent-resolvable` and its Evidence quotes no spec sentence or quotes one that does not appear verbatim in the worktree's `work/{n}-spec.md` (grep it before amending — a paraphrase is not a quote) — the burden of proof is on the quote. `missing-review-risk` and `mischaracterized-role` (#3378) never trigger the HARD-GATE — they route as plan amendments, same as `undecided behaviour`/`cross-task contract` below, regardless of severity. A row whose Class is none of the five is logged only, like a `low` row. A row promoted to `needs-human` here carries no Reading A / Reading B from the reviewer: write the two readings yourself from its Suggested resolution and the unamended spec text. A `+N more` row routes nothing; carry its count into the log text.
 
+<!-- planning-decisions:start -->
+**Planning decisions (#6051).** Before routing, resolve `planning-decisions` once: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values planning-decisions`. When it prints `asked-classes`, read `plan-review-asked-classes.md` in this directory and route every needs-human row by it; the asked classes are `_shared/planning-decisions.md`'s. Any other output, or a failed call, leaves this file as written.
+<!-- planning-decisions:end -->
+
 ## Handling by class
 
 When a reply carries needs-human rows beside others, settle the needs-human set first (the last two subsections). A present human's answers then join the other rows in one amendment sequence — one commit, one log line (plus one per row a converged round settles), one comment, one re-audit. A dispatched call or parallel-wave member that blocks applies nothing; the next build reviews the answered record afresh.
@@ -169,12 +173,12 @@ With no `$PIPELINE_RUN_DIR` (no run directory resolves, so no `config.yml`), the
 
 ## Skip logging
 
-When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), or Spec Step 2's resume branch skips a plan already reviewed, write one `SKIP` entry:
+When the `SKILL.md` stub's gate fires (`ceremony-profile=fast-lane` — roster tag `plan-review` — or a trivial plan), or Spec Step 2's resume branch skips a plan already reviewed, or `plan-reuse.md` reused a plan reviewed at specify, write one `SKIP` entry:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP \
   --section "/build" --step "Common Step 1.6 (plan review)" \
-  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since} → fallback: no plan review" --reversibility n/a
+  --text "condition: {ceremony-profile=fast-lane (roster tag plan-review) | trivial plan: fewer than 3 file references and no Scope keywords: | resumed build: plan already reviewed this run, spec and plan unchanged since | plan reviewed at specify ({commit})} → fallback: no plan review" --reversibility n/a
 ```
 
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead (`handoff-template.md`'s inline-skip listing).

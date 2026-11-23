@@ -842,7 +842,7 @@ async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipp
 
 const INLINE_UNSCOPED_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'post-merge', 'archive', 'console'];
 
-const DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
+const DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue', 'plan-refs'];
 
 test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
   const { calls } = await runReconcileVerbStubbed([
@@ -861,11 +861,11 @@ test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounde
   assert.equal(calls[1].skipCacheStamp, undefined);
 });
 
-test('unscoped CLI defers three checks and spawns the background pass (#4032)', async () => {
+test('unscoped CLI defers four checks and spawns the background pass (#4032)', async () => {
   const { calls, spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']]);
   assert.equal(spawnCalls.length, 1);
   assert.equal(calls.length, 1);
-  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue,plan-refs', reason: 'deferred-to-background' }]);
   assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
 
@@ -886,7 +886,7 @@ test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032
   assert.equal(spawnCalls.length, 0);
   assert.equal(outputs[0].background.spawned, false);
   assert.equal(outputs[0].background.reason, 'dry-run');
-  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].skipped, [{ check: 'archive-branches,remote-prune,ledger-residue,plan-refs', reason: 'deferred-to-background' }]);
 });
 
 test('unscoped CLI treats a local-merge-model skip as not converged: no deferral entry, skipped untouched (#4032)', async () => {
@@ -908,7 +908,7 @@ test('unscoped CLI treats a gh-preflight skip as not converged and keeps the def
   assert.equal(spawnCalls.length, 0);
   assert.deepEqual(outputs[0].skipped, [
     pfSkip,
-    { check: 'archive-branches,remote-prune,ledger-residue', reason: 'preflight-gh-absent' },
+    { check: 'archive-branches,remote-prune,ledger-residue,plan-refs', reason: 'preflight-gh-absent' },
   ]);
   assert.equal(outputs[0].background.reason, 'not-converged');
 });
@@ -959,7 +959,7 @@ test('unscoped CLI still defers and spawns when the pass carries a report-only n
     reconcileResult: () => ({ skipped: [reportOnly] }),
   });
   assert.equal(spawnCalls.length, 1);
-  assert.deepEqual(outputs[0].skipped, [reportOnly, { check: 'archive-branches,remote-prune,ledger-residue', reason: 'deferred-to-background' }]);
+  assert.deepEqual(outputs[0].skipped, [reportOnly, { check: 'archive-branches,remote-prune,ledger-residue,plan-refs', reason: 'deferred-to-background' }]);
   assert.deepEqual(outputs[0].background, { checks: DEFERRED_CHECKS, spawned: true, reason: 'spawned' });
 });
 
