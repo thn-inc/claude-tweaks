@@ -335,3 +335,31 @@ test('when every lens is excluded, the GIT_ATTR_SOURCE probe and its line are sk
   assert.strictEqual(calls.length, 0);
   assert.strictEqual(res.stderr, 'review-lens-workers: lens 3f A failed: excluded\nreview-lens-workers: lens 3f B failed: excluded\n');
 });
+
+// Re-review of fix round 1 (#6000).
+test('an unreadable policy exits 2 before any derivation git call or probe, its message neutralized', async (t) => {
+  const fx = fixture(t);
+  const gitCalls = [];
+  const realGit = require(CLI).realDeps.git;
+  const git = (args, opts) => { gitCalls.push(args); return realGit(args, opts); };
+  let probes = 0;
+  const { runner, calls } = fakeRunner();
+  const res = await call(fx, argv(fx, plainCheckout(t)), {
+    runner, git, gitHonoursAttrSource: () => { probes += 1; return true; },
+    resolvePolicy: () => { throw new Error('bad \u001b[31mred'); },
+  });
+  assert.strictEqual(res.code, 2);
+  assert.doesNotMatch(res.stderr, /\u001b/);
+  assert.match(res.stderr, /^review-lens-workers: policy unreadable: bad .*red\n$/);
+  assert.strictEqual(probes, 0);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(!gitCalls.some((a) => a.includes('hash-object') || a.includes('--git-common-dir')), JSON.stringify(gitCalls));
+});
+
+test('a stderr detail is cut by code point, never inside a surrogate pair', async (t) => {
+  const fx = fixture(t, { lenses: [lens('3b', 1)] });
+  const text = 'x'.repeat(199) + '\u{1F600}' + 'y'.repeat(300);
+  const { runner } = fakeRunner(() => ({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: text }) }));
+  const res = await call(fx, argv(fx, plainCheckout(t)), { runner });
+  assert.strictEqual(res.stderr, `review-lens-workers: lens 3b A failed: launch (${'x'.repeat(199)}\u{1F600}…)\n`);
+});

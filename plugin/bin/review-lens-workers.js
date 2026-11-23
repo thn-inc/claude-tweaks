@@ -39,8 +39,9 @@
 // not the sanctioned writers' 3, per the #4027 split: the spec fixes this CLI's codes to 0
 // and 2, and no caller branches on a distinct run-dir code. On POSIX a SIGINT or SIGTERM
 // forwards SIGTERM to every running worker, waits for their launches to settle (bounded by the
-// launcher's kill grace) so each still logs its record, sends SIGKILL to any worker still running
-// after the grace, prints nothing on stdout, and exits
+// launcher's kill grace) so each that settles in time logs its record, sends SIGKILL to any worker
+// still running after the grace and returns without waiting again, so a worker that ignored SIGTERM
+// may not append its record, prints nothing on stdout, and exits
 // 130 (SIGINT) or 143 (SIGTERM), so a dispatcher never reads an interrupted run as a reply.
 
 const fs = require('node:fs');
@@ -88,7 +89,8 @@ function errText(err) {
 // A worker-written string, safe for one stderr line.
 function safeText(text) {
   const clean = neutralize(String(text).replace(CONTROL_CHARS, ' '));
-  return clean.length > STDERR_DETAIL_MAX ? clean.slice(0, STDERR_DETAIL_MAX) + '…' : clean;
+  const points = Array.from(clean); // by code point, so a surrogate pair is never split
+  return points.length > STDERR_DETAIL_MAX ? points.slice(0, STDERR_DETAIL_MAX).join('') + '…' : clean;
 }
 
 function realGit(args, { cwd, env, input = '' }) {
@@ -165,6 +167,13 @@ async function run(argv, overrides = {}) {
   const runDir = target.dir;
   if (isAncestorOrSelf(cwdReal, canonicalRealpath(runDir) || runDir)) return usageError(`--run ${o.run} lies inside --cwd ${o.cwd}: the launcher's log would be written into the reviewed worktree`);
 
+  // Read before any derivation git call or probe line: an unreadable policy exits 2 first.
+  let policy;
+  try { policy = deps.resolvePolicy(MODEL_POLICY_KEYS, { runDir }); } catch (e) {
+    deps.stderr(`review-lens-workers: policy unreadable: ${safeText(errText(e))}\n`);
+    return 2;
+  }
+
   let readPaths;
   let attrSource;
   try {
@@ -184,12 +193,6 @@ async function run(argv, overrides = {}) {
   if (anyLaunchable && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
     honours = deps.gitHonoursAttrSource({ cwd: o.cwd, env: deps.env }) === true;
     if (!honours) deps.stderr(`review-lens-workers: the git in ${o.cwd} does not honour GIT_ATTR_SOURCE, which the lens-reviewer's pinned git environment needs; no worker starts\n`);
-  }
-
-  let policy;
-  try { policy = deps.resolvePolicy(MODEL_POLICY_KEYS, { runDir }); } catch (e) {
-    deps.stderr(`review-lens-workers: policy unreadable: ${errText(e)}\n`);
-    return 2;
   }
 
   let settingsDir;
