@@ -159,6 +159,14 @@ function isBuildTimeProtectedPath(path) {
   return BUILD_TIME_PROTECTED_RES.some((re) => re.test(normalized));
 }
 
+// The one rule both gates apply in the driver's reviewer mode (#6019): a protected path is left for
+// the reviewer only when it is not build-time and not merge-sensitive. evaluateRecordEligibility
+// (Key Files) and evaluateDiffBounds (changed paths, a rename's oldPath) must agree on it, or a path
+// eligibility admits would escalate at check, or the reverse.
+function protectedPathLeftForReviewer(path, sensitive) {
+  return isProtectedPath(path) && !isBuildTimeProtectedPath(path) && !sensitive;
+}
+
 // Mirrors design-detect's layer2 (FRONTEND_SURFACES there, `terminal` included;
 // only `backend` and `infra` skip): a surface the design tracks treat as a
 // frontend never takes the lane, which runs no design or visual check.
@@ -241,7 +249,7 @@ function evaluateRecordEligibility(issue, opts) {
   if (isFrontend(body, keyFiles)) reasons.push(REASONS.frontend);
   for (const p of keyFiles) {
     const sensitive = isSensitivePath(canonicalPath(p), sensitivePaths);
-    const leftForReviewer = protectedPathsNeedReviewer === true && !isBuildTimeProtectedPath(p) && !sensitive;
+    const leftForReviewer = protectedPathsNeedReviewer === true && protectedPathLeftForReviewer(p, sensitive);
     if (isProtectedPath(p) && !leftForReviewer) reasons.push(REASONS.protectedPath(p));
     if (sensitive) reasons.push(REASONS.sensitivePath(p));
   }
@@ -266,6 +274,18 @@ function widenings({ labels, riskCeiling, anyCeremony, keyFiles, protectedPathsN
   if (anyCeremony === true && names.some((n) => isCeremonyTierName(n) && n !== 'ceremony:fast-lane')) out.push('ceremony');
   if (protectedPathsNeedReviewer === true && Array.isArray(keyFiles) && keyFiles.some(isProtectedPath)) out.push('protected-path');
   return out;
+}
+
+// widenings() for a record judged under eligibility options (the driver's eligibilityOptions shape):
+// the one place the option names map to widenings' inputs, so the driver's eligibility step, the
+// plan lane and the express queue pull cannot drift apart on a new widening input.
+function widenedByFor(labels, keyFiles, opts = {}) {
+  return widenings({
+    labels, keyFiles,
+    riskCeiling: opts.riskCeiling,
+    anyCeremony: opts.allowAnyCeremony,
+    protectedPathsNeedReviewer: opts.protectedPathsNeedReviewer,
+  });
 }
 
 // Every changed non-test, non-pipeline-artifact path must be a Key File and
@@ -301,7 +321,7 @@ function evaluateDiffBounds(files, opts) {
       }
     }
     if (isProtectedPath(f.path)) {
-      if (report && !isBuildTimeProtectedPath(f.path) && !f.isSensitive) noteProtected(f.path);
+      if (report && protectedPathLeftForReviewer(f.path, f.isSensitive)) noteProtected(f.path);
       else violations.push(REASONS.protectedPath(f.path));
     }
     if (f.isSensitive) violations.push(REASONS.sensitivePath(f.path));
@@ -311,7 +331,7 @@ function evaluateDiffBounds(files, opts) {
     if (oldPath && oldPath !== f.path) {
       const oldSensitive = isSensitivePath(oldPath, sensitivePaths);
       if (isProtectedPath(oldPath)) {
-        if (report && !isBuildTimeProtectedPath(oldPath) && !oldSensitive) noteProtected(oldPath);
+        if (report && protectedPathLeftForReviewer(oldPath, oldSensitive)) noteProtected(oldPath);
         else violations.push(REASONS.protectedPath(oldPath));
       }
       if (oldSensitive) violations.push(REASONS.sensitivePath(oldPath));
@@ -337,6 +357,6 @@ function expressMergeVerification(resolved) {
 
 module.exports = {
   EXPRESS_MAX_KEY_FILES, isBeyondExpressBounds, isInsideLaneBounds, isReadableSizeCeiling, isReadableKeyFileLimit, SIZE_CEILINGS,
-  RISK_CEILINGS, isReadableRiskCeiling, widenings,
+  RISK_CEILINGS, isReadableRiskCeiling, widenings, widenedByFor,
   BOUND_REASONS, REASONS, isProtectedPath, PROTECTED_FAMILIES, BUILD_TIME_PROTECTED_RES, isBuildTimeProtectedPath, evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification,
 };

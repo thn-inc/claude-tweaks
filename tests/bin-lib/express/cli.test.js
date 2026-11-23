@@ -908,6 +908,16 @@ test('AC3.1 (#6019): check --protected-paths reviewer on a diff changing a liste
   assert.match(decisions(fx), /protected path\(s\) left for the reviewer and a human merge: plugin\/skills\/_shared\/a\.md/);
 });
 
+test('#6019: the proceed line neutralizes a reported protected path, as the driver copy of the note does', () => {
+  // `@` is one of the characters neutralize rewrites (to `@` + U+200B), so a raw write differs.
+  const p = 'plugin/skills/_shared/@team.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  assert.deepStrictEqual(h.json().bounds.protectedPaths, [p]);
+  assert.ok(decisions(fx).includes('left for the reviewer and a human merge: plugin/skills/_shared/@​team.md'));
+});
+
 test('AC3.2 (#6019): the same diff without the flag escalates out-of-bounds naming the protected path', () => {
   const p = 'plugin/skills/_shared/a.md';
   const fx = fixture();

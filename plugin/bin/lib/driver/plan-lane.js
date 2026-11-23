@@ -38,7 +38,7 @@ const { normalizeLabelNames, parseRecordFacets, LABELS } = require('../issues/re
 const { parseRiskFlags } = require('../issues/record-risk-flags');
 const { evaluateMicroPlanGate } = require('../issues/micro-plan-gate');
 const {
-  evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit, isReadableRiskCeiling, widenings,
+  evaluateRecordEligibility, isReadableSizeCeiling, isReadableKeyFileLimit, isReadableRiskCeiling, widenedByFor,
 } = require('../express/eligibility');
 const { expressGateOptions } = require('../express/policy');
 const { evaluateAdmission } = require('./admission');
@@ -112,8 +112,7 @@ function insideDriverBounds(issue, policy) {
   const opts = eligibilityOptions(policy);
   const eligibility = evaluateRecordEligibility(issue, { ...opts, escalated: false });
   if (!eligibility.eligible) return false;
-  const widenedBy = widenings({ labels: issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony,
-    keyFiles: eligibility.keyFiles, protectedPathsNeedReviewer: opts.protectedPathsNeedReviewer });
+  const widenedBy = widenedByFor(issue.labels, eligibility.keyFiles, opts);
   const reviewer = reviewRequired({ issue, keyFiles: eligibility.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy });
   return evaluateAdmission({
     state: 'OPEN',

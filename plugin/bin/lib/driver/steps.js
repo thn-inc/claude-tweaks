@@ -90,7 +90,7 @@ const { openBlockerRefs } = require('../issues/record-dependencies');
 const { hasDriverEscalationMarker } = require('./settle');
 const { merge } = require('./merge');
 const { laneBounds, eligibilityOptions } = require('./lane-bounds');
-const { widenings } = require('../express/eligibility');
+const { widenedByFor } = require('../express/eligibility');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { reviewRecord, treeDelta } = require('./review');
 const { reviewerGateReason, ADMISSION_REASONS } = require('./admission');
@@ -294,10 +294,7 @@ const eligibilityStep = defineStep(STEP.eligibility, STOP_CLASSES.REFUSED, async
   // What the record is admitted beyond (#6018). A refused record reports none, so --check never names a
   // widening for a record it refused; it never reaches merge either.
   const eligible = Boolean(verdict) && verdict.eligible === true;
-  ctx.widenedBy = eligible ? widenings({
-    labels: ctx.issue.labels, riskCeiling: opts.riskCeiling, anyCeremony: opts.allowAnyCeremony,
-    keyFiles: ctx.keyFiles, protectedPathsNeedReviewer: opts.protectedPathsNeedReviewer,
-  }) : [];
+  ctx.widenedBy = eligible ? widenedByFor(ctx.issue.labels, ctx.keyFiles, opts) : [];
   ctx.reviewer = deps.reviewRequired({ issue: ctx.issue, keyFiles: ctx.keyFiles, policyValue: policy['express-driver-review'].value, widenedBy: ctx.widenedBy });
   if (!eligible) {
     const reasons = [...((verdict && verdict.reasons) || [])];

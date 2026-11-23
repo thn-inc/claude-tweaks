@@ -183,6 +183,24 @@ test('AC6.3: an unreadable bound or policy entry reads null, policy-unreadable',
   }
 });
 
+test('every schema value of the three enum policy keys reads as readable policy', async (t) => {
+  // plan-lane.js keeps its own copy of each key's values; a value the schema gains that the copy
+  // lacks would read every record policy-unreadable, so each schema value is pinned here.
+  const { POLICY_KEYS: SCHEMA } = require(path.join(LIB, 'policy-schema.js'));
+  const b = body(DRIVER_FILES);
+  const keyFiles = extractKeyFileEntries(b);
+  for (const key of ['express-driver', 'express-driver-review', 'express-driver-protected-paths']) {
+    const values = SCHEMA.find((k) => k.key === key).values;
+    assert.ok(Array.isArray(values) && values.length > 0, `${key} has schema values`);
+    for (const value of values) {
+      await t.test(`${key}: ${value}`, () => {
+        const v = needsNoPlan({ labels: DRIVER_LABELS, keyFiles, body: b, policy: policy({ [key]: value }) });
+        assert.notStrictEqual(v.reason, 'policy-unreadable');
+      });
+    }
+  }
+});
+
 test('#6019: a merge-time protected Key File reads driver only under reviewer with the reviewer on', () => {
   const hookFiles = ['plugin/hooks/x.js'];
   const labels = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];

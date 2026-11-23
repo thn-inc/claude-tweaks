@@ -52,6 +52,9 @@ const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { expressGateOptions, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
 const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+// A changed path is raw git bytes (a newline is legal) bound for a decisions.md line; the driver's
+// copy of the proceed note neutralizes it the same way (steps.js checkStep).
+const { neutralize } = require('../driver/events');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
@@ -365,7 +368,7 @@ function runCheck(deps, flags) {
 
   const k = bounds.changedFiles.length;
   const protectedNote = Array.isArray(bounds.protectedPaths) && bounds.protectedPaths.length > 0
-    ? `; protected path(s) left for the reviewer and a human merge: ${bounds.protectedPaths.join(', ')}` : '';
+    ? `; protected path(s) left for the reviewer and a human merge: ${bounds.protectedPaths.map((p) => neutralize(String(p))).join(', ')}` : '';
   const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds${protectedNote}; runner stamp verifies HEAD ${head}.`);
   // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
   // stability): eligibility required pr-first, and the merge steps that follow must not
