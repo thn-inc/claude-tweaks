@@ -1,8 +1,58 @@
 {
-  "computedAt": "2026-11-23T15:42:00.862Z",
+  "computedAt": "2026-11-23T15:47:57.562Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6152,
+        "updatedAt": "2026-11-23T15:45:44Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6151,
+        "updatedAt": "2026-11-23T15:45:37Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6150,
+        "updatedAt": "2026-11-23T15:45:29Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6149,
+        "updatedAt": "2026-11-23T15:45:21Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6148,
+        "updatedAt": "2026-11-23T15:45:14Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6147,
+        "updatedAt": "2026-11-23T15:45:06Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6146,
+        "updatedAt": "2026-11-23T15:44:57Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6145,
+        "updatedAt": "2026-11-23T15:44:48Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6143,
+        "updatedAt": "2026-11-23T15:42:35Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6142,
+        "updatedAt": "2026-11-23T15:42:42Z",
+        "state": "OPEN"
+      },
       {
         "number": 6114,
         "updatedAt": "2026-11-23T07:27:03Z",
@@ -35,7 +85,7 @@
       },
       {
         "number": 6002,
-        "updatedAt": "2026-11-23T06:56:10Z",
+        "updatedAt": "2026-11-23T15:45:57Z",
         "state": "OPEN"
       },
       {
@@ -778,14 +828,20 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nOnce a launch's effort can be set (#5941 for agents in a session, #5942 for driver workers), an implementer's first attempt runs at the lowest effort its record's labels allow, and a failure raises the effort one step before it raises the profile. Starting effort follows `risk:`: `risk:low` starts at `low`, `risk:medium` at `medium`, anything higher, or no risk label, at the profile's own resolved effort. A failure an effort step can plausibly fix (red tests, or a failed fix-round re-review) first raises the effort one step on the same profile (never above `high`); a failure it cannot (`BLOCKED`, `cannot-complete`), or a second failure, steps the profile up at that profile's own resolved effort. At most two escalations; past them each lane does what #5997 and #5999 do after their one escalation. Implementers only: a test or a review shows when an implementer failed, while a review that misses a finding looks like a clean review and could never trigger a retry.\n\nThe design's done-when for this half: 20 tasks started at `low` show total minutes per task, retries included, no higher than tasks started at `medium` of the same size band, and no more fix rounds per task. Starting effort follows risk, so the two groups also differ in risk; the size match narrows that confound but does not remove it, and the comparison is read as cost and quality per risk class, not as a pure effort effect.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- Reviewers, judges and every non-implementer role: each gets one fixed effort, chosen by the review-replay phase of the design.\n- Changing `model-effort`, `launchEffort` or `--effort` themselves: #5941 and #5942.\n- The record rule and the one-profile step-up: #5996, #5997 and #5999. This record extends their ladder; it does not replace it.\n- `xhigh` or `max` for any implementer attempt.\n- The Fast profile's effort: its resolved effort is unset, so a Fast attempt has no effort step and its first escalation is the profile step.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #5941 | Set a launched agent's effort from its resolved profile | ready, not started; adds `model-effort` and `launchEffort` (blocked-by link) |\n| #5942 | Launch driver workers at the effort their role's profile names | ready, not started; adds `--effort` on driver launches and the `effort` event field (blocked-by link) |\n| #5996 | Pick an implementer's work profile from its record in code | ready; adds `plugin/bin/lib/model-profiles/implementer-tier.js` (blocked-by link) |\n| #5997 | Launch the driver implementer at the record's profile and retry once one profile up | ready; adds the driver relaunch (blocked-by link) |\n| #5999 | Take the standard lane's implementer profile from the record rule and escalate once | ready; adds the standard lane's escalation (blocked-by link) |\n\n## Current State\n\nWritten against the tree before its prerequisites; re-derive every name below from the merged code before planning.\n\n- `resolve()` (`plugin/bin/lib/model-profiles/profiles.js`) returns `effort`; #5941 adds `launchEffort`, the effort set on the launch under `model-effort: profile`, `null` under `inherit` and for a Fast resolution. `EFFORT_SCALE` is `low`, `medium`, `high`, `xhigh`, `max`.\n- #5941 also makes `_shared/subagent-dispatch-core.md` tell a dispatcher to set the Agent tool's `effort` parameter to `launchEffort`.\n- #5942 makes `launchTracked` (`plugin/bin/lib/driver/launch.js`) pass `launchEffort` to `composeArgs` (`plugin/bin/lib/driver/roles.js`) as `--effort`, and adds `effort` to each worker event line.\n- #5996, #5997 and #5999 add `keyFileCount`, `implementerProfile` and `stepUp` (`plugin/bin/lib/model-profiles/implementer-tier.js`), the CLI `plugin/bin/implementer-tier.js` (with `--from`), the driver's one relaunch on `cannot-complete` or red tests with per-launch ceilings, the worker line's `attempt` (1-2) field, the standard lane's one escalation on `BLOCKED` or a failed first fix round, and the `implementer profile` and `task {k} implementer escalated` `decisions.md` lines this record extends.\n- Under `implementer-tier: record`, a first profile is Fast or Standard only (Capable is reached only by a step-up), and Fast's resolved effort is unset, so Standard is the only profile that can start below its resolved effort.\n- This repository's `.claude-tweaks/policy.yml`, after #5941, sets `model-effort: profile` and Standard and Capable to `medium`.\n\n## Deliverables\n\n- [ ] `implementer-tier.js` gains `startEffort({ risk, launchEffort })` → `'low' | 'medium' | 'high' | null`: `null` when `launchEffort` is `null`; otherwise `low` for `risk: 'low'`, `medium` for `risk: 'medium'`, and `launchEffort` for `high` or a missing risk; never above `launchEffort`, and clamped to `high` when `launchEffort` is `xhigh` or `max`.\n- [ ] `implementer-tier.js` gains `nextAttempt({ profile, effort, escalations, trigger, resolveProfile })` → `{ profile, effort, escalations }` or `null`. `trigger` is `red-tests`, `fix-round-failed`, `blocked` or `cannot-complete`. With `escalations` 0, a `red-tests` or `fix-round-failed` trigger, and an `effort` that is not `null` and below `high`: one effort step up on the same profile. Otherwise, with `escalations` below 2: `stepUp(profile)` at that profile's resolved `launchEffort` (clamped to `high`). `null` at two escalations, at a `null` step-up, or when the step-up resolves to the same model. The returned `escalations` is the input plus one; the caller passes it back on the next failure, so the count is owned by the function's output, not by each lane. `resolveProfile` is injected so the function stays pure.\n- [ ] The CLI's JSON gains `startEffort` and, given `--attempt-profile`, `--attempt-effort` and `--escalations`, the `next` attempt; under `model-effort: inherit` both are `null` and the CLI's output is otherwise unchanged.\n- [ ] Driver: under `implementer-tier: record` and `model-effort: profile`, the first implementer launch passes `startEffort` as its effort and each relaunch follows `nextAttempt` with #5997's trigger, so a worker-or-test-step implementer can launch up to three times (start, effort step, profile step). Ceilings stay per launch (#5997), so the worst case is four implementer launches per record, the review fix round included, and `docs/driver.md` says so. Under `model-effort: inherit` the driver keeps #5997's one profile-step relaunch at no effort. Each launch's event line carries its `effort` (#5942's field) and `attempt` (1-3). Past the ladder the record leaves the lane as #5997's second failure does.\n- [ ] Standard lane: under the same two values, `plugin/skills/build/dispatch.md` tells SDD to dispatch each per-task implementer at `startEffort` and to follow `nextAttempt` on #5999's triggers (`blocked`, `fix-round-failed`), setting the Agent tool's `effort` parameter per #5941's contract. A task escalates at most twice, the count read from its `decisions.md` escalation lines as #5999 reads one. The escalation line names the effort: `task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger})`. Past the ladder the task gets SDD's own handling at its last profile and effort, as #5999 defines after one escalation.\n- [ ] The per-build `implementer profile` `decisions.md` line gains `effort {startEffort}`, with `inherit` printed for `null`, so the parent's done-when can compare tasks started at `low` with tasks started at `medium` from run logs alone.\n- [ ] `docs/driver.md` documents the effort ladder.\n- [ ] Tests: `startEffort` for each risk, a `null` `launchEffort` and an `xhigh` `launchEffort`; `nextAttempt` as a sequence from each start rung (`low`, `medium`, `high`, Fast's `null`) under each trigger, both caps and the clamp; the driver's three-launch sequence and its `inherit` fallback; the CLI fields; and a dispatch.md conformance test for the ladder instruction and the log line.\n\n## Acceptance Criteria\n\n1. With `launchEffort: 'medium'`, `startEffort` returns `'low'` for `risk: 'low'`, `'medium'` for `risk: 'medium'`, and `'medium'` for `risk: 'high'` and for a missing risk; with `launchEffort: null` it returns `null` for every risk; with `launchEffort: 'xhigh'` and `risk: 'high'` it returns `'high'`.\n2. `nextAttempt({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'red-tests' })` returns `{ profile: 'standard', effort: 'medium', escalations: 1 }`; called again with that result and `trigger: 'red-tests'` it returns `{ profile: 'capable', effort: <capable's resolved launchEffort>, escalations: 2 }`; called a third time it returns `null`.\n3. `nextAttempt({ profile: 'standard', effort: 'low', escalations: 0, trigger: 'blocked' })` returns the profile step with `escalations: 1`; `nextAttempt({ profile: 'standard', effort: 'high', escalations: 0, trigger: 'red-tests' })` returns the profile step; `nextAttempt({ profile: 'fast', effort: null, escalations: 0, trigger: 'red-tests' })` returns `{ profile: 'standard', effort: <standard's resolved launchEffort>, escalations: 1 }`.\n4. In a driver run with `implementer-tier: record`, `model-effort: profile` and a `risk:low`, `size:medium` record whose first two test steps are red, the implementer launches three times, with `--effort low` on Standard, `--effort medium` on Standard, and Capable at its resolved effort, and `driver-events.jsonl` holds three worker lines with `attempt` 1, 2 and 3; a third red test step leaves the lane as #5997's second failure does. With a first `cannot-complete` instead, the second launch is Capable.\n5. With `model-effort: inherit`, the same driver run launches at most twice, both with no `--effort`, as #5997 defines.\n6. A standard-lane build under both values logs `implementer profile {profile} … effort {startEffort}`; under `record` and `model-effort: profile`, a task whose first fix round fails re-review logs `escalated standard@low → standard@medium (fix-round-failed)`, and a task that reports `BLOCKED` first logs `escalated standard@low → capable@{effort} (blocked)`; a task past two escalations gets no third escalation line.\n7. No implementer attempt in either lane is launched at `xhigh` or `max`, and no non-implementer role's effort changes.\n\n## Release Note\n\nMade implementers start at a lower reasoning effort when the record's risk allows it, and raise the effort before moving to a larger model when an attempt fails.\n\n## Technical Approach\n\nThe ladder is one pure function next to the record rule, called in process by the driver and through the CLI by the standard lane, so both lanes climb the same rungs. Effort goes first, for the failures it can fix, because an effort step stays on the same model and per-token price, while a profile step moves Standard (Sonnet) to Capable (Opus) at several times the list price; for Opus the design measured `medium` and `high` turns at about the same cost ($0.077 and $0.074). `BLOCKED` and `cannot-complete` skip the effort rung: they report a missing capability or context, which more reasoning on the same model rarely supplies, so an effort step there would only add a wasted attempt. Risk sets the start because it is the record's own statement of how much a mistake costs; size already chose the model.\n\n### Data / API Surface\n\n- `startEffort({ risk, launchEffort })` → `'low' | 'medium' | 'high' | null`.\n- `nextAttempt({ profile, effort, escalations, resolveProfile })` → `{ profile, effort } | null`.\n- CLI JSON gains `startEffort` and `next`. Driver worker lines' `attempt` ranges 1-3. Additive.\n\n### Key Files\n\n- `plugin/bin/lib/model-profiles/implementer-tier.js` — `startEffort`, `nextAttempt`\n- `plugin/bin/lib/driver/review.js` — the review fix round's effort after a ladder\n- `plugin/bin/implementer-tier.js` — the CLI fields\n- `plugin/bin/lib/driver/launch.js` — the implementer's effort per attempt\n- `plugin/bin/lib/driver/steps.js` — the third launch\n- `plugin/bin/lib/driver/events.js` — `attempt` up to 3\n- `plugin/skills/build/dispatch.md` — the ladder instruction and log lines\n- `docs/driver.md` — the ladder\n- `tests/bin-lib/model-profiles/implementer-tier.test.js` — the function cases\n- `tests/bin-lib/driver/run.test.js` — the three-launch sequence\n- `tests/build-implementer-tier-conformance.test.js` — the ladder instruction\n\n### Package Dependencies\n\n- none\n\n## Gotchas\n\n- The build starts only after #5941, #5942 and #5996, #5997 and #5999 have merged (the blocked-by links). Re-derive Key Files and every identifier above from the merged code.\n- Read `.claude/skills/headless-worker-launch` and `.claude/skills/driver-step-addition` before touching the driver, and `.claude/skills/skill-prose-conformance-tests` before the conformance test.\n- Ceilings are per launch (#5997); a third worker launch costs one more full allowance, which the worst-case line in `docs/driver.md` states.\n- A `low`-effort attempt that passes its tests but writes weaker code is not retried; the task review and the done-when's fix-rounds-per-task comparison are what catch it.\n- `risk:` values are `low`, `medium` and `high` (`parseRecordFacets`); treat anything else as missing (start at `launchEffort`), never as `low`.\n- ASSUMPTION — verify at build: an implementer on Standard (the only profile that can start below its resolved effort under `record`) launched at `low` completes the task loop's contract — via three probe dispatches and three probe driver workers at `low` on one small fixture task, recorded with their outcomes in `plugin/bin/lib/driver/worker.js`'s header, `docs/driver.md` and the pull request. Pass means all six return a valid status line or result envelope and a commit. Anything less stops the build and is reported: the ladder would start every `risk:low` task with a wasted attempt.\n- Only 18 turns ran at `low` between 8 and 19 November 2026, so the starting rung has no track record; the parent's 20-task done-when is the check, and reverting is one line (`model-effort: inherit`, or `implementer-tier: lane`).\n\n\n<!-- work-fingerprint: pipeline-economy-phase-9:start-an-implementer-at-the-lowest-effort-its-record-allows -->\nwork-fingerprint: pipeline-economy-phase-9:start-an-implementer-at-the-lowest-effort-its-record-allows\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.",
-        "createdAt": "2026-11-21T17:36:32Z",
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nAdd the new vocabulary (kinds, outcomes, reason codes, actors, hold reasons, process id) to `stations.js` and the matching validation to `emit.js`. The file stays version 1; legacy outcomes are still accepted until Task 8. This is task 2 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Low\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\nNone. This record has no blockers in this repository.\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- \"`skipped` and `abandoned` are retired from the vocabulary; `abandoned` maps to `stopped`; `returned` becomes `sent-back`.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/stations.js`, `plugin/bin/lib/station-events/emit.js`\n- Test: `tests/bin-lib/station-events/emit.test.js`, `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\nInterfaces:\n\n- Produces in `stations.js`: `KINDS` gains `planned | replanned | held | released | decided`; `OUTCOMES` is `['passed','sent-back','failed','stopped']` plus `RETIRED_OUTCOMES = ['returned','skipped','abandoned']`, both still accepted by `appendStationEvent` until Task 8; `REASON_CODES` (frozen array: `unspecified`, `default-list`, `infrastructure`, `test-failed`, `spec-wrong`, `scope-too-big`, `blocked-by-other`, `changes-requested`, `superseded`, `withdrawn`, `ceremony-downgrade`, `documents-only`, `other`, extended by Task 1's findings); `ACTORS` (matcher `agent|script|person|rule:<id>`); `HOLD_WHYS = ['blocked','parked','changes-requested','waiting-on-you']`; `PROCESS = Object.freeze({ id: 'build-a-record', version: 1 })`.\n- Produces in `emit.js`: `invalidReason(event)` also rejects an `exited` whose `outcome` is new-vocabulary and lacks `payload.actor`, a non-`passed` new outcome lacking a `payload.reasonCode` in `REASON_CODES`, a `sent-back` lacking a `payload.next` in `STATIONS`, a `held`/`released` with `why` outside `HOLD_WHYS`, and a `planned`/`replanned` whose `payload.stations` is not an array of `STATIONS` ids.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests** in `emit.test.js`: `exited sent-back without next is dropped with a reason`; `exited failed without reasonCode is dropped`; `exited passed with actor script is written`; `held with an unknown why is dropped`; `planned with an unknown station is dropped`; `a legacy returned outcome is still written` (until Task 8); `a dropped line never throws and writes a reason to stderr`; `concurrent appends of a planned and an exited line both land intact`. In the conformance test, add `no call site spells a reason code or actor literal outside stations.js`.\n2. Review focus, covered by the tests above: A concurrent writer (two sessions claiming different records) never interleaves or loses a line; the existing `withLock` still covers every new kind.\n3. Review focus, covered by the tests above: An `exited` with `sent-back` and no `next`, or an unknown station in `next`, is dropped with a stderr reason and does not stop the transition.\n\n## Release Note\n\nAdded the station-event vocabulary and validation for plans, reasons, actors and holds, with legacy outcomes still accepted.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests** in `emit.test.js`: `exited sent-back without next is dropped with a reason`; `exited failed without reasonCode is dropped`; `exited passed with actor script is written`; `held with an unknown why is dropped`; `planned with an unknown station is dropped`; `a legacy returned outcome is still written` (until Task 8); `a dropped line never throws and writes a reason to stderr`; `concurrent appends of a planned and an exited line both land intact`. In the conformance test, add `no call site spells a reason code or actor literal outside stations.js`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/emit.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** the constants in `stations.js` and the checks in `invalidReason` (`emit.js`); legacy outcomes bypass the new-field checks.\n- [ ] **Step 4: Run** the station-events directory: `node tools/run-tests.js tests/bin-lib/station-events`. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: station-event vocabulary for plans, reasons and holds`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/stations.js`\n- `plugin/bin/lib/station-events/emit.js`\n- `tests/bin-lib/station-events/emit.test.js`\n- `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\n## Gotchas\n\n- Adds vocabulary and validation to the emitter; legacy outcomes stay accepted until Task 8.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-2 -->\nwork-fingerprint: factory-floor-map-emission:emission-2",
+        "createdAt": "2026-11-23T15:42:56Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
             "name": "ready",
             "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
             "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACruzLxQ",
@@ -806,6 +862,264 @@
             "color": "F9D0C4"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6146,
+        "state": "OPEN",
+        "title": "Floor map, emission 2/8: Vocabulary and validation",
+        "updatedAt": "2026-11-23T15:44:57Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nCapture which claude-tweaks code performs each station transition today, confirm the station order against real moves, and name the starting lists from real manifests. Tasks 3, 4, 6 and 7 read these sections. This is task 1 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Low\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\nNone. This record has no blockers in this repository.\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Modify: `docs/reference/station-events.md` (add the two sections below)\n- Test: `tests/bin-lib/station-events/transition-table.test.js` (Create)\n\nInterfaces:\n\n- Produces: a section `## Transition code by station` with one table row per station of `STATIONS`, columns `station | code that performs the transition (path:function) | kinds emitted today | outcome known to the code | reason known to the code`; a section `## Station order from real moves` stating the confirmed order and the counts it rests on; a section `## Starting lists` naming each list the plan can start from (`standard` plus every other list the real manifests show) with its stations and the ceremony profile or lane that selects it. Tasks 3, 4, 6, 7 read these sections.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write the failing test** `tests/bin-lib/station-events/transition-table.test.js`: test `every station has a row in the transition table` (parse the markdown table; assert one row per `STATIONS` entry); test `every cited code path exists` (each `path:function` cell names a file under `plugin/bin/` that exists and contains the function name, or the cell is exactly `none`); test `the order section names every station once`.\n2. `docs/reference/station-events.md` carries the three sections `## Transition code by station`, `## Station order from real moves` and `## Starting lists`, each as the Interfaces above describe; a list not observed in real manifests is not written.\n\n## Release Note\n\nDocumented which code performs each station transition, the confirmed station order, and the starting lists the plan can begin from.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write the failing test** `tests/bin-lib/station-events/transition-table.test.js`: test `every station has a row in the transition table` (parse the markdown table; assert one row per `STATIONS` entry); test `every cited code path exists` (each `path:function` cell names a file under `plugin/bin/` that exists and contains the function name, or the cell is exactly `none`); test `the order section names every station once`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js`. Expected: FAIL (sections missing).\n- [ ] **Step 3: Capture.** For each station, read the code that performs its transition (grep the callers of `appendStationEvent` and the label protocol under `plugin/bin/lib/issues/`) and fill the row; a station with no code (expected for review, polish, wrap-up, which the local file shows almost no events for) is `none`. For the order, run against a hub node database the query that counts consecutive-visit pairs per work order over 28 days (lead of `station` partitioned by `work_order_key` ordered by `entered_at, id`) and record the pairs with at least 10 occurrences; state whether Test comes before or after Polish (the 2026-11-22 counts were 133 Polish-to-Test, 120 Build-to-Polish, 12 Test-to-Polish). Read the real `manifest.json` files under `.claude-tweaks/pipelines/*/` for `lane` and `ceremonyProfile` to fill the starting lists; a list not observed is not written.\n- [ ] **Step 4: Run the test** from Step 2. Expected: PASS.\n- [ ] **Step 5: If the confirmed order differs from `STATION`'s order in `stations.js`,** reorder `STATION` to match, run `node tools/run-tests.js tests/bin-lib/station-events`, and note the change in the doc. Report the confirmed order to the hub plan's Task 4.\n- [ ] **Step 6: Commit** `docs: capture station transition code, order and starting lists`.\n\n### Key Files\n\n- `docs/reference/station-events.md`\n- `tests/bin-lib/station-events/transition-table.test.js`\n\n## Gotchas\n\n- Documentation capture plus one table-parsing test; no emitter behaviour changes except a possible reorder of STATION in Step 5.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n- Cross-repository: the hub plan's H4 (\"process as data\") in `thn-inc/dispatch` takes station order and starting lists from this record. The orchestrator adds that blocked-by edge (H4 blocked by this record) later; this record carries no cross-repository edge. Report the confirmed order to the hub plan's Task 4.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-1 -->\nwork-fingerprint: factory-floor-map-emission:emission-1",
+        "createdAt": "2026-11-23T15:42:50Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6145,
+        "state": "OPEN",
+        "title": "Floor map, emission 1/8: Capture pass: transition code by station, and the station order from real moves",
+        "updatedAt": "2026-11-23T15:44:48Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "## Current State\n\nA `pr-first` run opens a draft PR at run start (`_shared/pr-early-run-lifecycle.md`). Its body carries a `claude-tweaks-run:` marker and a phases checklist. Nothing stops another session from running `gh pr ready` and `gh pr merge` on that draft mid-run.\n\nOn 2026-11-23 PR #6061 (run `2026-11-23T062258-record-6000`, build in progress, every phase unchecked) was marked ready and merged 5 seconds later at 06:55:38Z by a session merging a batch of PRs (#6064 and #6065 went the same way). The merge closed #6000. Reconcile's post-merge then released the claim, stripped `auto:build` and archived the run as if it had finished, and the release bot posted \"Shipped in v6.177.0\" on #6000. #6003, which depends on #6000, was then dispatched against code that did not exist. Recovery took a reopened issue, a hand-written decision, a new draft PR (#6138) and a restarted run.\n\n## Deliverables\n\n1. A PreToolUse gate in `plugin/bin/lib/hooks/pre-tool-use.js`. A Bash call running `gh pr ready <n>` or `gh pr merge <n>` (any flags) is denied when PR n's body carries a `claude-tweaks-run: {id}` marker naming a run under `$RUN_ROOT/.claude-tweaks/pipelines/` whose `run-state.json` is non-terminal and whose phases checklist still has `build` or `test` unchecked. The deny reason names the run and its owning session. The owning session (`run-state.json` `sessionId`) is allowed. The gate fails open when the PR body or run state cannot be read, per `docs/hooks.md`'s never-break-a-session invariant.\n\n2. Reconcile's post-merge (`plugin/bin/lib/reconcile/post-merge.js`, `release-merged.js`) does not settle a hollow merge as a success. When a merged PR's marker names a run that was non-terminal at merge time, or the PR's phases checklist has `build` unchecked, it does not release the claim as merged, strip `auto:build` or archive the run. Instead it posts one comment on the record naming the merge, and reconcile's summary reports it.\n\n## Acceptance Criteria\n\n- [ ] Hook test: `gh pr merge 123 --squash` against a fake PR whose marker names an active run with `build` unchecked is denied; the same command from the run's owning session is allowed; an unreadable PR is allowed.\n\n- [ ] Hook test: `gh pr ready 123` behaves the same way as the merge case above.\n\n- [ ] Reconcile test: a merged PR whose marker names an active run with `build` unchecked leaves the claim, `auto:build` and the run directory in place, posts one comment, and appears in the summary.\n\n- [ ] Reconcile test: a merged PR whose run is clean and whose phases are all checked settles exactly as today.\n\n## Release Note\n\nAnother session can no longer mark a pipeline's draft PR ready or merge it while its build is still running, and a merge that lands mid-build is reported instead of being treated as shipped.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/pre-tool-use.js` — add the in-flight-run gate for gh pr ready / gh pr merge\n- `plugin/bin/lib/reconcile/post-merge.js` — detect a hollow merge and skip success settlement\n- `plugin/bin/lib/reconcile/release-merged.js` — do not release the claim on a hollow merge\n- `tests/bin-lib/reconcile/post-merge.test.js` — hollow-merge fixtures\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-23T15:37:09Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 6143,
+        "state": "OPEN",
+        "title": "Refuse to ready or merge a pipeline PR while its run is still building",
+        "updatedAt": "2026-11-23T15:42:35Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "## Current State\n\n`plugin/bin/lib/preflight-records/blocker-landing.js` classifies a blocker `landed` when any candidate closing commit is reachable from the integration branch. It never looks at what that commit changed.\n\nOn 2026-11-23 #6000 was closed by PR #6061, whose squash `46e21cbf6` added only the materialized spec, the plan and the ledger (`.claude-tweaks/pipelines/*/work/6000-spec.md`, `docs/superpowers/plans/…`, `docs/plans/…-ledger.md`): the run was still building. None of #6000's Key Files (`plugin/bin/lib/driver/roles.js`, `plugin/bin/review-lens-workers.js`, …) were touched. The check read #6000 as `landed`, so `/claude-tweaks:dispatch #6003` claimed #6003, opened draft PR #6121 and ran a build against a launcher that did not exist. The build agent noticed and stopped with `failed:blocker-landing` after about 7.5 minutes.\n\n## Deliverables\n\n1. In `blocker-landing.js`, a reachable closing commit counts as `landed` only when its diff touches at least one path in the blocker's `### Key Files`. A reachable commit that touches none of them, or only pipeline bookkeeping (`.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**`, `docs/plans/*-ledger.md`), gets a distinct verdict (for example `hollow`) carrying the PR number.\n\n2. A blocker with no `### Key Files` section keeps reachability as the rule, with the bookkeeping-only check from deliverable 1 still applied.\n\n3. The queue pull (`plugin/bin/lib/dispatch/unlanded-blockers.js`) excludes a record whose blocker is `hollow` as `unlanded-blocker`, and its report line says why: `#N waits — blocker #M was closed by #PR with no implementation`. `bin/preflight-records.js --blocker-landing` prints the same verdict.\n\n## Acceptance Criteria\n\n- [ ] A blocker whose reachable closing commit touches only `docs/superpowers/plans/x.md` and `.claude-tweaks/pipelines/r/work/1-spec.md` is not `landed`, and its dependent is excluded as `unlanded-blocker` with the no-implementation reason.\n\n- [ ] A blocker with Key Files `a.js` whose closing commit touches only `b.js` is not `landed`.\n\n- [ ] A closing commit that touches a Key File is `landed`, unchanged.\n\n- [ ] A blocker without Key Files whose closing commit touches a non-bookkeeping file is `landed`, unchanged.\n\n- [ ] A fixture replaying squash `46e21cbf6`'s file list against #6000's Key Files excludes the dependent (#6003's case).\n\n## Release Note\n\nDispatch no longer builds a record whose blocker was closed by a merge that carried no implementation.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — add the Key Files / bookkeeping-only check and the new verdict\n- `plugin/bin/lib/dispatch/unlanded-blockers.js` — exclude and report the new verdict\n- `plugin/bin/preflight-records.js` — print the new verdict\n- `tests/bin-lib/preflight-records/blocker-landing.test.js` — fixtures for each acceptance criterion\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-23T15:37:02Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
             "name": "priority:medium",
             "description": "Priority: dispatch picks after priority:high",
@@ -816,23 +1130,17 @@
             "name": "risk:medium",
             "description": "Scoring: moderate blast radius — review before merge recommended",
             "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
           }
         ],
-        "number": 6002,
+        "number": 6142,
         "state": "OPEN",
-        "title": "Start an implementer at the lowest effort its record allows and raise effort before profile",
-        "updatedAt": "2026-11-23T06:56:10Z",
+        "title": "Treat a dispatch blocker as landed only when its closing merge carried the implementation",
+        "updatedAt": "2026-11-23T15:42:42Z",
         "facets": {
-          "origin": null,
+          "origin": "capture",
           "risk": "medium",
           "size": "medium",
-          "ceremony": "standard",
+          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -840,7 +1148,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -11060,6 +11368,47 @@
       "number": 4591,
       "blockedBy": [
         4365
+      ]
+    },
+    {
+      "number": 6152,
+      "blockedBy": [
+        6151,
+        6150,
+        6149,
+        6148
+      ]
+    },
+    {
+      "number": 6151,
+      "blockedBy": [
+        6150
+      ]
+    },
+    {
+      "number": 6150,
+      "blockedBy": [
+        6147
+      ]
+    },
+    {
+      "number": 6149,
+      "blockedBy": [
+        6146,
+        6145
+      ]
+    },
+    {
+      "number": 6148,
+      "blockedBy": [
+        6147
+      ]
+    },
+    {
+      "number": 6147,
+      "blockedBy": [
+        6146,
+        6145
       ]
     },
     {
