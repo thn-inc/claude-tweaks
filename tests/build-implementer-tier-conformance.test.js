@@ -3,12 +3,12 @@
 // bin/implementer-tier.js (#5996) instead of a prose `size:` mapping, and adds one
 // escalation per task under `implementer-tier: record`. The prose facts are pinned
 // below; the CLI-answer block pins the CLI answers the build now depends on.
-const { test, afterEach } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { runCliSync } = require('./helpers/run-cli');
+const { scratchDir } = require('./helpers/tmp-dir');
 const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith } = require('./helpers/conformance-asserts');
 const { readText } = require('./helpers/read-skill');
 
@@ -52,9 +52,13 @@ const PATTERNS = [
   ],
   [lit('a fresh implementer, never a `SendMessage` resume'), 'fresh dispatch, never SendMessage'],
   [
-    lit("`stepUp` with `--from {task's profile}` (a `**Role:**` marker's profile when one set it)"),
-    "AC5.2: step-up from the task's own profile",
+    lit("a second `implementer-tier.js` call (same arguments) plus `--from {task's profile}` (a `**Role:**` marker's profile when one set it, else the build's `profile`)"),
+    "AC5.2: step-up from the task's own profile, by a second --from call",
   ],
+  [lit('plus `--run "$PIPELINE_RUN_DIR"` when set'), "AC7.4: the CLI call carries the run's config via --run"],
+  [lit('a `null` profile means no override'), 'AC7.5: a null profile means no override'],
+  [lit("(a resume keeps the first agent's model), one profile up"), 'escalation is one profile up, on a fresh agent'],
+  [lit("as do the fix rounds after an escalation (its round-4 step up included)"), "Decision Q1: SDD's own fix rounds apply after an escalation"],
   [
     lit("a task whose `task {k} implementer escalated` line is already in `decisions.md` (no run dir: SDD's `progress.md`)"),
     'AC5.1: once-per-task check reads decisions.md',
@@ -106,15 +110,7 @@ const CLI = path.join(ROOT, 'plugin', 'bin', 'implementer-tier.js');
 // resolvePolicy starts `git rev-parse --show-toplevel` with this env.
 const ENV = { PATH: process.env.PATH, ...(process.env.SystemRoot === undefined ? {} : { SystemRoot: process.env.SystemRoot }) };
 
-const madeTmpDirs = [];
-function tmpDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-impl-tier-'));
-  madeTmpDirs.push(dir);
-  return dir;
-}
-afterEach(() => {
-  while (madeTmpDirs.length) fs.rmSync(madeTmpDirs.pop(), { recursive: true, force: true });
-});
+const tmpDir = () => scratchDir('build-impl-tier-');
 
 // materialize.js's layout: header lines, a blank-free frontmatter close, then the body.
 const spec = ({ header, keyFiles = [] }) =>
