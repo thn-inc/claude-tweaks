@@ -355,6 +355,7 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
   assert.deepStrictEqual(inputs.records, []);
   assert.strictEqual(inputs.record, null);
   assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.strictEqual(inputs.closingRecords, null, '#4108: no records resolved is no decision, not an empty closing set');
 });
 
 // #5347: an express run writes no materialized header or manifest; its record
