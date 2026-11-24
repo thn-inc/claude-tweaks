@@ -14,7 +14,7 @@ The session has the tool when `Workflow` is among its tools, or `ToolSearch` wit
 
 For each lens (under `adaptive`, each lens in `selected`), compose its brief exactly as `step3-lens-dispatch.md` composes a Task brief: the scope and the context bundle path, the `SHELL DISCIPLINE:` and `READ-ONLY REVIEW:` lines, the `Path:Line`, finding-anchor, coverage-anchor, over-budget-bundle and code-state rules, lens 3f's scratch-checkout steps, the lens's questions, the byte-identical Calibration/Output block, and at `xhigh`/`max` the `effortLine` after it (`step3-tier-variants.md`). One thing differs: both reviewers of a lens get one string, so the brief cannot name a per-agent scratch path. In place of the Task path's `SCRATCH:` line, write this one, with `{ctx-dir}` and `{lens}` filled in literally, and keep the Scratch-rule citation and the Bash-only instruction the Task path puts beside it:
 
-`SCRATCH: make your own scratch directory — run mkdir -p {ctx-dir}/agent-scratch as one call, then mktemp -d {ctx-dir}/agent-scratch/{lens}-XXXXXX as another, and use the path it prints as your scratch path.`
+`SCRATCH: make your own scratch directory — run mkdir -p {ctx-dir}/agent-scratch as one call, then mktemp -d {ctx-dir}/agent-scratch/{lens}-XXXXXX as another, and use the path it prints as your scratch path. Never delete a parent, the session scratchpad or temp root, or any path outside that exact SCRATCH: path.`
 
 In lens 3f's brief, the pasted scratch-checkout steps' `{id}` is written as "the basename of the directory your `mktemp -d` call printed", never filled in.
 
