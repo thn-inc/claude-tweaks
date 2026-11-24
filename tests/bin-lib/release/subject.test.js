@@ -224,7 +224,7 @@ test('composeHousekeepingSubject: refs become Refs lines in a last block, never 
   const two = composeHousekeepingSubject({ title: 'Add x', number: 9, tag: 't', refs: [3, 1] });
   assert.equal(two.body, 'Add x\n\n[t]\n\nRefs #3\nRefs #1');
   assert.equal(composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [] }).body, 'Add x');
-  assert.throws(() => composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [0] }), (err) => err instanceof ComposeSubjectError);
+  assert.throws(() => composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [0] }), (err) => err instanceof ComposeSubjectError && /refs entries must be positive integers, got 0/.test(err.message));
 });
 
 test('composeHousekeepingSubject: a Conventional-Commits-shaped title loses its prefix, an over-long one truncates within the budget', () => {

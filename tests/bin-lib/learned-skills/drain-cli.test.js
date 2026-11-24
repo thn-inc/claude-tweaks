@@ -82,6 +82,14 @@ test('a repo-read failure is exit 1 and the library never runs', () => {
   assert.equal(h.calls.lib.length, 0);
 });
 
+test('an empty repo answer is exit 1 with that stderr and the library never runs', () => {
+  const h = harness({ repoView: () => '  \n' });
+  assert.equal(cli.run(['drain', '--run', DIR, '--integration-branch', 'main'], h.deps), 1);
+  assert.match(h.err.join(''), /drain failed: could not read the repository: empty answer/);
+  assert.equal(h.calls.lib.length, 0);
+  assert.equal(h.out.join(''), '');
+});
+
 test('without gh: no repo read, the library prints its no-gh result, exit 0', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drain-cli-'));
   try {

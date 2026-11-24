@@ -1332,6 +1332,15 @@ test('--housekeeping learned-skills refs: case-insensitive, de-duplicated, first
   assert.doesNotMatch(JSON.parse(tidy.out.stdout).body, /Refs/);
 });
 
+test('--housekeeping learned-skills refs: `refs #0` and a non-safe integer (`refs #1e21` digits) are dropped, the subject still composes', () => {
+  const body = `<!-- wrap-up-skills-pr -->\nrefs #0, Refs #${'9'.repeat(25)}, refs #8`;
+  const { deps, out } = fakeDeps({ prView: { number: 6200, title: 'Add learned skill updates', body, closingIssuesReferences: [] } });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  const composed = JSON.parse(out.stdout);
+  assert.ok(composed.body.endsWith('Refs #8'), composed.body);
+  assert.doesNotMatch(composed.body, /Refs #0|e\+|9{10}/);
+});
+
 test('--housekeeping refuses a marker-quoting PR that links a record (closingIssuesReferences non-empty), no output written', () => {
   const body = 'Fixes #5208\n\nStamps `<!-- tidy-housekeeping-pr -->` on tidy PRs.';
   const { deps, out } = fakeDeps({ prView: { ...HK_PR, body, closingIssuesReferences: [{ number: 5208 }] } });

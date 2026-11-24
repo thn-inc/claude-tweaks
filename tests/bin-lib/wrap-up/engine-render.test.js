@@ -677,6 +677,15 @@ test('a drain for another PR number changes nothing', () => {
   assert.strictEqual(renderTrace(state, { drain: { pr: 7, outcome: 'merged' } }), renderTrace(state));
 });
 
+test('a drain.pr of 0 or with leading zeros never matches a PR URL', () => {
+  for (const [url, pr] of [['https://github.com/o/r/pull/0', 0], ['https://github.com/o/r/pull/077', '077'], ['https://github.com/o/r/pull/00', '00']]) {
+    const state = skillsState([appliedFinding({ pr: url })]);
+    const drain = { pr, outcome: 'merged' };
+    assert.strictEqual(renderTrace(state, { drain }), renderTrace(state), url);
+    assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown, url);
+  }
+});
+
 test('no drain, an unknown outcome, or a non-object drain is byte-identical to today', () => {
   const state = drainState();
   for (const drain of [undefined, null, 'merged', { pr: 77 }, { pr: 77, outcome: 'weird' }]) {

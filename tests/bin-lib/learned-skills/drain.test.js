@@ -44,15 +44,16 @@ function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, merg
     if (a === 'pr' && b === 'view') {
       if (viewThrows[n]) throw Object.assign(new Error('Command failed'), { stderr: `${viewThrows[n]}\nsecond line` });
       const v = views[n] === undefined ? view({ number: n }) : views[n];
-      if (!Array.isArray(v)) return JSON.stringify(v);
+      const withFiles = (o) => ({ files: files[n] || GOOD_FILES, ...o }); // the state call requests `files` too
+      if (!Array.isArray(v)) return JSON.stringify(withFiles(v));
       seq[n] = seq[n] || 0;
       const out = v[Math.min(seq[n], v.length - 1)];
       seq[n] += 1;
-      return JSON.stringify(out);
+      return JSON.stringify(withFiles(out));
     }
     if (a === 'run' && b === 'list') return JSON.stringify(runs[args[args.indexOf('--commit') + 1]] || []);
     if (a === 'pr' && b === 'merge') {
-      if (mergeThrows[n]) throw Object.assign(new Error('Command failed: gh pr merge'), { stderr: mergeThrows[n] });
+      if (mergeThrows[n] !== undefined) throw Object.assign(new Error('Command failed: gh pr merge'), { stderr: mergeThrows[n] });
       return '';
     }
     throw new Error(`unexpected gh ${args.join(' ')}`);
@@ -174,6 +175,54 @@ test('AC3.2: a head that changes between classification and merge is left open a
   const out = drain(base(), h.deps);
   assert.deepEqual(out.leftOpen, [{ pr: 6212, reason: 'head-changed' }]);
   assert.equal(h.merges().length, 0);
+});
+
+test('a push between the files read and the pre-merge re-read is scope-checked again (files-outside-skills, no merge)', () => {
+  const pushed = view({ number: 6214, files: [{ path: '.claude/skills/x/SKILL.md' }, { path: 'plugin/bin/x.js' }] });
+  const h = harness({ prs: [pr(6214)], views: { 6214: [view({ number: 6214 }), pushed] } });
+  assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6214, reason: 'files-outside-skills' }]);
+  assert.equal(h.merges().length, 0);
+  assert.ok(h.calls.some((c) => c[1] === 'view' && c[c.indexOf('--json') + 1].split(',').includes('files') && c[c.indexOf('--json') + 1] !== 'files'), 'the state call requests files');
+});
+
+test('a files list of 100 entries cannot prove scope: files-outside-skills; 99 entries still merge', () => {
+  const many = (k) => Array.from({ length: k }, (_, i) => ({ path: `.claude/skills/s${i}/SKILL.md` }));
+  const full = harness({ prs: [pr(6215)], files: { 6215: many(100) } });
+  assert.deepEqual(drain(base(), full.deps).leftOpen, [{ pr: 6215, reason: 'files-outside-skills' }]);
+  assert.equal(full.merges().length, 0);
+  const under = harness({ prs: [pr(6216)], files: { 6216: many(99) } });
+  assert.deepEqual(drain(base(), under.deps).merged, [6216]);
+  assert.equal(scopeProblem({ isCrossRepository: false, headRefName: 'learned-skills/a' }, many(101).map((f) => f.path)), 'files-outside-skills');
+});
+
+test('an empty-stderr merge failure whose message carries the command line is merge-failed, not head-changed', () => {
+  const h = harness({ prs: [pr(6217)], mergeThrows: { 6217: '' } });
+  const out = drain(base(), h.deps);
+  assert.equal(out.leftOpen[0].reason, 'merge-failed');
+  assert.match(out.leftOpen[0].detail, /Command failed/);
+  const old = harness({ prs: [pr(6218)], mergeThrows: { 6218: 'unknown flag: --match-head-commit' } });
+  assert.equal(drain(base(), old.deps).leftOpen[0].reason, 'merge-failed');
+});
+
+test('a merge failure on a PR that is no longer OPEN (merged by a concurrent drain) is a no-op in no list', () => {
+  const open = view({ number: 6219 });
+  const h = harness({ prs: [pr(6219)], views: { 6219: [open, open, view({ number: 6219, state: 'MERGED' })] }, mergeThrows: { 6219: 'Pull request is already merged' } });
+  const out = drain(base({ runDir: '/run' }), h.deps);
+  assert.deepEqual(out, { merged: [], armed: [], leftOpen: [], conflicting: [] });
+  assert.equal(h.logged.length, 0);
+});
+
+test('under merge-verification off, an own PR with an empty rollup and no head runs is pending at once, without the watch', () => {
+  const h = harness({ prs: [pr(6226)], views: { 6226: view({ number: 6226, statusCheckRollup: [] }) } });
+  const out = drain(base({ ownPr: 6226, mergeVerification: 'off' }), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6226, reason: 'pending' }]);
+  assert.equal(h.clock.sleeps.length, 0);
+  assert.equal(h.merges().length, 0);
+  // every other off path is unchanged: a running check still gets the watch, and the clause is off-only.
+  const running = harness({ prs: [pr(6227)], views: { 6227: view({ number: 6227, statusCheckRollup: RUNNING }) } });
+  assert.deepEqual(drain(base({ ownPr: 6227, mergeVerification: 'off' }), running.deps).leftOpen, [{ pr: 6227, reason: 'timeout' }]);
+  const wait = harness({ prs: [pr(6228)], views: { 6228: view({ number: 6228, statusCheckRollup: [] }) } });
+  assert.deepEqual(drain(base({ ownPr: 6228, mergeVerification: 'wait' }), wait.deps).leftOpen, [{ pr: 6228, reason: 'timeout' }]);
 });
 
 test('a head mismatch reported by gh pr merge is head-changed', () => {

@@ -25,7 +25,8 @@
 // subject from its title (closing phrases neutralized) with no Release-Note or Fixes line, and
 // takes no <n>, --keep-open or --range. A learned-skills PR (`<!-- wrap-up-skills-pr -->`) is accepted
 // too and additionally carries one `Refs #n` body line per `refs #n` in its body. A PR body carrying
-// none of `<!-- tidy-housekeeping-pr -->`, `<!-- wrap-up-residue-pr -->` or `<!-- wrap-up-skills-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
+// none of `<!-- tidy-housekeeping-pr -->`, `<!-- wrap-up-residue-pr -->` or
+// `<!-- wrap-up-skills-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
 // record), is refused (exit 1); a failed or unparseable read exits 3.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
@@ -91,7 +92,7 @@ function learnedSkillsRefs(body) {
   const seen = [];
   for (const m of String(body).matchAll(/\brefs #(\d+)\b/gi)) {
     const n = Number(m[1]);
-    if (n > 0 && !seen.includes(n)) seen.push(n);
+    if (Number.isSafeInteger(n) && n > 0 && !seen.includes(n)) seen.push(n);
   }
   return seen;
 }

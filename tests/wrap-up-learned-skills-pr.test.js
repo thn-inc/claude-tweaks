@@ -174,17 +174,31 @@ const DRAIN_CONDITION = /only when it prints `true`, run once, after the Review 
 const drainGate = (text) => {
   const at = text.search(DRAIN_CONDITION);
   const drains = [...text.matchAll(/learned-skills-pr\.js" drain /g)].map((m) => m.index);
-  const sentence = at === -1 ? '' : text.slice(at, text.indexOf('.', at + 60));
-  return { conditionFound: at !== -1, drains: drains.length, allAfter: drains.every((i) => i > at), namesTrueOnly: /`true`/.test(sentence) && !/`false`[^.]*run/.test(sentence) };
+  // The condition sentence itself: the lever resolve, then "only when it prints `true`, run once". It is not
+  // derived from DRAIN_CONDITION, so a rewritten sentence cannot satisfy it through a stray `true` nearby.
+  const namesTrueOnly = LEVER_GATE.test(text) && !/`false`[^.]*run once/.test(text);
+  return { conditionFound: at !== -1, drains: drains.length, allAfter: drains.every((i) => i > at), namesTrueOnly };
 };
+const LEVER_GATE = /--values learned-skills-auto-merge`; only when it prints `true`, run once/;
 
 test('AC4.1: with learned-skills-auto-merge false the procedure runs no drain', () => {
   const g = drainGate(PROC);
   assert.deepEqual(g, { conditionFound: true, drains: 1, allAfter: true, namesTrueOnly: true });
   const stripped = PROC.replace(DRAIN_CONDITION, 'always run');
   assert.equal(drainGate(stripped).conditionFound, false, 'control: stripping the condition sentence is seen');
-  const hoisted = `${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
+  assert.equal(drainGate(PROC.replace('only when it prints `true`', 'only when it prints `false`')).namesTrueOnly, false, 'control: a condition naming `false` is seen');
+  assert.equal(drainGate(PROC.replace('--values learned-skills-auto-merge', '--values other-lever')).namesTrueOnly, false, 'control: a condition without the lever resolve is seen');
+  const hoisted =`${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
   assert.equal(drainGate(hoisted).allAfter, false, 'control: a drain fence before the condition is seen');
+});
+
+test('learned-skills-pr.md: the drain fence carries an explicit Bash timeout, the killed-call degrade, the no-gh and off outcomes, and no console-suffix claim', () => {
+  const section = PROC.slice(PROC.indexOf('## Drain at the end of wrap-up'), PROC.indexOf('## The PR'));
+  assert.ok(section.indexOf('timeout of `1200000` ms') !== -1 && section.indexOf('timeout of `1200000` ms') < section.indexOf('learned-skills-pr.js" drain'), 'timeout stated before the fence');
+  assert.match(section, /killed, or one that returned no JSON line, is the same degrade|killed or returned no output/);
+  assert.match(section, /Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0/);
+  assert.match(section, /`merge-verification: off`[^.]*empty rollup and no head runs[^.]*`pending` at once/);
+  assert.doesNotMatch(PROC, /Review Console's Skill updates disposition append/);
 });
 
 test('learned-skills-pr.md: the drain section replaces "waits for a human"', () => {

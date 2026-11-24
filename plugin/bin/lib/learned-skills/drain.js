@@ -15,6 +15,19 @@
 // or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set;
 // only the own PR writes the ci-gate event and drain.json.
 //
+// Scope is proven twice: before the state read (the files read, so the first-failure order stays
+// cross-repository, not-learned-skills-branch, files-outside-skills) and again on the pre-merge re-read,
+// whose state call also requests `files`, so a push between the two reads is never merged unchecked.
+// `gh pr view --json files` caps at 100 entries: a list of 100 or more cannot prove scope and reports
+// `files-outside-skills`. A merge failure re-reads the PR state once; a PR no longer OPEN (a concurrent
+// drain merged it) is a no-op, and a head mismatch is classified from the "was modified" wording on
+// stderr only, never from the command line in an error message.
+//
+// Under `mergeVerification: off` the rollup of a repo with no PR CI stays empty forever, so an own PR
+// whose rollup is empty and which has no head runs is left open `pending` at once, without the watch.
+//
+// `integrationBranch` is accepted for the CLI contract (spec Deliverable 1) and reserved: nothing here reads it.
+//
 // Every side effect goes through `deps` so tests inject a fake gh and a fake clock.
 'use strict';
 
@@ -31,6 +44,7 @@ const MARKER = /<!-- wrap-up-skills-pr -->/;
 const BRANCH_PREFIX = 'learned-skills/';
 const SKILLS_PREFIX = '.claude/skills/';
 const POLL_MS = 30000;
+const FILES_CAP = 100; // gh pr view --json files returns at most 100 entries
 const LOG_SECTION = '/wrap-up';
 const STEP = 'Learned-skills drain';
 const LEVER = 'learned-skills-auto-merge=true';
@@ -52,7 +66,7 @@ const LEVER_ACTIONS = Object.freeze({
 function scopeProblem({ isCrossRepository, headRefName } = {}, files) {
   if (isCrossRepository) return 'cross-repository';
   if (typeof headRefName !== 'string' || !headRefName.startsWith(BRANCH_PREFIX)) return 'not-learned-skills-branch';
-  if (!Array.isArray(files) || files.length === 0) return 'files-outside-skills';
+  if (!Array.isArray(files) || files.length === 0 || files.length >= FILES_CAP) return 'files-outside-skills';
   const inside = (p) => typeof p === 'string' && !p.split('/').includes('..') && p.startsWith(SKILLS_PREFIX) && p.length > SKILLS_PREFIX.length;
   return files.every(inside) ? null : 'files-outside-skills';
 }
@@ -173,7 +187,7 @@ function drain(opts, overrides = {}) {
 
   // state + head runs + ready-run for one PR; throws on any failed read.
   const read = (n) => {
-    const view = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'number,state,isDraft,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,title,body']), 'gh pr view');
+    const view = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'number,state,isDraft,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,files,title,body']), 'gh pr view');
     if (!view || typeof view !== 'object' || Array.isArray(view)) throw new Error('gh pr view returned no object');
     if (view.state !== 'OPEN') return { view, headRuns: [], ready: null, verdict: 'closed' };
     if (typeof view.headRefOid !== 'string' || !view.headRefOid || !Array.isArray(view.statusCheckRollup)) throw new Error('gh pr view returned no head commit or check rollup');
@@ -196,20 +210,29 @@ function drain(opts, overrides = {}) {
     try {
       deps.gh(mergeArgs(n, sha, composed, arm));
     } catch (err) {
-      const text = String((err && err.stderr) || (err && err.message) || err);
+      // A concurrent drain may have merged it already: a PR no longer OPEN is a no-op.
+      try {
+        const now = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'state']), 'gh pr view state');
+        if (now && now.state && now.state !== 'OPEN') return undefined;
+      } catch { /* classify from the merge error */ }
+      const text = String((err && err.stderr) || '');
       if (/conflict/i.test(text)) return settle(n, 'conflicting');
-      if (/was modified|match-head-commit/i.test(text)) return open(n, 'head-changed');
+      if (/was modified/i.test(text)) return open(n, 'head-changed');
       return open(n, 'merge-failed', firstStderrLine(err));
     }
     return settle(n, arm ? 'armed' : 'merged');
   };
 
+  const filePaths = (files) => (Array.isArray(files) ? files.map((f) => f && f.path) : []);
+
   // Green verdict at `sha`: a fresh re-read, then the one merge call.
-  const mergeGreen = (n, sha, gateStart) => {
+  const mergeGreen = (n, sha, gateStart, cand) => {
     let fresh;
     try { fresh = read(n); } catch (err) { return open(n, 'pending', firstStderrLine(err)); }
     if (fresh.verdict === 'closed') return undefined;
     if (fresh.view.headRefOid !== sha) return open(n, 'head-changed');
+    const recheck = scopeProblem(cand, filePaths(fresh.view.files));
+    if (recheck) return open(n, recheck);
     if (fresh.verdict === 'conflicting') return settle(n, 'conflicting');
     if (fresh.verdict === 'red') return open(n, 'red');
     if (fresh.verdict !== 'green') return open(n, 'pending');
@@ -231,7 +254,7 @@ function drain(opts, overrides = {}) {
         try {
           files = (parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'files']), 'gh pr view files') || {}).files;
         } catch (err) { open(n, 'pending', firstStderrLine(err)); continue; }
-        scope = scopeProblem(c, Array.isArray(files) ? files.map((f) => f && f.path) : []);
+        scope = scopeProblem(c, filePaths(files));
       }
       if (scope) { open(n, scope); continue; }
 
@@ -242,9 +265,10 @@ function drain(opts, overrides = {}) {
       if (state.verdict === 'closed') continue;
       if (state.verdict === 'conflicting') { settle(n, 'conflicting'); continue; }
       if (state.verdict === 'red') { open(n, 'red'); continue; }
-      if (state.verdict === 'green') { mergeGreen(n, sha, gateStart); continue; }
+      if (state.verdict === 'green') { mergeGreen(n, sha, gateStart, c); continue; }
       // pending
       if (n !== own) { open(n, 'pending'); continue; }
+      if (opts.mergeVerification === 'off' && state.view.statusCheckRollup.length === 0 && state.headRuns.length === 0) { open(n, 'pending'); continue; }
       if (LEVER_ACTIONS[lever].pending === 'arm-if-blocked-else-watch' && state.view.mergeStateStatus === 'BLOCKED') {
         land(n, sha, true);
         continue;
@@ -259,7 +283,7 @@ function drain(opts, overrides = {}) {
         if (poll.view.headRefOid !== sha) { open(n, 'head-changed'); settled = true; break; }
         if (poll.verdict === 'conflicting') { settle(n, 'conflicting'); settled = true; break; }
         if (poll.verdict === 'red') { open(n, 'red'); settled = true; break; }
-        if (poll.verdict === 'green') { mergeGreen(n, sha, gateStart); settled = true; break; }
+        if (poll.verdict === 'green') { mergeGreen(n, sha, gateStart, c); settled = true; break; }
       }
       if (!settled) open(n, 'timeout');
     } catch (err) {
