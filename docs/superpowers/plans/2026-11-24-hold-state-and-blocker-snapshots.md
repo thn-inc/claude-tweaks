@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js (CommonJS), `node:test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-24T102427-record-6151/work/6151-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-24T104349-record-6151/work/6151-spec.md` (re-materialized with the record's three plan-review Decisions)
 
 ## Global Constraints
 
@@ -18,11 +18,15 @@
 - Emission never blocks or fails a transition: no throw on any emission path.
 - `held` payload `{ why, ref? }`, `released` payload `{ why }`, `why` one of `HOLD_WHYS` (`blocked`, `parked`, `changes-requested`, `waiting-on-you`); filed under the station the item is at.
 - `discriminator` is a stable string the caller already holds, never `Date.now` / `new Date()` (`docs/reference/station-events.md`).
+- Plan-review Decision 1: `held` / `released` carry no `actor`; `emit.js` is not changed.
+- Plan-review Decision 2: `ref` on `held` names only a blocking record (`#N` or `owner/repo#N`); a hold with no blocking record (a driver stop) omits `ref` — a step name is never written there.
+- Plan-review Decision 3: a hold label edited through refine files under `authorize` always; no station is derived from labels.
+- Driver hold facts ride structured line fields (`stopStep` on `settle-label`, `parked` on `merge-park`), never a parse of `detail`: `merge.js`'s `stop()` writes `detail` as `{reason}: {lock text}`, so the lock text is not a prefix.
 
 ## Review Focus
 
 - A label that is not a hold label (`ready`, `auto:build`) passed to the hold builder → no event.
-- A `merge-park` whose label did NOT read back (`bot:parked NOT applied ...`) → no `held` line (the record is not held by label).
+- A `merge-park` whose label did NOT read back (`parked: false`) → no `held` line (the record is not held by label).
 - A `settle-label` line that failed (status `fail`) → no `held` line.
 - A `settle-label` stop at a step with no driver station (`claim`, `check`) → `held` filed under `build`, never dropped.
 - A refine action that removes `bot:blocked` alongside adding `auto:build` → existing authorize events unchanged, plus one `released`.
@@ -55,22 +59,23 @@ The five acceptance tests already exist and must keep passing: `an unchanged sna
 ### Task 2: Driver holds — `settle-label` and an applied park
 
 **Files:**
-- Modify: `plugin/bin/lib/station-events/driver-mirror.js`, `plugin/bin/lib/driver/run.js` (`settleStop`'s `emit`)
-- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`
+- Modify: `plugin/bin/lib/station-events/driver-mirror.js`, `plugin/bin/lib/driver/run.js` (`settleStop`'s `emit`), `plugin/bin/lib/driver/merge.js` (`park`'s final `stop` line)
+- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`, `tests/bin-lib/driver/merge.test.js`
 
 **Interfaces:**
 - Consumes: `holdEvent` (Task 1).
-- Produces: the `settle-label` driver line carries `stopStep` (the stopped step's name, `stopObject(...).step`, `null` when none) as a line field; `stationEventsFor` maps it.
+- Produces: the `settle-label` driver line carries `stopStep` (the stopped step's name, `stopObject(...).step`, `null` when none) as a line field; the `merge-park` line carries `parked` (`true` when `bot:parked` read back, else `false`); `stationEventsFor` maps both. Neither field is parsed out of `detail`.
 
 - [ ] **Step 1: Write failing tests**
-  - driver-mirror: `a settle-label ok line writes held why blocked at the stopped step's station` — `line({ step: 'settle-label', status: 'ok', stopStep: 'test' })` → exactly one event, `kind: 'held'`, `station: 'test'`, `lane: 'driver'`, `payload: { why: 'blocked', ref: 'test' }`, `discriminator: 'settle-label@' + TS`, and `buildLine(e)` non-null.
-  - driver-mirror: `a settle-label stop at a step with no station is held at build` — `stopStep: 'claim'` → `station: 'build'`; `stopStep` absent → `station: 'build'` and payload `{ why: 'blocked' }`.
+  - driver-mirror: `a settle-label ok line writes held why blocked at the stopped step's station` — `line({ step: 'settle-label', status: 'ok', stopStep: 'test' })` → exactly one event, `kind: 'held'`, `station: 'test'`, `lane: 'driver'`, `payload: { why: 'blocked' }` (no `ref`: a driver stop has no blocking record — Decision 2), `discriminator: 'settle-label@' + TS`, and `buildLine(e)` non-null.
+  - driver-mirror: `a settle-label stop at a step with no station is held at build` — `stopStep: 'claim'` → `station: 'build'`; `stopStep` absent → `station: 'build'`; payload `{ why: 'blocked' }` in both.
   - driver-mirror: `a failed settle-label writes no hold` — `status: 'fail'` → `[]`.
-  - driver-mirror: `an applied park writes held why parked at merge beside the returned exit` — `line({ step: 'merge-park', status: 'stop', detail: 'bot:parked applied to record 7' })` → kinds `[['exited','merge','returned'], ['held','merge',undefined]]`, held payload `{ why: 'parked' }`.
-  - driver-mirror: keep the existing `merge-park` test with `detail: 'ci-red: x'` passing unchanged (no hold: detail does not start `bot:parked applied`); add `bot:parked NOT applied to record 7 (x)` → only the exit.
+  - driver-mirror: `an applied park writes held why parked at merge beside the returned exit` — `line({ step: 'merge-park', status: 'stop', parked: true, detail: 'ci-red: bot:parked applied to record 7' })` → kinds `[['exited','merge','returned'], ['held','merge',undefined]]`, held payload `{ why: 'parked' }`.
+  - driver-mirror: keep the existing `merge-park` test (no `parked` field) passing unchanged — only the exit; add `parked: false` → only the exit.
+  - merge.test.js: an existing park test whose label reads back asserts the `merge-park` line has `parked: true`; one whose label never reads back asserts `parked: false`.
   - run.test.js: in `AC8.3: an unclassified stop ...`, assert the `settle-label` line's `stopStep === 'test'`.
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js` — Expected: FAIL.
-- [ ] **Step 3: Implement** — `run.js` `settleStop`: `emit` passes `extra: { stopStep: stopObj.step }` for `settle-label` only (name the step through the existing settle step-name source in `events.js`/settle, not a fresh literal if one is exported). `driver-mirror.js`: before the `DRIVER_STEP_STATIONS` branch, `settle-label` with `status === 'ok'` → `[holdEvent({ label: LABELS.BOT_BLOCKED, added: true, station: DRIVER_STEP_STATIONS[stopStep] || STATION.BUILD, ref: nonEmpty(stopStep) ? stopStep : undefined, ...base fields })]`; in the merge sub-step branch, when `step === 'merge-park'` and `detail` starts with `bot:parked applied`, append `holdEvent({ label: LABELS.BOT_PARKED, added: true, station: STATION.MERGE, ... })`. Keep the function pure.
+- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js tests/bin-lib/driver/merge.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** — `run.js` `settleStop`: `emit` passes `extra: { stopStep: stopObj.step }` for `settle-label` only (name the step through the existing settle step-name source in `events.js`/settle, not a fresh literal if one is exported). `merge.js` `park`: its final `stop(...)` passes `extra: { parked: applied }` (extend `stop` with an optional `extra` it forwards to `emit`). `driver-mirror.js`: before the `DRIVER_STEP_STATIONS` branch, `settle-label` with `status === 'ok'` → `[holdEvent({ label: LABELS.BOT_BLOCKED, added: true, station: DRIVER_STEP_STATIONS[stopStep] || STATION.BUILD, ...base fields })]` with no `ref`; in the merge sub-step branch, when `step === 'merge-park'` and `event.parked === true`, append `holdEvent({ label: LABELS.BOT_PARKED, added: true, station: STATION.MERGE, ... })`. Keep the function pure.
 - [ ] **Step 4: Run** the Step 2 command — Expected: PASS.
 - [ ] **Step 5: Commit** `feat: mirror driver hold labels as held events — refs #6151`.
 
@@ -89,6 +94,6 @@ The five acceptance tests already exist and must keep passing: `an unchanged sna
   - `a throwing emitter on a hold event never fails the batch` — exit code 0.
   - Update any existing test that pins the exact event list of an action removing or adding a hold label.
 - [ ] **Step 2: Run** `node tools/run-tests.js tests/apply-refine-labels.test.js` — Expected: FAIL.
-- [ ] **Step 3: Implement** — inside the per-edit loop, after the transitions, one `holdEvent` per hold-label edit with `station: STATION.AUTHORIZE` (refine is the authorization gate where a person lifts or sets the hold), the same `discriminator` shape `refine:{issue}:{direction}:{label}:{suffix}`, each `deps.stationEvent` call in its own try. Update `docs/reference/station-events.md`: the "Holds and plan changes" list, the kinds-with-producers sentence, and the "emit nothing" bullet for `bot:blocked` / `bot:parked` — name the three producers (driver mirror `settle-label`, driver mirror applied `merge-park`, `apply-refine-labels.js`), the station each files under, and that `accept:changes-requested` still has no code path; add producer-table rows matching the existing table's columns; add that `resolve-blockers.js` appends a `blockers` line only when it differs from the record's last one ignoring `fetchedAt` (bounded 64 KiB tail read).
+- [ ] **Step 3: Implement** — inside the per-edit loop, after the transitions, one `holdEvent` per hold-label edit with `station: STATION.AUTHORIZE` (refine is the authorization gate where a person lifts or sets the hold), the same `discriminator` shape `refine:{issue}:{direction}:{label}:{suffix}`, each `deps.stationEvent` call in its own try. Update `docs/reference/station-events.md`: the "Holds and plan changes" list, the kinds-with-producers sentence, and the "emit nothing" bullet for `bot:blocked` / `bot:parked` — name the three producers (driver mirror `settle-label`, driver mirror applied `merge-park`, `apply-refine-labels.js`), the station each files under, and that `accept:changes-requested` still has no code path; under Coverage gaps, add: "A hold label edited through refine is filed at `authorize`, even when the record is already at a later station." (Decision 3), and that a `drive.js --no-settle` run leaves the `bot:blocked` add to its caller, so no `held` line is written for it; define `ref` exactly as Decision 2 gives it: "`ref`: the blocking record, as `#N` or `owner/repo#N`; absent when the hold has no blocking record."; state that `held` / `released` carry no `actor` (Decision 1); add producer-table rows matching the existing table's columns; add that `resolve-blockers.js` appends a `blockers` line only when it differs from the record's last one ignoring `fetchedAt` (bounded 64 KiB tail read).
 - [ ] **Step 4: Run** `node tools/run-tests.js tests/apply-refine-labels.test.js tests/bin-lib/station-events/blockers.test.js tests/bin-lib/station-events/driver-mirror.test.js tests/resolve-blockers-cli.test.js tests/bin-lib/station-events/station-literal-conformance.test.js` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat: write hold events from refine label edits; document hold producers — refs #6151`.
