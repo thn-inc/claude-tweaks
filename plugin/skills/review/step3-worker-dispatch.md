@@ -68,7 +68,7 @@ Once every Task agent of lens 3f and of each re-dispatched lens has replied or f
 node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" merge-lens-replies --into "{into}" --out "{path-M}" --lens {lens} --reviewers {n} --side-a "{file-A|-}" --side-b "{file-B|-}"
 ```
 
-`{into}` is `{path-O}` for the first merge and `{path-M}` for every later one. `{n}` is the lens's `reviewers` count; at 1, drop `--side-b`. Pass `-` for a reviewer that failed or never replied. Exit 2 means the call was wrong and nothing was written: fix the flags or the text file and run it again. Exit 3 means the write failed: run it once more, and when it fails again take condition 4, since the settle file cannot be built.
+`{into}` is `{path-O}` for the first merge and `{path-M}` for every later one. `{n}` is the lens's `reviewers` count; at 1, drop `--side-b`. Pass `-` for a reviewer that failed or never replied. Exit 2 means the call was wrong and nothing was written: fix the flags or the text file and run it once more, never a third time. A second exit 2, or any exit 3 (the write failed), takes condition 4 with a message, since the settle file cannot be built: its `SKIP` text is `condition: settle exit 2: merge-lens-replies {exit 2|write} failed → fallback: Task lens dispatch`, so it never reads as a settle call's exit 2.
 
 The settle file, `{settle-file}` below, is `{path-M}` when any merge ran, else `{path-O}`.
 
@@ -91,9 +91,9 @@ The review falls back to `step3-lens-dispatch.md`'s Task dispatch, and logs one 
 1. `no claude binary` — the Availability check printed nothing.
 2. `launch error` — `{path-O}` is empty or not JSON, or its `started` is not `true` (a refused call, an interrupted launcher), or the wait bound was reached; the message is `{path-E}`'s first line, or `wait bound reached`.
 3. `every worker failed` — every reviewer in the reply has `failed: true`.
-4. `settle exit 2` — the first `settle-lens-replies` call exits 2 on the settle file, or the merge write failed twice.
+4. `settle exit 2` — the first `settle-lens-replies` call exits 2 on the settle file, or `merge-lens-replies` failed as Merge says (its message names the merge).
 
-The Task dispatch covers the review's lens set — the agent lenses in scope at the tier, or under `adaptive` the CLI's `selected` set, never a hard-coded 3a–3g — minus 3f and 3h when Start already dispatched them. Under condition 1, decided before Start, 3f and 3h are in the set. The kept 3f and 3h replies settle on that same Task path exactly as the Task path settles them, through their own per-pair route, never through `settle-lens-replies`.
+The Task dispatch covers the review's lens set — the agent lenses in scope at the tier, or under `adaptive` the CLI's `selected` set, never a hard-coded 3a–3g — minus every lens whose Task-path replies are already held: 3f and 3h from Start, and each lens Read the reply re-dispatched. Only the lenses with no Task replies in hand are dispatched. Under condition 1, decided before anything was dispatched, 3f and 3h are in the set. The held replies settle on that same Task path exactly as the Task path settles them, through each lens's own per-pair route, never through `settle-lens-replies`.
 
 Resolve the line's text file with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" S=review-{ctx-id}-worker-skip.txt`, `Write` one line to the printed path (`{path-S}`) — `condition: {label} → fallback: Task lens dispatch`, or `condition: {label}: {message} → fallback: Task lens dispatch` when there is a message (its first line only) — and run:
 

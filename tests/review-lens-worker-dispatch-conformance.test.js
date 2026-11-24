@@ -85,6 +85,12 @@ const FACTS = [
   [/re-dispatched reviewer that itself fails[^.]*`step3-tier-variants\.md`'s partner-died/, 'the Task re-dispatch is the one retry, then partner-died', 'AC3.1'],
   [new RegExp(esc(FAIL_CLOSED)), 'the fail-closed shapes are never a fallback condition', 'AC4.1'],
   [new RegExp(esc(SETTLE_EXIT_2)), 'every first-call settle exit 2 is condition settle exit 2', 'AC4.2'],
+  // Fix round 1: review-focus pins, the held-reply rule (controller ruling) and the bounded merge retry.
+  [/`\{path-O\}` is empty or not JSON/, 'empty launcher stdout is launch error, never an empty reply set', 'AC2.2'],
+  [/Off darwin the launcher starts, but every side fails with reason `platform`/, 'off darwin every side fails platform', 'AC2.2'],
+  [/minus every lens whose Task-path replies are already held[^.]*re-dispatched\. Only the lenses with no Task replies in hand are dispatched/, 'held Task-path replies are never dispatched again on fallback', 'AC2.2'],
+  [/run it once more, never a third time/, 'the merge exit-2 retry is bounded to one', 'AC2.2'],
+  [new RegExp(esc('`condition: settle exit 2: merge-lens-replies {exit 2|write} failed → fallback: Task lens dispatch`')), 'a merge failure logs condition 4 with its own message', 'AC2.2'],
 ];
 const missingFacts = missingFactsOf(FACTS.map(([p, f]) => [p, f]));
 const factsFor = (ac) => FACTS.filter(([, , tag]) => tag === ac).map(([p, f]) => [p, f]);
