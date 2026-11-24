@@ -1838,14 +1838,19 @@ function advanceNesting(nest, raw, kinds, end) {
     if (c === '\\') { if (kinds[j + 1] === 'd') j += 1; continue; }
     if (c === '`') tick = !tick;
     else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') {
-      stack += raw[j + 1] === '(' ? 'c' : 'p';
+      // #4247: a `$(case …` level ('k') closes only at the `)` after `esac`, since a pattern's `)` is not its closer.
+      stack += raw[j + 1] === '{' ? 'p' : /^\(\s*case\s/.test(raw.slice(j + 1)) ? 'k' : 'c';
       j += 1;
     } else if (stack !== '' || tick) {
       const inParam = stack.endsWith('p');
       if (inParam) { if (c === '}') stack = stack.slice(0, -1); }
       else if (c === "'") sq = true;
       else if (stack !== '' && (c === '(' || c === '{')) stack += c === '(' ? 'c' : 'g';
-      else if (stack !== '' && (c === ')' || c === '}')) stack = stack.slice(0, -1);
+      else if (stack !== '' && (c === ')' || c === '}')) {
+        // #4247: a closer pops only its own opener; a bare `}` or a pattern `)` is word text, which stays nested.
+        const top = stack[stack.length - 1];
+        if (c === '}' ? top === 'g' : top === 'c' || (top === 'k' && /\besac\s*;?\s*$/.test(raw.slice(0, j)))) stack = stack.slice(0, -1);
+      }
     }
   }
   return { stack, tick, sq };

@@ -220,6 +220,12 @@ test('#4210 F1 F3: hasFileRedirection skips a nested or quoted leading `>`, and 
   }
 });
 
+test('#4247: hasFileRedirection reads a `case` pattern and an unquoted heredoc body as bash does', () => {
+  assert.strictEqual(hasFileRedirection('echo "$(case $x in a) echo "p>q";; esac)"'), false);
+  assert.strictEqual(hasFileRedirection("git commit -m \"$(cat <<EOF\nDon't $(date)\nEOF\n)\" && echo y > o.js"), true);
+  assert.strictEqual(hasFileRedirection('echo $(cmd x>y)'), true);
+});
+
 test('AC3.1 #4210: the differential corpus lists the quoted-word shape, and it takes the full-handler path', () => {
   assert.ok(DIFFERENTIAL_CORPUS.includes('echo "hi">tracked.js'));
   assert.strictEqual(shouldRunFull('pre-tool-use', bash('echo "hi">tracked.js')), true);

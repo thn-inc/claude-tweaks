@@ -979,6 +979,23 @@ test('#4210 review: a heredoc body inside "$( … )" does not leave the nesting 
   assert.deepStrictEqual(fileWriteTargets("git commit -m \"$(cat <<'EOF'\nfoo > bar\nEOF\n)\"", '/r'), []);
 });
 
+// #4247: the nesting walk reads `case` patterns, a bare `}`, an unquoted heredoc body and an
+// unquoted `$( … )` group closer as bash does.
+test('#4247: a `case` pattern `)` or a bare `}` does not close "$( … )" early', () => {
+  for (const command of ['echo "$(case $x in a) echo "p>q";; esac)"', 'echo "$(echo } "p>q")"']) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], command);
+  }
+});
+
+test('#4247: an unquoted heredoc body with `$(` and an apostrophe leaves a later redirect resolvable', () => {
+  assert.deepStrictEqual(fileWriteTargets("git commit -m \"$(cat <<EOF\nDon't $(date)\nEOF\n)\" && echo y > o.js", '/r'),
+    [{ action: 'write', file: path.resolve('/r', 'o.js') }]);
+});
+
+test('#4247: an unquoted `$(cmd x>y)` resolves y, without the group closer', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo $(cmd x>y)', '/r'), [{ action: 'write', file: path.resolve('/r', 'y') }]);
+});
+
 // #4149 with #4210: a heredoc opened inside a quoted "$( … )" is planned against the
 // substitution's own text, not the outer line, so the reader allowlist judges the command that
 // reads the body. bash 3.2 and 5 write f (and g) for each shell case; the cat message writes nothing.
