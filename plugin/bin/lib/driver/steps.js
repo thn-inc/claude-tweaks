@@ -643,7 +643,7 @@ function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
     '',
     tests ? 'Edit only the Key Files and test files (the test list file below excepted).' : 'Edit only the Key Files and test files.',
     tests
-      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish. Write the test list with the Write tool and make every edit with Edit or Write, never a shell script. Run the test command as one Bash call on its own (no \`&&\`, \`;\`, pipe, redirect or \`mkdir\`); Bash otherwise admits only read-only \`git status/diff/log/show/ls-files\`. A denied Bash call means that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form before reporting cannot-complete.`
       : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
@@ -1349,7 +1349,7 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   // This guard and relaunchTestStep's read ctx.implementer, not ctx.relaunch: an attempt that resolved no model
   // leaves ctx.implementer at escalations 0, so the second relaunch is refused — the safe direction. Reading
   // ctx.relaunch would let relaunchOrStop plan from that stale implementer.
-  if (ladder && ctx.implementer.escalations === 1 && relaunchesOnCannotComplete('record', result)) {
+  if (ladder && laterTriggerArmed(ctx.implementer) && relaunchesOnCannotComplete('record', result)) {
     return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, (n) => cannotCompletePrompt(result.cannotComplete.summary, { attempt: n }), [relaunchWorkerStep]);
   }
   return line;
@@ -1369,11 +1369,18 @@ const relaunchCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async 
   return withRelaunchNote(ctx, result);
 });
 
-// The core test step after a relaunch. Its red tests are a trigger only under the effort ladder and only after
-// the first relaunch (escalations 1), queueing the second; after the second, and under record + inherit, never.
+// A relaunched attempt's own trigger may queue a further relaunch only while its implementer has stepped up at
+// least once and is below the cap. An attempt that resolved no model leaves ctx.implementer at escalations 0,
+// so it stays unarmed (the guard comment in relaunchWorkerStep).
+function laterTriggerArmed(implementer) {
+  return implementer.escalations > 0 && implementer.escalations < MAX_ESCALATIONS;
+}
+
+// The core test step after a relaunch. Its red tests are a trigger only under the effort ladder and only while
+// laterTriggerArmed (after the first relaunch, queueing the second); after the last, and under record + inherit, never.
 const relaunchTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const result = withRelaunchNote(ctx, await testStep.run(ctx, deps));
-  if (result.reason !== 'failing-test' || !effortLadder(ctx.shared.policy) || ctx.implementer.escalations !== 1) return result;
+  if (result.reason !== 'failing-test' || !effortLadder(ctx.shared.policy) || !laterTriggerArmed(ctx.implementer)) return result;
   return relaunchOrStop(ctx, result, TRIGGERS.redTests, (n) => redTestsPrompt(failingTests({ runDir: ctx.runDir, wt: ctx.wt, deps }), { attempt: n }));
 });
 

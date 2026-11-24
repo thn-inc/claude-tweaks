@@ -1,7 +1,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parsePolicyModelConfig, stripComment, modelProfilesEntry } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { parsePolicyModelConfig, readPolicyModelConfig, stripComment, modelProfilesEntry } = require('../../../plugin/bin/lib/model-profiles/policy-fragment');
 
 const SAMPLE = [
   'worktree-always: true',
@@ -114,4 +117,16 @@ test('modelProfilesEntry: a malformed sibling key never marks the block invalid'
     modelProfilesEntry('model-profiles:\n  standard:\n    effort: low\nfrontier-run-cap: 5 agents\n'),
     { value: { standard: { effort: 'low' } }, source: 'policy' },
   );
+});
+
+test('readPolicyModelConfig: a missing file is an empty policy, an unreadable or malformed one throws naming the path', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'policy-fragment-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'policy.yml');
+  assert.deepStrictEqual(readPolicyModelConfig(file), {});
+  fs.writeFileSync(file, 'model-stance: economy\n');
+  assert.deepStrictEqual(readPolicyModelConfig(file), { 'model-stance': 'economy' });
+  fs.writeFileSync(file, 'frontier-run-cap: lots\n');
+  assert.throws(() => readPolicyModelConfig(file), (err) => err.message.startsWith('malformed ' + file + ': ') && err.message.includes('frontier-run-cap'));
+  assert.throws(() => readPolicyModelConfig(dir), (err) => err.message.startsWith('cannot read ' + dir + ': '));
 });

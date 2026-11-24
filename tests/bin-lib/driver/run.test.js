@@ -4568,6 +4568,15 @@ test('#6002 AC4.1: two red runs climb low → medium on standard → capable', a
   assert.ok(noRelaunchKey(h));
 });
 
+test('#6002: a Fast first launch has no effort rung — its first red run steps up to standard at standard\'s launchEffort', async () => {
+  const h = ladderRig({ issue: SMALL_RECORD, script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('fast'), null], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.deepEqual(lines.map((l) => [l.attempt, l.effort ?? null, l.profile]), [[1, null, 'fast'], [2, 'medium', 'standard'], [3, 'medium', 'capable']]);
+  assert.deepEqual(lines.slice(1).map((l) => [l.escalatedFrom, l.trigger]), [['fast', 'red-tests'], ['standard', 'red-tests']]);
+});
+
 test('#6002 AC4.2: a third red run leaves as #5997\'s second failure does', async () => {
   const control = relaunchRig({ script: [[isVerifyCall, RED_VERIFY]] });
   await run(['#7'], control.deps);
@@ -5183,6 +5192,16 @@ test('#5915 AC1: with a declared impact.command the prompt names it and no npm t
   assert.ok(opts.prompt.split('\n').includes(EDIT_LINE_LISTED), 'the edit rule excepts the list file');
   assert.ok(!opts.prompt.split('\n').includes(EDIT_LINE));
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', 'the run goes on to the test step');
+});
+
+test('#6161: the declared-test prompt says to run the command unchained and to retry a denied shape', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL)] });
+  await run(['#7'], h.deps);
+  const { prompt } = workerCall(h).args[0];
+  assert.ok(prompt.includes('Write the test list with the Write tool'));
+  assert.ok(prompt.includes('one Bash call on its own'));
+  assert.ok(prompt.includes('read-only `git status/diff/log/show/ls-files`'));
+  assert.ok(prompt.includes('that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form'));
 });
 
 test('#5915 AC2: with no declaration the prompt says not to run tests and the launch has no testCommand', async () => {
