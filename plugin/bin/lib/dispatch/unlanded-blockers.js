@@ -90,9 +90,11 @@ function nativeMissingRecords(stderr, numbers) {
 const malformedExclusion = ({ number, cause }) => ({ reason: MALFORMED_REASON, records: [number], detail: { cause } });
 
 // The landing call's envelope, the requested numbers -> { exclusions, undetermined }.
-// One `unlanded-blocker` exclusion per requested record with an `unlanded` verdict
-// (blockers in blockerLanding order); `undetermined` lists every undetermined
-// verdict, which the CLI keeps and logs. `open` is the blocked pass's, and `landed`
+// One `unlanded-blocker` exclusion per requested record with an `unlanded` or `hollow`
+// verdict (blockers in blockerLanding order; a hollow entry adds `verdict: 'hollow'` and
+// the closing `pr`, null for a direct Commit closer, to the unlanded `{blocker, commit}`);
+// `undetermined` lists every undetermined verdict, which the CLI keeps and logs.
+// `open` is the blocked pass's, and `landed`
 // and `not-applicable` contribute nothing. A cross-repository `undetermined` is a
 // CLOSED foreign blocker, which /dispatch does not count as blocking (#4793); its
 // entry carries the verdict's `repository` so the CLI names it owner/name#N. Throws a
@@ -108,6 +110,7 @@ function landingExclusions(envelope, numbers) {
     const blockers = [];
     for (const v of landing) {
       if (v.verdict === 'unlanded') blockers.push({ blocker: v.blocker, commit: v.commit });
+      else if (v.verdict === 'hollow') blockers.push({ blocker: v.blocker, commit: v.commit, verdict: 'hollow', pr: v.pr ?? null });
       else if (v.verdict === 'undetermined') undetermined.push({ record: n, blocker: v.blocker, via: v.via, ...(v.repository ? { repository: v.repository } : {}) });
     }
     if (blockers.length) exclusions.push({ reason: UNLANDED_REASON, records: [n], detail: { blockers } });

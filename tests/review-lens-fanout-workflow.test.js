@@ -228,3 +228,43 @@ test('the banned-token scan goes red on each token it names', () => {
     assert.deepStrictEqual(bannedTokens(`${text}\n${line}\n`), [], line);
   }
 });
+
+// #6000: the headless-worker launcher (lib/driver/lens-workers.js) is the second producer of this reply shape.
+// Both producers' output for the same two-lens input goes through settle-lens-replies, so neither drifts alone.
+test("both producers' replies pass settle-lens-replies", async (t) => {
+  const { runLensWorkers } = require('../plugin/bin/lib/driver/lens-workers');
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lens-producers-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const sub of ['tmp', 'run', 'cwd', 'settings']) fs.mkdirSync(path.join(dir, sub));
+  const reply = '| Severity | Path:Line | Finding | Evidence |\n|---|---|---|---|\n| high | src/a.js:10 | missing expiry check on token | evidence |\n\nSTATUS: DONE';
+  const lenses = [lens('3a', 'B3a', 'haiku'), lens('3b', 'B3b', 'haiku')];
+  const { result: workflow } = await runScript({ lenses }, () => reply);
+  const runner = () => ({
+    pid: 1,
+    kill() {},
+    exited: Promise.resolve({ code: 0, signal: null, stderr: '', stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 1, usage: {}, permission_denials: [], structured_output: { text: reply } }) }),
+  });
+  const { reply: worker } = await runLensWorkers({
+    lenses, runDir: path.join(dir, 'run'), cwd: path.join(dir, 'cwd'), bundleText: 'B', readPaths: [], attrSource: '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+    settingsDir: path.join(dir, 'settings'), platform: 'darwin', policy: {}, env: { PATH: '/nonexistent', HOME: '/h' }, gitHonoursAttrSource: true,
+  }, { runner });
+  const tmp = path.join(dir, 'tmp');
+  const env = { CLAUDE_CODE_SESSION_ID: 't6000-session', TMPDIR: tmp, TMP: tmp, TEMP: tmp };
+  const settled = [];
+  for (const [name, value] of [['workflow.json', workflow], ['worker.json', worker]]) {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, JSON.stringify(value));
+    const res = runCliSync(CLI, ['settle-lens-replies', file, '--ctx-id', 't6000'], { env, cwd: dir });
+    assert.strictEqual(res.code, 0, `${name}: ${res.stderr}`);
+    settled.push(JSON.parse(res.stdout).settled);
+  }
+  assert.deepStrictEqual(settled[0].map((s) => s.lens), ['3a', '3b']);
+  assert.deepStrictEqual(settled[1], settled[0]);
+});
+
+// The launcher refuses exactly what the script refuses, with the same message.
+test("the launcher's inputRefusal matches the script's refusal on every refused input", () => {
+  const { inputRefusal } = require('../plugin/bin/lib/driver/lens-workers');
+  for (const [name, args, reason] of REFUSALS) assert.strictEqual(inputRefusal(args), reason, name);
+  assert.strictEqual(inputRefusal({ lenses: [lens('3b', 'B', 'm', 1)] }), null);
+});

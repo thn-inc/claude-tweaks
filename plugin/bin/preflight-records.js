@@ -35,12 +35,14 @@
 // problem is exit 2, as for --records-json, and the two flags are mutually
 // exclusive (exit 2).
 // --blocker-landing (#4553) adds records[n].blockerLanding [{blocker, verdict,
-// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry] —
+// commit, via}, plus `repository` (`owner/name`) on a cross-repository entry and
+// `pr` on a `hollow` verdict (#6142)] —
 // for each record, the landing verdict of every blocker that is
 // NOT one of the positional numbers (an in-run blocker is ordered by the DAG,
 // never judged here), in blockedBy order, [] when none; the verdicts are
 // bin/lib/preflight-records/blocker-landing.js's. One batched GraphQL call plus
-// one REST compare per distinct candidate commit; none when no record has an
+// one REST compare per distinct candidate commit, plus one REST commits read per distinct
+// reachable sha (its changed files, for the hollow judgment); none when no record has an
 // out-of-run blocker. Under --records-json no such call can run, so every
 // out-of-run blocker reads undetermined/records-json (one stderr line says so)
 // unless --blocker-states-json <path> — a JSON object keyed by blocker number
@@ -50,8 +52,9 @@
 // `owner/name#N` keys (any case), each {state} or a bare state string (issue_read's
 // lowercase `open`/`closed` is fine; anything else reads unreadable), for the
 // body-declared foreign blockers below (#4793). A compare call that throws
-// leaves that blocker undetermined/probe-failed and prints one stderr line (the
-// cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
+// leaves that blocker undetermined/probe-failed, and a commits read that throws
+// leaves it undetermined/files-unreadable (never hollow, never landed on that
+// candidate); each prints one stderr line (the cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
 // Under work-links: native (--prefetched-json included, which runs the native
 // call as the gh path does) a blocker the native read found in ANOTHER repository
 // (#4793) is not in blockedBy and is never queried or compared by number here:
@@ -110,7 +113,7 @@ const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { snapshotSinkOf } = require('./lib/station-events/blockers');
+const { snapshotSinkOf, lastPayloadFromCwd } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
@@ -197,6 +200,7 @@ const realDeps = {
   },
   // #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
   stationEvent: (e) => appendStationEvent(e),
+  lastPayload: lastPayloadFromCwd,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -428,8 +432,9 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
     deps.stderr(`preflight-records.js: blocker landing query failed: ${oneLine(error)}\n`);
     return { code: 1 };
   }
-  for (const { sha, message } of probeErrors || []) {
-    deps.stderr(`preflight-records.js: blocker landing compare failed for ${sha}: ${oneLine(message)}\n`);
+  for (const { kind, sha, message } of probeErrors || []) {
+    const what = kind === 'files' ? 'changed-files read' : 'compare';
+    deps.stderr(`preflight-records.js: blocker landing ${what} failed for ${sha}: ${oneLine(message)}\n`);
   }
   return { results };
 }

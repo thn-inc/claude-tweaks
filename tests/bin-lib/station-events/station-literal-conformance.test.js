@@ -261,3 +261,105 @@ test('the vocab walk reports a stripper mis-parse and an unparseable file as off
   assert.deepEqual(vocabOffendersIn(['x.js'], () => misparsed), [`x.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
   assert.deepEqual(vocabOffendersIn(['x.js'], () => unparseable), [`x.js: ${STRIPPER_VERDICT_MESSAGES.unparseable}`, `x.js:1: ${unparseable}`]);
 });
+
+// Record #6152: `returned`, `skipped` and `abandoned` are retired station-event outcomes, and the
+// emitter drops an `exited` that carries one. This scan flags a string literal (`'…'`, `"…"` or a
+// template literal) exactly equal to one of the three words in an emitter file, so a caller cannot
+// spell one back in. The emitter set is every plugin/bin file whose comment-stripped source
+// requires a path containing `station-events/`, plus every file under lib/station-events/
+// (stations.js included, not exempt).
+//
+// Over each file with comments blanked (literals kept). Recall limits: a word assembled from two
+// literals, a word reached through a computed key, a word inside a longer literal
+// (`'returned-x'`), and a word spelled in a regex literal (`/^abandoned/`, which is how stations.js
+// matches a release reason) are not seen.
+const RETIRED_WORDS = ['returned', 'skipped', 'abandoned'];
+const RETIRED_SITE = new RegExp(`(['"\`])(?:${RETIRED_WORDS.join('|')})\\1`, 'g');
+const EMITTER_FLOOR = 15;
+const STATION_EVENTS_DIR = 'lib/station-events/';
+const REQUIRES_STATION_EVENTS = /require\(\s*['"][^'"]*station-events\/[^'"]*['"]\s*\)/;
+
+// -> { sites: [{ line, text }], verdict, requires }
+function retiredSites(raw) {
+  const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
+  const rows = src.split('\n');
+  const sites = [];
+  for (const m of src.matchAll(RETIRED_SITE)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    sites.push({ line, text: rows[line - 1].trim().slice(0, 100) });
+  }
+  return { sites, verdict, requires: REQUIRES_STATION_EVENTS.test(src) };
+}
+
+const emitterFiles = (files, read) => files.filter((rel) => rel.startsWith(STATION_EVENTS_DIR) || retiredSites(read(rel)).requires);
+
+function retiredOffendersIn(files, read) {
+  const offenders = [];
+  for (const rel of emitterFiles(files, read)) {
+    const { sites, verdict } = retiredSites(read(rel));
+    if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
+    for (const s of sites) offenders.push(`${rel}:${s.line}: ${s.text}`);
+  }
+  return offenders;
+}
+
+const retiredLines = (src) => retiredSites(src).sites.map((s) => s.line);
+
+test('retired-outcome scanner flags a retired word spelled as a string literal (proves it can go red)', () => {
+  assert.deepEqual(retiredLines([
+    "const a = 'returned';",
+    'const b = "skipped";',
+    'const c = `abandoned`;',
+    "if (x === 'returned') {}",
+  ].join('\n')), [1, 2, 3, 4]);
+});
+
+test('retired-outcome scanner ignores comments, longer literals and bare identifiers', () => {
+  assert.deepEqual(retiredLines([
+    "// 'returned' in a comment",
+    "const a = 'returned-x';",
+    "const b = 'skipped: foo';",
+    'const returned = 1; const skipped = returned + 1;',
+    'const re = /^abandoned(?:[:\\s]|$)/;',
+  ].join('\n')), []);
+});
+
+test('retired-outcome scanner reports a stripper mis-parse', () => {
+  const misparsed = "if (cond) /'/.test(cond); const b = 'p//q'; emit({ outcome: 'returned' });";
+  assert.equal(retiredSites(misparsed).verdict, 'misparsed', STRIPPER_VERDICT_MESSAGES.misparsed);
+  assert.equal(retiredSites("const x = ; emit({ outcome: 'returned' });").verdict, 'unparseable');
+  assert.equal(retiredSites("emit({ outcome: 'returned' });").verdict, 'ok');
+  assert.deepEqual(retiredOffendersIn(['lib/station-events/x.js'], () => misparsed), [`lib/station-events/x.js: ${STRIPPER_VERDICT_MESSAGES.misparsed}`]);
+});
+
+test('the emitter set is every file requiring station-events plus every file under lib/station-events', () => {
+  const sources = {
+    'a.js': "const { x } = require('./lib/station-events/emit');",
+    'b.js': "const { x } = require('./other');",
+    'c.js': "// require('./lib/station-events/emit')\nconst y = 1;",
+    'lib/station-events/z.js': 'const y = 1;',
+  };
+  assert.deepEqual(emitterFiles(Object.keys(sources), (rel) => sources[rel]), ['a.js', 'lib/station-events/z.js']);
+});
+
+test('AC1.2: no emitter under plugin/bin spells a retired outcome', () => {
+  const files = listJs(BIN);
+  const read = (rel) => readText(path.join(BIN, rel));
+  const emitters = emitterFiles(files, read);
+  assert.ok(emitters.length >= EMITTER_FLOOR, `expected at least ${EMITTER_FLOOR} emitter files, saw ${emitters.length}: the emitter detection stopped matching`);
+  assert.ok(emitters.includes(HOME_REL), `${HOME_REL} must be in the emitter set`);
+  assert.deepEqual(retiredOffendersIn(files, read), [], 'name an outcome through OUTCOME.* (stations.js); returned, skipped and abandoned are retired');
+});
+
+test('the retired-outcome walk goes red when an emitter spells one', () => {
+  const files = listJs(BIN);
+  const target = 'release-claim.js';
+  assert.ok(files.includes(target), `${target} is not under plugin/bin: update the planted file`);
+  const real = readText(path.join(BIN, target));
+  const plantedLine = real.split('\n').length + 1;
+  const offenders = retiredOffendersIn(files, (rel) => (rel === target
+    ? `${real}\nconst o = 'abandoned';\n`
+    : readText(path.join(BIN, rel))));
+  assert.deepEqual(offenders, [`${target}:${plantedLine}: const o = 'abandoned';`]);
+});

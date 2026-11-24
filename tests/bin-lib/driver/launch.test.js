@@ -118,7 +118,8 @@ async function composedArgs(role, policyRaw, runConfigRaw = null) {
     runner: (call) => { seen = call.args; return { pid: 1, kill() {}, exited: Promise.resolve({ code: 0, signal: null, stdout: '', stderr: '' }) }; },
     launchWorker: (o, d) => launchWorker(o, d),
   };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p' });
+  // attrSource (the empty tree's id) is required for the lens-reviewer and ignored by every other role.
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p', attrSource: '4b825dc642cb6eb9a060e54bf8d69288fbee4904' });
   return seen;
 }
 const argModel = (args) => args[args.indexOf('--model') + 1];
@@ -222,12 +223,26 @@ test('#5942: launchTracked resolves { envelope, model, effort } and a throw carr
   }
 });
 
-test('#5942: the resolved effort wins over an effort in the caller opts', async () => {
+test('#6002: launchTracked passes an explicit effort and returns it; undefined keeps roleLaunch\'s', async () => {
+  const shared = { activeWorker: null, policy: policyFrom('model-effort: profile\n') };
+  for (const [given, want] of [['low', 'low'], [null, null], [undefined, 'high']]) {
+    let got = 'unset';
+    const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: async (o) => { got = o.effort; return 'env'; } };
+    const out = await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', prompt: 'p', effort: given });
+    assert.strictEqual(got, want, String(given));
+    assert.strictEqual(out.effort, want, String(given));
+  }
+});
+
+// #6002 replaces #5942's "resolved effort wins over the caller's": the explicit `effort` option is now the launch's effort
+// (the effort ladder's levels); an `effort` that is not that option still cannot reach the launcher, and the model stays resolved.
+test('#6002: an explicit effort option is the launch effort; the model is still the resolved one', async () => {
   const shared = { activeWorker: null, policy: policyFrom('') };
   let got = null;
   const deps = { platform: 'linux', env: {}, runner: () => {}, launchWorker: (o) => { got = o; } };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', effort: 'max', prompt: 'p' });
-  assert.strictEqual(got.effort, null);
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role: 'implementer', effort: 'max', model: 'caller-model', prompt: 'p' });
+  assert.strictEqual(got.effort, 'max');
+  assert.strictEqual(got.model, M('standard'));
 });
 
 test("#5942: model-ceiling standard clamps the reviewer's effort with its model", async () => {
@@ -247,6 +262,16 @@ test('#5942: an explorer under model-effort profile resolves resolve().launchEff
   const want = resolve('standard', { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
   assert.strictEqual(typeof want, 'string');
   assert.strictEqual(roleLaunch('explorer', policy).effort, want);
+});
+
+test('AC3.2 (Q3): the lens-reviewer effort comes from its DRIVER_ROLE_PROFILES row', () => {
+  assert.strictEqual(DRIVER_ROLE_PROFILES['lens-reviewer'], 'fast');
+  for (const mode of ['profile', 'inherit']) {
+    // A role map that omits lens-reviewer: the code-only row is what is read.
+    const policy = { ...policyFrom(''), 'express-driver-models': { value: { ...FOUR }, source: 'policy' }, 'model-effort': { value: mode, source: 'policy' } };
+    assert.deepStrictEqual(roleLaunch('lens-reviewer', policy), { model: 'haiku', effort: null, profile: 'fast' }, mode);
+  }
+  assert.strictEqual(modelPolicyRefusal(policyFrom('')), null);
 });
 
 test('#5942: an invalid model-effort refuses every role', () => {

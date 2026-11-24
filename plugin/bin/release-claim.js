@@ -212,7 +212,7 @@ function run(argv, deps = realDeps) {
     try {
       const visitRunId = r.sweptFrom || runId;
       const ownSession = deps.sessionId || '';
-      const payload = { reason, link: o.link || null };
+      const payload = { ...transition.payload, reason, link: o.link || null };
       if (r.sweptFrom) {
         payload.sweptBy = runId;
         if (ownSession) payload.sweptBySession = ownSession;

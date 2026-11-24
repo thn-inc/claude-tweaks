@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { derivePhases, joinTokens, countGuardEvents, aggregateDispatches } = require('./derive');
-const { subagentsDirFor, readDispatches } = require('./transcript');
+const { subagentsDirFor, readDispatches, readWorkerDispatches } = require('./transcript');
 const { readManifest } = require('../flow/manifest');
 const { resolveAgainst } = require('../health-core/io');
 const { canonicalRealpath } = require('../path-guard');
@@ -145,7 +145,13 @@ function scopeDirItems(items, scoped, resolveFrom, ownSlug) {
 // whose parentAgentId chain (through that directory's items, at most MAX_SCOPE_HOPS hops) reaches
 // a scoped agent. Where one directory is both (a dispatcher session in its own worktree slug) the
 // own-slug rule wins. Absent or empty: nothing is filtered.
-async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo } = {}) {
+// workerItems (optional, #6000): readWorkerDispatches's items, the headless lens workers, which
+// have no subagents directory. They join the transcript-backed items before aggregateDispatches,
+// and a run with only worker items has a dispatches value (the missing directory is named in
+// notFoundDirs), not { notFound }; so does a run whose every worker fell outside the window
+// (workerExcludedOutsideWindow, added to excludedOutsideWindow). With workers the merged items are
+// sorted by startTs.
+async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal = null, window: given, worktree = null, scopeDispatchesTo, workerItems = [], workerExcludedOutsideWindow = 0 } = {}) {
   const window = given === undefined ? eventWindow(events) : given;
   // A symlinked subagents/ leaf keeps its own path, so readDispatches sees the
   // link and refuses it instead of reading wherever it points.
@@ -170,7 +176,14 @@ async function collectDispatches(paths, events, cwd, { deadlineAt = null, signal
     items.push(...(scoped ? scopeDirItems(r.value.items, scoped, cwd, ownDirs.has(dir)) : r.value.items));
     excludedOutsideWindow += r.value.excludedOutsideWindow;
   }
-  if (found === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
+  if (found === 0 && workerItems.length === 0 && workerExcludedOutsideWindow === 0) return { notFound: reasons.length ? reasons.join('; ') : 'no transcript resolved' };
+  if (workerItems.length > 0) {
+    items.push(...workerItems);
+    // By start, unparseable last; the sort is stable, so equal starts keep their order. Only here: a run with no workers keeps its order.
+    const at = (d) => { const v = Date.parse(d.startTs); return Number.isFinite(v) ? v : Infinity; };
+    items.sort((a, b) => { const x = at(a); const y = at(b); return x === y ? 0 : (x < y ? -1 : 1); });
+  }
+  excludedOutsideWindow += workerExcludedOutsideWindow;
   // A direct (non-workflow) item keeps its pre-workflow shape: both keys null -> dropped.
   const agg = aggregateDispatches(items.map((d) => {
     if (d.workflowRunId !== null || d.workflowPhase !== null) return d;
@@ -281,7 +294,11 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
     rows = rows.concat(kept);
   }
   // Computed before the join: each workflow agent's start places it in a phase's subagents (#5597).
-  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { deadlineAt, window: clip, worktree, scopeDispatchesTo } : { deadlineAt, worktree, scopeDispatchesTo });
+  // The headless lens workers' log, in the same window collectDispatches uses (#6000).
+  const workers = readWorkerDispatches(runDir, { window: clip === null ? eventWindow(events) : clip });
+  for (const n of workers.notes) outNotes.push(`dispatches: ${n}`);
+  const dispatchOpts = { deadlineAt, worktree, scopeDispatchesTo, workerItems: workers.items, workerExcludedOutsideWindow: workers.excludedOutsideWindow };
+  const dispatches = await collectDispatches(transcriptPaths, events, at, clip ? { ...dispatchOpts, window: clip } : dispatchOpts);
   if (dispatches === null) return hit();
   const workflowStarts = (dispatches.items || []).filter((d) => d.workflowRunId != null && d.startTs).map((d) => d.startTs);
   const tokens = joinTokens(out.phases, rows, workflowStarts, { dispatchFileReads: dispatchFileReads(dispatches, transcriptPaths, at) });

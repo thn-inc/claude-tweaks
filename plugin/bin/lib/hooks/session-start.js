@@ -439,6 +439,23 @@ async function run(ctx) {
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
         }
+        // Runs a prior pass held because their PR merged while the run was in flight (#6143), and runs held
+        // because that check failed (merge state unknown, whether or not the PR number is known), each on its
+        // own line keyed on `reason`. An older status file lacks the field.
+        if (Array.isArray(s.hollowMerges) && s.hollowMerges.length) {
+          const checkFailed = s.hollowMerges.filter((e) => e.reason === 'hollow-check-failed');
+          const hollow = s.hollowMerges.filter((e) => e.reason !== 'hollow-check-failed');
+          if (hollow.length) {
+            lines.push(
+              `${hollow.length} merged PR(s) held as hollow merges (run unfinished; claim and run dir kept): ${hollow.map((e) => `${path.basename(String(e.runId))}${e.pr ? ` (PR #${e.pr}${e.phase ? `, ${e.phase} unfinished` : ''})` : ''}`).join(', ')}`,
+            );
+          }
+          if (checkFailed.length) {
+            lines.push(
+              `${checkFailed.length} run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): ${checkFailed.map((e) => `${path.basename(String(e.runId))}${e.pr ? ` (PR #${e.pr})` : ''}`).join(', ')}`,
+            );
+          }
+        }
         // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
         // (an older status file) or zero renders nothing.
         if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {

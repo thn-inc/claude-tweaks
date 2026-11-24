@@ -109,7 +109,46 @@ test('Review Console step 11 always records issues from inputs.closingRecords (R
 
 test('the current-branch Fixes issue set takes inputs.closingRecords (Ruling R1)', () => {
   const flat = collapse(read('plugin/skills/wrap-up/execution-and-verification.md'));
-  assert.match(flat, /`inputs\.closingRecords` when non-empty/);
+  assert.match(flat, /`inputs\.closingRecords` whenever it is an array/);
+});
+
+// #4108: closingRecords is array-or-null. An empty array is a decision (close
+// nothing); only `null` or a missing pack falls back to Phase 1's record.
+test('#4108: the current-branch Fixes sentence stamps nothing on an empty array and falls back only on null or a missing pack', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/execution-and-verification.md'));
+  assert.match(flat, /an empty array stamps no `Fixes` line/);
+  assert.match(flat, /Only when that field is `null` or the pack could not be produced, fall back to this run's own identified record/);
+  assert.doesNotMatch(flat, /`inputs\.closingRecords` when non-empty/);
+});
+
+test('#4108: Review Console step 11 records no issues on an empty array and falls back only on null or a missing pack', () => {
+  const flat = collapse(read('plugin/skills/wrap-up/review-console.md'));
+  const step11 = flat.slice(flat.indexOf('11. Write `verify-expectations.json`'), flat.indexOf('11. Write `verify-expectations.json`') + 2500);
+  assert.match(step11, /an empty array records no issues/);
+  assert.match(step11, /only when that field is `null` or the pack could not be produced, Phase 1's identified record/);
+  assert.doesNotMatch(step11, /`inputs\.closingRecords` when non-empty/);
+});
+
+test('#4108: Section C step 2 snippet stamps nothing on an empty closingRecords and falls back to the mirror on null', () => {
+  const block = collapse(read('plugin/skills/wrap-up/cleanup-procedures-execution.md'));
+  const script = /node -e '(const p=JSON\.parse[^']*closingRecords[^']*)'/.exec(block)[1];
+  const { spawnSync } = require('node:child_process');
+  const os = require('node:os');
+  const run = (closingRecords) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-4108-'));
+    try {
+      const pack = path.join(dir, 'wrap-up-pack.json');
+      fs.writeFileSync(pack, JSON.stringify({ inputs: { closingRecords } }));
+      return spawnSync(process.execPath, ['-e', script, '--', pack], { encoding: 'utf8' });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const empty = run([]);
+  assert.strictEqual(empty.status, 0);
+  assert.strictEqual(empty.stdout.trim(), '');
+  assert.strictEqual(run(null).status, 1);
+  assert.deepStrictEqual(run([41, 42]).stdout.trim().split('\n'), ['41', '42']);
 });
 
 // The one sentence allowed to name the header-source rungs: Section C step 2's field definition.

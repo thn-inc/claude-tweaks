@@ -7,6 +7,8 @@
 // runtime npm deps.
 'use strict';
 
+const fs = require('fs');
+
 // The flat-key comment rule (parseFlatLines' `[^#]*`): a `#` anywhere ends the
 // line. That is exact here because no `model-profiles` row name or field value
 // can hold a `#`. `trimEnd()` also drops a CRLF's trailing `\r`. Both readers of
@@ -121,4 +123,24 @@ function readProfilesSide(raw) {
   }
 }
 
-module.exports = { parsePolicyModelConfig, stripComment, modelProfilesEntry, mergeBlockRows };
+// The policy file at an already-located path, read for the resolver's keys: a
+// missing file is an empty policy; an unreadable or malformed one throws an
+// Error naming the path. Read directly, never exists-then-read. The one read
+// both resolve-profile.js and implementer-tier.js share; each locates the file
+// itself, so each keeps its own handling of an unreadable working directory.
+function readPolicyModelConfig(policyPath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(policyPath, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') return {};
+    throw new Error(`cannot read ${policyPath}: ${err.message}`);
+  }
+  try {
+    return parsePolicyModelConfig(raw);
+  } catch (err) {
+    throw new Error(`malformed ${policyPath}: ${err.message}`);
+  }
+}
+
+module.exports = { parsePolicyModelConfig, readPolicyModelConfig, stripComment, modelProfilesEntry, mergeBlockRows };

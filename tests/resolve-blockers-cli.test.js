@@ -232,6 +232,8 @@ test('#5902: makeBlockerSnapshotSink wired as onSnapshot yields two valid blocke
 test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
   const { realDeps } = require('../plugin/bin/resolve-blockers');
   assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  const { lastPayloadFromCwd } = require('../plugin/bin/lib/station-events/blockers');
+  assert.equal(realDeps.lastPayload, lastPayloadFromCwd, 'lastPayload is wired');
   assert.equal(typeof realDeps.runner, 'function', 'the number-list scaffold deps are still carried');
 });
 
@@ -242,6 +244,14 @@ test('#5902: run builds the blocker sink from deps.stationEvent when no onSnapsh
   assert.deepEqual(events.map((e) => [e.kind, e.recordNumber, e.repoName]), [
     ['blockers', 12, 'acme/widgets'], ['blockers', 13, 'acme/widgets'],
   ]);
+});
+
+test('an unchanged snapshot is not appended through run', () => {
+  const events = [];
+  const last = (repo, n) => (n === 13 ? { blockedBy: [], openBlockerIds: [], crossRepoBlockers: [], fetchedAt: 'old' } : null);
+  const deps = fakeDeps({ runner: twelveThirteen, stationEvent: (e) => events.push(e), lastPayload: last });
+  assert.equal(run(['12,13'], deps), 0);
+  assert.deepEqual(events.map((e) => e.recordNumber), [12]);
 });
 
 test('#5902: an explicit onSnapshot wins over deps.stationEvent', () => {

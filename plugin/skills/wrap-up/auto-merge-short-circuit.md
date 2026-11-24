@@ -256,7 +256,7 @@ merge` runs directly, which is what retires this section's pre-#411 `git -C "$RU
 worktree/branch resolution (#299: that resolution anchored against the run dir, not the worktree —
 a defect that simply cannot recur once there is no checkout resolution step to get wrong; see the
 local-merge branch below for that defect's full account, since local-merge still uses the
-resolution it fixed). Still generate this console's full content (Auto-applied / Skill updates /
+resolution it fixed). Before composing this FYI, run `learned-skills-pr.md`'s drain (only when `learned-skills-auto-merge` resolves `true`, after `land` and every `record` call) so the Skill updates section carries the outcome. Still generate this console's full content (Auto-applied / Skill updates /
 Configuration updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and
 attach it to a
 `PushNotification` as a non-blocking FYI — nothing this console would have shown is discarded,
@@ -316,7 +316,7 @@ nobody develops on (#132).
 
 Run the sequence's Steps 1-4 in order: Step 1 and Step 3 from the main checkout, Step 2 only once Step 1 passed, Step 4 from inside the worktree as its own Bash call.
 
-Still generate this console's full content (Auto-applied / Skill updates / Configuration updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and attach it to a `PushNotification` as a non-blocking FYI. Nothing this console would have shown is discarded — only the wait for a live approval is skipped.
+Before composing this FYI, run `learned-skills-pr.md`'s drain (only when `learned-skills-auto-merge` resolves `true`, after `land` and every `record` call) so the Skill updates section carries the outcome. Still generate this console's full content (Auto-applied / Skill updates / Configuration updates sections, per `review-console-interactive.md`'s "Present the console", plus the finding sections `node "${CLAUDE_PLUGIN_ROOT}/bin/console-filings.js" --run "$PIPELINE_RUN_DIR" --fyi` prints — Low-confidence, Contested, Dropped by tiebreak) and attach it to a `PushNotification` as a non-blocking FYI. Nothing this console would have shown is discarded — only the wait for a live approval is skipped.
 
 After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed merge commit (no PR, so `$MERGING_PR` is empty). Then run `_shared/pr-first-merge-post-merge.md` Step 4.1 with `--ref {integration-branch}` (staged file + closing-report line only).
 

@@ -11,7 +11,7 @@ Once per lens per Step 3 round, when a run directory exists. A standalone review
 ## Command
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" record-lens-dispatch --run "$PIPELINE_RUN_DIR" --lens {lens} --reviewers {1|2} --path {task|workflow} --status {completed|failed|blocked} --round {n}
+node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" record-lens-dispatch --run "$PIPELINE_RUN_DIR" --lens {lens} --reviewers {1|2} --path {task|workflow|worker} --status {completed|failed|blocked} --round {n}
 ```
 
 It prints one JSON line `{path, entry, duplicate}`.
@@ -26,7 +26,8 @@ It prints one JSON line `{path, entry, duplicate}`.
   - `failed` — the lens's replies never came: a session limit twice, unavailable, timed out, or the partner-died single-read degrade (`step3-tier-variants.md`).
 - `--path`: the path whose replies settled the lens.
   - `workflow` — a lens `settle-lens-replies` settled, and a `needsSession` lens with reason `single-reviewer` whose one workflow reviewer was usable (settled by the low-tier single-read rule, nothing re-dispatched: `--reviewers 1 --status completed`).
-  - `task` — every Task-path lens, including a workflow lens whose reviewers were re-dispatched as Task agents (`reviewer-unusable`, or a `single-reviewer` lens whose one reviewer was unusable) and every lens after the workflow fallback.
+  - `worker` — a lens `settle-lens-replies` settled from launcher replies on the worker path, `step3-worker-dispatch.md`.
+  - `task` — every Task-path lens, including a workflow lens whose reviewers were re-dispatched as Task agents (`reviewer-unusable`, or a `single-reviewer` lens whose one reviewer was unusable), every lens after the workflow fallback, and every lens the worker path sent to the Task path (3f, a re-dispatched lens, every lens after a worker fallback).
 - Lens 3h is always `--path task --reviewers 1`, including when it is dispatched as a Task agent alongside a workflow fan-out: `completed` on a usable reply, else `blocked` or `failed` as above.
 - `--round`: `1` on the run's first Step 3. A later Step 3 in the same run directory reads `{run}/lens-dispatch.json` once first and passes one more than its highest `round`. The round never changes the rate, so a doubtful round is harmless; an identical repeat call is a no-op (`duplicate: true`).
 
