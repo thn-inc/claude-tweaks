@@ -28,6 +28,13 @@ function segmentSpans(command) {
   return scanPass((spans) => segmentSpansWith(str, spans));
 }
 
+// The index at or after `at` that is not the start of a backslash-newline pair (#4245).
+function pastLineContinuations(str, at) {
+  let i = at;
+  while (str[i] === '\\' && str[i + 1] === '\n') i += 2;
+  return i;
+}
+
 function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
@@ -117,8 +124,7 @@ function segmentSpansWith(str, spans) {
       }
     }
     // bash removes a backslash-newline before it reads operators, so `&\<nl>&` is `&&` (#4245).
-    let nx = i + 1; // the operator's second char, past any backslash-newline between them
-    while (str[nx] === '\\' && str[nx + 1] === '\n') nx += 2;
+    const nx = pastLineContinuations(str, i + 1); // the operator's second char
     if (ch === '&' && str[nx] === '&') { cut(i); i = nx; continue; }
     if (ch === '|' && str[nx] === '|') { cut(i); i = nx; continue; }
     // `>|` is bash's noclobber-override redirect operator, not a pipe — a
@@ -3010,9 +3016,8 @@ function separatorOp(outer, at) {
   const c = outer[at];
   if (c === '&') return '&&';
   if (c !== '|') return ';';
-  let nx = at + 1; // past any backslash-newline, as segmentSpansWith cuts `|\<nl>|` (#4245)
-  while (outer[nx] === '\\' && outer[nx + 1] === '\n') nx += 2;
-  return outer[nx] === '|' ? '||' : '|';
+  // past any backslash-newline, as segmentSpansWith cuts `|\<nl>|` (#4245)
+  return outer[pastLineContinuations(outer, at + 1)] === '|' ? '||' : '|';
 }
 
 // The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.
