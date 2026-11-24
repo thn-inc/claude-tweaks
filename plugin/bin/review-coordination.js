@@ -100,7 +100,7 @@
 // (the text file's whole content, UTF-8, byte-exact; `-` for a side that failed or never answered: text null, failed true),
 // and writes {lenses, reviewers} to --out atomically (--out may be --into). It prints {out, lenses, replaced}. --side-b is
 // required with --reviewers 2 and refused with 1. Every refusal (a missing flag, a lens token outside the finding-line class, an
-// unreadable text file, an empty or invalid --into) is one stderr line, exit 2, with nothing written.
+// unreadable text file, an empty or invalid --into) is one stderr line, exit 2, with nothing written; a failed write of --out exits 3.
 // record-lens-dispatch (#5998) is the one sanctioned writer of the run dir's lens-dispatch.json (lib/review-lens/
 // dispatch-record.js documents the file): it appends {lens, reviewers, path, round, status} (--round defaults to 1) under a
 // fail-closed lock and prints {path, entry, duplicate}. An identical entry already present is not appended again
@@ -110,7 +110,7 @@
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
 // categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or missing (write-findings,
-// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included).
+// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included), or the --out write failed (merge-lens-replies).
 'use strict';
 
 const fs = require('node:fs');
@@ -671,7 +671,8 @@ function mergeLensReplies(rest, deps) {
   try {
     writeFileAtomic(at(deps, flags.out), JSON.stringify(merged, null, 2) + '\n');
   } catch (err) {
-    return refuse(`cannot write ${flags.out}: ${(err && err.message) || err}`);
+    deps.stderr(`review-coordination.js: cannot write ${flags.out}: ${(err && err.message) || err}\n`);
+    return 3;
   }
   deps.stdout(JSON.stringify({ out: flags.out, lenses: merged.lenses.map((l) => l.lens), replaced }) + '\n');
   return 0;

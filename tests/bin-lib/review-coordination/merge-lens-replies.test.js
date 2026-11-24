@@ -86,11 +86,12 @@ test('merge keeps the reply text byte-exact', () => {
 
 test('merge in place', () => {
   const dir = scratchDir('merge-lens-');
-  const { file } = launcherReply(dir);
+  const { reply, file } = launcherReply(dir);
   const r = merge3b(dir, file, file);
   assert.strictEqual(r.code, 0, r.stderr);
   const merged = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.deepStrictEqual(merged.lenses.map((l) => l.lens).sort(), ['3a', '3b']);
+  assert.deepStrictEqual(merged.reviewers.filter((e) => e.lens === '3a'), reply.reviewers.filter((e) => e.lens === '3a'));
   assert.strictEqual(merged.reviewers.length, 4);
   assert.ok(merged.reviewers.every((e) => !e.failed));
 });
@@ -128,4 +129,27 @@ test('exit 2 and no --out file on every refusal', () => {
   }
   const noOut = cli(['merge-lens-replies', '--lens', '3c', '--reviewers', '1', '--side-a', a]);
   assert.strictEqual(noOut.code, 2);
+});
+
+test('a result-wrapped --into is read and the output is bare', () => {
+  const dir = scratchDir('merge-lens-');
+  const { reply } = launcherReply(dir);
+  const wrapped = path.join(dir, 'wrapped.json');
+  fs.writeFileSync(wrapped, JSON.stringify({ result: reply }));
+  const out = path.join(dir, 'merged.json');
+  const r = merge3b(dir, wrapped, out);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const merged = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.deepStrictEqual(Object.keys(merged).sort(), ['lenses', 'reviewers']);
+  assert.deepStrictEqual(merged.reviewers.filter((e) => e.lens === '3a'), reply.reviewers.filter((e) => e.lens === '3a'));
+  assert.strictEqual(merged.reviewers.filter((e) => e.lens === '3b').length, 2);
+});
+
+test('exit 3 when --out cannot be written', () => {
+  const dir = scratchDir('merge-lens-');
+  const a = textFile(dir, 'a.txt', TABLE('x'));
+  const blocker = textFile(dir, 'blocker', 'file');
+  const r = cli(['merge-lens-replies', '--out', path.join(blocker, 'out.json'), '--lens', '3c', '--reviewers', '1', '--side-a', a]);
+  assert.strictEqual(r.code, 3, r.stderr);
+  assert.match(r.stderr, /cannot write/);
 });
