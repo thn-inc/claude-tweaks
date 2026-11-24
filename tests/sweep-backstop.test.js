@@ -218,8 +218,49 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
   assert.ok(candidateNumbers.includes(2001), 'a PR carrying only the wrap-up-residue-pr marker must be a candidate');
 });
 
-test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marker and a granted record", () => {
-  assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*never/);
+test("item 9's classifier grants a wrap-up-skills-pr PR through the key alone, never housekeeping or a record grant", () => {
+  const classifier = extractNodeScripts(ITEM9).find((s) => /labelsByIssue/.test(s));
+  assert.ok(classifier, 'expected the item-9 classifier script');
+  // The classifier is its own bash fence (a fresh shell): it must re-read the key itself, not inherit the filter fence's variable.
+  const classifierFence = ITEM9.split('```bash').map((f) => f.split('```')[0]).find((f) => f.includes('labelsByIssue'));
+  assert.match(classifierFence, /LEARNED_SKILLS_GRANT=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values learned-skills-auto-merge\)/);
+  const tmpDir = scratchDir('ct-item9-skills-cls-');
+  try {
+    const candidatesPath = path.join(tmpDir, 'candidates.json');
+    const linksPath = path.join(tmpDir, 'links.jsonl');
+    const script = classifier
+      .split('$PR_SCAN_UNARMED_CANDIDATES').join(toPosix(candidatesPath, path.sep))
+      .split('$PR_SCAN_UNARMED_LINKS').join(toPosix(linksPath, path.sep));
+    fs.writeFileSync(candidatesPath, JSON.stringify([{
+      number: 3002,
+      title: 'wrap-up learned skills',
+      body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
+      closingIssuesReferences: [{ number: 5290 }],
+    }]));
+    fs.writeFileSync(linksPath, JSON.stringify({ number: 5290, labels: ['auto:build', 'auto:merge'] }) + '\n');
+    const scriptPath = path.join(tmpDir, 'classifier.js');
+    fs.writeFileSync(scriptPath, script);
+    const run = (learned) => execFileSync('node', [scriptPath], {
+      env: { ...process.env, HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: learned, ALLOW_AUTO_MERGE: 'true' },
+      encoding: 'utf8',
+    });
+
+    const off = run('false');
+    assert.match(off, /learned-skills-auto-merge off — a human merges or closes it/);
+    assert.doesNotMatch(off, /green and granted|arm per|drain per|auto:build and auto:merge/);
+    const on = run('true');
+    assert.match(on, /learned-skills-auto-merge on — drain per tidy\/actions-github-issues\.md/);
+    assert.doesNotMatch(on, /arm per/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("item 9's filter offers a wrap-up-skills-pr PR only through learned-skills-auto-merge", () => {
+  assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*candidate only when `learned-skills-auto-merge` resolves `true`/);
+  assert.match(ITEM9, /resolve-policy\.js" --values learned-skills-auto-merge/);
+  assert.match(SCAN, /\| Unarmed learned-skills PR, granted \(item 9\) \| Drain via `\/claude-tweaks:tidy`/);
+  assert.match(SCAN, /Unarmed learned-skills PR, granted \(item 9\).*\| medium \|/);
   const filterScript = extractNodeScripts(ITEM9)[0];
   const tmpDir = scratchDir('ct-item9-skills-');
   try {
@@ -243,15 +284,28 @@ test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marke
         body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
         closingIssuesReferences: [{ number: 5290 }],
       },
+      { ...base, isDraft: true, number: 3003, title: 'wrap-up learned skills (draft)', body: '<!-- wrap-up-skills-pr -->' },
     ]));
 
     const scriptPath = path.join(tmpDir, 'item9-skills-filter.js');
     fs.writeFileSync(scriptPath, isolatedScript);
-    execFileSync('node', [scriptPath], { env: { ...process.env, UNARMED_AGE: '24' }, stdio: 'pipe' });
+    const run = (grant) => {
+      execFileSync('node', [scriptPath], {
+        env: { ...process.env, UNARMED_AGE: '24', HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: grant },
+        stdio: 'pipe',
+      });
+      return JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
+    };
 
-    const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
-    assert.ok(!candidateNumbers.includes(3001), 'a housekeeping-marked wrap-up-skills-pr PR must not be a candidate');
-    assert.ok(!candidateNumbers.includes(3002), 'a run-marked, granted wrap-up-skills-pr PR must not be a candidate');
+    const granted = run('true');
+    assert.ok(granted.includes(3001), 'learned-skills-auto-merge=true must offer a skills PR');
+    assert.ok(granted.includes(3002), 'learned-skills-auto-merge=true must offer a run-marked skills PR');
+    assert.ok(!granted.includes(3003), 'a draft skills PR is never a candidate');
+    for (const grant of ['false', '', 'TRUE']) {
+      const got = run(grant);
+      assert.ok(!got.includes(3001), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3001 (housekeeping lever irrelevant)`);
+      assert.ok(!got.includes(3002), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3002`);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -617,6 +671,59 @@ test('step-6-auto.md: the record-linked flavor of Arm ready PR always stages, at
   const row = STEP6.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
   assert.ok(row, 'record-linked Arm ready PR row not found');
   assert.match(row[0], /\| Stage \| Stage \| Stage/);
+});
+
+test('step-6-auto.md: the Drain learned-skills PR row auto-applies at the arm row\'s tiers only under learned-skills-auto-merge, and names its carve-out', () => {
+  const row = STEP6.match(/\| \*\*Drain learned-skills PR\*\*[^\n]*\n/);
+  assert.ok(row, 'Drain learned-skills PR row not found');
+  assert.match(row[0], /\| Stage \| Auto-apply — only under `learned-skills-auto-merge`[^|]*\| Auto-apply — same gate as `moderate`/);
+  assert.match(row[0], /resolves `false`, the row Stages at every tier/);
+  assert.match(row[0], /never satisfied by `housekeeping-auto-merge`/);
+  assert.match(row[0], /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(row[0], /`learned-skills-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+});
+
+test('step-6-auto.md: the Arm ready PR rows are fenced to non-marker PRs; the housekeeping row names its carve-out in the same form', () => {
+  const housekeeping = STEP6.match(/\| \*\*Arm ready PR\*\* \(a green, gate-passed, `\[pr-unarmed\]` PR granted via `housekeeping-auto-merge`[^\n]*\n/);
+  const linked = STEP6.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
+  assert.ok(housekeeping && linked, 'both Arm ready PR rows must exist');
+  assert.match(housekeeping[0], /`housekeeping-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+  assert.match(housekeeping[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+  assert.match(linked[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+});
+
+test('actions-github-issues.md: Drain learned-skills PRs runs the drain verb and trusts its own re-checks', () => {
+  assert.match(ACTIONS_GH, /## Drain learned-skills PRs/);
+  assert.match(ACTIONS_GH, /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(ACTIONS_GH, /re-checks green and gate-passed itself/);
+  const start = ACTIONS_GH.indexOf('## Drain learned-skills PRs');
+  const end = ACTIONS_GH.indexOf('## Sync to GitHub');
+  assert.ok(start >= 0 && end > start, 'Drain section must precede ## Sync to GitHub');
+  const section = ACTIONS_GH.slice(start, end);
+  assert.doesNotMatch(section, /gh pr merge/);
+});
+
+test('actions-github-issues.md: Drain covers exit 2, logs a degrade SKIP, and maps outcomes to report sections', () => {
+  const section = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Drain learned-skills PRs'), ACTIONS_GH.indexOf('## Sync to GitHub'));
+  assert.match(section, /Exit 2 is a malformed call[^]*re-run once/);
+  assert.match(section, /Learned-skills drain \(degraded\)[^]*log-decision\.js --status SKIP --text-file/);
+  assert.match(section, /killed[^]*no JSON line/);
+  assert.match(section, /Without `gh` the call returns\s+empty lists/);
+  assert.match(section, /a second exit 2 is the degrade case below \(the SKIP line\), merging nothing/);
+  assert.match(section, /killed, or no JSON line: the outcome is unknown[^]*never as nothing merged/);
+  assert.match(section, /drain exited \{1\|2\}/);
+  assert.match(STEP6, /once, over every open learned-skills PR —/);
+  assert.match(section, /`merged`\s+and `armed` go to \*\*Applied automatically\*\*; `conflicting` and every `leftOpen` reason[^]*go to \*\*Yours\*\*[^]*gh pr view \{n\} --web/);
+});
+
+test('actions-github-issues.md: Arm ready PR re-verify holds on bot:blocked/bot:parked and never arms a learned-skills marker PR', () => {
+  const arm = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Arm ready PR'), ACTIONS_GH.indexOf('## Drain learned-skills PRs'));
+  assert.match(arm, /that no linked record carries `bot:blocked` or\s+`bot:parked`[^]*defaulted to `\[\]`, still blocks the arm/);
+  assert.match(arm, /carrying the `<!-- wrap-up-skills-pr -->` marker is never armed here/);
+});
+
+test('step-6-auto.md: the preamble lets the policy-key carve-outs auto-apply at their own rows\' tiers', () => {
+  assert.match(STEP6, /`learned-skills-auto-merge`\), which auto-apply at their own rows' tiers; every other such write's disposition rides on reconcile/);
 });
 
 test('step-6-auto.md: ungranted unarmed PRs and unsettled runs never auto-apply at any tier', () => {

@@ -575,3 +575,9 @@ test('Deliverable 4: learned-skills/drain.json adds the own-PR outcome to the tr
   assert.ok(trace.includes(`learned-skills PR ${LS_PR} — merged`), trace);
   assert.ok(consoleOut.includes(`learned-skills PR ${LS_PR} — merged)`), consoleOut);
 });
+
+test('github-pr-scan.md item 9 pins the learned-skills-auto-merge rule, not the never-armed wording (AC3.1)', () => {
+  const scan = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'github-pr-scan.md'));
+  assert.doesNotMatch(scan, /wrap-up-skills-pr -->` PR[^\n]*is never a candidate/);
+  assert.match(scan, /is a candidate only when `learned-skills-auto-merge` resolves `true` — never under `housekeeping-auto-merge` or a linked record's `auto:merge` grant/);
+});
