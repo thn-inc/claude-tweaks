@@ -221,6 +221,9 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
 test("item 9's classifier grants a wrap-up-skills-pr PR through the key alone, never housekeeping or a record grant", () => {
   const classifier = extractNodeScripts(ITEM9).find((s) => /labelsByIssue/.test(s));
   assert.ok(classifier, 'expected the item-9 classifier script');
+  // The classifier is its own bash fence (a fresh shell): it must re-read the key itself, not inherit the filter fence's variable.
+  const classifierFence = ITEM9.split('```bash').map((f) => f.split('```')[0]).find((f) => f.includes('labelsByIssue'));
+  assert.match(classifierFence, /LEARNED_SKILLS_GRANT=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values learned-skills-auto-merge\)/);
   const tmpDir = scratchDir('ct-item9-skills-cls-');
   try {
     const candidatesPath = path.join(tmpDir, 'candidates.json');
@@ -243,8 +246,8 @@ test("item 9's classifier grants a wrap-up-skills-pr PR through the key alone, n
     });
 
     const off = run('false');
-    assert.match(off, /green but ungranted/);
-    assert.doesNotMatch(off, /green and granted|drain per/);
+    assert.match(off, /learned-skills-auto-merge off — a human merges or closes it/);
+    assert.doesNotMatch(off, /green and granted|arm per|drain per|auto:build and auto:merge/);
     const on = run('true');
     assert.match(on, /learned-skills-auto-merge on — drain per tidy\/actions-github-issues\.md/);
     assert.doesNotMatch(on, /arm per/);

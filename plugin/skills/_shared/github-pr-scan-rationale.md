@@ -10,10 +10,14 @@ but "informational" describes the *severity*, not whether the row carries a comm
 
 The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parking a parked run: a record carries `bot:blocked` because dispatch hit its retry ceiling, or `bot:parked` because `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) took the red path, and both mean a human owes a re-triage before anything arms that PR — a later-green rollup does not retract the park.
 
+## Item 9 — the `allow_auto_merge` state on every row
+
+(`ALLOW_AUTO_MERGE`, read once above via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies.
+
 ## Item 11 — flag-only, never auto-rebase
 
 The lower-risk default consistent with this scope's report-only posture (`/tidy`'s documented posture for most of its scans) — an unattended rebase changes PR content without the PR author present and would need the same unconditional-at-every-`autonomy`-tier confirmation gate `dispatch/resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep. This check's job is detection only: it feeds a human, or #2364's own close-out process, which already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case and, with the human present, may offer a re-verified update (`dispatch/close-out-update.md`) — this check never re-implements that merge path or performs that update.
 
 ## Anti-pattern — a self-scheduled per-PR check-in loop
 
-Do not have a session poll or re-check a single PR's arm/CI/merge state on its own schedule to "make sure it merges" — that durability lives in GitHub's own `--auto` (which merges the moment checks pass, with no session watching) plus this scheduled sweep (which catches the cases `--auto` alone can't: unarmed PRs and unsettled claims), neither of which depends on any session surviving. A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.
+GitHub's own `--auto` merges the moment checks pass, with no session watching, and this scheduled sweep catches the cases `--auto` alone can't: unarmed PRs and unsettled claims — neither depends on any session surviving. A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.

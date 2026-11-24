@@ -227,6 +227,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    ```bash
    PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
    PR_SCAN_UNARMED_LINKS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-links.jsonl)"
+   LEARNED_SKILLS_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values learned-skills-auto-merge)
    HOUSEKEEPING_GRANT="$HOUSEKEEPING_GRANT" LEARNED_SKILLS_GRANT="$LEARNED_SKILLS_GRANT" ALLOW_AUTO_MERGE="$ALLOW_AUTO_MERGE" node -e "
      const fs = require('fs');
      const HOUSEKEEPING = process.env.HOUSEKEEPING_GRANT === 'true';
@@ -245,7 +246,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
        let granted;
        if (/<!-- wrap-up-skills-pr -->/.test(pr.body || '')) {
          if (LEARNED_SKILLS) { console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green, learned-skills-auto-merge on — drain per tidy/actions-github-issues.md'); return; }
-         granted = false;
+         console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green, learned-skills-auto-merge off — a human merges or closes it'); return;
        } else if (isHousekeeping) {
          granted = HOUSEKEEPING;
        } else {
@@ -263,7 +264,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    "
    ```
 
-   Both outcomes share the `[pr-unarmed]` prefix — the row content distinguishes granted (recommends arming now) from ungranted (recommends granting first). Every row carries the repo's `allow_auto_merge` state (`ALLOW_AUTO_MERGE`, read once above via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies. **The list-time snapshot above is never trusted for the actual write**: grant labels, the `bot:blocked`/`bot:parked` exclusion (a record parked between the scan and the arm — or one whose labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]` — must still block the arm), `housekeeping-auto-merge`, and gate status (CI/draft/threads) are all re-read immediately before `gh pr merge --auto` runs, whether armed interactively or via `/claude-tweaks:tidy`'s Step 6/7 batch approval.
+   Both outcomes share the `[pr-unarmed]` prefix — the row content distinguishes granted (recommends arming now) from ungranted (recommends granting first). Every row carries the repo's `allow_auto_merge` state (`ALLOW_AUTO_MERGE`) whenever it's `false` (why: `github-pr-scan-rationale.md`). **The list-time snapshot above is never trusted for the actual write**: grant labels, the `bot:blocked`/`bot:parked` exclusion (a record parked between the scan and the arm — or one whose labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]` — must still block the arm), `housekeeping-auto-merge`, and gate status (CI/draft/threads) are all re-read immediately before `gh pr merge --auto` runs, whether armed interactively or via `/claude-tweaks:tidy`'s Step 6/7 batch approval.
 <!-- /when -->
 
 10. **Unsettled run** — a claimed or `bot:in-progress`-labeled issue whose pipeline shows no evidence of progress since it was claimed, past a threshold. Detected purely GitHub-side, in three fetches:
