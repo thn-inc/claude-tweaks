@@ -397,6 +397,8 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
   const batchDigested = new Map();
   // fingerprint -> the existing record number a same-pass item matched (by its claim or its item marker).
   const batchMatched = new Map();
+  // fingerprint -> the trusted comment a same-pass digest item was held by (by its claim or its item marker), so a twin is a duplicate of it (#4162).
+  const batchHeld = new Map();
   // item id -> its filing entry / its digest line index in out.digest.lines, so a same-pass twin's item marker can join it (#4162).
   const filingOf = new Map();
   const lineOf = new Map();
@@ -412,6 +414,8 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         const fp = prefiledFingerprint(item);
         const number = filedRecordOf(item, fp, known, markers);
         if (number !== null) {
+          // Record the match so a later same-claim twin in this pass reuses the record (#4162).
+          if (fp) batchMatched.set(fp, number);
           out.dispositions.push(result(item, 'file', 'tiebreak', { prefiled: true, proposal: { fingerprint: fp, title: null } }));
           out.reuse.push({ itemId: item.itemId, number });
           out.entries.push({
@@ -425,6 +429,7 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           const prefiledDigest = findingDigest(item, DIGEST_REASONS.CANT_TELL, runIdOf(item.consoleDir));
           const held = heldDigestComment(digestComments, prefiledDigest, item);
           if (held) {
+            batchHeld.set(prefiledDigest.fingerprint, held);
             out.dispositions.push(result(item, 'digest', 'tiebreak', { prefiled: true, digest: prefiledDigest }));
             out.digest.duplicates.push(item.itemId);
             out.entries.push({
@@ -476,7 +481,8 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
       } else if (d.action === 'digest') {
         // A duplicate's ref is the comment holding its entry: an already-posted one's URL now; a same-pass
         // twin's once that line is posted (`sameAs`, resolved by the procedure as a filing's is).
-        const held = batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item);
+        const held = batchHeld.get(d.digest.fingerprint)
+          || (batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item));
         if (batchDigested.has(d.digest.fingerprint)) {
           const twin = batchDigested.get(d.digest.fingerprint);
           out.digest.duplicates.push(d.itemId);
@@ -484,6 +490,7 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           // The twin's line carries this item's marker too, so the next pass finds it there if its claim has moved (#4162).
           if (item.kind === 'finding') out.digest.lines[lineOf.get(twin)] += ` ${itemMarkerOf(item)}`;
         } else if (held) {
+          batchHeld.set(d.digest.fingerprint, held);
           out.digest.duplicates.push(d.itemId);
           ref = commentRef(held);
         } else {
