@@ -47,6 +47,7 @@ const {
   parseRecordFacets, extractFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseDependencies,
 } = require('./lib/issues/record');
 const { parseCrossRepoDependencies } = require('./lib/issues/cross-repo-refs');
+const { riskFromLabels } = require('./lib/model-profiles/implementer-tier');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, describeDesignIntentError,
 } = require('./lib/issues/materialize-format');
@@ -621,7 +622,9 @@ function run(argv, deps = realDeps) {
   const header = composeHeader({
     record: opts.n,
     origin: facets.origin || 'human',
-    risk: facets.risk,
+    // Exactly one valid `risk:` label, else none: the implementer-tier CLI starts the standard lane's effort from
+    // this line, and parseRecordFacets' last-wins would let a duplicated label start lower than the driver (#6002).
+    risk: riskFromLabels(labelNames),
     size: facets.size,
     ceremony,
     grants: facets.grants,

@@ -1,6 +1,6 @@
 # Pipeline economy — Phase 7 driver admission trial
 
-Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: paused on #6162 since 2026-11-23T16:17Z. Five frozen records handled, none driven to a PR (0 of 20).
+Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: running. As of 2026-11-24T04:45Z, 13 frozen records handled: 3 driven to a PR (3 of 20), 10 replaced.
 
 ## Verdict rule
 
@@ -241,9 +241,25 @@ Two tests on `main` pass only when `gh` has credentials: `tests/bin-lib/hooks/re
 
 Driving on would escalate more frozen records to the standard lane for the same reason, so no further record is driven until #6162 is fixed on `main`. The two stops stay under Replaced, as the verdict rule says; both are attributed to #6162 there, and neither says anything about the admission values.
 
+## Resumed, and what else interrupted the trial
+
+- **Resumed 2026-11-23T17:53Z.** #6162 was fixed by PR #6169 (merge commit `4d84b1e5cd`, tests only); the maintainer chose that the trial's session build and merge it. No record was driven between the pause and that merge.
+- **A weekly usage limit stopped #3995** at the driver's reviewer step, after its tests and `check` were green. Since then every drive first launches one haiku, one sonnet and one opus worker with the driver's own launch flags; when any of them fails, nothing is driven and the record stays on the list. That check held the trial from 2026-11-23T20:15Z to 2026-11-24T04:40Z, while the account's login had expired. No record was lost to it.
+- **The driver's test step timed out on #4310** at its 30-minute bound (`spawnSync … node ETIMEDOUT`). The cause is not established; other sessions' suite runs shared the machine and the suite slot at the time.
+
+Of the seven records the driver stopped before a PR so far, four stops say nothing about the record or the admission values (#4617 and #3822 on #6162, #3995 on the usage limit, #4310 on the timeout) and three do (#3875, #4004, #4309).
+
 ## Driven records
 
-None yet (0 of 20).
+3 of 20 so far. Minutes are the driver's total and its total without the CI wait. Implementer cost sums the implementer launches; the driver's own reviewer is listed beside it. Each whole-branch review ran on the head the driver pushed, before `/claude-tweaks:review` touched the branch, and its report is at `phase-7-trial-reviews/{record}-whole-branch.md`.
+
+| n | List # | Record | PR | Size | Risk | Widened by | Outcome | Minutes | Implementer cost | Driver reviewer | Whole-branch review (Critical / Important / Minor) | `/claude-tweaks:review` (critical / high) | Fix before merge | Merged |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | 6 | #3835 | #6171 | low | low | none | `pending-review` (record lacks `auto:merge`), CI green | 7.8 / 3.9 | $0.15 | $0.28; 0 returned | 0 / 3 / 3, on `a3b5ffc073` | running | pending | no |
+| 2 | 10 | #4108 | #6173 | medium | medium | risk, ceremony | `pending-review`, CI green | 12.6 / 9.2 | $1.25 | $0.41; 1 returned, 1 reproduced, fixed in one round | 0 / 1 / 4, on `7584a149ef` | running | pending | no |
+| 3 | 11 | #4244 | #6176 | low | medium | risk, protected-path | `pending-review`, CI green | 9.9 / 6.6 | $0.34 | $0.61; 0 returned | 0 / 3 / 3, on `2dbdff59d1` | not started | pending | no |
+
+The whole-branch reviewer is one read-only agent on Opus, given superpowers' `requesting-code-review/code-reviewer.md` template (the one a build's final whole-branch review is dispatched with) filled with the record body as the requirements and `merge-base(origin/main, head)..head` as the range, plus one line asking for numbered items and "None" under an empty severity.
 
 ## Replaced
 
@@ -256,12 +272,17 @@ In the order handled. "Not admitted at its turn" rows cost nothing: `drive.js --
 | 3 | #6145 | medium | low | ceremony | Not admitted at its turn: `record has an open PR` (#6158, another session's dispatch run). | | | |
 | 4 | #6146 | medium | low | ceremony | Not admitted at its turn: `record has an open PR` (#6159, another session's dispatch run). | | | |
 | 5 | #3822 | low | low | protected-path | Stopped before its PR: `express-escalated` at the worker step. The first run's tests were red on the two #6162 tests alone, and the relaunched worker reported it could not fix them inside the Key Files. The escalation comment failed to post (a GitHub GraphQL error), so the record carries no escalation marker. | 4.4 | $0.38 | `2026-11-23T161206-drive-3822` |
+| 7 | #3875 | medium | medium | risk, ceremony, protected-path | Stopped before its PR: `express-escalated` at the test step, `red tests; after one relaunch (red-tests, standard to capable)`. The failing file was `tests/local-merge-close-run-ordering.test.js`, a conformance test over the prose the record changes. | 22.7 | $0.78 | `2026-11-23T180100-drive-3875` |
+| 8 | #3995 | low | low | none | Stopped before its PR: `express-escalated` at the review step, `reviewer fail/exit: You've hit your weekly limit`. Tests and `check` were green. A usage limit on the account, not a finding. | 8.1 | $0.29 | `2026-11-23T182418-drive-3995` |
+| 9 | #4004 | low | low | none | Stopped before its PR: `express-escalated` at the review step. The driver's reviewer returned 3 findings, all 3 reproduced by a failing test, and the one fix round left tests red. Reviewer cost $0.35. | 10.5 | $0.50 | `2026-11-23T190452-drive-4004` |
+| 12 | #4309 | low | medium | risk, protected-path | Stopped before its PR: `express-escalated` at the worker step, `worker could not complete` twice (haiku, then sonnet). Each wrote the change, was denied a compound shell command, and stopped without running the one test command it is allowed. | 1.5 | $0.07 | `2026-11-23T193850-drive-4309` |
+| 13 | #4310 | medium | medium | risk, protected-path | Stopped before its PR: `express-escalated` at the test step, `spawnSync … node ETIMEDOUT` after 30 minutes, on the relaunch (the first worker could not complete). Cause not established. | 33.7 | $0.45 | `2026-11-23T194120-drive-4310` |
 
 ## Guard results
 
 | Guard | Value | Baseline | Read on |
 |---|---|---|---|
-| 1 | pending | 70% | |
+| 1 | pending: 3 of 3 driven PRs so far have a Critical or Important item (17 PRs to go) | 70% | |
 | 2 | not applicable: the driver has no task review | | |
 | 3 | pending | pending (on or after 2026-12-02) | |
 
