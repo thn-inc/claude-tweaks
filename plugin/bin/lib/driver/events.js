@@ -52,8 +52,10 @@ function errorText(err) {
 
 // The calls the driver's own settle makes for a stopped run (settle.js). Kept apart from
 // STEP_NAMES: these are cleanup calls, not pipeline steps, and the step list is pinned.
+// The settle call that puts bot:blocked on the record: the driver's hold (#6151).
+const SETTLE_LABEL_STEP = 'settle-label';
 const SETTLE_STEP_NAMES = Object.freeze([
-  'settle-escalate', 'settle-comment-pr', 'settle-comment-record', 'settle-label',
+  'settle-escalate', 'settle-comment-pr', 'settle-comment-record', SETTLE_LABEL_STEP,
   'settle-release', 'settle-remove-worktree', 'settle-delete-branch', 'settle-close',
 ]);
 
@@ -327,6 +329,6 @@ function createEventSink({ stdout, appendFile }) {
 
 module.exports = {
   CLI_TIMEOUT_MS, firstLine, errorText,
-  STEP_NAMES, SETTLE_STEP_NAMES, MERGE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES, WORKER_TEST_MODES,
+  STEP_NAMES, SETTLE_STEP_NAMES, SETTLE_LABEL_STEP, MERGE_STEP_NAMES, FINAL_STEP, BUDGET_STEP, STEP, OUTCOMES, STOP_CLASSES, WORKER_TEST_MODES,
   outcomeFor, yieldToEventLoop, neutralize, normalizeTitle, createEventSink,
 };
