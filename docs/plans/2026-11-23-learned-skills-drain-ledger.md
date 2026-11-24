@@ -9,3 +9,4 @@
 | 5 | build | SDD ruling — skill-graph 809 and github-pr-scan item 9 left to the PR-scan sub-issue: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 6 | build | SDD ruling — under merge-verification off an empty-rollup own PR is pending at once: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 7 | build | SDD ruling — one targeted residual fix after the final fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 8 | build/skill | gh-api-module-pattern extension: gh pr view --json files caps at 100 entries, so a scope check over it must treat a 100+ list as unprovable (drain.js does) | observation | — |
