@@ -78,6 +78,22 @@ Three conventions follow from how this repo works, and all are visible below:
 * Treat a dispatch blocker as landed only when its closing… ([#6142](https://github.com/thn-inc/claude-tweaks/issues/6142)) ([a75ee03](https://github.com/thn-inc/claude-tweaks/commit/a75ee032804afbd1c7c69555d5a3702b12c54986))
 * Two reconcile tests need gh credentials, so the driver's… ([#6162](https://github.com/thn-inc/claude-tweaks/issues/6162)) ([4d84b1e](https://github.com/thn-inc/claude-tweaks/commit/4d84b1e5cd7f25fdd73fda510bdbe1f103ca70b8))
 
+### Highlights
+* Driver-built records no longer fall back to the slow path because the worker misread a refused test command as Bash being switched off.
+* Wrote the plan as a planned station event when a record is claimed, once per record and run.
+* Made implementers start at a lower reasoning effort when the record's risk allows it, and raise the effort before moving to a larger model when an attempt fails.
+* Dispatch no longer builds a record whose blocker was closed by a merge that carried no implementation.
+* A human resuming a dispatched pipeline run no longer gets stranded with a dispatcher-only handoff block when the session crosses its context cap.
+* Added the station-event vocabulary and validation for plans, reasons, actors and holds, with legacy outcomes still accepted.
+* The dispatch queue pull no longer reuses a cached group order after a change to a setting that decides how records are grouped.
+* Add a `learned-skills-auto-merge` setting that lets wrap-up's learned-skill update PRs merge on their own once CI passes; it is on by default only at `autonomy: unattended`.
+* Documented which code performs each station transition, the confirmed station order, and the starting lists the plan can begin from.
+* Tidy's housekeeping PRs now arm for auto-merge when you have opted in, instead of always being left unarmed.
+* Made the pipeline driver start small records on the cheapest model and retry a failed attempt once on the next model up, before handing the record to the full pipeline.
+* Maintainer tooling only, nothing ships: the review replay can replay task and whole-branch reviewers, and measure how much of what task reviews catch the whole-branch review would have caught on its own.
+* Fix a resumed wrap-up so it recognises learned-skill edits whose PR already merged, instead of opening a duplicate PR or staging them again.
+* Made each build pick its implementer model from the record's size and file count through one shared rule, and move a stuck task to the next model up once.
+
 ## [6.177.0](https://github.com/thn-inc/claude-tweaks/compare/v6.176.0...v6.177.0) (2026-11-23)
 
 
