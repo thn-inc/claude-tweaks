@@ -25,11 +25,11 @@ const bashInput = (command, cwd) => ({ tool_name: 'Bash', tool_input: { command 
 const editInput = (filePath) => ({ tool_name: 'Edit', tool_input: { file_path: filePath } });
 const writeInput = (filePath) => ({ tool_name: 'Write', tool_input: { file_path: filePath } });
 
-function assertDenied(out) {
+function assertDenied(out, label = '') {
   assert.strictEqual(
     out.json && out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision,
     'deny',
-    'expected a deny, but got: ' + JSON.stringify(out),
+    (label ? label + ': ' : '') + 'expected a deny, but got: ' + JSON.stringify(out),
   );
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /resolve-run-dir/);
 }
@@ -38,18 +38,35 @@ function assertAllowed(out) {
   assert.deepStrictEqual(out, {}, 'expected no deny, but got: ' + JSON.stringify(out));
 }
 
-test('#4452: a cp / mv / install into an EXISTING pipelines dir of a linked worktree is denied', () => {
+test('#4452: a cp / mv / install / ln into an EXISTING pipelines dir of a linked worktree is denied', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   const pipelines = path.join(wt, '.claude-tweaks', 'pipelines');
   fs.mkdirSync(pipelines, { recursive: true });
-  for (const cmd of [`cp a ${shellQuote(pipelines)}`, `cd ./x/../.claude-tweaks || cp a ${shellQuote(pipelines + '/')}`, `mv a ${shellQuote(pipelines)}`, `install a ${shellQuote(pipelines)}`]) {
-    assertDenied(pre.run({ env: process.env, input: bashInput(cmd, main), runDir: null, runState: null, cwd: main }));
+  for (const cmd of [
+    `cp a ${shellQuote(pipelines)}`,
+    `cd ./x/../.claude-tweaks || cp a ${shellQuote(pipelines + '/')}`,
+    `cp -t ${shellQuote(pipelines)} a`,
+    `mv a ${shellQuote(pipelines)}`,
+    `install a ${shellQuote(pipelines)}`,
+    `ln -s a ${shellQuote(pipelines)}`,
+  ]) {
+    assertDenied(pre.run({ env: process.env, input: bashInput(cmd, main), runDir: null, runState: null, cwd: main }), cmd);
   }
   // The same copy into the main checkout's pipelines dir stays allowed.
   const mainPipelines = path.join(main, '.claude-tweaks', 'pipelines');
   fs.mkdirSync(mainPipelines, { recursive: true });
   assertAllowed(pre.run({ env: process.env, input: bashInput(`cp a ${shellQuote(mainPipelines)}`, main), runDir: null, runState: null, cwd: main }));
+});
+
+test('#4452: install -d on an EXISTING worktree pipelines dir creates no entry and stays allowed', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const pipelines = path.join(wt, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  // Control: mkdir -p on the same existing dir is allowed.
+  assertAllowed(pre.run({ env: process.env, input: bashInput(`mkdir -p ${shellQuote(pipelines)}`, main), runDir: null, runState: null, cwd: main }));
+  assertAllowed(pre.run({ env: process.env, input: bashInput(`install -d ${shellQuote(pipelines)}`, main), runDir: null, runState: null, cwd: main }));
 });
 
 test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
