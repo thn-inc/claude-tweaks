@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-11-24T095857-drive-3731",
-  "sessionId": "7681df63-8b80-4414-9874-ef1bf1dd6ced",
-  "claimedAt": "2026-11-24T09:58:59.435Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "drive.js settle: express-escalated at check",
+  "releasedAt": "2026-11-24T10:18:04.471Z"
 }
