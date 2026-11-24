@@ -127,6 +127,7 @@ test('AC2.2: nothing on stdout — the reply reads as a launch error', async (t)
   const out = path.join(dir, 'merged.json');
   const m = cli(['merge-lens-replies', '--into', file, '--out', out, '--lens', '3f', '--reviewers', '1', '--side-a', textFile(dir, 'a.txt', TABLE('f'))], dir);
   assert.strictEqual(m.code, 2);
+  assert.match(m.stderr, /invalid JSON in /);
   assert.strictEqual(fs.existsSync(out), false);
   assert.strictEqual(settle(dir, file).code, 2);
 });
