@@ -169,6 +169,16 @@ const HANDS_OFF = new Set(['in-flight', 'explicit']);
 const NOT_IDENTIFIED_REASON = 'handoff.json not written: the caller was not identified, so the measured transcript may be another agent\'s (only an in-flight or --transcript identification hands off)';
 const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
 
+const STORIES_OWED_REASON = 'handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place';
+
+// True when the list keeps build's owed stories step: present, and ahead of test when test is listed.
+function keepsOwedStories(nextSteps) {
+  const storiesAt = nextSteps.indexOf('stories');
+  if (storiesAt === -1) return false;
+  const testAt = nextSteps.indexOf('test');
+  return testAt === -1 || storiesAt < testAt;
+}
+
 // Measure, and write the handoff when over. Never throws: every failure is a
 // `reason` on the result (the fail-open contract); several join with '; '.
 async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, noStories = false, storiesOwed = false, transcriptArg }, deps) {
@@ -209,7 +219,7 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
   }
   if (!result.over || !nextSteps) return done();
   // --stories-owed: build's automatic stories step has not run yet; a list without it would drop it for good.
-  if (storiesOwed && !(nextSteps.includes('stories') && (!nextSteps.includes('test') || nextSteps.indexOf('stories') < nextSteps.indexOf('test')))) return done(`handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place`);
+  if (storiesOwed && !keepsOwedStories(nextSteps)) return done(STORIES_OWED_REASON);
   if (!HANDS_OFF.has(identified)) return done(NOT_IDENTIFIED_REASON);
   // flow/context-handoff.md: a top-level run never hands off wrap-up; a dispatched run may.
   if (nextSteps.includes('wrap-up')) {
