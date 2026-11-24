@@ -28,6 +28,13 @@ function segmentSpans(command) {
   return scanPass((spans) => segmentSpansWith(str, spans));
 }
 
+// The index at or after `at` that is not the start of a backslash-newline pair (#4245).
+function pastLineContinuations(str, at) {
+  let i = at;
+  while (str[i] === '\\' && str[i + 1] === '\n') i += 2;
+  return i;
+}
+
 function segmentSpansWith(str, spans) {
   const segments = [];
   let current = '';
@@ -116,8 +123,10 @@ function segmentSpansWith(str, spans) {
         continue;
       }
     }
-    if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
-    if (ch === '|' && str[i + 1] === '|') { cut(i); i += 1; continue; }
+    // bash removes a backslash-newline before it reads operators, so `&\<nl>&` is `&&` (#4245).
+    const nx = pastLineContinuations(str, i + 1); // the operator's second char
+    if (ch === '&' && str[nx] === '&') { cut(i); i = nx; continue; }
+    if (ch === '|' && str[nx] === '|') { cut(i); i = nx; continue; }
     // `>|` is bash's noclobber-override redirect operator, not a pipe — a
     // glued `|` immediately after `>` (#3080) must not fabricate a segment
     // break here, or the operator token never reaches the tokenizer whole.
@@ -129,11 +138,19 @@ function segmentSpansWith(str, spans) {
     // recognized at a word boundary (start of string, or immediately after
     // whitespace/a separator) to match bash's own rule: `#` glued to
     // preceding non-whitespace text (e.g. `foo#bar`) is NOT a comment.
-    if (ch === '#' && (i === 0 || /[\s;&|]/.test(str[i - 1]))) {
-      let j = i + 1;
-      while (j < str.length && str[j] !== '\n') j++;
-      i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
-      continue;
+    // The character before `#` is read from `current` with its trailing backslash-newlines dropped,
+    // not from `str`: bash removes them before it splits words, so `a\<nl>#x` is the word `a#x`, not
+    // a comment (#4245). A bare newline always cuts, so a newline left in `current` is always the
+    // second half of an escape pair. A cut leaves `current` empty, which is a word start.
+    if (ch === '#') {
+      let k = current.length;
+      while (k >= 2 && current[k - 1] === '\n' && current[k - 2] === '\\') k -= 2;
+      if (k === 0 || /[\s;&|]/.test(current[k - 1])) {
+        let j = i + 1;
+        while (j < str.length && str[j] !== '\n') j++;
+        i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
+        continue;
+      }
     }
     current += ch;
   }
@@ -3003,7 +3020,8 @@ function separatorOp(outer, at) {
   const c = outer[at];
   if (c === '&') return '&&';
   if (c !== '|') return ';';
-  return outer[at + 1] === '|' ? '||' : '|';
+  // past any backslash-newline, as segmentSpansWith cuts `|\<nl>|` (#4245)
+  return outer[pastLineContinuations(outer, at + 1)] === '|' ? '||' : '|';
 }
 
 // The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.
