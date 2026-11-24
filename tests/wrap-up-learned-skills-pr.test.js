@@ -463,3 +463,44 @@ test('AC8.1/AC8.2: a skills payload carrying pr renders the URL in the trace and
   assert.equal(consoleOut.status, 0, consoleOut.stderr);
   assert.match(consoleOut.stdout, /applied \(abc1234, learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77\)/);
 });
+
+test('Deliverable 4: learned-skills/drain.json adds the own-PR outcome to the trace and the console, through the CLI', (t) => {
+  const { buildWorklist } = require('../plugin/bin/lib/wrap-up/engine-plan');
+  const { initState } = require('../plugin/bin/lib/wrap-up/engine-record');
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-13T000000-spec-6112');
+  fs.mkdirSync(path.join(runDir, 'learned-skills'), { recursive: true });
+  const worklist = buildWorklist({
+    facts: {
+      isRepo: true, changedFiles: ['src/a.js', 'src/b.js'], renamedDeleted: [], skillsLibraryExists: true,
+      multiFileDiff: true, docsTreeNonEmpty: false, journeysExist: false, journeyFiles: [],
+      claudeMdCommandRenamed: false, renamedOrDeleted: false,
+    },
+    signals: {}, ceremonyProfile: 'standard', budgets: {},
+  });
+  initState({ runDir, worklist, now: new Date(2026, 10, 13, 12, 0, 0), telemetryPath: null });
+  const payload = {
+    version: 1, rowId: 'skills', result: 'findings', gapDetection: 'run', detail: 'Read 1',
+    read: [{ path: '.claude/skills/a/SKILL.md', mode: 'full' }],
+    findings: [{
+      kind: 'patch', summary: 'Add a row', targetPath: '.claude/skills/a/SKILL.md',
+      action: 'applied', stagePath: null, commit: 'abc1234', pr: LS_PR,
+    }],
+  };
+  const spawn = (args, input) => spawnSync(process.execPath, [ENGINE_CLI, ...args], { cwd: repo, input, encoding: 'utf8' });
+  assert.equal(spawn(['record', '--run-dir', runDir, '--dry-run'], JSON.stringify(payload)).status, 0);
+  const drainFile = path.join(runDir, 'learned-skills', 'drain.json');
+  const renders = () => ['trace', 'console'].map((s) => {
+    const r = spawn(['render', '--run-dir', runDir, '--section', s]);
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+  });
+  const [plainTrace, plainConsole] = renders();
+  fs.writeFileSync(drainFile, '{not json');
+  assert.deepEqual(renders(), [plainTrace, plainConsole]);
+  fs.writeFileSync(drainFile, JSON.stringify({ pr: 77, outcome: 'merged' }));
+  const [trace, consoleOut] = renders();
+  assert.ok(trace.includes(`learned-skills PR ${LS_PR} — merged`), trace);
+  assert.ok(consoleOut.includes(`learned-skills PR ${LS_PR} — merged)`), consoleOut);
+});

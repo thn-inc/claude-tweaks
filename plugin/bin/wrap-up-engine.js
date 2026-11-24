@@ -67,6 +67,7 @@ const { ledgerRowCells } = require('./lib/wrap-up/ledger-cells');
 const { headerField } = require('./lib/stage-item/ledger');
 const { sddRulingRatifyAction, SDD_RULING_RATIFY_ACTIONS } = require('./lib/console/sdd-ruling');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
+const { drainPath } = require('./lib/learned-skills/layout');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { validateFields, writeExpectations } = require('./lib/verify-expectations/write');
 
@@ -503,9 +504,18 @@ function runRender(args, d) {
     return 2;
   }
 
+  // The drain's outcome for this run's own learned-skills PR; absent or
+  // unparseable renders exactly as before.
+  let drain;
+  try {
+    drain = JSON.parse(fs.readFileSync(drainPath(resolvedDir), 'utf8'));
+  } catch (e) {
+    drain = undefined;
+  }
+
   const output = section === 'trace'
-    ? renderTrace(state)
-    : renderConsoleSections(state, { startAt: args.startAt !== null ? Number(args.startAt) : 1 }).markdown;
+    ? renderTrace(state, { drain })
+    : renderConsoleSections(state, { startAt: args.startAt !== null ? Number(args.startAt) : 1, drain }).markdown;
 
   // Print first, so the hole is visible even when --strict is about to make
   // it fatal.

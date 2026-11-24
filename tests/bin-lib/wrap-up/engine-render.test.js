@@ -649,3 +649,39 @@ test('PROCEDURE_HEADS names exactly the four files split by #2546, no more, no f
     ['cleanup-procedures-execution', 'curation-engine', 'pr-first-merge', 'review-console'].sort(),
   );
 });
+
+// ---- learned-skills drain outcome (drain.json) on the own PR ----------------
+
+const drainState = () => skillsState([appliedFinding({ pr: LS_PR })]);
+
+for (const [label, drain, suffix] of [
+  ['merged', { pr: 77, outcome: 'merged' }, ' — merged'],
+  ['left open: pending', { pr: 77, outcome: 'left-open', reason: 'pending' }, ' — left open: pending'],
+  ['conflicting', { pr: 77, outcome: 'conflicting' }, ' — conflicting'],
+  ['armed for an armed --own-pr', { pr: 77, outcome: 'armed' }, ' — armed'],
+]) {
+  test(`AC (deliverable 4): the Skills row shows ${label}`, () => {
+    const state = drainState();
+    assert.match(renderTrace(state, { drain }), new RegExp(`\\| Read 2 · learned-skills PR ${LS_PR}${suffix} \\|`));
+    const { markdown } = renderConsoleSections(state, { startAt: 1, drain });
+    assert.ok(markdown.includes(`applied (abc1234, learned-skills PR ${LS_PR}${suffix})`), markdown);
+  });
+}
+
+test('a drain for another PR number changes nothing', () => {
+  const state = drainState();
+  const drain = { pr: 78, outcome: 'merged' };
+  assert.strictEqual(renderTrace(state, { drain }), renderTrace(state));
+  assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown);
+  // a PR number that is only a suffix of the URL's number must not match
+  assert.strictEqual(renderTrace(state, { drain: { pr: 7, outcome: 'merged' } }), renderTrace(state));
+});
+
+test('no drain, an unknown outcome, or a non-object drain is byte-identical to today', () => {
+  const state = drainState();
+  for (const drain of [undefined, null, 'merged', { pr: 77 }, { pr: 77, outcome: 'weird' }]) {
+    assert.strictEqual(renderTrace(state, { drain }), renderTrace(state));
+    assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown);
+  }
+  assert.doesNotMatch(renderTrace(state), / — /);
+});
