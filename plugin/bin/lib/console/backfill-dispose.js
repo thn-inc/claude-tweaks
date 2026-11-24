@@ -393,16 +393,14 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
   const out = {
     dispositions: [], file: [], reuse: [], digest: { lines: [], duplicates: [], sameAs: [] }, entries: [], awaitingVerdict: [],
   };
+  // fingerprint -> its filing entry / its digest line ({ itemId, index in out.digest.lines, its disposition's digest }),
+  // so a same-pass twin's item marker can join it (#4162).
   const batchFiled = new Map();
   const batchDigested = new Map();
   // fingerprint -> the existing record number a same-pass item matched (by its claim or its item marker).
   const batchMatched = new Map();
   // fingerprint -> the trusted comment a same-pass digest item was held by (by its claim or its item marker), so a twin is a duplicate of it (#4162).
   const batchHeld = new Map();
-  // item id -> its filing entry / its digest line ({ index in out.digest.lines, its disposition's digest }), so a
-  // same-pass twin's item marker can join it (#4162).
-  const filingOf = new Map();
-  const lineOf = new Map();
 
   for (const run of workList.runs) {
     for (const item of run.items) {
@@ -465,19 +463,17 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           out.reuse.push({ itemId: d.itemId, number: batchMatched.get(fp) });
           ref = `#${batchMatched.get(fp)}`;
         } else if (fp && batchFiled.has(fp)) {
-          const twin = batchFiled.get(fp);
-          out.reuse.push({ itemId: d.itemId, number: null, sameAs: twin });
+          const filing = batchFiled.get(fp);
+          out.reuse.push({ itemId: d.itemId, number: null, sameAs: filing.itemId });
           if (item.kind === 'finding') {
             // The twin's record carries this item's marker, so the next pass finds it there if its claim has moved.
-            const filing = filingOf.get(twin);
             const fpOwn = itemFingerprint(item);
             filing.text += `${filing.text.endsWith('\n') ? '' : '\n'}<!-- work-fingerprint: ${fpOwn} -->\nwork-fingerprint: ${fpOwn}\n`;
           }
         } else {
-          if (fp) batchFiled.set(fp, d.itemId);
           const filing = { itemId: d.itemId, fingerprint: fp, title: d.proposal.title, text: d.proposal.text };
+          if (fp) batchFiled.set(fp, filing);
           out.file.push(filing);
-          filingOf.set(d.itemId, filing);
         }
       } else if (d.action === 'digest') {
         // A duplicate's ref is the comment holding its entry: an already-posted one's URL now; a same-pass
@@ -485,13 +481,12 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         const held = batchHeld.get(d.digest.fingerprint)
           || (batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item));
         if (batchDigested.has(d.digest.fingerprint)) {
-          const twin = batchDigested.get(d.digest.fingerprint);
+          const owner = batchDigested.get(d.digest.fingerprint);
           out.digest.duplicates.push(d.itemId);
-          out.digest.sameAs.push({ itemId: d.itemId, sameAs: twin });
+          out.digest.sameAs.push({ itemId: d.itemId, sameAs: owner.itemId });
           // The twin's line carries this item's marker too, so the next pass finds it there if its claim has moved (#4162).
           // The owner's disposition gets the same text: tidy/console-backfill.md maps each planned line to its owner by it.
           if (item.kind === 'finding') {
-            const owner = lineOf.get(twin);
             owner.digest.line += ` ${itemMarkerOf(item)}`;
             out.digest.lines[owner.index] = owner.digest.line;
           }
@@ -500,8 +495,7 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           out.digest.duplicates.push(d.itemId);
           ref = commentRef(held);
         } else {
-          batchDigested.set(d.digest.fingerprint, d.itemId);
-          lineOf.set(d.itemId, { index: out.digest.lines.length, digest: d.digest });
+          batchDigested.set(d.digest.fingerprint, { itemId: d.itemId, index: out.digest.lines.length, digest: d.digest });
           out.digest.lines.push(d.digest.line);
         }
       }
