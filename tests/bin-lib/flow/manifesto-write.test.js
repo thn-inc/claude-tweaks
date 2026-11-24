@@ -371,6 +371,58 @@ test('renderFyi shows a degraded-sourced lever with the source column degraded',
   assert.match(renderFyi(levers), /\| Merge verification \| wait \| degraded \|/i);
 });
 
+// --- replanned (#6148): the Manifesto write replans a claimed record once, after its batch and lane fill ---
+
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
+const { STATION, KIND } = require('../../../plugin/bin/lib/station-events/stations');
+
+function claimedFixture() {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  fs.writeFileSync(path.join(fx.root, '.claude-tweaks', 'station-events.jsonl'), JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',
+    runId: RUN_ID, payload: { stations: STARTING_LISTS.standard },
+  }) + '\n');
+  return fx;
+}
+const FAST = [{ n: 4027, ceremony: 'fast-lane', ceremonySource: 'label' }];
+
+test('writeManifesto with a fast-lane ceremony after a standard claim writes one replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { records: FAST, deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].payload.cause.ref, 'ceremony-profile');
+  assert.strictEqual(events[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
+test('writeManifesto with a standard ceremony after a standard claim writes nothing', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.deepStrictEqual(events, []);
+});
+
+test('a writeManifesto that fails mid-batch writes no replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'spec') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { records: FAST, deps: { setConfigLever: flaky, stationEvent: (e) => events.push(e), stationMainRoot: fx.root } }), /EIO/);
+  assert.deepStrictEqual(events, []);
+});
+
+test('a throwing stationEvent leaves writeManifesto\'s result, config.yml and decisions.md as with stationEvent null', () => {
+  const runOnce = (stationEvent) => {
+    const fx = claimedFixture();
+    const { out } = write(fx, { records: FAST, deps: { stationEvent, stationMainRoot: fx.root } });
+    return { table: out.table, config: fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), log: fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').split(fx.root).join('<root>') };
+  };
+  const off = runOnce(null);
+  const thrown = runOnce(() => { throw new Error('sink exploded'); });
+  assert.deepStrictEqual(thrown, off);
+});
+
 test('a config.yml write that fails mid-batch removes the partial config.yml, so the run reads as case 3, never case 1', () => {
   const fx = fixture({ decisions: CLAIM });
   let n = 0;
