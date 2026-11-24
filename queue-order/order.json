@@ -1,16 +1,11 @@
 {
-  "computedAt": "2026-11-24T06:20:07.269Z",
+  "computedAt": "2026-11-24T08:55:15.177Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
-        "number": 6161,
-        "updatedAt": "2026-11-24T06:13:57Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6152,
-        "updatedAt": "2026-11-23T16:10:26Z",
+        "updatedAt": "2026-11-24T06:34:08Z",
         "state": "OPEN"
       },
       {
@@ -20,12 +15,7 @@
       },
       {
         "number": 6150,
-        "updatedAt": "2026-11-23T16:10:21Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6149,
-        "updatedAt": "2026-11-24T05:17:14Z",
+        "updatedAt": "2026-11-24T07:59:55Z",
         "state": "OPEN"
       },
       {
@@ -35,7 +25,7 @@
       },
       {
         "number": 6143,
-        "updatedAt": "2026-11-23T16:45:03Z",
+        "updatedAt": "2026-11-24T08:06:06Z",
         "state": "OPEN"
       },
       {
@@ -49,13 +39,8 @@
         "state": "OPEN"
       },
       {
-        "number": 6112,
-        "updatedAt": "2026-11-24T04:44:36Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6003,
-        "updatedAt": "2026-11-24T06:13:21Z",
+        "updatedAt": "2026-11-24T06:20:34Z",
         "state": "OPEN"
       },
       {
@@ -140,12 +125,12 @@
       },
       {
         "number": 4741,
-        "updatedAt": "2026-11-03T09:36:06Z",
+        "updatedAt": "2026-11-24T08:45:58Z",
         "state": "OPEN"
       },
       {
         "number": 4725,
-        "updatedAt": "2026-11-03T09:36:01Z",
+        "updatedAt": "2026-11-24T08:41:45Z",
         "state": "OPEN"
       },
       {
@@ -170,7 +155,7 @@
       },
       {
         "number": 4664,
-        "updatedAt": "2026-11-03T09:35:51Z",
+        "updatedAt": "2026-11-24T08:30:19Z",
         "state": "OPEN"
       },
       {
@@ -259,11 +244,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4531,
-        "updatedAt": "2026-10-31T06:54:20Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4526,
         "updatedAt": "2026-10-30T04:29:09Z",
         "state": "OPEN"
@@ -300,12 +280,12 @@
       },
       {
         "number": 4496,
-        "updatedAt": "2026-10-30T04:28:37Z",
+        "updatedAt": "2026-11-24T08:06:58Z",
         "state": "OPEN"
       },
       {
         "number": 4493,
-        "updatedAt": "2026-10-31T06:32:28Z",
+        "updatedAt": "2026-11-24T07:57:15Z",
         "state": "OPEN"
       },
       {
@@ -320,7 +300,7 @@
       },
       {
         "number": 4472,
-        "updatedAt": "2026-10-30T04:28:12Z",
+        "updatedAt": "2026-11-24T07:44:33Z",
         "state": "OPEN"
       },
       {
@@ -330,22 +310,22 @@
       },
       {
         "number": 4463,
-        "updatedAt": "2026-10-30T06:35:24Z",
+        "updatedAt": "2026-11-24T07:37:33Z",
         "state": "OPEN"
       },
       {
         "number": 4462,
-        "updatedAt": "2026-10-30T06:35:22Z",
+        "updatedAt": "2026-11-24T07:33:18Z",
         "state": "OPEN"
       },
       {
         "number": 4461,
-        "updatedAt": "2026-10-30T06:35:20Z",
+        "updatedAt": "2026-11-24T07:22:14Z",
         "state": "OPEN"
       },
       {
         "number": 4460,
-        "updatedAt": "2026-10-28T18:40:16Z",
+        "updatedAt": "2026-11-24T07:13:23Z",
         "state": "OPEN"
       },
       {
@@ -355,12 +335,12 @@
       },
       {
         "number": 4452,
-        "updatedAt": "2026-10-30T06:51:06Z",
+        "updatedAt": "2026-11-24T06:47:16Z",
         "state": "OPEN"
       },
       {
         "number": 4451,
-        "updatedAt": "2026-11-24T06:10:09Z",
+        "updatedAt": "2026-11-24T06:25:47Z",
         "state": "OPEN"
       },
       {
@@ -769,9 +749,19 @@
         "state": "OPEN"
       },
       {
+        "number": 6194,
+        "updatedAt": "2026-11-24T07:53:11Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4548,
         "updatedAt": "2026-11-02T11:42:11Z",
         "state": "CLOSED"
+      },
+      {
+        "number": 5046,
+        "updatedAt": "2026-11-24T07:53:05Z",
+        "state": "OPEN"
       },
       {
         "number": 5392,
@@ -791,168 +781,6 @@
     ]
   },
   "groups": [
-    [
-      {
-        "body": "## Current State\n\nThe pipeline driver's implementer worker runs headless with a narrow Bash allow list (`plugin/bin/lib/driver/roles.js`): the declared test command (`Bash(node tools/run-tests.js --files-from *)` on this repo) plus read-only `git status/diff/log/show/ls-files`, with `autoAllowBashIfSandboxed: false`, so any other command, including a compound one that chains the allowed command, is denied.\n\nThe worker prompt (`plugin/bin/lib/driver/steps.js`, the `Tests:` line in the implementer prompt builder) says only: \"write their repo-relative paths, one per line, to `.claude-tweaks/pipelines/worker-test-files.txt` and run `{testCommand}` with {files} as that path.\" It never says (a) Bash admits only that command and read-only git, (b) the list file is written with the Write tool, or (c) the test command must run alone, unchained.\n\nObserved live on 2026-11-23 in the #5571 proof drain (`drive.js 5270 --run .claude-tweaks/pipelines/2026-11-23T151537-record-5270 --no-settle`, plugin 6.176.0): the worker edited three files, then issued two Bash calls that were denied: a `python3 - <<'E' …` heredoc edit, and `mkdir -p .claude-tweaks/pipelines && printf '…' > .claude-tweaks/pipelines/worker-test-files.txt && node tools/run-tests.js --files-from .claude-tweaks/pipelines/worker-test-files.txt 2>&1 | tail -40`. It then reported `cannot-complete` (\"The Bash tool was denied in this session, so the edits are unverified and nothing is committed\"), never running the allowed command on its own. The driver's final line: `outcome: express-escalated`, `stop.reason: express-error`, `denialCount: 2`, `costUsd: 0.206`, 18 turns. The record fell back to the full `/flow` path, so the driver lane delivered nothing for an admitted record.\n\nThis blocks #5571 AC2 (an admitted record must reach `merged`/`armed`/`pending-review` through the driver) and so Phase 13 (#6117-#6120).\n\n## Deliverables\n\n- [ ] The implementer prompt's `Tests:` line (`plugin/bin/lib/driver/steps.js`) tells the worker: write the test list with the Write tool; run the declared test command as one Bash call on its own (no `&&`, `;`, pipe, redirect or `mkdir`); Bash otherwise admits only read-only `git status/diff/log/show/ls-files`; make edits with Edit/Write, never a shell script.\n- [ ] The prompt tells the worker a denied Bash call means that command shape is outside the allow list, not that Bash is unavailable: retry with the allowed form before reporting `cannot-complete`.\n- [ ] Unit tests in `tests/bin-lib/driver/worker.test.js` (or wherever the implementer prompt is asserted today) pin both sentences, rendered with a declared test command.\n\n## Acceptance Criteria\n\n1. The implementer prompt rendered with a declared test command contains an instruction to write the test list with the Write tool and to run the test command alone, unchained, and names read-only git as the only other Bash it may run.\n2. The rendered prompt contains an instruction that a denied Bash call is a disallowed command shape, to be retried in the allowed form, not a reason to stop.\n3. With no declared test command (the \"do not run tests\" branch), the prompt is unchanged apart from any shared edit-with-Edit/Write sentence.\n4. A test fails when either instruction is removed from the prompt builder (verified by reverting the prompt change).\n5. `npm test` passes.\n\n## Release Note\n\nDriver-built records no longer fall back to the slow path because the worker misread a refused test command as Bash being switched off.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/driver/steps.js` — implementer prompt `Tests:` line — Write-tool list file, unchained test command, denial-is-shape guidance\n- `tests/bin-lib/driver/worker.test.js` — pin the new prompt sentences\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-23T16:09:32Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 6161,
-        "state": "OPEN",
-        "title": "Tell the driver implementer its Bash runs only the unchained test command, so a refused chain is retried, not fatal",
-        "updatedAt": "2026-11-24T06:13:57Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Overview\n\nMake the label-protocol exits (release, authorize, accept) write the new outcomes with actor and reason, and write `decided` beside the authorize and accept exits. This is task 6 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E3 | Floor map, emission 3/8: The plan at the claim | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/release-claim.js` (release exit), `plugin/bin/apply-refine-labels.js` (the authorize exit near line 136), `plugin/bin/accept-park.js` (the accept exit near line 735)\n- Test: `tests/bin-lib/release-claim/cli.test.js`, `tests/apply-refine-labels.test.js`, `tests/accept-park-cli.test.js`\n\nInterfaces:\n\n- Produces: `release` exits `passed` with actor `script`; `authorize` exits `passed` with actor `person` (the skill is run by the person) and a following `decided` line with `decision: 'authorize'`, `via: 'skill'`; `accept` exits `passed` for an approval, and `sent-back` with `next: 'build'` and reason `changes-requested` (with `reasonText` from the label's comment where the code holds it) for changes requested.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests,** one per caller: `a claim's release exit is passed with actor script`; `authorizing writes exited passed actor person and a decided authorize via skill`; `approving an acceptance writes exited passed and a decided accept`; `requesting changes writes exited sent-back next build with reason changes-requested`.\n\n## Release Note\n\nMade the release, authorize and accept transitions write an outcome, actor and reason, plus a decided event for authorize and accept.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests,** one per caller: `a claim's release exit is passed with actor script`; `authorizing writes exited passed actor person and a decided authorize via skill`; `approving an acceptance writes exited passed and a decided accept`; `requesting changes writes exited sent-back next build with reason changes-requested`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js tests/apply-refine-labels.test.js tests/accept-park-cli.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** by passing the new `outcome` and `payload` fields in each existing `deps.stationEvent({...})` call; add the `decided` call beside the authorize and accept exits.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: label-protocol transitions write outcome, actor and reason`.\n\n### Key Files\n\n- `plugin/bin/release-claim.js`\n- `plugin/bin/apply-refine-labels.js`\n- `plugin/bin/accept-park.js`\n- `tests/bin-lib/release-claim/cli.test.js`\n- `tests/apply-refine-labels.test.js`\n- `tests/accept-park-cli.test.js`\n\n## Gotchas\n\n- Changes outcome payloads at three label-protocol exits.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-6 -->\nwork-fingerprint: factory-floor-map-emission:emission-6\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n",
-        "createdAt": "2026-11-23T15:43:21Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6150,
-        "state": "OPEN",
-        "title": "Floor map, emission 6/8: Outcomes at the label-protocol transitions",
-        "updatedAt": "2026-11-23T16:10:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite `replanned` when the stations of an already-claimed record change (for example a ceremony-profile downgrade), keeping every plan version with its reason and cause. This is task 4 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E3 | Floor map, emission 3/8: The plan at the claim | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"The plan is written by claude-tweaks code at the claim, from the same ceremony profile and lane that already decide which steps a flow runs, and written as `planned`. The hub never computes a plan.\"\n- \"Every version of a plan is kept with its reason and cause.\" A plan is never rewritten silently.\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/plan.js`, `plugin/bin/lib/set-config/write.js` (the ceremony-profile downgrade), the express lane entry `plugin/bin/lib/express/cli.js` if Task 1 shows it changes the stations of a claimed item\n- Test: `tests/bin-lib/station-events/plan.test.js`, the neighbouring set-config test\n\nInterfaces:\n\n- Produces: `replanEvent({ repoName, recordNumber, before: string[], after: string[], reasonCode: string, cause: { kind: 'outcome'|'decision'|'config', ref?: string }, sessionId, runId, at }): object | null` (an event in the shape `appendStationEvent` takes; kind `replanned`; `discriminator` built from `after` joined and `at`; returns `null` when `before` and `after` are equal so an unchanged plan writes nothing).\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n\n## Release Note\n\nWrote a replanned station event when the stations of a claimed record change.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/plan.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `replanEvent`; call it from the code Task 1 names as the place a claimed item's stations change, computing `before` from `planOf` for the old profile and `after` for the new.\n- [ ] **Step 4: Run** the plan tests and the set-config tests. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write replanned when a claimed record's stations change`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/plan.js`\n- `plugin/bin/lib/set-config/write.js`\n- `plugin/bin/lib/express/cli.js`\n- `tests/bin-lib/station-events/plan.test.js`\n\n## Gotchas\n\n- Adds replanning writes from the set-config downgrade path.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-4 -->\nwork-fingerprint: factory-floor-map-emission:emission-4\n\n## Decisions (orchestrator, 2026-11-23, from the plan review of emission 3/8)\n\nA `/flow` claim happens before the Config Manifesto, so the claim-time plan is usually `standard`/`default-list`. This record therefore also covers the moment the profile or lane is fixed: when `plugin/bin/lib/set-config/write.js` writes `ceremony-profile`, or `plugin/bin/lib/flow/manifesto-write.js` writes the lane, to a run's manifest after a claim exists, compute `planOf` for the values before and after, and write one `replanned` event when the stations differ (reason `ceremony-downgrade` when a station is removed, cause `{ kind: 'config' }`; nothing when they are equal). The `before` plan is the claim's `planned` event's stations. Added tests: `fixing the profile to fast-lane after a standard claim writes one replanned without polish`; `fixing the profile to standard after a standard claim writes nothing`; `setting the lane to driver after a standard claim writes one replanned`. Keep the existing ceremony-downgrade and Test-and-Polish tests.\n",
@@ -1020,6 +848,162 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: irreversible-side-effect\n**Related:** #3963, #4366\n\n## Current State\n\n- `plugin/skills/_shared/github-pr-scan.md` item 9 states \"A `<!-- wrap-up-skills-pr -->` PR … is never a candidate\" and its inline filter returns `false` for that marker; `plugin/skills/tidy/step-6-auto.md` has an arm row for `[pr-unarmed]` PRs under `housekeeping-auto-merge`.\n- After the sibling sub-issues, every wrap-up drains open learned-skills PRs when `learned-skills-auto-merge` is `true`. Repos where wrap-up stops running still need a human-run path, and `github-pr-scan` still refuses the marker by name, which would contradict the new rule. (The one-time drain of the PRs open at ship belongs to the rebuild sub-issue.)\n\n## Deliverables\n\n1. `github-pr-scan.md` item 9: replace the never-a-candidate line with: a marker PR is a `[pr-unarmed]` candidate only when `learned-skills-auto-merge` resolves `true`, never under `housekeeping-auto-merge` or a linked record's `auto:merge` grant. Update the inline filter to match, reading the key the same way it reads `HOUSEKEEPING_GRANT`. An unset or unreadable key resolves `false`, so the PR is not a candidate (fail closed). The marker check and the key are tested together: a marker PR that links a record carrying `auto:merge` is a candidate only through the key. The key comes from the policy-key sub-issue and the `drain` verb from the drain sub-issue; this unit is blocked by them.\n2. `tidy/step-6-auto.md`: one row that runs `node \"${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js\" drain --integration-branch {integration-branch}` for those candidates, auto-applied at the tiers the existing arm row uses, staged otherwise. The row is gated on `learned-skills-auto-merge` alone, never satisfied by `housekeeping-auto-merge`; the generic arm row is fenced to non-marker PRs, so this row is the only one that sees marker PRs; `drain` re-checks green and gate-passed itself rather than trusting the scan's candidate status.\n   The new `tidy/step-6-auto.md` row auto-applies at exactly the tiers the existing `[pr-unarmed]` arm row auto-applies at, and only when `learned-skills-auto-merge` resolves `true`; when it resolves `false` the row stages at every tier. The row names `learned-skills-auto-merge` as its carve-out from the \"outward GitHub write, never auto per reversibility floor\" rule, in the same edit and in the same form the arm row already uses for `housekeeping-auto-merge`: the policy key is the human's standing grant. Acceptance: a conformance test pins the new row's per-tier cells and the carve-out sentence.\n3. Both files are at the read rail (`github-pr-scan.md` 52,287 B, `step-6-auto.md` 52,211 B, rail 52,500 B): make room first by moving existing rationale to an appendix sub-file each file already cites (or creating one), so each ends under the rail with the new text in and at least 300 B of margin, re-checked after rebasing over #3963 and #4366. Moved rationale stays reachable through a cite from the appendix, and the full suite stays green (it pins some of that prose).\n\n## Acceptance Criteria\n\n- A conformance test pins item 9's filter: a marker PR is a candidate with `learned-skills-auto-merge=true` and not with it `false`, and never through `housekeeping-auto-merge` alone (update `tests/sweep-backstop.test.js` or the test that pins item 9's filter today; never delete the pin).\n- A marker PR that links a record carrying an `auto:merge` grant is not a candidate unless `learned-skills-auto-merge` is `true`, and an unset or unreadable key yields no candidate.\n- `tests/wrap-up-learned-skills-pr.test.js` no longer pins the never-armed wording and pins the new rule instead.\n- `node plugin/bin/context-cost-report.js --plugin-root plugin` reports both files under 52,500 B.\n- `npm test -- --full` passes.\n\n## Release Note\n\nThe PR scan and `/claude-tweaks:tidy` now merge learned-skill update PRs that wrap-up left behind, when `learned-skills-auto-merge` is on.\n\n## Technical Approach\n\nKeep the scan read-only: it reports candidates; tidy Step 6 runs the drain. The drain verb, its merge path and its rebuild come from the sibling sub-issues; this unit only routes to them.\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — item 9 exclusion and filter\n- `plugin/skills/tidy/step-6-auto.md` — drain row\n- `plugin/skills/tidy/actions-github-issues.md` — only if Step 6's arm action is defined there\n- `tests/sweep-backstop.test.js` — item 9 filter pin\n- `tests/wrap-up-learned-skills-pr.test.js` — never-armed pin replaced\n\n## Gotchas\n\n- #3963 and #4366 also edit `github-pr-scan.md` and `step-6-auto.md`; expect rebases.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:let-the-pr-scan-and-tidy-drain-learned-skills-prs-that-wrap -->\nwork-fingerprint: learned-skills-auto-merge:let-the-pr-scan-and-tidy-drain-learned-skills-prs-that-wrap\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(irreversible-side-effect): …`.\n\n",
+        "createdAt": "2026-11-23T07:01:49Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6114,
+        "state": "OPEN",
+        "title": "Let the PR scan and tidy drain learned-skills PRs that wrap-up left behind",
+        "updatedAt": "2026-11-23T07:27:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: irreversible-side-effect\n\n## Current State\n\n- The learned-skills `drain` (sibling sub-issue) reports a `DIRTY` learned-skills PR as `conflicting` and leaves it open.\n- The conflicts behind #6088 are two runs appending a bullet or numbered item at the same anchor of the same `.claude/skills/**` file. #6083 folded ten such PRs by hand with a 3-way merge that kept both sides where both only added lines, then fixed a duplicated numbered item and a numbering collision. #6097 and #6098 both edit `.claude/skills/skill-prose-conformance-tests/SKILL.md` today.\n- #6088 dropped the human-review floor for the learned-skills PR, so a rebuild needs no reviewer.\n\n## Deliverables\n\n1. When `drain` meets a conflicting marker PR, it rebuilds the PR's branch: a 3-way merge of the PR's head onto the current integration tip, done through git plumbing on a temp index (never touching any worktree's own branch, index or files, as `land` does). The rebuild is one result commit whose parent is the integration tip; its message carries the union of the PR commits' run-id and entry-id trailers, in order, so no entry loses its trailer.\n2. A conflict hunk where **both sides only add lines** at the same spot is resolved by keeping both: the integration side's lines first, then the PR's. The predicate: with `git merge-file --diff3`, a conflict block is a pure double-append only when its base section is empty and both its ours and theirs sections are non-empty; any other block, and any `merge-tree` conflict type other than a content conflict (modify/delete, rename), refuses. A line the PR adds that already appears verbatim among the integration side's added lines is dropped, so one lesson added twice stays once. Afterwards, within each resolved hunk, a numbered-list collision (two items with the same number, or numbering that no longer increases by one) is renumbered so the list stays consecutive. An item is a line matching `^\\s*\\d+[.)]\\s`. Renumbering applies only when the resolved hunk ends its list (the next line is not an item at that indent); a mid-list hunk refuses with the `conflict needs a human` reason.\n3. A conflict hunk where either side deletes or changes an existing line is not auto-resolved: the PR is left open and reported `leftOpen: {pr, reason: \"conflict needs a human: {file}\"}`, naming every conflicted file, comma-joined.\n4. A successful rebuild is pushed with `git push --force-with-lease=refs/heads/learned-skills/{run-id}:{old-head}` to the PR's own branch only (never the integration branch, never a branch not named `learned-skills/*`), keeps every commit's run-id and entry-id trailers, and the PR then follows the drain's pending path (merged by a later drain once green, where green means checks on the rebuilt head SHA: a status that predates the head is pending). The push uses the session's own git credentials, not `GITHUB_TOKEN`, so CI runs on the new head. A rejected lease is `leftOpen` reason `lease-rejected` with no retry; a head ref outside `learned-skills/*` is never touched.\n5. The drain's JSON gains `rebuilt:[…]`, and each rebuild or refusal is logged to `decisions.md` (`AUTO` for a rebuild, `SKIP` for a refusal) with the tag `[lever: learned-skills-auto-merge={value}]`.\n6. Migration (#6088 Deliverable 3): after this ships and the installed plugin carries it (`claude plugin update`, not a stale cache), run `learned-skills-pr.js drain` on this repository, at most 3 passes each waiting out CI, until no learned-skills PR is left open except any reported `conflict needs a human`, which gets a PR comment naming the file. That drains the PRs the old never-armed path opened (five as of 2026-11-23: #6089, #6092, #6096, #6097, #6098; the last two edit the same file), so the old and new shapes do not coexist.\n\n## Acceptance Criteria\n\n- A fixture repo test: two learned-skills branches each append one bullet after the same line of one file; after the first merges, `drain` rebuilds the second so the file holds both bullets (integration's first) and the PR's diff against the tip adds only its own bullet.\n- A fixture test where both branches append item `7.` to the same numbered list ends with items `7.` and `8.`.\n- A fixture test where the PR changes a line the integration side also changed leaves the PR open, pushes nothing, and reports the file.\n- A test pins that the push uses `--force-with-lease` with the expected old head and targets only `refs/heads/learned-skills/*`.\n- Each new test was seen failing with the rebuild reverted.\n- `npm test -- --full` passes.\n- After the post-ship drain settles (at most 3 passes), `gh pr list --state open --search \"wrap-up-skills-pr in:body\"` lists no PR except those reported as needing a human; that output is quoted in a comment on this record.\n\n## Release Note\n\nWrap-up now repairs learned-skill update PRs that conflict because two runs added to the same spot, instead of leaving them for a person to fold by hand.\n\n## Technical Approach\n\nUse `git merge-tree --write-tree` against the integration tip to detect conflicts and produce the merged tree; for conflicted files, run `git merge-file` per file and post-process conflict blocks: a block whose base section is empty on both sides is a pure double-append and is unioned; any other block refuses. Build the result commit with `commit-tree` on a temp index, carrying the PR's commits' trailers in the message. Keep the algorithm in a pure function over three strings (base, ours, theirs) so it is unit-testable without git. The `git-ground-truth-test-env` project skill covers fixture git environments.\n\n### Key Files\n\n- `plugin/bin/lib/learned-skills/rebuild.js` — new: conflict classification, union, renumbering, plumbing commit, lease push\n- `plugin/bin/lib/learned-skills/drain.js` — call the rebuild for a conflicting PR\n- `plugin/bin/learned-skills-pr.js` — header contract names `rebuilt`\n- `tests/bin-lib/learned-skills/rebuild.test.js` — new: pure union/renumber cases and fixture-repo cases\n\n## Gotchas\n\n- A union of two pure appends gives the same text the two PRs would have produced if merged one after the other without conflict, so it introduces nothing a sequential merge would not; a block with any deleted or changed line is exactly where a contradiction could hide, which is why it refuses.\n- `merge-tree` needs git ≥ 2.38; on an older git the rebuild refuses with `leftOpen` reason `git-too-old` instead of falling back to a temp worktree (that would break the no-worktree rule). Confirm the CI and Windows runners' git versions at build time.\n- Renumbering must stay inside the resolved hunk; never renumber a list the PR did not touch.\n- Two appended bullets can still contradict each other; no step checks that. The accepted backstop is the green-CI gate, and a verbatim duplicate is the only semantic case the rebuild handles.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:rebuild-a-conflicting-learned-skills-pr-on-the-integration-t -->\nwork-fingerprint: learned-skills-auto-merge:rebuild-a-conflicting-learned-skills-pr-on-the-integration-t\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(irreversible-side-effect): …`.\n",
+        "createdAt": "2026-11-23T07:01:43Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6113,
+        "state": "OPEN",
+        "title": "Rebuild a conflicting learned-skills PR on the integration tip during the drain",
+        "updatedAt": "2026-11-23T07:26:56Z",
+        "facets": {
+          "origin": null,
+          "risk": "high",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
           "stage": "ready",
           "grants": {
             "build": true,
@@ -2330,7 +2314,7 @@
         "number": 4741,
         "state": "OPEN",
         "title": "Review a multi-spec record against its own commit range",
-        "updatedAt": "2026-11-03T09:36:06Z",
+        "updatedAt": "2026-11-24T08:45:58Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2558,96 +2542,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\n`/claude-tweaks:flow` Step 4 says to check the context cap \"after `build`'s automatic `stories`\", but only prose enforces that order. In the reported run, UI files changed and the orchestrator ran `bin/context-gauge.js` before the stories step. It was over the cap (about 563k against 200k) and handed off with `--next-steps test,review,polish`. The resumed agent never ran stories, so a new journey shipped with zero QA stories, and the gap surfaced only as a ledger observation.\n\nThe report says `--next-steps` cannot carry the owed step. On current `main` that part no longer holds: the gauge validates against `FLOW_STEPS` in `plugin/bin/lib/claim-targets/claim-targets.js`, which includes `stories`. The gap that remains is that nothing notices when a handoff omits a stories step it still owes.\n\n## Deliverables\n\n1. A `/flow` run that changed UI files, without `no-stories`, and that hands off before its automatic stories step no longer loses that step silently. The resumed agent runs it, or the handoff is refused or flagged.\n2. A test covers a handoff taken while stories are still owed.\n\n## Acceptance Criteria\n\n1. When stories are owed and the gauge is over the cap, the resumed run either runs `/claude-tweaks:stories` before `test`, or the gauge reports the omission so the caller can correct `--next-steps`.\n2. A run with `no-stories`, or with no UI file changes, hands off exactly as it does today.\n3. `npm test` passes.\n\n## Release Note\n\nKeep `/flow`'s automatic stories step when a context handoff happens before it runs.\n\n## Technical Approach\n\nThe report suggests a run-dir marker set by build, a gauge refusal while that marker exists, or having the resumed `test` step run the stories check itself. Since `stories` is already a valid token, the smallest route may be a marker the gauge reads to detect a `--next-steps` list that omits it. The build decides.\n\n### Key Files\n\n- `plugin/bin/context-gauge.js` — `--next-steps` validation and `handoff.json`\n- `plugin/skills/flow/SKILL.md` — Step 4's context cap check and automatic story generation\n- `plugin/skills/flow/context-handoff.md` — the resume procedure\n\n## Gotchas\n\n- The UI-file trigger already lives in flow's automatic stories prose, using design-wrapper's Layer 3 sniff. Reuse that rule rather than adding a second definition of \"UI files changed\".\n\n## Original request\n\nflow: a context-cap handoff taken before the automatic stories step drops that step for good\n\n**Summary:** If `/flow` runs the context gauge before the automatic stories step and is over the cap, the handoff's `--next-steps` cannot carry the owed stories step, so the resumed agent never runs it.\n\n**Kind:** Gap\n\n**Affected component:** `/claude-tweaks:flow` Step 4 (\"Check the context cap\" and automatic story generation); `bin/context-gauge.js` `--next-steps` / `handoff.json`\n\n**Use case**\n\nA single-spec `/flow` run (auto) changed UI files: an admin page, a filter component, and a detail page. `flow/SKILL.md` says to gauge the context cap \"after `build`'s automatic `stories`\". In this run the orchestrator gauged first. It was over the cap (about 563k vs 200k) and handed off with `--next-steps test,review,polish`. The decision log reads: `SKIP — Step 4 automatic stories (skipped): condition: UI files changed … but the orchestrator ran the context gauge before the automatic stories step and was over cap → fallback: no QA stories generated`.\n\n`--next-steps` has no way to say \"stories still owed\", so the resumed agent never ran the stories step. The build's new journey shipped with zero stories. Review fell back to a visual walk, and the gap surfaced only as a ledger observation (\"new journey has no stories yet\").\n\n**Why it is a gap**\n\n- The ordering rule is prose only. Nothing in `context-gauge.js` or the handoff refuses or repairs a handoff taken before a pending automatic stories step.\n- Automatic stories is not a step token, so the resumed step list cannot carry it, and the loss is silent.\n\n**Suggested fix (any)**\n\n- Have `context-gauge.js` take a `--stories-pending` flag (or read a run-dir marker that build sets when UI files changed). Write it into `handoff.json`, so the resumed agent runs `/claude-tweaks:stories` before `test`.\n- Or have the gauge refuse `over: true` (or warn) while a stories-pending marker exists and no `no-stories` token was given.\n- Or make the resumed `test` step run the automatic-stories check itself when UI files changed and no stories cover the new journeys.\n\n**Cost this session:** a new journey shipped with 0 QA stories. Review used a visual walk instead, and a follow-up `/claude-tweaks:stories` run is now owed by hand.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.3\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-0ee8fc63 -->\n",
-        "createdAt": "2026-10-31T06:31:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4664,
-        "state": "OPEN",
-        "title": "flow: a context-cap handoff taken before the automatic stories step drops that step for good",
-        "updatedAt": "2026-11-03T09:35:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -3196,84 +3090,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect light from #4369\n\nDefer-reason: tangential\n\n## Current State\n\n#4369 made `mergeStateDemands` (`plugin/bin/lib/preflight-records/merge-gate.js`) and `extractCurrentStateAnchors` (near-duplicate reader) skip heading-shaped lines inside fenced code blocks, via the shared `fencedLineMask` / `fencedLineRanges` in `plugin/bin/lib/issues/record-payload.js`. The same defect class remains in record-body heading readers outside that diff: `splitSections` in `plugin/bin/lib/compose-record/compose.js` (line-anchored `^## (.+)$` with no fence awareness) and `locateSpecSummary` in `plugin/bin/lib/flow/pr-body.js` (stops at any `^#{1,3}\\s` line). A fenced `## Heading` or `### x` line in a record or PR body therefore opens or closes a section in those two readers.\n\nA third, divergent fence implementation exists: `fenceInfo` in `plugin/bin/lib/release-note-repair/apply.js` (accepts indented fences and throws on an unterminated one), unlike `fencedLineRanges` (column-0 openers, CommonMark info-string rule).\n\nIntegration-branch probe (#3987): `git grep -n -i -c -e fence origin/main -- plugin/bin/lib/compose-record/compose.js plugin/bin/lib/flow/pr-body.js` matched nothing (exit 1) after `git fetch origin main`, so neither reader has fence handling on main.\n\n**Related:** #4501, #4502\n\n## Deliverables\n\n1. Move `splitSections` (compose.js) and `locateSpecSummary` (pr-body.js) onto `fencedLineMask` so a fenced heading-shaped line neither starts nor ends a section.\n\n2. Decide whether `release-note-repair/apply.js`'s `fenceInfo` converges on `fencedLineMask` or deliberately keeps its indented-fence and throw-on-unterminated behavior; if it keeps them, state why in a code comment beside both implementations.\n\n3. Sweep by pattern, not function name, for any other `^##? ` heading-scan over a record or PR body with no fence skip, and either migrate it or list it with a reason.\n\n## Acceptance Criteria\n\n- AC1: A record body whose `## Deliverables` section contains a fenced block holding a `## Not a heading` line is split by `splitSections` into the same sections as the body without that fenced line (a test in tests/ asserts this and fails on the unfixed reader).\n\n- AC2: `locateSpecSummary` returns the same span for a Spec summary containing a fenced `### x` line as for one without it.\n\n- AC3: `npm test` passes.\n\n## Release Note\n\nInternal: record-body and PR-body section readers no longer treat a heading-shaped line inside a fenced code block as a section boundary.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/compose-record/compose.js` — splitSections: skip fenced heading-shaped lines\n- `plugin/bin/lib/flow/pr-body.js` — locateSpecSummary: skip fenced heading-shaped lines\n- `plugin/bin/lib/release-note-repair/apply.js` — fenceInfo: converge on or document divergence from fencedLineMask\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-28T20:17:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4531,
-        "state": "OPEN",
-        "title": "Make the record-body section readers skip fenced headings (compose splitSections, pr-body locateSpecSummary)",
-        "updatedAt": "2026-10-31T06:54:20Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -3878,7 +3694,7 @@
         "number": 4496,
         "state": "OPEN",
         "title": "materialize: committing work/{n}-spec.md needs a force-add when the project gitignores .claude-tweaks/",
-        "updatedAt": "2026-10-30T04:28:37Z",
+        "updatedAt": "2026-11-24T08:06:58Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -4028,7 +3844,7 @@
         "number": 4463,
         "state": "OPEN",
         "title": "reconcile: archive-branches and remote-prune do not accept \"branch tip equals or is contained in its merged PR's head\" as merged proof",
-        "updatedAt": "2026-10-30T06:35:24Z",
+        "updatedAt": "2026-11-24T07:37:33Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -4106,7 +3922,7 @@
         "number": 4462,
         "state": "OPEN",
         "title": "reconcile: mirror fast-forward refuses on any untracked file, so a tidy run's own committed trail (or one stray file) blocks main-checkout sync indefinitely",
-        "updatedAt": "2026-10-30T06:35:22Z",
+        "updatedAt": "2026-11-24T07:33:18Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -4184,7 +4000,7 @@
         "number": 4461,
         "state": "OPEN",
         "title": "reconcile: one branch with more than 10 associated PRs fails the whole bulk PR screen, silently disabling archive-branches and remote-prune",
-        "updatedAt": "2026-10-30T06:35:20Z",
+        "updatedAt": "2026-11-24T07:22:14Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -4262,89 +4078,11 @@
         "number": 4460,
         "state": "OPEN",
         "title": "Write gate misses a quoted '(x' redirect target and a cd with a glued redirect (cd>f DIR)",
-        "updatedAt": "2026-10-28T18:40:16Z",
+        "updatedAt": "2026-11-24T07:13:23Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
           "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #4303, #4475\n\nOrigin: /claude-tweaks:build of #4303 (run 2026-10-25T143627-spec-4303), SDD final-review rounds 4-8\n\nDefer-reason: tangential\n\n## Current State\n\nThe pipeline shadow guard in `plugin/bin/lib/hooks/pre-tool-use.js` misses a way bash writes into a linked worktree's existing `.claude-tweaks/pipelines/` dir. This was checked with bash 3.2 and 5.\n\n- **OScpNoLost:** run from M, `cd ./x/../.claude-tweaks || cp a ../wt2/.claude-tweaks/pipelines` copies into an existing pipelines dir. No collapse is involved. Every version allows it; base denied it only through a phantom target from the worktree gate.\n\n**Narrowed 2026-10-30 (ADR 0028, #4475).** This record originally had a second shape, A2b/A2c/A2p: the cwd was already inside pipelines through an absolute cd that the cwd-cap collapse dropped. That shape is now covered by #4475's sub-issue in which the shadow guard adopts the unreadable verdict. A cd the gate cannot resolve is unreadable there, so no collapse trail needs seeding. The remaining shape is a recognised one (a literal `cp` destination), so it stays here.\n\n## Deliverables\n\n1. Treat a `cp`, `mv` or `install` whose destination is an existing pipelines dir as creating an entry under it.\n2. Pin the shape.\n\n## Acceptance Criteria\n\n- The OScpNoLost shape denies through `pre.run`.\n- No new deny appears against #4303's head over its 1176-command corpus.\n- The rule has a red-turning mutant.\n- `tests/hooks-pipeline-shadow-guard.test.js` passes.\n\n## Release Note\n\nThe pipeline shadow guard now catches a copy into an existing run directory.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — modify\n- `plugin/bin/lib/hooks/pre-tool-use.js` — modify\n- `tests/hooks-pipeline-shadow-guard.test.js` — modify\n\n_Filed by `capture` via specShapedBody; narrowed under #4475._\n",
-        "createdAt": "2026-10-26T23:55:42Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4452,
-        "state": "OPEN",
-        "title": "Pipeline shadow guard misses a run dir made through a dropped absolute cd or a cp into an existing pipelines dir",
-        "updatedAt": "2026-10-30T06:51:06Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
@@ -4418,7 +4156,7 @@
         "number": 4451,
         "state": "OPEN",
         "title": "Teardown gate misses git's bare-name worktree lookup in `git worktree remove <name>`",
-        "updatedAt": "2026-11-24T06:10:09Z",
+        "updatedAt": "2026-11-24T06:25:47Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -10162,7 +9900,7 @@
         "number": 4493,
         "state": "OPEN",
         "title": "check-staged-stack: false conflict for every LF patch on a Git for Windows checkout with core.autocrlf=true",
-        "updatedAt": "2026-10-31T06:32:28Z",
+        "updatedAt": "2026-11-24T07:57:15Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -10334,89 +10072,7 @@
         "number": 4472,
         "state": "OPEN",
         "title": "Subagent Scratch rule never forbids deleting outside the scratch path — a review lens agent rm -rf'd the session scratchpad",
-        "updatedAt": "2026-10-30T04:28:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: backend\n\n**Related:** #3982, #3995, #4738, #4764\n\n## Current State\n\nThe post-merge Windows check failed on commit ab2f50978 (compared against 302f0cb20), after PR #4689. Baseline adjudication attributed `tests/hooks-gate-coverage.test.js` as newly failing. Run: https://github.com/thn-inc/claude-tweaks/actions/runs/41205362433\n\nOne test is attributed: `#4303 case: gitTargets reads a pattern-list | the same way`, at line 2261. Its expected value differs on a `D:\\\\main` path, which points at path handling.\n\n## Deliverables\n\n1. `tests/hooks-gate-coverage.test.js` passes on Windows, by fixing the product code or the test, whichever the failure turns out to be.\n2. The cause is named in the PR, including whether other tests share it.\n\n## Acceptance Criteria\n\n1. `tests/hooks-gate-coverage.test.js` passes in the Windows workflow on the fixing branch, proven by a run dispatched after the last code change.\n2. The same file still passes on Linux and macOS.\n3. `npm test` passes.\n\n## Release Note\n\nNo user-facing change; this restores the Windows test suite.\n\n## Technical Approach\n\nReproduce it first. Forward-slash and backslash handling is the usual cause here, and swapping `require(\"path\")` for `path.win32` in a preload reproduces most path-string failures locally on unit tests.\n\n### Key Files\n\n- `tests/hooks-gate-coverage.test.js` — the failing suite\n- `plugin/bin/lib/hooks/git-command.js` — `gitTargets`, the scanner the test exercises\n\n## Gotchas\n\n- Check that the failure still reproduces on current `main` before building. A later Windows fix may already have cleared it.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after ab2f50978\n\nThe post-merge Windows check failed on commit ab2f50978eb2dce272c92d55a516866996207ba9 (compared against 302f0cb20).\n\n**Merged PR:** #4689 (https://github.com/thn-inc/claude-tweaks/pull/4689)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/41205362433\n\n### Newly failing test files\n- `tests/hooks-gate-coverage.test.js`\n\n### Failure excerpts\n\n#### `tests/hooks-gate-coverage.test.js`\n\n_Excerpts for the 1 test(s) the baseline adjudication attributed as new._\n\n```\nnot ok 14457 - \\#4303 case: gitTargets reads a pattern-list | the same way\n  ---\n  duration_ms: 3.8951\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\hooks-gate-coverage.test.js:2261:3'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly deep-equal:\n    + actual - expected\n    \n      [\n        'D:\\\\main',\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._",
-        "createdAt": "2026-10-31T13:44:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4725,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after ab2f50978",
-        "updatedAt": "2026-11-03T09:36:01Z",
+        "updatedAt": "2026-11-24T07:44:33Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -11172,7 +10828,6 @@
       "blockedBy": [
         6151,
         6150,
-        6149,
         6148
       ]
     },
@@ -11180,18 +10835,6 @@
       "number": 6151,
       "blockedBy": [
         6150
-      ]
-    },
-    {
-      "number": 6114,
-      "blockedBy": [
-        6112
-      ]
-    },
-    {
-      "number": 6113,
-      "blockedBy": [
-        6112
       ]
     },
     {
@@ -11312,8 +10955,7 @@
     {
       "records": [
         4442,
-        4472,
-        4725
+        4472
       ]
     },
     {
