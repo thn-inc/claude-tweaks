@@ -44,6 +44,12 @@ const KINDS = Object.freeze(Object.values(KIND));
 // valid `payload.actor`; `sent-back` also names the station it goes back to in `payload.next`.
 const OUTCOME = Object.freeze({ PASSED: 'passed', SENT_BACK: 'sent-back', FAILED: 'failed', STOPPED: 'stopped' });
 const OUTCOMES = Object.freeze(Object.values(OUTCOME));
+// Retired outcome word -> its replacement, for the emitter's drop reason. Keys are identifiers, never string literals.
+const RETIRED_OUTCOMES = Object.freeze({
+  returned: 'sent-back',
+  skipped: 'a replanned event',
+  abandoned: 'stopped',
+});
 
 // Why an exit was not a pass, or why a plan was made. A caller's unknown or missing code is
 // normalized to REASON_UNSPECIFIED by emit.js, never dropped.
@@ -196,7 +202,7 @@ function releaseTransition(reason) {
 }
 
 module.exports = {
-  STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, REASON, REASON_UNSPECIFIED, REASON_CODES, ACTOR, ACTORS, HOLD_WHYS, PROCESS,
+  STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON, REASON_UNSPECIFIED, REASON_CODES, ACTOR, ACTORS, HOLD_WHYS, PROCESS,
   BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
   PR_OPENED_FACT, PR_OPENED_TRANSITION,
   DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,

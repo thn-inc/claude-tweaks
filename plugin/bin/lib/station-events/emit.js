@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const { withLock } = require('../file-lock');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const {
-  STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS,
+  STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS,
 } = require('./stations');
 
 const LINE_VERSION = 1;
@@ -145,6 +145,7 @@ function invalidReason(event) {
   if (!Number.isInteger(event.recordNumber) || event.recordNumber <= 0) return 'recordNumber is not a positive integer';
   if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${show(event.kind)}`;
   if (!STATIONS.includes(event.station)) return `station outside the closed set: ${show(event.station)}`;
+  if (event.kind === KIND.EXITED && Object.prototype.hasOwnProperty.call(RETIRED_OUTCOMES, event.outcome)) return `retired outcome ${show(event.outcome)} (use ${RETIRED_OUTCOMES[event.outcome]})`;
   if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${show(event.outcome)}`;
   if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${show(event.lane)}`;
   if (typeof event.discriminator !== 'string' || event.discriminator === '') return 'discriminator missing';

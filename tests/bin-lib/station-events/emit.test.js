@@ -414,9 +414,13 @@ test('a decided line with an unknown actor is dropped', () => {
 
 for (const retired of ['returned', 'skipped', 'abandoned']) {
   test(`AC1.1: a retired outcome is dropped with a reason (${retired})`, () => {
-    dropped(exitedEvent(retired, { actor: 'agent' }), /outcome outside the closed set/);
+    dropped(exitedEvent(retired, { actor: 'agent' }), new RegExp(`retired outcome .*${retired}.* \\(use `));
   });
 }
+
+test('an unknown non-retired outcome still gets the closed-set reason', () => {
+  dropped(exitedEvent('bogus', { actor: 'agent' }), /outcome outside the closed set/);
+});
 
 test('an exited passed without actor is dropped', () => {
   dropped(exitedEvent('passed', { step: 'worker' }), /actor/);
