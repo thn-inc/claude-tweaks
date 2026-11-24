@@ -127,8 +127,12 @@ function validateLever(key, value) {
 // the LAST occurrence's value, matching parseFlatLines semantics — not
 // necessarily the first line's. Every other line is preserved byte-for-byte.
 // Throws on fs errors — the CLI maps those to exit 3.
-function setConfigLever({ runDir, key, value }) {
+function setConfigLever({ runDir, key, value, replan }) {
   const file = path.join(runDir, 'config.yml');
+  let manifestBefore = null; // the manifest as it stood before this write, for the replan's `before`
+  if (key === 'ceremony-profile' && replan) {
+    try { manifestBefore = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')); } catch { /* no manifest: no replan */ }
+  }
   let text = '';
   try { text = fs.readFileSync(file, 'utf8'); } catch { /* config.yml not yet created */ }
   const lines = text ? text.split('\n') : [];
@@ -155,8 +159,30 @@ function setConfigLever({ runDir, key, value }) {
   // changes this write's outcome. Required lazily so the many callers that never touch it stay light.
   if (key === 'ceremony-profile') {
     try { require('../run-manifest/write').fillRunManifest(runDir, { ceremonyProfile: value }); } catch { /* never breaks the lever write */ }
+    emitReplan({ runDir, value, manifestBefore, replan });
   }
   return { file, previous };
+}
+
+// A claimed record's stations changed by this profile write: one `replanned` (cause config), nothing
+// when the lists are equal. Needs a caller-supplied `replan: { stationEvent, repoName, recordNumber,
+// sessionId }`; without it, nothing is written. Never throws, never changes the lever write.
+function emitReplan({ runDir, value, manifestBefore, replan }) {
+  try {
+    if (!replan || typeof replan.stationEvent !== 'function' || manifestBefore === null) return;
+    const { planOf, replanEvent } = require('../station-events/plan');
+    const lane = manifestBefore.lane;
+    const before = planOf({ lane, ceremonyProfile: manifestBefore.ceremonyProfile }).stations;
+    const after = planOf({ lane, ceremonyProfile: value }).stations;
+    const removed = before.some((s) => !after.includes(s));
+    const { REASON } = require('../station-events/stations');
+    const event = replanEvent({
+      repoName: replan.repoName, recordNumber: replan.recordNumber, before, after, lane,
+      reasonCode: removed ? REASON.CEREMONY_DOWNGRADE : REASON.OTHER, cause: { kind: 'config', ref: 'ceremony-profile' },
+      sessionId: replan.sessionId, runId: path.basename(runDir), at: new Date().toISOString(),
+    });
+    if (event !== null) replan.stationEvent(event);
+  } catch { /* emission never blocks the write */ }
 }
 
 module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, PIN_PATTERNS, isConfigKey, leverValues, validateLever, setConfigLever };

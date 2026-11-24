@@ -221,6 +221,28 @@ test('setConfigLever: a later ceremony-profile change overwrites ceremonyProfile
   assert.deepEqual({ ...second, ceremonyProfile: null }, { ...first, ceremonyProfile: null });
 });
 
+const replanDeps = (events) => ({ stationEvent: (e) => events.push(e), repoName: 'acme/w', recordNumber: 6148, sessionId: 's1' });
+
+test('downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade', () => {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane', replan: replanDeps(events) });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'replanned');
+  assert.equal(events[0].payload.reasonCode, 'ceremony-downgrade');
+  assert.equal(events[0].payload.cause.kind, 'config');
+  assert.equal(events[0].payload.stations.includes('polish'), false);
+});
+
+test('fixing the profile to standard after a standard claim writes nothing', () => {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'standard', replan: replanDeps(events) });
+  assert.deepEqual(events, []);
+});
+
 test('setConfigLever: setting another key leaves manifest.json untouched, and does not create one', () => {
   const runDir = fixtureRunDir();
   setConfigLever({ runDir, key: 'mode', value: 'auto' });
