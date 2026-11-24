@@ -1750,6 +1750,15 @@ test('#5902: native mode builds the blocker sink from deps.stationEvent when no 
   ]);
 });
 
+test('#5902: an unchanged snapshot is not appended through run (deps.lastPayload)', () => {
+  const events = [];
+  const d = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  d.deps.stationEvent = (e) => events.push(e);
+  d.deps.lastPayload = (repo, n) => (n === 721 ? { blockedBy: [], openBlockerIds: [], crossRepoBlockers: [], fetchedAt: 'old' } : null);
+  assert.equal(run(['720', '721', '722'], d.deps), 0);
+  assert.deepEqual(events.map((e) => e.recordNumber), [720, 722]);
+});
+
 test('#5902: an explicit deps.onSnapshot wins over deps.stationEvent', () => {
   const events = [];
   const seen = [];

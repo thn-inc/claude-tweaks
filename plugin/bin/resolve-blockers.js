@@ -44,8 +44,7 @@
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { snapshotSinkOf, lastBlockersPayload } = require('./lib/station-events/blockers');
-const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
+const { snapshotSinkOf, lastPayloadFromCwd } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
@@ -68,10 +67,7 @@ const realDeps = {
   ...numberListDeps,
   stationEvent: (e) => appendStationEvent(e),
   // The previous snapshot for a record, from the tail of the station-event file.
-  lastPayload: (repoName, n) => {
-    const root = mainCheckoutRoot(process.cwd());
-    return typeof root === 'string' ? lastBlockersPayload(repoName, n, root) : null;
-  },
+  lastPayload: lastPayloadFromCwd,
 };
 
 // A `blockers` station event per fetched number: with no explicit `onSnapshot`, the

@@ -33,7 +33,7 @@ const {
 } = require('./lib/repo-resolve');
 const { appendStationEvent, toRepoName, eventKey } = require('./lib/station-events/emit');
 const { transitionsForLabel, ACTOR, KIND, STATION } = require('./lib/station-events/stations');
-const { holdEvent } = require('./lib/station-events/blockers');
+const { makeHoldSink } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
@@ -167,7 +167,7 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
     }
     // A hold label edited here is filed at `authorize` — refine is where a person sets or lifts the hold.
     // No blocking record, so no `ref`.
-    const hold = holdEvent({
+    makeHoldSink({ stationEvent: deps.stationEvent })({
       label,
       added: direction === 'added',
       recordNumber: issue,
@@ -178,10 +178,6 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
       sessionId: deps.sessionId || null,
       discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
     });
-    if (!hold) continue;
-    try {
-      deps.stationEvent(hold);
-    } catch { /* emission is best-effort — never fails the batch */ }
   }
 }
 

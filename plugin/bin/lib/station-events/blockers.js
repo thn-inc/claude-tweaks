@@ -6,6 +6,7 @@ const fs = require('fs');
 const { BLOCKER_SNAPSHOT_STATION, KIND } = require('./stations');
 const { toRepoName, stationEventPath } = require('./emit');
 const { LABELS } = require('../issues/record-vocabulary');
+const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 
 const TAIL_BYTES = 65536;
 
@@ -42,6 +43,13 @@ function lastBlockersPayload(repoName, number, mainRoot, fsImpl = fs) {
     } finally { fsImpl.closeSync(fd); }
   } catch { /* no file yet */ }
   return null;
+}
+
+// (repoName, number) -> the previous snapshot for a record, read from the main
+// checkout of the process cwd; null when that root does not resolve. The CLIs' `deps.lastPayload`.
+function lastPayloadFromCwd(repoName, number) {
+  const root = mainCheckoutRoot(process.cwd());
+  return typeof root === 'string' ? lastBlockersPayload(repoName, number, root) : null;
 }
 
 // { stationEvent, sessionId, runId, lastPayload } -> (number, entry, meta) => void.
@@ -130,6 +138,6 @@ function snapshotSinkOf(deps) {
 }
 
 module.exports = {
-  makeBlockerSnapshotSink, snapshotSinkOf, blockersChanged, lastBlockersPayload, makeHoldSink,
+  makeBlockerSnapshotSink, snapshotSinkOf, blockersChanged, lastBlockersPayload, lastPayloadFromCwd, makeHoldSink,
   holdEvent, HOLD_LABEL_WHY,
 };
