@@ -232,6 +232,8 @@ test('#5902: makeBlockerSnapshotSink wired as onSnapshot yields two valid blocke
 test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
   const { realDeps } = require('../plugin/bin/resolve-blockers');
   assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  const { lastPayloadFromCwd } = require('../plugin/bin/lib/station-events/blockers');
+  assert.equal(realDeps.lastPayload, lastPayloadFromCwd, 'lastPayload is wired');
   assert.equal(typeof realDeps.runner, 'function', 'the number-list scaffold deps are still carried');
 });
 

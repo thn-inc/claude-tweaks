@@ -1738,6 +1738,8 @@ test('#5902: --prefetched-json under native still runs the native fetch and hand
 test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
   const { realDeps } = require('../../../plugin/bin/preflight-records');
   assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  const { lastPayloadFromCwd } = require('../../../plugin/bin/lib/station-events/blockers');
+  assert.equal(realDeps.lastPayload, lastPayloadFromCwd, 'lastPayload is wired');
 });
 
 test('#5902: native mode builds the blocker sink from deps.stationEvent when no onSnapshot is passed', () => {
