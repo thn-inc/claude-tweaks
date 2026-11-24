@@ -95,6 +95,8 @@ const ENTRY_FACTS = [
   [/\*\*`express-escalated`\*\* — continue at Step 3, unchanged/, 'escalation → Step 3'],
   [/reads the run dir as case 3/, 'the adoption pack reads case 3'],
   [/render the note below and end the run: no Manifesto, no Pipeline Summary/, 'other outcomes → the note, then end'],
+  [/After a `merged` outcome, and only when `express-lane` resolves `true`, run `express-lane\.js samples --pr \{pr\}`/, 'merged: own-PR sampling gated on express-lane'],
+  [/On `found: false`, a non-zero exit or a review that does not complete, name the PR in the note as "left to the next drain's sweep"/, 'left to the next drain'],
   [/^## Flow: Express lane$/m, 'the note heading'],
   [/^#\{n\} — \{outcome\}$/m, 'the note names the outcome'],
   [/^PR: \{PR link \| none\}$/m, 'the note names the PR link'],

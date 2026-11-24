@@ -118,7 +118,7 @@ test('--help exits 0 and prints USAGE before any ghAvailable call', () => {
     'express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name]',
     'express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
     'express-lane.js verify --run <dir> --issue <n>',
-    'express-lane.js samples [--every <n>] [--repo owner/name]']) {
+    'express-lane.js samples [--every <n>] [--pr <n>] [--repo owner/name]']) {
     assert.ok(USAGE.includes(line), line);
   }
 });
@@ -719,6 +719,30 @@ test('samples: every 5th express merge is sampled; a reviewed one is excluded', 
   const h = samplesHarness(fx, new Set([105]));
   assert.strictEqual(run(['samples', '--every', '5'], h.deps), 0);
   assert.deepStrictEqual(h.json().sampled, [{ pr: 110, ordinal: 10, mergedAt: '2026-10-10T12:00:00Z', mergeSha: 'sha110', records: [909, 959] }]);
+});
+
+test('samples --pr: filters the due set to that PR and reports found', () => {
+  const fx = fixture();
+  const go = (pr, reviewed) => {
+    const h = samplesHarness(fx, reviewed);
+    assert.strictEqual(run(['samples', '--every', '5', '--pr', String(pr)], h.deps), 0);
+    return h.json();
+  };
+  const hit = go(105);
+  assert.strictEqual(hit.found, true);
+  assert.deepStrictEqual(hit.sampled.map((s) => s.pr), [105]);
+  const miss = go(104);
+  assert.strictEqual(miss.found, true);
+  assert.deepStrictEqual(miss.sampled, []);
+  const absent = go(999);
+  assert.strictEqual(absent.found, false);
+  assert.deepStrictEqual(absent.sampled, []);
+  const done = go(105, new Set([105]));
+  assert.strictEqual(done.found, true);
+  assert.deepStrictEqual(done.sampled, []);
+  const h = samplesHarness(fx);
+  run(['samples', '--every', '5'], h.deps);
+  assert.ok(!('found' in h.json()));
 });
 
 test('samples: the merged-PR search gets its own longer timeout; 1000 merges in one second exits 1, never sampled', () => {
