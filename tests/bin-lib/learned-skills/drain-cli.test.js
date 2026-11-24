@@ -12,7 +12,7 @@ const repoResolve = require('../../../plugin/bin/lib/repo-resolve.js');
 const { realDeps: libDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 
 const DIR = '/main/.claude-tweaks/pipelines/run-1';
-const RESULT = { merged: [3], armed: [], leftOpen: [], conflicting: [] };
+const RESULT = { merged: [3], armed: [], leftOpen: [], conflicting: [], rebuilt: [] };
 
 function harness(extra = {}) {
   const out = [];
@@ -37,7 +37,7 @@ test('drain prints the library JSON and passes the resolved levers, own PR and r
   const code = cli.run(['drain', '--run', DIR, '--integration-branch', 'main', '--own-pr', '7'], h.deps);
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(h.out.join('')), RESULT);
-  assert.deepEqual(h.calls.lib, [{ runDir: DIR, integrationBranch: 'main', ownPr: 7, autoMerge: true, mergeVerification: 'wait', repo: 'o/r' }]);
+  assert.deepEqual(h.calls.lib, [{ runDir: DIR, integrationBranch: 'main', ownPr: 7, autoMerge: true, mergeVerification: 'wait', cwd: '/main', repo: 'o/r' }]);
   assert.deepEqual(h.calls.policy, [DIR]);
 });
 
@@ -97,7 +97,7 @@ test('without gh: no repo read, the library prints its no-gh result, exit 0', ()
     h.deps.repoView = () => { throw new Error('repo must not be read'); };
     const code = cli.run(['drain', '--run', dir, '--integration-branch', 'main', '--own-pr', '7'], h.deps);
     assert.equal(code, 0);
-    assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [{ pr: 7, reason: 'no-gh' }], conflicting: [] });
+    assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [{ pr: 7, reason: 'no-gh' }], conflicting: [], rebuilt: [] });
     const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
     assert.match(decisions, /PR #7 left open \(no-gh\)/);
     assert.match(decisions, /learned-skills-auto-merge=true/);
@@ -115,7 +115,7 @@ test('a false lever never reads gh or the repo: the library reports disabled eve
     drainLib: drain,
   });
   assert.equal(cli.run(['drain', '--run', DIR, '--integration-branch', 'main', '--own-pr', '7'], h.deps), 0);
-  assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [], conflicting: [], disabled: true });
+  assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [], conflicting: [], rebuilt: [], disabled: true });
   assert.equal(h.err.join(''), '');
 });
 
