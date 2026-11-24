@@ -198,12 +198,13 @@ test('#6143: an env-clearing prefix marks the call envCleared', () => {
     'env -i gh pr merge 5', 'env --ignore-environment gh pr merge 5', 'env - gh pr merge 5', 'env -u GH_TOKEN gh pr merge 5',
     'env --unset=X gh pr merge 5', 'env -vi gh pr merge 5', '/usr/bin/env -i gh pr merge 5', 'sudo gh pr merge 5', 'doas gh pr merge 5',
     'exec -c gh pr merge 5', 'nice env -i gh pr merge 5',
+    'env --ignore-env gh pr merge 5', 'env --ignore-e gh pr merge 5', 'env --un X gh pr merge 5', 'env --u=GH_TOKEN gh pr merge 5',
   ]) {
     const calls = ghPrLifecycleCalls(c, CWD);
     assert.strictEqual(calls.length, 1, c);
     assert.strictEqual(calls[0].envCleared, true, c);
   }
-  for (const c of ['gh pr merge 5', 'env gh pr merge 5', 'env FOO=1 gh pr merge 5', 'env -C /x gh pr merge 5', 'nice -n 5 gh pr merge 5', 'exec gh pr merge 5']) {
+  for (const c of ['gh pr merge 5', 'env gh pr merge 5', 'env FOO=1 gh pr merge 5', 'env -C /x gh pr merge 5', 'nice -n 5 gh pr merge 5', 'exec gh pr merge 5', 'env --i=x gh pr merge 5']) {
     assert.strictEqual(ghPrLifecycleCalls(c, CWD)[0].envCleared, false, c);
   }
 });

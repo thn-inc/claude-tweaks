@@ -3983,7 +3983,7 @@ const PFLAG_TRUE = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
 // --disable-auto`, which only turns auto-merge off; bare or with a pflag true value (`=true`, `=1`, …),
 // the last spelling winning, so a false value (`=false`, `=0`, …) or one ParseBool refuses is no cancel.
 // `envCleared` is true when a prefix runs gh without (part of) the inherited environment: `env` with
-// `-i`/`--ignore-environment`/`-`/`-u`/`--unset`, `exec -c`, or `sudo`/`doas` (both reset it by default). `env` holds the GH_REPO/GH_HOST values of the call's own literal
+// `-i`/`--ignore-environment`/`-`/`-u`/`--unset` (or a unique abbreviation, getopt's rule), `exec -c`, or `sudo`/`doas` (both reset it by default). `env` holds the GH_REPO/GH_HOST values of the call's own literal
 // assignment prefix (`GH_REPO=o/r gh pr merge 5`), which gh reads in place of the cwd's repo.
 // `envUnprovable` is true when such a value cannot be known: an expansion or `+=` in the value, a
 // subscript, a prefix word (`env`, `sudo`) in front of the call, or any GH_REPO/GH_HOST text in the
@@ -4027,7 +4027,7 @@ function ghPrLifecycleCalls(command, cwd, opts) {
         if (STRIPPED_PREFIX_WORDS.includes(w) || PATH_PREFIX_WORDS.includes(base)) {
           prefixName = STRIPPED_PREFIX_WORDS.includes(w) ? w : base;
           if (prefixName === 'sudo' || prefixName === 'doas') envCleared = true;
-        } else if (prefixName === 'env' && (w === '-' || /^--(?:ignore-environment|unset)(?:=|$)/.test(w) || /^-[^-]*[iu]/.test(w))) {
+        } else if (prefixName === 'env' && (w === '-' || (w.startsWith('--') && ['ignore-environment', 'unset'].includes(longOptionName(w, Object.keys(PREFIX_OPTIONS.env.long)))) || /^-[^-]*[iu]/.test(w))) {
           envCleared = true;
         } else if (prefixName === 'exec' && /^-[^-]*c/.test(w)) {
           envCleared = true;
