@@ -673,6 +673,33 @@ test('step-6-auto.md: the record-linked flavor of Arm ready PR always stages, at
   assert.match(row[0], /\| Stage \| Stage \| Stage/);
 });
 
+test('step-6-auto.md: the Drain learned-skills PR row auto-applies at the arm row\'s tiers only under learned-skills-auto-merge, and names its carve-out', () => {
+  const row = STEP6.match(/\| \*\*Drain learned-skills PR\*\*[^\n]*\n/);
+  assert.ok(row, 'Drain learned-skills PR row not found');
+  assert.match(row[0], /\| Stage \| Auto-apply — only under `learned-skills-auto-merge`[^|]*\| Auto-apply — same gate as `moderate`/);
+  assert.match(row[0], /resolves `false`, the row Stages at every tier/);
+  assert.match(row[0], /never satisfied by `housekeeping-auto-merge`/);
+  assert.match(row[0], /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(row[0], /`learned-skills-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+});
+
+test('step-6-auto.md: the Arm ready PR rows are fenced to non-marker PRs; the housekeeping row names its carve-out in the same form', () => {
+  const housekeeping = STEP6.match(/\| \*\*Arm ready PR\*\* \(a green, gate-passed, `\[pr-unarmed\]` PR granted via `housekeeping-auto-merge`[^\n]*\n/);
+  const linked = STEP6.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
+  assert.ok(housekeeping && linked, 'both Arm ready PR rows must exist');
+  assert.match(housekeeping[0], /`housekeeping-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+  assert.match(housekeeping[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+  assert.match(linked[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+});
+
+test('actions-github-issues.md: Drain learned-skills PRs runs the drain verb and trusts its own re-checks', () => {
+  assert.match(ACTIONS_GH, /## Drain learned-skills PRs/);
+  assert.match(ACTIONS_GH, /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(ACTIONS_GH, /re-checks green and gate-passed itself/);
+  const section = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Drain learned-skills PRs'), ACTIONS_GH.indexOf('## Release claim'));
+  assert.doesNotMatch(section, /gh pr merge/);
+});
+
 test('step-6-auto.md: ungranted unarmed PRs and unsettled runs never auto-apply at any tier', () => {
   const ungrantedRow = STEP6.match(/\| \*\*Unarmed ready PR, ungranted\*\*[^\n]*\n/);
   const unsettledRow = STEP6.match(/\| \*\*Unsettled run\*\*[^\n]*\n/);

@@ -135,6 +135,26 @@ state read has already happened here and the lever never needs resolving. Should
 unavailable, item 1's degrade branch that applies is the `off` one (an immediate merge of an
 already-green PR), never the `wait` row.
 
+## Drain learned-skills PRs
+
+The `[pr-unarmed]` findings this action resolves are the `<!-- wrap-up-skills-pr -->` PRs
+`_shared/github-pr-scan.md` item 9 offers only under `learned-skills-auto-merge` — a
+`github-issues`-only action. Run it once for the whole finding set, never per PR.
+
+1. Resolve `{integration-branch}` by `_shared/integration-branch.md`'s Resolution ladder.
+2. Resolve `{run-dir}`: tidy's own run dir (pipeline, or the Standalone auto fallback). An
+   interactive standalone run has none, so first mint one with
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug tidy --standalone tidy --create`
+   and use the printed path.
+3. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run-dir}" --integration-branch {integration-branch}`
+   with a Bash timeout of `1200000` ms, as `wrap-up/learned-skills-pr.md`'s drain watch does.
+
+The CLI resolves `learned-skills-auto-merge` and re-checks green and gate-passed itself, so the
+scan's candidate status is never trusted, and it writes its own `decisions.md` lines — hand-log
+nothing. Report `merged`, `armed`, `leftOpen` and `conflicting` from its JSON. `{disabled:true}` is
+a silent no-op: report nothing. Exit 1 is a listing or repo-read failure: report it and merge
+nothing. This action never merges by any other route.
+
 ## Release claim
 
 Executor for a `[claim]` Release row from Step 4.7's claim audit (`scan-procedures.md`) — both
