@@ -40,8 +40,11 @@ const PROC_FACTS = [
   [/For `stage` \(the direct `local-merge` call or that fallback\): every captured patch still sits only in `\{run\}\/learned-skills\/`\. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item/, 'a stage exit 1 with no JSON is handled per patch'],
   [/The body carries the `<!-- wrap-up-skills-pr -->` marker and names each record only as `refs #\{n\}`/, 'the PR body marker and refs-only naming'],
   [/The record-owned rule: the record's own commits already touch this file, so the edit stays on the run branch/, 'the record-owned rule'],
-  [/\*\*Never armed\.\*\* This file and its CLI run no merge command, and `housekeeping-auto-merge` is never read for this PR/, 'the PR is never armed'],
-  [/item 9 excludes a `<!-- wrap-up-skills-pr -->` PR from both of its arm routes/, 'the item 9 exclusion'],
+  [/only when it prints `true`, run once, after the Review Console resolves and every `record` call/, 'drain runs only when the lever is true, after the console and record'],
+  [/learned-skills-pr\.js" drain --run "\{run\}" --integration-branch "\{integration-branch\}" --own-pr \{pr-number\}/, 'runs drain with the run, integration branch and own PR'],
+  [/omit `--own-pr` when `land` opened no PR this run/, 'drain omits --own-pr when land opened no PR'],
+  [/\[lever: learned-skills-auto-merge=\{value\}\]/, 'the CLI tags each decision line with the lever'],
+  [/[Ee]xit 1[^\n]*Learned-skills drain \(degraded\)/, 'drain exit 1 logs a degraded SKIP and continues'],
   [/It rides that same patch, and `capture` returns `shared: true` for it/, 'a later row on a captured target rides the same patch'],
   [/`pack\.blastRadius\.value\.mergeBase` from `\{run-dir\}\/wrap-up-pack\.json`/, 'the merge-base comes from the wrap-up pack'],
   [/use the batch merge-base from `flow\/multispec-batch-curation\.md` step 1/, 'multi-spec uses the batch merge-base'],
@@ -86,7 +89,7 @@ test('learned-skills-pr.md: each procedure fact goes red on its own', () => {
   assertEachPatternGoesRed(PROC, PROC_FACTS, missingProc);
 });
 
-// No merge command, no --auto: the PR waits for a human (Global Constraints). The control appends each
+// No merge command, no --auto: prose never merges by hand; the drain CLI does (#6112). The control appends each
 // banned form to the live text and the check must catch it.
 const BANNED = [/gh pr merge/, /--auto\b/];
 const bannedIn = (text) => BANNED.filter((re) => re.test(text)).map(String);
@@ -104,7 +107,7 @@ test('scratch-worktree.md does not list the learned-skills PR as a caller', () =
   assert.ok(/learned-skills/.test(`${SCRATCH}\n- /claude-tweaks:wrap-up learned-skills-pr.md`), 'control: the check sees an added caller');
 });
 
-// The three fences, flags checked through the CLI's own run(): every required flag present and every
+// The four fences, flags checked through the CLI's own run(): every required flag present and every
 // value taken, so the call reaches the --run anchoring check (stubbed to "missing") instead of a
 // usage error about the call's own shape.
 const CLI = require('../plugin/bin/learned-skills-pr.js');
@@ -135,10 +138,10 @@ function runFence(fence) {
   return { code, err, verb: argv[2] };
 }
 
-test('learned-skills-pr.md fences: capture, land and stage each pass the CLI\'s own flag checks', () => {
+test('learned-skills-pr.md fences: capture, land, stage and drain each pass the CLI\'s own flag checks', () => {
   const found = fences(PROC);
-  assert.equal(found.length, 3, 'three CLI fences');
-  assert.deepEqual(found.map((f) => argvOf(f)[2]), ['capture', 'land', 'stage']);
+  assert.equal(found.length, 4, 'four CLI fences');
+  assert.deepEqual(found.map((f) => argvOf(f)[2]), ['capture', 'land', 'stage', 'drain']);
   for (const fence of found) {
     const { code, err, verb } = runFence(fence);
     assert.equal(code, 2, `${verb}: reaches the stubbed --run refusal`);
@@ -151,10 +154,10 @@ test('learned-skills-pr.md fences: capture, land and stage each pass the CLI\'s 
 const runValues = (text) => fences(text).map((f) => { const a = argvOf(f); return a[a.indexOf('--run') + 1]; });
 
 test('learned-skills-pr.md fences: every --run is the {run} placeholder, never $PIPELINE_RUN_DIR', () => {
-  assert.deepEqual(runValues(PROC), ['{run}', '{run}', '{run}']);
+  assert.deepEqual(runValues(PROC), ['{run}', '{run}', '{run}', '{run}']);
   const doctored = PROC.replace('land --run "{run}"', 'land --run "$PIPELINE_RUN_DIR"');
   assert.notEqual(doctored, PROC);
-  assert.deepEqual(runValues(doctored), ['{run}', '$PIPELINE_RUN_DIR', '{run}'], 'control: a hard-coded fence is seen');
+  assert.deepEqual(runValues(doctored), ['{run}', '$PIPELINE_RUN_DIR', '{run}', '{run}'], 'control: a hard-coded fence is seen');
 });
 
 test('control: a fence missing --merge-base fails the CLI\'s flag check', () => {
@@ -163,6 +166,57 @@ test('control: a fence missing --merge-base fails the CLI\'s flag check', () => 
   assert.notEqual(doctored, land);
   const { err } = runFence(doctored);
   assert.match(err, /--merge-base is required/);
+});
+
+// AC4.1: with learned-skills-auto-merge false the procedure runs no drain. Every drain fence sits after
+// the condition sentence, and that sentence names `true` only (never a `false` branch that runs one).
+const DRAIN_CONDITION = /only when it prints `true`, run once, after the Review Console resolves and every `record` call/;
+const drainGate = (text) => {
+  const at = text.search(DRAIN_CONDITION);
+  const drains = [...text.matchAll(/learned-skills-pr\.js" drain /g)].map((m) => m.index);
+  const sentence = at === -1 ? '' : text.slice(at, text.indexOf('.', at + 60));
+  return { conditionFound: at !== -1, drains: drains.length, allAfter: drains.every((i) => i > at), namesTrueOnly: /`true`/.test(sentence) && !/`false`[^.]*run/.test(sentence) };
+};
+
+test('AC4.1: with learned-skills-auto-merge false the procedure runs no drain', () => {
+  const g = drainGate(PROC);
+  assert.deepEqual(g, { conditionFound: true, drains: 1, allAfter: true, namesTrueOnly: true });
+  const stripped = PROC.replace(DRAIN_CONDITION, 'always run');
+  assert.equal(drainGate(stripped).conditionFound, false, 'control: stripping the condition sentence is seen');
+  const hoisted = `${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
+  assert.equal(drainGate(hoisted).allAfter, false, 'control: a drain fence before the condition is seen');
+});
+
+test('learned-skills-pr.md: the drain section replaces "waits for a human"', () => {
+  assert.match(PROC, /^## Drain at the end of wrap-up$/m);
+  assert.doesNotMatch(PROC, /waits for a human|## The PR waits/);
+  assert.match(PROC, /<!-- wrap-up-skills-pr -->/);
+});
+
+// ---- curation-engine.md section 2 and the short-circuit FYIs: the drain step ----
+
+const ENGINE_DRAIN = /\*\*Drain step — after the Review Console and every `record` call, before the phase-trace `render`\.\*\* When `learned-skills-auto-merge` resolves `true`, run `learned-skills-pr\.md`'s drain/;
+test('curation-engine.md section 2 names the drain step after the console and record, before render', () => {
+  const s2 = sectionOf(ENGINE, '## 2. Invocation sequence');
+  assert.match(s2, ENGINE_DRAIN);
+  assert.ok(s2.search(ENGINE_DRAIN) > s2.indexOf('**Step 2 —'), 'after step 2 (record)');
+  assert.ok(s2.search(ENGINE_DRAIN) < s2.indexOf('**Step 3 —'), 'before step 3 (render)');
+  assert.doesNotMatch(s2.replace(ENGINE_DRAIN, ''), ENGINE_DRAIN, 'control: stripping it is seen');
+});
+
+const SC_PR_DRAIN = /Before composing this FYI, run `learned-skills-pr\.md`'s drain \(only when `learned-skills-auto-merge` resolves `true`, after `land` and every `record` call\) so the Skill updates section carries the outcome/;
+test('auto-merge-short-circuit.md: the pr-first FYI follows the drain', () => {
+  const fyi = prFirstFyi(SHORT_CIRCUIT);
+  assert.match(fyi, SC_PR_DRAIN);
+  assert.doesNotMatch(fyi.replace(SC_PR_DRAIN, ''), SC_PR_DRAIN, 'control');
+});
+test('auto-merge-short-circuit.md: the local-merge FYI follows the drain', () => {
+  const at = SHORT_CIRCUIT.indexOf('**Bindings:** `{base-branch}` = `{integration-branch}`');
+  assert.ok(at !== -1, 'local-merge slice resolves');
+  const tail = collapse(SHORT_CIRCUIT.slice(at));
+  const drainAt = tail.search(SC_PR_DRAIN);
+  const fyiAt = tail.indexOf('attach it to a `PushNotification` as a non-blocking FYI');
+  assert.ok(drainAt !== -1 && fyiAt !== -1 && drainAt < fyiAt, 'the drain sentence precedes the local-merge FYI');
 });
 
 // ---- curation-engine.md section 4: the serial-commit pass --------------------
