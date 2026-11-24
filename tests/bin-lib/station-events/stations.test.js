@@ -157,3 +157,23 @@ test('MERGE_SUBSTEP_TRANSITIONS omits merge-call and only merge-confirm skips ar
     assert.equal(t.skipDetailPrefix, name === 'merge-confirm' ? 'armed' : undefined);
   }
 });
+
+test('every exited line in LABEL_TRANSITIONS and every releaseTransition passes buildLine', () => {
+  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
+  const base = { repoName: 'acme/widgets', recordNumber: 7, lane: 'unknown', runId: 'run-1' };
+  let checked = 0;
+  for (const label of Object.keys(LABEL_TRANSITIONS)) {
+    for (const direction of ['added', 'removed']) {
+      for (const t of transitionsForLabel(label, direction).filter((x) => x.kind === 'exited')) {
+        assert.ok(buildLine({ ...base, ...t, discriminator: `${label}:${direction}` }), `${label} ${direction} ${t.station}`);
+        checked += 1;
+      }
+    }
+  }
+  for (const reason of ['merged: spec 1', 'abandoned: spec 1', 'failed: test', 'never-started', 'something else']) {
+    const t = releaseTransition(reason);
+    assert.ok(buildLine({ ...base, ...t, discriminator: reason }), reason);
+    checked += 1;
+  }
+  assert.ok(checked >= 10, 'the exits were walked, so an empty filter cannot pass');
+});

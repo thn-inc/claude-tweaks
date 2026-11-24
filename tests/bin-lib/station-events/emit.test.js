@@ -54,7 +54,7 @@ test('v1 line has exactly the spec fields', () => {
   assert.equal(line.outcome, null);
   assert.deepEqual(line.payload, {});
   assert.equal(line.lane, 'unknown');
-  const exited = buildLine(event({ kind: 'exited', outcome: 'passed', lane: 'driver' }), { now: FIXED_NOW });
+  const exited = buildLine(event({ kind: 'exited', outcome: 'passed', lane: 'driver', payload: { actor: 'script' } }), { now: FIXED_NOW });
   assert.equal(exited.outcome, 'passed');
   assert.equal(exited.lane, 'driver');
   // an outcome on a non-exited kind is not carried
@@ -87,7 +87,7 @@ test('each append runs inside withLock on the sibling .lock path', () => {
   };
   const { d } = deps(root, { fs: countingFs, withLock: recordingLock });
   appendStationEvent(event(), d);
-  appendStationEvent(event({ kind: 'exited', outcome: 'passed' }), d);
+  appendStationEvent(event({ kind: 'exited', outcome: 'passed', payload: { actor: 'script' } }), d);
   assert.equal(calls.length, 2);
   for (const [i, call] of calls.entries()) {
     assert.equal(call.lockPath, `${file}.lock`);
@@ -118,7 +118,7 @@ test('appends whole lines under the real lock', () => {
   const root = scratchDir('ct-station-events-');
   const { stderr, d } = deps(root);
   assert.deepEqual(appendStationEvent(event(), d), { written: true });
-  assert.deepEqual(appendStationEvent(event({ kind: 'exited', outcome: 'passed' }), d), { written: true });
+  assert.deepEqual(appendStationEvent(event({ kind: 'exited', outcome: 'passed', payload: { actor: 'script' } }), d), { written: true });
   const { raw, lines } = readLines(root);
   assert.equal(lines.length, 2);
   assert.ok(raw.endsWith('\n'));
@@ -412,20 +412,23 @@ test('a decided line with an unknown actor is dropped', () => {
   assert.equal(line.payload.actor, 'person');
 });
 
-test('a retired outcome carrying an actor is written unchanged', () => {
-  const { line } = writtenLine(exitedEvent('returned', { actor: 'robot' }));
-  assert.deepEqual(line.payload, { actor: 'robot' });
+for (const retired of ['returned', 'skipped', 'abandoned']) {
+  test(`AC1.1: a retired outcome is dropped with a reason (${retired})`, () => {
+    dropped(exitedEvent(retired, { actor: 'agent' }), /outcome outside the closed set/);
+  });
+}
+
+test('an exited passed without actor is dropped', () => {
+  dropped(exitedEvent('passed', { step: 'worker' }), /actor/);
 });
 
-test('a passed line with no actor is written unchanged', () => {
-  const { line } = writtenLine(exitedEvent('passed', { step: 'worker' }));
-  assert.deepEqual(line.payload, { step: 'worker' });
+test('an exited failed without actor is dropped', () => {
+  dropped(exitedEvent('failed', { reason: 'failed: test', link: null }), /actor/);
 });
 
-test('a failed line with no actor and no reasonCode is written unchanged', () => {
-  const payload = { reason: 'failed: test', link: null };
-  const { line } = writtenLine(exitedEvent('failed', payload));
-  assert.deepEqual(line.payload, payload);
+test('an exited with a non-object payload is dropped, not thrown', () => {
+  dropped(exitedEvent('passed', null), /actor/);
+  dropped(exitedEvent('passed', 'x'), /actor/);
 });
 
 test('a sent-back with no actor is dropped', () => {
@@ -444,14 +447,6 @@ test('planned with an unknown station is dropped', () => {
   dropped({ kind: 'planned', payload: { stations: 'build' } }, /stations/);
   dropped({ kind: 'replanned' }, /stations/);
   writtenLine({ kind: 'planned', payload: { stations: ['build', 'test'], reasonCode: 'default-list' } });
-});
-
-test('AC1.6: a legacy returned outcome is still written', () => {
-  for (const outcome of ['returned', 'skipped', 'abandoned']) {
-    const { line } = writtenLine(exitedEvent(outcome, {}));
-    assert.equal(line.outcome, outcome);
-    assert.deepEqual(line.payload, {});
-  }
 });
 
 test('AC3.2: a dropped line never throws and writes a reason to stderr', () => {
@@ -486,11 +481,6 @@ test('a planned line with no stations is dropped; an empty replanned is written'
   dropped({ kind: 'planned', payload: { stations: [] } }, /stations/);
   const { line } = writtenLine({ kind: 'replanned', payload: { stations: [] } });
   assert.deepEqual(line.payload.stations, []);
-});
-
-test('an own actor key puts an exit on the new contract, even when its value is undefined', () => {
-  dropped(exitedEvent('failed', { actor: undefined }), /actor/);
-  dropped(exitedEvent('failed', { actor: null }), /actor/);
 });
 
 test('AC2.1: concurrent appends of a planned and an exited line both land intact', async () => {

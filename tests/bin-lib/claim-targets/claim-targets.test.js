@@ -3401,6 +3401,7 @@ test('station: a rolled-back partial claim closes its build visit with exited bu
   assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build', 'exited:build:stopped']);
   const exit = for720[4];
   assert.deepEqual(exit.payload, { reason: ABORT_REASON, actor: 'script', reasonCode: 'unspecified' });
+  assert.ok(buildLine(exit), 'the rollback exit line is accepted by the emitter');
   assert.equal(exit.discriminator, `${CLAIMED_AT}:abort`);
   assert.equal(exit.repoName, 'acme/w');
   assert.equal(exit.runId, 'r1');

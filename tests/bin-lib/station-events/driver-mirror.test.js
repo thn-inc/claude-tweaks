@@ -183,7 +183,7 @@ test('every mirrored merge exit passes buildLine', () => {
   for (const over of [{ step: 'merge-confirm', detail: 'merged' }, { step: 'merge-park', status: 'stop', detail: 'ci-red: x' }, { step: 'merge-park', status: 'stop' }]) {
     for (const e of stationEventsFor(line(over), ID).filter((x) => x.kind === 'exited')) { assert.ok(buildLine(e), JSON.stringify(over)); checked += 1; }
   }
-  assert.ok(checked >= 3, 'each of the three inputs produced an exit, so an empty filter cannot pass');
+  assert.equal(checked, 3, 'each of the three inputs produced an exit, so an empty filter cannot pass');
 });
 
 test('a settle-label ok line writes held why blocked at the stopped step\'s station', () => {
@@ -239,4 +239,17 @@ test('a replay of the same line keys identically', () => {
 test('a missing or non-finite ms puts started at ts', () => {
   assert.equal(stationEventsFor(line({ ms: undefined }), ID)[0].at, TS);
   assert.equal(stationEventsFor(line({ ms: 'x' }), ID)[0].at, TS);
+});
+
+test('every driver step x status exit passes buildLine (the non-merge exitPayload path)', () => {
+  let checked = 0;
+  for (const step of Object.keys(DRIVER_STEP_STATIONS)) {
+    for (const status of ['ok', 'fail', 'stop']) {
+      for (const e of stationEventsFor(line({ step, status }), ID).filter((x) => x.kind === 'exited')) {
+        assert.ok(buildLine(e), `${step}/${status}`);
+        checked += 1;
+      }
+    }
+  }
+  assert.equal(checked, Object.keys(DRIVER_STEP_STATIONS).length * 3, 'every step and status produced an exit');
 });

@@ -622,8 +622,7 @@ test('a release with an unrecognised reason is written as sent-back next release
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'drive.js settle: express-escalated at check'], d), 0);
   assert.equal(events[0].outcome, 'sent-back');
-  assert.equal(events[0].payload.next, 'release');
-  assert.equal(events[0].payload.actor, 'script');
+  assert.deepEqual(events[0].payload, { reason: 'drive.js settle: express-escalated at check', link: null, actor: 'script', reasonCode: 'unspecified', next: 'release' });
   assert.ok(buildLine(events[0]));
 });
 

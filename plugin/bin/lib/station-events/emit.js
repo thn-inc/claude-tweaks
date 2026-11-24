@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const { withLock } = require('../file-lock');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const {
-  STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS,
+  STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, REASON_UNSPECIFIED, REASON_CODES, ACTORS, HOLD_WHYS,
 } = require('./stations');
 
 const LINE_VERSION = 1;
@@ -91,20 +91,8 @@ function validStationList(v) {
   return Array.isArray(v) && v.every((st) => STATIONS.includes(st));
 }
 
-function hasOwn(o, k) {
-  return Object.prototype.hasOwnProperty.call(o, k);
-}
-
 function validActor(v) {
   return typeof v === 'string' && ACTORS.test(v);
-}
-
-// Is this an `exited` on the new contract (stations.js, above OUTCOMES)? A pre-contract line is
-// written unchanged: a retired outcome, or a passed/failed with no actor.
-function isNewContractExit(event) {
-  if (event.kind !== KIND.EXITED) return false;
-  if (event.outcome === OUTCOME.SENT_BACK || event.outcome === OUTCOME.STOPPED) return true;
-  return (event.outcome === OUTCOME.PASSED || event.outcome === OUTCOME.FAILED) && hasOwn(payloadOf(event), 'actor');
 }
 
 // A payload value for a drop reason; never throws (a Symbol or a null-prototype object would
@@ -117,10 +105,10 @@ function show(v) {
   return typeof v;
 }
 
-// event -> the field a new-contract line gets wrong, or null. Never judges `reasonCode`.
+// event -> the field a line's contract gets wrong, or null. Never judges `reasonCode`.
 function invalidContract(event) {
   const payload = payloadOf(event);
-  if (isNewContractExit(event)) {
+  if (event.kind === KIND.EXITED) {
     if (!validActor(payload.actor)) return `payload.actor is not an agent, script, person or rule:name: ${show(payload.actor)}`;
     if (event.outcome === OUTCOME.SENT_BACK && !STATIONS.includes(payload.next)) return `payload.next is not a station: ${show(payload.next)}`;
   }
@@ -133,13 +121,13 @@ function invalidContract(event) {
   return null;
 }
 
-// The payload a line carries. A new-contract non-pass exit or a plan whose reasonCode is unknown
+// The payload a line carries. A non-pass exit or a plan whose reasonCode is unknown
 // or missing is written with REASON_UNSPECIFIED, the original kept in reasonText; the caller's
 // object is never mutated.
 function contractPayload(event) {
   const payload = payloadOf(event);
   const needsReason = event.kind === KIND.PLANNED || event.kind === KIND.REPLANNED
-    || (isNewContractExit(event) && event.outcome !== OUTCOME.PASSED);
+    || (event.kind === KIND.EXITED && event.outcome !== OUTCOME.PASSED);
   if (!needsReason || REASON_CODES.includes(payload.reasonCode)) return payload;
   const original = payload.reasonCode;
   const copy = { ...payload, reasonCode: REASON_UNSPECIFIED };
@@ -157,7 +145,7 @@ function invalidReason(event) {
   if (!Number.isInteger(event.recordNumber) || event.recordNumber <= 0) return 'recordNumber is not a positive integer';
   if (!KINDS.includes(event.kind)) return `kind outside the closed set: ${show(event.kind)}`;
   if (!STATIONS.includes(event.station)) return `station outside the closed set: ${show(event.station)}`;
-  if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome) && !RETIRED_OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${show(event.outcome)}`;
+  if (event.kind === KIND.EXITED && !OUTCOMES.includes(event.outcome)) return `outcome outside the closed set: ${show(event.outcome)}`;
   if (event.lane !== undefined && event.lane !== null && !LANES.includes(event.lane)) return `lane outside the closed set: ${show(event.lane)}`;
   if (typeof event.discriminator !== 'string' || event.discriminator === '') return 'discriminator missing';
   return invalidContract(event);
