@@ -10,6 +10,8 @@ files:
   - plugin/skills/wrap-up/learned-skills-pr.md
   - plugin/skills/wrap-up/curation-engine.md
   - plugin/skills/_shared/github-pr-scan.md
+  - plugin/skills/tidy/step-6-auto.md
+  - plugin/skills/tidy/actions-github-issues.md
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/bin/console-residue.js
   - plugin/bin/lib/reconcile/archive-branches.js
@@ -102,8 +104,19 @@ files:
   - a run that archives with a `captured` entry in `learned-skills/manifest.json` and no report
   - `record` accepting an applied Skills-row finding with no commit
 
+### 8. Drain learned-skills PRs wrap-up left behind with `/claude-tweaks:tidy` (lever on)
+- **URL:** `/claude-tweaks:tidy`, whose Step 4.8 PR scan reports `[pr-unarmed] PR #{n}: {title} — green, learned-skills-auto-merge on — drain per tidy/actions-github-issues.md`; Step 6's **Drain learned-skills PR** row then runs `node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run-dir}" --integration-branch {integration-branch}` once
+- **Action:** in a repo where wrap-up no longer runs, a maintainer runs tidy. Item 9 offers a green, gate-passed marker PR only when `learned-skills-auto-merge` resolves `true`. The Drain row auto-applies at `moderate`/`aggressive` (Stages at `conservative`, and at every tier when the key is `false`); an interactive tidy with no run dir mints one first. The drain acts on every open learned-skills PR, re-checking green and scope itself.
+- **Should feel:** a backstop, not a second policy: the same key that lets wrap-up drain decides here, and a person can still review a staged drain.
+- **Should understand:** `merged` and `armed` land under **Applied automatically**; `conflicting` and each `leftOpen` reason land under **Yours** with `gh pr view {n} --web`. A failed call logs a degrade `SKIP` and merges nothing.
+- **Red flags:**
+  - a marker PR offered or drained with the key `false` or unset, or through `housekeeping-auto-merge` or a record's `auto:merge`
+  - a marker PR picked up by the generic **Arm ready PR** rows
+  - a `conflicting` or `leftOpen` PR reported under **Applied automatically**
+
 ## Origin
 - Created during the build of #5290: `bin/learned-skills-pr.js` (`capture`, `land`, `stage`), `lib/learned-skills/`, the console and trace rendering of the PR URL, item 9's `<!-- wrap-up-skills-pr -->` exclusion, verify's `learned-skills-delivered` row, and `wrap-up/learned-skills-pr.md`.
 - Updated during the build of #6110: a resumed `land` recognises edits a merged learned-skills PR already shipped, looking the run branch's PRs up whether or not the branch still exists.
 - Related journeys: `keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md` covers the same console-less short-circuit for review findings. `trust-a-singleton-auto-merge-to-refuse-without-a-verdict-2941.md` covers the merge-check verdict this journey keeps from parking.
 - Updated by #6112: the PR merges once green under `learned-skills-auto-merge` (wrap-up's drain); it is no longer never-armed. Added step 4 (the drain) and renumbered the later steps.
+- Updated by #6114: item 9 offers a learned-skills PR only under `learned-skills-auto-merge`, and `/claude-tweaks:tidy` drains PRs wrap-up left behind. Added step 8.
