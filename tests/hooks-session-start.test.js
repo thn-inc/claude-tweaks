@@ -163,6 +163,9 @@ test('#3370: an archived run with unreviewed console items gets its own banner n
   assert.match(ctx, /review-debate-deviation\.md/);
   assert.match(ctx, /console-residue\.js" --ack --run/);
   assert.match(ctx, /Relay this list once, in your first reply to the user, one line per item with its command/);
+  // #3419 / #3788: the runnable --ack lines are relayed, never run by the model.
+  assert.ok(ctx.includes('and never run it yourself: no human has reviewed these items'), 'console-residue banner says never run it yourself');
+  assert.doesNotMatch(ctx, /mark the run reviewed with its own command above/);
 });
 
 test('#3370: SessionStart renders no console-residue banner when every console is acknowledged', async () => {

@@ -12,7 +12,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
                        [ /claude-tweaks:visualize ] ← utility (no fixed lifecycle position)
                                     ↑
    Used by: /claude-tweaks:journeys (Step 3.6), /claude-tweaks:specify (Step 2.5d),
-            /claude-tweaks:review (Lens 3i-diagram), ad-hoc direct invocation
+            ad-hoc direct invocation (including as recommended by /claude-tweaks:review)
 ```
 
 ## When to Use
@@ -46,7 +46,7 @@ Generates a self-contained HTML+SVG diagram, themed from the project's own desig
 `[topic]` is free text describing what to diagram. If `$ARGUMENTS` is empty, ask the user for both — except `record-graph`, which takes no topic at all: `/claude-tweaks:visualize record-graph` alone is a complete invocation, and `$ARGUMENTS` being exactly `record-graph` should never trigger the "ask for both" fallback.
 
 Flags:
-- `--source <caller>` (producer-only) — set by soft-hook callers (`journeys`, `specify`, `review`) to select default placement (Step 3) without prompting.
+- `--source <caller>` (producer-only) — set by soft-hook callers (`journeys`, `specify`) to select default placement (Step 3) without prompting.
 - `--ephemeral` — for direct/ad-hoc invocation only (no `--source`): skip Step 3's persist-vs-ephemeral `AskUserQuestion` and go straight to the scratch-path-only "Just show me now" behavior. For a quick mid-conversation sketch where the user already knows they don't want it saved as a project doc.
 
 ## Workflow
@@ -87,7 +87,6 @@ Read `skills/_shared/visual-html-output.md` Steps 1-2. Extract tokens from `DESI
 |---|---|
 | `journeys` | `docs/journeys/{journey-name}-{type}.html` |
 | `specify` | `docs/plans/{spec-slug}-{type}.html` |
-| `review` | Ephemeral by default; ask before persisting near `docs/architecture.md` |
 | *(none — direct invocation)*, `--ephemeral` not passed | Run `visual-html-output.md` Step 6's `AskUserQuestion`; "Save as a project doc" resolves to `docs/diagrams/{slug}.html` |
 | *(none — direct invocation)*, `--ephemeral` passed | Skip the `AskUserQuestion` — go straight to `visual-html-output.md` Step 6's "Just show me now" behavior (scratch-path-only, no `docs/` placement, no Step 6 registry update, no MDX-embed snippet) |
 | `record-graph` (any invocation) | Overridden entirely by `record-graph.md` Step C — always `docs/diagrams/record-graph.html` (+ `.d2` source), no `AskUserQuestion`, always persisted and overwritten. |
@@ -132,7 +131,7 @@ After generating, render as plain markdown (docs/skill-authoring.md's Skill hand
 
 ## Component-Skill Contract
 
-When `$PIPELINE_RUN_DIR` is set, `/claude-tweaks:visualize` is running inside a pipeline (invoked by `/claude-tweaks:journeys`, `/claude-tweaks:specify`, `/claude-tweaks:review`, or another pipeline orchestrator). In that case omit the `## Next Actions` block — the parent owns the handoff.
+When `$PIPELINE_RUN_DIR` is set, `/claude-tweaks:visualize` is running inside a pipeline (invoked by `/claude-tweaks:journeys`, `/claude-tweaks:specify`, or another pipeline orchestrator). In that case omit the `## Next Actions` block — the parent owns the handoff.
 
 Direct invocation may pass `--source <parent-skill>` as an explicit fallback when ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal).
 
