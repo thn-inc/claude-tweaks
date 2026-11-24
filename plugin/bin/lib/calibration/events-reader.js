@@ -1,5 +1,6 @@
 'use strict';
 const fs = require('node:fs');
+const { isTestTaggedEvent } = require('../friction-lens-vocab');
 
 function readEventsKinds(filePath) {
   let text;
@@ -19,7 +20,7 @@ function readEventsKinds(filePath) {
     // #4186: a test:true denial is the test suite exercising the hook's deny
     // logic, not operator friction — the same rule bin/friction-events.js's
     // readEvents applies (#1337, widened #2282).
-    if ((parsed.type === 'gate-denial' || parsed.type === 'wd-guard-refusal') && parsed.test === true) continue;
+    if (isTestTaggedEvent(parsed)) continue;
     counts[parsed.type] = (counts[parsed.type] || 0) + 1;
   }
   return { counts };

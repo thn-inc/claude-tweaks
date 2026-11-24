@@ -62,7 +62,7 @@ const path = require('path');
 const ctxLib = require('./lib/hooks/context');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { canonicalRealpath } = require('./lib/path-guard');
-const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
+const { FRICTION_EVENT_TYPES, isTestTaggedEvent } =require('./lib/friction-lens-vocab');
 
 const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
 
@@ -191,7 +191,7 @@ function readEvents(runDir, source) {
     try {
       const parsed = JSON.parse(line);
       if (!parsed || typeof parsed !== 'object') continue;
-      if ((parsed.type === 'gate-denial' || parsed.type === 'wd-guard-refusal') && parsed.test === true) continue;
+      if (isTestTaggedEvent(parsed)) continue;
       if (source === 'primary' && parsed.attribution === 'fallback') continue;
       if (parsed.type === 'contract-violation' && (parsed.variant === 'lenient' || parsed.variant === 'foreign-contract')) continue;
       if (claimBoundary) {
