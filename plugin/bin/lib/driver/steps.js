@@ -1349,7 +1349,7 @@ const relaunchWorkerStep = defineStep(STEP.worker, STOP_CLASSES.PRE_PUSH, async 
   // This guard and relaunchTestStep's read ctx.implementer, not ctx.relaunch: an attempt that resolved no model
   // leaves ctx.implementer at escalations 0, so the second relaunch is refused — the safe direction. Reading
   // ctx.relaunch would let relaunchOrStop plan from that stale implementer.
-  if (ladder && ctx.implementer.escalations === 1 && relaunchesOnCannotComplete('record', result)) {
+  if (ladder && laterTriggerArmed(ctx.implementer) && relaunchesOnCannotComplete('record', result)) {
     return relaunchOrStop(ctx, line, TRIGGERS.cannotComplete, (n) => cannotCompletePrompt(result.cannotComplete.summary, { attempt: n }), [relaunchWorkerStep]);
   }
   return line;
@@ -1369,11 +1369,18 @@ const relaunchCommitStep = defineStep(STEP.commit, STOP_CLASSES.PRE_PUSH, async 
   return withRelaunchNote(ctx, result);
 });
 
-// The core test step after a relaunch. Its red tests are a trigger only under the effort ladder and only after
-// the first relaunch (escalations 1), queueing the second; after the second, and under record + inherit, never.
+// A relaunched attempt's own trigger may queue a further relaunch only while its implementer has stepped up at
+// least once and is below the cap. An attempt that resolved no model leaves ctx.implementer at escalations 0,
+// so it stays unarmed (the guard comment in relaunchWorkerStep).
+function laterTriggerArmed(implementer) {
+  return implementer.escalations > 0 && implementer.escalations < MAX_ESCALATIONS;
+}
+
+// The core test step after a relaunch. Its red tests are a trigger only under the effort ladder and only while
+// laterTriggerArmed (after the first relaunch, queueing the second); after the last, and under record + inherit, never.
 const relaunchTestStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {
   const result = withRelaunchNote(ctx, await testStep.run(ctx, deps));
-  if (result.reason !== 'failing-test' || !effortLadder(ctx.shared.policy) || ctx.implementer.escalations !== 1) return result;
+  if (result.reason !== 'failing-test' || !effortLadder(ctx.shared.policy) || !laterTriggerArmed(ctx.implementer)) return result;
   return relaunchOrStop(ctx, result, TRIGGERS.redTests, (n) => redTestsPrompt(failingTests({ runDir: ctx.runDir, wt: ctx.wt, deps }), { attempt: n }));
 });
 

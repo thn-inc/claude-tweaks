@@ -131,6 +131,10 @@ function nextAttempt({ profile, effort, escalations, trigger, resolveProfile } =
     throw new Error(`implementer-tier: resolveProfile must be a function, got ${describe(resolveProfile)}`);
   }
   if (escalations >= MAX_ESCALATIONS) return null;
+  // Effort before profile, only for the failures more reasoning can fix: an effort step keeps the model and its
+  // per-token price, a profile step costs several times more. BLOCKED and cannot-complete report missing capability
+  // or context, which more effort on the same model rarely supplies, so they go straight to the profile step. The
+  // effort rung is the first step only: after a profile step the new model starts at its own clamped launchEffort.
   if (escalations === 0 && (trigger === 'red-tests' || trigger === 'fix-round-failed')
       && effort !== null && EFFORT_SCALE.indexOf(effort) < CAP_IDX) {
     return { profile, effort: EFFORT_SCALE[EFFORT_SCALE.indexOf(effort) + 1], escalations: 1 };

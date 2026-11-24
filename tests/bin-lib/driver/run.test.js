@@ -4568,6 +4568,15 @@ test('#6002 AC4.1: two red runs climb low → medium on standard → capable', a
   assert.ok(noRelaunchKey(h));
 });
 
+test('#6002: a Fast first launch has no effort rung — its first red run steps up to standard at standard\'s launchEffort', async () => {
+  const h = ladderRig({ issue: SMALL_RECORD, script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('fast'), null], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.deepEqual(lines.map((l) => [l.attempt, l.effort ?? null, l.profile]), [[1, null, 'fast'], [2, 'medium', 'standard'], [3, 'medium', 'capable']]);
+  assert.deepEqual(lines.slice(1).map((l) => [l.escalatedFrom, l.trigger]), [['fast', 'red-tests'], ['standard', 'red-tests']]);
+});
+
 test('#6002 AC4.2: a third red run leaves as #5997\'s second failure does', async () => {
   const control = relaunchRig({ script: [[isVerifyCall, RED_VERIFY]] });
   await run(['#7'], control.deps);

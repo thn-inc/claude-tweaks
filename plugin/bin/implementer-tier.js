@@ -17,10 +17,13 @@
 // then, `stepUp` one profile up from --from (else the computed profile), null
 // from capable, frontier or null. #6002's effort ladder: `ladder` is true
 // exactly when the rule is `record` and policy.yml's `model-effort` is
-// `profile`; `startEffort` is the first attempt's effort (the spec header's
-// `risk:` against the resolved launch effort of --from's profile, else the
-// computed one; null when that profile is null or `model-effort` is not
-// `profile`, so also null for a Fast profile under an active ladder); `next`
+// `profile`; `startEffort` is the first attempt's effort under the ladder (the
+// spec header's `risk:` against the resolved launch effort of --from's profile,
+// else the computed one; null when that profile is null or `model-effort` is
+// not `profile`, so also null for a Fast profile under an active ladder). It is
+// computed whenever that profile resolves, so with `ladder` false (rule `lane`)
+// it is still printed but applies to nothing: the standard lane dispatches
+// resolve-profile.js's `launchEffort` then (build/dispatch.md); `next`
 // is the following attempt `{ profile, effort, escalations }` from the four
 // attempt flags (all or none), null without them, when the ladder is off, or
 // when the ladder is spent.
@@ -55,7 +58,7 @@ const fs = require('fs');
 const { PROFILES, resolve } = require('./lib/model-profiles/profiles');
 const { POLICY_KEY, RULES, SIZES, TRIGGERS, MAX_ESCALATIONS, keyFileCount, implementerProfile, stepUp, startEffort, nextAttempt, riskOf } = require('./lib/model-profiles/implementer-tier');
 const { locatePolicyFile } = require('./lib/policy-file');
-const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
+const { readPolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { fsPath } = require('./lib/health-core/io');
 const { resolvePolicy, realDeps: policyDeps } = require('./resolve-policy');
 
@@ -104,10 +107,11 @@ function readRisk(text) {
   return riskOf(values);
 }
 
-// The model-profiles policy fragment, read as resolve-profile.js reads it: a
-// missing file is an empty policy, a malformed one throws. An unreadable cwd
-// (a deleted working directory) is an empty policy too, with a stderr warning —
-// the ladder is then off.
+// The model-profiles policy fragment, through the reader resolve-profile.js
+// uses (readPolicyModelConfig): a missing file is an empty policy, a malformed
+// one throws. Only locating the file differs: an unreadable cwd (a deleted
+// working directory) is an empty policy here, with a stderr warning — the
+// ladder is then off — where resolve-profile.js lets the error stop the call.
 function readPolicy(deps) {
   let policyPath;
   try {
@@ -116,18 +120,7 @@ function readPolicy(deps) {
     deps.stderr('implementer-tier: warning: cannot read the working directory — policy read skipped, startEffort/next/ladder reflect an empty policy\n');
     return {};
   }
-  let raw;
-  try {
-    raw = fs.readFileSync(policyPath, 'utf8');
-  } catch (err) {
-    if (err.code === 'ENOENT') return {};
-    throw new Error(`cannot read ${policyPath}: ${err.message}`);
-  }
-  try {
-    return parsePolicyModelConfig(raw);
-  } catch (err) {
-    throw new Error(`malformed ${policyPath}: ${err.message}`);
-  }
+  return readPolicyModelConfig(policyPath);
 }
 
 // { opts } or { error }. A value-taking flag needs a value: a missing, blank or

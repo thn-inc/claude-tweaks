@@ -42,7 +42,7 @@ const os = require('os');
 const path = require('path');
 const { resolve, PROFILES } = require('./lib/model-profiles/profiles');
 const { locatePolicyFile } = require('./lib/policy-file');
-const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
+const { readPolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { readFailedModels, recordFailure, invalidateFailures } = require('./lib/model-profiles/session-failures');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 const { resolveAgainst } = require('./lib/health-core/io');
@@ -132,14 +132,11 @@ function run(argv, deps) {
     if (message) return fail(message);
   }
 
-  let policy = {};
-  const policyPath = locatePolicyFile(deps.cwd()).path;
-  if (fs.existsSync(policyPath)) {
-    try {
-      policy = parsePolicyModelConfig(fs.readFileSync(policyPath, 'utf8'));
-    } catch (e) {
-      return fail(`malformed ${policyPath}: ${e.message}`);
-    }
+  let policy;
+  try {
+    policy = readPolicyModelConfig(locatePolicyFile(deps.cwd()).path);
+  } catch (e) {
+    return fail(e.message);
   }
 
   let frontierUsed = 0;
