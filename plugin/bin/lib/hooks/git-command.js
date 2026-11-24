@@ -821,10 +821,10 @@ const PATH_PREFIX_WORDS = Object.freeze(['doas', 'env', 'nice', 'nohup', 'sudo',
 // The ones that run a following `cd` builtin in the current shell (commandWord's `shellOnly`).
 const SHELL_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'time']);
 
-// #4244 (ADR 0028): the compound keywords that structure a list: `in` follows `for NAME` or `case WORD`
-// and is no command-position word, so commandWord skips only the ones a command follows, the shared
-// COMPOUND_LEAD_WORDS set (#4281). The prefixes `!`/`time` and the cd forms are other records'. Pinned,
-// with which of them commandWord skips, by the tests.
+// #4244 (ADR 0028): the compound keywords that structure a list. commandWord skips only those a command
+// follows, the shared COMPOUND_LEAD_WORDS set (#4281); `in` follows `for NAME` or `case WORD` and is never
+// a command-position word. The prefixes `!`/`time` and the cd forms are other records'. The tests pin
+// this list and which of its words commandWord skips.
 const COMPOUND_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'for', 'do', 'done', 'case', 'esac', 'in']);
 
 // How each prefix word reads its options, each per its own manual (bash's builtins, GNU and BSD
