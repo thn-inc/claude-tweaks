@@ -96,8 +96,11 @@ git commit -m "Stamp verify.js's exit code on the driver test line — refs #614
 **Files:**
 - Modify: `plugin/bin/lib/station-events/stations.js` (`DRIVER_STATUS_OUTCOMES` only)
 - Modify: `plugin/bin/lib/station-events/driver-mirror.js` (`stationEventsFor`'s step branch; new local `DRIVER_STEP_ACTORS`, `CI_READ_FAILURE_DETAILS`, `exitPayload`)
-- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/station-events/stations.test.js` (line 84: `outcomeForDriverStatus('stop')` now `'stopped'`), `tests/bin-lib/driver/run.test.js`
-- No change: `plugin/bin/lib/driver/run.js` — `mirroredSink` already forwards every mirrored event unchanged.
+- Test: `tests/bin-lib/station-events/driver-mirror.test.js`
+- Test: `tests/bin-lib/station-events/stations.test.js` (line 84: `outcomeForDriverStatus('stop')` now `'stopped'`)
+- Test: `tests/bin-lib/driver/run.test.js`
+- Verify (no change): `plugin/bin/lib/driver/run.js` — `mirroredSink` already forwards every mirrored event unchanged; the end-to-end tests in `run.test.js` prove it.
+- Not touched (plan audit Check B hit): `docs/superpowers/plans/2026-11-23-station-transition-capture.md` — a shipped plan, history.
 
 **Interfaces:**
 - Consumes: Task 1's `verifyExit`; `REASON.TEST_FAILED`, `REASON.INFRASTRUCTURE`, `REASON.UNSPECIFIED`, `ACTOR.AGENT`, `ACTOR.SCRIPT`, `KIND.EXITED`, `OUTCOME.*` from `stations.js`.
@@ -109,7 +112,7 @@ In `tests/bin-lib/station-events/driver-mirror.test.js` (reuse `line`, `ID`, `TS
 
 1. `AC1.1: a red-tests stop at the test step mirrors to exited failed with reasonCode test-failed and actor agent` — `exitedOf({ step: 'test', status: 'stop', detail: 'red tests', verifyExit: 1 })` → `[outcome, payload.reasonCode, payload.actor]` = `['failed', 'test-failed', 'agent']`, no `reasonText`; the same with `detail: 'red tests; no relaunch: no step-up'` gives the same triple.
 2. `AC1.1: a verdictless fail at the test step mirrors to exited failed with reasonCode infrastructure` — for `verifyExit` in `[2, 137, null]`: `exitedOf({ step: 'test', status: 'fail', detail: 'verify exited 2', verifyExit })` → `['failed', 'infrastructure', 'agent']`. And `AC1.1: a failed ci step classified infrastructure mirrors with reasonCode infrastructure` — for each of `read-failed`, `gh-absent`, `no-pr`: `exitedOf({ step: 'ci', status: 'fail', detail })` → `['failed', 'infrastructure', 'script']`; `exitedOf({ step: 'ci', status: 'stop', detail: 'gh-absent' })` → outcome `stopped`, `infrastructure`, `reasonText` `'gh-absent'`.
-3. `AC2.1: an interrupted fail at the test step mirrors to exited failed with reasonCode unspecified` — `exitedOf({ step: 'test', status: 'fail', detail: 'interrupted by SIGTERM' })` → `['failed', 'unspecified', 'agent']`; also a dirty-tree fail (`detail: 'the worktree differs from HEAD after the test step on 1 path(s): a.js'`, no `verifyExit`) → `unspecified`; `exitedOf({ step: 'ci', status: 'fail', detail: 'interrupted by SIGTERM' }).payload.reasonCode` and `exitedOf({ step: 'worker', status: 'fail' }).payload.reasonCode` are `unspecified`.
+3. `AC1.4 AC2.1: a step with no known reason mirrors with reasonCode unspecified` (covers the revised `an interrupted fail at the test step mirrors to exited failed with reasonCode unspecified`) — `exitedOf({ step: 'test', status: 'fail', detail: 'interrupted by SIGTERM' })` → `['failed', 'unspecified', 'agent']`; also a dirty-tree fail (`detail: 'the worktree differs from HEAD after the test step on 1 path(s): a.js'`, no `verifyExit`) → `unspecified`; `exitedOf({ step: 'ci', status: 'fail', detail: 'interrupted by SIGTERM' }).payload.reasonCode` and `exitedOf({ step: 'worker', status: 'fail' }).payload.reasonCode` are `unspecified`.
 4. `AC2.1: a stop at any other step mirrors to exited stopped with reasonCode unspecified and the driver reason in reasonText` — `exitedOf({ step: 'pr', status: 'stop', detail: 'no changed files' })` → `[outcome, reasonCode, actor, reasonText]` = `['stopped', 'unspecified', 'script', 'no changed files']`; a test-step stop without `verifyExit` (`detail: '.claude-tweaks/verify-scope.json is not a regular file (dir); verify.js was not run'`) → `stopped`, `unspecified`, `agent`, that detail; a stop with no detail has no `reasonText`; a red-tests detail **without** `verifyExit` is `stopped` (the field, not the text, is the key).
 5. `every driver step station has an actor` — sorted `Object.keys(DRIVER_STEP_STATIONS)` (from `stations.js`) deep-equals sorted `Object.keys(DRIVER_STEP_ACTORS)` (from `driver-mirror.js`), and every value matches `ACTORS`.
 6. `an ok step mirrors to exited passed with actor and no reason` — for `[['worker','agent'],['test','agent'],['review','agent'],['pr','script'],['ci','script'],['merge','script']]`: outcome `passed`, `payload.actor` as listed, no own `reasonCode` or `reasonText`; `exitedOf({ step: 'ci', detail: 'read-failed' })` (status ok) has no `reasonCode`.
@@ -155,7 +158,7 @@ git commit -m "feat: driver exits carry outcome, actor and reason — refs #6149
 Behavior-change prose sweep: `git grep -n -i -e "stop. is .returned" -e "stop returned" -e "stop: 'returned'"` lists only `docs/reference/station-events.md:35,166`, `stations.js:97` and the old test name — the doc lines change here, the code and test in Task 2.
 
 - [ ] **Step 1: Edit the three files as above.**
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/docs` if such a directory exists, else the docs conformance tests `git grep -l "station-events.md\|driver.md" tests` names. Expected: PASS.
+- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js tests/bin-lib/driver/run.test.js tests/bin-lib/driver/merge.test.js` (the suites that read these docs). Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
