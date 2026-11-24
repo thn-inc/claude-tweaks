@@ -3971,15 +3971,26 @@ const GH_PR_VALUE_FLAGS = Object.freeze({
   ready: Object.freeze(['-R', '--repo']),
 });
 
-// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, cwd, lost }`. `selector`
-// is the first positional after the verb (null when absent), `repo` the -R/--repo value, `undo` true
-// for --undo. `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
+// The environment variables that pick the repository gh reads (#6143 review): a call's own literal
+// assignment prefix is carried into `env`; any other spelling of them makes the call `envUnprovable`.
+const GH_TARGET_ENV_MENTION_RE = /GH_(?:REPO|HOST)/gi;
+
+// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, env, envUnprovable, cwd,
+// lost }`. `selector` is the first positional after the verb (null when absent), `repo` the -R/--repo
+// value, `undo` true for a call that only cancels: `ready --undo`, or `merge --disable-auto`, which
+// only turns auto-merge off. `env` holds the GH_REPO/GH_HOST values of the call's own literal
+// assignment prefix (`GH_REPO=o/r gh pr merge 5`), which gh reads in place of the cwd's repo.
+// `envUnprovable` is true when such a value cannot be known: an expansion or `+=` in the value, a
+// subscript, a prefix word (`env`, `sudo`) in front of the call, or any GH_REPO/GH_HOST text in the
+// command (any case) beyond the prefixes carried (`export GH_REPO=…;`, `env -u GH_HOST`, a quoted
+// mention). `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
 // a prefix's directory cannot be proved, and `cwd` is then a stand-in, taken from the first of: the
 // lost cwd's root (as resolveGitCommand reports it), else the unprovable prefix's directory, else the
 // walk's cwd (a lost one's root), else the `cwd` argument.
 function ghPrLifecycleCalls(command, cwd, opts) {
   const calls = [];
   let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  let carried = 0; // GH_REPO/GH_HOST prefix assignments carried, first visits only
   forEachShellSegment(command, cwd, (tokens, effCwd, quoting, again) => {
     if (!again) pieceStart = calls.length;
     const lead = commandWord(tokens, quoting, effCwd);
@@ -3993,6 +4004,25 @@ function ghPrLifecycleCalls(command, cwd, opts) {
     if (t[1] !== GH_PR_LIFECYCLE.group || !GH_PR_LIFECYCLE.verbs.includes(t[2])) return;
     const verb = t[2];
     const valueFlags = GH_PR_VALUE_FLAGS[verb];
+    // The words before the command word: redirections, assignment words and prefix words (commandWord).
+    const env = {};
+    let envUnprovable = false;
+    let prefixWord = false;
+    let mine = 0;
+    for (let i = 0; i < from;) {
+      const width = redirectionWidth(quoting.raw[i], quoting.spanKinds[i], quoting.leadQuoted[i]);
+      if (width > 0) { i += width; continue; }
+      const end = assignmentWordEnd(quoting.raw, quoting.spanKinds, i);
+      if (end === i) { prefixWord = true; i += 1; continue; }
+      const m = /^(GH_REPO|GH_HOST)=/.exec(quoting.raw[i]);
+      if (m && end === i + 1 && !/[$`]/.test(quoting.raw[i])) {
+        env[m[1]] = tokens[i].slice(m[1].length + 1);
+        mine += 1;
+      }
+      i = end;
+    }
+    if (prefixWord && mine > 0) envUnprovable = true;
+    if (!again) carried += mine;
     let selector = null;
     let repo = null;
     let undo = false;
@@ -4001,7 +4031,7 @@ function ghPrLifecycleCalls(command, cwd, opts) {
       const a = rest[i];
       if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
       if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
-      if (a === '--undo') { undo = true; continue; }
+      if (a === '--undo' || (verb === 'merge' && a === '--disable-auto')) { undo = true; continue; }
       let name;
       let value = null;
       if (a.startsWith('--')) {
@@ -4025,11 +4055,14 @@ function ghPrLifecycleCalls(command, cwd, opts) {
     // A lost cwd's stand-in comes from the walk's own input (its root, or the cwd argument), never from
     // the hook process's cwd.
     const standIn = lead.dir instanceof LostCwd ? lead.dir.root : (typeof lead.dir === 'string' ? lead.dir : (effCwd instanceof LostCwd ? effCwd.root : (typeof effCwd === 'string' ? effCwd : String(cwd || '.'))));
-    const call = { verb, selector, repo, undo, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
+    const call = { verb, selector, repo, undo, env, envUnprovable, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
     // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
     if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
     calls.push(call);
   }, keepLost(opts));
+  // A GH_REPO/GH_HOST mention the carried prefixes do not account for may set what gh reads.
+  const mentions = (String(command).match(GH_TARGET_ENV_MENTION_RE) || []).length;
+  if (mentions > carried) for (const call of calls) call.envUnprovable = true;
   return calls;
 }
 

@@ -104,3 +104,53 @@ test('#6143: other gh calls and a quoted word are not matched', () => {
     assert.deepStrictEqual(ghPrLifecycleCalls(c, CWD), [], c);
   }
 });
+
+// ---- #6143 review: GH_REPO/GH_HOST assignment prefixes, and --disable-auto ----
+
+test('#6143: a literal GH_REPO/GH_HOST assignment prefix is carried into the call env', () => {
+  const cases = [
+    ['GH_REPO=o/r gh pr merge 5', { GH_REPO: 'o/r' }],
+    ['GH_HOST=ghe.example.com GH_REPO=o/r gh pr ready 5', { GH_HOST: 'ghe.example.com', GH_REPO: 'o/r' }],
+    ["GH_REPO='o/r' FOO=1 gh pr merge 5", { GH_REPO: 'o/r' }],
+    ['>log GH_REPO="o/r" gh pr merge 5', { GH_REPO: 'o/r' }],
+  ];
+  for (const [c, env] of cases) {
+    const [call] = ghPrLifecycleCalls(c, CWD);
+    assert.deepStrictEqual(call.env, env, c);
+    assert.strictEqual(call.envUnprovable, false, c);
+    assert.strictEqual(call.selector, '5', c);
+  }
+});
+
+test('#6143: no GH_REPO/GH_HOST anywhere gives an empty, provable env', () => {
+  for (const c of ['gh pr merge 5', 'FOO=1 gh pr merge 5', 'sudo gh pr merge 5', 'env FOO=1 gh pr merge 5']) {
+    const [call] = ghPrLifecycleCalls(c, CWD);
+    assert.deepStrictEqual(call.env, {}, c);
+    assert.strictEqual(call.envUnprovable, false, c);
+  }
+});
+
+test('#6143: a prefix on one call does not reach a later call in the list', () => {
+  const calls = ghPrLifecycleCalls('GH_REPO=a/b gh pr ready 1 && gh pr merge 2', CWD);
+  assert.deepStrictEqual(calls.map((c) => [c.selector, c.env, c.envUnprovable]), [['1', { GH_REPO: 'a/b' }, false], ['2', {}, false]]);
+});
+
+test('#6143: a GH_REPO/GH_HOST the parser cannot carry marks the call envUnprovable', () => {
+  for (const c of [
+    'GH_REPO=$R gh pr merge 5', 'GH_REPO=$(cat f) gh pr merge 5', 'GH_REPO=`cat f` gh pr merge 5', 'GH_REPO+=x gh pr merge 5',
+    'export GH_REPO=o/r; gh pr merge 5', 'GH_REPO=o/r; gh pr merge 5', 'env GH_REPO=o/r gh pr merge 5',
+    'env -u GH_HOST gh pr merge 5', 'sudo GH_HOST=h gh pr merge 5', 'gh_repo=o/r gh pr merge 5', 'GH_REPO[0]=o/r gh pr merge 5',
+  ]) {
+    const calls = ghPrLifecycleCalls(c, CWD);
+    assert.strictEqual(calls.length, 1, c);
+    assert.strictEqual(calls[0].envUnprovable, true, c);
+  }
+});
+
+test('#6143: gh pr merge --disable-auto is a cancel, like gh pr ready --undo', () => {
+  assert.deepStrictEqual(pick(ghPrLifecycleCalls('gh pr merge --disable-auto 5', CWD)), [{ verb: 'merge', selector: '5', repo: null, undo: true }]);
+  assert.deepStrictEqual(pick(ghPrLifecycleCalls('gh pr merge 5 --disable-auto -R o/r', CWD)), [{ verb: 'merge', selector: '5', repo: 'o/r', undo: true }]);
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge 5 --auto', CWD)[0].undo, false);
+  // Not a ready flag: gh refuses it there, so it cancels nothing.
+  assert.strictEqual(ghPrLifecycleCalls('gh pr ready --disable-auto 5', CWD)[0].undo, false);
+});

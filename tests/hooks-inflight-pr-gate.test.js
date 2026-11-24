@@ -173,16 +173,19 @@ function stubGh({ exit, json }) {
   const argvFile = path.join(bin, 'argv.txt');
   const jsonFile = path.join(bin, 'out.json');
   const pwdFile = path.join(bin, 'pwd.txt');
+  const envFile = path.join(bin, 'env.txt');
   if (json) fs.writeFileSync(jsonFile, JSON.stringify(json));
   fs.writeFileSync(path.join(bin, 'gh'),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\npwd -P > "${pwdFile}"\n${json ? `cat "${jsonFile}"\n` : ''}exit ${exit}\n`);
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\npwd -P > "${pwdFile}"\nprintf '%s|%s' "$GH_REPO" "$GH_HOST" > "${envFile}"\n${json ? `cat "${jsonFile}"\n` : ''}exit ${exit}\n`);
   fs.chmodSync(path.join(bin, 'gh'), 0o755);
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.GH_HOST;
+  delete env.GH_REPO;
   return {
     env,
     argv: () => fs.readFileSync(argvFile, 'utf8').split('\n').filter(Boolean),
     pwd: () => fs.readFileSync(pwdFile, 'utf8').trim(),
+    ghEnv: () => fs.readFileSync(envFile, 'utf8'),
   };
 }
 
@@ -220,6 +223,21 @@ test('AC1.3: the default runner runs gh in the call\'s own cwd, not the session\
   assert.ok(denyReason(gate(ctx)));
   // pwd -P: the physical directory gh ran in, the checkout the link names.
   assert.strictEqual(gh.pwd(), fx.project);
+});
+
+test('the default runner reads the PR with the call\'s GH_REPO/GH_HOST prefix in its env', { skip: skipWin }, async () => {
+  const fx = await fixture();
+  const gh = stubGh({ exit: 0, json: { body: bodyFor(fx), number: 5 } });
+  assert.ok(denyReason(gate(ctxFor(fx, 'GH_HOST=ghe.example.com GH_REPO=o/r gh pr merge 5', {}, gh.env))));
+  assert.strictEqual(gh.ghEnv(), 'o/r|ghe.example.com');
+  assert.deepStrictEqual(gh.argv(), ['pr', 'view', '--json', 'body,number', '--', '5']);
+});
+
+test('the default runner with no prefix keeps the hook env (no GH_REPO/GH_HOST added)', { skip: skipWin }, async () => {
+  const fx = await fixture();
+  const gh = stubGh({ exit: 1 });
+  assertAllowedNoEvent(gate(ctxFor(fx, 'gh pr merge 5', {}, gh.env)), fx);
+  assert.strictEqual(gh.ghEnv(), '|');
 });
 
 // ---- AC3: no owner, and the phase-exit record ----
@@ -316,6 +334,29 @@ test('gh pr ready --undo 123 is allowed without reading the PR', async () => {
   const fx = await fixture();
   const read = reader(bodyFor(fx));
   assertAllowedNoEvent(gate(ctxFor(fx, 'gh pr ready --undo 123'), { readPrBody: read }), fx);
+  assert.strictEqual(read.calls.length, 0);
+});
+
+test('gh pr merge --disable-auto 123 is allowed without reading the PR', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  assertAllowedNoEvent(gate(ctxFor(fx, 'gh pr merge --disable-auto 123'), { readPrBody: read }), fx);
+  assert.strictEqual(read.calls.length, 0);
+});
+
+test('a GH_REPO prefix is handed to the PR read in call.env, and the call is still judged', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  assert.ok(denyReason(gate(ctxFor(fx, 'GH_REPO=o/r gh pr merge 5'), { readPrBody: read })));
+  assert.deepStrictEqual(read.calls.map((c) => c.call.env), [{ GH_REPO: 'o/r' }]);
+});
+
+test('a GH_REPO/GH_HOST the parser cannot carry is allowed without reading the PR', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  for (const c of ['GH_REPO=$R gh pr merge 5', 'export GH_REPO=o/r; gh pr merge 5', 'env GH_HOST=h gh pr merge 5']) {
+    assertAllowedNoEvent(gate(ctxFor(fx, c), { readPrBody: read }), fx);
+  }
   assert.strictEqual(read.calls.length, 0);
 });
 

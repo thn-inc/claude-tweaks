@@ -11,14 +11,16 @@
 // caller whose session_id equals run-state `sessionId` — is always allowed (its own wrap-up merges
 // after its build and test exits). `dispatchSessionId` is not an owner. Every caller is allowed when
 // the run-state has no non-empty string `sessionId`. Per call (ghPrLifecycleCalls), it denies only
-// when every step is proven: not `--undo`; the call's cwd is known (not `lost`) and absolute; that
+// when every step is proven: not a cancel (`ready --undo`, `merge --disable-auto`); the GH_REPO/GH_HOST
+// gh would read is known (the call's own literal prefix, carried into the PR read's env, or none); the call's cwd is known (not `lost`) and absolute; that
 // cwd is in a git checkout whose main checkout resolves; the PR body reads, by `gh pr view` run from
-// that cwd; its first line carries a run marker; the named run dir resolves under that main
+// that cwd under the hook env plus that prefix; its first line carries a run marker; the named run dir resolves under that main
 // checkout; its run-state reads with an owner; the caller is not the owner; and inFlightPhase names
 // a phase. The call's own cwd is the base, not ctx.cwd: after `cd /other/checkout &&`, gh reads that
 // checkout's repo, so the gate judges the PR from there.
 // Fail-open conditions, each `{}` with no event: any other tool; a non-string command; no gh pr
-// ready/merge call; `--undo`; a `lost` call cwd (only a stand-in, so the repo gh would read there
+// ready/merge call; `--undo` or `--disable-auto`; an `envUnprovable` call (a GH_REPO/GH_HOST value the
+// parser cannot carry, so the repo gh reads is unknown); a `lost` call cwd (only a stand-in, so the repo gh would read there
 // cannot be proved — _shared/policy-schema-coverage.md's "Where a relative target resolves") or a
 // relative one; a call cwd outside any git checkout, or mainCheckoutRoot null or throwing for it
 // (the PR is then never read); a PR read that fails or prints no string body and integer number; no
@@ -39,7 +41,7 @@
 // Each deny appends a `gate-denial` event (gate 'inflight-pr', with the PR number and the phase) to
 // the named run, unattributed (the run is named, not guessed). The deny outcome is pre-tool-use.js's
 // denyResult, passed in by runInner, so this module never requires pre-tool-use.js. `deps` (test
-// seams): readPrBody(call, ctx) -> { body, number } | null (run from call.cwd), mainCheckoutRoot,
+// seams): readPrBody(call, ctx) -> { body, number } | null (run from call.cwd, env ctx.env + call.env), mainCheckoutRoot,
 // readRunState, readDecisions(runDir) -> string[] (throws when unreadable), fsImpl.
 'use strict';
 const fs = require('fs');
@@ -68,20 +70,21 @@ function lazy() {
 }
 
 // `gh pr view --json body,number [--repo R] [-- selector]` from the call's own cwd, under the hook
-// context's env (an empty --repo value, from `-R=` or a trailing `-R`, passes no --repo). The
+// context's env with the call's GH_REPO/GH_HOST prefix laid over it (an empty --repo value, from `-R=` or a trailing `-R`, passes no --repo). The
 // selector follows `--`, so one that starts with `-` is never read as a flag.
 function defaultReadPrBody(call, ctx) {
   const { execFileSync } = require('child_process');
   const { ghOptions, injectedGhDeps } = require('../repo-resolve');
   const { ghTimeoutMsAt } = require('../shared-primitives');
+  const env = { ...ctx.env, ...(call.env && typeof call.env === 'object' ? call.env : {}) };
   const args = ['pr', 'view', '--json', 'body,number'];
   if (isNonEmptyString(call.repo)) args.push('--repo', call.repo);
   if (call.selector !== null && call.selector !== undefined) args.push('--', call.selector);
   try {
     const out = execFileSync('gh', args, ghOptions(args, {
-      cwd: call.cwd, env: ctx.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: ghTimeoutMsAt(call.cwd, { env: ctx.env }), windowsHide: true,
-    }, injectedGhDeps({ env: ctx.env })));
+      cwd: call.cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: ghTimeoutMsAt(call.cwd, { env }), windowsHide: true,
+    }, injectedGhDeps({ env })));
     const parsed = JSON.parse(out);
     if (!parsed || typeof parsed.body !== 'string' || !Number.isInteger(parsed.number)) return null;
     return { body: parsed.body, number: parsed.number };
@@ -92,6 +95,7 @@ function defaultReadPrBody(call, ctx) {
 
 function checkCall(call, ctx, d, deny) {
   if (call.undo) return {};
+  if (call.envUnprovable) return {};
   if (call.lost || !isNonEmptyString(call.cwd) || !path.isAbsolute(call.cwd)) return {};
   // Outside any git checkout no run can be named, so the PR is never read.
   let main;
