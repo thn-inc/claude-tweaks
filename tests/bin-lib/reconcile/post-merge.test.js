@@ -2444,7 +2444,7 @@ test('hollow merge: a marker for #6143 does not count as one for #61 (prefix bou
   assert.deepEqual(r.entries[0].commented, [61]);
 });
 
-test('hollow merge: a run with no pr field resolves its PR through prStates.byBranch and is held', async () => {
+test('hollow merge: a run with no pr field resolves its PR through prStates.byBranchAsync and is held', async () => {
   const root = mainCheckout();
   git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
   git(root, 'branch', 'feat-6143');
@@ -2453,7 +2453,7 @@ test('hollow merge: a run with no pr field resolves its PR through prStates.byBr
   const branchCalls = [];
   const prStates = {
     byNumberAsync: async (n) => ({ 42: merged() }[n]),
-    byBranch: (b) => { branchCalls.push(b); return b === 'feat-6143' ? { number: 42, state: 'MERGED' } : null; },
+    byBranchAsync: async (b) => { branchCalls.push(b); return b === 'feat-6143' ? { number: 42, state: 'MERGED' } : null; },
   };
   const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
   const r = await detect(root, { gh, prStates });
@@ -2471,7 +2471,7 @@ test('AC7.1 + AC7.2 (detection): an unreadable run-state.json behind a marker-be
   const lifecycle = formatEntry({ status: 'AUTO', now: NOW, step: 'PR-early run lifecycle', text: 'PR-early run lifecycle: pushed feat-6143 to origin' });
   const dir = addRun(root, HR, { pr: null, decisions: `${ONE_LINE_DECISION}${lifecycle}\n` });
   fs.writeFileSync(path.join(dir, 'run-state.json'), '{not json');
-  const prStates = { byNumberAsync: async () => merged(), byBranch: () => ({ number: 42 }) };
+  const prStates = { byNumberAsync: async () => merged(), byBranchAsync: async () => ({ number: 42 }) };
   const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
   const r = await detect(root, { gh, prStates });
   assert.equal(r.entries.length, 1);
@@ -2485,7 +2485,7 @@ test('hollow merge: a run with no pr field and no resolvable branch gets no entr
   const root = mainCheckout();
   addRun(root, HR, { pr: null, decisions: ONE_LINE_DECISION });
   const gh = hollowGh();
-  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranch: () => ({ number: 42 }) } });
+  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => ({ number: 42 }) } });
   assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
   assert.equal(gh.calls.length, 0);
 });
@@ -2700,7 +2700,7 @@ function branchRunFixture() {
 test('hollow merge: a transient byBranch answer for a run with no pr field holds it as hollow-check-failed (pr null)', async () => {
   const { root, dir } = branchRunFixture();
   const gh = hollowGh();
-  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranch: () => 'network-failure' } });
+  const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => 'network-failure' } });
   assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'branch feat-6143 PR lookup: network-failure' }]);
   assert.deepEqual(r.hollowRunDirs, [dir]);
   assert.equal(gh.calls.length, 0);
@@ -2710,7 +2710,7 @@ test('hollow merge: a definitive byBranch answer (no PR, gh-absent, pr-not-found
   const { root } = branchRunFixture();
   for (const answer of [null, 'gh-absent', 'pr-not-found']) {
     const gh = hollowGh();
-    const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranch: () => answer } });
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async () => merged(), byBranchAsync: async () => answer } });
     assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, String(answer));
     assert.equal(gh.calls.length, 0);
   }
@@ -2721,7 +2721,7 @@ test('hollow merge: a byBranch object answer without a positive integer number (
   for (const answer of [{ number: 0 }, {}, { number: -3 }, { number: 4.5 }]) {
     const gh = hollowGh();
     const byNumberCalls = [];
-    const r = await detect(root, { gh, prStates: { byNumberAsync: async (n) => { byNumberCalls.push(n); return merged(); }, byBranch: () => answer } });
+    const r = await detect(root, { gh, prStates: { byNumberAsync: async (n) => { byNumberCalls.push(n); return merged(); }, byBranchAsync: async () => answer } });
     assert.deepEqual(r, { entries: [], hollowRunDirs: [] }, JSON.stringify(answer));
     assert.equal(gh.calls.length, 0);
     assert.deepEqual(byNumberCalls, [], 'no PR-state lookup for a non-PR answer');
@@ -2748,7 +2748,7 @@ test('hollow merge: a PR lookup that throws for one run holds that run (pr null 
   const c = addRun(root, '2026-11-23T120000-record-3', { pr: 13, decisions: ONE_LINE_DECISION });
   const prStates = {
     byNumberAsync: async (n) => { if (n === 13) throw new Error('socket hang up'); return merged(); },
-    byBranch: () => { throw new Error('byBranch exploded'); },
+    byBranchAsync: async () => { throw new Error('byBranch exploded'); },
   };
   const gh = hollowGh({ views: { 12: view(hollowBody(path.basename(b))) } });
   const r = await detect(root, { gh, prStates });
@@ -2795,7 +2795,7 @@ test('hollow merge: a run with no pr field resolves its branch from the live wor
   const branchCalls = [];
   const prStates = {
     byNumberAsync: async (n) => ({ 43: merged() }[n]),
-    byBranch: (b) => { branchCalls.push(b); return b === 'wt-branch-6143' ? { number: 43 } : null; },
+    byBranchAsync: async (b) => { branchCalls.push(b); return b === 'wt-branch-6143' ? { number: 43 } : null; },
   };
   const gh = hollowGh({ views: { 43: view(hollowBody(HR)) } });
   const r = await detect(root, { gh, prStates });
@@ -2803,6 +2803,27 @@ test('hollow merge: a run with no pr field resolves its branch from the live wor
   assert.equal(r.entries.length, 1);
   assert.equal(r.entries[0].pr, 43);
   assert.equal(r.entries[0].reason, 'hollow-merge');
+});
+
+test('hollow merge: the by-branch lookup refuses a persisted "no PR" answer (freshNull, as release joins the branch) and holds the merged PR', async () => {
+  const { createPrStateResolver } = require('../../../plugin/bin/lib/reconcile/pr-state-cache');
+  const { writeCache } = require('../../../plugin/bin/lib/reconcile/cache');
+  const { root, dir } = branchRunFixture();
+  // A prior pass learned "no PR for feat-6143" a minute ago: inside the null's 5-minute TTL.
+  writeCache(root, { prStates: { 'b:feat-6143': { v: null, at: Date.now() - 60 * 1000 } } });
+  const live = { number: 42, state: 'MERGED', mergedAt: MERGED_AT };
+  const prStates = createPrStateResolver({
+    root,
+    deps: {
+      byBranch: () => live, byBranchAsync: async () => live, byNumberAsync: async () => live, fetchBatch: async () => null,
+    },
+  });
+  const gh = hollowGh({ views: { 42: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh, prStates });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].pr, 42);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
 });
 
 test('hollow merge: a setup failure returns the failure with empty sets', async () => {

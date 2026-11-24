@@ -641,19 +641,21 @@ function hollowMarked(decisionsText, pr, n) {
   });
 }
 
-// The run's PR number: run-state's `pr.number`, else the PR `prStates.byBranch` finds for the run's branch
+// The run's PR number: run-state's `pr.number`, else the PR `prStates.byBranchAsync` finds for the run's branch
 // (the live worktree entry's branch for `state.worktree`, else fallbackBranch — releaseMerged's join). null
-// when neither gives one; throws on a transient byBranch answer. `worktrees` is a lazy reader of the parsed `git worktree list`.
-function hollowCandidatePr(root, dir, state, prStates, worktrees) {
+// when neither gives one; throws on a transient by-branch answer. `worktrees` is a lazy reader of the parsed `git worktree list`.
+async function hollowCandidatePr(root, dir, state, prStates, worktrees) {
   const stamped = state && state.pr && state.pr.number;
   if (Number.isInteger(stamped) && stamped > 0) return stamped;
-  if (typeof prStates.byBranch !== 'function') return null;
+  if (typeof prStates.byBranchAsync !== 'function') return null;
   const wtEntry = state && state.worktree
     ? worktrees().find((w) => path.resolve(w.path) === path.resolve(state.worktree))
     : null;
   const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
   if (!branch) return null;
-  const found = prStates.byBranch(branch);
+  // freshNull, as releaseMerged joins the same branch: a "no PR" persisted by an earlier pass is re-asked live,
+  // so detection never accepts a stale null that release then bypasses to find (and settle) the merged PR.
+  const found = await prStates.byBranchAsync(branch, { freshNull: true });
   // A transient answer leaves the run's PR unknown: the caller holds the run. A definitive one has no PR.
   if (found === TRANSIENT_PR_FAILURE) throw new Error(`branch ${branch} PR lookup: ${found}`);
   const number = found && typeof found === 'object' ? found.number : null;
@@ -690,7 +692,7 @@ async function detectHollowMerges({
     const commented = [];
     let pr = null;
     try {
-      pr = hollowCandidatePr(root, dir, state, prStates, worktrees);
+      pr = await hollowCandidatePr(root, dir, state, prStates, worktrees);
       if (pr === null) continue;
       const prState = await prStates.byNumberAsync(pr);
       // A transient answer leaves the merge unknown: held. A definitive one (OPEN, CLOSED, `gh-absent`,
