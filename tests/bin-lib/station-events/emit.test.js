@@ -11,6 +11,7 @@ const { appendGitConfigEnv } = require('../../../tools/run-tests');
 const {
   appendStationEvent, buildLine, eventKey, toRepoName, stationEventPath, EXCLUDE_ENTRIES, ensureLocalExclude,
 } = require('../../../plugin/bin/lib/station-events/emit');
+const { REASON_UNSPECIFIED } = require('../../../plugin/bin/lib/station-events/stations');
 
 const FIXED_NOW = () => new Date('2026-11-19T08:00:00.000Z');
 
@@ -327,4 +328,218 @@ test('an unwritable exclude never drops the event', () => {
   assert.equal(excludeHits, 1);
   assert.equal(stderr.calls.length, 0);
   assert.equal(readLines(root).lines.length, 1);
+});
+
+// --- station-event vocabulary: contract validation (#6146) ---
+
+function writtenLine(overrides) {
+  const root = scratchDir('ct-station-events-');
+  const { stderr, d } = deps(root);
+  const result = appendStationEvent(event(overrides), d);
+  assert.equal(result.written, true, `expected written: ${JSON.stringify(result)}`);
+  const { lines } = readLines(root);
+  assert.equal(lines.length, 1);
+  return { line: lines[0], stderr };
+}
+
+function dropped(overrides, fieldRe) {
+  const root = scratchDir('ct-station-events-');
+  const { stderr, d } = deps(root);
+  const result = appendStationEvent(event(overrides), d);
+  assert.equal(result.written, false);
+  assert.match(result.reason, fieldRe);
+  assert.equal(stderr.calls.length, 1);
+  assert.match(stderr.calls[0], /station event dropped/);
+  assert.equal(fs.existsSync(stationEventPath(root)), false);
+}
+
+const exitedEvent = (outcome, payload) => ({ kind: 'exited', outcome, payload });
+
+test('AC1.1 AC3.1: exited sent-back without next is dropped with a reason', () => {
+  dropped(exitedEvent('sent-back', { actor: 'agent', reasonCode: 'test-failed' }), /next/);
+  dropped(exitedEvent('sent-back', { actor: 'agent', reasonCode: 'test-failed', next: 'nowhere' }), /next/);
+  const { line } = writtenLine(exitedEvent('sent-back', { actor: 'agent', reasonCode: 'test-failed', next: 'build' }));
+  assert.equal(line.payload.next, 'build');
+});
+
+test('exited failed carrying an actor but no reasonCode is written with reasonCode unspecified', () => {
+  for (const outcome of ['failed', 'stopped']) {
+    const payload = { actor: 'agent' };
+    const { line, stderr } = writtenLine(exitedEvent(outcome, payload));
+    assert.equal(line.payload.reasonCode, 'unspecified');
+    assert.equal('reasonText' in line.payload, false);
+    assert.equal(stderr.calls.length, 0);
+    assert.equal('reasonCode' in payload, false);
+  }
+});
+
+test('an unknown reasonCode is rewritten to unspecified and the original kept in reasonText', () => {
+  let { line } = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: 'made-up' }));
+  assert.equal(line.payload.reasonCode, 'unspecified');
+  assert.equal(line.payload.reasonText, 'made-up');
+  ({ line } = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: 'made-up', reasonText: 'flaky ci' })));
+  assert.equal(line.payload.reasonText, 'made-up: flaky ci');
+  ({ line } = writtenLine(exitedEvent('stopped', { actor: 'person', reasonCode: 'withdrawn' })));
+  assert.deepEqual(line.payload, { actor: 'person', reasonCode: 'withdrawn' });
+});
+
+test('exited passed with actor script is written', () => {
+  let { line } = writtenLine(exitedEvent('passed', { actor: 'script' }));
+  assert.equal(line.payload.actor, 'script');
+  assert.equal('reasonCode' in line.payload, false);
+  ({ line } = writtenLine(exitedEvent('passed', { actor: 'rule:auto-merge' })));
+  assert.equal(line.payload.actor, 'rule:auto-merge');
+  dropped(exitedEvent('passed', { actor: 'robot' }), /actor/);
+  dropped(exitedEvent('stopped', {}), /actor/);
+});
+
+test('a planned or replanned line with an unknown or missing reasonCode is written with reasonCode unspecified', () => {
+  let { line } = writtenLine({
+    kind: 'planned',
+    payload: { process: 'build-a-record', processVersion: 1, list: 'default', stations: ['build', 'test'], reasonCode: 'made-up' },
+  });
+  assert.equal(line.payload.reasonCode, 'unspecified');
+  assert.equal(line.payload.reasonText, 'made-up');
+  ({ line } = writtenLine({ kind: 'replanned', payload: { stations: ['test'], cause: { kind: 'config' } } }));
+  assert.equal(line.payload.reasonCode, 'unspecified');
+  assert.equal('reasonText' in line.payload, false);
+});
+
+test('a decided line with an unknown actor is dropped', () => {
+  const payload = { decision: 'accept', actor: 'robot', via: 'panel', outcomeRef: 'abc' };
+  dropped({ kind: 'decided', payload }, /actor/);
+  const { line } = writtenLine({ kind: 'decided', payload: { ...payload, actor: 'person' } });
+  assert.equal(line.payload.actor, 'person');
+});
+
+test('a retired outcome carrying an actor is written unchanged', () => {
+  const { line } = writtenLine(exitedEvent('returned', { actor: 'robot' }));
+  assert.deepEqual(line.payload, { actor: 'robot' });
+});
+
+test('a passed line with no actor is written unchanged', () => {
+  const { line } = writtenLine(exitedEvent('passed', { step: 'worker' }));
+  assert.deepEqual(line.payload, { step: 'worker' });
+});
+
+test('a failed line with no actor and no reasonCode is written unchanged', () => {
+  const payload = { reason: 'failed: test', link: null };
+  const { line } = writtenLine(exitedEvent('failed', payload));
+  assert.deepEqual(line.payload, payload);
+});
+
+test('a sent-back with no actor is dropped', () => {
+  dropped(exitedEvent('sent-back', { reasonCode: 'test-failed', next: 'build' }), /actor/);
+});
+
+test('held with an unknown why is dropped', () => {
+  dropped({ kind: 'held', payload: { why: 'tired' } }, /why/);
+  dropped({ kind: 'released', payload: {} }, /why/);
+  const { line } = writtenLine({ kind: 'held', payload: { why: 'parked', ref: '#1' } });
+  assert.equal(line.payload.why, 'parked');
+});
+
+test('planned with an unknown station is dropped', () => {
+  dropped({ kind: 'planned', payload: { stations: ['build', 'nowhere'] } }, /stations/);
+  dropped({ kind: 'planned', payload: { stations: 'build' } }, /stations/);
+  dropped({ kind: 'replanned' }, /stations/);
+  writtenLine({ kind: 'planned', payload: { stations: ['build', 'test'], reasonCode: 'default-list' } });
+});
+
+test('AC1.6: a legacy returned outcome is still written', () => {
+  for (const outcome of ['returned', 'skipped', 'abandoned']) {
+    const { line } = writtenLine(exitedEvent(outcome, {}));
+    assert.equal(line.outcome, outcome);
+    assert.deepEqual(line.payload, {});
+  }
+});
+
+test('AC3.2: a dropped line never throws and writes a reason to stderr', () => {
+  for (const [bad, fieldRe] of [[exitedEvent('stopped', null), /actor/], [{ kind: 'held', payload: 'x' }, /why/]]) {
+    const root = scratchDir('ct-station-events-');
+    const { stderr, d } = deps(root);
+    let result;
+    assert.doesNotThrow(() => { result = appendStationEvent(event(bad), d); });
+    assert.equal(result.written, false);
+    assert.match(result.reason, fieldRe);
+    assert.equal(stderr.calls.length, 1);
+  }
+});
+
+test('a drop reason names the field even when the payload value cannot be stringified', () => {
+  dropped({ kind: 'held', payload: { why: Object.create(null) } }, /why/);
+  dropped({ kind: 'held', payload: { why: Symbol('x') } }, /why/);
+  dropped({ kind: 'planned', payload: { stations: [Symbol('x')] } }, /stations/);
+  dropped({ kind: Symbol('x') }, /kind/);
+});
+
+test('a reasonCode that cannot be stringified is normalized, never dropped', () => {
+  const { line } = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: Object.create(null) }));
+  assert.equal(line.payload.reasonCode, REASON_UNSPECIFIED);
+  assert.equal(line.payload.reasonText, '{}');
+  const symbolic = writtenLine(exitedEvent('failed', { actor: 'agent', reasonCode: Symbol('x'), reasonText: 'why' }));
+  assert.equal(symbolic.line.payload.reasonCode, REASON_UNSPECIFIED);
+  assert.equal(symbolic.line.payload.reasonText, 'symbol: why');
+});
+
+test('a planned line with no stations is dropped; an empty replanned is written', () => {
+  dropped({ kind: 'planned', payload: { stations: [] } }, /stations/);
+  const { line } = writtenLine({ kind: 'replanned', payload: { stations: [] } });
+  assert.deepEqual(line.payload.stations, []);
+});
+
+test('an own actor key puts an exit on the new contract, even when its value is undefined', () => {
+  dropped(exitedEvent('failed', { actor: undefined }), /actor/);
+  dropped(exitedEvent('failed', { actor: null }), /actor/);
+});
+
+test('AC2.1: concurrent appends of a planned and an exited line both land intact', async () => {
+  const { execFile } = require('child_process');
+  const root = scratchDir('ct-station-events-');
+  const emitPath = path.join(__dirname, '../../../plugin/bin/lib/station-events/emit.js');
+  // Both children busy-wait to one shared instant so their appends contend for the lock.
+  const startAt = Date.now() + 750;
+  const script = (ev) => `const m = require(${JSON.stringify(emitPath)}); while (Date.now() < ${startAt}) {} m.appendStationEvent(${JSON.stringify(event(ev))}, { mainRoot: ${JSON.stringify(root)} });`;
+  const run = (ev) => new Promise((resolve, reject) => {
+    execFile(process.execPath, ['-e', script(ev)], { windowsHide: true }, (err) => (err ? reject(err) : resolve()));
+  });
+  await Promise.all([
+    run({ kind: 'planned', payload: { stations: ['build', 'test'], reasonCode: 'default-list' } }),
+    run(exitedEvent('passed', { actor: 'agent' })),
+  ]);
+  const { lines } = readLines(root);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => l.kind).sort(), ['exited', 'planned']);
+  assert.equal(fs.existsSync(`${stationEventPath(root)}.lock`), false);
+});
+
+test('AC2.2: every new kind appends inside withLock', () => {
+  const root = scratchDir('ct-station-events-');
+  const file = stationEventPath(root);
+  let appended = 0;
+  const countingFs = { ...fs, appendFileSync: (...args) => { appended += 1; return fs.appendFileSync(...args); } };
+  const calls = [];
+  const recordingLock = (lockPath, fn, opts) => {
+    const call = { lockPath, opts, before: appended };
+    calls.push(call);
+    const result = fn();
+    call.after = appended;
+    return result;
+  };
+  const { d } = deps(root, { fs: countingFs, withLock: recordingLock });
+  const valid = [
+    { kind: 'planned', payload: { stations: ['build'], reasonCode: 'default-list' } },
+    { kind: 'replanned', payload: { stations: ['test'], reasonCode: 'scope-too-big' } },
+    { kind: 'held', payload: { why: 'blocked' } },
+    { kind: 'released', payload: { why: 'blocked' } },
+    { kind: 'decided', payload: { actor: 'person' } },
+    exitedEvent('sent-back', { actor: 'agent', reasonCode: 'test-failed', next: 'build' }),
+  ];
+  for (const ev of valid) assert.equal(appendStationEvent(event(ev), d).written, true);
+  assert.equal(calls.length, valid.length);
+  for (const [i, call] of calls.entries()) {
+    assert.equal(call.lockPath, `${file}.lock`);
+    assert.equal(call.before, i);
+    assert.equal(call.after, i + 1);
+  }
 });

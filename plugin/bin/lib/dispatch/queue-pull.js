@@ -584,7 +584,7 @@ function runFetch(ctx) {
       const autoBuild = readArray(queueFile);
       const current = buildFreshnessSignal([...autoBuild, ...readArray(depFile)]);
       // #5314 (fence 109): an empty queue never reuses the earlier pull's groups.
-      if (autoBuild.length > 0 && cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }).grouping)) {
+      if (autoBuild.length > 0 && cacheUsable(persisted, current, deps.expressQueuePolicy({ stderr: deps.stderr }))) {
         fs.writeFileSync(paths['dispatch-groups.json'], JSON.stringify(persisted.groups));
         state.cacheHit = true;
         state.persisted = persisted;
@@ -893,7 +893,7 @@ function runWriteBack(ctx) {
     const blob = composeOrderBlob({
       computedAt: deps.now().toISOString(),
       runId: runDir ? path.basename(runDir) : null,
-      freshnessSignal, groups, excluded, bundles, grouping: deps.expressQueuePolicy({ stderr: deps.stderr }).grouping,
+      freshnessSignal, groups, excluded, bundles, ...deps.expressQueuePolicy({ stderr: deps.stderr }),
     });
     const result = deps.queueOrder.writeOrder(root, blob);
     if (!result.ok) deps.stderr(`Queue-order cache write-back failed (non-blocking): ${result.error}\n`);
