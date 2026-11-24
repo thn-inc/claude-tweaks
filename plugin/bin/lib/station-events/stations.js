@@ -94,15 +94,7 @@ const DRIVER_STEP_STATIONS = Object.freeze({
 
 // Driver step status -> exited outcome.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
-const DRIVER_STATUS_OUTCOMES = Object.freeze({ ok: OUTCOME.PASSED, fail: OUTCOME.FAILED, stop: OUTCOME.STOPPED });
-
-// Driver step -> who ran it: the script's own steps are `script`, the steps that run a model or
-// the worker's tests are `agent`.
-const DRIVER_STEP_ACTORS = Object.freeze({
-  worker: ACTOR.AGENT, test: ACTOR.AGENT, review: ACTOR.AGENT, pr: ACTOR.SCRIPT, ci: ACTOR.SCRIPT, merge: ACTOR.SCRIPT,
-});
-// A `ci` step line whose detail is one of these CI words is a failure of the read, not of the code.
-const CI_INFRASTRUCTURE_DETAILS = Object.freeze(['read-failed', 'gh-absent', 'no-pr', 'timeout']);
+const DRIVER_STATUS_OUTCOMES = Object.freeze({ ok: 'passed', fail: 'failed', stop: 'returned' });
 
 function outcomeForDriverStatus(status) {
   return Object.prototype.hasOwnProperty.call(DRIVER_STATUS_OUTCOMES, status) ? DRIVER_STATUS_OUTCOMES[status] : null;
@@ -198,6 +190,6 @@ module.exports = {
   STATION, STATIONS, LANES, KIND, KINDS, OUTCOME, OUTCOMES, RETIRED_OUTCOMES, REASON, REASON_UNSPECIFIED, REASON_CODES, ACTOR, ACTORS, HOLD_WHYS, PROCESS,
   BLOCKER_SNAPSHOT_STATION, SESSION_BOUND_STATION,
   PR_OPENED_FACT, PR_OPENED_TRANSITION,
-  DRIVER_STEP_STATIONS, DRIVER_STEP_ACTORS, CI_INFRASTRUCTURE_DETAILS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,
+  DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, LABEL_TRANSITIONS,
   outcomeForReleaseReason, releaseTransition, outcomeForDriverStatus, transitionsForLabel,
 };

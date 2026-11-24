@@ -3,18 +3,7 @@
 // Step lines become a started/exited work segment; three merge sub-steps mark
 // the merge-station visit boundary. Names live in stations.js.
 'use strict';
-const {
-  DRIVER_STEP_STATIONS, DRIVER_STEP_ACTORS, CI_INFRASTRUCTURE_DETAILS, MERGE_SUBSTEP_TRANSITIONS, SESSION_BOUND_STATION,
-  KIND, OUTCOME, REASON, outcomeForDriverStatus,
-} = require('./stations');
-
-// Why a non-passing step exited: a failed test step is `test-failed`, a failed ci step whose detail
-// is a CI read word is `infrastructure`; any other line names no reason, so `unspecified`.
-function reasonFor(step, event) {
-  if (step === 'test' && event.status === 'fail') return REASON.TEST_FAILED;
-  if (step === 'ci' && CI_INFRASTRUCTURE_DETAILS.includes(event.detail)) return REASON.INFRASTRUCTURE;
-  return REASON.UNSPECIFIED;
-}
+const { DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, SESSION_BOUND_STATION, outcomeForDriverStatus } = require('./stations');
 
 const own = (table, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
@@ -41,11 +30,7 @@ function stationEventsFor(event, { repoName, runId } = {}) {
     const ms = Number.isFinite(event.ms) ? event.ms : 0;
     const out = [{ ...base, kind: 'started', station, at: isoOrNull(endMs - ms), payload: { step } }];
     const outcome = outcomeForDriverStatus(status);
-    if (outcome !== null) {
-      const payload = { step, actor: DRIVER_STEP_ACTORS[step] };
-      if (outcome !== OUTCOME.PASSED) payload.reasonCode = reasonFor(step, event);
-      out.push({ ...base, kind: KIND.EXITED, station, at: ts, outcome, payload });
-    }
+    if (outcome !== null) out.push({ ...base, kind: 'exited', station, at: ts, outcome, payload: { step } });
     if (step === 'worker' && nonEmpty(event.sessionId)) {
       out.push({ ...base, kind: 'session_bound', station: SESSION_BOUND_STATION, at: ts, sessionId: event.sessionId, payload: { step } });
     }
