@@ -53,9 +53,11 @@ Render the markdown below, substituting placeholders. Generate field values from
 (or omit this section: Common Step 1.6 amended nothing, or a run directory exists — `decisions.md` carries them as `AUTO` entries instead.)
 
 ### Implementer profile (standalone build)
-- implementer profile {profile} (rule: {rule}, size: {size}, key files: {count})
+- implementer profile {profile} (rule: {rule}, size: {size}, key files: {count}) effort {startEffort}
 - task {k} implementer escalated {from} → {to} ({trigger})
-(or omit this section: a run directory exists — `decisions.md` carries both as `AUTO` entries — or the build was design mode; omit the escalation line when no task escalated.)
+- task {k} implementer escalated {from-profile}@{from-effort} → {to-profile}@{to-effort} ({trigger}) (effort ladder)
+- task {k} implementer start {profile}@{effort} (role: {role}) (a `**Role:**` marker's task under the ladder)
+(or omit this section: a run directory exists — `decisions.md` carries them as `AUTO` entries — or the build was design mode; omit an escalation or start line when none happened.)
 
 ### Manual Steps Required
 | # | What | Where |

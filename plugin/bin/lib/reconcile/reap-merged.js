@@ -262,8 +262,11 @@ async function prefetchReapPrStates(root, prStates) {
   await prStates.prefetch({ branches });
 }
 
+// `heldWorktrees` (real paths) and `heldBranches`: what the runs reconcile holds as hollow merges own
+// (post-merge.js's hollowRunRefs, #6143). Such a worktree is skipped `hollow-merge`, so the run stays resumable.
 function reapMerged({
   cwd, dryRun = false, releasePorts = releasePortsDefault, runner, fsRmSync, platform, prStates, gateDeps,
+  heldWorktrees = [], heldBranches = [],
 } = {}) {
   const reaped = [];
   const skipped = [];
@@ -287,11 +290,14 @@ function reapMerged({
   const cacheBatch = beginCacheBatch(root);
   const runMemo = createRunLookupMemo();
   const domain = safeReal(path.join(root, HARNESS_WORKTREE_DIR)) || path.join(root, HARNESS_WORKTREE_DIR);
+  const hollowWorktrees = new Set(heldWorktrees);
+  const hollowBranches = new Set(heldBranches);
   for (const wt of parseWorktreeList(list.stdout)) {
     const real = safeReal(wt.path);
     if (!real || real === root || wt.bare) continue; // never the main checkout
     if (!isPathContained(real, domain)) continue; // out of harness domain — not this check's concern
 
+    if (hollowWorktrees.has(real) || (wt.branch && hollowBranches.has(wt.branch))) { skipped.push({ path: real, reason: 'hollow-merge' }); continue; }
     if (!wt.branch) { skipped.push({ path: real, reason: 'no-branch' }); continue; }
     // Regardless of PR state, lock state, or anything else below — a
     // worktree the caller is standing in is never a reap candidate (#644).

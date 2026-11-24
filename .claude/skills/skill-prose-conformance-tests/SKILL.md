@@ -92,6 +92,8 @@ When the pinned prose deliberately mirrors canonical text in another file, or is
 
 When the prose tells the reader to run a CLI, pin the whole call line including each argument's value, not the command and flag alone. #5999's first pin ended at `--spec-file`, so reverting the argument to a path that does not exist in the worktree stayed green until a review lens caught it. The shipped pin is the full literal `node "${CLAUDE_PLUGIN_ROOT}/bin/implementer-tier.js" --spec-file "{spec-file}"` (`CLI_CALL` in `tests/build-implementer-tier-conformance.test.js`).
 
+A literal pin freezes the prose, not the CLI: rename a flag in the `bin/` script and the pinned line stays green while the documented command breaks at runtime. Also check each `--flag` in the pinned line against the CLI's own `--help` usage, with a go-red that renames one flag. #6003's review caught its launcher start line and `merge-lens-replies` call byte-pinned as text only (`checkFlagsAccepted` in `tests/review-lens-worker-dispatch-conformance.test.js`).
+
 ### Import the shipped parser's constants; never retype them into the test's own helper
 
 When the corpus sweep needs the same recognizer a shipped module already owns — a marker regex, a

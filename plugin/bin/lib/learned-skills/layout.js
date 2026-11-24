@@ -15,6 +15,9 @@ const STATUSES = Object.freeze(Object.values(STATUS));
 
 function patchDir(runDir) { return path.join(runDir, 'learned-skills'); }
 
+// The own PR's drain outcome, beside the manifest: wrap-up's Skills row reads it.
+function drainPath(runDir) { return path.join(patchDir(runDir), 'drain.json'); }
+
 function manifestPath(runDir) { return path.join(patchDir(runDir), 'manifest.json'); }
 
 // A captured patch named where it now lives, beside the manifest: the manifest stores an absolute path,
@@ -39,4 +42,4 @@ function firstBadEntry(entries) {
   return null;
 }
 
-module.exports = { STATUS, patchDir, manifestPath, localPatchPath, firstBadEntry };
+module.exports = { STATUS, patchDir, manifestPath, drainPath, localPatchPath, firstBadEntry };

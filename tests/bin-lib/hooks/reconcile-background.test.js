@@ -250,6 +250,20 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
+test('reconcile-background summary: carries held hollow merges (#6143), empty when none', async () => {
+  const held = await backgroundSummaryFor({
+    hollowMerges: [
+      { runDir: '/r/a', runId: 'run-a', pr: 7, action: 'held', reason: 'hollow-merge', phase: 'build', records: [1], commented: [1] },
+      { runDir: '/r/b', runId: 'run-b', pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'x' },
+    ],
+  });
+  assert.deepEqual(held.hollowMerges, [
+    { runId: 'run-a', pr: 7, reason: 'hollow-merge', phase: 'build' },
+    { runId: 'run-b', pr: null, reason: 'hollow-check-failed' },
+  ]);
+  assert.deepEqual((await backgroundSummaryFor({})).hollowMerges, []);
+});
+
 test("reconcile-background summary: the banner drops reap-merged's 'held' and 'in-use' skips but keeps held-unverifiable (#4960)", async () => {
   const summary = await backgroundSummaryFor({
     worktrees: [

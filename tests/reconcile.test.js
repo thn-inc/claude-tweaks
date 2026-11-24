@@ -1250,6 +1250,7 @@ test('reconcile: an archive merged-partial skip carries unclosed through to resu
   const pr = {
     number: 3503100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     closingIssuesReferences: [{ number: 3306, repository: { name: 'w', owner: { login: 'acme' } } }],
+    body: '', // read by the hollow-merge check (#6143); no run marker, so the run settles as before
   };
   const restore = installStub('gh', [
     '#!/bin/sh',
@@ -1300,6 +1301,7 @@ test('reconcile: an archive tiebreak-coverage-missing skip carries missing and h
   const pr = {
     number: 3945100, state: 'MERGED', mergedAt: '2026-10-22T00:00:00Z', updatedAt: '2026-10-22T00:00:00Z',
     closingIssuesReferences: [{ number: 3945, repository: { name: 'w', owner: { login: 'acme' } } }],
+    body: '', // read by the hollow-merge check (#6143); no run marker, so the run settles as before
   };
   const restore = installStub('gh', [
     '#!/bin/sh',

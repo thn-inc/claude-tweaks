@@ -21,7 +21,7 @@ files:
 - **Action:** set the key. A `dontAsk` or headless session also needs the allow rule `Workflow(claude-tweaks:review-lens-fanout)`; the plugin adds none.
 - **Should feel:** a one-line, reversible switch; removing it restores today's dispatch exactly.
 - **Should understand:** an invalid value resolves to `task`; a session on an older plugin release ignores the key, and its policy audit names it as unrecognised.
-- **Red flags:** the resolver printing anything but `task` or `workflow`; a session that never had the allow rule silently "working" because every review fell back.
+- **Red flags:** the resolver printing anything but `task`, `workflow` or `worker` (the headless-worker path, #6003); a session that never had the allow rule silently "working" because every review fell back.
 
 ### 2. Start the workflow — the review session
 - **URL:** the `Workflow dispatch (opt-in, #5599)` pointer in `step3-lens-dispatch.md` sends Step 3 to `plugin/skills/review/step3-workflow-dispatch.md` (only when the key resolves `workflow`); one `Workflow` call to `claude-tweaks:review-lens-fanout` with `args: { lenses: [{ lens, brief, model, reviewers }] }`

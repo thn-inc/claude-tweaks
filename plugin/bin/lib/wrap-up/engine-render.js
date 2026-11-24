@@ -45,6 +45,22 @@ function hasPr(pr) {
   return typeof pr === 'string' && pr !== '';
 }
 
+// The drain's outcome for this run's own learned-skills PR (drain.json,
+// written by learned-skills-pr.js drain). Applies only to the PR URL ending
+// /pull/{drain.pr}; any other shape or PR renders as before.
+const DRAIN_OUTCOMES = new Set(['merged', 'armed', 'conflicting', 'left-open']);
+function prWithDrain(pr, drain) {
+  const text = `learned-skills PR ${pr}`;
+  if (!drain || typeof drain !== 'object' || !DRAIN_OUTCOMES.has(drain.outcome)) return text;
+  const n = String(drain.pr);
+  if (!/^[1-9]\d*$/.test(n) || !pr.endsWith(`/pull/${n}`)) return text;
+  if (drain.outcome === 'left-open') {
+    return typeof drain.reason === 'string' && drain.reason !== ''
+      ? `${text} — left open: ${drain.reason}` : `${text} — left open`;
+  }
+  return `${text} — ${drain.outcome}`;
+}
+
 function findingCounts(findings) {
   const applied = (findings || []).filter((f) => f.action === 'applied').length;
   const staged = (findings || []).filter((f) => f.action === 'staged').length;
@@ -66,14 +82,14 @@ function formatResultCell(entry) {
   return String(entry.result);
 }
 
-function formatDetailCell(entry) {
+function formatDetailCell(entry, drain) {
   if (!entry) return '';
   const parts = [];
   if (entry.detail) parts.push(entry.detail);
   // Learned-skills PR: each distinct non-empty pr on an applied finding is
   // named once (matches dispositionFor — a staged finding is not on the PR).
   const prs = [...new Set((entry.findings || []).filter((f) => f.action === 'applied').map((f) => f.pr).filter(hasPr))];
-  for (const pr of prs) parts.push(`learned-skills PR ${pr}`);
+  for (const pr of prs) parts.push(prWithDrain(pr, drain));
   return parts.join(' · ');
 }
 
@@ -94,7 +110,7 @@ function isRowEmpty(entry) {
   return false;
 }
 
-function renderTrace(state) {
+function renderTrace(state, opts = {}) {
   const rows = worklistRows(state.worklist);
   const results = state.results || {};
 
@@ -113,7 +129,7 @@ function renderTrace(state) {
 
   for (const row of rows) {
     const entry = results[row.id];
-    lines.push(`| ${row.target} | ${formatResultCell(entry)} | ${formatDetailCell(entry)} |`);
+    lines.push(`| ${row.target} | ${formatResultCell(entry)} | ${formatDetailCell(entry, opts.drain)} |`);
   }
 
   const markdown = lines.join('\n');
@@ -135,10 +151,10 @@ const SECTION_SPECS = [
   { rowIds: ['references'], title: 'Reference repairs' },
 ];
 
-function dispositionFor(finding) {
+function dispositionFor(finding, drain) {
   if (finding.action === 'applied') {
     return hasPr(finding.pr)
-      ? `applied (${finding.commit}, learned-skills PR ${finding.pr})`
+      ? `applied (${finding.commit}, ${prWithDrain(finding.pr, drain)})`
       : `applied (${finding.commit})`;
   }
   if (finding.action === 'staged') return `staged (${finding.stagePath})`;
@@ -158,7 +174,7 @@ function collectFindings(results, rowIds) {
   return findings;
 }
 
-function renderConsoleSections(state, { startAt = 1 } = {}) {
+function renderConsoleSections(state, { startAt = 1, drain } = {}) {
   const results = state.results || {};
   let n = startAt;
   const blocks = [];
@@ -169,7 +185,7 @@ function renderConsoleSections(state, { startAt = 1 } = {}) {
 
     const tableLines = ['| # | Target | Change | Disposition |', '|---|---|---|---|'];
     for (const finding of findings) {
-      tableLines.push(`| ${n} | ${finding.targetPath} | ${finding.summary} | ${dispositionFor(finding)} |`);
+      tableLines.push(`| ${n} | ${finding.targetPath} | ${finding.summary} | ${dispositionFor(finding, drain)} |`);
       n += 1;
     }
     blocks.push(`#### ${spec.title}\n\n${tableLines.join('\n')}`);
@@ -180,6 +196,7 @@ function renderConsoleSections(state, { startAt = 1 } = {}) {
   return { markdown, nextNumber: n };
 }
 
+// No drain suffix here, deliberately: drain.json is per single run dir, and this renders many specs' states.
 function renderConsoleSectionsMulti(specStates, { startAt = 1 } = {}) {
   let n = startAt;
   const blocks = [];

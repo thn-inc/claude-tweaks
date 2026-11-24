@@ -33,7 +33,7 @@
 //   node bin/learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>
 //
 // `land` commits each captured patch (plumbing, on a temp index) to learned-skills/{run-id}, pushes it and
-// opens a ready PR that is never armed; a patch that cannot ride it is staged instead. `stage` stages
+// opens a ready PR that land never merges (wrap-up's drain does, when learned-skills-auto-merge is on); a patch that cannot ride it is staged instead. `stage` stages
 // every captured patch (local-merge). --merge-base (required) marks a captured entry whose edit the
 // run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice.
 // Stdout is one JSON line (pr is set only when confirmed open in this call):
@@ -49,6 +49,16 @@
 //   prBodyStale — commits were added to the open PR but its body could not be rewritten: the landed
 //                 entries stand; the caller names the PR in an open wrap-up ledger item
 //   staged[] rows an earlier call already staged carry that call's stagePath (no second file or line)
+//
+//   node bin/learned-skills-pr.js drain --run <run-dir> --integration-branch <name> [--own-pr <n>] [--repo <owner/name>]
+//
+// `drain` merges the open learned-skills PRs that are green (Step 2.5's semantics, lib/learned-skills/drain.js)
+// when the learned-skills-auto-merge lever resolves true; otherwise it reports {disabled:true}. The CLI reads
+// the two levers (learned-skills-auto-merge, merge-verification) through resolve-policy.js, anything but the
+// literal `true` meaning off. Without gh it reads no repo and prints the library's no-gh result (exit 0); with
+// gh, --repo defaults to the current repo (a read failure is exit 1). Stdout is one JSON line:
+//   drain: {merged: [n], armed: [n], leftOpen: [{pr, reason[, detail]}], conflicting: [n], rebuilt: [n][, disabled]}
+//   exit 0 any outcome; 1 a listing or repo-read failure; 2 malformed call (--own-pr not a positive integer)
 //
 // Exit 0 ok (every route above, staged included)
 //      1 a git failure before the diff was read — nothing was changed; the caller commits on the run
@@ -73,10 +83,15 @@ const path = require('path');
 const { capture, realDeps: libDeps, UsageError, StagingFailure } = require('./lib/learned-skills/learned-skills');
 const { land, stage } = require('./lib/learned-skills/land');
 const { resolveTarget } = require('./lib/stage-item/write');
+const { drain } = require('./lib/learned-skills/drain');
+const { ghAvailable } = require('./lib/repo-resolve');
+const { execFileSync } = require('child_process');
 
 const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <abs> --merge-base <sha> --target <repo-rel> --summary-file <path> [--row <row-id>]\n'
   + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> --merge-base <sha>\n'
   + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>\n'
+  + '       learned-skills-pr.js drain --run <run-dir> --integration-branch <name> [--own-pr <n>] [--repo <owner/name>]\n'
+  + '  drain prints {merged, armed, leftOpen, conflicting, rebuilt[, disabled]}; exit 0 any outcome, 1 a listing or repo-read failure\n'
   + '  land / stage print one JSON line ({branch, pr, landed, staged} / {staged}); exit 1 when a staged write failed\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
   + '  staged results may carry patch (the file holding the edit when the stage is description-only or unvalidated),\n'
@@ -90,10 +105,12 @@ const VERBS = {
   capture: ['--run', '--worktree', '--merge-base', '--target', '--summary-file'],
   land: ['--run', '--worktree', '--record', '--integration-branch', '--merge-base'],
   stage: ['--run', '--worktree', '--reason', '--merge-base'],
+  drain: ['--run', '--integration-branch'],
 };
 const FLAGS = {
   '--run': 'run', '--worktree': 'worktree', '--merge-base': 'mergeBase', '--target': 'target', '--summary-file': 'summaryFile',
   '--record': 'record', '--integration-branch': 'integrationBranch', '--reason': 'reason', '--row': 'row',
+  '--own-pr': 'ownPr', '--repo': 'repo',
 };
 const REPEATABLE = new Set(['--record']);
 
@@ -113,7 +130,24 @@ function parseArgs(argv) {
   return o;
 }
 
+// The two levers drain reads: one resolve-policy.js call, two lines. Anything but the literal `true` is off.
+function defaultResolvePolicy(runDir, exec = execFileSync) {
+  try {
+    const out = exec(process.execPath, [path.join(__dirname, 'resolve-policy.js'), '--run', runDir, '--values', 'learned-skills-auto-merge,merge-verification'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    });
+    const lines = String(out).split(/\r?\n/);
+    return { autoMerge: (lines[0] || '').trim() === 'true', mergeVerification: (lines[1] || '').trim() };
+  } catch {
+    return { autoMerge: false, mergeVerification: '' };
+  }
+}
+
 const realDeps = {
+  ghAvailable,
+  resolvePolicy: defaultResolvePolicy,
+  repoView: () => libDeps.gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']),
+  drainLib: drain,
   cwd: () => process.cwd(),
   mainRoot: undefined, // resolveTarget derives the main-checkout anchor from cwd
   resolveTarget,
@@ -130,7 +164,7 @@ function run(argv, overrides = {}) {
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
-  if (!o.verb) return usageError('a verb is required (capture, land, stage)');
+  if (!o.verb) return usageError('a verb is required (capture, land, stage, drain)');
   if (!Object.hasOwn(VERBS, o.verb)) return usageError(`unknown verb: ${o.verb}`);
   for (const flag of VERBS[o.verb]) if (!o[FLAGS[flag]]) return usageError(`${flag} is required`);
 
@@ -147,6 +181,7 @@ function run(argv, overrides = {}) {
       : `--run ${o.run} is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/, or outside every checkout) — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path`);
   }
 
+  if (o.verb === 'drain') return runDrain(o, target, deps, usageError);
   if (o.verb !== 'capture') return runDelivery(o, target, deps, usageError);
 
   let summary;
@@ -193,6 +228,34 @@ function runDelivery(o, target, deps, usageError) {
   }
 }
 
-module.exports = { run, parseArgs, USAGE };
+// drain: resolve the levers, then one library call; the result is one JSON line, exit 0 whatever it holds.
+function runDrain(o, target, deps, usageError) {
+  if (o.ownPr !== undefined && !/^[1-9]\d*$/.test(o.ownPr)) return usageError(`--own-pr must be a positive integer: ${o.ownPr}`);
+  const fail = (message) => { deps.stderr(`learned-skills-pr.js: drain failed: ${message}\n`); return 1; };
+  try {
+    const { autoMerge, mergeVerification } = deps.resolvePolicy(target.dir);
+    const common = { runDir: target.dir, integrationBranch: o.integrationBranch, ownPr: o.ownPr ? Number(o.ownPr) : undefined, autoMerge: autoMerge === true, mergeVerification, cwd: deps.cwd() };
+    let result;
+    if (!common.autoMerge) {
+      // The lever is off: the library reports {disabled:true} before it reads anything, so neither gh nor the repo is touched.
+      result = deps.drainLib({ ...common, repo: o.repo });
+    } else if (!deps.ghAvailable()) {
+      result = deps.drainLib({ ...common, repo: o.repo }, { ghAvailable: () => false });
+    } else {
+      let repo = o.repo;
+      if (!repo) {
+        try { repo = String(deps.repoView()).trim(); } catch (e) { return fail(`could not read the repository: ${(e && e.message) || e}`); }
+        if (!repo) return fail('could not read the repository: empty answer');
+      }
+      result = deps.drainLib({ ...common, repo });
+    }
+    deps.stdout(JSON.stringify(result) + '\n');
+    return 0;
+  } catch (e) {
+    return fail((e && e.message) || String(e));
+  }
+}
+
+module.exports = { run, parseArgs, USAGE, defaultResolvePolicy, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

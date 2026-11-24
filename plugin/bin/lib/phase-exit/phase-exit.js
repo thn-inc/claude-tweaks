@@ -4,6 +4,10 @@
 // _shared/pr-checklist-refresh.md's Phase-checklist update used to spell out,
 // and keeps each guard that prose left to the reader as its own branch:
 //
+//   0. Phase-exit record (#6143, lib/phase-exit/exit-record.js): one AUTO `Phase exit`
+//      line, `{phase} phase exited at {head}`, under the phase's section, in every
+//      route, ahead of every other line and the push -- unless the run is closed
+//      (see 4). lib/flow/inflight-run.js reads it as that phase finished.
 //   1. Route. `git rev-parse --git-dir --git-common-dir` equal -> current-branch
 //      (no worktree branch: no bookkeeping, no push). Else integration-model via
 //      resolve-policy.js's core, in-process: local-merge -> no push, no gh; pr-first -> on.
@@ -55,6 +59,7 @@
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { formatEntry, appendEntry } = require('../log-decision/append');
+const { PHASE_EXIT_STEP, phaseExitText } = require('./exit-record');
 const { readRunStateWithParent, appendEvent, readEventLines } = require('../hooks/context');
 const { prStampReleased, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
@@ -169,6 +174,12 @@ function runPhaseExit(opts, overrides = {}) {
   env.branch = firstLine(tryGit(['-C', wt, 'branch', '--show-current'])) || null;
   env.head = firstLine(tryGit(['-C', wt, 'rev-parse', 'HEAD'])) || null;
 
+  // 0. The phase-exit record, ahead of every route's own lines and any push. A closed run is never written.
+  let state = null;
+  try { state = deps.readRunState(runDir); } catch { state = null; }
+  const closed = isClosedRun(state, runDir);
+  if (!closed) log('AUTO', PHASE_EXIT_STEP, phaseExitText(phase, env.head));
+
   if (path.resolve(wt, gitDir) === path.resolve(wt, commonDir)) {
     env.route = 'current-branch';
     env.bookkeeping = { worktree: 'n/a', pr: 'n/a' };
@@ -188,10 +199,6 @@ function runPhaseExit(opts, overrides = {}) {
     return env;
   }
   env.route = model;
-
-  let state = null;
-  try { state = deps.readRunState(runDir); } catch { state = null; }
-  const closed = isClosedRun(state, runDir);
 
   if (model === 'local-merge') {
     env.bookkeeping = bookkeeping({ deps, runDir, wt, phase, state, closed, log, prFirst: false, branch: null });

@@ -36,7 +36,7 @@ files:
 - **URL:** no command — say "show advanced" in chat
 - **Action:** Ask to see the advanced-tier levers still on default.
 - **Should feel:** A free follow-up, not a new decision — no confirmation, no new question.
-- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The levers listed here (the deploy, dev and acceptance keys, `trusted-authors` and `learned-skills-auto-merge`) show summaries opening "Not yet used". Setting them today changes nothing, until the record that wires each one lands (#4816) — a #4608 record, or for `learned-skills-auto-merge` #6088's learned-skills drain sub-issue.
+- **Should understand:** This expands in-conversation from the same held snapshot; it never triggers a new `AskUserQuestion` — the mode has exactly one, reserved for the apply step below. The levers listed here (the deploy, dev and acceptance keys and `trusted-authors`) show summaries opening "Not yet used". Setting them today changes nothing, until the record that wires each one lands (#4816) — a #4608 record. `learned-skills-auto-merge` is read by wrap-up's drain (#6112) and carries no marker.
 - **Red flags:** A second `AskUserQuestion` call firing here; a control-mode lever presented as if setting it changes behavior today.
 
 ### 4. Answer the one apply question — `AskUserQuestion`
@@ -62,3 +62,4 @@ Reviewing configuration this way is read-only-safe up through Step 3 — `/claud
 - Updated by #4492: Step 5 names the worktree-fallback branch. A worktree that reads the main checkout's policy gets paste-ready commands, never a worktree-local file that would hide the main checkout's keys
 - Updated by #6109: Step 3's "Not yet used" lever list gains `learned-skills-auto-merge`
 - Updated by #4816: Step 2 red flag for the CRLF `model-profiles` audit blind spot, now closed; Step 3 notes the "Not yet used" marker on control-mode lever summaries
+- Updated by #6112: Step 3's "Not yet used" lever list drops `learned-skills-auto-merge`; wrap-up's drain reads it
