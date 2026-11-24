@@ -760,6 +760,12 @@ for (const [label, cmd, expected] of [
   });
 }
 
+// #4245: a backslash-newline continuation is no word (#4281), so git after `&& \` or `-C /M \` is seen.
+test('#4245: gitTargets sees git after a backslash-newline continuation', () => {
+  assert.deepStrictEqual(gitTargets('cd /M && \\\n git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+  assert.deepStrictEqual(gitTargets('git -C /M \\\n  commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+});
+
 test('#4149: an absolute -C after a brace group is reported once', () => {
   assert.deepStrictEqual(gitTargets('{ cd /main; }; git -C /x commit -m x', '/wt'), [{ action: 'commit', dir: path.resolve('/x') }]);
 });

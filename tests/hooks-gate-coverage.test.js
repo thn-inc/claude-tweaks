@@ -4319,3 +4319,13 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
   assert.notStrictEqual(decisionFor('node x.js <<EOF\nif (openIds.length > 0) b();\nEOF'), 'deny');
   assert.strictEqual(decisionFor('node x.js <<EOF\nif (openIds.length > 0) b();\nEOF\necho x > tracked-file.js'), 'deny');
 });
+
+// #4245: a backslash-newline continuation is no word (#4281), so the write after `&& \` is seen.
+test('#4245: fileWriteTargets sees a cp after a backslash-newline continuation', () => {
+  assert.deepStrictEqual(fileWriteTargets('true && \\\n cp x /M/b', '/r'), [{ action: 'copy', file: path.resolve('/M/b') }]);
+  assert.deepStrictEqual(fileWriteTargets('cd /M && \\\n cp x b', '/r'), [{ action: 'copy', file: path.resolve('/M/b') }]);
+});
+
+test('#4245: a single-quoted backslash-newline keeps its literal', () => {
+  assert.deepStrictEqual(fileWriteTargets("echo 'a\\\nb' > f", '/r'), [{ action: 'write', file: path.resolve('/r/f') }]);
+});
