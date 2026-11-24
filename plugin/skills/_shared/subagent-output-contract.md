@@ -164,6 +164,8 @@ A `/claude-tweaks:review` lens fan-out may run through `plugin/workflows/review-
 
 A gate rule written for `Agent` and `Task` calls (the PreToolUse dispatch-prompt gate) does not see a workflow agent's prompt; the plugin's PreToolUse hook does fire for a workflow agent's own tool calls.
 
+The fan-out may instead run headless: under `worker`, `review-lens-workers.js` runs each brief as a headless worker in the `lens-reviewer` role. The brief, with the context bundle inlined ahead of it, is the worker's only input; its reply is free text carrying the brief's `STATUS:` line and Template A, settled by `settle-lens-replies` as above; and its model is the lens's resolved `model`. The Task dispatch stays the fallback (`/claude-tweaks:review`'s `step3-worker-dispatch.md`).
+
 ## Re-prompt on violation
 
 When an agent returns malformed output — a wrong or missing status line, no table, narration before the table, wrong columns — the dispatcher re-prompts:
