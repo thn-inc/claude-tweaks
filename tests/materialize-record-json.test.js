@@ -159,3 +159,20 @@ test('gh absent, --record-json absent: exits 2 naming both the existing message 
     assert.match(err, /--record-json/);
   });
 });
+
+test('#6002: the header carries risk only for exactly one valid risk label, so a duplicated label never lowers the standard lane', () => {
+  const header = (labels) => {
+    const repo = gitRepo();
+    return withCwd(repo, () => {
+      const recordFile = path.join(repo, 'record.json');
+      fs.writeFileSync(recordFile, JSON.stringify({ number: 1459, title: 'Test record', body: SHAPED_BODY, labels: labels.map((name) => ({ name })), url: 'https://example.invalid/1459' }));
+      const deps = fakeDepsNoGh();
+      const exitCode = run(['1459', '--run-dir', runDirFor(repo), '--record-json', recordFile], deps);
+      assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+      return fs.readFileSync(JSON.parse(deps.calls.stdout.join('')).file, 'utf8').split('\n---\n')[0];
+    });
+  };
+  assert.match(header(['ceremony:standard', 'risk:low']), /\nrisk: low\n/);
+  assert.doesNotMatch(header(['ceremony:standard', 'risk:high', 'risk:low']), /\nrisk:/);
+  assert.doesNotMatch(header(['ceremony:standard', 'risk:extreme']), /\nrisk:/);
+});
