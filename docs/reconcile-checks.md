@@ -12,13 +12,15 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
   finished with. The hollow-merge detection pre-step (#6143, `post-merge.js`'s `detectHollowMerges`) runs
-  immediately before `release` whenever `release`, `post-merge` or `archive` is in the pass: it finds merged PRs
-  whose run was still in flight and hands release (`hollowRunIds`), post-merge (`hollowRunDirs`) and archive (via
-  `postMergeDeferred`) the runs to leave alone, and fills `result.hollowMerges`. It fails closed: a setup failure
-  or a throw skips all three checks for the pass with `{ check: 'release,post-merge,archive', reason:
-  'hollow-merge-check-failed' }`, except `no-remote` and `unknown-host` (an origin the #4933 host gate refuses
-  before any `gh` call, which release and post-merge refuse too), where the check can never run and there is
-  nothing to hold, so the three run with empty sets. It runs on any work backend: only its record comment needs
+  immediately before `release` whenever `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune` or
+  `reap` is in the pass: it finds merged PRs whose run was still in flight and hands release (`hollowRunIds`),
+  post-merge (`hollowRunDirs`) and archive (via `postMergeDeferred`) the runs to leave alone, hands
+  archive-branches and remote-prune (`heldBranches`) and reap (`heldWorktrees`, `heldBranches`) the branches and
+  worktrees those runs own (`hollowRunRefs`; each skips them `hollow-merge`), and fills `result.hollowMerges`. It
+  fails closed: a setup failure or a throw skips every one of those six checks in the pass with `{ check: '<the
+  requested ones, comma-joined>', reason: 'hollow-merge-check-failed' }`, except `no-remote` and `unknown-host` (an
+  origin the #4933 host gate refuses before any `gh` call, which release and post-merge refuse too), where the
+  check can never run and there is nothing to hold, so they run with empty sets. It runs on any work backend: only its record comment needs
   `github-issues`, so another backend's hollow run is held with no comment. It reads the pass's one shared PR-state resolver,
   warmed first with every non-terminal run's PR number (and each PR-less run's branch), and checks the pass budget
   between runs: an exhausted budget returns `budget-exhausted`, so the pass fails closed rather than settle an unjudged run. `post-merge` sits immediately before `archive` because it hands archive the run
@@ -716,7 +718,9 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into `postMergeDeferred` whether or not
   `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run dir in place. `postMerge`
   itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the archive set
-  again so the hold also applies when `post-merge` did not run. A `hollow-merge` run's records are
+  again so the hold also applies when `post-merge` did not run. The branches and worktrees those runs own
+  (`post-merge.js`'s `hollowRunRefs`: the recorded `worktree`, its live branch, `pr.branch`) go to
+  archive-branches, remote-prune and reap, which skip them `hollow-merge`, so the run stays resumable. A `hollow-merge` run's records are
   each commented on once: the comment and its marker are written under the run's post-merge claim
   (`takeClaim`/`releaseClaim`, the lock Steps 4.0/4.0b take), with the marker read after the claim is taken, so an
   inline reconcile racing `reconcile-background` cannot post twice; a claim another pass holds posts nothing that

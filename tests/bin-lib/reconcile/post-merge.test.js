@@ -2873,6 +2873,24 @@ test('hollow merge: a project on another work backend is still checked and held,
   assert.equal(hollowMarkers(dir).length, 0);
 });
 
+test('hollowRunRefs: a held run\'s recorded worktree (real path), its live branch and its stamped pr.branch; an unreadable run-state gives nothing', () => {
+  const { hollowRunRefs } = require('../../../plugin/bin/lib/reconcile/post-merge');
+  const root = mainCheckout();
+  git(root, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-q', '-m', 'init');
+  const wt = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-wt-')));
+  tempRoots.push(wt);
+  fs.rmdirSync(wt);
+  git(root, 'worktree', 'add', '-q', '-b', 'worktree-held-6143', wt);
+  const dir = addRun(root, HR, { pr: null });
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ status: 'in-progress', worktree: wt, pr: { number: 11, branch: 'pushed-6143' } }));
+  const broken = addRun(root, '2026-11-23T100000-record-1');
+  fs.writeFileSync(path.join(broken, 'run-state.json'), '{not json');
+  const refs = hollowRunRefs(root, [dir, broken]);
+  assert.deepEqual(refs.worktrees, [wt]);
+  assert.deepEqual([...refs.branches].sort(), ['pushed-6143', 'worktree-held-6143']);
+  assert.deepEqual(hollowRunRefs(root, []), { worktrees: [], branches: [] });
+});
+
 test('hollow merge: a setup failure returns the failure with empty sets', async () => {
   const root = mainCheckout({ origin: false });
   addRun(root, HR, { decisions: ONE_LINE_DECISION });

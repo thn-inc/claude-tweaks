@@ -89,7 +89,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSyncTimed } = require('./timing');
 const { listRunDirsWithState, readRunState } = require('../hooks/context');
-const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { repoSpecOf, runGit } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys, POLICY_KEYS } = require('../policy-schema');
@@ -816,6 +816,36 @@ async function detectHollowMerges({
   return { entries, hollowRunDirs };
 }
 
+// The worktrees and branches detectHollowMerges' held runs own, for the checks that act on those rather than on
+// the run dir (index.js hands them to archive-branches, remote-prune and reap): each run's recorded `worktree`
+// (real path), the live worktree entry's branch for it, its stamped `pr.branch`, and fallbackBranch's. A run
+// whose run-state cannot be read contributes nothing. -> { worktrees, branches }.
+function hollowRunRefs(root, runDirs) {
+  const worktrees = new Set();
+  const branches = new Set();
+  const add = (b) => { if (typeof b === 'string' && b) branches.add(b); };
+  let listed = null;
+  for (const dir of runDirs) {
+    const state = readRunState(dir);
+    if (!state || typeof state !== 'object') continue;
+    try {
+      if (typeof state.worktree === 'string' && state.worktree) {
+        const real = safeReal(state.worktree) || path.resolve(state.worktree);
+        worktrees.add(real);
+        if (!listed) {
+          const out = runGit(['worktree', 'list', '--porcelain'], root);
+          listed = out.failure ? [] : parseWorktreeList(out.stdout);
+        }
+        const entry = listed.find((w) => (safeReal(w.path) || path.resolve(w.path)) === real);
+        add(entry && entry.branch);
+      }
+      add(state.pr && state.pr.branch);
+      add(fallbackBranch(root, dir, state));
+    } catch { /* what was gathered for this run still holds */ }
+  }
+  return { worktrees: [...worktrees], branches: [...branches] };
+}
+
 // Is this run dir under `{main checkout}/.claude-tweaks/pipelines/archive/`? Real paths on both sides.
 function isArchivedRunDir(runDir, root) {
   return resolveWithin(runDir, path.join(root, '.claude-tweaks', 'pipelines', 'archive')) !== null;
@@ -1193,7 +1223,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, detectHollowMerges, HOLLOW_STEP, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, isSupersededEntry, supersededChanges, supersededChangesLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
+  postMerge, postMergeOne, detectHollowMerges, hollowRunRefs, HOLLOW_STEP, classifyEntry, markSuperseded, isFailedRun, failedRecordNumbers, parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine, isSupersededEntry, supersededChanges, supersededChangesLine, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, heartbeatClaim, releaseClaim,
   composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,

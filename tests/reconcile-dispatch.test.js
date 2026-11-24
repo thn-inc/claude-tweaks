@@ -1061,6 +1061,56 @@ test('(#6143): a project with no remote or an origin on an unknown host has noth
   }
 });
 
+// archive-branches, remote-prune and reap act on a run's branch and worktree, not its run dir: the hold reaches
+// them through hollowRunRefs, and a failed check skips them with the other three.
+async function withBranchCheckStubs(extra, fn) {
+  const abMod = require('../plugin/bin/lib/reconcile/archive-branches');
+  const prMod = require('../plugin/bin/lib/reconcile/prune-remote');
+  const reapMod = require('../plugin/bin/lib/reconcile/reap-merged');
+  const pmMod = require('../plugin/bin/lib/reconcile/post-merge');
+  const orig = { ab: abMod.archiveBranches, pr: prMod.pruneRemote, refs: pmMod.hollowRunRefs };
+  const seen = {};
+  try {
+    const out = await reconcileWithAsyncMerge(['archive-branches', 'remote-prune', 'reap'], {
+      ...extra,
+      afterStubs: () => {
+        pmMod.hollowRunRefs = (root, dirs) => { seen.refsDirs = dirs; return { worktrees: ['/w/held'], branches: ['worktree-held'] }; };
+        abMod.archiveBranches = (opts) => { seen.ab = opts; return { entries: [], failure: null }; };
+        prMod.pruneRemote = (opts) => { seen.pr = opts; return { entries: [], failure: null }; };
+        reapMod.reapMerged = (opts) => { seen.reap = opts; return { reaped: [], skipped: [], portsRelease: [] }; };
+      },
+    });
+    return fn(out, seen);
+  } finally {
+    abMod.archiveBranches = orig.ab;
+    prMod.pruneRemote = orig.pr;
+    pmMod.hollowRunRefs = orig.refs;
+  }
+}
+
+test('AC4.1 (#6143): archive-branches, remote-prune and reap are handed the held runs\' branches and worktrees', async () => {
+  const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
+  const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
+  await withBranchCheckStubs({ hollow: async () => ({ entries: [entry], hollowRunDirs: [runDir] }) }, ({ hollowCalls }, seen) => {
+    assert.equal(hollowCalls, 1, 'detection runs for these checks too');
+    assert.deepEqual(seen.refsDirs, [runDir]);
+    assert.deepEqual(seen.ab.heldBranches, ['worktree-held']);
+    assert.deepEqual(seen.pr.heldBranches, ['worktree-held']);
+    assert.deepEqual(seen.reap.heldWorktrees, ['/w/held']);
+    assert.deepEqual(seen.reap.heldBranches, ['worktree-held']);
+  });
+});
+
+test('AC7.1 (#6143): a failed hollow-merge check skips archive-branches, remote-prune and reap too', async () => {
+  await withBranchCheckStubs({ hollow: async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }) }, ({ r }, seen) => {
+    assert.equal(seen.ab, undefined);
+    assert.equal(seen.pr, undefined);
+    assert.equal(seen.reap, undefined);
+    const skip = r.skipped.find((s) => s.reason === 'hollow-merge-check-failed');
+    assert.ok(skip && ['archive-branches', 'remote-prune', 'reap'].every((c) => skip.check.split(',').includes(c)), JSON.stringify(r.skipped));
+  });
+});
+
 test('(#6143): a hollow-check-failed entry with no PR still renders its summary line', () => {
   assert.equal(
     formatSummary({ hollowMerges: [{ runDir: '/r', runId: 'run-x', pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'x' }], skipped: [] }),
