@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-11-24T083422-drive-4725",
-  "sessionId": "7681df63-8b80-4414-9874-ef1bf1dd6ced",
-  "claimedAt": "2026-11-24T08:34:23.224Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "already fixed on main by #5694; PR #6203 closed unmerged after review",
+  "releasedAt": "2026-11-24T14:34:36.864Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/6203"
 }
