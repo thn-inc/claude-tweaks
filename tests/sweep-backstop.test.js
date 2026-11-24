@@ -218,8 +218,46 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
   assert.ok(candidateNumbers.includes(2001), 'a PR carrying only the wrap-up-residue-pr marker must be a candidate');
 });
 
-test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marker and a granted record", () => {
-  assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*never/);
+test("item 9's classifier grants a wrap-up-skills-pr PR through the key alone, never housekeeping or a record grant", () => {
+  const classifier = extractNodeScripts(ITEM9).find((s) => /labelsByIssue/.test(s));
+  assert.ok(classifier, 'expected the item-9 classifier script');
+  const tmpDir = scratchDir('ct-item9-skills-cls-');
+  try {
+    const candidatesPath = path.join(tmpDir, 'candidates.json');
+    const linksPath = path.join(tmpDir, 'links.jsonl');
+    const script = classifier
+      .split('$PR_SCAN_UNARMED_CANDIDATES').join(toPosix(candidatesPath, path.sep))
+      .split('$PR_SCAN_UNARMED_LINKS').join(toPosix(linksPath, path.sep));
+    fs.writeFileSync(candidatesPath, JSON.stringify([{
+      number: 3002,
+      title: 'wrap-up learned skills',
+      body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
+      closingIssuesReferences: [{ number: 5290 }],
+    }]));
+    fs.writeFileSync(linksPath, JSON.stringify({ number: 5290, labels: ['auto:build', 'auto:merge'] }) + '\n');
+    const scriptPath = path.join(tmpDir, 'classifier.js');
+    fs.writeFileSync(scriptPath, script);
+    const run = (learned) => execFileSync('node', [scriptPath], {
+      env: { ...process.env, HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: learned, ALLOW_AUTO_MERGE: 'true' },
+      encoding: 'utf8',
+    });
+
+    const off = run('false');
+    assert.match(off, /green but ungranted/);
+    assert.doesNotMatch(off, /green and granted|drain per/);
+    const on = run('true');
+    assert.match(on, /learned-skills-auto-merge on — drain per tidy\/actions-github-issues\.md/);
+    assert.doesNotMatch(on, /arm per/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("item 9's filter offers a wrap-up-skills-pr PR only through learned-skills-auto-merge", () => {
+  assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*candidate only when `learned-skills-auto-merge` resolves `true`/);
+  assert.match(ITEM9, /resolve-policy\.js" --values learned-skills-auto-merge/);
+  assert.match(SCAN, /\| Unarmed learned-skills PR, granted \(item 9\) \| Drain via `\/claude-tweaks:tidy`/);
+  assert.match(SCAN, /Unarmed learned-skills PR, granted \(item 9\).*\| medium \|/);
   const filterScript = extractNodeScripts(ITEM9)[0];
   const tmpDir = scratchDir('ct-item9-skills-');
   try {
@@ -243,15 +281,28 @@ test("item 9's filter never offers a wrap-up-skills-pr PR, even with a run marke
         body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
         closingIssuesReferences: [{ number: 5290 }],
       },
+      { ...base, isDraft: true, number: 3003, title: 'wrap-up learned skills (draft)', body: '<!-- wrap-up-skills-pr -->' },
     ]));
 
     const scriptPath = path.join(tmpDir, 'item9-skills-filter.js');
     fs.writeFileSync(scriptPath, isolatedScript);
-    execFileSync('node', [scriptPath], { env: { ...process.env, UNARMED_AGE: '24' }, stdio: 'pipe' });
+    const run = (grant) => {
+      execFileSync('node', [scriptPath], {
+        env: { ...process.env, UNARMED_AGE: '24', HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: grant },
+        stdio: 'pipe',
+      });
+      return JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
+    };
 
-    const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
-    assert.ok(!candidateNumbers.includes(3001), 'a housekeeping-marked wrap-up-skills-pr PR must not be a candidate');
-    assert.ok(!candidateNumbers.includes(3002), 'a run-marked, granted wrap-up-skills-pr PR must not be a candidate');
+    const granted = run('true');
+    assert.ok(granted.includes(3001), 'learned-skills-auto-merge=true must offer a skills PR');
+    assert.ok(granted.includes(3002), 'learned-skills-auto-merge=true must offer a run-marked skills PR');
+    assert.ok(!granted.includes(3003), 'a draft skills PR is never a candidate');
+    for (const grant of ['false', '', 'TRUE']) {
+      const got = run(grant);
+      assert.ok(!got.includes(3001), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3001 (housekeeping lever irrelevant)`);
+      assert.ok(!got.includes(3002), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3002`);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
