@@ -3,7 +3,14 @@
 // Step lines become a started/exited work segment; three merge sub-steps mark
 // the merge-station visit boundary. Names live in stations.js.
 'use strict';
-const { DRIVER_STEP_STATIONS, MERGE_SUBSTEP_TRANSITIONS, SESSION_BOUND_STATION, outcomeForDriverStatus } = require('./stations');
+const { ACTOR, DRIVER_STEP_STATIONS, KIND, MERGE_SUBSTEP_TRANSITIONS, OUTCOME, REASON, SESSION_BOUND_STATION, outcomeForDriverStatus } = require('./stations');
+
+// Who does the work at each driver step: a model session, or the driver's own code.
+const DRIVER_STEP_ACTORS = Object.freeze({
+  worker: ACTOR.AGENT, test: ACTOR.AGENT, review: ACTOR.AGENT, pr: ACTOR.SCRIPT, ci: ACTOR.SCRIPT, merge: ACTOR.SCRIPT,
+});
+// The details steps.js's ciStep writes when it could not read the PR's checks.
+const CI_READ_FAILURE_DETAILS = Object.freeze(['read-failed', 'gh-absent', 'no-pr']);
 
 const own = (table, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key);
 const nonEmpty = (v) => typeof v === 'string' && v !== '';
@@ -11,6 +18,25 @@ const nonEmpty = (v) => typeof v === 'string' && v !== '';
 function isoOrNull(ms) {
   const d = new Date(ms);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// A red-tests stop (verifyExit 1) is a failure; any other stop is a stop. `verifyExit` is present only
+// on the lines that decided from verify.js's exit code (steps.js).
+const isRedTests = (step, event) => step === 'test' && event.status === 'stop' && event.verifyExit === 1;
+
+function exitOutcome(step, event) {
+  return isRedTests(step, event) ? OUTCOME.FAILED : outcomeForDriverStatus(event.status);
+}
+
+function exitPayload(step, event, outcome) {
+  const payload = { step, actor: DRIVER_STEP_ACTORS[step] };
+  if (outcome === OUTCOME.PASSED) return payload;
+  if (isRedTests(step, event)) payload.reasonCode = REASON.TEST_FAILED;
+  else if (step === 'test' && event.status === 'fail' && Object.hasOwn(event, 'verifyExit')) payload.reasonCode = REASON.INFRASTRUCTURE;
+  else if (step === 'ci' && CI_READ_FAILURE_DETAILS.includes(event.detail)) payload.reasonCode = REASON.INFRASTRUCTURE;
+  else payload.reasonCode = REASON.UNSPECIFIED;
+  if (outcome === OUTCOME.STOPPED && nonEmpty(event.detail)) payload.reasonText = event.detail;
+  return payload;
 }
 
 // (driver event, { repoName, runId }) -> station events, [] when the line maps to none.
@@ -29,8 +55,8 @@ function stationEventsFor(event, { repoName, runId } = {}) {
     const endMs = Date.parse(ts);
     const ms = Number.isFinite(event.ms) ? event.ms : 0;
     const out = [{ ...base, kind: 'started', station, at: isoOrNull(endMs - ms), payload: { step } }];
-    const outcome = outcomeForDriverStatus(status);
-    if (outcome !== null) out.push({ ...base, kind: 'exited', station, at: ts, outcome, payload: { step } });
+    const outcome = exitOutcome(step, event);
+    if (outcome !== null) out.push({ ...base, kind: KIND.EXITED, station, at: ts, outcome, payload: exitPayload(step, event, outcome) });
     if (step === 'worker' && nonEmpty(event.sessionId)) {
       out.push({ ...base, kind: 'session_bound', station: SESSION_BOUND_STATION, at: ts, sessionId: event.sessionId, payload: { step } });
     }
@@ -52,4 +78,4 @@ function stationEventsFor(event, { repoName, runId } = {}) {
   return [];
 }
 
-module.exports = { stationEventsFor };
+module.exports = { stationEventsFor, DRIVER_STEP_ACTORS };

@@ -1,12 +1,14 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { stationEventsFor } = require('../../../plugin/bin/lib/station-events/driver-mirror');
+const { stationEventsFor, DRIVER_STEP_ACTORS } = require('../../../plugin/bin/lib/station-events/driver-mirror');
+const { DRIVER_STEP_STATIONS, ACTORS } = require('../../../plugin/bin/lib/station-events/stations');
 const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
 
 const TS = '2026-11-19T08:00:10.000Z';
 const ID = { repoName: 'acme/widgets', runId: 'run-1' };
 const line = (over = {}) => ({ ts: TS, run: 'run-1', record: 7, step: 'worker', status: 'ok', ms: 4000, ...over });
+const exitedOf = (over) => stationEventsFor(line(over), ID).find((e) => e.kind === 'exited');
 const kinds = (events) => events.map((e) => [e.kind, e.station, e.outcome]);
 
 test('a worker line gives started at ts minus ms and exited at ts, both on build', () => {
@@ -15,14 +17,96 @@ test('a worker line gives started at ts minus ms and exited at ts, both on build
     { repoName: 'acme/widgets', recordNumber: 7, lane: 'driver', runId: 'run-1', discriminator: `worker@${TS}`,
       kind: 'started', station: 'build', at: '2026-11-19T08:00:06.000Z', payload: { step: 'worker' } },
     { repoName: 'acme/widgets', recordNumber: 7, lane: 'driver', runId: 'run-1', discriminator: `worker@${TS}`,
-      kind: 'exited', station: 'build', at: TS, outcome: 'passed', payload: { step: 'worker' } },
+      kind: 'exited', station: 'build', at: TS, outcome: 'passed', payload: { step: 'worker', actor: 'agent' } },
   ]);
   for (const e of events) assert.ok(buildLine(e), `${e.kind} builds a line`);
 });
 
-test('a step status maps to its outcome: fail -> failed, stop -> returned', () => {
+test('a step status maps to its outcome: fail -> failed, stop -> stopped', () => {
   assert.equal(stationEventsFor(line({ step: 'test', status: 'fail' }), ID)[1].outcome, 'failed');
-  assert.equal(stationEventsFor(line({ step: 'ci', status: 'stop' }), ID)[1].outcome, 'returned');
+  assert.equal(stationEventsFor(line({ step: 'ci', status: 'stop' }), ID)[1].outcome, 'stopped');
+  assert.equal(stationEventsFor(line({ status: 'bogus' }), ID).some((e) => e.kind === 'exited'), false);
+});
+
+const shape = (e) => [e.outcome, e.payload.reasonCode, e.payload.actor];
+
+test('AC1.1: a red-tests stop at the test step mirrors to exited failed with reasonCode test-failed and actor agent', () => {
+  for (const detail of ['red tests', 'red tests; no relaunch: no step-up']) {
+    const e = exitedOf({ step: 'test', status: 'stop', detail, verifyExit: 1 });
+    assert.deepEqual(shape(e), ['failed', 'test-failed', 'agent'], detail);
+    assert.equal(Object.hasOwn(e.payload, 'reasonText'), false);
+    assert.ok(buildLine(e), 'the emitter accepts it');
+  }
+});
+
+test('AC1.1: a verdictless fail at the test step mirrors to exited failed with reasonCode infrastructure', () => {
+  for (const verifyExit of [1, 2, 137, null]) {
+    const e = exitedOf({ step: 'test', status: 'fail', detail: 'verify exited 2', verifyExit });
+    assert.deepEqual(shape(e), ['failed', 'infrastructure', 'agent'], String(verifyExit));
+    assert.ok(buildLine(e));
+  }
+});
+
+test('AC1.1: a failed ci step classified infrastructure mirrors with reasonCode infrastructure', () => {
+  for (const detail of ['read-failed', 'gh-absent', 'no-pr']) {
+    const e = exitedOf({ step: 'ci', status: 'fail', detail });
+    assert.deepEqual(shape(e), ['failed', 'infrastructure', 'script'], detail);
+    assert.ok(buildLine(e));
+  }
+  const s = exitedOf({ step: 'ci', status: 'stop', detail: 'gh-absent' });
+  assert.deepEqual([s.outcome, s.payload.reasonCode, s.payload.reasonText], ['stopped', 'infrastructure', 'gh-absent']);
+  assert.ok(buildLine(s));
+});
+
+test('an interrupted fail at the test step mirrors to exited failed with reasonCode unspecified', () => {
+  const e = exitedOf({ step: 'test', status: 'fail', detail: 'interrupted by SIGTERM' });
+  assert.deepEqual(shape(e), ['failed', 'unspecified', 'agent']);
+  assert.ok(buildLine(e));
+});
+
+test('AC1.4 AC2.1: a step with no known reason mirrors with reasonCode unspecified', () => {
+  const cases = [
+    { step: 'test', status: 'fail', detail: 'the worktree differs from HEAD after the test step on 1 path(s): a.js' },
+    { step: 'ci', status: 'fail', detail: 'interrupted by SIGTERM' },
+    { step: 'worker', status: 'fail' },
+  ];
+  for (const c of cases) {
+    const e = exitedOf(c);
+    assert.equal(e.payload.reasonCode, 'unspecified', JSON.stringify(c));
+    assert.equal(e.outcome, 'failed');
+    assert.ok(buildLine(e));
+  }
+});
+
+test('AC2.1: a stop at any other step mirrors to exited stopped with reasonCode unspecified and the driver reason in reasonText', () => {
+  const pr = exitedOf({ step: 'pr', status: 'stop', detail: 'no changed files' });
+  assert.deepEqual([pr.outcome, pr.payload.reasonCode, pr.payload.actor, pr.payload.reasonText], ['stopped', 'unspecified', 'script', 'no changed files']);
+  assert.ok(buildLine(pr));
+  const detail = '.claude-tweaks/verify-scope.json is not a regular file (dir); verify.js was not run';
+  const t = exitedOf({ step: 'test', status: 'stop', detail });
+  assert.deepEqual([t.outcome, t.payload.reasonCode, t.payload.actor, t.payload.reasonText], ['stopped', 'unspecified', 'agent', detail]);
+  const bare = exitedOf({ step: 'pr', status: 'stop' });
+  assert.ok(buildLine(bare));
+  assert.equal(Object.hasOwn(bare.payload, 'reasonText'), false);
+  // The structured field, not the text, is the key.
+  assert.equal(exitedOf({ step: 'test', status: 'stop', detail: 'red tests' }).outcome, 'stopped');
+});
+
+test('every driver step station has an actor', () => {
+  assert.deepEqual(Object.keys(DRIVER_STEP_ACTORS).sort(), Object.keys(DRIVER_STEP_STATIONS).sort());
+  for (const a of Object.values(DRIVER_STEP_ACTORS)) assert.match(a, ACTORS);
+});
+
+test('an ok step mirrors to exited passed with actor and no reason', () => {
+  for (const [step, actor] of [['worker', 'agent'], ['test', 'agent'], ['review', 'agent'], ['pr', 'script'], ['ci', 'script'], ['merge', 'script']]) {
+    const e = exitedOf({ step });
+    assert.equal(e.outcome, 'passed');
+    assert.equal(e.payload.actor, actor);
+    assert.ok(buildLine(e));
+    assert.equal(Object.hasOwn(e.payload, 'reasonCode'), false);
+    assert.equal(Object.hasOwn(e.payload, 'reasonText'), false);
+  }
+  assert.equal(Object.hasOwn(exitedOf({ step: 'ci', detail: 'read-failed' }).payload, 'reasonCode'), false);
 });
 
 test('every mirrored step lands on its table station', () => {
