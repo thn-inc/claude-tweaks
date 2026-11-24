@@ -1,10 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
+const { readText } = require('./helpers/read-skill');
 
-const read = (...p) => fs.readFileSync(path.join(__dirname, '..', 'plugin', 'skills', ...p), 'utf8');
+const read = (...p) => readText(path.join(__dirname, '..', 'plugin', 'skills', ...p));
 
 test('the contract Scratch rule names the never-delete scope (#4472)', () => {
   const t = read('_shared', 'subagent-output-contract.md');
