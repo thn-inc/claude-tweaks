@@ -36,6 +36,9 @@ Test runner: `node tools/run-tests.js <file.test.js> [...]`.
 **Files:**
 - Modify: `plugin/bin/lib/station-events/blockers.js`
 - Test: `tests/bin-lib/station-events/blockers.test.js`
+- Already landed (`f92cb72b53`, verify only): `plugin/bin/resolve-blockers.js`, `tests/resolve-blockers-cli.test.js`
+
+The five acceptance tests already exist and must keep passing: `an unchanged snapshot is not appended`; `a changed blocker set is appended`; `the first snapshot for a record is appended`; `adding bot:blocked writes held why blocked with the blocker ref`; `removing it writes released why blocked`.
 
 **Interfaces:**
 - Produces: `holdEvent({ label, added, recordNumber, repoName, station, lane, runId, sessionId, ref, discriminator }) -> event | null` — `null` for a label not in the hold map; `kind` `KIND.HELD` when `added`, `KIND.RELEASED` otherwise; payload `{ why, ref }` on `held` when `ref` is a string, else `{ why }`; `lane` defaults to `'unknown'`, `runId`/`sessionId` to `null`. `makeHoldSink({ stationEvent })` → `(args) => void` calls `stationEvent(holdEvent(args))` when non-null, swallows throws, inert without a function. `HOLD_LABEL_WHY` exported (label → why). The args object uses `recordNumber` (rename from the current `number`).
