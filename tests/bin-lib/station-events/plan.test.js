@@ -126,6 +126,7 @@ test('replanEvent for Test and Polish removed carries the after list and reason 
   assert.equal(ev.kind, KIND.REPLANNED);
   assert.deepEqual(ev.payload, { stations: after, reasonCode: 'documents-only', cause: { kind: 'config' } });
   assert.ok(buildLine(ev));
+  assert.equal(ev.at, REPLAN.at);
 });
 test('mutating a returned stations array leaves STARTING_LISTS unchanged', () => {
   const p = planOf({ lane: null, ceremonyProfile: null });

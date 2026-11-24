@@ -121,6 +121,7 @@ test('a throwing sink never throws out of replanRun', () => {
 test('deps.now feeds the event discriminator', () => {
   const { seen } = run([planLine(KIND.PLANNED, 'r1', 7, STARTING_LISTS.standard)], { lane: 'unknown', ceremonyProfile: 'fast-lane' }, 'x');
   assert.equal(seen[0].discriminator, `replanned:${STARTING_LISTS['fast-lane'].join(',')}:2026-11-24T10:00:00.000Z`);
+  assert.equal(seen[0].at, '2026-11-24T10:00:00.000Z');
 });
 
 test('latestPlans skips a non-integer recordNumber and a non-string station', () => {

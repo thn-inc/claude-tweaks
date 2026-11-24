@@ -57,7 +57,7 @@ function replanEvent(input) {
   if (reasonText !== undefined) payload.reasonText = reasonText;
   return {
     repoName, recordNumber, kind: KIND.REPLANNED, station: station ?? STATION.BUILD, outcome: null,
-    lane, sessionId, runId, discriminator: `replanned:${after.join(',')}:${at ?? ''}`, payload,
+    lane, sessionId, runId, at, discriminator: `replanned:${after.join(',')}:${at ?? ''}`, payload,
   };
 }
 
