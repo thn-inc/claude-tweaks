@@ -65,8 +65,8 @@ function emit(s, step, status, detail, extra) {
   }
 }
 
-function stop(s, step, reason, detail) {
-  emit(s, step, 'stop', `${reason}: ${detail || ''}`.trim());
+function stop(s, step, reason, detail, extra) {
+  emit(s, step, 'stop', `${reason}: ${detail || ''}`.trim(), extra);
   return { stop: reason, detail: neutralize(String(detail || '')) };
 }
 
@@ -792,7 +792,8 @@ function park(s, reason, { names = [], files = [] } = {}) {
   logDecision(s, 'Step 2.5 (merge-verification gate)', `parked — ${neutralize(reason)} on PR #${ctx.pr}; ${lockLog}`,
     'AUTO', 'high (label removal + resume)', `merge-verification=${s.value} (${s.source})`);
   notes.push(...s.logFailures.slice(failuresBefore));
-  return stop(s, 'merge-park', reason, `${lockEvent}${notes.length ? ` (${notes.join('; ')})` : ''}`);
+  // `parked` is the read-back result, a field the station mirror reads (#6151) — never parsed from the detail.
+  return stop(s, 'merge-park', reason, `${lockEvent}${notes.length ? ` (${notes.join('; ')})` : ''}`, { parked: applied });
 }
 
 // Ports Step 2.5's conflict row: the driver never updates a conflicting branch. One PR comment,

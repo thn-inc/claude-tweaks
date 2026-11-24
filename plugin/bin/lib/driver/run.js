@@ -70,7 +70,7 @@
 // supervisor should signal the process group, not the pid.
 const fs = require('fs');
 const { execFileSync, spawnSync } = require('child_process');
-const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES } = require('./events');
+const { createEventSink, outcomeFor, neutralize, yieldToEventLoop, FINAL_STEP, STOP_CLASSES, OUTCOMES, SETTLE_LABEL_STEP } = require('./events');
 const { STEPS, CHECK_STEPS } = require('./steps');
 const { toEscalationReason, planRow, SETTLE_ROWS, ESCALATE_STEP, CLASS_BY_ROW, settle } = require('./settle');
 const { ghAvailable, remoteUrl, ghOptions } = require('../repo-resolve');
@@ -353,7 +353,11 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   const stopObj = stopObject(ctx, stop);
   const pr = ctx.pr && ctx.pr.number;
   // A successful call has no detail: the line omits the field, like any other step line.
-  const emit = (name, status, ms, detail) => { sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra: {} }, ms, deps)); };
+  // The label line names the stopped step as a field, so the station mirror never parses prose (#6151).
+  const emit = (name, status, ms, detail) => {
+    const extra = name === SETTLE_LABEL_STEP ? { stopStep: stopObj.step } : {};
+    sink.emit(eventFor(ctx, name, { status, detail: detail || undefined, extra }, ms, deps));
+  };
   const input = {
     stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
     pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
