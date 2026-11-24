@@ -3,6 +3,7 @@ files:
   - plugin/bin/lib/station-events/emit.js
   - plugin/bin/lib/station-events/stations.js
   - plugin/bin/lib/station-events/driver-mirror.js
+  - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/station-events/blockers.js
   - plugin/bin/lib/station-events/plan.js
   - plugin/bin/lib/claim-targets/claim-targets.js
@@ -57,7 +58,15 @@ files:
 - **Should understand:** stdout prints `{"written":true}`, then `{"written":false,"reason":"payload.next is not a station: undefined"}` (with the same reason on stderr as `claude-tweaks: station event dropped: …`), then `{"written":true}`, then two lines. The `failed` line's payload reads `{"actor":"agent","reasonCode":"unspecified","reasonText":"made-up"}`: the unknown code is normalized and the original kept. The `passed` line's payload is still exactly `{"step":"worker"}`. Actor-less `passed`/`failed` lines and retired outcomes (`returned`, `skipped`, `abandoned`) stay accepted unchanged until record 8/8 (#6152) retires them.
 - **Red flags:** The `failed` line dropped, or written with `reasonCode: "made-up"`; a `sent-back` written with no `next`; a `reasonCode` or `actor` key added to the actor-less `passed`; a throw or non-zero exit.
 
+### 6. Map driver step lines and read the actor and reason on each exit — terminal, `plugin/bin/lib/station-events/driver-mirror.js` directly
+- **URL:** `node -e "const {stationEventsFor}=require('./plugin/bin/lib/station-events/driver-mirror');const {buildLine}=require('./plugin/bin/lib/station-events/emit');const id={repoName:'acme/widgets',runId:'run-a'};const L=(o)=>({ts:'2026-11-24T08:00:10.000Z',run:'run-a',record:999,step:'test',status:'ok',ms:4000,...o});for(const l of [L({}),L({status:'stop',detail:'red tests',verifyExit:1}),L({status:'fail',detail:'verify exited 2',verifyExit:2}),L({step:'pr',status:'stop',detail:'no changed files'})]){const e=stationEventsFor(l,id).find(x=>x.kind==='exited');console.log(JSON.stringify([e.station,e.outcome,e.payload]),!!buildLine(e))}"`
+- **Action:** Run from the checkout root. The four lines are what a driver run writes to `driver-events.jsonl`: a green test step, a red-tests stop (the test step stamps `verifyExit`, verify.js's exit code), a verdict-less test run (verify.js exited 2), and a `pr` step that stopped. The mirror is what the driver's sink runs on each line before the emitter appends it.
+- **Should feel:** Every exit answers "who decided, and why", even when nothing knows why.
+- **Should understand:** stdout prints four lines, each ending `true` (the emitter accepts it): `["test","passed",{"step":"test","actor":"agent"}]`; `["test","failed",{"step":"test","actor":"agent","reasonCode":"test-failed"}]`; `["test","failed",{"step":"test","actor":"agent","reasonCode":"infrastructure"}]`; `["wrap-up","stopped",{"step":"pr","actor":"script","reasonCode":"unspecified","reasonText":"no changed files"}]`. Red tests are keyed on `verifyExit: 1`, never on the detail text, so a relaunch note added to the detail changes nothing. `worker`, `test` and `review` exits carry actor `agent`; `pr`, `ci` and `merge` carry `script`. A real `ci` line is always `passed`: a red CI state is data for the reviewer, not an exit (`docs/reference/station-events.md`).
+- **Red flags:** An exit with no `actor`; a `reasonCode` on a `passed` exit; a red-tests stop written `stopped`; a test `fail` with no `verifyExit` written `infrastructure`; a stop with a detail but no `reasonText`.
+
 ## Origin
+- Step 6 added during build of record #6149 (driver exits carry outcome, actor and reason). Run live in this session against the worktree's `driver-mirror.js`, output as stated. Pinned by `tests/bin-lib/station-events/driver-mirror.test.js` and the `#6149` mirror tests in `tests/bin-lib/driver/run.test.js`.
 - Created during build of record #5902 (station events: program code appends one line per pipeline transition to the main checkout's `.claude-tweaks/station-events.jsonl` for the factory-floor ledger).
 - Steps 1 and 2 were run live in this session against the worktree's `emit.js` (two lines with one `eventKey`; a read-only `.claude-tweaks` dropped with one `EACCES` stderr line and no throw). Step 3 is pinned by `tests/bin-lib/claim-targets/cli.test.js` and the linked-worktree case in `tests/bin-lib/station-events/emit.test.js` rather than re-run against a live claim, which would write a real claim record.
 - Step 4 added during build of record #5957 (the log and its lock are listed in the main checkout's `.git/info/exclude` at append time, so a project without `/init`'s `.gitignore` rows stays clean). Run live in this session against the worktree's `emit.js`: `status: ""` and both entries printed. Pinned by the AC1.1/AC3.1 tests in `tests/bin-lib/station-events/emit.test.js`.

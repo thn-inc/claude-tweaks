@@ -1037,6 +1037,11 @@ function testTreeStop(ctx, deps) {
   return { status: 'fail', detail: `the worktree differs from HEAD after the test step on ${changed.length} path(s): ${namedPaths(changed)}` };
 }
 
+// verify.js's exit code for the step line: `null` when the run gave none (a timeout, a spawn error) (#6149).
+function verifyExitOf(r) {
+  return r.code ?? null;
+}
+
 // Why a verify.js run gave no verdict: a null code is no exit at all (a timeout, a spawn error), any
 // other non-zero code that is not a red run (2: usage or infrastructure error) names its own stderr.
 function verdictlessDetail(r) {
@@ -1233,15 +1238,16 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   if (flagStop) return flagStop;
   // A red run's tree is not read here (#5454): the record stops on it with nothing pushed, or, under
   // implementer-tier record, the relaunch commit stages that tree and the next run's tree check reads it (#5997).
-  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
+  // `verifyExit` is the key the station mirror reads to tell red tests from a verdict-less run (#6149).
+  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests', extra: { verifyExit: 1 } };
   // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
   const treeStop = testTreeStop(ctx, deps);
   // A verdict-less run keeps its cause beside the tree detail, which stays the prefix.
-  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}` };
+  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}`, extra: { verifyExit: verifyExitOf(r) } };
   // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read). No exit at
   // all (a timeout, a spawn error) or any other non-zero exit (2: usage or infrastructure error) means
   // the run itself gave no verdict, so it is a `fail`, not a gate saying no.
-  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
+  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r), extra: { verifyExit: verifyExitOf(r) } };
   return { status: 'ok', detail };
 });
 

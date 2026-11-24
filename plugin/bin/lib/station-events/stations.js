@@ -92,9 +92,9 @@ const DRIVER_STEP_STATIONS = Object.freeze({
   merge: STATION.MERGE,
 });
 
-// Driver step status -> exited outcome.
-// Names are unconfirmed pending the design's Phase 0 fixtures.
-const DRIVER_STATUS_OUTCOMES = Object.freeze({ ok: 'passed', fail: 'failed', stop: 'returned' });
+// Driver step status -> exited outcome. The red-tests stop is the one exception: it is `failed`,
+// keyed on the line's `verifyExit` (driver-mirror.js).
+const DRIVER_STATUS_OUTCOMES = Object.freeze({ ok: OUTCOME.PASSED, fail: OUTCOME.FAILED, stop: OUTCOME.STOPPED });
 
 function outcomeForDriverStatus(status) {
   return Object.prototype.hasOwnProperty.call(DRIVER_STATUS_OUTCOMES, status) ? DRIVER_STATUS_OUTCOMES[status] : null;
