@@ -89,8 +89,8 @@ const HOLD_LABEL_WHY = Object.freeze({
 function holdEvent({
   label, added, recordNumber, repoName, station, lane, runId, sessionId, ref, discriminator, at,
 } = {}) {
+  if (!Object.hasOwn(HOLD_LABEL_WHY, label)) return null;
   const why = HOLD_LABEL_WHY[label];
-  if (!why) return null;
   return {
     kind: added ? KIND.HELD : KIND.RELEASED,
     station,

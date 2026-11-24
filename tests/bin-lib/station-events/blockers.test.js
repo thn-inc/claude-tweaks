@@ -117,3 +117,21 @@ test('bot:parked added writes held why parked with no ref', () => {
   makeHoldSink({ stationEvent })({ label: 'bot:parked', added: true, recordNumber: 11, repoName: 'acme/w', station: 'build', discriminator: 'd-2' });
   assert.deepEqual(events[0].payload, { why: 'parked' });
 });
+
+test('a prototype-chain name is not a hold label', () => {
+  for (const label of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    assert.equal(holdEvent({ label, added: true, recordNumber: 11, repoName: 'acme/w', station: 'build', discriminator: 'd-1' }), null);
+  }
+});
+
+test('holdEvent pins its defaults and drops a ref on released or a non-string ref', () => {
+  const base = { label: 'bot:blocked', recordNumber: 11, repoName: 'acme/w', station: 'build', discriminator: 'd-1' };
+  const held = holdEvent({ ...base, added: true, ref: '#5' });
+  assert.equal(held.lane, 'unknown');
+  assert.equal(held.runId, null);
+  assert.equal(held.sessionId, null);
+  assert.equal(held.at, null);
+  assert.deepEqual(holdEvent({ ...base, added: false, ref: '#5' }).payload, { why: 'blocked' });
+  assert.deepEqual(holdEvent({ ...base, added: true, ref: 5 }).payload, { why: 'blocked' });
+  assert.deepEqual(holdEvent({ ...base, added: true }).payload, { why: 'blocked' });
+});
