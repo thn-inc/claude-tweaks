@@ -45,7 +45,9 @@ Scope keywords: DRIVER_STATUS_OUTCOMES, outcomeForDriverStatus, stationEventsFor
 - Modify: `plugin/bin/lib/station-events/stations.js` (`DRIVER_STATUS_OUTCOMES`, new `DRIVER_STEP_ACTORS`, new `CI_READ_FAILURE_DETAILS`, exports)
 - Modify: `plugin/bin/lib/station-events/driver-mirror.js` (`stationEventsFor`'s step branch, new local `reasonFor`)
 - Modify: `docs/reference/station-events.md` (line 35's driver `worker` cell `stop` returned → `stop` stopped; line 166's driver-mirror row: outcome cell `stop` is `stopped`, payload cell `step`, `actor` (`script` for `pr`/`ci`/`merge`, `agent` for `worker`/`test`/`review`), `reasonCode` on every non-`passed` exit (`test-failed` for a failed `test`, `infrastructure` for a non-passing `ci` whose detail is `read-failed`/`gh-absent`/`no-pr`, else `unspecified`)). Behavior-change prose sweep: `git grep -n -i -e "stop. is .returned" -e "stop returned" -e "stop: 'returned'"` lists only these two doc lines, `stations.js:97` and the existing test name — all four change here.
-- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`
+- Modify: `docs/plugin-structure.md:34` (the `driver-mirror.js` clause: add "; since #6149 every step `exited` carries `payload.actor` and, when not `passed`, `payload.reasonCode`")
+- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`, `tests/bin-lib/station-events/stations.test.js` (line 84: `outcomeForDriverStatus('stop')` now `'stopped'`)
+- No change (plan audit Check B/F hits, classified): `plugin/bin/lib/driver/run.js` — `mirroredSink` already forwards every mirrored event unchanged; `docs/superpowers/plans/2026-11-23-station-transition-capture.md` — a shipped plan, history.
 
 **Interfaces:**
 - Produces (exported from `stations.js`):
@@ -83,12 +85,12 @@ Expected: FAIL — the new assertions fail on `returned` / missing `payload.acto
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js tests/bin-lib/station-events/station-literal-conformance.test.js tests/bin-lib/station-events/transition-table.test.js`
+Run: `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js tests/bin-lib/station-events/stations.test.js tests/bin-lib/station-events/station-literal-conformance.test.js tests/bin-lib/station-events/transition-table.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/station-events/stations.js plugin/bin/lib/station-events/driver-mirror.js docs/reference/station-events.md tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js
+git add plugin/bin/lib/station-events/stations.js plugin/bin/lib/station-events/driver-mirror.js docs/reference/station-events.md docs/plugin-structure.md tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js tests/bin-lib/station-events/stations.test.js
 git commit -m "feat: driver exits carry outcome, actor and reason — refs #6149"
 ```
