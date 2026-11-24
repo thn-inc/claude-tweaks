@@ -148,13 +148,40 @@ test('#5997: a relaunch worker line (attempt 2, no fix marker) maps to a work se
   assert.deepEqual(stationEventsFor({ ...relaunch, fix: true }, ID), []);
 });
 
-test('merge sub-steps: ready enters, a merged confirm exits passed, a park exits returned', () => {
+test('merge sub-steps: ready enters, a merged confirm exits passed, a park exits sent-back', () => {
   assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-ready', detail: 'PR undrafted' }), ID)), [['entered', 'merge', undefined]]);
   const confirm = stationEventsFor(line({ step: 'merge-confirm', detail: 'merged, unit concluded SUCCESS' }), ID);
   assert.deepEqual(kinds(confirm), [['exited', 'merge', 'passed']]);
-  assert.deepEqual(confirm[0].payload, { substep: 'merge-confirm' });
+  assert.deepEqual(confirm[0].payload, { substep: 'merge-confirm', actor: 'script' });
   assert.equal(confirm[0].at, TS);
-  assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'returned']]);
+  assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'sent-back']]);
+});
+
+test('a merge-park is written as sent-back next build', () => {
+  const [e] = stationEventsFor(line({ step: 'merge-park', status: 'stop', detail: 'ci-red: x' }), ID);
+  assert.equal(e.outcome, 'sent-back');
+  assert.equal(e.payload.next, 'build');
+});
+
+test('a merge-park stop mirrors to exited merge sent-back with next build, actor script and the detail as reasonText', () => {
+  const [e] = stationEventsFor(line({ step: 'merge-park', status: 'stop', detail: 'ci-red: x' }), ID);
+  assert.deepEqual(e.payload, { substep: 'merge-park', actor: 'script', reasonCode: 'unspecified', next: 'build', reasonText: 'ci-red: x' });
+});
+
+test('a merge-park with no detail has no reasonText', () => {
+  const [e] = stationEventsFor(line({ step: 'merge-park', status: 'stop' }), ID);
+  assert.equal(Object.hasOwn(e.payload, 'reasonText'), false);
+});
+
+test('a merge-confirm that merged carries actor script', () => {
+  const [e] = stationEventsFor(line({ step: 'merge-confirm', detail: 'merged, unit concluded SUCCESS' }), ID);
+  assert.equal(e.payload.actor, 'script');
+});
+
+test('every mirrored merge exit passes buildLine', () => {
+  for (const over of [{ step: 'merge-confirm', detail: 'merged' }, { step: 'merge-park', status: 'stop', detail: 'ci-red: x' }, { step: 'merge-park', status: 'stop' }]) {
+    for (const e of stationEventsFor(line(over), ID).filter((x) => x.kind === 'exited')) assert.ok(buildLine(e), JSON.stringify(over));
+  }
 });
 
 test('a settle-label ok line writes held why blocked at the stopped step\'s station', () => {
@@ -181,13 +208,13 @@ test('a failed settle-label writes no hold', () => {
   assert.deepEqual(stationEventsFor(line({ step: 'settle-label', status: 'fail', stopStep: 'test' }), ID), []);
 });
 
-test('an applied park writes held why parked at merge beside the returned exit', () => {
+test('an applied park writes held why parked at merge beside the sent-back exit', () => {
   const events = stationEventsFor(line({ step: 'merge-park', status: 'stop', parked: true, detail: 'ci-red: bot:parked applied to record 7' }), ID);
-  assert.deepEqual(kinds(events), [['exited', 'merge', 'returned'], ['held', 'merge', undefined]]);
+  assert.deepEqual(kinds(events), [['exited', 'merge', 'sent-back'], ['held', 'merge', undefined]]);
   assert.deepEqual(events[1].payload, { why: 'parked' });
   assert.equal(events[1].at, TS);
   assert.equal(events[1].discriminator, `merge-park@${TS}`);
-  assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', parked: false, detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'returned']]);
+  assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', parked: false, detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'sent-back']]);
 });
 
 test('an armed confirm, a failed ready or confirm, merge-call and the unmapped steps give nothing', () => {

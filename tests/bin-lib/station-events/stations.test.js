@@ -116,13 +116,20 @@ test('every label-transition exit carries an actor', () => {
     'auto:build/added': ['person'],
     'bot:in-progress/added': ['script'],
   };
+  const exitBearing = [];
+  for (const [label, entry] of Object.entries(LABEL_TRANSITIONS)) {
+    for (const direction of Object.keys(entry)) {
+      if (transitionsForLabel(label, direction).some((r) => r.kind === 'exited')) exitBearing.push(label + '/' + direction);
+    }
+  }
+  assert.deepEqual(Object.keys(expected).sort(), exitBearing.sort());
   for (const [label, entry] of Object.entries(LABEL_TRANSITIONS)) {
     for (const direction of Object.keys(entry)) {
       const rows = transitionsForLabel(label, direction);
       for (const row of rows.filter((r) => r.kind === 'entered')) assert.equal(Object.hasOwn(row, 'payload'), false);
       const actors = rows.filter((r) => r.kind === 'exited').map((r) => r.payload.actor);
       for (const a of actors) assert.match(a, ACTORS);
-      if (expected[label + '/' + direction]) assert.deepEqual(actors, expected[label + '/' + direction]);
+      if (Object.hasOwn(expected, label + '/' + direction)) assert.deepEqual(actors, expected[label + '/' + direction]);
     }
   }
 });

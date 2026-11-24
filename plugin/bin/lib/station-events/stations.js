@@ -106,9 +106,10 @@ function outcomeForDriverStatus(status) {
 // `merge-call` is deliberately absent: it reports non-merges as `ok` too.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
-  'merge-ready': Object.freeze({ kind: 'entered', station: STATION.MERGE, substep: 'merge-ready' }),
-  'merge-confirm': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'passed', substep: 'merge-confirm', skipDetailPrefix: 'armed' }),
-  'merge-park': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'returned', substep: 'merge-park' }),
+  'merge-ready': Object.freeze({ kind: KIND.ENTERED, station: STATION.MERGE, substep: 'merge-ready' }),
+  'merge-confirm': Object.freeze({ kind: KIND.EXITED, station: STATION.MERGE, outcome: OUTCOME.PASSED, substep: 'merge-confirm', skipDetailPrefix: 'armed', payload: Object.freeze({ actor: ACTOR.SCRIPT }) }),
+  // A park sends the record back to build: the accept `changes-requested` verdict's shape.
+  'merge-park': Object.freeze({ kind: KIND.EXITED, station: STATION.MERGE, outcome: OUTCOME.SENT_BACK, substep: 'merge-park', payload: Object.freeze({ actor: ACTOR.SCRIPT, reasonCode: REASON.UNSPECIFIED, next: STATION.BUILD }) }),
 });
 
 // Label edit -> the transitions it records, per the design's registry. The `release` station
@@ -121,29 +122,29 @@ const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
 const AGENT_EXIT = Object.freeze({ actor: ACTOR.AGENT });
 const LABEL_TRANSITIONS = Object.freeze({
   [LABELS.NEEDS_DEFINITION]: Object.freeze({
-    removed: Object.freeze([{ kind: 'exited', station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT }]),
+    removed: Object.freeze([{ kind: KIND.EXITED, station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT }]),
   }),
   [LABELS.READY]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
-      { kind: 'exited', station: STATION.SHAPE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
-      { kind: 'entered', station: STATION.AUTHORIZE },
+      { kind: KIND.EXITED, station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
+      { kind: KIND.EXITED, station: STATION.SHAPE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
+      { kind: KIND.ENTERED, station: STATION.AUTHORIZE },
     ]),
   }),
   [LABELS.AUTO_BUILD]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.AUTHORIZE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.PERSON }) },
-      { kind: 'entered', station: STATION.RELEASE },
+      { kind: KIND.EXITED, station: STATION.AUTHORIZE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.PERSON }) },
+      { kind: KIND.ENTERED, station: STATION.RELEASE },
     ]),
   }),
   [LABELS.BOT_IN_PROGRESS]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.RELEASE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.SCRIPT }) },
-      { kind: 'entered', station: STATION.BUILD },
+      { kind: KIND.EXITED, station: STATION.RELEASE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.SCRIPT }) },
+      { kind: KIND.ENTERED, station: STATION.BUILD },
     ]),
   }),
   [LABELS.ACCEPT_PENDING]: Object.freeze({
-    added: Object.freeze([{ kind: 'entered', station: STATION.ACCEPT }]),
+    added: Object.freeze([{ kind: KIND.ENTERED, station: STATION.ACCEPT }]),
   }),
 });
 

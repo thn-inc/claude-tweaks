@@ -85,10 +85,11 @@ function stationEventsFor(event, { repoName, runId } = {}) {
     const t = MERGE_SUBSTEP_TRANSITIONS[step];
     // A failed sub-step marks no boundary (a ready-failed or unconfirmed stop entered or merged
     // nothing), except a park, which is itself the stop that returns the record.
-    if (status !== 'ok' && t.outcome !== 'returned') return [];
+    if (status !== 'ok' && t.outcome !== OUTCOME.SENT_BACK) return [];
     if (t.skipDetailPrefix && typeof event.detail === 'string' && event.detail.startsWith(t.skipDetailPrefix)) return [];
-    const ev = { ...base, kind: t.kind, station: t.station, at: ts, payload: { substep: t.substep } };
+    const ev = { ...base, kind: t.kind, station: t.station, at: ts, payload: { ...t.payload, substep: t.substep } };
     if (t.outcome) ev.outcome = t.outcome;
+    if (t.outcome === OUTCOME.SENT_BACK && nonEmpty(event.detail)) ev.payload.reasonText = event.detail;
     const out = [ev];
     // An applied park (the structured `parked` field, never the detail text) is also a hold.
     if (step === 'merge-park' && event.parked === true) {
