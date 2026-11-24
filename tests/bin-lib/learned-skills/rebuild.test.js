@@ -144,6 +144,21 @@ test('a new list the PR adds after a paragraph is not merged into the integratio
   );
 });
 
+test('a mid-list hunk refuses when a continuation line sits between it and the next item', () => {
+  assert.deepStrictEqual(resolveDiff3('1. a\n' + block(['2. b'], [], ['2. c']) + '   cont\n3. z\n'), REFUSED);
+});
+
+test('a run that closed inside the hunk does not make a later new list mid-list', () => {
+  assert.deepStrictEqual(
+    resolveDiff3('1. a\n' + block(['2. b'], [], ['2. c', '', 'Paragraph.']) + '\n1. z\n'),
+    ok('1. a\n2. b\n3. c\n\nParagraph.\n\n1. z\n'),
+  );
+  assert.deepStrictEqual(
+    resolveDiff3('1. a\n' + block(['2. b'], [], ['', '## Next', '']) + '1. z\n'),
+    ok('1. a\n2. b\n\n## Next\n\n1. z\n'),
+  );
+});
+
 test('a body line shaped like a short marker passes through', () => {
   assert.deepStrictEqual(resolveDiff3('<<<<<<< x\n' + block(['a'], [], ['b'])), ok('<<<<<<< x\na\nb\n'));
 });

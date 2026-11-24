@@ -55,6 +55,8 @@ function itemRuns(out, start, end) {
     const it = itemOf(out[i]);
     if (run && it && it.indent === run.indent) { run.items.push({ index: i, number: it.number }); continue; }
     if (run && indentOf(text) > run.indent) continue;
+    // Prose or a heading closes a run; a sibling list item of another kind (a bullet) leaves it open.
+    if (run && !ITEM_ANY.test(text)) run.closed = true;
     run = null;
     if (it) {
       run = { indent: it.indent, items: [{ index: i, number: it.number }], firstIndex: i };
@@ -70,10 +72,14 @@ function renumberRange(out, start, end) {
   const runs = itemRuns(out, start, end);
   if (runs.length === 0) return true;
   const last = runs[runs.length - 1];
-  for (let i = end; i < out.length; i++) {
-    if (stripCr(out[i]).trim() === '') continue;
+  // Only a run still open at the range's end can continue into the lines after it; look past blank lines
+  // and the run's last item's deeper-indented continuation to the first other line.
+  for (let i = end; !last.closed && i < out.length; i++) {
+    const text = stripCr(out[i]);
+    if (text.trim() === '') continue;
     const it = itemOf(out[i]);
     if (it && it.indent === last.indent) return false;
+    if (indentOf(text) > last.indent) continue;
     break;
   }
 
