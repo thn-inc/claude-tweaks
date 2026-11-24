@@ -229,6 +229,7 @@ function replanFixture() {
   const runDir = fixtureRunDir();
   seedManifest(runDir);
   const mainRoot = path.resolve(runDir, '..', '..', '..');
+  fs.mkdirSync(path.join(mainRoot, '.git')); // resolvable by mainCheckoutRoot, so a default-sink regression would append here
   const logFile = path.join(mainRoot, '.claude-tweaks', 'station-events.jsonl');
   fs.writeFileSync(logFile, JSON.stringify({
     v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',

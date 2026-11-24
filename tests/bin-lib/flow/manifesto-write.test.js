@@ -396,6 +396,18 @@ test('writeManifesto with a fast-lane ceremony after a standard claim writes one
   assert.strictEqual(events[0].payload.reasonCode, 'ceremony-downgrade');
 });
 
+test('writeManifesto with no stationEvent in deps appends one replanned through the real default sink', () => {
+  const fx = claimedFixture();
+  const logFile = path.join(fx.root, '.claude-tweaks', 'station-events.jsonl');
+  write(fx, { records: FAST });
+  const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const replans = lines.filter((l) => l.kind === KIND.REPLANNED);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(replans.length, 1);
+  assert.strictEqual(replans[0].payload.stations.includes('polish'), false);
+  assert.strictEqual(replans[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
 test('writeManifesto with a standard ceremony after a standard claim writes nothing', () => {
   const fx = claimedFixture();
   const events = [];
