@@ -419,17 +419,50 @@ test('#5902: realDeps wires a stationEvent emitter, so the real entry point emit
   assert.strictEqual(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
 });
 
-test('run: station events — adding auto:build records exited authorize passed + entered release, with the full field set', () => {
+test('run: station events — adding auto:build records exited authorize passed + decided authorize + entered release, with the full field set', () => {
   const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }], { sessionId: 'sess-1' });
   assert.strictEqual(run(['actions.json'], deps), 0);
-  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'entered release']);
+  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'decided authorize', 'entered release']);
   assert.deepStrictEqual(events[0], {
     kind: 'exited', station: 'authorize', outcome: 'passed',
     recordNumber: 118, repoName: 'acme/widgets', lane: 'unknown', runId: null, sessionId: 'sess-1',
-    payload: { label: 'auto:build', direction: 'added' },
+    payload: { label: 'auto:build', direction: 'added', actor: 'person' },
     discriminator: 'refine:118:added:auto:build:2023-11-14T22:13:20.000Z',
   });
-  assert.strictEqual(events[1].outcome, undefined);
+  assert.strictEqual(events[2].outcome, undefined);
+});
+
+test('authorizing writes exited passed actor person and a decided authorize via skill', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }], { sessionId: 'sess-1' });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'decided authorize', 'entered release']);
+  assert.strictEqual(events[0].payload.actor, 'person');
+  const { eventKey, buildLine } = require('../plugin/bin/lib/station-events/emit');
+  assert.deepStrictEqual(events[1].payload, {
+    decision: 'authorize', actor: 'person', via: 'skill', outcomeRef: eventKey(events[0]),
+  });
+  assert.strictEqual(events[1].payload.outcomeRef, buildLine(events[0]).eventKey, 'outcomeRef is the written exit line key');
+  assert.strictEqual(events[1].discriminator, events[0].discriminator);
+  assert.ok(buildLine(events[1]), 'the decided line is accepted');
+});
+
+test('re-authorizing (auto:build added, bot:blocked removed) also writes decision authorize', () => {
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'], removeLabels: ['bot:blocked'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  const decided = events.filter((e) => e.kind === 'decided');
+  assert.strictEqual(decided.length, 1);
+  assert.strictEqual(decided[0].payload.decision, 'authorize');
+  assert.strictEqual(decided[0].payload.actor, 'person');
+});
+
+test('a throwing exit emitter writes no decided line', () => {
+  const seen = [];
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
+    stationEvent: (e) => { seen.push(e.kind); if (e.kind === 'exited') throw new Error('boom'); },
+  });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(seen, ['exited', 'entered']);
 });
 
 test('run: station events — adding ready records its three transitions', () => {
@@ -464,7 +497,7 @@ test('run: station events — two actions on one issue are not deduped against e
   assert.deepStrictEqual(events.map((e) => `${e.recordNumber} ${triple(e)}`), [
     '4 exited intake passed',
     '4 exited intake passed', '4 exited shape passed', '4 entered authorize',
-    '5 exited authorize passed', '5 entered release', '5 exited release passed', '5 entered build',
+    '5 exited authorize passed', '5 decided authorize', '5 entered release', '5 exited release passed', '5 entered build',
   ]);
 });
 
@@ -508,7 +541,7 @@ test('run: station events — a recording stationEvent leaves stdout and exit co
   const { deps, events } = stationDeps(actions);
   assert.strictEqual(run(['actions.json'], deps), plainCode);
   assert.strictEqual(deps.calls.stdout.join(''), plain.calls.stdout.join(''));
-  assert.strictEqual(events.length, 5, 'the recorder saw every transition');
+  assert.strictEqual(events.length, 6, 'the recorder saw every transition');
 });
 
 test('run: station events — runId is the run dir basename with --run, and the discriminator ends with it', () => {
@@ -524,7 +557,7 @@ test('run: station events — a comment failure after a successful edit still re
     gh: (args) => { if (args[1] === 'comment') throw new Error('HTTP 500'); return ''; },
   });
   assert.strictEqual(run(['actions.json'], deps), 0);
-  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'entered release']);
+  assert.deepStrictEqual(events.map(triple), ['exited authorize passed', 'decided authorize', 'entered release']);
   const summary = JSON.parse(deps.calls.stdout.join(''));
   assert.deepStrictEqual(summary.ok, []);
   assert.deepStrictEqual(summary.failed.map((f) => [f.issue, f.step]), [[12, 'comment']]);
@@ -533,7 +566,7 @@ test('run: station events — a comment failure after a successful edit still re
 test('run: station events — a host-qualified --repo reduces to owner/name on every event', () => {
   const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'] }]);
   assert.strictEqual(run(['actions.json', '--repo', 'ghe.example.com/acme/widgets'], deps), 0);
-  assert.strictEqual(events.length, 2);
+  assert.strictEqual(events.length, 3);
   assert.ok(events.every((e) => e.repoName === 'acme/widgets'));
 });
 
