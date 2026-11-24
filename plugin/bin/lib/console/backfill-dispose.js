@@ -399,7 +399,8 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
   const batchMatched = new Map();
   // fingerprint -> the trusted comment a same-pass digest item was held by (by its claim or its item marker), so a twin is a duplicate of it (#4162).
   const batchHeld = new Map();
-  // item id -> its filing entry / its digest line index in out.digest.lines, so a same-pass twin's item marker can join it (#4162).
+  // item id -> its filing entry / its digest line ({ index in out.digest.lines, its disposition's digest }), so a
+  // same-pass twin's item marker can join it (#4162).
   const filingOf = new Map();
   const lineOf = new Map();
 
@@ -488,14 +489,19 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
           out.digest.duplicates.push(d.itemId);
           out.digest.sameAs.push({ itemId: d.itemId, sameAs: twin });
           // The twin's line carries this item's marker too, so the next pass finds it there if its claim has moved (#4162).
-          if (item.kind === 'finding') out.digest.lines[lineOf.get(twin)] += ` ${itemMarkerOf(item)}`;
+          // The owner's disposition gets the same text: tidy/console-backfill.md maps each planned line to its owner by it.
+          if (item.kind === 'finding') {
+            const owner = lineOf.get(twin);
+            owner.digest.line += ` ${itemMarkerOf(item)}`;
+            out.digest.lines[owner.index] = owner.digest.line;
+          }
         } else if (held) {
           batchHeld.set(d.digest.fingerprint, held);
           out.digest.duplicates.push(d.itemId);
           ref = commentRef(held);
         } else {
           batchDigested.set(d.digest.fingerprint, d.itemId);
-          lineOf.set(d.itemId, out.digest.lines.length);
+          lineOf.set(d.itemId, { index: out.digest.lines.length, digest: d.digest });
           out.digest.lines.push(d.digest.line);
         }
       }

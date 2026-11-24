@@ -702,6 +702,40 @@ test('#4162: a digest twin is found by its own item marker after a crash and a c
   assert.deepStrictEqual(out.digest.duplicates, [bAfter.itemId]);
 });
 
+test('#4162: a digest line carrying a twin\'s marker still maps back to the item that owns it', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000g3', itemHash: 'hg3', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000g4', itemHash: 'hg4', claimText: 'The guard runs after the read' });
+  const out = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: digestV, [b.itemId]: digestV } });
+  // tidy/console-backfill.md's digest-chunk step keys each planned line to its owner by the disposition's `digest.line`.
+  const dup = new Set(out.digest.duplicates);
+  const byLine = new Map(out.dispositions.filter((d) => d.action === 'digest' && !dup.has(d.itemId)).map((d) => [d.digest.line, d.itemId]));
+  assert.ok(out.digest.lines[0].includes(`consolebackfill-item: ${backfillFingerprint(b.itemId)}`), 'precondition: the line carries the twin\'s marker');
+  assert.deepStrictEqual(out.digest.lines.map((line) => byLine.get(line)), [a.itemId]);
+});
+
+// A twin settled against a record or comment an earlier item of the pass matched by its own item marker.
+test('#4162: a twin of an unverdicted item matched by its item marker reuses that record', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000p1', itemHash: 'hp1', claimText: 'The guard runs after the read, as a later cleaner leaves it' });
+  const b = { ...a, itemId: 'bf:00000000000000p2', itemHash: 'hp2' };
+  const existingIssues = [{ number: 4190, title: 'x', body: `Some record.\n<!-- work-fingerprint: ${backfillFingerprint(a.itemId)} -->` }];
+  const out = plan({ workList: workList([a, b]), verdicts: { [b.itemId]: confirmed() }, existingIssues });
+  assert.deepStrictEqual(out.reuse.find((r) => r.itemId === a.itemId).number, 4190);
+  assert.deepStrictEqual(out.file, [], 'B must not be filed as a new record');
+});
+
+test('#4162: a twin of a digest item held by its item marker is a duplicate, not a second line', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000q1', itemHash: 'hq1', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a]), verdicts: { [a.itemId]: digestV } });
+  assert.strictEqual(pass1.digest.lines.length, 1);
+  const digestComments = [{ body: pass1.digest.lines[0], authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
+  const newClaim = 'the guard runs after the read (as a later cleaner leaves it)';
+  const aAfter = { ...a, claimText: newClaim };
+  const bAfter = findingItem({ itemId: 'bf:00000000000000q2', itemHash: 'hq2', claimText: newClaim });
+  const out = plan({ workList: workList([aAfter, bAfter]), verdicts: { [aAfter.itemId]: digestV, [bAfter.itemId]: digestV }, digestComments });
+  assert.ok(out.digest.duplicates.includes(aAfter.itemId), 'precondition: A is held by its item marker');
+  assert.deepStrictEqual(out.digest.lines, [], 'no second digest line for B');
+});
+
 test('AC8.1 (held half): a tombstone keeps a promoted console-backfill finding held against the new container', () => {
   const before = findingItem({ itemId: 'bf:00000000000000e1', itemHash: 'he1' });
   const after = { ...before, claimText: 'The guard runs after the read, as a later cleaner leaves it' };
