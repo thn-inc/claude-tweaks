@@ -37,7 +37,8 @@ function planOf(input) {
 }
 
 // `listLane` chooses the list when it differs from the line's `lane`; `lane` goes to the line as given.
-function planEvent({ repoName, recordNumber, lane, ceremonyProfile, sessionId, runId, listLane } = {}) {
+function planEvent(input) {
+  const { repoName, recordNumber, lane, ceremonyProfile, sessionId, runId, listLane } = input !== null && typeof input === 'object' ? input : {};
   const { list, stations, reasonCode, reasonText } = planOf({ lane: listLane ?? lane, ceremonyProfile });
   const payload = { process: PROCESS.id, processVersion: PROCESS.version, list, stations, reasonCode };
   if (reasonText !== undefined) payload.reasonText = reasonText;

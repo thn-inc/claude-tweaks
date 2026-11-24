@@ -90,6 +90,14 @@ test('planEvent builds a line appendStationEvent accepts', () => {
   assert.equal(ev.outcome, null);
   assert.deepEqual(ev.payload, { process: 'build-a-record', processVersion: 1, list: 'standard', stations: [...STATIONS], reasonCode: 'default-list' });
 });
+test('planEvent never throws on a non-object argument', () => {
+  for (const arg of [null, undefined, 'x']) {
+    const ev = planEvent(arg);
+    assert.equal(typeof ev, 'object');
+    assert.equal(ev.kind, KIND.PLANNED);
+    assert.deepEqual(ev.payload, { process: 'build-a-record', processVersion: 1, list: 'standard', stations: [...STATIONS], reasonCode: REASON.DEFAULT_LIST });
+  }
+});
 test('a known selector carries reason other with its reasonText', () => {
   const d = planOf({ lane: 'driver', ceremonyProfile: null });
   assert.equal(d.reasonCode, REASON.OTHER);
