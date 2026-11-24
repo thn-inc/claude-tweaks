@@ -5,7 +5,7 @@
 // procedure is lib/timing/context-gauge.js.
 //
 //   node bin/context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>]
-//     [--next-steps <step,...>
+//     [--next-steps <step,...> [--stories-owed]
 //      | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]
 //
 // The transcript is --transcript when given, else found from
@@ -24,6 +24,10 @@
 // record's own remaining steps (`#A:none;#B:build,test`, lib/flow/record-steps.js);
 // the two are mutually exclusive. --keep-going and --no-stories, each valid only
 // with --record-steps, carry that run's token of the same name into `resume`.
+// --stories-owed, valid only with --next-steps, says build's automatic stories
+// step has not run yet (#4664): over the cap, a list without `stories`, or with
+// it after `test`, writes no handoff (handoff: null and a reason), so the step
+// is never dropped from the resumed run.
 //
 // Stdout: one JSON line, {contextTokens, cap, over, transcript, handoff, reason}.
 // over is contextTokens > cap. When over, --next-steps or --record-steps was
@@ -62,7 +66,8 @@
 //      2 malformed invocation: an unknown flag, a value-less flag, a --cap that
 //        is not a positive integer, a --next-steps entry outside FLOW_STEPS, an
 //        invalid --record-steps value, --record-steps beside --next-steps,
-//        --keep-going or --no-stories without --record-steps, or a --run that
+//        --keep-going or --no-stories without --record-steps, --stories-owed
+//        without --next-steps, or a --run that
 //        is missing, not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local
 //        shadow, or a directory outside pipelines/, or outside every checkout — [IL-127]), or whose basename is
 //        not a run id. Nothing is written.
@@ -84,13 +89,14 @@ const {
 const { parseRecordSteps } = require('./lib/flow/record-steps');
 const { readRunMode } = require('./lib/flow/run-mode');
 
-const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...> | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]\n'
+const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...> [--stories-owed] | --record-steps <#N:steps;...> [--keep-going] [--no-stories]] [--help]\n'
   + '  measures this agent\'s context from its transcript; past the cap, writes {run}/handoff.json (with --next-steps or --record-steps)\n'
   + '  prints {contextTokens, cap, over, transcript, handoff, reason}; a missing/unreadable transcript prints over: false + reason\n'
   + `  --cap defaults to ${CONTEXT_CAP_TOKENS}; --next-steps entries: ${FLOW_STEPS.join(', ')}\n`
   + '  --record-steps is a multi-spec run\'s form, every manifest.yml record with its own steps: #A:none;#B:build,test\n'
   + '  --keep-going (only with --record-steps) carries the run\'s keep-going token into the resume line\n'
   + '  --no-stories (only with --record-steps) carries the run\'s no-stories token into the resume line\n'
+  + '  --stories-owed (only with --next-steps): build\'s automatic stories has not run; over the cap, a list without stories before test writes no handoff\n'
   + '  exit 0 in every measured state (the JSON is the answer)\n'
   + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout\'s .claude-tweaks/pipelines, not a run id)\n';
 
@@ -282,6 +288,7 @@ async function run(argv, overrides = {}) {
   if (o.recordSteps !== undefined && o.nextSteps !== undefined) return usageError('--record-steps and --next-steps are mutually exclusive');
   if (o.keepGoing && o.recordSteps === undefined) return usageError('--keep-going is valid only with --record-steps');
   if (o.noStories && o.recordSteps === undefined) return usageError('--no-stories is valid only with --record-steps');
+  if (o.storiesOwed && o.nextSteps === undefined) return usageError('--stories-owed is valid only with --next-steps');
   let parsedRecordSteps = null;
   if (o.recordSteps !== undefined) {
     parsedRecordSteps = parseRecordSteps(o.recordSteps);
