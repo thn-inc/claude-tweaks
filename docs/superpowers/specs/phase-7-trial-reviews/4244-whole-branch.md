@@ -47,7 +47,7 @@ None
   - `if cd /M; then : > zz; fi` still resolves `zz` to `/r/zz`, though bash writes `/M/zz`. The cd is in the condition, which always runs in the current shell, not in a body. Base behaves the same, and ADR 0028 hands every unresolved cwd from a cd in a conditional to #4572. I set it aside as #4572's, but the condition position is not literally "a body", so the executor should confirm #4572's scope covers it.
   - `pushd`/`popd` and the prefixes `!`/`time`/`builtin`/`command` were set aside: the record's ADR 0028 scope moved them to #4572 and #4448. (`!` and `time` already strip through #4448, which my probes confirmed.)
   - Keywords after an external prefix or an assignment (`env then cp`, `X=1 then cp`) now produce an extra, spurious target. I set this aside as fail-closed and harmless.
-  - I did not run the test suite or check against real bash 3.2 and 5, as instructed. My verdicts rest on reading the code plus one scratch probe script run against head and base (/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/7681df63-8b80-4414-9874-ef1bf1dd6ced/scratchpad/probe4244.js).
+  - I did not run the test suite or check against real bash 3.2 and 5, as instructed. My verdicts rest on reading the code plus one scratch probe script run against head and base ({scratchpad}/probe4244.js).
 
 ### Assessment
 
