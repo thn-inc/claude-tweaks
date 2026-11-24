@@ -1627,6 +1627,14 @@ test('isClosedSlugStuck: true once every record in the slug resolves CLOSED and 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('isClosedSlugStuck: a state-less spec-{n}-{m} dir is stuck once every record is CLOSED, not while one is OPEN', () => {
+  const dir = mkConfigOnlyDir('spec-11-12', STRUCTURALLY_STUCK_TTL_MS * 2);
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), () => ({ state: 'CLOSED' })), true);
+  const open = (root, n) => ({ state: n === 12 ? 'OPEN' : 'CLOSED' });
+  assert.equal(isClosedSlugStuck('/repo', dir, null, Date.now(), open), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('isClosedSlugStuck: false when any one record in the slug is still OPEN', () => {
   const dir = mkConfigOnlyDir('record-1378-816', STRUCTURALLY_STUCK_TTL_MS * 2);
   const resolve = (root, n) => ({ state: n === 816 ? 'OPEN' : 'CLOSED', number: n });

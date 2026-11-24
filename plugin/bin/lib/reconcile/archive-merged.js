@@ -1135,7 +1135,7 @@ function shellWorkTwinDiffers(root, dir) {
 // escalates at `structurally-stuck` forever without ever resolving (see this
 // record's own filed example, #1811's Original request). Terminal once every
 // record in the slug is independently CLOSED — nothing left to build.
-const RECORD_SLUG_RE = /-record-([\d-]+)$/;
+const RECORD_SLUG_RE = /-(?:record|spec)-(\d+(?:-\d+)*)$/;
 
 // dir basename -> record numbers named in a `record-{n}[-{m}...]` slug, or
 // null when the basename doesn't match that shape (a topic-name run, a
