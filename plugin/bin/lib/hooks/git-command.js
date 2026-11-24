@@ -3974,7 +3974,139 @@ function mkdirTargets(command, cwd, opts) {
   return targets;
 }
 
+// #6143: `gh pr ready|merge` calls, for the in-flight-run merge gate. The program, group and verbs are
+// the one spelling the Bash prefilter's pre-tool-use reach rule reads too (bash-prefilter.js), so the
+// prefilter stays a superset of this parser.
+const GH_PR_LIFECYCLE = Object.freeze({ program: 'gh', group: 'pr', verbs: Object.freeze(['merge', 'ready']) });
+// The flags that take a value, per verb. A short one also takes it glued (`-Ro/r`).
+const GH_PR_VALUE_FLAGS = Object.freeze({
+  merge: Object.freeze(['-A', '--author-email', '-b', '--body', '-F', '--body-file', '--match-head-commit', '-t', '--subject', '-R', '--repo']),
+  ready: Object.freeze(['-R', '--repo']),
+});
+
+// The environment variables that pick the repository gh reads (#6143 review): a call's own literal
+// assignment prefix is carried into `env`; any other spelling of them makes the call `envUnprovable`.
+const GH_TARGET_ENV_MENTION_RE = /GH_(?:REPO|HOST)/gi;
+// pflag reads a `--flag=value` boolean with Go's strconv.ParseBool: these are its true spellings.
+const PFLAG_TRUE = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
+
+// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, env, envUnprovable,
+// envCleared, cwd, lost }`. `selector` is the first positional after the verb (null when absent), `repo`
+// the -R/--repo value, `undo` true for a call that only cancels: `ready --undo`, or `merge
+// --disable-auto`, which only turns auto-merge off; bare or with a pflag true value (`=true`, `=1`, …),
+// the last spelling winning, so a false value (`=false`, `=0`, …) or one ParseBool refuses is no cancel.
+// `envCleared` is true when a prefix runs gh without (part of) the inherited environment: `env` with
+// `-i`/`--ignore-environment`/`-`/`-u`/`--unset` (or a unique abbreviation, getopt's rule), `exec -c`, or `sudo`/`doas` (both reset it by default). `env` holds the GH_REPO/GH_HOST values of the call's own literal
+// assignment prefix (`GH_REPO=o/r gh pr merge 5`), which gh reads in place of the cwd's repo.
+// `envUnprovable` is true when such a value cannot be known: an expansion or `+=` in the value, a
+// subscript, a prefix word (`env`, `sudo`) in front of the call, or any GH_REPO/GH_HOST text in the
+// command (any case) beyond the prefixes carried (`export GH_REPO=…;`, `env -u GH_HOST`, a quoted
+// mention). `cwd` is the segment's cwd; `lost` is true when the walk no longer knows it (#4303) or
+// a prefix's directory cannot be proved, and `cwd` is then a stand-in, taken from the first of: the
+// lost cwd's root (as resolveGitCommand reports it), else the unprovable prefix's directory, else the
+// walk's cwd (a lost one's root), else the `cwd` argument.
+function ghPrLifecycleCalls(command, cwd, opts) {
+  const calls = [];
+  let pieceStart = 0; // where the current piece's first-cwd visit began pushing
+  let carried = 0; // GH_REPO/GH_HOST prefix assignments carried, first visits only
+  forEachShellSegment(command, cwd, (tokens, effCwd, quoting, again) => {
+    if (!again) pieceStart = calls.length;
+    const lead = commandWord(tokens, quoting, effCwd);
+    if (lead.index === -1) return;
+    const from = lead.index;
+    const t = dropRedirections(tokens.slice(from), {
+      raw: quoting.raw.slice(from), leadQuoted: quoting.leadQuoted.slice(from), spanKinds: quoting.spanKinds.slice(from),
+    });
+    const { pathImpl } = quoting;
+    if (!t.length || pathImpl.basename(t[0]).toLowerCase().replace(/\.exe$/, '') !== GH_PR_LIFECYCLE.program) return;
+    if (t[1] !== GH_PR_LIFECYCLE.group || !GH_PR_LIFECYCLE.verbs.includes(t[2])) return;
+    const verb = t[2];
+    const valueFlags = GH_PR_VALUE_FLAGS[verb];
+    // The words before the command word: redirections, assignment words and prefix words (commandWord).
+    const env = {};
+    let envUnprovable = false;
+    let envCleared = false;
+    let prefixWord = false;
+    let prefixName = null; // the prefix word whose options are being read
+    let mine = 0;
+    for (let i = 0; i < from;) {
+      const width = redirectionWidth(quoting.raw[i], quoting.spanKinds[i], quoting.leadQuoted[i]);
+      if (width > 0) { i += width; continue; }
+      const end = assignmentWordEnd(quoting.raw, quoting.spanKinds, i);
+      if (end === i) {
+        prefixWord = true;
+        const w = tokens[i];
+        const base = pathImpl.basename(w);
+        if (STRIPPED_PREFIX_WORDS.includes(w) || PATH_PREFIX_WORDS.includes(base)) {
+          prefixName = STRIPPED_PREFIX_WORDS.includes(w) ? w : base;
+          if (prefixName === 'sudo' || prefixName === 'doas') envCleared = true;
+        } else if (prefixName === 'env' && (w === '-' || (w.startsWith('--') && ['ignore-environment', 'unset'].includes(longOptionName(w, Object.keys(PREFIX_OPTIONS.env.long)))) || /^-[^-]*[iu]/.test(w))) {
+          envCleared = true;
+        } else if (prefixName === 'exec' && /^-[^-]*c/.test(w)) {
+          envCleared = true;
+        }
+        i += 1;
+        continue;
+      }
+      const m = /^(GH_REPO|GH_HOST)=/.exec(quoting.raw[i]);
+      if (m && end === i + 1 && !/[$`]/.test(quoting.raw[i])) {
+        env[m[1]] = tokens[i].slice(m[1].length + 1);
+        mine += 1;
+      }
+      i = end;
+    }
+    if (prefixWord && mine > 0) envUnprovable = true;
+    if (!again) carried += mine;
+    let selector = null;
+    let repo = null;
+    let undo = false;
+    const rest = t.slice(3);
+    for (let i = 0; i < rest.length; i += 1) {
+      const a = rest[i];
+      if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
+      if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
+      const cancel = /^--(undo|disable-auto)(?:=(.*))?$/.exec(a);
+      if (cancel && (cancel[1] === 'undo' || verb === 'merge')) {
+        // A false value, or one ParseBool refuses (gh then exits on the flag), is no cancel.
+        undo = cancel[2] === undefined || PFLAG_TRUE.has(cancel[2]);
+        continue;
+      }
+      let name;
+      let value = null;
+      if (a.startsWith('--')) {
+        const eq = a.indexOf('=');
+        name = eq === -1 ? a : a.slice(0, eq);
+        if (!valueFlags.includes(name)) continue;
+        value = eq === -1 ? null : a.slice(eq + 1);
+      } else {
+        // pflag reads a short cluster letter by letter: the first value flag takes the rest of the
+        // cluster (one leading `=` dropped) or, when nothing is left, the next word.
+        const at = [...a.slice(1)].findIndex((c) => valueFlags.includes(`-${c}`));
+        if (at === -1) continue;
+        name = `-${a[1 + at]}`;
+        const glued = a.slice(2 + at);
+        value = glued === '' ? null : glued.replace(/^=/, '');
+      }
+      if (value === null) { value = i + 1 < rest.length ? rest[i + 1] : ''; i += 1; }
+      if (name === '-R' || name === '--repo') repo = value;
+    }
+    const known = !lead.unprovable && lead.dir !== null && !(lead.dir instanceof LostCwd);
+    // A lost cwd's stand-in comes from the walk's own input (its root, or the cwd argument), never from
+    // the hook process's cwd.
+    const standIn = lead.dir instanceof LostCwd ? lead.dir.root : (typeof lead.dir === 'string' ? lead.dir : (effCwd instanceof LostCwd ? effCwd.root : (typeof effCwd === 'string' ? effCwd : String(cwd || '.'))));
+    const call = { verb, selector, repo, undo, env, envUnprovable, envCleared, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
+    // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
+    if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
+    calls.push(call);
+  }, keepLost(opts));
+  // A GH_REPO/GH_HOST mention the carried prefixes do not account for may set what gh reads.
+  const mentions = (String(command).match(GH_TARGET_ENV_MENTION_RE) || []).length;
+  if (mentions > carried) for (const call of calls) call.envUnprovable = true;
+  return calls;
+}
+
 module.exports = {
+  GH_PR_LIFECYCLE, ghPrLifecycleCalls,
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The stripped command prefixes and their reader (#4448), reused by later recognisers.
   STRIPPED_PREFIX_WORDS, commandWord,

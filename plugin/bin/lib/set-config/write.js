@@ -127,7 +127,7 @@ function validateLever(key, value) {
 // the LAST occurrence's value, matching parseFlatLines semantics — not
 // necessarily the first line's. Every other line is preserved byte-for-byte.
 // Throws on fs errors — the CLI maps those to exit 3.
-function setConfigLever({ runDir, key, value }) {
+function setConfigLever({ runDir, key, value, stationDeps }) {
   const file = path.join(runDir, 'config.yml');
   let text = '';
   try { text = fs.readFileSync(file, 'utf8'); } catch { /* config.yml not yet created */ }
@@ -155,8 +155,22 @@ function setConfigLever({ runDir, key, value }) {
   // changes this write's outcome. Required lazily so the many callers that never touch it stay light.
   if (key === 'ceremony-profile') {
     try { require('../run-manifest/write').fillRunManifest(runDir, { ceremonyProfile: value }); } catch { /* never breaks the lever write */ }
+    replanFromProfile({ runDir, value, stationDeps });
   }
   return { file, previous };
+}
+
+// A claimed record's stations may change with this profile write: replanRun writes one `replanned` per
+// such record. Needs a caller-supplied `stationDeps` with a `stationEvent` sink; without it (the
+// set-config.js CLI passes none), nothing is written. The profile is the `value` just written, never
+// re-read from the manifest, whose fill is best-effort. Never throws, never changes the lever write.
+function replanFromProfile({ runDir, value, stationDeps }) {
+  try {
+    if (stationDeps === null || typeof stationDeps !== 'object' || typeof stationDeps.stationEvent !== 'function') return;
+    let lane = null;
+    try { lane = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8')).lane ?? null; } catch { /* unreadable: lane unknown */ }
+    require('../station-events/replan').replanRun({ runDir, manifest: { lane, ceremonyProfile: value }, ref: 'ceremony-profile', deps: stationDeps });
+  } catch { /* emission never blocks the write */ }
 }
 
 module.exports = { MANIFESTO_LEVERS, LEVER_LABELS, RUN_PINS, PIN_PATTERNS, isConfigKey, leverValues, validateLever, setConfigLever };

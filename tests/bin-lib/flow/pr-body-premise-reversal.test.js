@@ -78,6 +78,14 @@ test('a reversal rewrites only the Spec summary span, note line first', () => {
   assert.equal(r.body.slice(r.body.indexOf('### Phases')), b.slice(b.indexOf('### Phases')));
 });
 
+test('a fenced heading-shaped line inside the Spec summary does not end the span (#4531)', () => {
+  const b = '### Spec summary\n\nOld.\n\n```\n### x\n```\n\n### Phases\n\nkeep\n';
+  const r = reviseSpecSummary({ body: b, reversals: [{ original: 'a', replacement: 'b' }], summary: 'New.\n' });
+  assert.equal(r.changed, true);
+  assert.doesNotMatch(r.body, /### x/);
+  assert.equal(r.body.slice(r.body.indexOf('### Phases')), '### Phases\n\nkeep\n');
+});
+
 test('re-running with the same reversal is idempotent — already-noted, unchanged', () => {
   const rev = [{ original: 'A', replacement: 'B' }];
   const first = reviseSpecSummary({ body: body(), reversals: rev, summary: 'New behavior.' });

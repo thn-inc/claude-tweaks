@@ -8,6 +8,10 @@
 // check re-verifies state immediately before writing. Safe by these
 // per-check properties, not by a global lock.
 'use strict';
+const path = require('path');
+const HOLLOW_CHECK_NOT_APPLICABLE = ['no-remote', 'unknown-host'];
+// The checks a hollow-merge hold reaches (#6143): each leaves a held run's claim, run dir, branch or worktree alone.
+const HOLLOW_HELD_CHECKS = ['release', 'post-merge', 'archive', 'archive-branches', 'remote-prune', 'reap'];
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { findNonCanonicalRunDirs } = require('../hooks/context');
 const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReapWorktrees } = require('../hooks/worktree-reap');
@@ -16,7 +20,7 @@ const { mirrorFastForward } = require('./mirror-ff');
 const { redTipCheck } = require('./red-tip');
 const { reapMerged, prefetchReapPrStates } = require('./reap-merged');
 const { releaseMerged } = require('./release-merged');
-const { postMerge, prefetchPostMergePrStates } = require('./post-merge');
+const { postMerge, detectHollowMerges, hollowRunRefs, prefetchPostMergePrStates } = require('./post-merge');
 const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
@@ -160,7 +164,7 @@ async function reconcileInner(opts, state) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, hollowMerges: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -547,7 +551,40 @@ async function reconcileInner(opts, state) {
   // of hazard `bin/lib/hooks/session-start.js` already documents for its
   // own stale-run-scan-before-reap ordering.
   if (overBudget(DISPATCH_ORDER.slice(3))) return result;
-  if (checks.includes('release')) {
+  // A PR merged while its run was still in flight (#6143) must not be settled: release, post-merge and
+  // archive each skip the runs listed here, and archive-branches, remote-prune and reap skip the branches and
+  // worktrees those runs own (hollowRunRefs), so a held run stays resumable. Fails closed: a setup failure (bar
+  // the not-applicable ones below) or an uncaught throw skips all six for this pass, never an empty hold set.
+  // Detection and release read the one `prStates` resolver.
+  let hollowRunDirs = [];
+  let hollowRunIds = [];
+  let hollowRefs = { worktrees: [], branches: [] };
+  let hollowCheckFailed = false;
+  const heldChecks = HOLLOW_HELD_CHECKS.filter((c) => checks.includes(c));
+  if (heldChecks.length) {
+    try {
+      // Its own PR warm-up runs first, and the pass budget is checked between runs (a run left unjudged fails the pass closed).
+      const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() }));
+      // `no-remote` and `unknown-host`: this project has no PR to ask about, or an origin the #4933 host gate
+      // refuses before any gh call (release and post-merge refuse it too), so the check can never run and has
+      // nothing to hold. Treating them as a failed check would skip archive on every pass for every such project,
+      // which never had the hazard. Another work backend is not among them: detection runs there and holds,
+      // and only its record comment, which needs GitHub issues, is skipped.
+      if (h.failure && !HOLLOW_CHECK_NOT_APPLICABLE.includes(h.failure)) {
+        hollowCheckFailed = true;
+        result.skipped.push({ check: heldChecks.join(','), reason: 'hollow-merge-check-failed', detail: h.detail ? `${h.failure}: ${h.detail}` : h.failure });
+      } else if (!h.failure) {
+        if (h.hollowRunDirs.length) hollowRefs = hollowRunRefs(root, h.hollowRunDirs);
+        hollowRunDirs = h.hollowRunDirs;
+        hollowRunIds = hollowRunDirs.map((d) => path.basename(d));
+        result.hollowMerges = h.entries;
+      }
+    } catch (e) {
+      hollowCheckFailed = true;
+      result.skipped.push({ check: heldChecks.join(','), reason: 'hollow-merge-check-failed', detail: String(e && e.message ? e.message : e).split('\n')[0].slice(0, 200) });
+    }
+  }
+  if (checks.includes('release') && !hollowCheckFailed) {
     // Release performs one write kind (a conditional-overwrite of the claim
     // blob) with no meaningful "preview" — unlike ff/reap/archive, there is
     // no local state to diff against. dry-run skips it outright rather than
@@ -555,7 +592,7 @@ async function reconcileInner(opts, state) {
     if (dryRun) {
       result.skipped.push({ check: 'release', reason: 'dry-run-not-supported' });
     } else {
-      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates }));
+      const r = await timePhase('release', () => releaseMerged({ cwd: root, prStates, hollowRunIds }));
       if (r.failure) {
         result.skipped.push({ check: 'release', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
       } else {
@@ -573,11 +610,11 @@ async function reconcileInner(opts, state) {
   // backstop stays the recovery). Reads GitHub only, so it is not gated on the shared fetch.
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   let postMergeDeferred = [];
-  if (checks.includes('post-merge')) {
+  if (checks.includes('post-merge') && !hollowCheckFailed) {
     const r = await timePhase('post-merge', async () => {
       await warm(prefetchPostMergePrStates);
       // The pass budget, checked between runs: a catch-up or several armed merges must not run past it.
-      return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
+      return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded(), hollowRunDirs });
     });
     if (r.failure) {
       result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
@@ -586,9 +623,11 @@ async function reconcileInner(opts, state) {
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];
     }
   }
+  // A hollow run stays in place whether or not post-merge ran: archive must not move its run dir.
+  postMergeDeferred = [...new Set([...postMergeDeferred, ...hollowRunDirs])];
 
   if (overBudget(DISPATCH_ORDER.slice(5))) return result;
-  if (checks.includes('archive')) {
+  if (checks.includes('archive') && !hollowCheckFailed) {
     const r = await timePhase('archive', async () => {
       await warm((r, states) => prefetchArchivePrStates(r, states, { cache: runIntegrityCache }));
       return archiveMerged({
@@ -621,8 +660,8 @@ async function reconcileInner(opts, state) {
   // refs reap may remove. Runs after archive (run-dir archival may release
   // branch attachments), before reap (which stays last — see above).
   if (overBudget(DISPATCH_ORDER.slice(6))) return result;
-  if (checks.includes('archive-branches')) {
-    const r = timePhaseSync('archive-branches', () => archiveBranches({ cwd: root, integration, dryRun }));
+  if (checks.includes('archive-branches') && !hollowCheckFailed) {
+    const r = timePhaseSync('archive-branches', () => archiveBranches({ cwd: root, integration, dryRun, heldBranches: hollowRefs.branches }));
     if (r.failure) {
       result.skipped.push({ check: 'archive-branches', reason: r.failure });
     } else {
@@ -635,8 +674,10 @@ async function reconcileInner(opts, state) {
   // the worktree-attachment guard must read worktrees reap has not yet
   // removed, so this too runs before reap (which stays last — see above).
   if (overBudget(DISPATCH_ORDER.slice(7))) return result;
-  if (checks.includes('remote-prune') && sharedFetchOk) {
-    const r = timePhaseSync('remote-prune', () => pruneRemote({ cwd: root, integration, dryRun, skipFetch: true }));
+  if (checks.includes('remote-prune') && sharedFetchOk && !hollowCheckFailed) {
+    const r = timePhaseSync('remote-prune', () => pruneRemote({
+      cwd: root, integration, dryRun, skipFetch: true, heldBranches: hollowRefs.branches,
+    }));
     if (r.failure) {
       result.skipped.push({ check: 'remote-prune', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
@@ -673,7 +714,7 @@ async function reconcileInner(opts, state) {
   }
 
   if (overBudget(DISPATCH_ORDER.slice(10))) return result;
-  if (checks.includes('reap')) {
+  if (checks.includes('reap') && !hollowCheckFailed) {
     // #644 review fix: pass the caller's actual `cwd`, not the already-
     // resolved `root` every other dispatch line above uses. reapMerged's own
     // `isOwnCwd` guard (#644 Deliverable 1) exists specifically to detect
@@ -688,7 +729,9 @@ async function reconcileInner(opts, state) {
     // directly) still exercised and passed.
     const r = await timePhase('reap', async () => {
       await warm(prefetchReapPrStates);
-      return reapMerged({ cwd, dryRun, runner: issueListCache.runner, prStates });
+      return reapMerged({
+        cwd, dryRun, runner: issueListCache.runner, prStates, heldWorktrees: hollowRefs.worktrees, heldBranches: hollowRefs.branches,
+      });
     });
     if (r.failure) {
       result.skipped.push({ check: 'reap', reason: r.failure });

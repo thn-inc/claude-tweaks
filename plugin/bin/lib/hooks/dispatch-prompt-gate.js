@@ -53,8 +53,8 @@ const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./context');
 const wtDetect = require('./worktree-detect');
-const { canonicalRealpath, lstatType } = require('../path-guard');
-const { isPathContained } = require('../shared-primitives');
+const { lstatType } = require('../path-guard');
+const { pipelinesDir, namedRunDir } = require('./named-run');
 const { isDispatchTaskCall } = require('../dispatch/task-call');
 
 const GATE = 'dispatch-prompt-fidelity';
@@ -70,24 +70,10 @@ function testTag(env) {
   return env.CT_HOOKS_TEST_MODE === '1' ? { test: true } : null;
 }
 
-// The main checkout's canonical pipelines dir, or null when it cannot be proven.
-function pipelinesDir(cwd, d) {
-  if (!isNonEmptyString(cwd) || !path.isAbsolute(cwd)) return null;
-  let main;
-  try { main = d.mainCheckoutRoot(cwd); } catch { return null; }
-  if (!isNonEmptyString(main)) return null;
-  return canonicalRealpath(path.join(main, '.claude-tweaks', 'pipelines'), { fsImpl: d.fsImpl });
-}
-
 function checkMismatch(ctx, prompt, marker, tp, d, deny) {
   const [, runId, call] = marker;
-  if (!ctxLib.RUN_ID_RE.test(runId)) return {};
-  const pipes = pipelinesDir(ctx.cwd, d);
-  if (!pipes) return {};
-  const real = canonicalRealpath(path.join(pipes, runId), { fsImpl: d.fsImpl });
+  const real = namedRunDir(ctx.cwd, runId, d);
   if (!real) return {};
-  if (lstatType(real, { fsImpl: d.fsImpl }).type !== 'directory') return {};
-  if (!isPathContained(real, pipes) || path.dirname(real) !== pipes) return {};
   let text;
   try {
     text = d.fsImpl.readFileSync(path.join(real, tp.REGISTRY_FILE), 'utf8');

@@ -79,7 +79,9 @@ function decideRemotePrune({ branch, cherryEquivalent, squashMerged = false, prS
   return { action: 'delete', reason: cherryEquivalent ? 'merged-pr-cherry-equivalent' : 'merged-pr-squash-merged' };
 }
 
-function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipFetch, refExists, gateDeps } = {}) {
+// `heldBranches`: branches of runs reconcile holds as hollow merges (post-merge.js's hollowRunRefs, #6143) —
+// skipped `hollow-merge` before the screen, so a held run's pushed branch is never deleted.
+function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipFetch, refExists, gateDeps, heldBranches = [] } = {}) {
   const root = cwd || process.cwd();
   const resolve = resolvePr || resolvePrState;
   const resolveBulk = resolvePrBulk || resolvePrStatesBulk;
@@ -109,9 +111,11 @@ function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipF
 
   // Collect the in-scope branch set first — the screen is one bulk call.
   const inScopeBranches = [];
+  const held = new Set(heldBranches);
   for (const branch of refs.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
     if (branch === 'HEAD' || branch === integration) continue;
     if (!inScope(branch, worktrees)) continue;
+    if (held.has(branch)) { entries.push({ name: branch, kind: 'remote-branch', action: 'skip', reason: 'hollow-merge' }); continue; }
     inScopeBranches.push(branch);
   }
 

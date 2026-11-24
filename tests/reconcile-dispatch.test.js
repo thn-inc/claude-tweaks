@@ -998,3 +998,122 @@ test('AC4.1: SessionStart passes no budgetMs (default budget); the background pa
   assert.ok(bgLine, 'background reconcile call site found');
   assert.ok(bgLine.includes('budgetMs: BACKGROUND_BUDGET_MS'), 'the background pass runs under its own ceiling, not the 18 s hot-path default');
 });
+
+// #6143: the hollow-merge check (a PR merged while its run was in flight) holds the run through release,
+// post-merge and archive, and fails closed.
+test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive as a hold, kept out of archive, and shown in the summary', async () => {
+  const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
+  const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
+  const { r, order, releaseOpts, postMergeOpts, archiveOpts, hollowOpts, hollowCalls } = await reconcileWithAsyncMerge(['release', 'archive'], {
+    hollow: async () => ({ entries: [entry], hollowRunDirs: [runDir] }),
+  });
+  assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
+  assert.equal(hollowCalls, 1, 'detection runs once per pass');
+  assert.deepEqual(releaseOpts.hollowRunIds, ['2026-11-23T1-hollow']);
+  assert.deepEqual(postMergeOpts.hollowRunDirs, [runDir]);
+  assert.deepEqual(archiveOpts.postMergeDeferred, [runDir], 'archive leaves the hollow run dir in place');
+  assert.equal(hollowOpts.prStates, releaseOpts.prStates, 'detection and release read ONE per-pass PR-state resolver');
+  assert.equal(hollowOpts.prStates, postMergeOpts.prStates);
+  assert.equal(typeof hollowOpts.budgetExceeded, 'function', 'detection checks the pass budget');
+  assert.equal(hollowOpts.budgetExceeded(), false);
+  assert.deepEqual(r.hollowMerges, [entry]);
+  assert.ok(formatSummary(r).split('\n').includes(
+    'hollow merge held: PR #77 (run 2026-11-23T1-hollow) — build unfinished; claim, auto:build and run dir kept; commented on #5',
+  ));
+});
+
+test('AC5.1 (#6143): a clean pass hands release, post-merge and archive empty hold sets and prints no hollow line', async () => {
+  const { r, releaseOpts, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['release', 'archive']);
+  assert.deepEqual(releaseOpts.hollowRunIds, []);
+  assert.deepEqual(postMergeOpts.hollowRunDirs, []);
+  assert.deepEqual(archiveOpts.postMergeDeferred, []);
+  assert.deepEqual(r.hollowMerges, []);
+  assert.ok(!formatSummary(r).includes('hollow'));
+});
+
+test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post-merge and archive for the pass', async () => {
+  // `not-github-issues` is no longer a not-applicable refusal (detection runs on any work backend), so it fails closed too.
+  const failing = [
+    async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }),
+    async () => ({ entries: [], hollowRunDirs: [], failure: 'not-github-issues' }),
+    async () => { throw new Error('boom'); },
+  ];
+  for (const hollow of failing) {
+    const { r, order, archiveCalled } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow });
+    assert.deepEqual(order, [], 'none of release, post-merge, archive ran');
+    assert.equal(archiveCalled, false);
+    assert.equal(r.hollowMerges, null, 'a failed check reports no hold list');
+    assert.equal(r.skipped.filter((s) => s.check === 'release,post-merge,archive' && s.reason === 'hollow-merge-check-failed').length, 1);
+    assert.ok(formatSummary(r).split('\n').some((l) => l.startsWith('skipped: release,post-merge,archive — hollow-merge-check-failed')));
+  }
+});
+
+test('(#6143): a project with no remote or an origin on an unknown host has nothing to hold, so the three checks still run', async () => {
+  // `unknown-host`: setupContext refuses the origin (#4933) before any gh call, so the check can never run;
+  // treating it as a failure would hold release, post-merge and archive on every pass, forever.
+  for (const failure of ['no-remote', 'unknown-host']) {
+    const { r, order, releaseOpts, postMergeOpts } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
+    assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive'], failure);
+    assert.deepEqual(releaseOpts.hollowRunIds, []);
+    assert.deepEqual(postMergeOpts.hollowRunDirs, []);
+    assert.equal(r.hollowMerges, null);
+    assert.ok(!r.skipped.some((s) => s.reason === 'hollow-merge-check-failed'));
+  }
+});
+
+// archive-branches, remote-prune and reap act on a run's branch and worktree, not its run dir: the hold reaches
+// them through hollowRunRefs, and a failed check skips them with the other three.
+async function withBranchCheckStubs(extra, fn) {
+  const abMod = require('../plugin/bin/lib/reconcile/archive-branches');
+  const prMod = require('../plugin/bin/lib/reconcile/prune-remote');
+  const reapMod = require('../plugin/bin/lib/reconcile/reap-merged');
+  const pmMod = require('../plugin/bin/lib/reconcile/post-merge');
+  const orig = { ab: abMod.archiveBranches, pr: prMod.pruneRemote, refs: pmMod.hollowRunRefs };
+  const seen = {};
+  try {
+    const out = await reconcileWithAsyncMerge(['archive-branches', 'remote-prune', 'reap'], {
+      ...extra,
+      afterStubs: () => {
+        pmMod.hollowRunRefs = (root, dirs) => { seen.refsDirs = dirs; return { worktrees: ['/w/held'], branches: ['worktree-held'] }; };
+        abMod.archiveBranches = (opts) => { seen.ab = opts; return { entries: [], failure: null }; };
+        prMod.pruneRemote = (opts) => { seen.pr = opts; return { entries: [], failure: null }; };
+        reapMod.reapMerged = (opts) => { seen.reap = opts; return { reaped: [], skipped: [], portsRelease: [] }; };
+      },
+    });
+    return fn(out, seen);
+  } finally {
+    abMod.archiveBranches = orig.ab;
+    prMod.pruneRemote = orig.pr;
+    pmMod.hollowRunRefs = orig.refs;
+  }
+}
+
+test('AC4.1 (#6143): archive-branches, remote-prune and reap are handed the held runs\' branches and worktrees', async () => {
+  const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
+  const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
+  await withBranchCheckStubs({ hollow: async () => ({ entries: [entry], hollowRunDirs: [runDir] }) }, ({ hollowCalls }, seen) => {
+    assert.equal(hollowCalls, 1, 'detection runs for these checks too');
+    assert.deepEqual(seen.refsDirs, [runDir]);
+    assert.deepEqual(seen.ab.heldBranches, ['worktree-held']);
+    assert.deepEqual(seen.pr.heldBranches, ['worktree-held']);
+    assert.deepEqual(seen.reap.heldWorktrees, ['/w/held']);
+    assert.deepEqual(seen.reap.heldBranches, ['worktree-held']);
+  });
+});
+
+test('AC7.1 (#6143): a failed hollow-merge check skips archive-branches, remote-prune and reap too', async () => {
+  await withBranchCheckStubs({ hollow: async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }) }, ({ r }, seen) => {
+    assert.equal(seen.ab, undefined);
+    assert.equal(seen.pr, undefined);
+    assert.equal(seen.reap, undefined);
+    const skip = r.skipped.find((s) => s.reason === 'hollow-merge-check-failed');
+    assert.ok(skip && ['archive-branches', 'remote-prune', 'reap'].every((c) => skip.check.split(',').includes(c)), JSON.stringify(r.skipped));
+  });
+});
+
+test('(#6143): a hollow-check-failed entry with no PR still renders its summary line', () => {
+  assert.equal(
+    formatSummary({ hollowMerges: [{ runDir: '/r', runId: 'run-x', pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'x' }], skipped: [] }),
+    'hollow-merge check failed for run run-x; held this pass',
+  );
+});
