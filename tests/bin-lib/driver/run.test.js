@@ -3218,6 +3218,33 @@ test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail car
   }
 });
 
+test('#6149 the test line carries verifyExit on a red-tests stop and a verdict-less fail, and nowhere else', async () => {
+  const testLineOf = (h) => h.lines().find((l) => l.step === 'test');
+  for (const [code, want] of [[1, 1], [2, 2], [137, 137], [null, null]]) {
+    const h = harness({ script: [[on('node', /verify\.js$/), { code, stdout: '', stderr: 'x' }]] });
+    await run(['#7'], h.deps);
+    const line = testLineOf(h);
+    assert.ok(Object.hasOwn(line, 'verifyExit'), String(code));
+    assert.equal(line.verifyExit, want, String(code));
+  }
+  const green = harness();
+  await run(['#7'], green.deps);
+  assert.equal(Object.hasOwn(testLineOf(green), 'verifyExit'), false);
+
+  // A verdict-less run that changed the tree: the composite carries it, the tree detail stays the prefix.
+  const dirty = leftDirtyHarness(' M src/a.js\0', { code: 2, stdout: '', stderr: 'boom' });
+  await run(['#7'], dirty.deps);
+  const dirtyLine = testLineOf(dirty);
+  assert.equal(dirtyLine.verifyExit, 2);
+  assert.ok(dirtyLine.detail.startsWith(treeDetail(1, 'src/a.js')));
+
+  // A green run that changed the tree: not a verify.js exit story.
+  const greenDirty = leftDirtyHarness(' M src/a.js\0');
+  await run(['#7'], greenDirty.deps);
+  assert.equal(testLineOf(greenDirty).status, 'fail');
+  assert.equal(Object.hasOwn(testLineOf(greenDirty), 'verifyExit'), false);
+});
+
 test('a symlinked (or non-directory) .claude-tweaks parent refuses the scope file, no test run', async () => {
   const parent = path.join(WT, '.claude-tweaks');
   for (const type of ['symlink', 'file', 'other', 'unreadable']) {
