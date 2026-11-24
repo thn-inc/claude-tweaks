@@ -268,3 +268,31 @@ test('go-red: the whole check fails with the fact list when one fact goes missin
   assert.notEqual(mutated, live);
   assert.throws(() => checkSubFile(mutated), { message: /sub-file facts missing/ });
 });
+
+// ---- the pinned commands against the flags their CLIs accept ----
+
+const { spawnSync } = require('node:child_process');
+
+const flagsOf = (line) => [...new Set(line.match(/--[a-z][a-z-]*/g) || [])];
+const helpOf = (rel) => spawnSync(process.execPath, [path.join(ROOT, rel), '--help'], { encoding: 'utf8', windowsHide: true }).stdout;
+const mergeUsageOf = () => helpOf('plugin/bin/review-coordination.js').split('\n').find((l) => l.includes('merge-lens-replies'));
+
+function checkFlagsAccepted(line, usage, what) {
+  const flags = flagsOf(line);
+  assert.ok(flags.length >= 4, `${what}: found only ${flags.length} flags in the pinned command`);
+  for (const flag of flags) assert.ok(usage.split(/[\s[\]<>|]+/).includes(flag), `${what}: the CLI usage does not list ${flag}`);
+}
+
+test('the pinned start and merge commands use only flags their CLIs list in --help', () => {
+  checkFlagsAccepted(START_LINE, helpOf('plugin/bin/review-lens-workers.js'), 'launcher start line');
+  const mergeUsage = mergeUsageOf();
+  assert.ok(mergeUsage, 'review-coordination.js --help names no merge-lens-replies usage line');
+  checkFlagsAccepted(MERGE_CALL, mergeUsage, 'merge-lens-replies call');
+});
+
+test('go-red: a renamed flag in the pinned start or merge command fails with its own message', () => {
+  const launcher = helpOf('plugin/bin/review-lens-workers.js');
+  const merge = mergeUsageOf();
+  assert.throws(() => checkFlagsAccepted(START_LINE.replace('--bundle', '--bundles'), launcher, 'launcher start line'), { message: /launcher start line: the CLI usage does not list --bundles/ });
+  assert.throws(() => checkFlagsAccepted(MERGE_CALL.replace('--side-a', '--side-first'), merge, 'merge-lens-replies call'), { message: /merge-lens-replies call: the CLI usage does not list --side-first/ });
+});

@@ -1216,7 +1216,8 @@ test('AC6.3: the review-lens-dispatch removal condition names worker and #5825',
   let start = row;
   while (start > 0 && lines[start - 1].trim().startsWith('//')) start--;
   const block = lines.slice(start, row).join('\n');
-  assert.match(block, /worker/);
+  // The header comment line already says `worker`, so a bare /worker/ passes without the removal sentence; pin the sentence's own clause.
+  assert.match(block, /`worker` is a permanent third value/);
   assert.match(block, /#5825/);
 });
 
