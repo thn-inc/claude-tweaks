@@ -656,6 +656,86 @@ test('I1: a finding digested under one claim is a digest duplicate, not a second
   assert.deepStrictEqual(plan({ workList: workList([after]), verdicts: {}, digestComments: [{ ...digestComments[0], authorAssociation: 'NONE' }] }).awaitingVerdict, [after.itemId]);
 });
 
+// #4162: a same-claim pair files once. A twin (`sameAs`) has no record of its own, so its item marker rides on the
+// record that is filed for the item it repeats; the next pass then finds the twin by its own marker after a claim change.
+test('#4162: a same-claim twin is reused, not re-filed, after a crash and a claim change', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000f1', itemHash: 'hf1', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000f2', itemHash: 'hf2', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: confirmed(), [b.itemId]: confirmed() } });
+  assert.deepStrictEqual(pass1.file.map((f) => f.itemId), [a.itemId]);
+  assert.deepStrictEqual(pass1.reuse, [{ itemId: b.itemId, number: null, sameAs: a.itemId }]);
+  // The crash lands after A's record is created and before apply settles B; a plugin upgrade then moves B's claim.
+  const crashed = pass1.file[0];
+  assert.ok(crashed.text.includes(`work-fingerprint: ${backfillFingerprint(b.itemId)}`), 'the record carries the twin\'s item marker');
+  const existingIssues = [{ number: 4170, title: crashed.title, body: crashed.text }];
+  const bAfter = { ...b, claimText: 'the guard runs after the read (as a later cleaner leaves it)' };
+  assert.notStrictEqual(findingFingerprint({ lens: '3a', path: bAfter.finding.path, claim: bAfter.claimText }), crashed.fingerprint, 'precondition: B\'s claim fingerprint moved');
+  for (const verdicts of [{ [bAfter.itemId]: confirmed() }, {}]) {
+    const out = plan({ workList: workList([a, bAfter]), verdicts: { [a.itemId]: confirmed(), ...verdicts }, existingIssues });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.reuse.map((r) => [r.itemId, r.number]), [[a.itemId, 4170], [bAfter.itemId, 4170]]);
+  }
+});
+
+test('#4162: a twin of a filing that matched an existing record by its item marker reuses that record', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000f3', itemHash: 'hf3', claimText: 'The guard runs after the read, as a later cleaner leaves it' });
+  const b = { ...a, itemId: 'bf:00000000000000f4', itemHash: 'hf4' };
+  // The record was filed under an older claim: only A's item marker matches it now, not the claim fingerprint A and B share.
+  const existingIssues = [{ number: 4180, body: `Some record.\n<!-- work-fingerprint: ${backfillFingerprint(a.itemId)} -->` }];
+  const out = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: confirmed(), [b.itemId]: confirmed() }, existingIssues });
+  assert.deepStrictEqual(out.file, [], 'B is not a new filing');
+  assert.deepStrictEqual(out.reuse, [{ itemId: a.itemId, number: 4180 }, { itemId: b.itemId, number: 4180 }]);
+  assert.deepStrictEqual(out.entries.map((e) => [e.itemId, e.ref]), [[a.itemId, '#4180'], [b.itemId, '#4180']]);
+});
+
+test('#4162: a digest twin is found by its own item marker after a crash and a claim change', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000g1', itemHash: 'hg1', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000g2', itemHash: 'hg2', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: digestV, [b.itemId]: digestV } });
+  assert.strictEqual(pass1.digest.lines.length, 1, 'one line for the pair');
+  assert.deepStrictEqual(pass1.digest.sameAs, [{ itemId: b.itemId, sameAs: a.itemId }]);
+  // The crash lands before B's line is posted; B's claim then moves.
+  const bAfter = { ...b, claimText: 'the guard runs after the read (as a later cleaner leaves it)' };
+  const digestComments = [{ body: pass1.digest.lines[0], authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
+  const out = plan({ workList: workList([bAfter]), verdicts: { [bAfter.itemId]: digestV }, digestComments });
+  assert.deepStrictEqual(out.digest.lines, [], 'no second digest line for B');
+  assert.deepStrictEqual(out.digest.duplicates, [bAfter.itemId]);
+});
+
+test('#4162: a digest line carrying a twin\'s marker still maps back to the item that owns it', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000g3', itemHash: 'hg3', claimText: 'The guard runs after the read' });
+  const b = findingItem({ itemId: 'bf:00000000000000g4', itemHash: 'hg4', claimText: 'The guard runs after the read' });
+  const out = plan({ workList: workList([a, b]), verdicts: { [a.itemId]: digestV, [b.itemId]: digestV } });
+  // tidy/console-backfill.md's digest-chunk step keys each planned line to its owner by the disposition's `digest.line`.
+  const dup = new Set(out.digest.duplicates);
+  const byLine = new Map(out.dispositions.filter((d) => d.action === 'digest' && !dup.has(d.itemId)).map((d) => [d.digest.line, d.itemId]));
+  assert.ok(out.digest.lines[0].includes(`consolebackfill-item: ${backfillFingerprint(b.itemId)}`), 'precondition: the line carries the twin\'s marker');
+  assert.deepStrictEqual(out.digest.lines.map((line) => byLine.get(line)), [a.itemId]);
+});
+
+// A twin settled against a record or comment an earlier item of the pass matched by its own item marker.
+test('#4162: a twin of an unverdicted item matched by its item marker reuses that record', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000p1', itemHash: 'hp1', claimText: 'The guard runs after the read, as a later cleaner leaves it' });
+  const b = { ...a, itemId: 'bf:00000000000000p2', itemHash: 'hp2' };
+  const existingIssues = [{ number: 4190, title: 'x', body: `Some record.\n<!-- work-fingerprint: ${backfillFingerprint(a.itemId)} -->` }];
+  const out = plan({ workList: workList([a, b]), verdicts: { [b.itemId]: confirmed() }, existingIssues });
+  assert.deepStrictEqual(out.reuse.find((r) => r.itemId === a.itemId).number, 4190);
+  assert.deepStrictEqual(out.file, [], 'B must not be filed as a new record');
+});
+
+test('#4162: a twin of a digest item held by its item marker is a duplicate, not a second line', () => {
+  const a = findingItem({ itemId: 'bf:00000000000000q1', itemHash: 'hq1', claimText: 'The guard runs after the read' });
+  const pass1 = plan({ workList: workList([a]), verdicts: { [a.itemId]: digestV } });
+  assert.strictEqual(pass1.digest.lines.length, 1);
+  const digestComments = [{ body: pass1.digest.lines[0], authorAssociation: 'OWNER', url: 'https://x/issues/1426#issuecomment-1' }];
+  const newClaim = 'the guard runs after the read (as a later cleaner leaves it)';
+  const aAfter = { ...a, claimText: newClaim };
+  const bAfter = findingItem({ itemId: 'bf:00000000000000q2', itemHash: 'hq2', claimText: newClaim });
+  const out = plan({ workList: workList([aAfter, bAfter]), verdicts: { [aAfter.itemId]: digestV, [bAfter.itemId]: digestV }, digestComments });
+  assert.ok(out.digest.duplicates.includes(aAfter.itemId), 'precondition: A is held by its item marker');
+  assert.deepStrictEqual(out.digest.lines, [], 'no second digest line for B');
+});
+
 test('AC8.1 (held half): a tombstone keeps a promoted console-backfill finding held against the new container', () => {
   const before = findingItem({ itemId: 'bf:00000000000000e1', itemHash: 'he1' });
   const after = { ...before, claimText: 'The guard runs after the read, as a later cleaner leaves it' };

@@ -731,7 +731,7 @@ function checkTeardownGate(ctx, teardownWarnings = [], deps = {}) {
 // pre-exist made the sanctioned exception unreachable by any tool-mediated
 // write. See WORK_SPEC_TAIL_RE above for exactly what this does and does
 // not cover.
-function shadowPipelineRunDir(targetPath, { fsImpl, env } = {}) {
+function shadowPipelineRunDir(targetPath, { fsImpl, env, entryInto } = {}) {
   ctxLib.assertEnvObject(env, 'shadowPipelineRunDir');
   if (typeof targetPath !== 'string' || !targetPath || !path.isAbsolute(targetPath)) return null;
   const resolved = path.resolve(targetPath);
@@ -751,6 +751,10 @@ function shadowPipelineRunDir(targetPath, { fsImpl, env } = {}) {
   // repoRoot is the JS form, which echoes casing on a case-insensitive volume.
   // Both operands resolve through the same fsImpl so they land on one filesystem.
   const pipelinesDir = path.join(canonicalRealpath(repoRoot, { fsImpl }) || repoRoot, PIPELINE_STATE_DIR);
+  // #4452: a cp/mv/install/ln destination that IS an existing pipelines dir creates its entry (a run dir) there.
+  if (entryInto && real === pipelinesDir) {
+    try { return (fsImpl || fs).statSync(real).isDirectory() ? { worktreeRoot: repoRoot, runDirCandidate: real } : null; } catch { return null; }
+  }
   if (!isPathContained(real, pipelinesDir)) return null;
   const relFromPipelines = path.relative(pipelinesDir, real);
   const relParts = relFromPipelines.split(path.sep);
@@ -770,6 +774,7 @@ function checkPipelineShadowGuard(ctx, deps = {}) {
   const toolInput = ctx.input && ctx.input.tool_input;
   const candidates = [];
   const lostRels = [];
+  const intoDirs = new Set();
   if (GATE_COVERAGE.tools.includes(toolName)) {
     const target = fileToolTargetPath(toolName, toolInput);
     if (target !== null) candidates.push(target);
@@ -777,6 +782,7 @@ function checkPipelineShadowGuard(ctx, deps = {}) {
     const command = toolInput.command;
     for (const t of [...fileWriteTargets(command, ctx.cwd), ...mkdirTargets(command, ctx.cwd)]) {
       candidates.push(t.file);
+      if (['copy', 'move', 'install', 'link'].includes(t.action)) intoDirs.add(t.file);
       if (t.lost) lostRels.push(t.rel);
     }
   }
@@ -800,7 +806,7 @@ function checkPipelineShadowGuard(ctx, deps = {}) {
     );
   }
   for (const candidate of candidates) {
-    const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl, env: ctx.env });
+    const shadow = shadowPipelineRunDir(candidate, { fsImpl: deps.fsImpl, env: ctx.env, entryInto: intoDirs.has(candidate) });
     if (!shadow) continue;
     // #2282: previously left no friction-event trace — mirrors
     // checkWorktreeRequired's own gate-denial breadcrumb below (same

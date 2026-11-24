@@ -10,6 +10,11 @@ const { readText } = require('./helpers/read-skill');
 const SKILLS_DIR = path.join(__dirname, '..', 'plugin', 'skills');
 const CRON_RE = /^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/;
 const FORBIDDEN_KEYS = ['environment_id', 'repo_url', 'account', 'credentials', 'connector_uuid', 'url'];
+// Shipped templates share one default model. A template that needs another model
+// declares it in MODEL_OVERRIDES with a reason; an undeclared mismatch fails the
+// suite, so a migration that misses one template cannot pass silently (record #3914).
+const ROUTINE_DEFAULT_MODEL = 'claude-sonnet-5-5';
+const MODEL_OVERRIDES = {};
 
 function findTemplates() {
   return fs
@@ -91,7 +96,21 @@ for (const templatePath of findTemplates()) {
     );
 
     assert.equal(typeof tpl.model, 'string');
-    assert.ok(tpl.model.length > 0, 'model must be non-empty');
+    const override = MODEL_OVERRIDES[skillName];
+    const modelMismatch = `${skillName}/routine-template.yml model is '${tpl.model}' but`;
+    if (override) {
+      assert.equal(
+        tpl.model,
+        override.model,
+        `${modelMismatch} its MODEL_OVERRIDES entry declares '${override.model}' — update the template or the override entry`
+      );
+    } else {
+      assert.equal(
+        tpl.model,
+        ROUTINE_DEFAULT_MODEL,
+        `${modelMismatch} the shared default is '${ROUTINE_DEFAULT_MODEL}' — a migration must update every template, or the template must declare a MODEL_OVERRIDES entry with a reason`
+      );
+    }
 
     assert.ok(Array.isArray(tpl.allowed_tools), 'allowed_tools must be an array');
     assert.ok(tpl.allowed_tools.length > 0, 'allowed_tools must not be empty');
@@ -123,6 +142,16 @@ for (const templatePath of findTemplates()) {
     }
   });
 }
+
+test('MODEL_OVERRIDES entries name a shipped template, carry a reason, and differ from the default', () => {
+  const skills = new Set(findTemplates().map((p) => path.basename(path.dirname(p))));
+  for (const [skill, entry] of Object.entries(MODEL_OVERRIDES)) {
+    assert.ok(skills.has(skill), `MODEL_OVERRIDES['${skill}'] names no shipped template — remove the stale entry`);
+    assert.ok(typeof entry.model === 'string' && entry.model.length > 0, `MODEL_OVERRIDES['${skill}'] needs a model`);
+    assert.ok(typeof entry.reason === 'string' && entry.reason.length > 0, `MODEL_OVERRIDES['${skill}'] needs a reason`);
+    assert.notEqual(entry.model, ROUTINE_DEFAULT_MODEL, `MODEL_OVERRIDES['${skill}'] equals the shared default — remove the redundant entry`);
+  }
+});
 
 // The kernel replaces the per-template preamble copies: one canonical block in
 // _shared/routine-template-schema.md, assembled per firing. Nothing but these two
