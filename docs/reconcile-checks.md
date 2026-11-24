@@ -108,7 +108,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
-   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, hollowMerges, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, planRefs, console, residuePlan, residueErrors, hollowMerges, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -704,17 +704,22 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   `postMergeDeferred`, and `archiveMerged` skips each listed run `post-merge-pending`, resolved-path
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
-  failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
-- **Hollow merges are held, not deferred (#6143).** `detectHollowMerges` lists the runs whose PR merged while
+  failed or did not run leaves `deferred` empty, so a failed post-merge never holds archive back; the one
+  addition to that set is the hollow-merge hold below, which does not depend on post-merge running.
+- **Hollow merges join the archive hold set (#6143).** `detectHollowMerges` lists the runs whose PR merged while
   the run's `build` or `test` phase was unfinished; `index.js` passes them to `postMerge` as `hollowRunDirs`
-  (skipped, reason `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and appends them to
-  `postMergeDeferred` so archive leaves the run dir in place. Each held run is commented on once and shown in
-  `result.hollowMerges`, `formatSummary`, and the background status file's `hollowMerges` list.
-- **How the guard clears.** Exactly six reasons defer a run: `merge-grace`, `in-flight`,
+  (skipped, reason `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into
+  `postMergeDeferred` whether or not `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run
+  dir in place. A `hollow-merge` run's records are each commented on once; a `hollow-check-failed` run is held
+  with no comment. Both show in `result.hollowMerges`, `formatSummary`, and the background status file's
+  `hollowMerges` list. A held run leaves the set on a later pass, when detection no longer reports it: its phase
+  exits were recorded or the run reached a terminal state.
+- **How the guard clears.** Exactly six reasons defer a run in `post-merge` (the hollow-merge hold above is a
+  separate, detection-driven addition to the archive set): `merge-grace`, `in-flight`,
   `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below)
   and `budget-exhausted` (below). A run leaves the set once `post-merge` acts on it, which for
   `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3)
-  more passes. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
+  more passes. Nothing else defers in `post-merge`. Each reason is normally cleared by a later pass, but two cases
   are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
   deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
   every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
