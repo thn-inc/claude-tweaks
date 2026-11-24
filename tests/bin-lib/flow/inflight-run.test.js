@@ -94,3 +94,24 @@ test('a readSpecs throw propagates; a null readSpecs (single-spec run) falls bac
   assert.throws(() => inFlightPhase({ runState: active, body, readDecisions: reader([]), readSpecs: () => { throw new Error('manifest unreadable'); } }), /manifest unreadable/);
   assert.equal(inFlightPhase({ runState: active, body: both, readDecisions: reader([]), readSpecs: () => null }), null);
 });
+
+// ---- runs that predate phase-exit records ----
+const entryIn = (section) => `## ${section}\n${formatEntry({ status: 'AUTO', step: 'Step 1', text: 'did a thing', now })}\n`;
+
+test('a run with no phase-exit record whose decisions carry a /review or /wrap-up entry is past test, though both rows are unchecked', () => {
+  for (const section of ['/review', '/wrap-up']) {
+    assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader([entryIn('/build'), entryIn(section)]) }), null, section);
+  }
+});
+
+test('a run with no phase-exit record and only /flow, /build or /test entries is still in flight at build', () => {
+  assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader([entryIn('/flow') + entryIn('/build') + entryIn('/test')]) }), 'build');
+});
+
+test('once a run holds any phase-exit record, a /review entry no longer stands in for one', () => {
+  assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader([exit('build') + entryIn('/review')]) }), 'test');
+});
+
+test('a test exit with no build exit (build exited on an earlier release) finishes build too', () => {
+  assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader([exit('test')]) }), null);
+});

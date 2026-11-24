@@ -76,8 +76,8 @@
 // throw while checking it, from its PR lookup on) is held as `hollow-check-failed`, never settled; the other
 // runs are still judged. A definitive answer (OPEN, CLOSED, no PR, `gh-absent`, `pr-not-found`, …) gives no
 // entry. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
-// must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge it
-// posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
+// must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge past
+// MERGE_GRACE_MS (one inside it is held with no comment, `detail` saying so) it posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
 // each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
 // on that record again. The comments and markers are written under the run's post-merge claim (takeClaim,
 // the lock Steps 4.0/4.0b take), the marker read after it is taken, so two racing passes post one comment; a
@@ -119,6 +119,8 @@ const HOLLOW_SECTION = '/reconcile';
 const UNKNOWN_MERGE_TIME = 'an unknown time';
 // A hollow merge with no record to comment on (no closing reference in this repo, no single-number `spec:`).
 const NO_HOLLOW_RECORD_DETAIL = 'no record to comment on';
+// A hollow merge inside MERGE_GRACE_MS: held, its comment left to a pass past the grace.
+const HOLLOW_GRACE_DETAIL = 'merged within the merge grace: comment deferred';
 // A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
 // An unreadable own claim (a non-ENOENT read error in heartbeatClaim) is reported with it too: an accepted
 // mislabel, the safe stop being the point.
@@ -663,7 +665,7 @@ function hollowCandidatePr(root, dir, state, prStates, worktrees) {
 // commented?, detail? }. Spawns only through setupContext's `timedGh` (`deps.gh` in tests); `deps.readSpecNumber`
 // is the config.yml seam.
 async function detectHollowMerges({
-  cwd, prStates, dryRun = false, deps = {},
+  cwd, prStates, dryRun = false, now = Date.now, deps = {},
 } = {}) {
   const entries = [];
   const hollowRunDirs = [];
@@ -717,11 +719,15 @@ async function detectHollowMerges({
         records = spec ? [Number(spec)] : [];
       }
       const mergedAt = view.mergedAt || prState.mergedAt || UNKNOWN_MERGE_TIME;
+      // The merging session's own window (postMerge's MERGE_GRACE_MS): the run is held, but no comment yet, so
+      // state its session is still writing never reads as a hollow merge on a record. An unknown time is past it.
+      const mergedMs = Date.parse(mergedAt);
+      const inGrace = !Number.isNaN(mergedMs) && now() - mergedMs <= MERGE_GRACE_MS;
       // Each comment and its marker are posted under the run's post-merge claim, the lock Steps 4.0/4.0b take,
       // with the marker read only once the claim is held: two racing passes (an inline reconcile and
       // reconcile-background) cannot both read "unmarked" and post twice. A claim another pass holds (or one
       // that cannot be taken) posts nothing this pass; the run is still held, and a later pass comments.
-      const claim = !dryRun && records.length > 0 ? (deps.takeClaim || takeClaim)(dir, Date.now()) : null;
+      const claim = !dryRun && !inGrace && records.length > 0 ? (deps.takeClaim || takeClaim)(dir, Date.now()) : null;
       if (claim && claim.ok) {
         try {
           for (const n of records) {
@@ -746,7 +752,7 @@ async function detectHollowMerges({
       }
       entries.push({
         runDir: dir, runId, pr, action: 'held', reason: 'hollow-merge', phase, records, commented,
-        ...(records.length === 0 ? { detail: NO_HOLLOW_RECORD_DETAIL } : {}),
+        ...(inGrace ? { detail: HOLLOW_GRACE_DETAIL } : records.length === 0 ? { detail: NO_HOLLOW_RECORD_DETAIL } : {}),
       });
     } catch (e) {
       entries.push({

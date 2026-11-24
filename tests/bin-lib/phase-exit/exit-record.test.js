@@ -159,3 +159,15 @@ test('phaseExitReached counts the phase\'s own exit or any later phase\'s, never
   assert.equal(phaseExitReached(decisionsText([{ section: '/build', entry: line('build') }]), 'test'), false);
   assert.equal(phaseExitReached(testExit, 'nope'), false);
 });
+
+test('postTestSectionRecorded needs an entry under /review or /wrap-up; anyPhaseExitRecorded sees any phase\'s exit', () => {
+  const { postTestSectionRecorded, anyPhaseExitRecorded } = require('../../../plugin/bin/lib/phase-exit/exit-record');
+  const other = line('build', { step: 'Step 2', text: 'unrelated' });
+  assert.equal(postTestSectionRecorded(decisionsText([{ section: '/review', entry: other }])), true);
+  assert.equal(postTestSectionRecorded(decisionsText([{ section: '/wrap-up', entry: other }])), true);
+  assert.equal(postTestSectionRecorded(decisionsText([{ section: '/test', entry: other }, { section: '/flow', entry: other }])), false);
+  assert.equal(postTestSectionRecorded('## /review\n\nprose, no entry\n'), false);
+  assert.equal(postTestSectionRecorded(''), false);
+  assert.equal(anyPhaseExitRecorded(decisionsText([{ section: '/flow', entry: line('polish') }])), true);
+  assert.equal(anyPhaseExitRecorded(decisionsText([{ section: '/review', entry: other }])), false);
+});

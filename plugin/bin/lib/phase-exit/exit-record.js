@@ -3,7 +3,9 @@
 // closed, and the reader that decides whether a run's decisions.md set records
 // that exit. lib/flow/inflight-run.js's inFlightPhase consumes the reader; a PR
 // checklist row is only its pre-filter. Runs started before this line existed
-// write none, so their checked rows alone decide (expand-contract).
+// write none: inFlightPhase reads a run with no record for any phase as past test
+// when it carries an entry under /review or /wrap-up (postTestSectionRecorded),
+// else its checked rows alone decide (expand-contract).
 'use strict';
 
 const fs = require('fs');
@@ -15,6 +17,8 @@ const { parseManifestYaml } = require('../flow/manifest');
 const PHASE_EXIT_STEP = 'Phase exit';
 // Pipeline order: a phase never exits before the ones ahead of it.
 const PHASES = Object.keys(PHASE_SECTIONS);
+// Sections only a run past its test phase writes to: /review gates on test passing, and /wrap-up follows review.
+const POST_TEST_SECTIONS = [PHASE_SECTIONS.review, PHASE_SECTIONS['wrap-up']];
 const SPEC_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 function phaseExitText(phase, head) {
@@ -67,6 +71,21 @@ function phaseExitReached(decisionsText, phase) {
   return i >= 0 && PHASES.slice(i).some((p) => phaseExitRecorded(decisionsText, p));
 }
 
+const anyPhaseExitRecorded = (decisionsText) => PHASES.some((p) => phaseExitRecorded(decisionsText, p));
+
+// True when a `## /review` or `## /wrap-up` section of the text holds at least one entry.
+function postTestSectionRecorded(decisionsText) {
+  if (typeof decisionsText !== 'string' || !decisionsText) return false;
+  let inSection = false;
+  for (const raw of decisionsText.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const heading = /^## (.+)$/.exec(line);
+    if (heading) { inSection = POST_TEST_SECTIONS.includes(normalizeSection(heading[1].trim())); continue; }
+    if (inSection && parseEntry(line)) return true;
+  }
+  return false;
+}
+
 // A multi-spec run's specs, from {runDir}/manifest.yml (flow/manifest.js's shape), in manifest order:
 // [{ id, status, phase, decisions }], `decisions` being {runDir}/spec-{id}/decisions.md ('' when the
 // spec dir or its file is absent, or the dir is a symlink). null when the run has no manifest.yml (a
@@ -101,5 +120,5 @@ function readRunSpecs(runDir, fsImpl = fs) {
 }
 
 module.exports = {
-  PHASE_EXIT_STEP, PHASES, phaseExitText, readRunDecisions, phaseExitRecorded, phaseExitReached, readRunSpecs,
+  PHASE_EXIT_STEP, PHASES, phaseExitText, readRunDecisions, phaseExitRecorded, phaseExitReached, anyPhaseExitRecorded, postTestSectionRecorded, readRunSpecs,
 };

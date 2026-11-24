@@ -3,7 +3,11 @@
 // has not finished. A PR phases-checklist row that is checked, or absent (no span,
 // or a removed row), counts as finished; only a present unchecked row sends the
 // check to the run's decisions.md set, where a phase-exit record
-// (lib/phase-exit/exit-record.js) decides. A multi-spec run (one with a
+// (lib/phase-exit/exit-record.js) of that phase or a later one decides. A run
+// whose set holds no phase-exit record at all may have started on a release
+// that wrote none: an entry under /review or /wrap-up then shows it got past
+// test. (A run that has not exited build yet holds none either, so the absence
+// alone proves nothing.) A multi-spec run (one with a
 // manifest.yml) is judged per spec instead: its checklist rows and its
 // decisions.md set are run-wide, so one spec's exit would read as every spec's
 // (flow/multispec-pr-checklist.md: a checked row means "at least one spec").
@@ -12,7 +16,9 @@
 'use strict';
 
 const { uncheckedBuildOrTest } = require('./pr-checklist');
-const { PHASES, phaseExitRecorded, phaseExitReached } = require('../phase-exit/exit-record');
+const {
+  PHASES, phaseExitReached, anyPhaseExitRecorded, postTestSectionRecorded,
+} = require('../phase-exit/exit-record');
 
 // manifest.yml statuses after which a spec does no more work in this run.
 const SPEC_SETTLED = new Set(['complete', 'failed', 'not-run']);
@@ -42,8 +48,9 @@ function inFlightPhase({ runState, body, readDecisions, readSpecs }) {
   const unchecked = uncheckedBuildOrTest(body);
   if (!unchecked.length) return null;
   const texts = readDecisions();
+  if (!texts.some(anyPhaseExitRecorded) && texts.some(postTestSectionRecorded)) return null;
   for (const phase of unchecked) {
-    if (!texts.some((text) => phaseExitRecorded(text, phase))) return phase;
+    if (!texts.some((text) => phaseExitReached(text, phase))) return phase;
   }
   return null;
 }

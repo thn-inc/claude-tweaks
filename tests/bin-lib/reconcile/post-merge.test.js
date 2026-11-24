@@ -2288,8 +2288,8 @@ function hollowGh({ views = {}, commentThrows = [] } = {}) {
 
 const view = (body, closing = [ref(6143)]) => ({ body, closingIssuesReferences: closing, mergedAt: HOLLOW_MERGED_AT });
 const hollowMarkers = (dir) => decisionsOf(dir).split('\n').map(parseEntry).filter((e) => e && e.location === HOLLOW_STEP);
-const detect = (root, { prs = { 11: merged() }, gh, dryRun = false, extra = {}, prStates } = {}) => detectHollowMerges({
-  cwd: root, prStates: prStates || fakePrStates(prs), dryRun, deps: { gh, ...extra },
+const detect = (root, { prs = { 11: merged() }, gh, dryRun = false, extra = {}, prStates, clock } = {}) => detectHollowMerges({
+  cwd: root, prStates: prStates || fakePrStates(prs), dryRun, deps: { gh, ...extra }, ...(clock ? { now: clock } : {}),
 });
 
 test('AC4.1 (detection): a merged PR whose marker names an active run with build unchecked and no build phase-exit record is held, commented once, and marked', async () => {
@@ -2616,6 +2616,34 @@ test('AC7.1 + AC7.2 (detection): a body with no run marker gives no entry', asyn
   const body = hollowBody(HR).split('\n').slice(2).join('\n');
   const r = await detect(root, { gh: hollowGh({ views: { 11: view(body) } }) });
   assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+});
+
+test('hollow merge: inside MERGE_GRACE_MS the run is held with no comment and no marker; past it the comment is posted', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const mergedMs = Date.parse(HOLLOW_MERGED_AT);
+  const r = await detect(root, { gh, clock: () => mergedMs + MERGE_GRACE_MS });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [],
+    detail: 'merged within the merge grace: comment deferred',
+  }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+  const later = await detect(root, { gh, clock: () => mergedMs + MERGE_GRACE_MS + 1 });
+  assert.deepEqual(later.entries[0].commented, [6143]);
+  assert.equal(gh.comments().length, 1);
+});
+
+test('hollow merge: a run with no phase-exit record whose decisions.md carries a /wrap-up entry (started on an earlier release) gets no entry, though both rows are unchecked', async () => {
+  const root = mainCheckout();
+  const wrapUp = formatEntry({ status: 'AUTO', now: NOW, step: 'Review Console', text: 'console resolved' });
+  addRun(root, HR, { decisions: `${ONE_LINE_DECISION}## /wrap-up\n${wrapUp}\n` });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(gh.comments().length, 0);
 });
 
 test('hollow merge: dryRun holds with no comment and no marker', async () => {
