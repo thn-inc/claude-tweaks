@@ -48,8 +48,6 @@ function segmentSpansWith(str, spans) {
     // Unquoted: a backslash escapes the next character, so `\"` opens no
     // quote and `\\` is a literal backslash — matching bash semantics.
     if (ch === '\\' && i + 1 < str.length) {
-      // A backslash-newline is removed before bash tokenizes, so `&\<nl>&` is `&&` (#4245).
-      if (str[i + 1] === '\n') { i += 1; continue; }
       current += ch + str[i + 1];
       i += 1;
       continue;
@@ -118,6 +116,7 @@ function segmentSpansWith(str, spans) {
         continue;
       }
     }
+    // bash removes a backslash-newline before it reads operators, so `&\<nl>&` is `&&` (#4245).
     let nx = i + 1; // the operator's second char, past any backslash-newline between them
     while (str[nx] === '\\' && str[nx + 1] === '\n') nx += 2;
     if (ch === '&' && str[nx] === '&') { cut(i); i = nx; continue; }
@@ -133,11 +132,19 @@ function segmentSpansWith(str, spans) {
     // recognized at a word boundary (start of string, or immediately after
     // whitespace/a separator) to match bash's own rule: `#` glued to
     // preceding non-whitespace text (e.g. `foo#bar`) is NOT a comment.
-    if (ch === '#' && (i === 0 || /[\s;&|]/.test(str[i - 1]))) {
-      let j = i + 1;
-      while (j < str.length && str[j] !== '\n') j++;
-      i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
-      continue;
+    // The character before `#` is read from `current` with its trailing backslash-newlines dropped,
+    // not from `str`: bash removes them before it splits words, so `a\<nl>#x` is the word `a#x`, not
+    // a comment (#4245). A bare newline always cuts, so a newline left in `current` is always the
+    // second half of an escape pair. A cut leaves `current` empty, which is a word start.
+    if (ch === '#') {
+      let k = current.length;
+      while (k >= 2 && current[k - 1] === '\n' && current[k - 2] === '\\') k -= 2;
+      if (k === 0 || /[\s;&|]/.test(current[k - 1])) {
+        let j = i + 1;
+        while (j < str.length && str[j] !== '\n') j++;
+        i = j - 1; // for-loop's i++ lands exactly on the newline (or end of string)
+        continue;
+      }
     }
     current += ch;
   }
@@ -3003,7 +3010,9 @@ function separatorOp(outer, at) {
   const c = outer[at];
   if (c === '&') return '&&';
   if (c !== '|') return ';';
-  return outer[at + 1] === '|' ? '||' : '|';
+  let nx = at + 1; // past any backslash-newline, as segmentSpansWith cuts `|\<nl>|` (#4245)
+  while (outer[nx] === '\\' && outer[nx + 1] === '\n') nx += 2;
+  return outer[nx] === '|' ? '||' : '|';
 }
 
 // The union of two cwd lists, collapsing to `overflow(union)` past CWD_SET_CAP.

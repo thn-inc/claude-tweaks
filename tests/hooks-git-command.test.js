@@ -761,9 +761,33 @@ for (const [label, cmd, expected] of [
 }
 
 // #4245: a backslash-newline continuation is no word (#4281), so git after `&& \` or `-C /M \` is seen.
+// bash 3.2 and 5: `cd M && \<nl> pwd` and `git -C M \<nl> …` both run in M.
 test('#4245: gitTargets sees git after a backslash-newline continuation', () => {
   assert.deepStrictEqual(gitTargets('cd /M && \\\n git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
   assert.deepStrictEqual(gitTargets('git -C /M \\\n  commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+});
+
+// bash removes a backslash-newline before it reads operators: bash 3.2 and 5 run `cd M &\<nl>& pwd`
+// as `cd M && pwd` and print M.
+test('#4245: gitTargets sees git after an && split by a backslash-newline', () => {
+  assert.deepStrictEqual(gitTargets('cd /M &\\\n& git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+});
+
+// bash 3.2 and 5 run `false |\<nl>| cd M && pwd` (and `… cd M ; pwd`) as `false || cd M …` and
+// print M, so the commit after the `||` may run in /M or, when the cd is skipped, in /r.
+test('#4245: gitTargets reads `|` backslash-newline `|` as `||`', () => {
+  const both = [{ action: 'commit', dir: path.resolve('/M') }, { action: 'commit', dir: path.resolve('/r') }];
+  assert.deepStrictEqual(gitTargets('false |\\\n| cd /M && git commit -m x', '/r'), both);
+  assert.deepStrictEqual(gitTargets('false |\\\n| cd /M ; git commit -m x', '/r'), both);
+});
+
+// bash 3.2 and 5 join `echo a\<nl>#c` into the word `a#c` (it prints `a#c`), so `#` there starts no
+// comment and the cd and commit after it run in M. With a space before the backslash (`echo a \<nl>#c`)
+// or an even run of backslashes the `#` does start one, and bash prints only `a`.
+test('#4245: a `#` glued to a word by a backslash-newline is not a comment', () => {
+  assert.deepStrictEqual(gitTargets('echo a\\\n#c && cd /M && git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/M') }]);
+  assert.deepStrictEqual(gitTargets('echo a \\\n#c && cd /M && git commit -m x', '/r'), []);
+  assert.deepStrictEqual(gitTargets('echo a\\\\\n#c && cd /M && git commit -m x', '/r'), []);
 });
 
 test('#4149: an absolute -C after a brace group is reported once', () => {

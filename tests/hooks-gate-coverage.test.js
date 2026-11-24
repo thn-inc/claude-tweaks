@@ -4321,11 +4321,28 @@ test('e2e #3989: a `>` in a heredoc body from a worktree-always main checkout is
 });
 
 // #4245: a backslash-newline continuation is no word (#4281), so the write after `&& \` is seen.
+// bash 3.2 and 5 run `cd M && \<nl> pwd` in M.
 test('#4245: fileWriteTargets sees a cp after a backslash-newline continuation', () => {
   assert.deepStrictEqual(fileWriteTargets('true && \\\n cp x /M/b', '/r'), [{ action: 'copy', file: path.resolve('/M/b') }]);
   assert.deepStrictEqual(fileWriteTargets('cd /M && \\\n cp x b', '/r'), [{ action: 'copy', file: path.resolve('/M/b') }]);
 });
 
+// bash 3.2 and 5 run `cd M &\<nl>& pwd` as `cd M && pwd` and print M.
+test('#4245: fileWriteTargets sees cp after an && split by a backslash-newline', () => {
+  assert.deepStrictEqual(fileWriteTargets('cd /M &\\\n& cp x b', '/r'), [{ action: 'copy', file: path.resolve('/M/b') }]);
+});
+
+// Inside single quotes a backslash-newline is two literal characters: bash 3.2 and 5 print
+// `printf '%s|' 'a\<nl>b'` as `a\`, newline, `b|`. The redirect target carries the literal, so a
+// join inside single quotes would change it.
 test('#4245: a single-quoted backslash-newline keeps its literal', () => {
-  assert.deepStrictEqual(fileWriteTargets("echo 'a\\\nb' > f", '/r'), [{ action: 'write', file: path.resolve('/r/f') }]);
+  assert.deepStrictEqual(fileWriteTargets("echo x > 'a\\\nb'", '/r'), [{ action: 'write', file: path.resolve('/r', 'a\\\nb') }]);
+});
+
+// A heredoc body read by a shell is run as commands, and a body line ending in `&\` joins the next
+// one: bash 3.2 and 5 run `bash <<EOF` + `cd M &\<nl>& pwd` (delimiter quoted or not) and print M.
+test('#4245: a heredoc body line ending in a backslash-newline inside && joins the next line', () => {
+  const m = [{ action: 'copy', file: path.resolve('/M/b') }];
+  assert.deepStrictEqual(fileWriteTargets('bash <<EOF\ncd /M &\\\n& cp x b\nEOF', '/r'), m);
+  assert.deepStrictEqual(fileWriteTargets("bash <<'EOF'\ncd /M &\\\n& cp x b\nEOF", '/r'), m);
 });
