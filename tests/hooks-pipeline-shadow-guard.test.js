@@ -46,6 +46,8 @@ test('#4452: a cp / mv / install / ln into an EXISTING pipelines dir of a linked
   for (const cmd of [
     `cp a ${shellQuote(pipelines)}`,
     `cd ./x/../.claude-tweaks || cp a ${shellQuote(pipelines + '/')}`,
+    // The record's literal OScpNoLost shape: a destination relative to the main checkout.
+    `cd ./x/../.claude-tweaks || cp a ${shellQuote(path.relative(main, pipelines))}`,
     `cp -t ${shellQuote(pipelines)} a`,
     `mv a ${shellQuote(pipelines)}`,
     `install a ${shellQuote(pipelines)}`,
