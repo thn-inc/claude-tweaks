@@ -493,6 +493,24 @@ test('#4303: redirectWriteTargets without quoting reads `>& file`, and no `2>&` 
   assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>>&/main/f.js'], '/r'), []);
 });
 
+// #4460: a quoted `(` is file text, so `echo x > '(x'` writes /r/(x (bash 3.2 and 5). Only a bare `(`
+// opens a process substitution, which writes no file: `cat <(true)` resolves no target.
+test('#4460: a quoted `(` redirect target is a file, a bare `<(` is a process substitution', () => {
+  const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file);
+  assert.deepStrictEqual(files("echo x > '(x'"), [path.resolve('/r/(x')]);
+  assert.deepStrictEqual(files('cat <(true)'), []);
+});
+
+// #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`) is the cd's own redirect. bash 3.2 and 5
+// write /r/f in the cwd, then change to /main and write /main/g.js for `cd>f /main; cp a g.js`, so the
+// cd must still move the cwd: from /r, the copy is a main-checkout write.
+test('#4460: a cd with a redirect glued to its name still changes the cwd', () => {
+  for (const cmd of ['cd>f /main; cp a g.js', 'cd>>f /main; cp a g.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file).sort(),
+      [path.resolve('/main/g.js'), path.resolve('/r/f')].sort(), cmd);
+  }
+});
+
 // #4303: GNU getopt reads `-t` inside a short-option cluster: its value is the rest of the
 // cluster, else the next word, and `--target-directory` may be abbreviated (cp, mv, install and
 // ln have no other `--t…` option). bash 3.2 and 5 with GNU cp: `cp -rt M src` writes M/src;

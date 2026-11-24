@@ -1101,7 +1101,9 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseL
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
   // `cd` are read for them: an assignment word before it can span tokens that look like a
   // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
-  if (t[cdLead] === 'cd' && !(split && baseLike)) { // an index of -1 reads undefined: no cd
+  // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`) is the cd's own redirect, and the cd still runs.
+  const gluedCd = cdLead >= 0 && /^cd[<>]/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
+  if ((t[cdLead] === 'cd' || gluedCd) && !(split && baseLike)) { // an index of -1 reads undefined: no cd
     const from = cdLead + 1;
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
@@ -3514,13 +3516,15 @@ function redirectRawTargets(t, quoting) {
       if (word === '') {
         if (rawTarget !== whole) continue; // `>&)`: the word ends at the closer, a syntax error
         i += 1; // consume the word token too, as above
-        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], kindsAt(i));
-      }
+        targetKinds = kindsAt(i);
+        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], targetKinds);
+      } else if (targetKinds) targetKinds = targetKinds.slice(1);
       const stdout = plainFd === '' || Number(plainFd) === 1; // Number(null) is 0: not stdout
       if (word === undefined || !stdout || isFdDupTarget(word)) continue;
       rawTarget = word;
     }
-    if (rawTarget.startsWith('(')) continue;
+    // #4460: only a bare `(` opens a process substitution (`>(cat)`); a quoted or escaped one is file text.
+    if (rawTarget.startsWith('(') && (targetKinds === null || targetKinds[0] === 'b')) continue;
     out.push(rawTarget);
   }
   return out;
