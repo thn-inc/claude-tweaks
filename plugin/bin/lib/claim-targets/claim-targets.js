@@ -86,10 +86,15 @@ function parseJsonOrNull(text) {
 // #6147: the lane and ceremony profile a run manifest already holds, for the
 // `planned` event. Each is a string or null; any read or parse failure is
 // both null (the plan then falls back to the default list). Never throws.
-function readRunManifestPlanInputs(runDir) {
+// The run dir is anchored by the same `resolveTarget` check the claim log
+// uses ([IL-127]): a worktree-local shadow copy of a run dir is not read.
+// `anchor` is the `{ cwd, mainRoot }` seam, left empty in production.
+function readRunManifestPlanInputs(runDir, anchor = {}) {
   const none = { lane: null, ceremonyProfile: null };
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+    const target = resolveTarget({ runDir, ...anchor });
+    if (!target.ok) return none;
+    const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(target.file), 'manifest.json'), 'utf8'));
     if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return none;
     return {
       lane: typeof manifest.lane === 'string' ? manifest.lane : null,
@@ -605,7 +610,7 @@ function run(argv, deps) {
     if (typeof deps.stationEvent !== 'function' || !claimedAt) return;
     try {
       if (manifestPlanInputs === null) {
-        manifestPlanInputs = opts.runDir !== null ? readRunManifestPlanInputs(opts.runDir) : { lane: null, ceremonyProfile: null };
+        manifestPlanInputs = opts.runDir !== null ? readRunManifestPlanInputs(opts.runDir, { mainRoot: deps.mainRoot }) : { lane: null, ceremonyProfile: null };
       }
       const listLane = opts.lane !== 'unknown' ? opts.lane : (manifestPlanInputs.lane ?? opts.lane);
       deps.stationEvent(planEvent({

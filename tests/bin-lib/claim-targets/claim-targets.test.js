@@ -3497,13 +3497,21 @@ test('station: a claim payload with no claimedAt skips its events with one stder
 // ---- #6147: the plan written at the claim ----
 const STATION_RUN_ID = 'r1';
 
+// An anchored run dir (a `.git` directory at the root, the run under
+// `.claude-tweaks/pipelines/`), the shape `resolveTarget` accepts; the
+// matching main root is `anchorOf(dir)`.
 function manifestRunDir(manifest) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-plan-'));
   tmpRoots.push(root);
-  const dir = path.join(root, STATION_RUN_ID);
-  fs.mkdirSync(dir);
+  fs.mkdirSync(path.join(root, '.git'));
+  const dir = path.join(root, '.claude-tweaks', 'pipelines', STATION_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
   if (manifest !== undefined) fs.writeFileSync(path.join(dir, 'manifest.json'), typeof manifest === 'string' ? manifest : JSON.stringify(manifest));
   return dir;
+}
+
+function anchorOf(dir) {
+  return path.dirname(path.dirname(path.dirname(dir)));
 }
 
 function claimWithManifest(manifest, extraArgs = []) {
@@ -3511,7 +3519,9 @@ function claimWithManifest(manifest, extraArgs = []) {
   const { deps, io } = baseDeps({ ghApi, gh: makeGh({}).gh });
   deps.appendClaimLog = () => {};
   const events = withRecorder(deps);
-  const code = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', manifestRunDir(manifest), ...extraArgs], deps);
+  const dir = manifestRunDir(manifest);
+  deps.mainRoot = anchorOf(dir);
+  const code = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', dir, ...extraArgs], deps);
   return { code, events, io };
 }
 
@@ -3577,17 +3587,20 @@ test('a corrupt run manifest plans the default list and leaves the claim unchang
   const { ghApi } = claimFixture([720]);
   const { deps, io: io2 } = baseDeps({ ghApi, gh: makeGh({}).gh });
   deps.appendClaimLog = () => {};
-  const plainCode = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', manifestRunDir('not json{')], deps);
+  const corruptDir = manifestRunDir('not json{');
+  deps.mainRoot = anchorOf(corruptDir);
+  const plainCode = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', corruptDir], deps);
   assert.equal(code, plainCode);
   assert.equal(io.out.join('\n'), io2.out.join('\n'));
 });
 
 test('a multi-target claim reads the run manifest once', () => {
   const dir = manifestRunDir({ lane: 'driver', ceremonyProfile: 'standard' });
-  const manifestPath = path.join(dir, 'manifest.json');
+  const manifestPath = path.join(fs.realpathSync(dir), 'manifest.json');
   const { ghApi } = claimFixture([720, 721]);
   const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
   deps.appendClaimLog = () => {};
+  deps.mainRoot = anchorOf(dir);
   const events = withRecorder(deps);
   const realRead = fs.readFileSync;
   let reads = 0;
@@ -3610,9 +3623,35 @@ test('a multi-target claim reads the run manifest once', () => {
 
 test('readRunManifestPlanInputs returns nulls for a missing dir, a missing file and a non-object JSON', () => {
   const nulls = { lane: null, ceremonyProfile: null };
+  const read = (dir) => readRunManifestPlanInputs(dir, { mainRoot: anchorOf(dir) });
   assert.deepEqual(readRunManifestPlanInputs(path.join(os.tmpdir(), 'ct-no-such-dir-6147')), nulls);
-  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir()), nulls);
-  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir('[1,2]')), nulls);
-  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir('null')), nulls);
-  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir({ lane: 3, ceremonyProfile: 'fast-lane' })), { lane: null, ceremonyProfile: 'fast-lane' });
+  assert.deepEqual(read(manifestRunDir()), nulls);
+  assert.deepEqual(read(manifestRunDir('[1,2]')), nulls);
+  assert.deepEqual(read(manifestRunDir('null')), nulls);
+  assert.deepEqual(read(manifestRunDir({ lane: 3, ceremonyProfile: 'fast-lane' })), { lane: null, ceremonyProfile: 'fast-lane' });
+});
+
+test('a run dir that fails the anchoring check plans the default list', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-plan-unanchored-'));
+  tmpRoots.push(root);
+  fs.mkdirSync(path.join(root, '.git'));
+  const dir = path.join(root, 'elsewhere', STATION_RUN_ID);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ lane: 'driver', ceremonyProfile: 'fast-lane' }));
+  const claim = (runArgs, mainRoot) => {
+    const { ghApi } = claimFixture([720]);
+    const { deps, io } = baseDeps({ ghApi, gh: makeGh({}).gh });
+    deps.appendClaimLog = () => {};
+    deps.mainRoot = mainRoot;
+    const events = withRecorder(deps);
+    return { code: run(['--run-id', STATION_RUN_ID, '--targets', '720', ...runArgs], deps), events, io };
+  };
+  const shadow = claim(['--run', dir], root);
+  const anchoredDir = manifestRunDir();
+  const plain = claim(['--run', anchoredDir], anchorOf(anchoredDir));
+  const planned = shadow.events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'standard');
+  assert.equal(planned.payload.reasonCode, 'default-list');
+  assert.equal(shadow.code, plain.code);
+  assert.equal(shadow.io.out.join('\n'), plain.io.out.join('\n'));
 });
