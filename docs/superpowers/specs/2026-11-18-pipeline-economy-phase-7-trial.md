@@ -1,6 +1,6 @@
 # Pipeline economy — Phase 7 driver admission trial
 
-Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: running. As of 2026-11-24T11:52Z, 47 frozen records handled: 16 driven to a PR (16 of 20), 31 replaced.
+Record: #6021. Design: `2026-11-18-pipeline-economy-design.md`, Phase 7. Status: driving complete. As of 2026-11-24T15:15Z, 57 frozen records handled: 20 driven to a PR, 37 replaced. Provisional verdict written; merges and the guard 3 read are open.
 
 ## Verdict rule
 
@@ -253,13 +253,16 @@ Driving on would escalate more frozen records to the standard lane for the same 
 - **The driver's merge-check declined one PR.** #4162 (list #48) is not widened and carries `auto:merge`, like #4531. Its merge-check worker returned `needs-human`, so PR #6217 stopped at `pending-review` and did not merge. Its whole-branch review then found one Critical item. #3902 (list #42), the other such record reached so far, changed no files and has no PR.
 - **One record is driven out of list order.** #3986 (list #47) got no verdict from its first `drive.js --check`: `gh` timed out reading the record. A re-check admitted it, so it is driven after #4162 (list #48). Since then a check that returns no verdict is retried once, and a second failure leaves the record on the list.
 - **The first `/claude-tweaks:review` that blocks a PR.** The review of #6203 (#4725) ended BLOCKED at its first gate: the failure the record names was already fixed on `main` by #5694, and the PR's one-line change weakens the assertion. Its whole-branch review had found two Critical items. The PR is for the maintainer to close or have fixed; it counts toward the 20 either way.
-- **Local paths in saved reports.** A report or a driver stop message that names a path on the trial machine has the home directory written `~` and the session scratch directory written `{scratchpad}`. Two places committed earlier (one Replaced row, one line of `4244-whole-branch.md`) are rewritten that way in this update; nothing else in them changed.
+- **Local paths in saved reports.** A report or a driver stop message that names a path on the trial machine has the home directory written `~` and the session scratch directory written `{scratchpad}`. Two places committed earlier (one Replaced row, one line of `4244-whole-branch.md`) are rewritten that way in PR #6218; nothing else in them changed.
+- **A 5-hour usage limit held the trial from 2026-11-24T11:59Z to 13:50Z.** It stopped #4163 (list #49) when its relaunched worker could not start; the pre-drive check then held #4191 untouched until the limit cleared.
+- **Two records lost a finished fix to a denied commit.** In the reviewer fix round of #3986 and #4248 the worker fixed every confirmed finding, tried `git add`, was denied (the driver makes the commit, which no worker prompt says), and reported `cannot-complete`. The driver ended both records there. Filed as #6226. Both are under Replaced.
+- **The sample closed at list #57.** #4259 is the twentieth record with a PR. Like #4162 it is not widened and carries `auto:merge`, and the merge-check again returned `needs-human`, so PR #6227 did not merge. Of the six such records on the list, one merged unattended (#4531), two were declined by the merge-check (#4162, #4259), two stopped before a PR (#3995, #3902) and one was not reached (#4433). The 28 frozen records after #4259 were not driven.
 
 The split of the driver's stops by cause is in the Replaced section.
 
 ## Driven records
 
-16 of 20 so far. Minutes are the driver's total and its total without the CI wait. Implementer cost sums the implementer launches; the driver's own reviewer is listed beside it. Each whole-branch review ran on the head the driver pushed, before `/claude-tweaks:review` touched the branch. Reports are in `phase-7-trial-reviews/`: `{record}-whole-branch.md` (guard 1) and `{record}-review.md` (the merge gate). Each is the report as returned, except that a home-directory path is written `~` and the session scratch directory `{scratchpad}`.
+20 of 20. Minutes are the driver's total and its total without the CI wait. Implementer cost sums the implementer launches; the driver's own reviewer is listed beside it. Each whole-branch review ran on the head the driver pushed, before `/claude-tweaks:review` touched the branch. Reports are in `phase-7-trial-reviews/`: `{record}-whole-branch.md` (guard 1) and `{record}-review.md` (the merge gate). Each is the report as returned, except that a home-directory path is written `~` and the session scratch directory `{scratchpad}`.
 
 | n | List # | Record | PR | Size | Risk | Widened by | Outcome | Minutes | Implementer cost | Driver reviewer | Whole-branch review (Critical / Important / Minor) | `/claude-tweaks:review` (critical / high; verdict) | Fix before merge | Merged |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -269,22 +272,26 @@ The split of the driver's stops by cause is in the Replaced section.
 | 4 | 14 | #4365 | #6180 | medium | medium | risk, ceremony, protected-path | `pending-review`, CI red | 19.4 / 16.5 | $0.54 | $0.26; 0 returned, 0 reproduced | 0 / 5 / 7 | 0 / 1; PASS | yes (12 findings) | no |
 | 5 | 21 | #4452 | #6189 | medium | medium | risk, protected-path | `pending-review` (not-authorized), CI green | 25.7 / 21.2 | $0.37 | $0.34; 1 returned, 1 reproduced, fixed in one round | 0 / 1 / 5 | 0 / 0; PASS | yes (4 findings) | no |
 | 6 | 22 | #4460 | #6191 | low | medium | risk, protected-path | `pending-review` (not-authorized), CI green | 25.0 / 21.2 | $0.07 | $0.21; 2 returned, 2 reproduced, fixed in one round | 0 / 0 / 5 | 0 / 0; PASS | yes (8 findings) | no |
-| 7 | 26 | #4472 | #6193 | low | low | protected-path | `pending-review` (not-authorized), CI green | 11.2 / 6.8 | $0.24 | $0.46; 0 returned, 0 reproduced | 0 / 3 / 2 | pending | pending | no |
+| 7 | 26 | #4472 | #6193 | low | low | protected-path | `pending-review` (not-authorized), CI green | 11.2 / 6.8 | $0.24 | $0.46; 0 returned, 0 reproduced | 0 / 3 / 2 | 0 / 1; PASS | yes (5 findings) | yes, 2026-11-24 |
 | 8 | 29 | #4531 | #6196 | low | low | none | `merged` by the driver | 14.3 / 10.4 | $0.17 | $0.17; 2 returned, 2 reproduced, fixed in one round | 0 / 2 / 4 | not run yet | no: merged before /claude-tweaks:review could run | yes, 2026-11-24 (by the driver, unattended; see Operating notes and #6198) |
-| 9 | 30 | #4664 | #6201 | low | low | ceremony | `pending-review` (not-authorized), CI green | 11.9 / 8.1 | $0.23 | $0.28; 1 returned, 1 reproduced, fixed in one round | 0 / 4 / 4 | pending | pending | no |
-| 10 | 31 | #4725 | #6203 | low | low | protected-path | `pending-review` (not-authorized), CI green | 11.3 / 7.4 | $0.36 | $0.10; 0 returned, 0 reproduced | 2 / 3 / 1 | 0 / 0; BLOCKED. The cause named in the PR body is wrong, no Windows run exists for this branch, and the change makes the assertion weaker. The record is already fixed on main by #5694. | no | no |
+| 9 | 30 | #4664 | #6201 | low | low | ceremony | `pending-review` (not-authorized), CI green | 11.9 / 8.1 | $0.23 | $0.28; 1 returned, 1 reproduced, fixed in one round | 0 / 4 / 4 | 0 / 0; PASS | yes (7 findings) | yes, 2026-11-24 |
+| 10 | 31 | #4725 | #6203 | low | low | protected-path | `pending-review` (not-authorized), CI green | 11.3 / 7.4 | $0.36 | $0.10; 0 returned, 0 reproduced | 2 / 3 / 1 | 0 / 0; BLOCKED. The cause named in the PR body is wrong, no Windows run exists for this branch, and the change makes the assertion weaker. The record is already fixed on main by #5694. | no | closed unmerged |
 | 11 | 37 | #2724 | #6209 | low | low | none | `pending-review` (not-authorized), CI green | 14.1 / 10.3 | $0.23 | $0.21; 1 returned, 1 reproduced, fixed in one round | 0 / 3 / 3 | pending | pending | no |
 | 12 | 39 | #3788 | #6210 | low | low | protected-path | `pending-review` (not-authorized), CI green | 8.1 / 4.8 | $0.11 | $0.23; 0 returned, 0 reproduced | 0 / 0 / 3 | pending | pending | no |
 | 13 | 40 | #3831 | #6211 | low | low | none | `pending-review` (not-authorized), CI green | 9.2 / 5.9 | $0.09 | $0.14; 0 returned, 0 reproduced | 0 / 0 / 3 | pending | pending | no |
 | 14 | 44 | #3905 | #6214 | low | low | protected-path | `pending-review` (not-authorized), CI green | 10.8 / 7.0 | $0.10 | $0.16; 0 returned, 0 reproduced | 0 / 2 / 1 | pending | pending | no |
 | 15 | 45 | #3914 | #6215 | low | low | protected-path | `pending-review` (not-authorized), CI green | 7.6 / 3.7 | $0.01 | $0.10; 0 returned, 0 reproduced | 0 / 0 / 7 | pending | pending | no |
 | 16 | 48 | #4162 | #6217 | low | low | none | `pending-review` (verdict-not-confirmed), CI green | 15.7 / 12.4 | $0.04 | $0.36; 2 returned, 2 reproduced, fixed in one round | 1 / 1 / 3 | pending | pending | no |
+| 17 | 50 | #4191 | #6219 | medium | low | none | `pending-review` (not-authorized), CI green | 9.2 / 5.2 | $0.15 | $0.28; 0 returned, 0 reproduced | 0 / 4 / 1 | pending | pending | no |
+| 18 | 54 | #4245 | #6221 | low | low | protected-path | `pending-review` (widened-admission), CI green | 13.2 / 9.3 | $0.23 | $0.32; 1 returned, 1 reproduced, fixed in one round | 0 / 4 / 3 | pending | pending | no |
+| 19 | 55 | #4247 | #6225 | medium | medium | risk, protected-path | `pending-review` (not-authorized), CI green | 15.9 / 12.1 | $0.47 | $0.37; 2 returned, 2 reproduced, fixed in one round | 1 / 5 / 5 | pending | pending | no |
+| 20 | 57 | #4259 | #6227 | low | low | none | `pending-review` (verdict-not-confirmed), CI green | 9.4 / 5.0 | $0.17 | $0.18; 0 returned, 0 reproduced | 0 / 1 / 3 | pending | pending | no |
 
 The whole-branch reviewer is one read-only agent on Opus, given superpowers' `requesting-code-review/code-reviewer.md` template (the one a build's final whole-branch review is dispatched with) filled with the record body as the requirements and `merge-base(origin/main, head)..head` as the range, plus one line asking for numbered items and "None" under an empty severity. Counts are `parseReviewCounts`' own; where a report lists "declined to judge" bullets under its Minor heading the Minor count includes them, which guard 1 does not read.
 
 ## Replaced
 
-31 so far, in the order handled: 4 not admitted at their turn (`drive.js --check` refused them and `drive.js` was not run) and 27 stopped by the driver before a PR. Of those 27 stops: 9 the 40-line bound at `check`; 5 the driver's reviewer: confirmed findings the fix round did not clear; 5 the worker changed no files; 3 a driver or test defect since fixed (#6162, #6161); 3 tests still red after the relaunch; 2 a usage limit or a timeout.
+37, in the order handled: 4 not admitted at their turn (`drive.js --check` refused them and `drive.js` was not run) and 33 stopped by the driver before a PR. Of those 33 stops: 11 the 40-line bound at `check`; 6 the driver's reviewer: confirmed findings the fix round did not clear; 5 the worker changed no files; 3 a driver or test defect since fixed (#6162, #6161); 3 tests still red after the relaunch; 3 a usage limit or a timeout; 2 a fix-round worker that finished its fix and reported cannot-complete over a denied commit (#6226, open).
 
 | List # | Record | Size | Risk | Widened by | What happened | Minutes | Implementer cost | Run |
 |---|---|---|---|---|---|---|---|---|
@@ -319,15 +326,25 @@ The whole-branch reviewer is one read-only agent on Opus, given superpowers' `re
 | 42 | #3901 | low | low | none | Stopped before its PR: `express-escalated` at the commit step, `no changed files`. | 0.7 | $0.05 | `2026-11-24T105218-drive-3901` |
 | 43 | #3902 | low | low | none | Stopped before its PR: `express-escalated` at the commit step, `no changed files`. A not-widened auto:merge record. | 0.6 | $0.04 | `2026-11-24T105319-drive-3902` |
 | 46 | #3963 | low | low | protected-path | Stopped before its PR: `express-escalated` at the review step, `fix round test: red tests: plugin/skills/tidy/step-6-auto.md:37 The new not-landed row puts the bare value 'Yours' in its tier cells, but 'Yours' is …`. Reviewer cost $0.48. | 17.2 | $0.87 | `2026-11-24T111258-drive-3963` |
+| 47 | #3986 | low | low | none | Stopped before its PR: `express-escalated` at the review step, `fix round launch: worker could not complete: The fix is applied to 'docs/skill-authoring.md' (one line, Failure paths section): DONE_WITH_CONCERNS is…`. The reviewer returned 3 findings, all reproduced; the worker had finished the fix and reported cannot-complete because its commit was denied (#6226). Reviewer cost $0.41. | 6.6 | $0.05 | `2026-11-24T114640-drive-3986` |
+| 49 | #4163 | medium | medium | risk, ceremony | Stopped before its PR: `express-escalated` at the worker step, `fail/exit: You've hit your 5-hour limit · resets 2:50pm (Europe/Copenhagen); after one relaunch (red-tests, standard@medium to standard@high)`. The relaunched worker hit the account 5-hour usage limit. | 5.7 | $0.35 | `2026-11-24T115334-drive-4163` |
+| 51 | #4209 | low | low | ceremony | Stopped before its PR: `express-escalated` at the check step, `out-of-bounds: 41 implementation lines + 15 deleted test lines > 40`. | 8.3 | $0.17 | `2026-11-24T140028-drive-4209` |
+| 52 | #4211 | low | low | protected-path | Stopped before its PR: `express-escalated` at the check step, `out-of-bounds: 39 implementation lines + 9 deleted test lines > 40`. | 6.7 | $0.04 | `2026-11-24T140858-drive-4211` |
+| 53 | #4243 | low | low | protected-path | Stopped before its PR: `express-escalated` at the review step, `fix round test: red tests: plugin/skills/build/dispatch.md:14 The new paragraph tells every SDD dispatch to follow the shell constraint via '_shared/…`. Reviewer cost $0.71. | 6.1 | $0.29 | `2026-11-24T141550-drive-4243` |
+| 56 | #4248 | low | low | protected-path | Stopped before its PR: `express-escalated` at the review step, `fix round launch: worker could not complete: Both review findings are fixed in plugin/bin/lib/hooks/git-command.js (17 insertions, 7 deletions agains…`. The worker had finished the fix and reported cannot-complete because its commit was denied (#6226). Reviewer cost $0.14. | 12.2 | $0.36 | `2026-11-24T145141-drive-4248` |
 
 ## Guard results
 
 | Guard | Value | Baseline | Read on |
 |---|---|---|---|
-| 1 | pending: 12 of 16 reviewed PRs so far have a Critical or Important item (4 to go) | 70% | |
+| 1 | 16 of 20 driven PRs have a Critical or Important item in their whole-branch review: 80%. Worse. | 70% | 2026-11-24 |
 | 2 | not applicable: the driver has no task review | | |
 | 3 | pending | pending (on or after 2026-12-02) | |
 
 ## Verdict
 
-Provisional: pending. Final: pending.
+**Provisional, 2026-11-24: worse.** Guard 1 is 16 of 20, 80%, against the 70% baseline: 16 of the 20 driven PRs have at least one Critical or Important item in their whole-branch review. All 20 reports were readable, so none is left out of the denominator. Three of the 16 have a Critical item (#6203, #6217, #6225). The four with neither are #6191, #6210, #6211 and #6215.
+
+Under the verdict rule a worse guard sends the five policy values back to their defaults. A policy-only PR removing the five rows from `.claude-tweaks/policy.yml` is opened with this update and linked from #6021.
+
+**Final: pending** the guard 3 read (the baseline on or after 2026-12-02, the trial value 14 days after the last trial merge). Guard 1 is closed, so the final verdict cannot be better than the provisional one; guard 3 is still read and recorded, and #6021 stays open until then.
