@@ -3974,11 +3974,16 @@ const GH_PR_VALUE_FLAGS = Object.freeze({
 // The environment variables that pick the repository gh reads (#6143 review): a call's own literal
 // assignment prefix is carried into `env`; any other spelling of them makes the call `envUnprovable`.
 const GH_TARGET_ENV_MENTION_RE = /GH_(?:REPO|HOST)/gi;
+// pflag reads a `--flag=value` boolean with Go's strconv.ParseBool: these are its true spellings.
+const PFLAG_TRUE = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
 
-// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, env, envUnprovable, cwd,
-// lost }`. `selector` is the first positional after the verb (null when absent), `repo` the -R/--repo
-// value, `undo` true for a call that only cancels: `ready --undo`, or `merge --disable-auto`, which
-// only turns auto-merge off. `env` holds the GH_REPO/GH_HOST values of the call's own literal
+// Every `gh pr merge|ready` call in `command`: `{ verb, selector, repo, undo, env, envUnprovable,
+// envCleared, cwd, lost }`. `selector` is the first positional after the verb (null when absent), `repo`
+// the -R/--repo value, `undo` true for a call that only cancels: `ready --undo`, or `merge
+// --disable-auto`, which only turns auto-merge off; bare or with a pflag true value (`=true`, `=1`, …),
+// the last spelling winning, so a false value (`=false`, `=0`, …) or one ParseBool refuses is no cancel.
+// `envCleared` is true when a prefix runs gh without (part of) the inherited environment: `env` with
+// `-i`/`--ignore-environment`/`-`/`-u`/`--unset`, `exec -c`, or `sudo`/`doas` (both reset it by default). `env` holds the GH_REPO/GH_HOST values of the call's own literal
 // assignment prefix (`GH_REPO=o/r gh pr merge 5`), which gh reads in place of the cwd's repo.
 // `envUnprovable` is true when such a value cannot be known: an expansion or `+=` in the value, a
 // subscript, a prefix word (`env`, `sudo`) in front of the call, or any GH_REPO/GH_HOST text in the
@@ -4007,13 +4012,29 @@ function ghPrLifecycleCalls(command, cwd, opts) {
     // The words before the command word: redirections, assignment words and prefix words (commandWord).
     const env = {};
     let envUnprovable = false;
+    let envCleared = false;
     let prefixWord = false;
+    let prefixName = null; // the prefix word whose options are being read
     let mine = 0;
     for (let i = 0; i < from;) {
       const width = redirectionWidth(quoting.raw[i], quoting.spanKinds[i], quoting.leadQuoted[i]);
       if (width > 0) { i += width; continue; }
       const end = assignmentWordEnd(quoting.raw, quoting.spanKinds, i);
-      if (end === i) { prefixWord = true; i += 1; continue; }
+      if (end === i) {
+        prefixWord = true;
+        const w = tokens[i];
+        const base = pathImpl.basename(w);
+        if (STRIPPED_PREFIX_WORDS.includes(w) || PATH_PREFIX_WORDS.includes(base)) {
+          prefixName = STRIPPED_PREFIX_WORDS.includes(w) ? w : base;
+          if (prefixName === 'sudo' || prefixName === 'doas') envCleared = true;
+        } else if (prefixName === 'env' && (w === '-' || /^--(?:ignore-environment|unset)(?:=|$)/.test(w) || /^-[^-]*[iu]/.test(w))) {
+          envCleared = true;
+        } else if (prefixName === 'exec' && /^-[^-]*c/.test(w)) {
+          envCleared = true;
+        }
+        i += 1;
+        continue;
+      }
       const m = /^(GH_REPO|GH_HOST)=/.exec(quoting.raw[i]);
       if (m && end === i + 1 && !/[$`]/.test(quoting.raw[i])) {
         env[m[1]] = tokens[i].slice(m[1].length + 1);
@@ -4031,7 +4052,12 @@ function ghPrLifecycleCalls(command, cwd, opts) {
       const a = rest[i];
       if (a === '--') { if (selector === null && i + 1 < rest.length) selector = rest[i + 1]; break; }
       if (a === '-' || !a.startsWith('-')) { if (selector === null) selector = a; continue; }
-      if (a === '--undo' || (verb === 'merge' && a === '--disable-auto')) { undo = true; continue; }
+      const cancel = /^--(undo|disable-auto)(?:=(.*))?$/.exec(a);
+      if (cancel && (cancel[1] === 'undo' || verb === 'merge')) {
+        // A false value, or one ParseBool refuses (gh then exits on the flag), is no cancel.
+        undo = cancel[2] === undefined || PFLAG_TRUE.has(cancel[2]);
+        continue;
+      }
       let name;
       let value = null;
       if (a.startsWith('--')) {
@@ -4055,7 +4081,7 @@ function ghPrLifecycleCalls(command, cwd, opts) {
     // A lost cwd's stand-in comes from the walk's own input (its root, or the cwd argument), never from
     // the hook process's cwd.
     const standIn = lead.dir instanceof LostCwd ? lead.dir.root : (typeof lead.dir === 'string' ? lead.dir : (effCwd instanceof LostCwd ? effCwd.root : (typeof effCwd === 'string' ? effCwd : String(cwd || '.'))));
-    const call = { verb, selector, repo, undo, env, envUnprovable, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
+    const call = { verb, selector, repo, undo, env, envUnprovable, envCleared, cwd: known ? lead.dir : (pathImpl.isAbsolute(standIn) ? pathImpl.resolve(standIn) : standIn), lost: !known };
     // A repeat visit under another cwd (after a brace group) that reads the same adds nothing.
     if (again && calls.slice(pieceStart).some((c) => c.cwd === call.cwd && c.lost === call.lost && c.verb === verb && c.selector === selector)) return;
     calls.push(call);

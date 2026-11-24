@@ -14,12 +14,13 @@
 // when every step is proven: not a cancel (`ready --undo`, `merge --disable-auto`); the GH_REPO/GH_HOST
 // gh would read is known (the call's own literal prefix, carried into the PR read's env, or none); the call's cwd is known (not `lost`) and absolute; that
 // cwd is in a git checkout whose main checkout resolves; the PR body reads, by `gh pr view` run from
-// that cwd under the hook env plus that prefix; its first line carries a run marker; the named run dir resolves under that main
+// that cwd under the hook env plus that prefix (a carried GH_REPO passed as --repo); its first line carries a run marker; the named run dir resolves under that main
 // checkout; its run-state reads with an owner; the caller is not the owner; and inFlightPhase names
 // a phase. The call's own cwd is the base, not ctx.cwd: after `cd /other/checkout &&`, gh reads that
 // checkout's repo, so the gate judges the PR from there.
 // Fail-open conditions, each `{}` with no event: any other tool; a non-string command; no gh pr
-// ready/merge call; `--undo` or `--disable-auto`; an `envUnprovable` call (a GH_REPO/GH_HOST value the
+// ready/merge call; `--undo` or `--disable-auto` (bare or with a pflag true value); an `envCleared` call
+// (`env -i`/`-u`, `exec -c`, `sudo`, `doas`) while the hook env carries GH_REPO or GH_HOST; an `envUnprovable` call (a GH_REPO/GH_HOST value the
 // parser cannot carry, so the repo gh reads is unknown); a `lost` call cwd (only a stand-in, so the repo gh would read there
 // cannot be proved — _shared/policy-schema-coverage.md's "Where a relative target resolves") or a
 // relative one; a call cwd outside any git checkout, or mainCheckoutRoot null or throwing for it
@@ -77,8 +78,12 @@ function defaultReadPrBody(call, ctx) {
   const { ghOptions, injectedGhDeps } = require('../repo-resolve');
   const { ghTimeoutMsAt } = require('../shared-primitives');
   const env = { ...ctx.env, ...(call.env && typeof call.env === 'object' ? call.env : {}) };
+  // A carried GH_REPO goes on as --repo (an -R/--repo value wins, as in gh), so ghOptions sees an explicit
+  // repo and adds no GH_HOST from the cwd's origin: a two-part value then reads on GH_HOST or github.com,
+  // and a three-part `host/o/r` on its own host, exactly as gh reads GH_REPO.
+  const repo = isNonEmptyString(call.repo) ? call.repo : (call.env && isNonEmptyString(call.env.GH_REPO) ? call.env.GH_REPO : null);
   const args = ['pr', 'view', '--json', 'body,number'];
-  if (isNonEmptyString(call.repo)) args.push('--repo', call.repo);
+  if (repo !== null) args.push('--repo', repo);
   if (call.selector !== null && call.selector !== undefined) args.push('--', call.selector);
   try {
     const out = execFileSync('gh', args, ghOptions(args, {
@@ -96,6 +101,9 @@ function defaultReadPrBody(call, ctx) {
 function checkCall(call, ctx, d, deny) {
   if (call.undo) return {};
   if (call.envUnprovable) return {};
+  // A prefix that clears the inherited env runs gh without the hook env's GH_REPO/GH_HOST, which the read
+  // below would still apply: the repo gh reads is then unknown. With neither set, both read the cwd's repo.
+  if (call.envCleared && (isNonEmptyString(ctx.env.GH_REPO) || isNonEmptyString(ctx.env.GH_HOST))) return {};
   if (call.lost || !isNonEmptyString(call.cwd) || !path.isAbsolute(call.cwd)) return {};
   // Outside any git checkout no run can be named, so the PR is never read.
   let main;

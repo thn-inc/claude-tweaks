@@ -173,3 +173,37 @@ test('#6143: the Known gaps shapes are unparsed, and docs/hooks.md names them wi
     assert.ok(gaps.includes(phrase), phrase);
   }
 });
+
+// ---- #6143 residual: pflag boolean values on the cancel flags, and env-clearing prefixes ----
+
+test('#6143: --undo/--disable-auto with a pflag true value cancel; a false value does not; the last one wins', () => {
+  for (const v of ['true', '1', 't', 'T', 'TRUE', 'True']) {
+    assert.strictEqual(ghPrLifecycleCalls(`gh pr ready --undo=${v} 7`, CWD)[0].undo, true, `--undo=${v}`);
+    assert.strictEqual(ghPrLifecycleCalls(`gh pr merge --disable-auto=${v} 7`, CWD)[0].undo, true, `--disable-auto=${v}`);
+  }
+  for (const v of ['false', '0', 'f', 'F', 'FALSE', 'False']) {
+    assert.strictEqual(ghPrLifecycleCalls(`gh pr ready --undo=${v} 7`, CWD)[0].undo, false, `--undo=${v}`);
+    assert.strictEqual(ghPrLifecycleCalls(`gh pr merge --disable-auto=${v} 7`, CWD)[0].undo, false, `--disable-auto=${v}`);
+  }
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge --disable-auto --disable-auto=false 7', CWD)[0].undo, false);
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge --disable-auto=false --disable-auto 7', CWD)[0].undo, true);
+  // Not a ParseBool value: gh refuses the flag, so it is not counted as a cancel.
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge --disable-auto=yes 7', CWD)[0].undo, false);
+  assert.strictEqual(ghPrLifecycleCalls('gh pr ready --disable-auto=true 7', CWD)[0].undo, false);
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge --disable-auto=true 7', CWD)[0].selector, '7');
+});
+
+test('#6143: an env-clearing prefix marks the call envCleared', () => {
+  for (const c of [
+    'env -i gh pr merge 5', 'env --ignore-environment gh pr merge 5', 'env - gh pr merge 5', 'env -u GH_TOKEN gh pr merge 5',
+    'env --unset=X gh pr merge 5', 'env -vi gh pr merge 5', '/usr/bin/env -i gh pr merge 5', 'sudo gh pr merge 5', 'doas gh pr merge 5',
+    'exec -c gh pr merge 5', 'nice env -i gh pr merge 5',
+  ]) {
+    const calls = ghPrLifecycleCalls(c, CWD);
+    assert.strictEqual(calls.length, 1, c);
+    assert.strictEqual(calls[0].envCleared, true, c);
+  }
+  for (const c of ['gh pr merge 5', 'env gh pr merge 5', 'env FOO=1 gh pr merge 5', 'env -C /x gh pr merge 5', 'nice -n 5 gh pr merge 5', 'exec gh pr merge 5']) {
+    assert.strictEqual(ghPrLifecycleCalls(c, CWD)[0].envCleared, false, c);
+  }
+});

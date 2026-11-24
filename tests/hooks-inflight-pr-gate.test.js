@@ -230,7 +230,54 @@ test('the default runner reads the PR with the call\'s GH_REPO/GH_HOST prefix in
   const gh = stubGh({ exit: 0, json: { body: bodyFor(fx), number: 5 } });
   assert.ok(denyReason(gate(ctxFor(fx, 'GH_HOST=ghe.example.com GH_REPO=o/r gh pr merge 5', {}, gh.env))));
   assert.strictEqual(gh.ghEnv(), 'o/r|ghe.example.com');
-  assert.deepStrictEqual(gh.argv(), ['pr', 'view', '--json', 'body,number', '--', '5']);
+  assert.deepStrictEqual(gh.argv(), ['pr', 'view', '--json', 'body,number', '--repo', 'o/r', '--', '5']);
+});
+
+// A carried GH_REPO becomes --repo, so ghOptions injects no origin-derived GH_HOST: gh itself reads a
+// two-part GH_REPO on github.com (or GH_HOST), never on the cwd origin's host. -R still wins over it.
+test('the default runner turns a GH_REPO prefix into --repo; a three-part value keeps its host; -R wins', { skip: skipWin }, async () => {
+  const fx = await fixture();
+  for (const [command, repoArgs] of [
+    ['GH_REPO=o/r gh pr merge 5', ['--repo', 'o/r']],
+    ['GH_REPO=ghe.corp/o/r gh pr merge 5', ['--repo', 'ghe.corp/o/r']],
+    ['GH_REPO=o/r gh pr merge -R a/b 5', ['--repo', 'a/b']],
+    ['GH_REPO= gh pr merge 5', []],
+  ]) {
+    const gh = stubGh({ exit: 1 });
+    assertAllowedNoEvent(gate(ctxFor(fx, command, {}, gh.env)), fx);
+    assert.deepStrictEqual(gh.argv(), ['pr', 'view', '--json', 'body,number', ...repoArgs, '--', '5'], command);
+  }
+});
+
+test('an env-clearing prefix with GH_REPO or GH_HOST in the hook env is allowed without reading the PR', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  for (const key of ['GH_REPO', 'GH_HOST']) {
+    for (const c of ['env -i gh pr merge 5', 'env -u GH_REPO gh pr merge 5', 'sudo gh pr merge 5']) {
+      assertAllowedNoEvent(gate(ctxFor(fx, c, {}, { ...process.env, GH_REPO: '', GH_HOST: '', [key]: 'x/y' }), { readPrBody: read }), fx);
+    }
+  }
+  assert.strictEqual(read.calls.length, 0);
+});
+
+test('an env-clearing prefix with no GH_REPO/GH_HOST in the hook env is still judged', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  const env = { ...process.env };
+  delete env.GH_REPO;
+  delete env.GH_HOST;
+  assert.ok(denyReason(gate(ctxFor(fx, 'env -i gh pr merge 5', {}, env), { readPrBody: read })));
+  assert.strictEqual(read.calls.length, 1);
+});
+
+test('gh pr merge --disable-auto=true is allowed unread; --disable-auto=false is judged', async () => {
+  const fx = await fixture();
+  const read = reader(bodyFor(fx));
+  assertAllowedNoEvent(gate(ctxFor(fx, 'gh pr merge --disable-auto=true 123'), { readPrBody: read }), fx);
+  assertAllowedNoEvent(gate(ctxFor(fx, 'gh pr ready --undo=1 123'), { readPrBody: read }), fx);
+  assert.strictEqual(read.calls.length, 0);
+  assert.ok(denyReason(gate(ctxFor(fx, 'gh pr merge --disable-auto=false 123'), { readPrBody: read })));
+  assert.strictEqual(read.calls.length, 1);
 });
 
 test('the default runner with no prefix keeps the hook env (no GH_REPO/GH_HOST added)', { skip: skipWin }, async () => {
