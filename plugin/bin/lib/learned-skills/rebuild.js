@@ -22,6 +22,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS } = require('../shared-primitives');
 const { realDeps, gitEnv, firstStderrLine } = require('./learned-skills');
+const { repoPinnedEnv } = require('../hooks/git-exec');
 
 const MARKER_SIZE = 32;
 
@@ -188,14 +189,16 @@ function rebuild({ pr, headRef, oldHead, integrationBranch, cwd }, overrides = {
     return { ok: false, reason: 'not-learned-skills-branch' };
   }
   const deps = { ...defaultDeps(), ...overrides };
-  const nonce = typeof deps.nonce === 'function' ? deps.nonce() : deps.nonce;
-  const base = `refs/claude-tweaks/rebuild/${pr}-${nonce}/base`;
-  const head = `refs/claude-tweaks/rebuild/${pr}-${nonce}/head`;
+  let base = null;
+  let head = null;
   const git = (args, opts = {}) => deps.git(args, { cwd, ...opts });
   const out = (args, opts) => String(git(args, opts)).trim();
   let dir = null;
   let fetched = false;
   try {
+    const nonce = typeof deps.nonce === 'function' ? deps.nonce() : deps.nonce;
+    base = `refs/claude-tweaks/rebuild/${pr}-${nonce}/base`;
+    head = `refs/claude-tweaks/rebuild/${pr}-${nonce}/head`;
     const version = /(\d+)\.(\d+)/.exec(out(['version'], { timeout: GIT_TIMEOUT_MS }));
     if (!version || Number(version[1]) < MIN_GIT[0] || (Number(version[1]) === MIN_GIT[0] && Number(version[2]) < MIN_GIT[1])) {
       return { ok: false, reason: 'git-too-old' };
@@ -232,13 +235,15 @@ function rebuild({ pr, headRef, oldHead, integrationBranch, cwd }, overrides = {
       deps.writeFile(paths.theirs, git(['cat-file', 'blob', t.oid], { encoding: 'buffer' }));
       let merged;
       try {
-        merged = String(git(['merge-file', '-p', '--diff3', `--marker-size=${MARKER_SIZE}`, '-L', 'ours', '-L', 'base', '-L', 'theirs',
-          paths.ours, paths.base, paths.theirs]));
+        merged = git(['merge-file', '-p', '--diff3', `--marker-size=${MARKER_SIZE}`, '-L', 'ours', '-L', 'base', '-L', 'theirs',
+          paths.ours, paths.base, paths.theirs], { encoding: 'buffer' });
       } catch (err) {
-        merged = stdoutOf(err);
+        merged = err && err.stdout != null ? err.stdout : null;
         if (merged === null || !(err.status > 0 && err.status < 128)) throw err;
       }
-      const res = resolveDiff3(merged);
+      let decoded = null;
+      try { decoded = new TextDecoder('utf-8', { fatal: true }).decode(merged); } catch { /* not UTF-8: unresolvable */ }
+      const res = decoded === null ? { ok: false } : resolveDiff3(decoded);
       if (!res.ok) { unresolvable.push(file); continue; }
       resolved.set(file, { mode: o.mode, text: res.text });
     }
@@ -255,8 +260,8 @@ function rebuild({ pr, headRef, oldHead, integrationBranch, cwd }, overrides = {
     const message = `Rebuild learned-skills PR #${pr} on ${integrationBranch}\n\n${trailers}`;
     const commit = out(['commit-tree', finalTree, '-p', tip, '-F', '-'], { env: indexEnv, input: message });
 
-    const pushEnv = { ...deps.env, GIT_LITERAL_PATHSPECS: '1' };
-    for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GITHUB_TOKEN']) delete pushEnv[k];
+    const pushEnv = { ...repoPinnedEnv(deps.env), GIT_LITERAL_PATHSPECS: '1' };
+    delete pushEnv.GITHUB_TOKEN;
     try {
       git(['push', '--no-verify', `--force-with-lease=refs/heads/${headRef}:${oldHead}`, '--end-of-options', 'origin',
         `${commit}:refs/heads/${headRef}`], { env: pushEnv, timeout: GIT_PUSH_TIMEOUT_MS });
@@ -268,7 +273,7 @@ function rebuild({ pr, headRef, oldHead, integrationBranch, cwd }, overrides = {
   } catch (err) {
     return { ok: false, reason: 'rebuild-failed', detail: firstStderrLine(err) };
   } finally {
-    if (fetched) {
+    if (fetched && base && head) {
       for (const ref of [base, head]) {
         try { git(['update-ref', '-d', '--end-of-options', ref]); } catch { /* best effort */ }
       }

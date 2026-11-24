@@ -287,9 +287,85 @@ test('scratch refs and the temp dir are removed', (t) => {
   const mkdtemp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rebuild-')); dirs.push(d); return d; };
   assert.equal(rebuild(request(fx, 'B'), { mkdtemp }).ok, true);
   assert.equal(rebuild(request(fx, 'B', { oldHead: fx.baseSha }), { mkdtemp }).reason, 'head-changed');
-  assert.equal(fx.sh(fx.clone, ['for-each-ref', 'refs/claude-tweaks/rebuild']), '');
   assert.equal(dirs.length, 1);
-  assert.throws(() => fs.statSync(dirs[0]), { code: 'ENOENT' });
+
+  // A conflict refusal and a rebuild-failed after the temp dir exists clean up too.
+  const fx2 = rebuildFixture(t);
+  const A = fx2.lsBranch('A', replaceLine('- two', '- two (A)'));
+  fx2.lsBranch('B', replaceLine('- two', '- two (B)'));
+  fx2.advanceMain(A);
+  assert.ok(rebuild(request(fx2, 'B'), { mkdtemp }).reason.startsWith('conflict needs a human'));
+  assert.equal(dirs.length, 2);
+  const failing = recorder({ before: (args) => { if (args[0] === 'write-tree') throw new Error('boom'); } });
+  const { fx: fx3 } = twoAppends(t);
+  const res = rebuild(request(fx3, 'B'), { ...failing.deps, mkdtemp });
+  assert.equal(res.reason, 'rebuild-failed');
+  assert.equal(dirs.length, 3);
+
+  for (const f of [fx, fx2, fx3]) assert.equal(f.sh(f.clone, ['for-each-ref', 'refs/claude-tweaks/rebuild']), '');
+  for (const d of dirs) assert.throws(() => fs.statSync(d), { code: 'ENOENT' });
+});
+
+test('a throwing nonce is rebuild-failed, never a throw', (t) => {
+  const { fx } = twoAppends(t);
+  const rec = recorder({ deps: { nonce: () => { throw new Error('no entropy'); } } });
+  const res = rebuild(request(fx, 'B'), rec.deps);
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'rebuild-failed');
+  assert.deepStrictEqual(rec.pushes(), []);
+  assert.equal(fx.sh(fx.clone, ['for-each-ref', 'refs/claude-tweaks/rebuild']), '');
+});
+
+test('a non-UTF-8 conflicted file refuses and pushes nothing', (t) => {
+  const fx = rebuildFixture(t);
+  const edit = (tag) => (repo) => {
+    const p = path.join(repo, FILE);
+    fs.writeFileSync(p, Buffer.concat([fs.readFileSync(p), Buffer.from(`- ${tag} `), Buffer.from([0xff]), Buffer.from('\n')]));
+  };
+  const A = fx.lsBranch('A', edit('a'));
+  const B = fx.lsBranch('B', edit('b'));
+  fx.advanceMain(A);
+  const rec = recorder();
+  assert.deepStrictEqual(rebuild(request(fx, 'B'), rec.deps), { ok: false, reason: `conflict needs a human: ${FILE}` });
+  assert.equal(fx.originRef('learned-skills/B'), B);
+  assert.deepStrictEqual(rec.pushes(), []);
+});
+
+test('a binary conflict refuses naming the file and pushes nothing', (t) => {
+  const BIN = '.claude/skills/x/blob.bin';
+  const fx = rebuildFixture(t, { extra: { [BIN]: 'base\0data\n' } });
+  const A = fx.lsBranch('A', (repo) => fs.writeFileSync(path.join(repo, BIN), 'A\0data\n'));
+  const B = fx.lsBranch('B', (repo) => fs.writeFileSync(path.join(repo, BIN), 'B\0data\n'));
+  fx.advanceMain(A);
+  const rec = recorder();
+  const res = rebuild(request(fx, 'B'), rec.deps);
+  assert.equal(res.ok, false);
+  assert.ok(res.reason.startsWith('conflict needs a human: '), JSON.stringify(res));
+  assert.ok(res.reason.includes(BIN), res.reason);
+  assert.equal(fx.originRef('learned-skills/B'), B);
+  assert.deepStrictEqual(rec.pushes(), []);
+});
+
+test('an add/add of the same new file refuses and pushes nothing', (t) => {
+  const NEW = '.claude/skills/y/SKILL.md';
+  const fx = rebuildFixture(t);
+  const A = fx.lsBranch('A', (repo) => fx.write(repo, NEW, '# y\n\n- a\n'));
+  const B = fx.lsBranch('B', (repo) => fx.write(repo, NEW, '# y\n\n- b\n'));
+  fx.advanceMain(A);
+  const rec = recorder();
+  const res = rebuild(request(fx, 'B'), rec.deps);
+  assert.deepStrictEqual(res, { ok: false, reason: `conflict needs a human: ${NEW}` });
+  assert.equal(fx.originRef('learned-skills/B'), B);
+  assert.deepStrictEqual(rec.pushes(), []);
+});
+
+test('a successful rebuild leaves the clone HEAD, status and index untouched', (t) => {
+  const { fx } = twoAppends(t);
+  fx.write(fx.clone, 'scratch.txt', 'untracked\n');
+  const snap = () => ['rev-parse HEAD', 'symbolic-ref HEAD', 'status --porcelain', 'ls-files -s'].map((c) => fx.sh(fx.clone, c.split(' '))).join('\0');
+  const before = snap();
+  assert.equal(rebuild(request(fx, 'B'), recorder().deps).ok, true);
+  assert.equal(snap(), before);
 });
 
 test('scratch refs are per call', (t) => {
@@ -315,4 +391,14 @@ test('the push drops GITHUB_TOKEN only', (t) => {
   const env = rec.pushes()[0].opts.env;
   assert.equal('GITHUB_TOKEN' in env, false);
   assert.equal(env.GH_TOKEN, 'y');
+});
+
+test('the push env carries no repo-pinning variable', (t) => {
+  const { fx } = twoAppends(t);
+  const rec = recorder({ deps: { env: { ...process.env, GIT_DIR: '/elsewhere/.git', GIT_INDEX_FILE: '/elsewhere/index' } } });
+  const res = rebuild(request(fx, 'B'), rec.deps);
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const env = rec.pushes()[0].opts.env;
+  for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) assert.equal(k in env, false, k);
+  assert.equal(env.GIT_LITERAL_PATHSPECS, '1');
 });
