@@ -1104,7 +1104,8 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseL
   // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`) is the cd's own redirect, and the cd still runs.
   const gluedCd = cdLead >= 0 && /^cd[<>]/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
   if ((t[cdLead] === 'cd' || gluedCd) && !(split && baseLike)) { // an index of -1 reads undefined: no cd
-    const from = cdLead + 1;
+    // #4460: an operator that ends the glued token (`cd> f`, `cd>> f`) takes the next word as its target, not as the argument.
+    const from = cdLead + (gluedCd && /^cd[<>][<>&|]*$/.test(rawT[cdLead]) ? 2 : 1);
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
     const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
@@ -3465,6 +3466,9 @@ function redirectRawTargets(t, quoting) {
     // (#4281), so an escaped or quoted `&` reads the same: `>\&2` and `> '&2'` write the file `&2`
     // (bash 3.2 and 5), so only a bare one counts. Without span kinds every `&` counts, as before.
     let ampOp = !kindsOf;
+    // #4460: whether the target's first character is a bare `(` in the source (false when a `$`
+    // expansion supplies it, as in `>$A`); null when no span kinds are known.
+    let bareParen = null;
     if (!kindsOf) {
       const op = matchRedirectOperator(t[i]);
       if (op) ({ plainFd, target: rawTarget } = op);
@@ -3493,6 +3497,7 @@ function redirectRawTargets(t, quoting) {
         // A substitution leaves the target's first character in place (substituteVars, above),
         // so it is `raw[opEnd]` on every branch; one a `$` put there is text too (`>$A`).
         ampOp = raw[opEnd] === '&' && kinds[opEnd] === 'b';
+        bareParen = raw[opEnd] === '(' && kinds[opEnd] === 'b';
       }
     }
     if (rawTarget === null) continue;
@@ -3500,6 +3505,7 @@ function redirectRawTargets(t, quoting) {
       i += 1; // consume the target token too — never re-scan it as its own operator
       rawTarget = t[i];
       targetKinds = kindsAt(i);
+      if (kindsOf && quoting.raw[i] !== undefined) bareParen = quoting.raw[i][0] === '(' && kindsOf[i][0] === 'b';
       // The target is a word of its own: an `&` starting it is literal unless bare.
       if (kindsOf) ampOp = rawTarget !== undefined && kindsOf[i][0] === 'b';
     }
@@ -3524,7 +3530,8 @@ function redirectRawTargets(t, quoting) {
       rawTarget = word;
     }
     // #4460: only a bare `(` opens a process substitution (`>(cat)`); a quoted or escaped one is file text.
-    if (rawTarget.startsWith('(') && (targetKinds === null || targetKinds[0] === 'b')) continue;
+    // A `(` a `$` expansion put there is never bare (`A='(x'; echo x > $A` writes the file `(x`).
+    if (rawTarget.startsWith('(') && (targetKinds ? targetKinds[0] === 'b' : bareParen !== false)) continue;
     out.push(rawTarget);
   }
   return out;
