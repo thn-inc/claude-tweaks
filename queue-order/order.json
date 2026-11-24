@@ -1,31 +1,11 @@
 {
-  "computedAt": "2026-11-24T10:21:47.835Z",
+  "computedAt": "2026-11-24T14:31:15.617Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 6152,
         "updatedAt": "2026-11-24T06:34:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6151,
-        "updatedAt": "2026-11-23T16:10:24Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6148,
-        "updatedAt": "2026-11-24T09:29:29Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6114,
-        "updatedAt": "2026-11-24T09:02:26Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6113,
-        "updatedAt": "2026-11-24T09:04:16Z",
         "state": "OPEN"
       },
       {
@@ -570,7 +550,7 @@
       },
       {
         "number": 4245,
-        "updatedAt": "2026-10-26T14:34:09Z",
+        "updatedAt": "2026-11-24T14:22:25Z",
         "state": "OPEN"
       },
       {
@@ -580,7 +560,7 @@
       },
       {
         "number": 4243,
-        "updatedAt": "2026-11-10T09:44:19Z",
+        "updatedAt": "2026-11-24T14:21:51Z",
         "state": "OPEN"
       },
       {
@@ -600,27 +580,27 @@
       },
       {
         "number": 4211,
-        "updatedAt": "2026-10-31T10:00:02Z",
+        "updatedAt": "2026-11-24T14:15:36Z",
         "state": "OPEN"
       },
       {
         "number": 4209,
-        "updatedAt": "2026-11-03T09:35:45Z",
+        "updatedAt": "2026-11-24T14:08:39Z",
         "state": "OPEN"
       },
       {
         "number": 4191,
-        "updatedAt": "2026-11-03T16:46:41Z",
+        "updatedAt": "2026-11-24T13:56:22Z",
         "state": "OPEN"
       },
       {
         "number": 4163,
-        "updatedAt": "2026-10-30T06:35:06Z",
+        "updatedAt": "2026-11-24T11:59:09Z",
         "state": "OPEN"
       },
       {
         "number": 4162,
-        "updatedAt": "2026-10-26T14:34:25Z",
+        "updatedAt": "2026-11-24T11:42:38Z",
         "state": "OPEN"
       },
       {
@@ -655,7 +635,7 @@
       },
       {
         "number": 3986,
-        "updatedAt": "2026-10-23T22:43:34Z",
+        "updatedAt": "2026-11-24T11:53:14Z",
         "state": "OPEN"
       },
       {
@@ -665,32 +645,32 @@
       },
       {
         "number": 3963,
-        "updatedAt": "2026-10-23T22:09:23Z",
+        "updatedAt": "2026-11-24T11:29:59Z",
         "state": "OPEN"
       },
       {
         "number": 3914,
-        "updatedAt": "2026-10-24T05:39:57Z",
+        "updatedAt": "2026-11-24T11:08:46Z",
         "state": "OPEN"
       },
       {
         "number": 3905,
-        "updatedAt": "2026-10-24T05:39:53Z",
+        "updatedAt": "2026-11-24T11:01:05Z",
         "state": "OPEN"
       },
       {
         "number": 3902,
-        "updatedAt": "2026-11-03T09:35:40Z",
+        "updatedAt": "2026-11-24T10:53:50Z",
         "state": "OPEN"
       },
       {
         "number": 3901,
-        "updatedAt": "2026-11-03T09:35:35Z",
+        "updatedAt": "2026-11-24T10:52:50Z",
         "state": "OPEN"
       },
       {
         "number": 3878,
-        "updatedAt": "2026-10-24T05:39:46Z",
+        "updatedAt": "2026-11-24T10:52:03Z",
         "state": "OPEN"
       },
       {
@@ -705,7 +685,7 @@
       },
       {
         "number": 3831,
-        "updatedAt": "2026-10-24T05:39:35Z",
+        "updatedAt": "2026-11-24T10:32:36Z",
         "state": "OPEN"
       },
       {
@@ -715,7 +695,7 @@
       },
       {
         "number": 3788,
-        "updatedAt": "2026-11-24T10:18:39Z",
+        "updatedAt": "2026-11-24T10:23:16Z",
         "state": "OPEN"
       },
       {
@@ -745,7 +725,7 @@
       },
       {
         "number": 5046,
-        "updatedAt": "2026-11-24T07:53:05Z",
+        "updatedAt": "2026-11-24T11:36:29Z",
         "state": "OPEN"
       },
       {
@@ -768,8 +748,8 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite `held` and `released` when the hold labels (`bot:blocked`, `bot:parked`, `accept:changes-requested`) are added and removed, and stop appending blocker snapshots that did not change. This is task 7 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E6 | Floor map, emission 6/8: Outcomes at the label-protocol transitions | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/blockers.js`, `plugin/bin/resolve-blockers.js`, the code Task 1 names as adding and removing `bot:blocked`, `bot:parked` and `accept:changes-requested`\n- Test: `tests/bin-lib/station-events/blockers.test.js`, `tests/resolve-blockers-cli.test.js`\n\nInterfaces:\n\n- Produces: `blockersChanged(previous: object | null, next: object): boolean` in `blockers.js`, comparing the snapshot without its `fetchedAt`; `resolve-blockers.js` appends a `blockers` line only when it returns true, using the last line for that record in the station-event file as `previous`; adding a hold label writes `held` and removing it writes `released`, each with `why` from `HOLD_WHYS`.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `an unchanged snapshot is not appended`; `a changed blocker set is appended`; `the first snapshot for a record is appended`; `adding bot:blocked writes held why blocked with the blocker ref`; `removing it writes released why blocked`.\n\n## Release Note\n\nWrote held and released station events for hold labels and stopped appending unchanged blocker snapshots.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `an unchanged snapshot is not appended`; `a changed blocker set is appended`; `the first snapshot for a record is appended`; `adding bot:blocked writes held why blocked with the blocker ref`; `removing it writes released why blocked`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/blockers.test.js tests/resolve-blockers-cli.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `blockersChanged` and the last-line read (bounded read of the file's tail, not the whole file); call it before appending; emit `held`/`released` from the hold-label code.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write hold and release; stop appending unchanged blocker snapshots`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/blockers.js`\n- `plugin/bin/resolve-blockers.js`\n- `tests/bin-lib/station-events/blockers.test.js`\n- `tests/resolve-blockers-cli.test.js`\n\n## Gotchas\n\n- Changes blocker snapshot appending and adds hold/release writes.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-7 -->\nwork-fingerprint: factory-floor-map-emission:emission-7\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n",
-        "createdAt": "2026-11-23T15:43:27Z",
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nRemove `returned`, `skipped` and `abandoned` from the accepted outcomes, replace every remaining caller of a retired value, and publish the contract in `docs/reference/station-events.md`. This is task 8 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E4 | Floor map, emission 4/8: Replanning | must be merged before this starts (native blocked-by edge) |\n| E5 | Floor map, emission 5/8: The driver's outcomes with actor and reason | must be merged before this starts (native blocked-by edge) |\n| E6 | Floor map, emission 6/8: Outcomes at the label-protocol transitions | must be merged before this starts (native blocked-by edge) |\n| E7 | Floor map, emission 7/8: Hold state, and blocker snapshots only when they changed | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- \"`skipped` and `abandoned` are retired from the vocabulary; `abandoned` maps to `stopped`; `returned` becomes `sent-back`.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/stations.js`, `plugin/bin/lib/station-events/emit.js`, `docs/reference/station-events.md`\n- Test: `tests/bin-lib/station-events/emit.test.js`, `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\nInterfaces:\n\n- Produces: `appendStationEvent` rejects `returned`, `skipped` and `abandoned`; `docs/reference/station-events.md` carries the contract table of this plan.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `a retired outcome is dropped with a reason` (one per retired value); `no emitter under plugin/bin spells a retired outcome` (scan, as the station-literal conformance test does).\n\n## Release Note\n\nRetired the returned, skipped and abandoned outcomes from station events and published the event contract.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `a retired outcome is dropped with a reason` (one per retired value); `no emitter under plugin/bin spells a retired outcome` (scan, as the station-literal conformance test does).\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events`. Expected: FAIL.\n- [ ] **Step 3: Implement:** remove `RETIRED_OUTCOMES` from the accepted set; replace any remaining caller of a retired value (the scan finds them); update the reference doc.\n- [ ] **Step 4: Run** `node tools/run-tests.js tests/bin-lib/station-events tests/bin-lib/driver tests/bin-lib/release-claim`. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: retire returned, skipped and abandoned from station events`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/stations.js`\n- `plugin/bin/lib/station-events/emit.js`\n- `docs/reference/station-events.md`\n- `tests/bin-lib/station-events/emit.test.js`\n- `tests/bin-lib/station-events/station-literal-conformance.test.js`\n\n## Gotchas\n\n- Removes accepted outcome values; every caller must have left them first.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-8 -->\nwork-fingerprint: factory-floor-map-emission:emission-8\n\n## Decisions (orchestrator, 2026-11-23)\n\nRecord 2/8 (#6146) accepts a `passed` or `failed` `exited` line that has no `payload.actor` (pre-contract callers). This record removes that carve-out: an `exited` line of any outcome without `payload.actor` is dropped with a stderr reason. Added tests: `an exited passed without actor is dropped`; `an exited failed without actor is dropped`. A missing or unknown `reasonCode` keeps being normalized to `unspecified` (not dropped).\n\n\n## Decisions (orchestrator, 2026-11-24, from the plan review of record 6/8)\nRecord 6/8 (#6150) leaves the release exits whose outcome is `abandoned` or `returned` unchanged (no `actor`). This record migrates every one of them when it retires the old outcomes: `abandoned` becomes `stopped` and `returned` becomes `sent-back`, each with a reason code (`unspecified` where the caller holds none) and `actor` set, so that none is dropped by the no-actor rule below. Added test: `a release with a retired outcome is written as stopped or sent-back with an actor`. Record 6/8 also leaves the accept verdict exits unemitted (a follow-up record owns them); this record's scan must not treat that as a retired-value caller.\n",
+        "createdAt": "2026-11-23T15:43:32Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -778,10 +758,10 @@
             "color": "2EA44F"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2oaA",
@@ -820,14 +800,14 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6151,
+        "number": 6152,
         "state": "OPEN",
-        "title": "Floor map, emission 7/8: Hold state, and blocker snapshots only when they changed",
-        "updatedAt": "2026-11-23T16:10:24Z",
+        "title": "Floor map, emission 8/8: Retire the old outcomes and publish the contract",
+        "updatedAt": "2026-11-24T06:34:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
-          "size": "medium",
+          "size": "low",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -7722,96 +7702,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #4149, #4281, #4244, #4246, #4294, #4211, #4242, #4247, #4248, #4303, #4309, #4310, #4328, #4329, #3822, #3982, #4217, #4292, #4304\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\n**The defect is already fixed at HEAD.** #4281 (PR #4298, merged 2026-10-25, commit 1961010a1) taught `tokenize` in `plugin/bin/lib/hooks/git-command.js` to remove a backslash-newline, bare or double-quoted, the way bash does (`git-command.js:351-358`). It drops a word made only of backslash-newlines (`:437`). Re-probed at HEAD with session cwd `/r`:\n\n- `cd /M && \\` + newline + ` git commit -m x` gives `gitTargets` `[{action:'commit', dir:'/M'}]`.\n- `git -C /M \\` + newline + `  commit -m x` gives `[{action:'commit', dir:'/M'}]`.\n- `true && \\` + newline + ` cp x /M/b` gives `fileWriteTargets` `[{action:'copy', file:'/M/b'}]`.\n- `cd /M && \\` + newline + ` cp x b` gives `[{action:'copy', file:'/M/b'}]`.\n\nWhen the record was filed (probe at the #4149 branch and 7070c0b8a), `tokenize` kept an unquoted backslash-newline as a stray `\\` token that became `t[0]` of the next segment. So the command after `&& \\` or `;\\` was not seen as git or a write shape, and a `cd` after it was lost.\n\nWhat is **not** yet pinned: `tests/hooks-git-command.test.js:776-780` (\"#4281: a word of backslash-newlines alone is no word\") covers `cd \\` + newline + ` /main && git commit`, the continuation *inside* a `cd` argument. None of this record's own probes is a test case: a continuation after `&&`, a `git -C /M \\` continuation before the subcommand, a `cp` after `&& \\`, and the quoted-backslash-newline and heredoc-body preservation cases.\n\n## Deliverables\n\n1. Add this record's probe cases as regression tests: the two `gitTargets` cases and the two `fileWriteTargets` cases above, in `tests/hooks-git-command.test.js` and `tests/hooks-gate-coverage.test.js`.\n2. Add the two preservation cases: a single-quoted backslash-newline (`echo 'a\\` + newline + `b' > f` keeps the literal) and an unquoted-delimiter heredoc body line ending in `\\`, which keeps its current, already-pinned joining behavior per `policy-schema-coverage.md`'s heredoc parser rules. Both are checked against real bash.\n3. No production change unless a new case fails at HEAD. In that case it is a real residual defect, fixed here and named in the PR.\n\n## Acceptance Criteria\n\n- The four probe cases above pass at HEAD.\n- Each of the four fails when `tokenize`'s backslash-newline removal (#4281) is reverted locally, which proves the tests discriminate.\n- The single-quoted backslash-newline case keeps its literal, and the heredoc-body case's result is unchanged from HEAD.\n- `npm test` passes.\n\n## Release Note\n\nImproved test coverage for the worktree write guard's handling of commands split across lines with a trailing backslash.\n\n## Technical Approach\n\nTests only. Place the cases beside the existing #4281 block (`tests/hooks-git-command.test.js:698-800`), labelled `#4245`, so a reader sees which record each pin guards. Follow the repo-local `shell-scanner-bash-differential` skill's \"judge each case against real bash 3.2 and 5\" rule for the expected values.\n\n### Key Files\n\n- `tests/hooks-git-command.test.js` — git-target and cd-walk continuation pins\n- `tests/hooks-gate-coverage.test.js` — write-target continuation pins\n- `plugin/bin/lib/hooks/git-command.js` — reference only, unless a new pin fails at HEAD\n\n## Gotchas\n\n- Premise drift: the filed Current State described HEAD-of-#4149 behavior. #4281 has since fixed the defect, so this record is now a regression pin. A reviewer who judges the existing #4281 test sufficient can close it as fixed by #4281 instead of building it.\n- Prove each pin by reverting the #4281 continuation handling and watching it go red. A pin that passes either way guards nothing.\n- #4244 and #4246 edit the same lexer, and #4242 proposes splitting it out. Tests added here move with whichever module the split creates.\n- #4294 (open) covers line-continuation *redirect targets* on the span-mask tokenizer, an adjacent shape. Check that its fix and these pins agree on the same continuation semantics.\n\n## Original request\n\nWrite gate misses the command after a backslash-newline line continuation\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\nIn `plugin/bin/lib/hooks/git-command.js`, `tokenize` keeps an unquoted backslash-newline as a stray `\\` token, which becomes `t[0]` of the next segment, so the command after `&& \\` or `;\\` (or a `git -C /M \\` continued onto the next line) is not seen as git or a write shape, and a `cd` after it is lost. Executed probe at the #4149 branch and at 7070c0b8a: `cd /M && \\\\\\n git commit -m x` and `git -C /M \\\\\\n  commit -m x` both give gitTargets `[]`. Multi-line `&& \\` chains are common in agent-written commands. Found by /claude-tweaks:review of #4149 (lens 3b).\n\n## Deliverables\n\n1. Join an unquoted backslash-newline (outside single quotes and heredoc bodies) before segmenting, as bash does.\n2. Add the probe cases to `tests/hooks-git-command.test.js` and `tests/hooks-gate-coverage.test.js`.\n\n## Acceptance Criteria\n\n- `gitTargets`/`fileWriteTargets` report the /M target for both probe cases and a `cp` after `&& \\`.\n- A quoted backslash-newline and a heredoc body line ending in `\\` keep their current behavior.\n- `npm test` passes.\n\n_Filed by `review` via specShapedBody._\n",
-        "createdAt": "2026-10-25T10:25:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4245,
-        "state": "OPEN",
-        "title": "Write gate misses the command after a backslash-newline line continuation",
-        "updatedAt": "2026-10-26T14:34:09Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #4149, #4211, #4242, #4247, #4248, #4294, #4303, #4309, #4310, #4328, #4329, #3822, #4164, #4217, #4245, #4246, #4285, #4304, #4369, #4571\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\nIn `plugin/bin/lib/hooks/git-command.js`, three lead checks read the segment's first token literally: `visitSegment` (cd tracking, `:652`), `findGitLead` (`:754`), and the `WRITE_SHAPES` lead check. A `cd`, a `git`, or a write-shape command behind `if`, `then`, `do`, `else`, `while`, `!`, `time`, `builtin`, `command`, or `pushd` is never seen.\n\nRe-probed at HEAD with session cwd `/r`, these still reproduce:\n\n- `if true; then cp x /M/b; fi` and `for f in a; do cp x /M/b; done` give `fileWriteTargets` `[]`.\n- `if true; then git -C /M commit -m x; fi` gives `gitTargets` `[]`.\n- `if true; then cd M; fi; : > zz` and `pushd /M; : > zz` both resolve `zz` to `/r/zz`.\n\n`groupEvents` already treats these words as keeping command position, through `COMMAND_PREFIX_WORDS` (`:1420`, used at `:1455` and `:1867`), so the two halves of the scanner disagree. Found by /claude-tweaks:review of #4149 (lens 3b, both reproduction agents).\n\n**Scope under ADR 0028 (#4571, 2026-10-30).** This record is a Phase 1 prerequisite of #4572, narrowed to **compound keywords used as list structure**: `if`/`then`/`elif`/`else`/`fi`, `while`/`until`/`for … do`/`done`, `case … esac`, and `in`.\n\n- **Moved to #4448:** the prefixes (`!`, `time`, `builtin`, `command`). This record is Blocked by it.\n- **Moved to #4572:** `pushd`/`popd` and a cd inside a conditional or loop body (`if true; then cd M; fi; : > zz`). Under the new design these are unresolved cwds, owned there, not modelled here.\n\n## Deliverables\n\n1. Add the compound keywords to #4448's \"skip to command word\" helper, so `visitSegment`, `findGitLead` and the write-shape lead check read the command after a keyword. Export the keyword set beside #4448's prefix set for #4572's recogniser.\n2. Add the keyword probe cases above to `tests/hooks-gate-coverage.test.js` / `tests/hooks-git-command.test.js`, checked against real bash.\n\n## Acceptance Criteria\n\n- `if true; then cp x /M/b; fi`, `for f in a; do cp x /M/b; done`, `while false; do :; done; cp x /M/b` and `if true; then git -C /M commit -m x; fi` report the /M target.\n- `case x in x) cp a /M/b;; esac` reports the /M target.\n- Each new case goes red against the current lead check.\n- A pin test fails if the exported keyword set and this record's list diverge.\n- `npm test` passes.\n\n## Release Note\n\nThe worktree write guard now catches file writes and git commits placed inside if, for, while and case blocks.\n\n## Technical Approach\n\nExtend #4448's helper rather than adding a second one, so the lexer half and the target half share a single definition of command position. Follow the repo-local `shell-scanner-bash-differential` skill: judge each case against real bash 3.2 and 5, check base for regressions, and prove each rule with a mutant.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — the \"skip to command word\" helper (#4448), `COMMAND_PREFIX_WORDS`, exported keyword set\n- `tests/hooks-gate-coverage.test.js` — write-target probe cases\n- `tests/hooks-git-command.test.js` — git-target probe cases\n\n## Gotchas\n\n- Adding keywords to the shared `COMMAND_PREFIX_WORDS` set also changes `groupEvents`' behaviour. Decide whether they join the set or are skipped only at the lead checks.\n- `in` is a keyword only after `for NAME` and `case WORD`. Skipping it anywhere else would misread a command named `in`.\n- Several open records target the same lexer half of `git-command.js`, including #4245, #4246 and #4448. #4242 proposes splitting the lexer out. Expect merge conflicts.\n- This is the worktree-always write gate. A missed target fails open, so every new rule needs a go-red case.\n\n## Original request\n\nWrite gate misses a command after a compound keyword or builtin prefix (if/then/do/while/!/time/command/pushd)\n\nOrigin: /claude-tweaks:review of #4149 (refs #4149)\n\n## Current State\n\nIn `plugin/bin/lib/hooks/git-command.js`, `visitSegment` (cd tracking), `findGitLead` and the `WRITE_SHAPES` lead check read the segment's first token literally, so a `cd`, a `git` or a write-shape command behind `if`, `then`, `do`, `else`, `while`, `!`, `time`, `builtin`, `command` or `pushd` is never seen. Executed probe at the #4149 branch and at 7070c0b8a: `if true; then cp x /M/b; fi`, `for f in a; do cp x /M/b; done` (fileWriteTargets `[]`), `if true; then git -C /M commit -m x; fi` (gitTargets `[]`), `if true; then cd M; fi; : > zz` (resolves under the session cwd) — bash writes or commits in /M in each. `groupEvents` already knows these words keep command position (`COMMAND_PREFIX_WORDS`), so the two halves disagree. Found by /claude-tweaks:review of #4149 (lens 3b, both reproduction agents).\n\n## Deliverables\n\n1. Skip compound keywords and builtin prefixes (the `COMMAND_PREFIX_WORDS` set, plus `pushd`/`popd` as cd forms) before reading a segment's command word in `visitSegment`, `findGitLead` and the write-shape check.\n2. Add each probe case above to `tests/hooks-gate-coverage.test.js` / `tests/hooks-git-command.test.js`, checked against real bash.\n\n## Acceptance Criteria\n\n- `fileWriteTargets`/`gitTargets` report the /M target for every probe case above.\n- Each new case goes red against the current lead check.\n- `npm test` passes.\n\n_Filed by `review` via specShapedBody._\n",
         "createdAt": "2026-10-25T10:25:05Z",
         "labels": [
@@ -7951,7 +7841,7 @@
         "number": 4243,
         "state": "OPEN",
         "title": "Carry the worktree shell constraint into /build's SDD implementer and reviewer dispatches",
-        "updatedAt": "2026-11-10T09:44:19Z",
+        "updatedAt": "2026-11-24T14:21:51Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8101,7 +7991,7 @@
         "number": 4211,
         "state": "OPEN",
         "title": "Resolve every target of chained redirects in the worktree-always scan (echo a>b>c writes b and c)",
-        "updatedAt": "2026-10-31T10:00:02Z",
+        "updatedAt": "2026-11-24T14:15:36Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8191,7 +8081,7 @@
         "number": 4209,
         "state": "OPEN",
         "title": "reconcile: pruneResidueFailures drops an escalated entry whose retry resolve failed, orphaning its path",
-        "updatedAt": "2026-11-03T09:35:45Z",
+        "updatedAt": "2026-11-24T14:08:39Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8269,7 +8159,7 @@
         "number": 4191,
         "state": "OPEN",
         "title": "reconcile: isClosedSlugStuck should also cover state-less spec-{n}-… dirs whose named records are all CLOSED",
-        "updatedAt": "2026-11-03T16:46:41Z",
+        "updatedAt": "2026-11-24T13:56:22Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8353,7 +8243,7 @@
         "number": 4163,
         "state": "OPEN",
         "title": "Console backfill: settle Review Console residue under work-backend: local-files",
-        "updatedAt": "2026-10-30T06:35:06Z",
+        "updatedAt": "2026-11-24T11:59:09Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -8443,7 +8333,7 @@
         "number": 4162,
         "state": "OPEN",
         "title": "Console backfill can file a twin for a same-claim pair after a crash and a plugin upgrade",
-        "updatedAt": "2026-10-26T14:34:25Z",
+        "updatedAt": "2026-11-24T11:42:38Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8695,7 +8585,7 @@
         "number": 3986,
         "state": "OPEN",
         "title": "Require a failure path for every agent dispatch and CLI call in skill-step prose",
-        "updatedAt": "2026-10-23T22:43:34Z",
+        "updatedAt": "2026-11-24T11:53:14Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8851,7 +8741,7 @@
         "number": 3963,
         "state": "OPEN",
         "title": "Route a held record-linked [pr-unarmed] PR to Yours at scan time instead of re-staging an Arm row",
-        "updatedAt": "2026-10-23T22:09:23Z",
+        "updatedAt": "2026-11-24T11:29:59Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -8929,7 +8819,7 @@
         "number": 3914,
         "state": "OPEN",
         "title": "Decide whether shipped routine templates must share one model value",
-        "updatedAt": "2026-10-24T05:39:57Z",
+        "updatedAt": "2026-11-24T11:08:46Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8953,96 +8843,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/skills/_shared/github-pr-scan.md`'s repo-wide item 4 (\"Merged/closed PRs with local remnants\") runs two queries, `gh pr list --state merged --limit 50` and `gh pr list --state closed --limit 50`, and justifies running both with a parenthetical:\n\n> GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`\n\nThat claim is wrong for the CLI filter. `gh pr list --state closed` returns merged PRs too: in the 2026-10-21 sweep, 47 of the 50 `--state closed` entries were merged (e.g. #3891). The scan still produces correct rows only because each `headRefName` from either result is cross-checked against local branches, so a PR appearing in both lists is harmless.\n\nThe wrong note has a second, unstated cost. Because merged PRs fill most of the closed query's 50-entry window, \"closed without merging\" PRs get only a few of the slots (3 of 50 in that sweep). A stale local branch from an abandoned PR is therefore easily pushed out of view.\n\n## Deliverables\n\n1. Correct item 4's parenthetical so it states the real CLI behavior: `--state closed` includes merged PRs.\n2. Make item 4's handling of the overlap explicit: either dedupe the two result sets by PR number in the procedure text, or select closed-without-merge PRs directly so the second query no longer spends its window on merged PRs. The plan records which and why.\n3. If item 4's window behavior changes, keep the closed-without-merge coverage at least as wide as today's.\n\n## Acceptance Criteria\n\n- Item 4's text no longer claims `--state closed` and `--state merged` are mutually exclusive, and states that the closed filter includes merged PRs.\n- Item 4's procedure states how a PR present in both result sets is handled (deduped by number, or excluded by query shape).\n- If the query shape changes, the closed-without-merge query's results contain only non-merged closed PRs (for example `gh pr list --state closed --json number,headRefName,mergedAt` filtered to `mergedAt == null`, or a search qualifier), verified by running the documented command against this repo and quoting its count in the PR.\n- Any conformance test that pins item 4's prose (check `tests/` for `github-pr-scan` pins) passes after the edit, and `npm test` passes.\n\n## Release Note\n\nTidy's GitHub scan now describes its merged and closed PR queries correctly and finds stale branches from abandoned PRs more reliably.\n\n## Technical Approach\n\nThis is a prose edit to item 4 in `github-pr-scan.md`, which is read through `compose-context.js` bundles under the `pr-scan` step. If Deliverable 2 changes the query, the cleanest shape is a single `gh pr list --state closed --limit {n} --json number,headRefName,mergedAt` call split locally into merged and closed-unmerged sets. That replaces two partially-overlapping queries with one, and widens the closed-unmerged window instead of shrinking it. The alternative (keep both queries, add an explicit dedupe sentence) is a smaller edit but keeps the window cost. The plan picks one and says why the other lost.\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — repo-wide item 4 text and queries\n\n## Gotchas\n\n- `github-pr-scan.md` has transport-split rules: item 4 is PR-backed and degrades under the MCP transport. Keep the degrade note accurate if the query changes.\n- Executable prose in `_shared/` may be byte-pinned by skill-prose conformance tests. Run the full suite after the edit.\n\n## Original request\n\ngithub-pr-scan item 4 wrongly treats the closed and merged PR lists as mutually exclusive\n\n**Related:** none\n\nContext: `gh pr list --state closed` also returns merged PRs (47 of 50 closed entries were merged in the 2026-10-21 sweep, e.g. #3891), so `_shared/github-pr-scan.md` repo-wide item 4's mutually-exclusive note is wrong; the scan works only because it dedupes by PR number.\n\nScope: correct the item 4 note and make the dedupe-by-number explicit (or filter the closed list by state).\n",
-        "createdAt": "2026-10-21T20:51:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3905,
-        "state": "OPEN",
-        "title": "github-pr-scan item 4 wrongly treats the closed and merged PR lists as mutually exclusive",
-        "updatedAt": "2026-10-24T05:39:53Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -9109,7 +8909,7 @@
         "number": 3902,
         "state": "OPEN",
         "title": "docs: resolve 4 accumulated below-floor digest findings",
-        "updatedAt": "2026-11-03T09:35:40Z",
+        "updatedAt": "2026-11-24T10:53:50Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9193,7 +8993,7 @@
         "number": 3901,
         "state": "OPEN",
         "title": "dispatch: resolve 3 accumulated below-floor digest findings",
-        "updatedAt": "2026-11-03T09:35:35Z",
+        "updatedAt": "2026-11-24T10:52:50Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9277,7 +9077,7 @@
         "number": 3878,
         "state": "OPEN",
         "title": "Decide #205 revisit — shared helper for CLOSING_SUB_ISSUES now that four callers pass it",
-        "updatedAt": "2026-10-24T05:39:46Z",
+        "updatedAt": "2026-11-24T10:52:03Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -9433,7 +9233,7 @@
         "number": 3831,
         "state": "OPEN",
         "title": "Align /visualize and /review on whether review passes --source review",
-        "updatedAt": "2026-10-24T05:39:35Z",
+        "updatedAt": "2026-11-24T10:32:36Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9589,7 +9389,7 @@
         "number": 3788,
         "state": "OPEN",
         "title": "Reconcile the never-run rule with the console-residue SessionStart banner",
-        "updatedAt": "2026-11-24T10:18:39Z",
+        "updatedAt": "2026-11-24T10:23:16Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -10564,13 +10364,6 @@
       "number": 4591,
       "blockedBy": [
         4365
-      ]
-    },
-    {
-      "number": 6152,
-      "blockedBy": [
-        6151,
-        6148
       ]
     },
     {
