@@ -14,7 +14,8 @@ Scope keywords: wrap-up-skills-pr, never a candidate, learned-skills-auto-merge
 
 ## Global Constraints
 
-- Rail: `RAIL_BYTES` = 52,500 (`plugin/bin/lib/skill-audit/budgets.js`). `plugin/skills/_shared/github-pr-scan.md` and `plugin/skills/tidy/step-6-auto.md` each end ≤ 52,200 B (≥ 300 B margin) with the new text in.
+- Rail: `RAIL_BYTES` = 52,500 (`plugin/bin/lib/skill-audit/budgets.js`). `plugin/skills/_shared/github-pr-scan.md` and `plugin/skills/tidy/step-6-auto.md` each end ≤ 52,200 B (≥ 300 B margin) with the new text in. The composed `pr-scan` bundle (`tidy/scan-procedures.md` line ~295, `compose-context.js --step pr-scan` over `github-pr-scan.md`; 52,348 B today) must also stay under the rail — `plan-audit.js --bytes` reports it.
+- Check B's keyword hits outside this plan (policy-schema read-path/coverage, wrap-up drain prose, decision 0040, drain/land code) state the key or the drain, not item 9's exclusion — no edit needed there.
 - The key is read exactly as `HOUSEKEEPING_GRANT` is: `LEARNED_SKILLS_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values learned-skills-auto-merge)`; only the literal string `true` grants. Unset, empty, or anything else → not a candidate.
 - A marker PR is never granted by `housekeeping-auto-merge` or by a linked record's `auto:build`/`auto:merge`.
 - Tidy command, verbatim: `node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run-dir}" --integration-branch {integration-branch}` (the CLI requires `--run`; tidy always has a run dir — pipeline or Standalone auto fallback).
@@ -145,7 +146,7 @@ git commit -m "Add tidy Step 6 drain row for learned-skills PRs — gated on lea
 Run: `node plugin/bin/context-cost-report.js --plugin-root plugin`
 Expected: both `_shared/github-pr-scan.md` and `tidy/step-6-auto.md` under 52,500 B, each ≤ 52,200 B.
 
-- [ ] **Step 2: Full suite (AC5.1)**
+- [ ] **Step 2: Verify full test suite (AC5.1)**
 
 Run: `npm test -- --full` through `/claude-tweaks:test` / `verify.js` (Common Step 5).
 Expected: PASS.
