@@ -47,6 +47,8 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/wait-for.js" pid --pid {pid} --max-seconds 150
 
 Exit 0 means the launcher has exited: go to Read the reply. Exit 3 with `bound` `call` means it is still running: make the same call again. Exit 3 with `bound` `deadline` closes one 20-minute window, and the next call opens another. Wait at most 3 windows, 60 minutes, which is 4 waves of the launcher's 15-minute worker ceiling at its concurrency of 4. When the third window's deadline is reached, stop the launcher with `kill {pid}` (that PID only, never a process by name) and take condition 2 with the message `wait bound reached`.
 
+A Start call that prints no PID (refused or failed), or a `wait-for.js` exit 2 (a malformed call, or a missing or invalid session id), is condition 2 too, its message `no launcher PID` or the first line of `wait-for.js`'s stderr; a 3f or 3h not yet dispatched stays in Fallback's Task set.
+
 ## Read the reply
 
 Read the reply's state once, with one plain command:
@@ -89,11 +91,11 @@ Record each lens as `step3-lens-dispatch-record.md` says. A lens settled from th
 The review falls back to `step3-lens-dispatch.md`'s Task dispatch, and logs one `SKIP` line, on any of these conditions — each with what the session observes.
 
 1. `no claude binary` — the Availability check printed nothing.
-2. `launch error` — `{path-O}` is empty or not JSON, or its `started` is not `true` (a refused call, an interrupted launcher), or the wait bound was reached; the message is `{path-E}`'s first line, or `wait bound reached`.
+2. `launch error` — `{path-O}` is empty or not JSON, or its `started` is not `true` (a refused call, an interrupted launcher), or Start printed no PID, or `wait-for.js` exited 2, or the wait bound was reached; the message is `{path-E}`'s first line, `no launcher PID`, `wait-for.js`'s first stderr line, or `wait bound reached`.
 3. `every worker failed` — every reviewer in the reply has `failed: true`.
 4. `settle exit 2` — the first `settle-lens-replies` call exits 2 on the settle file, or `merge-lens-replies` failed as Merge says (its message names the merge).
 
-The Task dispatch covers the review's lens set — the agent lenses in scope at the tier, or under `adaptive` the CLI's `selected` set, never a hard-coded 3a–3g — minus every lens whose Task-path replies are already held: 3f and 3h from Start, and each lens Read the reply re-dispatched. Only the lenses with no Task replies in hand are dispatched. Under condition 1, decided before anything was dispatched, 3f and 3h are in the set. The held replies settle on that same Task path exactly as the Task path settles them, through each lens's own per-pair route, never through `settle-lens-replies`.
+The Task dispatch covers the review's lens set — the agent lenses in scope at the tier, or under `adaptive` the CLI's `selected` set, never a hard-coded 3a–3g — minus every lens whose Task-path replies are already held: 3f and 3h from Start, once dispatched there, and each lens Read the reply re-dispatched. Only the lenses with no Task replies in hand are dispatched. Under condition 1, decided before anything was dispatched, 3f and 3h are in the set. The held replies settle on that same Task path exactly as the Task path settles them, through each lens's own per-pair route, never through `settle-lens-replies`.
 
 Resolve the line's text file with one plain call, `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" S=review-{ctx-id}-worker-skip.txt`, `Write` one line to the printed path (`{path-S}`) — `condition: {label} → fallback: Task lens dispatch`, or `condition: {label}: {message} → fallback: Task lens dispatch` when there is a message (its first line only) — and run:
 

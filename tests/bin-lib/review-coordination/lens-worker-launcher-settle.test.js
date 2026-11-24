@@ -142,3 +142,22 @@ test('AC7.1: mixed review — 3f from the Task path beside worker lenses in one 
   assert.strictEqual(s.code, 0, s.stderr);
   assert.deepStrictEqual(settledLenses(s), ['3a', '3b', '3f']);
 });
+
+// Final review finding 4: the two fail-closed reply shapes (spec Gotchas, #5836) through the launcher's envelope.
+// A one-line `No findings` with prose is unparseable, so its lens is `reviewer-unusable`; a `[skill]`-tagged
+// severity cell is off the scale, so its row is counted in `skipped` while the lens still settles. Settle exits 0.
+const NO_FINDINGS_PROSE = 'No findings. The diff only renames a helper, so there is nothing to report.\n\nSTATUS: DONE\n';
+const SKILL_TAGGED = '| Severity | Path:Line | Finding | Evidence |\n|---|---|---|---|\n| high | a.js:1 | x | y |\n| [skill] medium | b.js:2 | y | z |\n\nSTATUS: DONE\n';
+
+test('AC4.1: the fail-closed shapes from workers reach needsSession and skipped, settle exits 0', async (t) => {
+  const shapes = { '3aA': NO_FINDINGS_PROSE, '3bA': SKILL_TAGGED };
+  const { res, dir, file } = await launch(t, [lens('3a'), lens('3b')], (n, s) => (shapes[`${n}${s}`] ? resultOut(shapes[`${n}${s}`]) : good(n, s)));
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.ok(JSON.parse(res.stdout).reviewers.every((r) => !r.failed), 'both shapes are delivered replies, not failed workers');
+  const s = settle(dir, file);
+  assert.strictEqual(s.code, 0, s.stderr);
+  const out = JSON.parse(s.stdout);
+  assert.deepStrictEqual(out.needsSession.map((x) => [x.lens, x.reason]), [['3a', 'reviewer-unusable']]);
+  assert.deepStrictEqual(out.skipped, [{ lens: '3b', side: 'A', rows: 1 }]);
+  assert.deepStrictEqual(settledLenses(s), ['3b']);
+});

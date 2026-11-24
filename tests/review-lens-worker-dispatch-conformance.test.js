@@ -91,6 +91,8 @@ const FACTS = [
   [/minus every lens whose Task-path replies are already held[^.]*re-dispatched\. Only the lenses with no Task replies in hand are dispatched/, 'held Task-path replies are never dispatched again on fallback', 'AC2.2'],
   [/run it once more, never a third time/, 'the merge exit-2 retry is bounded to one', 'AC2.2'],
   [new RegExp(esc('`condition: settle exit 2: merge-lens-replies {exit 2|write} failed → fallback: Task lens dispatch`')), 'a merge failure logs condition 4 with its own message', 'AC2.2'],
+  // Final review finding 2: the Start and wait failure exits.
+  [/Start call that prints no PID[^.]*`wait-for\.js` exit 2[^.]*is condition 2 too.*?3f or 3h not yet dispatched stays in Fallback's Task set/, 'no PID or a wait-for exit 2 is launch error, and undispatched 3f/3h stay in the Task set', 'AC2.2'],
 ];
 const missingFacts = missingFactsOf(FACTS.map(([p, f]) => [p, f]));
 const factsFor = (ac) => FACTS.filter(([, , tag]) => tag === ac).map(([p, f]) => [p, f]);
