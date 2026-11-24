@@ -203,7 +203,7 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
   }
   if (!result.over || !nextSteps) return done();
   // --stories-owed: build's automatic stories step has not run yet; a list without it would drop it for good.
-  if (storiesOwed && !nextSteps.includes('stories')) return done(`handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place`);
+  if (storiesOwed && !(nextSteps.includes('stories') && (!nextSteps.includes('test') || nextSteps.indexOf('stories') < nextSteps.indexOf('test')))) return done(`handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place`);
   if (!HANDS_OFF.has(identified)) return done(NOT_IDENTIFIED_REASON);
   // flow/context-handoff.md: a top-level run never hands off wrap-up; a dispatched run may.
   if (nextSteps.includes('wrap-up')) {
