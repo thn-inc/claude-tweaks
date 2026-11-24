@@ -643,7 +643,7 @@ function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
     '',
     tests ? 'Edit only the Key Files and test files (the test list file below excepted).' : 'Edit only the Key Files and test files.',
     tests
-      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish. Write the test list with the Write tool and make every edit with Edit or Write, never a shell script. Run the test command as one Bash call on its own (no \`&&\`, \`;\`, pipe, redirect or \`mkdir\`); Bash otherwise admits only read-only \`git status/diff/log/show/ls-files\`. A denied Bash call means that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form before reporting cannot-complete.`
       : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
