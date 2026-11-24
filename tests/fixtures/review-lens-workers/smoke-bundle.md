@@ -1,0 +1,279 @@
+<!-- source: .claude-tweaks/pipelines/archive/2026-11-22T204253-spec-6060/context/lens-child.md (archived run 2026-11-22T204253-spec-6060), copied verbatim below this line -->
+<!-- resolved: integration-model=pr-first mode=auto attendance=headless transport=gh worktree-policy=always work-backend=github-issues -->
+# Subagent Contract
+
+Canonical input/output rules for parallel-dispatched subagents. Referenced from every Form B / Form C parallel-execution site across skills.
+
+This file is the single source of truth. Skills include the relevant template **literally** in their `Task()` prompts — agents only see what's in their prompt, they cannot read sibling files.
+
+Five sections — Working Directory Discipline, Model Selection, Template A, Failed-agent
+retrieval, and the fan-out section ("How to integrate at a dispatch site") — moved to
+`_shared/subagent-dispatch-core.md` (#2019), so a call site that needs only those can compose a
+lean bundle without also paying for everything below. Both files together are
+the one contract; this file cites the companion rather than restating it.
+
+## Why this exists
+
+This contract is **dispatch correctness** discipline. A dispatched agent is not a cheaper copy of the main thread — it is a separate reasoning context the dispatcher cannot see into, and every rule below exists to make that separation safe to act on:
+
+1. **A dispatch you cannot reproduce is a dispatch you cannot trust.** An agent handed the conversation inherits the dispatcher's framing and its half-formed conclusions, then confirms them. The clean room is what makes N agents independent evidence rather than N echoes — the precondition for reproduction, debate, and refutation (`multi-agent-coordination.md`) meaning anything at all.
+2. **An outcome you cannot route is an outcome you will misread.** Without a fixed status line, "I couldn't find the file" and "I found nothing wrong" arrive as the same confident paragraph, and a failed dispatch aggregates silently as a clean result.
+3. **A result you cannot parse is a result you will paraphrase.** Free-form prose from three agents gets merged by the dispatcher's summary rather than by its content — inventing severities, dropping findings, smoothing over disagreement. Templates A/B/C keep aggregation mechanical.
+4. **A model mismatch surfaces as a wrong answer, not just a bill.** An under-powered agent on judgment work returns confident nonsense shaped exactly like a finding.
+
+The contract addresses all four — **input discipline** (below), **the status protocol**, **output templates** (Templates A/B/C), and **model selection** (per-dispatch profile guidance) — and adds **working-directory discipline**, the same principle applied to the filesystem: an agent whose CWD the dispatcher merely assumed lands real commits on the wrong branch while the dispatcher's own `git status` looks fine — and **waiting discipline**, the same principle applied to resume signals: a dispatcher that parks per-agent instead of trusting the notification wastes exactly the context this contract exists to conserve.
+
+Following it also costs less to run, and the templates are deliberately compact. Treat that as a welcome side effect, never as the justification: a dispatch that saves tokens while returning an unroutable, unparseable, or context-contaminated result has bought nothing. The one sizing rule here (inherited project context, under Input Discipline) exists to stop a fan-out from being wider than it is worth — not to price the protocol.
+
+## Input Discipline
+
+A dispatched agent is a clean room. Don't pass the conversation. Pass exactly:
+
+1. **The task scope** — one sentence: "Audit `src/auth.ts` for the OWASP top 10."
+2. **The file/path the agent should read** — explicit paths, not "the relevant code."
+
+   **Cite the run's composed bundle, never a `_shared/` path** — except inside the fallback sentence itself, which is expected to name the underlying source files it falls back to. The dispatcher composes the bundle before dispatch (`bin/compose-context.js`, `{run}/context/{step}.md`; one `--phase` call composes all of a phase's bundles, and `bin/lib/compose-context/phases.js` is the one home of which bundles a phase gets) and the prompt cites that path, stating in the same sentence the one fallback the agent can act on — if that bundle is absent, read the named source file directly; the compose command's own fallback (if the compose command is unavailable or exits non-zero, read the named source files directly) belongs to the dispatcher's compose instruction, since the agent never runs that command or sees its exit. The prompt also says how each bundle loads: a bundle registered `load: 'always'` is read once, whole, before the child's first step, with one Read and never piecewise; an `on-demand` one only where a citation sends the child. `dispatch/task-prompt.md`'s Context pack is the reference shape for both halves.
+3. **The output template** — literally, inline. Agents only see what's in their prompt; they cannot read sibling files.
+4. **Constraints that prevent overreach** — "Do not modify other files." "Read-only."
+
+Do NOT pass: prior messages, the user's original phrasing, your own findings so far, or "background context for completeness." Each of those compounds across N agents.
+
+**Scratch rule.** A file an agent creates to verify its own work (probe script, benchmark, fixture) goes under the scratch directory the prompt names, never under the repository tree. The agent deletes what it created there before its status word; a dispatch granting write access must name that path. Self-reported; sweep callers check their subdir too (`step3-lens-dispatch.md`). **When that scratch directory lies outside the agent's own worktree** — an `EnterWorktree`-isolated dispatch whose `{ctx-dir}` resolves to the shared main checkout, the case a review fan-out hits on every `worktree`-mode run, **and identically under a `worktree-always: true` project's PreToolUse guard**, which pins every session (dispatched or not) to its own worktree the same way — create and delete the file via Bash, one plain command per call — `mkdir -p` as its own call, the file written by one plain `printf` redirect or `node -e` call, `rm` as its own call; never a heredoc or an `&&` chain, which the harness Bash guard refuses by shape (`_shared/scratch-worktree.md` §7) — and never the `Write`/`Edit` tools. Empirically confirmed on record #2245 (`EnterWorktree`-isolated dispatch) and independently reconfirmed on record #2595 (`worktree-always`, same guard, same mechanism): a `Write`/`Edit` call targeting a path outside the calling session's own worktree is refused outright by the harness's worktree-pinning guard, with an explicit message naming the worktree and telling it to write there instead — but a Bash-mediated write to the identical path succeeds, since the guard is scoped to the file-editing tools, not to Bash. The two dispatch shapes reach the same guard behavior for the same reason (both are, mechanically, a session pinned to a worktree writing outside it), so no separate scratch location is needed for `worktree-always` — the existing Bash-mediated workaround already covers it; a dispatch prompt should say so explicitly rather than let the agent discover the refusal itself (`step3-lens-dispatch.md`/`step3-debate-and-refutation.md`'s `SCRATCH:` lines). This keeps the promise above intact rather than bypassing it: the scratch path is still outside the repository tree either way, only the mechanism used to reach it changes.
+
+**`subagent_type: "fork"` is prohibited for a clean-room fan-out dispatch, and should be avoided for any narrow/read-only/research-scoped solo dispatch too** — full rationale, the empirically-verified structural mitigation, and the `isolation: "worktree"` mandate: `_shared/fork-worktree-isolation.md`. See `_shared/subagent-dispatch-core.md`'s "Session-inherit protection" paragraph (Model Selection) for the related, narrower model-override exemption this restriction is not.
+
+When in doubt, give less context. If the agent comes back with `NEEDS_CONTEXT`, give it more on the re-dispatch.
+
+**A file allowlist inherits the staleness of whatever it was derived from.** When the scope comes from an issue body, a design doc, or any other snapshot, the real work site may sit outside it — the four health-sweep skills file issues whose file lists are routinely wrong in both directions (a named file that isn't really affected, and an unnamed one that is). Say so in the dispatch: the agent must locate constructs by content rather than by the source's line numbers, and report an out-of-allowlist site under `DONE_WITH_CONCERNS` instead of silently scoping around it or editing outside its list. That report is cheap; a fix applied to the wrong file because the right one wasn't listed is not.
+
+**Inherited project context is the dominant per-agent cost.** Every dispatched agent also inherits the project's `CLAUDE.md` in its system prompt — you do not pass it, and you cannot opt out of it. That inherited payload is typically an order of magnitude larger than a well-disciplined prompt, and it multiplies by N across a fan-out, so a wide dispatch of cheap, mechanical agents costs far more than its prompts suggest. Size a fan-out against the inherited total, not the prompt you wrote — and measure the current file rather than trusting a remembered figure, since it changes. Note the division of labour: input discipline governs only your share of the cost; the lever for the inherited term is keeping `CLAUDE.md` itself lean.
+
+**Pre-specify shared interface text across interdependent parallel dispatches.** When two dispatches in the same fan-out produce artifacts that must cite each other by exact text — a heading, a literal string, a function's return value, a CLI flag name — decide that exact text yourself and quote it in both prompts, rather than letting each agent invent its own wording and hoping they converge. Observed 3x on one 6-record batch run, each with zero-coordination convergence: a CLI interface's exact shape cited into a parallel SKILL.md-editing agent's prompt, a heading's exact characters cited into a second, a function's literal output (`formatOffsetClause`, see `feedback/session-evaluation.md`'s watermark offset clause) cited into a third — every agent landed on identical text with no reconciliation step needed. The technique is an extension of Input Discipline point 3 (inline the output template literally) to the *input* side: when a dispatch's correctness depends on matching another artifact byte-for-byte, that other artifact's text is exactly the kind of thing that must not be left for the agent to guess.
+
+## HARD-GATE Marker Convention and Inheritance Hazard
+
+**Marker convention.** Any skill step whose heading or prose asserts "HARD GATE" — a mandatory stop that must not be silently passed — carries a marker comment immediately before its blocking call (an `AskUserQuestion` invocation, or an equivalent hard-stop condition with no user-facing question). The marker is a single-line HTML comment placed on its own line directly above the blocking call, e.g. `<!-- HARD-GATE: refine-confirm -->`. A marker that predates this convention (e.g. `refine-lanes.md`'s `<!-- refine-confirm-gate -->`) stays as-is — do not rename a working marker to match this shape; the requirement is that *some* adjacent HTML-comment marker exists at the site, greppable by a conformance test, not that every marker share one literal string.
+
+**HARD-GATE inheritance hazard.** A subagent dispatched via `fork`, a broad Task dispatch, or any mechanism that carries the dispatcher's full conversation, inherits a gated skill's own instructions as background context — including its HARD GATE. That inheritance does not make the gate optional: a subagent that reaches a HARD GATE it cannot present interactively (no live human to answer an `AskUserQuestion`) must stop and report `BLOCKED`, never execute past it on its own initiative. Observed live on `/claude-tweaks:backlog refine`: an orchestrating session dispatched three parallel background subagents to divide the skill's heavier sub-steps, each inheriting `refine-mode.md`'s own text; two honored their scoping, the third re-derived the skill's later steps on its own initiative and ran straight through the Apply logic, writing dozens of label/body changes — including 20 unreviewed `auto:merge` grants — to live GitHub issues without ever presenting the load-bearing confirm gate to a human (`docs/incident-log.md` `[IL-139]`). The skill's own prose stated this must never happen, and the subagent had that exact text in its inherited context — prose alone did not stop it. Treat any HARD GATE encountered inside a subagent's inherited context as binding on that subagent too, and prefer a scoped, non-`fork` dispatch (per Input Discipline above) over any dispatch shape that would hand a subagent a gate it cannot itself satisfy.
+
+## Waiting for Dispatched Agents
+
+Read `_shared/dispatch-waiting.md` — the notification-driven resume pattern and the one-watchdog-per-wave cap (extracted for headroom, #1995).
+
+## Implementer Status Protocol
+
+Every dispatched agent reports one of four statuses as a labeled **trailing** line — `STATUS: {WORD}`, the reply's last non-empty line, after the output template:
+
+| Status | Meaning | Dispatcher response |
+|---|---|---|
+| `DONE` | Task complete, no concerns | Accept output; proceed. |
+| `DONE_WITH_CONCERNS` | Task complete, but the agent flagged doubts | Read the concerns. If correctness/scope → address before proceeding. If observational ("this file is getting large") → note and proceed. |
+| `NEEDS_CONTEXT` | Information was missing from the dispatch | Provide what was missing; re-dispatch. |
+| `BLOCKED` | Cannot complete the task | Diagnose: more context (re-dispatch), more capable model (upgrade), smaller scope (split), or wrong plan (escalate). Never force-retry with no changes. |
+
+**Test-authoring tasks run a mutation probe before committing:** a dispatched implementer adding or modifying a test mutates a scratch copy of the code under test to confirm the test goes red — never the shared tree in place (`_shared/subagent-dispatch-core.md`'s **Discrimination checks in a scratch checkout**) — and reports mutants tried vs. survivors caught in its status line.
+
+**A dispatching agent's own interim progress-update replies are not final replies — mark them as such (#2714).** A dispatched agent that is itself a nested dispatcher (fanning out further async `Agent`-tool calls) keeps its turn alive until every child reports (`_shared/subagent-dispatch-core.md`'s Foreground Execution Discipline). A turn that nonetheless ends while a keep-alive wait is still in progress, with a child outstanding, is an interim reply, not a final one (e.g. "2 of 8 back. Lens 3b-b surfaced two HIGH findings…"). End every such interim turn with its own trailing marker line, `INTERIM_STATUS: {one-line progress note}` — deliberately a different label than `STATUS: {WORD}` above, since that vocabulary is reserved for a FINAL reply and reusing it here would blur the two. `bin/lib/hooks/subagent-stop.js`'s `isInterimProgressReply` recognizes this marker as the reply's last non-empty line and never grades that turn as a final reply at all (no `contract-violation` event, not even the informational `lenient` variant) — the same silent-skip treatment the existing `asyncWaitCheckpoint` filter already gives a reply immediately reacting to an async signal (`## Waiting for Dispatched Agents` above); this marker closes the gap for an interim turn composed *after* intervening tool calls, where that narrower filter doesn't fire. `bin/lib/hooks/subagent-stop.js` also skips grading mechanically while the agent's own in-turn async `Agent` dispatches are still pending in its transcript — launch acks with no matching task-notification before the reply, correlated by id and bounded at 60 minutes (#3015) — so an unmarked yield mid-fan-out is no longer forced to emit `STATUS:`. The `INTERIM_STATUS:` marker stays required: that count covers only the dispatcher's own pending children, and a transcript it cannot parse falls back to grading. Only the dispatch's genuine final turn ends with `STATUS: {WORD}`: a child that is abandoned at the bound (its unit self-judged) no longer counts as outstanding, so the reply after it is final, never an interim one.
+
+**Finish everything the blocker doesn't gate before reporting `BLOCKED`.** A failed precondition — a worktree path that doesn't resolve, a missing fixture, an unavailable service — usually gates only *some* of the task. Analysis, measurement, verification, and drafting the exact edits are typically all still possible, and a `BLOCKED` report carrying that finished work costs the dispatcher one cheap re-dispatch instead of a full redo. This applies to the wrong-worktree case in `_shared/subagent-dispatch-core.md`'s Working Directory Discipline: report `BLOCKED` rather than editing the wrong checkout, but do the read-only work first and hand back verified, ready-to-apply results. Do not silently downgrade to `DONE_WITH_CONCERNS` because you got most of it done — the blocker still stands, and the status line is what the dispatcher routes on.
+
+For review-style agents (Template A), the trailing status line follows the findings table (reversing the old "status line, then table" order). For search-style (B) and scout-style (C), the trailing status line follows whatever the template's own content is — the status replaces no sentinel, it comes after it.
+
+```
+| Severity | Path:Line | Finding | Evidence |
+|---|---|---|---|
+| ...
+STATUS: DONE
+```
+
+```
+Reason: couldn't locate the auth middleware referenced in the task scope.
+Tried: grep -r "authMiddleware" src/, grep -r "requireAuth" src/
+Need: actual file path of the auth middleware, or confirmation it doesn't exist.
+STATUS: BLOCKED
+```
+
+SubagentStop hook (E3) logs replies missing the status line to the run dir's `events.jsonl` (best-effort — the event fires unreliably for Task dispatches, claude-code#27755). The detector (#2265) is two-tier: an exact-canonical trailing `STATUS: {WORD}` line is fully compliant (nothing logged); a bare or off-position status word within the reply's first-or-last 3 non-empty lines is lenient-compliant (logged as an *informational* `contract-violation` variant, distinguishable in the event's own fields — never a hard failure, and never returned to the dispatcher as a warning); the status word absent from that window entirely is a genuine violation. A genuine violation now gets one forced in-run retry per `(session_id, agent_id)` (#1936 — live-confirmed that `SubagentStop`'s JSON output supports `{ decision: 'block', reason }`, which keeps the subagent running and delivers `reason` as its next instruction): the first such violation for a given agent is blocked with a reason quoting the rule and the offending first line, never reaching this log; a second violation by the same agent (or a failed retry-counter write) falls through to the warn-and-log path, logged exactly as before #1936.
+
+**A logged `contract-violation` is evidence to read, not a confirmed violation.** The detector (`bin/lib/hooks/subagent-stop.js`) has no way to know *which* agent replied or what contract that dispatch declared, so one non-violating case still lands in the log, now tagged rather than left for manual triage (#2344): a dispatch whose own template specifies a different status shape (its header comment names this one) is logged with `variant: 'foreign-contract'`, distinct from a genuine `variant: 'violation'` — `bin/friction-events.js` drops the former from its aggregate the same way it already drops the informational `'lenient'` variant, so a reader judging aggregate volume should read that filtered count as the genuine one. A **background-job-orchestrated session's own interim narration turn** — never a violation, since the status-line requirement above is scoped to a dispatched subagent's own *final* reply — is now filtered at the detector in both shapes the harness produces for it: an absent `agent_transcript_path` (#1928), and one identical to the same event's own `transcript_path` (#2036). A genuine subagent stop always carries its own distinct transcript file, so neither filter can suppress a real violation. A **third-party agent exempt from this contract entirely** (see Exemption below) is now filtered out at the detector itself via its `agent_type` input field (#1596), so `/claude-tweaks:simplify`'s `code-simplifier:code-simplifier` dispatch no longer needs manual triage. Triage any remaining `variant: 'violation'` case against the dispatch that produced it before treating it as a finding.
+
+**A verdict from zero tool calls is a failed dispatch, never evidence (#2345).** A verdict, findings list, or pass-fail claim from an agent whose transcript contains zero tool-use blocks read nothing — no matter how well-formed its status line or output template, every mechanical check this contract defines checks the *shape* of the reply, never whether the agent actually did the work behind it. Treat it exactly like a malformed reply: the caller **re-dispatches a fresh agent** (never resumes the same one — the 529/stall precedent: 0/5 resumes succeeded) and **never aggregates the reply** as if it were real findings. `bin/lib/hooks/subagent-stop.js` makes this mechanical where it can: at the same seam that reads `agent_transcript_path` to grade the status line, it counts tool-use blocks across the whole graded transcript and logs a `zero-tool-use-verdict` event (distinct from `contract-violation`) when the count is zero — visible in `events.jsonl` rather than depending on an orchestrator noticing by hand, as the original catch of this failure mode required.
+
+## Template B — Search-style (returns locations)
+
+Use when an agent locates code, files, or references.
+
+```
+OUTPUT FORMAT (required):
+Return ONLY bullet lines, one per match:
+
+- {path}:{line} — {one-line context}
+
+If no matches: return literal text "No matches."
+Do not add narration or grouping headers.
+```
+
+**Used by:** `/journeys` (per-journey extraction), `/stories` (per-flow probe), `/build` (search subagents).
+
+## Template C — Scout-style (returns yes/no + evidence)
+
+Use when an agent answers a binary question with brief evidence.
+
+```
+OUTPUT FORMAT (required):
+First line: "yes" or "no"
+Second line onward: up to 3 bullet lines of evidence (path:line — context).
+Maximum 200 tokens total.
+```
+
+**Used by:** `/test` (parallel verification scouts), pre-checks before larger parallel dispatch.
+
+## Not every consumer uses A/B/C
+
+When a dispatch's output genuinely doesn't fit A/B/C, define the format explicitly in the dispatch prompt rather than forcing it into one of the three.
+
+## Exemption: third-party agents
+
+**The condition is structural, not a judgment call.** An agent is exempt from this contract when **its definition file lives outside the `agents/` directory this plugin owns** — it ships with a third-party plugin and is invoked as a delegation. Everything under this repository's `agents/` (declared in `.claude-plugin/plugin.json`'s `agents` array) is claude-tweaks-authored and is **never** exempt, however awkward its output is to parse. "This agent's output is inconvenient" is not a reading this paragraph supports: a dispatch site settles its own eligibility by asking where the agent file lives, with no appeal to intent.
+
+Why an exemption rather than a conformance shim: this contract buys **dispatch correctness** for agents claude-tweaks authors, where we control the prompt and the protocol is what makes the result routable. A third-party agent is a delegation — it already has its own input and output contract, written by someone else and versioned with their plugin. Wrapping it to force a `DONE` line and a Template A table would mean paraphrasing its output into a shape it never promised, which is exactly the failure this contract's own rationale warns about. Adapt at the boundary instead.
+
+**The exemption covers the agent, never the caller.** Everything on the dispatcher's side still binds:
+
+- **Normalize at the boundary.** The caller maps the third-party output into the shape its own consumers already read, and documents that mapping at the call site. A caller that passes foreign output through unmapped has not adapted, it has leaked.
+- **Handle the outcomes the status line would have carried.** With no `BLOCKED` / `NEEDS_CONTEXT` to route on, the caller must still separate *agent unavailable*, *agent failed*, *agent returned nothing*, and *agent returned something that does not parse* — and must never report a clean result for any of them. Silence is not a pass.
+- **Check availability at the agent level.** Plugin presence does not imply agent presence; agents are added and removed between versions of one plugin. Resolve the agent's own definition file before dispatching.
+- **Input discipline and working-directory discipline still apply** — both describe what the dispatcher sends, not what comes back.
+- **The zero-tool-use rule still applies at the boundary (#2345).** A third-party agent is exempt from this contract's *shape* requirements (status line, output template), never from the underlying correctness requirement that a verdict be backed by real work. A caller receiving a verdict, findings list, or pass-fail claim from an exempt agent still rejects it if the agent made zero tool calls — the caller cannot rely on `subagent-stop.js`'s mechanical assist here (it never grades an exempt agent's transcript at all), so this check is the caller's own responsibility to make by hand for an exempt dispatch.
+
+Re-prompting on format (below) does not apply to an exempt agent: it is not violating a format it was never given.
+
+**Current exempt dispatch:** `impeccable-finish-reviewer`, shipped by the Impeccable plugin and dispatched by `/claude-tweaks:design-wrapper`'s `review` mode (`modes/review.md` Step 3.7). Its output contract (a first-line `disposition: recapture|rebuild|fix|ship`, then exactly five sections — `persistence` / `fidelity` / `ceiling` / `material_fixes` / `keep` — or, on `recapture`, a single `recapture` section replacing all five) is upstream's; that mode's Step 4 maps it into this repo's normalized finding shape.
+
+## Workflow-dispatched agents
+
+A `/claude-tweaks:review` lens fan-out may run through `plugin/workflows/review-lens-fanout.js` when `review-lens-dispatch` resolves `workflow`; the Task dispatch stays the fallback.
+
+| Rule | How it is kept |
+|---|---|
+| Input discipline | The brief is the only text the script passes, and both reviewers of a lens get one string, so "byte-identical prompts" is a property of the script. The harness wraps that string in a `[Workflow harness — computed task]` frame, indents every line, and in an interactive session first relays the request that started the run (`docs/reference/workflow-tool-probe.md`, `agent-prompt-frame`), so the brief must not rely on column-zero lines. |
+| Status line | The brief's own trailing `STATUS:` rule, unchanged. No schema is used, so the reply is the agent's text. `settle-lens-replies` checks the line's position. |
+| Output template | Template A sits inside the brief, unchanged. |
+| Model profile | Resolved per lens by `resolve-profile.js` as today and passed as `model`. The script refuses a lens with no model, so no agent inherits the session model by omission. |
+| Working-directory, read-only, foreground and shell rules | Lines inside the brief, unchanged. |
+| Re-prompt on violation | The session cannot re-prompt a workflow agent. Inside a claude-tweaks run the plugin's own `SubagentStop` hook re-prompts one whose reply has no status line (`agent-verbatim`, `init-interactive`). A reply with a misplaced status line is used, and `settle-lens-replies` lists it under `violations`, which the session names in the review summary. A reply with no status line, or one that does not parse, is not used: that reviewer is dispatched again once through the Task path. |
+| Failed, empty or unparseable | Never a clean result: the lens goes to `needsSession`. |
+
+A gate rule written for `Agent` and `Task` calls (the PreToolUse dispatch-prompt gate) does not see a workflow agent's prompt; the plugin's PreToolUse hook does fire for a workflow agent's own tool calls.
+
+## Re-prompt on violation
+
+When an agent returns malformed output — a wrong or missing status line, no table, narration before the table, wrong columns — the dispatcher re-prompts:
+
+```
+Your output didn't match the required format. Re-emit using only this format:
+{template repeated}
+Do not add explanation.
+```
+
+Cap at one retry. If still malformed, accept what you got and move on (do not loop).
+
+**Check the status word's position, not merely its presence.** A reply whose status word never lands as a genuine trailing marker still violates the Implementer Status Protocol even though the literal token appears somewhere in the reply. Two failure modes to watch for: a **bare trailing word** instead of the labeled `STATUS: {WORD}` line ("...the tests are done" reads as ambiguous prose, not a status marker), and a **status line that isn't truly the last non-empty line** — trailing narration or a stray blank-then-comment after it defeats the position check just as opening narration used to. Verify the reply's actual last non-empty line reads exactly `STATUS: {WORD}` before accepting it: reading a reply for its content does not check this, and a dispatcher that trusts its own read-through accepts the violation silently. Observed twice under the old first-line rule — #606's wrap-up (a lens agent accepted on token presence alone), and record #1653, where 3 of 8 `/claude-tweaks:review` lens dispatches opened with narration and all three were accepted with no re-prompt, despite every prompt carrying an explicit `WRONG:` example — the trailing-line convention and `subagent-stop.js`'s lenient fallback (#2265) exist to make both classes of drift survivable without a human catching every one by hand.
+
+## Anti-Patterns
+
+| Anti-pattern | Why it fails |
+|---|---|
+| Padding the template with optional sections "if relevant" | Agents include them every time, defeating the compression. |
+| Using soft directives like "be concise" or "summarize" | Too soft — agents drift back to prose. |
+| Asking for both narration AND a table | Agents pick narration. The contract must be exclusive. |
+| Omitting the severity scale | Agents invent their own scales (P0/P1, MUST/SHOULD, urgent/normal), making aggregation impossible. |
+| Letting agents read sibling files for the template | Agents only see their prompt. Always inline the template literally. |
+| Stating a requirement in prose beside the inlined template | The agent receives the fence, not the file around it. Anything outside the block never arrives. |
+| Skipping the "if no findings" literal text | Without it, agents pad empty results with explanation. |
+
+## Related primitives
+
+- `skills/_shared/multi-agent-coordination.md` — inter-agent coordination patterns (Reproduction, Debate, Multi-persona red-team) that compose with these templates.
+# Criteria: Architecture Depth
+
+Shared, criteria-only fragment — the "what is worth flagging" knowledge for architectural depth. No workflow, no auto-mode handling, no Next Actions. Consumed by `/claude-tweaks:deepen` (the reactive depth pass), `/claude-tweaks:code-health`'s architecture-depth judgment lens (Phase 2 subagents), and `/claude-tweaks:review`'s Architecture lens shallow-module check. One source of truth so a reactive review and a proactive sweep apply identical criteria.
+
+## Depth = leverage, not line ratio
+
+A **deep** module hides a lot of behavior behind a small interface. A **shallow** module has an interface nearly as complex as its implementation — the abstraction isn't earning its keep, and a caller would be no worse off inlining it.
+
+Do **not** measure depth as a ratio of implementation lines to interface lines. That metric rewards padding the implementation to look deep, and it punishes genuinely simple-but-deep modules. Measure **leverage** instead:
+
+> **Leverage = how much behavior a caller can exercise per unit of interface they must learn.**
+
+A module is deep when callers (and their tests) get a lot of mileage from a tiny surface area. It is shallow when learning the interface costs nearly as much as reading the implementation would have. This is a behavioral judgment, not a line count — make it by reading the call sites, not by counting.
+
+## The deletion test
+
+For any module you suspect is shallow, ask:
+
+> **Would deleting this module concentrate complexity, or just move it?**
+
+- **Concentrates complexity** → the module was earning its keep. Inlining it would force every caller to relearn the hidden behavior. Keep it; it is deep enough. Not a candidate.
+- **Just moves it** → the module is a pass-through. Its callers already carry the complexity; the module only adds a name and an indirection. **Shallow** — a candidate for collapsing into its caller or merging with a sibling.
+
+The deletion test is the primary shallow-detector. Apply it before proposing any deepening — a "deepening opportunity" that fails the deletion test is really a "deletion opportunity," and you should say so.
+
+## Two kinds of opportunity
+
+| Opportunity | Signal | Move |
+|-------------|--------|------|
+| **Deepen** | A real abstraction exists but leaks — callers must know implementation details, pass redundant config, or sequence calls in a fixed order the module could own. | Widen what the module hides; shrink the interface. |
+| **Collapse** | The deletion test says "just moves it" — a thin wrapper, a one-call pass-through, a module whose interface mirrors its single dependency. | Inline it, or merge it into a sibling so the surviving module gets deeper. |
+
+Both increase average depth across the codebase. Report each as what it is — do not dress a collapse up as a deepening.
+
+## Leverage ranking
+
+Rank candidates by leverage gained per unit of churn, highest first:
+
+1. **Callers affected** — how many call sites get simpler. More callers = more leverage.
+2. **Interface shrink** — how much smaller the surface a caller must learn becomes (fewer params, fewer required call sequences, fewer leaked types).
+3. **Blast radius** — how much code must change to do it. Lower is better; a high-leverage change with a small blast radius ranks above a high-leverage change that rewrites a subsystem.
+
+## Dependency classification (testing the deepened module)
+
+A deeper module is only safe to ship if it stays testable. When deepening, classify the module's dependencies — this determines the test approach:
+
+| Class | Examples | Test approach |
+|-------|----------|---------------|
+| **Pure computation** | Parsing, formatting, calculation, pure transforms | Deepens trivially — test through the public interface with plain inputs/outputs. No stand-ins needed. |
+| **Local stand-in** | Database, filesystem, cache | Deepens with an in-process stand-in running in the suite (e.g. PGLite for Postgres, in-memory FS). Test through the interface against the stand-in. |
+| **Network boundary** | Third-party API, remote service, message bus | Define a **port** at the seam (a narrow interface the module owns) and inject the transport as an **adapter**. Test the module against a fake adapter; test the real adapter separately. This is ports-and-adapters at the granularity of one module. |
+
+If a candidate's dependencies can't be classified into one of these — or deepening would force a network call into a previously pure module — flag that as a risk, because it raises the cost of the refactor.
+
+## Controlled vocabulary
+
+Use exactly these terms when proposing and discussing refactors. Consistent language keeps proposals comparable.
+
+| Term | Meaning |
+|------|---------|
+| **module** | A unit with an interface and a hidden implementation. |
+| **interface** | What a caller must learn to use the module. |
+| **implementation** | What the module hides. |
+| **depth** | Leverage — behavior exercised per unit of interface learned. |
+| **seam** | A point where a dependency can be substituted (the boundary a port sits on). |
+| **adapter** | The concrete transport behind a port. |
+| **leverage** | The ranking quantity — see above. |
+
+Do **not** drift into `component`, `service`, `API`, or `boundary` in proposals — they blur the distinctions above and make two proposals hard to compare. (`API` is fine when it literally means a network API; not as a synonym for "interface".)
+
+## Cross-file calibration (duplicate abstractions)
+
+The sections above judge one module's own depth. This section applies the same criterion across files, for `code-health`'s `focus=abstraction-police` candidate stream (`bin/lib/code-health/candidates-abstraction-police.js`): a cluster of near-identical exported helpers rebuilt in more than one file. The candidate generator's clustering is lexical/structural (signature shape + body token overlap) — it nominates, it does not decide. Judge each cluster the same way you would judge any depth finding, using the calibration below.
+
+**Unify when the copies drift-fix independently.** The clearest signal a duplicated abstraction is a real depth problem: the same bug gets fixed in one copy and not the others, or a behavior change lands in one copy while its siblings silently keep the old behavior. This is the N-times-fixed-bug shape — every future fix has to remember to touch every copy, and the ones a fixer doesn't know about stay wrong. A cluster with any history of this shape (visible in the candidate's evidence, or inferable from how the copies differ) is a strong unify candidate.
+
+**Do NOT unify when:**
+- The similarity is coincidental shape sharing across genuinely different domains — two functions that happen to validate a similarly-shaped object for unrelated reasons are not the same abstraction merely because their parameter destructuring and control flow look alike. Read what each copy is *for*, not just what it does structurally.
+- Unification would couple modules across a deliberate boundary — if the two files sit on opposite sides of an intentional seam (e.g. a plugin boundary, a client/server split, a public-API/internal-implementation line), merging them re-introduces the coupling the boundary exists to prevent. A little duplication is the price of that boundary, not a defect in it.
+- One copy is about to be deleted anyway — a duplicate inside code already flagged for removal, or behind a flag being sunset, is not worth unifying; the unification would outlive the code it serves.
+
+**Behavioral differences are part of the finding, not noise to reconcile silently.** Per IL-90 (N implementations agreeing is exactly when a shared bug reads as the spec), do not assume the copies are behaviorally identical just because they cluster on structure. When a cluster's members differ in any observable way — one validates a field the other skips, one throws where the other returns false — the unification finding must call that difference out explicitly and flag which copy looks like the bug, rather than silently picking one copy's behavior as canonical. A judge that unifies without surfacing the behavioral drift ships a silent regression into whichever copies didn't have it.

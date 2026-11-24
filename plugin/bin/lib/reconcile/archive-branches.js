@@ -51,7 +51,7 @@ const TAG_AGE_DAYS = 90; // matches git's default reflog window: past it, the ta
 
 // Plugin-owned branch namespaces. No canonical source elsewhere in the repo —
 // maintained manually here; a future plugin-owned prefix must be added by
-// hand or its branches silently never age out. learned-skills/{run-id} is wrap-up's never-armed
+// hand or its branches silently never age out. learned-skills/{run-id} is wrap-up's
 // learned-skills PR branch (#5290, bin/lib/learned-skills/land.js).
 const SCOPE_PATTERNS = [/^build\//, /^worktree-/, /^demo\//, /^learned-skills\//];
 
@@ -142,7 +142,9 @@ function isCherryEquivalent(root, integration, branch) {
   return lines.every((l) => l.startsWith('-'));
 }
 
-function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk, gateDeps } = {}) {
+// `heldBranches`: branches of runs reconcile holds as hollow merges (post-merge.js's hollowRunRefs, #6143) —
+// skipped `hollow-merge` before any screen, so a held run stays resumable.
+function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk, gateDeps, heldBranches = [] } = {}) {
   const root = cwd || process.cwd();
   const nowMs = now || Date.now();
   const resolve = resolvePr || resolvePrState;
@@ -160,9 +162,11 @@ function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBu
   // screen is one bulk call (#1083, adopting #1082's screen-then-confirm).
   // No preferOpen, screen or confirm — deliberate; see the module header (#664 census).
   const candidates = [];
+  const held = new Set(heldBranches);
   for (const line of refs.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
     const [branch, committerDate, tip] = line.split('\t');
     if (!inScope(branch, worktrees)) continue;
+    if (held.has(branch)) { entries.push({ name: branch, kind: 'branch', action: 'skip', reason: 'hollow-merge' }); continue; }
     candidates.push({ branch, committerDate, tip });
   }
 

@@ -163,7 +163,7 @@ function resolveOnce(stationEventFor) {
 
 describe('an unwritable station file never changes a CLI result', () => {
   const cases = [
-    ['claim-targets', claimOnce, 6],
+    ['claim-targets', claimOnce, 8],
     ['release-claim', releaseOnce, 1],
     ['resolve-blockers (onSnapshot)', resolveOnce, 2],
   ];
@@ -182,7 +182,7 @@ describe('an unwritable station file never changes a CLI result', () => {
   }
 
   const existingDirCases = [
-    ['claim-targets', claimOnce, 6],
+    ['claim-targets', claimOnce, 8],
     ['release-claim', releaseOnce, 1],
   ];
   for (const [name, once, expectedEvents] of existingDirCases) {
@@ -239,14 +239,15 @@ describe('the v1 line, one real line per kind', () => {
   });
 
   test('exited: the only kind that keeps its outcome', () => {
+    const payload = { actor: 'agent', reasonCode: 'test-failed', next: 'build' };
     const built = line({
-      repoName: 'acme/widgets', recordNumber: 7, kind: 'exited', station: 'review', outcome: 'returned',
-      lane: 'express', sessionId: 'sess-2', runId: 'run-2', discriminator: 'review@2', payload: { step: 'review' },
+      repoName: 'acme/widgets', recordNumber: 7, kind: 'exited', station: 'review', outcome: 'sent-back',
+      lane: 'express', sessionId: 'sess-2', runId: 'run-2', discriminator: 'review@2', payload,
     });
     assert.deepStrictEqual(built, {
       v: 1, eventKey: built.eventKey, repoName: 'acme/widgets', recordNumber: 7, kind: 'exited', station: 'review',
-      at: '2026-11-19T10:00:00.000Z', outcome: 'returned', lane: 'express', sessionId: 'sess-2', runId: 'run-2',
-      payload: { step: 'review' },
+      at: '2026-11-19T10:00:00.000Z', outcome: 'sent-back', lane: 'express', sessionId: 'sess-2', runId: 'run-2',
+      payload,
     });
   });
 
@@ -274,7 +275,7 @@ describe('the v1 line, one real line per kind', () => {
   });
 
   test('eventKey: the same fact keys the same at any time, and differs by discriminator', () => {
-    const base = { repoName: 'acme/widgets', recordNumber: 7, kind: 'exited', station: 'review', outcome: 'returned', runId: 'run-2', discriminator: 'review@2' };
+    const base = { repoName: 'acme/widgets', recordNumber: 7, kind: 'exited', station: 'review', outcome: 'sent-back', runId: 'run-2', discriminator: 'review@2', payload: { actor: 'agent', reasonCode: 'test-failed', next: 'build' } };
     assert.equal(buildLine({ ...base, at: '2026-01-01T00:00:00Z' }).eventKey, buildLine({ ...base, at: '2026-12-31T00:00:00Z' }).eventKey);
     assert.notEqual(buildLine(base).eventKey, buildLine({ ...base, discriminator: 'review@3' }).eventKey);
   });

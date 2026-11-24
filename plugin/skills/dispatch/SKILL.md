@@ -110,7 +110,7 @@ First action, before the pool is read: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js
 
 Common to every selection form — group membership must be computed over the full current pool *before* anything is claimed (per `_shared/issue-claims.md`'s group-claim rule: group membership is computed over **unclaimed** records only, so two racing firings converge on the same winner instead of splitting a group between them).
 
-The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + not already shipped by a `strong`-tier merged-PR mention (#1984) + no `unlanded` out-of-run blocker or malformed blocker declaration (#4792) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
+The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + not already shipped by a `strong`-tier merged-PR mention (#1984) + no `unlanded`/`hollow` out-of-run blocker or malformed blocker declaration (#4792) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
 
 **False-positive posture (#1984).** A record whose full deliverable set is already shipped, but
 whose resolving PR never carried a closing keyword, can only be excluded here when a **merged**

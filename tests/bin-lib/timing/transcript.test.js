@@ -1486,3 +1486,59 @@ test('RUN_ID_NAMED_RE captures the canonical run-id shape', () => {
   const body = RUN_ID_SHAPE.source.replace(/^\^/, '').replace(/\$$/, '');
   assert.ok(RUN_ID_NAMED_RE.source.includes(`(${body})`), `RUN_ID_NAMED_RE (${RUN_ID_NAMED_RE.source}) no longer captures RUN_ID_SHAPE's body (${body})`);
 });
+
+// readWorkerDispatches (#6000 Task 4).
+const { readWorkerDispatches, WORKER_DISPATCHES_FILE } = require('../../../plugin/bin/lib/timing/transcript');
+const workerRec = (over = {}) => ({ kind: 'worker', launched: true, lens: '3a', side: 'A', description: 'lens 3a A', agentType: 'lens-reviewer', metaModel: 'haiku', startTs: '2026-11-23T12:10:00.000Z', endTs: '2026-11-23T12:11:00.000Z', wallClockMs: 60000, failed: false, reason: null, agentId: 's1', tokens: { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 }, ...over });
+function workerRunDir(lines) {
+  const dir = scratchDir('ct-worker-disp-');
+  if (lines !== null) fs.writeFileSync(path.join(dir, WORKER_DISPATCHES_FILE), lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n') + '\n');
+  return dir;
+}
+
+test('readWorkerDispatches: an absent file is no items and no note', () => {
+  assert.deepEqual(readWorkerDispatches(workerRunDir(null)), { items: [], excludedOutsideWindow: 0, notes: [] });
+});
+
+test('readWorkerDispatches skips a malformed line into notes and keeps the rest', () => {
+  const r = readWorkerDispatches(workerRunDir([workerRec(), '{not json', '[1]', workerRec({ side: 'B', agentId: 's2' })]));
+  assert.deepEqual(r.items.map((i) => i.agentId), ['s1', 's2']);
+  assert.equal(r.notes.length, 2);
+  assert.match(r.notes[0], /line 2 is not a JSON object/);
+  assert.match(r.notes[1], /line 3 is not a JSON object/);
+});
+
+test('readWorkerDispatches: launched: false lines are not dispatches and count nowhere', () => {
+  const r = readWorkerDispatches(workerRunDir([workerRec(), { kind: 'worker', launched: false, lens: '3f', side: 'A', reason: 'excluded' }, { kind: 'worker', launched: false, lens: '3f', side: 'B', reason: 'excluded' }]), { window: { start: 0, end: Infinity } });
+  assert.equal(r.items.length, 1);
+  assert.equal(r.excludedOutsideWindow, 0);
+  assert.deepEqual(r.notes, []);
+});
+
+test('readWorkerDispatches keeps an item only inside the window by startTs', () => {
+  const dir = workerRunDir([workerRec(), workerRec({ agentId: 'early', startTs: '2026-11-23T11:00:00.000Z' }), workerRec({ agentId: 'nots', startTs: null })]);
+  const window = { start: Date.parse('2026-11-23T12:00:00Z'), end: Date.parse('2026-11-23T13:00:00Z') };
+  const r = readWorkerDispatches(dir, { window });
+  assert.deepEqual(r.items.map((i) => i.agentId), ['s1']);
+  assert.equal(r.excludedOutsideWindow, 2);
+  assert.equal(readWorkerDispatches(dir).items.length, 3);
+});
+
+test('readWorkerDispatches: an item has the subagent keys it lacks defaulted, tokens null unless an object', () => {
+  const [a, b] = readWorkerDispatches(workerRunDir([workerRec({ tokens: 'x' }), workerRec({ agentId: 's2' })])).items;
+  assert.equal(a.tokens, null);
+  assert.equal(a.transcriptPath, null);
+  assert.equal(a.procedureFileRows, null);
+  assert.deepEqual(b.tokens, { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 });
+});
+
+test('readWorkerDispatches never throws: a directory in place of the file and a throwing fs are notes', () => {
+  const dir = scratchDir('ct-worker-disp-');
+  fs.mkdirSync(path.join(dir, WORKER_DISPATCHES_FILE));
+  assert.match(readWorkerDispatches(dir).notes[0], /not a regular file/);
+  const file = workerRunDir([workerRec()]);
+  const fsImpl = { ...fs, lstatSync: fs.lstatSync, readFileSync: () => { throw Object.assign(new Error('x'), { code: 'EACCES' }); } };
+  const r = readWorkerDispatches(file, { fsImpl });
+  assert.deepEqual(r.items, []);
+  assert.match(r.notes[0], /not readable \(EACCES\)/);
+});
