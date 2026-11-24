@@ -12,8 +12,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const {
-  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, FLOW_STEPS, defaultAppendClaimLog,
+  run, BOT_IN_PROGRESS, ABORT_REASON, USAGE, FLOW_STEPS, defaultAppendClaimLog, readRunManifestPlanInputs,
 } = require('../../../plugin/bin/lib/claim-targets/claim-targets');
+const { STATIONS } = require('../../../plugin/bin/lib/station-events/stations');
+const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
 const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/log-decision/claim-log');
 // #787 residual finding (progress.md's parked "expectedContent has zero test
 // coverage" item): claim-targets.js requires this same module-level object,
@@ -3228,7 +3230,7 @@ test('station: a claim whose label add succeeded records exited release passed a
 
   assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
 
-  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build']);
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build']);
   const [, exited, entered] = events;
   for (const e of [exited, entered]) {
     assert.equal(e.repoName, 'acme/w');
@@ -3242,7 +3244,7 @@ test('station: a claim whose label add succeeded records exited release passed a
   assert.equal(entered.outcome, null);
 });
 
-test('station: a failed label add records session_bound only, never the transition', () => {
+test('station: a failed label add records session_bound and planned, never the transition', () => {
   const { ghApi } = claimFixture([750]);
   const { gh } = makeGh({ fail: { labelAdd: true } });
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -3251,7 +3253,7 @@ test('station: a failed label add records session_bound only, never the transiti
   assert.equal(run(['--run-id', 'r1', '--targets', '750'], deps), 0);
 
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [750]);
-  assert.deepEqual(events.map(kindStation), ['session_bound:build']);
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'planned:build']);
 });
 
 test('station: --lane driver stamps lane driver on every event', () => {
@@ -3262,7 +3264,7 @@ test('station: --lane driver stamps lane driver on every event', () => {
 
   assert.equal(run(['--run-id', 'r1', '--targets', '720,721', '--lane', 'driver'], deps), 0);
 
-  assert.equal(events.length, 6);
+  assert.equal(events.length, 8);
   assert.deepEqual([...new Set(events.map((e) => e.lane))], ['driver']);
 });
 
@@ -3291,7 +3293,7 @@ test('station: every accepted --lane value claims and is stamped', () => {
   }
 });
 
-test('station: an empty or absent sessionId records the two transition events and no session_bound', () => {
+test('station: an empty or absent sessionId records the transition events and planned, and no session_bound', () => {
   for (const sessionId of ['', undefined]) {
     const { ghApi } = claimFixture([720]);
     const { gh } = makeGh({});
@@ -3301,7 +3303,7 @@ test('station: an empty or absent sessionId records the two transition events an
 
     assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
 
-    assert.deepEqual(events.map(kindStation), ['exited:release:passed', 'entered:build'], String(sessionId));
+    assert.deepEqual(events.map(kindStation), ['exited:release:passed', 'entered:build', 'planned:build'], String(sessionId));
   }
 });
 
@@ -3374,7 +3376,7 @@ test('station: a recording stationEvent leaves exit code and stdout identical to
   const plain = once(false);
   const recording = once(true);
 
-  assert.equal(recording.events.length, 6, 'the recorder saw every event');
+  assert.equal(recording.events.length, 8, 'the recorder saw every event');
   assert.equal(recording.code, plain.code);
   assert.equal(recording.out, plain.out);
 });
@@ -3395,8 +3397,8 @@ test('station: a rolled-back partial claim closes its build visit with exited bu
 
   assert.deepEqual(JSON.parse(io.out[0]).released, [720]);
   const for720 = events.filter((e) => e.recordNumber === 720);
-  assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'exited:build:abandoned']);
-  const exit = for720[3];
+  assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build', 'exited:build:abandoned']);
+  const exit = for720[4];
   assert.deepEqual(exit.payload, { reason: ABORT_REASON });
   assert.equal(exit.discriminator, `${CLAIMED_AT}:abort`);
   assert.equal(exit.repoName, 'acme/w');
@@ -3433,7 +3435,7 @@ test('station: a rollback whose release write fails (releaseFailed) emits no bui
   assert.ok(!events.some((e) => e.kind === 'exited' && e.station === 'build'), JSON.stringify(events));
 });
 
-test('station: a --resume-pr re-claim records session_bound but no bot:in-progress transition', () => {
+test('station: a --resume-pr re-claim records session_bound but no bot:in-progress transition and no planned', () => {
   const { ghApi } = makeGhApi({
     reads: { 780: [readOk(staleMarker(RUN), 'sha780'), confirmRead()] },
     writes: { 780: [writeOk] },
@@ -3490,4 +3492,101 @@ test('station: a claim payload with no claimedAt skips its events with one stder
   assert.deepEqual(recorded.events, []);
   assert.deepEqual(recorded.err, ['claim-targets: station events skipped for #720 — claim payload has no claimedAt\n']);
   assert.deepEqual(plain.err, [], 'no emitter, nothing to skip, no line');
+});
+
+// ---- #6147: the plan written at the claim ----
+const STATION_RUN_ID = 'r1';
+
+function manifestRunDir(manifest) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-plan-'));
+  tmpRoots.push(root);
+  const dir = path.join(root, STATION_RUN_ID);
+  fs.mkdirSync(dir);
+  if (manifest !== undefined) fs.writeFileSync(path.join(dir, 'manifest.json'), typeof manifest === 'string' ? manifest : JSON.stringify(manifest));
+  return dir;
+}
+
+function claimWithManifest(manifest, extraArgs = []) {
+  const { ghApi } = claimFixture([720]);
+  const { deps, io } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  const events = withRecorder(deps);
+  const code = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', manifestRunDir(manifest), ...extraArgs], deps);
+  return { code, events, io };
+}
+
+test('AC1.5: a claim writes one planned line carrying the stations and reason', () => {
+  const { ghApi } = claimFixture([720]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  const events = withRecorder(deps);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.equal(planned.length, 1);
+  assert.equal(planned[0].station, 'build');
+  assert.equal(planned[0].recordNumber, 720);
+  assert.equal(planned[0].runId, 'r1');
+  assert.deepEqual(planned[0].payload, { process: 'build-a-record', processVersion: 1, list: 'standard', stations: [...STATIONS], reasonCode: 'default-list' });
+  assert.ok(buildLine(planned[0]), 'appendStationEvent accepts it');
+});
+
+test('AC1.6, AC2.1, AC2.2: claiming the same record again in the same run writes no second planned', () => {
+  const { ghApi } = claimFixture([720]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  const first = withRecorder(deps);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 0);
+
+  const { ghApi: ghApi2 } = makeGhApi({ reads: { 720: [readOk(liveMarker('r1'), 'sha720')] }, writes: {} });
+  const { deps: deps2, io } = baseDeps({ ghApi: ghApi2, gh: makeGh({}).gh });
+  const second = withRecorder(deps2);
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps2), 0);
+
+  assert.deepEqual(JSON.parse(io.out[0]).alreadyOwned, [720]);
+  assert.equal(first.filter((e) => e.kind === 'planned').length, 1);
+  assert.equal(second.filter((e) => e.kind === 'planned').length, 0);
+});
+
+test('a claim with --run reads lane and ceremony profile from the run manifest', () => {
+  const manifest = { lane: 'driver', ceremonyProfile: 'fast-lane' };
+  const { code, events } = claimWithManifest(manifest);
+  assert.equal(code, 0);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.equal(planned.length, 1);
+  assert.equal(planned[0].payload.list, 'driver');
+  assert.equal(planned[0].payload.reasonText, 'lane driver');
+
+  const passed = claimWithManifest(manifest, ['--lane', 'standard']).events.find((e) => e.kind === 'planned');
+  assert.equal(passed.payload.list, 'fast-lane');
+  assert.equal(passed.payload.reasonText, 'ceremony profile fast-lane');
+  assert.equal(passed.lane, 'standard');
+});
+
+test('the planned line and the claim\'s other events carry the same lane field even when the manifest lane differs', () => {
+  const { events } = claimWithManifest({ lane: 'driver', ceremonyProfile: 'standard' });
+  const planned = events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'driver');
+  assert.deepEqual(events.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build']);
+  assert.deepEqual([...new Set(events.map((e) => e.lane))], ['unknown']);
+});
+
+test('a corrupt run manifest plans the default list and leaves the claim unchanged', () => {
+  const { code, events, io } = claimWithManifest('not json{');
+  const planned = events.find((e) => e.kind === 'planned');
+  assert.equal(planned.payload.list, 'standard');
+  assert.equal(planned.payload.reasonCode, 'default-list');
+
+  const { ghApi } = claimFixture([720]);
+  const { deps, io: io2 } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  const plainCode = run(['--run-id', STATION_RUN_ID, '--targets', '720', '--run', manifestRunDir('not json{')], deps);
+  assert.equal(code, plainCode);
+  assert.equal(io.out.join('\n'), io2.out.join('\n'));
+});
+
+test('readRunManifestPlanInputs returns nulls for a missing dir, a missing file and a non-object JSON', () => {
+  const nulls = { lane: null, ceremonyProfile: null };
+  assert.deepEqual(readRunManifestPlanInputs(path.join(os.tmpdir(), 'ct-no-such-dir-6147')), nulls);
+  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir()), nulls);
+  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir('[1,2]')), nulls);
+  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir('null')), nulls);
+  assert.deepEqual(readRunManifestPlanInputs(manifestRunDir({ lane: 3, ceremonyProfile: 'fast-lane' })), { lane: null, ceremonyProfile: 'fast-lane' });
 });

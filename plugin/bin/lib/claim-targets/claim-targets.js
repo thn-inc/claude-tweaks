@@ -19,6 +19,7 @@
 // call that can throw is wrapped so a failure never escapes uncaught.
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const claimStore = require('../issues/claim-store');
 const {
@@ -29,6 +30,7 @@ const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
 const { toRepoName } = require('../station-events/emit');
+const { planEvent } = require('../station-events/plan');
 const { LANES, SESSION_BOUND_STATION, transitionsForLabel, releaseTransition } = require('../station-events/stations');
 const { tombstoneInFlightPr, refusalText } = claimStore;
 
@@ -79,6 +81,21 @@ function oneLineReason(text, max = 500) {
 // null rather than throwing.
 function parseJsonOrNull(text) {
   try { return JSON.parse(text); } catch { return null; }
+}
+
+// #6147: the lane and ceremony profile a run manifest already holds, for the
+// `planned` event. Each is a string or null; any read or parse failure is
+// both null (the plan then falls back to the default list). Never throws.
+function readRunManifestPlanInputs(runDir) {
+  const none = { lane: null, ceremonyProfile: null };
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+    if (manifest === null || typeof manifest !== 'object' || Array.isArray(manifest)) return none;
+    return {
+      lane: typeof manifest.lane === 'string' ? manifest.lane : null,
+      ceremonyProfile: typeof manifest.ceremonyProfile === 'string' ? manifest.ceremonyProfile : null,
+    };
+  } catch { return none; }
 }
 
 function parseArgs(argv) {
@@ -580,6 +597,23 @@ function run(argv, deps) {
       emitStation(issue, claimedAt, { ...row, discriminator: `${claimedAt}:${row.kind}:${row.station}` });
     }
   }
+  // #6147: one `planned` per newly claimed record. The list is chosen by the
+  // passed --lane, else the run manifest's lane; the line's own lane stays
+  // --lane. The manifest is read once, on the first emit.
+  let manifestPlanInputs = null;
+  function emitPlanned(issue, claimedAt) {
+    if (typeof deps.stationEvent !== 'function' || !claimedAt) return;
+    try {
+      if (manifestPlanInputs === null) {
+        manifestPlanInputs = opts.runDir !== null ? readRunManifestPlanInputs(opts.runDir) : { lane: null, ceremonyProfile: null };
+      }
+      const listLane = opts.lane !== 'unknown' ? opts.lane : (manifestPlanInputs.lane ?? opts.lane);
+      deps.stationEvent(planEvent({
+        repoName: stationRepoName, recordNumber: issue, lane: opts.lane, listLane,
+        ceremonyProfile: manifestPlanInputs.ceremonyProfile, sessionId: deps.sessionId, runId: opts.runId,
+      }));
+    } catch { /* best-effort: the claim stands */ }
+  }
   // `abort()`'s rollback ends the build visit of every record this run had
   // claimed and actually released; an unverified extra target was never
   // claimed here, so it has no `claimedAt` entry and emits nothing.
@@ -808,6 +842,9 @@ function run(argv, deps) {
     } catch (e) {
       labelFailures.push({ issue, error: errText(e) });
     }
+    // The claim landed whether or not the label add did, so the plan is written
+    // either way; a `--resume-pr` re-claim never left `build` and is not re-planned.
+    if (resumeLink === null) emitPlanned(issue, claimedAt);
 
     try {
       deps.gh(['issue', 'comment', String(issue), '--body', payload.commentBody]);
@@ -855,5 +892,5 @@ function run(argv, deps) {
 }
 
 module.exports = {
-  run, parseArgs, parseTargets, USAGE, FLOW_STEPS, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog,
+  run, parseArgs, parseTargets, USAGE, FLOW_STEPS, BOT_IN_PROGRESS, ABORT_REASON, defaultAppendClaimLog, readRunManifestPlanInputs,
 };
