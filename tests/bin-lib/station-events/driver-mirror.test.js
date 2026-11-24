@@ -15,14 +15,41 @@ test('a worker line gives started at ts minus ms and exited at ts, both on build
     { repoName: 'acme/widgets', recordNumber: 7, lane: 'driver', runId: 'run-1', discriminator: `worker@${TS}`,
       kind: 'started', station: 'build', at: '2026-11-19T08:00:06.000Z', payload: { step: 'worker' } },
     { repoName: 'acme/widgets', recordNumber: 7, lane: 'driver', runId: 'run-1', discriminator: `worker@${TS}`,
-      kind: 'exited', station: 'build', at: TS, outcome: 'passed', payload: { step: 'worker' } },
+      kind: 'exited', station: 'build', at: TS, outcome: 'passed', payload: { step: 'worker', actor: 'agent' } },
   ]);
   for (const e of events) assert.ok(buildLine(e), `${e.kind} builds a line`);
 });
 
-test('a step status maps to its outcome: fail -> failed, stop -> returned', () => {
+test('a step status maps to its outcome: fail -> failed, stop -> stopped', () => {
   assert.equal(stationEventsFor(line({ step: 'test', status: 'fail' }), ID)[1].outcome, 'failed');
-  assert.equal(stationEventsFor(line({ step: 'ci', status: 'stop' }), ID)[1].outcome, 'returned');
+  assert.equal(stationEventsFor(line({ step: 'ci', status: 'stop' }), ID)[1].outcome, 'stopped');
+});
+
+const exitedOf = (over) => stationEventsFor(line(over), ID).find((e) => e.kind === 'exited');
+
+test('a failed test step mirrors to exited failed with reasonCode test-failed and actor agent', () => {
+  const e = exitedOf({ step: 'test', status: 'fail' });
+  assert.deepEqual([e.outcome, e.payload.reasonCode, e.payload.actor], ['failed', 'test-failed', 'agent']);
+  assert.ok(buildLine(e));
+});
+
+test('a failed ci step classified infrastructure mirrors with reasonCode infrastructure', () => {
+  const e = exitedOf({ step: 'ci', status: 'fail', detail: 'read-failed' });
+  assert.deepEqual([e.outcome, e.payload.reasonCode, e.payload.actor], ['failed', 'infrastructure', 'script']);
+  assert.ok(buildLine(e));
+});
+
+test('an ok step mirrors to exited passed with actor', () => {
+  for (const [step, actor] of [['worker', 'agent'], ['review', 'agent'], ['pr', 'script'], ['merge', 'script']]) {
+    const e = exitedOf({ step });
+    assert.deepEqual([e.outcome, e.payload.actor, 'reasonCode' in e.payload], ['passed', actor, false], step);
+  }
+});
+
+test('a step with no known reason mirrors with reasonCode unspecified', () => {
+  const e = exitedOf({ step: 'ci', status: 'fail', detail: 'something else' });
+  assert.deepEqual([e.outcome, e.payload.reasonCode], ['failed', 'unspecified']);
+  assert.equal(exitedOf({ step: 'pr', status: 'stop' }).payload.reasonCode, 'unspecified');
 });
 
 test('every mirrored step lands on its table station', () => {
