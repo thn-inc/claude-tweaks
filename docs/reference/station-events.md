@@ -163,7 +163,7 @@ Lines keep the fields above. The payload each kind carries:
 | `decided` | the station the decision was made at | `{ decision: 'authorize' \| 'accept' \| 'unblock', actor: string, via: 'panel' \| 'skill' \| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |
 | `exited` (extended) | unchanged | `outcome` is one of `passed \| sent-back \| failed \| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |
 
-`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` in `stations.js`. A reason nothing knows is `unspecified`: a missing or unknown `reasonCode` on a non-passed exit or a plan is normalized to it, not dropped. A line whose `payload` is not an object is dropped with a stderr reason, never thrown on.
+`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` in `stations.js`. A reason nothing knows is `unspecified`: a missing or unknown `reasonCode` on a non-passed exit or a plan is normalized to it, not dropped. A non-object `payload` is read as `{}`, so a kind whose contract needs a payload field (`exited`, `held`, `released`, `planned`, `replanned`, `decided`) is dropped with a stderr reason, never thrown on; other kinds are written with `{}`.
 
 Actors the producers set: label-transition `intake` and `shape` exits `agent`; the `authorize` exit `person`; the `release` exit on `bot:in-progress` `script`; claim releases `script`; merge sub-steps `script`; driver steps per the driver mirror row below.
 
