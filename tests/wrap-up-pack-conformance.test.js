@@ -227,6 +227,8 @@ test('every inputs field a closing-keyword reader relies on is produced by resol
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+  // This fixture resolves a header rung, so closingRecords is an array here; its
+  // `null` (#4108, no records resolved) is pinned in pack.test.js's unavailable case.
   assert.ok(Array.isArray(inputs.closingRecords));
   assert.strictEqual(typeof inputs.parkedAtShaping, 'object');
   const corpus = ['cleanup-procedures-execution', 'execution-and-verification', 'review-console', 'cleanup-procedures']

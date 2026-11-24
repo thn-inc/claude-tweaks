@@ -11,6 +11,9 @@ const {
   drain, LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr, defaultReadyRun,
 } = require('../../../plugin/bin/lib/learned-skills/drain.js');
 
+const { rebuildFixture, FILE } = require('../../helpers/learned-skills-rebuild');
+const { MERGE_GATE_WATCH_SECONDS } = require('../../../plugin/bin/lib/ci-health/constants');
+
 const REPO = 'acme/repo';
 const MARKER = '<!-- wrap-up-skills-pr -->';
 const SHA = (c) => c.repeat(40);
@@ -25,7 +28,7 @@ const view = (o = {}) => ({
 const pr = (number, o = {}) => ({ number, headRefName: `learned-skills/run-${number}`, isCrossRepository: false, body: `${MARKER}\nrefs #6112`, ...o });
 
 // prs: the `pr list` answer. views[n]: a view, or an array answered in order (the last one repeats).
-function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, mergeThrows = {}, viewThrows = {}, ciGate = 0, listThrows = null } = {}) {
+function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, mergeThrows = {}, viewThrows = {}, ciGate = 0, listThrows = null, rebuild } = {}) {
   const calls = [];
   const clock = { t: 1_700_000_000_000, sleeps: [] };
   const seq = {};
@@ -63,6 +66,7 @@ function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, merg
   };
   const logged = [];
   const gateCalls = [];
+  const rebuildCalls = [];
   const deps = {
     gh,
     ghAvailable: () => true,
@@ -71,8 +75,9 @@ function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, merg
     readyRun: () => ({ state: 'not-applicable', readySince: null, readyWorkflows: [], ...ready }),
     appendEntries: ({ items }) => { logged.push(...items.map((i) => i.entry)); },
     ciGateRecord: (a) => { gateCalls.push(a); return ciGate; },
+    rebuild: (a) => { rebuildCalls.push(a); return (rebuild || (() => { throw new Error('unexpected rebuild'); }))(a); },
   };
-  return { deps, calls, clock, logged, gateCalls, merges: () => calls.filter((c) => c[0] === 'pr' && c[1] === 'merge') };
+  return { deps, calls, clock, logged, gateCalls, rebuildCalls, merges: () => calls.filter((c) => c[0] === 'pr' && c[1] === 'merge') };
 }
 
 const base = (o = {}) => ({ repo: REPO, autoMerge: true, mergeVerification: 'wait', integrationBranch: 'main', ...o });
@@ -119,21 +124,124 @@ test('AC1.4: a red PR is left open with no label writes', () => {
   assert.ok(!h.calls.some((c) => c[0] === 'issue' || c.includes('--add-label') || c.includes('--remove-label')));
 });
 
-test('AC1.5: a DIRTY PR is reported conflicting', () => {
-  const h = harness({ prs: [pr(6204)], views: { 6204: view({ number: 6204, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] }) } });
-  const out = drain(base(), h.deps);
-  assert.deepEqual(out.conflicting, [6204]);
-  assert.deepEqual(out.leftOpen, []);
+const dirtyView = (n, o = {}) => view({ number: n, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [], ...o });
+const REBUILT = () => ({ ok: true, commit: SHA('c'), tip: SHA('d') });
+
+test('a DIRTY PR is rebuilt and left pending', () => {
+  const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: REBUILT });
+  const out = drain(base({ runDir: '/run' }), h.deps);
+  assert.deepEqual(out.rebuilt, [6204]);
+  assert.deepEqual(out.leftOpen, [{ pr: 6204, reason: 'pending' }]);
+  assert.deepEqual(out.conflicting, []);
+  assert.deepEqual(h.rebuildCalls, [{ pr: 6204, headRef: 'learned-skills/run-6204', oldHead: SHA('a'), integrationBranch: 'main' }]);
   assert.equal(h.merges().length, 0);
+  const auto = h.logged.filter((l) => l.startsWith('- AUTO'));
+  assert.equal(auto.length, 1);
+  assert.match(auto[0], /PR #6204 rebuilt on main \(old head a{40}\)/);
+  assert.match(auto[0], /\[lever: learned-skills-auto-merge=true\]$/);
 });
 
-test('a sibling turned DIRTY by an earlier merge in the same drain is conflicting', () => {
+test('a refused rebuild is left open naming the files', () => {
+  const reason = 'conflict needs a human: .claude/skills/x/SKILL.md';
+  const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason }) });
+  const out = drain(base({ runDir: '/run' }), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6204, reason }]);
+  assert.deepEqual(out.rebuilt, []);
+  assert.deepEqual(out.conflicting, []);
+  const skips = h.logged.filter((l) => l.startsWith('- SKIP'));
+  assert.equal(skips.length, 1);
+  assert.match(skips[0], /\[lever: learned-skills-auto-merge=true\]$/);
+});
+
+test('a refusal with a detail carries it', () => {
+  const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason: 'rebuild-failed', detail: 'fetch failed' }) });
+  assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6204, reason: 'rebuild-failed', detail: 'fetch failed' }]);
+});
+
+test('a rebuild that throws is rebuild-failed with the error as detail', () => {
+  const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => { throw new Error('boom\nsecond'); } });
+  const out = drain(base(), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6204, reason: 'rebuild-failed', detail: 'boom' }]);
+  assert.deepEqual(out.rebuilt, []);
+});
+
+test('a sibling turned DIRTY by an earlier merge in the same drain is rebuilt (the recheck site)', () => {
   const dirty = view({ number: 6206, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING' });
-  const h = harness({ prs: [pr(6205), pr(6206)], views: { 6206: [view({ number: 6206 }), dirty] } });
+  const h = harness({ prs: [pr(6205), pr(6206)], views: { 6206: [view({ number: 6206 }), dirty] }, rebuild: REBUILT });
   const out = drain(base(), h.deps);
   assert.deepEqual(out.merged, [6205]);
-  assert.deepEqual(out.conflicting, [6206]);
+  assert.deepEqual(out.rebuilt, [6206]);
+  assert.deepEqual(out.leftOpen, [{ pr: 6206, reason: 'pending' }]);
+  assert.deepEqual(out.conflicting, []);
   assert.equal(h.merges().length, 1);
+  assert.equal(h.rebuildCalls[0].oldHead, SHA('a'));
+});
+
+test('a rebuilt own PR follows the pending path to a merge on the new head', () => {
+  const lag = view({ number: 6290, statusCheckRollup: RUNNING });
+  const h = harness({
+    prs: [pr(6290)],
+    views: { 6290: [dirtyView(6290), lag, view({ number: 6290, headRefOid: SHA('c') }), view({ number: 6290, headRefOid: SHA('c') })] },
+    rebuild: REBUILT,
+  });
+  const out = drain(base({ ownPr: 6290 }), h.deps);
+  assert.deepEqual(out.rebuilt, [6290]);
+  assert.deepEqual(out.merged, [6290]);
+  assert.equal(h.merges().length, 1);
+  const m = h.merges()[0];
+  assert.equal(m[m.indexOf('--match-head-commit') + 1], SHA('c'));
+  assert.deepEqual(h.clock.sleeps, [30000, 30000]);
+});
+
+test('an own PR that turns conflicting mid-watch is rebuilt', () => {
+  const pending = view({ number: 6291, statusCheckRollup: RUNNING });
+  const h = harness({
+    prs: [pr(6291)],
+    views: { 6291: [pending, dirtyView(6291), view({ number: 6291, headRefOid: SHA('c') }), view({ number: 6291, headRefOid: SHA('c') })] },
+    rebuild: REBUILT,
+  });
+  const out = drain(base({ ownPr: 6291 }), h.deps);
+  assert.deepEqual(out.rebuilt, [6291]);
+  assert.deepEqual(out.merged, [6291]);
+  assert.deepEqual(out.conflicting, []);
+  assert.deepEqual(h.rebuildCalls.map((c) => c.oldHead), [SHA('a')]);
+});
+
+test('an own PR whose pre-merge re-read is conflicting is rebuilt and the watch continues', () => {
+  const h = harness({
+    prs: [pr(6292)],
+    views: { 6292: [view({ number: 6292 }), dirtyView(6292), view({ number: 6292, headRefOid: SHA('c') }), view({ number: 6292, headRefOid: SHA('c') })] },
+    rebuild: REBUILT,
+  });
+  const out = drain(base({ ownPr: 6292 }), h.deps);
+  assert.deepEqual(out.rebuilt, [6292]);
+  assert.deepEqual(out.merged, [6292]);
+  assert.equal(h.merges()[0][h.merges()[0].indexOf('--match-head-commit') + 1], SHA('c'));
+});
+
+test('a PR conflicting again after its rebuild settles conflicting', () => {
+  const h = harness({ prs: [pr(6293)], views: { 6293: [dirtyView(6293), dirtyView(6293, { headRefOid: SHA('c') })] }, rebuild: REBUILT });
+  const out = drain(base({ ownPr: 6293 }), h.deps);
+  assert.deepEqual(out.rebuilt, [6293]);
+  assert.deepEqual(out.conflicting, [6293]);
+  assert.deepEqual(out.leftOpen, []);
+  assert.equal(h.rebuildCalls.length, 1);
+});
+
+test('a rebuild mid-watch keeps the watch deadline', () => {
+  const pending = view({ number: 6294, statusCheckRollup: RUNNING });
+  const plain = harness({ prs: [pr(6294)], views: { 6294: pending } });
+  assert.deepEqual(drain(base({ ownPr: 6294 }), plain.deps).leftOpen, [{ pr: 6294, reason: 'timeout' }]);
+  const h = harness({
+    prs: [pr(6294)],
+    views: { 6294: [pending, pending, dirtyView(6294), view({ number: 6294, headRefOid: SHA('c'), statusCheckRollup: RUNNING })] },
+    rebuild: REBUILT,
+  });
+  const out = drain(base({ ownPr: 6294 }), h.deps);
+  assert.deepEqual(out.rebuilt, [6294]);
+  assert.deepEqual(out.leftOpen, [{ pr: 6294, reason: 'timeout' }]);
+  assert.equal(h.clock.sleeps.length, plain.clock.sleeps.length);
+  assert.equal(h.clock.sleeps.length, MERGE_GATE_WATCH_SECONDS * 1000 / 30000);
 });
 
 test('AC1.6: a PR without the marker is never touched', () => {
@@ -216,7 +324,7 @@ test('a merge failure on a PR that is no longer OPEN (merged by a concurrent dra
   const open = view({ number: 6219 });
   const h = harness({ prs: [pr(6219)], views: { 6219: [open, open, view({ number: 6219, state: 'MERGED' })] }, mergeThrows: { 6219: 'Pull request is already merged' } });
   const out = drain(base({ runDir: '/run' }), h.deps);
-  assert.deepEqual(out, { merged: [], armed: [], leftOpen: [], conflicting: [] });
+  assert.deepEqual(out, { merged: [], armed: [], leftOpen: [], conflicting: [], rebuilt: [] });
   assert.equal(h.logged.length, 0);
 });
 
@@ -377,12 +485,12 @@ test('a compose failure is merge-failed with the compose error first line as det
   assert.equal(h.merges().length, 0);
 });
 
-test('ready-run red + DIRTY stays red; draft-skip-without-ready-trigger + DIRTY is conflicting', () => {
+test('ready-run red + DIRTY stays red; draft-skip-without-ready-trigger + DIRTY is rebuilt', () => {
   const dirty = { 6245: view({ number: 6245, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] }) };
   const red = harness({ prs: [pr(6245)], views: dirty, ready: { state: 'red' } });
   assert.deepEqual(drain(base(), red.deps).leftOpen, [{ pr: 6245, reason: 'red' }]);
-  const skip = harness({ prs: [pr(6245)], views: dirty, ready: { state: 'draft-skip-without-ready-trigger' } });
-  assert.deepEqual(drain(base(), skip.deps).conflicting, [6245]);
+  const skip = harness({ prs: [pr(6245)], views: dirty, ready: { state: 'draft-skip-without-ready-trigger' }, rebuild: REBUILT });
+  assert.deepEqual(drain(base(), skip.deps).rebuilt, [6245]);
 });
 
 test('defaultReadyRun pins the ready-run read to the drain repo, not the cwd origin', () => {
@@ -413,19 +521,10 @@ test('AC5.1: in an unprotected repo (CLEAN) a drain never merges a PR whose chec
   }
 });
 
-test('own PR turning conflicting during the watch is conflicting, not timeout', () => {
-  const pending = view({ number: 6251, statusCheckRollup: RUNNING });
-  const dirty = view({ number: 6251, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] });
-  const h = harness({ prs: [pr(6251)], views: { 6251: [pending, pending, dirty] } });
-  const out = drain(base({ ownPr: 6251 }), h.deps);
-  assert.deepEqual(out.conflicting, [6251]);
-  assert.deepEqual(out.leftOpen, []);
-});
-
 test('a PR already merged (state MERGED at the state read) is a no-op in no list', () => {
   const h = harness({ prs: [pr(6252)], views: { 6252: view({ number: 6252, state: 'MERGED' }) } });
   const out = drain(base({ runDir: '/run', ownPr: 6252 }), h.deps);
-  assert.deepEqual(out, { merged: [], armed: [], leftOpen: [], conflicting: [] });
+  assert.deepEqual(out, { merged: [], armed: [], leftOpen: [], conflicting: [], rebuilt: [] });
   assert.equal(h.logged.length, 0);
   assert.equal(h.merges().length, 0);
 });
@@ -468,7 +567,7 @@ test('own PR writes drain.json; a sibling writes no drain.json', () => {
 });
 
 test('LEFT_OPEN_REASONS is exactly the closed set', () => {
-  assert.deepEqual([...LEFT_OPEN_REASONS], ['pending', 'timeout', 'red', 'head-changed', 'cross-repository', 'not-learned-skills-branch', 'files-outside-skills', 'merge-failed', 'no-gh']);
+  assert.deepEqual([...LEFT_OPEN_REASONS], ['pending', 'timeout', 'red', 'head-changed', 'cross-repository', 'not-learned-skills-branch', 'files-outside-skills', 'merge-failed', 'no-gh', 'lease-rejected', 'git-too-old', 'rebuild-failed', 'conflict needs a human']);
   assert.ok(Object.isFrozen(LEFT_OPEN_REASONS));
 });
 
@@ -505,4 +604,70 @@ test("twin pin: LEVER_ACTIONS rows equal Step 2.5's table Value column", () => {
   // go-red control: a row added to the table makes the parsed set differ from the module's.
   const drifted = text.replace('| `off` |', '| `strict` | x | x | x |\n| `off` |');
   assert.notDeepEqual(Object.keys(LEVER_ACTIONS).sort(), leverTable(drifted).values.sort());
+});
+
+test('an unexpected rebuild reason becomes rebuild-failed naming it', () => {
+  for (const [reason, detail] of [['made-up', 'unexpected rebuild reason: made-up'], [undefined, 'unexpected rebuild reason: none']]) {
+    const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason }) });
+    assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6204, reason: 'rebuild-failed', detail }]);
+  }
+  for (const reason of ['lease-rejected', 'git-too-old', 'head-changed', 'not-learned-skills-branch', 'conflict needs a human: a, b']) {
+    const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason }) });
+    assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6204, reason }], reason);
+  }
+});
+
+test('under off, a rebuilt own PR with no checks at all is pending at once, without the watch', () => {
+  const h = harness({ prs: [pr(6295)], views: { 6295: dirtyView(6295) }, rebuild: REBUILT });
+  const out = drain(base({ ownPr: 6295, mergeVerification: 'off' }), h.deps);
+  assert.deepEqual(out.rebuilt, [6295]);
+  assert.deepEqual(out.leftOpen, [{ pr: 6295, reason: 'pending' }]);
+  assert.equal(h.clock.sleeps.length, 0);
+  const wait = harness({ prs: [pr(6296)], views: { 6296: dirtyView(6296) }, rebuild: REBUILT });
+  assert.deepEqual(drain(base({ ownPr: 6296, mergeVerification: 'wait' }), wait.deps).leftOpen, [{ pr: 6296, reason: 'timeout' }]);
+});
+
+test('under merge-when-green, a rebuilt own PR that reads BLOCKED pending at the new head is never armed', () => {
+  const blockedC = view({ number: 6297, headRefOid: SHA('c'), mergeStateStatus: 'BLOCKED', statusCheckRollup: RUNNING });
+  const h = harness({ prs: [pr(6297)], views: { 6297: [dirtyView(6297), blockedC] }, rebuild: REBUILT });
+  const out = drain(base({ ownPr: 6297, mergeVerification: 'merge-when-green' }), h.deps);
+  assert.deepEqual(out.rebuilt, [6297]);
+  assert.deepEqual(out.armed, []);
+  assert.equal(h.merges().length, 0);
+  assert.deepEqual(out.leftOpen, [{ pr: 6297, reason: 'timeout' }]);
+});
+
+test('after a rebuild the ci-gate record gets the pre-rebuild gateStart and the rebuilt head', () => {
+  const green = view({ number: 6298, headRefOid: SHA('c') });
+  const h = harness({ prs: [pr(6298)], views: { 6298: [dirtyView(6298), green] }, rebuild: REBUILT });
+  const out = drain(base({ runDir: '/run', ownPr: 6298 }), h.deps);
+  assert.deepEqual(out.merged, [6298]);
+  assert.equal(h.gateCalls.length, 1);
+  assert.equal(h.gateCalls[0].headSha, SHA('c'));
+  assert.equal(h.gateCalls[0].gateStartEpoch, 1_700_000_000);
+  assert.ok(h.clock.t > 1_700_000_000_000, 'the clock advanced past the gate start');
+});
+
+test('AC1.1 AC1.2: drain rebuilds the second of two double-append PRs (real git)', (t) => {
+  const fx = rebuildFixture(t);
+  const append = (after, line) => (repo) => {
+    const p = path.join(repo, FILE);
+    fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace(after, `${after}${line}`));
+  };
+  const A = fx.lsBranch('A', append('- two\n', '- a\n'));
+  const B = fx.lsBranch('B', append('- two\n', '- b\n'));
+  fx.advanceMain(A);
+  const h = harness({
+    prs: [pr(6300, { headRefName: 'learned-skills/B' })],
+    views: { 6300: dirtyView(6300, { headRefOid: B }) },
+  });
+  delete h.deps.rebuild; // the real rebuild, pointed at the fixture clone
+  const out = drain(base({ cwd: fx.clone }), h.deps);
+  assert.deepEqual(out.rebuilt, [6300], JSON.stringify(out));
+  assert.deepEqual(out.leftOpen, [{ pr: 6300, reason: 'pending' }]);
+  fx.sh(fx.clone, ['fetch', '-q', 'origin']);
+  assert.equal(fx.sh(fx.clone, ['show', 'origin/learned-skills/B:' + FILE]), '# x\n\n- one\n- two\n- a\n- b\n\nend\n');
+  const diff = fx.sh(fx.clone, ['diff', 'origin/main', 'origin/learned-skills/B']);
+  const added = diff.split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---) /.test(l));
+  assert.deepEqual(added, ['+- b']);
 });

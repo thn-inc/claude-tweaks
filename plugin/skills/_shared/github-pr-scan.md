@@ -85,7 +85,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    "
    ```
 
-   Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — spans both the `Fresh` and `Review` bands, since neither currently has its own finding for a PR with nothing wrong), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding. A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational — see the Findings and recommendations table below.
+   Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — the `Fresh` and `Review` bands), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but the row still carries its trailing `gh pr view {n} --web` command (why: `github-pr-scan-rationale.md`). A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
 3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
 4. **Merged/closed PRs with local remnants** — de-duplicate the union of the merged and closed results by `number`, so a PR present in both is one candidate and yields at most one finding; then cross-check each `headRefName` against the local branches. `--state closed` also returns merged PRs (47 of its 50 rows in one sweep), so the closed query adds `--search is:unmerged` to spend its `{resolved-limit}`-row window on PRs closed without merging; the merged query covers merged PRs, and the de-duplication stays as a guard. `{resolved-limit}` rows per state overrun one Bash result, so each list goes to a session-scoped file (`_shared/session-tmp-root.md`). Resolve the three paths once, substituting the printed literals for `{merged-path}`, `{closed-path}` and `{branches-path}` below:
@@ -151,7 +151,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
 9. **Unarmed ready PR** — a green, gate-passed, granted or grantable, plugin-created PR whose `--auto` was never armed. "Plugin-created" is detected purely GitHub-side, from the PR body's `<!-- claude-tweaks-run: {run-id} -->` marker (stamped by `_shared/pr-early-run-lifecycle.md`'s PR-open template) or one of the two mechanical-housekeeping markers — `<!-- tidy-housekeeping-pr -->` (stamped by `/claude-tweaks:tidy` Step 7 at creation) or `<!-- wrap-up-residue-pr -->` (stamped by `wrap-up/residue-sweep.md`'s pr-first landing path — the same low-judgment, purely-mechanical shape as a tidy Step-7 commit, gated by the identical `housekeeping-auto-merge` lever) — no local run-dir join, so this check works from a fresh sandbox exactly like every other item here.
 
-   A `<!-- wrap-up-skills-pr -->` PR (`wrap-up/learned-skills-pr.md`) is never a candidate, by marker or linked-record grant: it carries instruction edits a human must review.
+   A `<!-- wrap-up-skills-pr -->` PR (`wrap-up/learned-skills-pr.md`) is a candidate only when `learned-skills-auto-merge` resolves `true` — never under `housekeeping-auto-merge` or a linked record's `auto:merge` grant; an unset or unreadable key is not `true`, so the PR is not a candidate (fail closed). `/claude-tweaks:tidy` drains it (`tidy/actions-github-issues.md`'s `## Drain learned-skills PRs`); it is never armed by **Arm ready PR**; the drain decides.
 
 <!-- when: transport=gh -->
    Resolve this item's session-scoped temp paths first, per `_shared/session-tmp-root.md`:
@@ -161,11 +161,12 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
    UNARMED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values pr-unarmed-age-hours)
    HOUSEKEEPING_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values housekeeping-auto-merge)
+   LEARNED_SKILLS_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values learned-skills-auto-merge)
    ALLOW_AUTO_MERGE=$(gh api repos/{owner}/{repo} -q .allow_auto_merge 2>/dev/null)
    gh pr list --state open --json number,title,updatedAt,isDraft,body,autoMergeRequest,statusCheckRollup,closingIssuesReferences,url --limit {resolved-limit} \
      > "$PR_SCAN_UNARMED"
 
-   UNARMED_AGE="$UNARMED_AGE" node -e "
+   UNARMED_AGE="$UNARMED_AGE" LEARNED_SKILLS_GRANT="$LEARNED_SKILLS_GRANT" node -e "
      const fs = require('fs');
      const AGE_HOURS = Number(process.env.UNARMED_AGE);
      const now = Date.now();
@@ -173,7 +174,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      const HOUSEKEEPING_MARKER = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/;
      const prs = require('$PR_SCAN_UNARMED');
      const candidates = prs.filter((pr) => {
-       if (/<!-- wrap-up-skills-pr -->/.test(pr.body || '')) return false;
+       const isSkills = /<!-- wrap-up-skills-pr -->/.test(pr.body || ''); if (isSkills && process.env.LEARNED_SKILLS_GRANT !== 'true') return false;
        if (pr.isDraft || pr.autoMergeRequest) return false;
        const ageHours = (now - Date.parse(pr.updatedAt)) / 3600000;
        if (ageHours < AGE_HOURS) return false;
@@ -185,7 +186,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
        const NON_BLOCKING = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
        const green = checks.every((c) => NON_BLOCKING.has(c.conclusion || c.state));
        if (checks.length && !green) return false;
-       return RUN_MARKER.test(pr.body || '') || HOUSEKEEPING_MARKER.test(pr.body || '');
+       return isSkills || RUN_MARKER.test(pr.body || '') || HOUSEKEEPING_MARKER.test(pr.body || '');
      });
      fs.writeFileSync('$PR_SCAN_UNARMED_CANDIDATES', JSON.stringify(candidates));
    "
@@ -221,14 +222,18 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    done
    ```
 
-   Classify each surviving candidate — granted when every linked record carries `auto:build` and `auto:merge` **and none carries `bot:blocked` or `bot:parked`** (a housekeeping-marker PR is granted instead by `housekeeping-auto-merge` alone, no record grant needed). The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parking a parked run: a record carries `bot:blocked` because dispatch hit its retry ceiling, or `bot:parked` because `_shared/pr-first-merge.md`'s Step 2.5 (Merge-verification gate) took the red path, and both mean a human owes a re-triage before anything arms that PR — a later-green rollup does not retract the park. Re-resolve this fence's session-scoped paths:
+   Classify each surviving candidate — granted when every linked record carries `auto:build` and `auto:merge` **and none carries `bot:blocked` or `bot:parked`** (a housekeeping-marker PR is granted instead by `housekeeping-auto-merge` alone, no record grant needed). The `bot:blocked`/`bot:parked` exclusion keeps this sweep from un-parking a parked run (why: `github-pr-scan-rationale.md`). Re-resolve this fence's session-scoped paths:
 
    ```bash
    PR_SCAN_UNARMED_CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-candidates.json)"
    PR_SCAN_UNARMED_LINKS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-unarmed-links.jsonl)"
-   HOUSEKEEPING_GRANT="$HOUSEKEEPING_GRANT" ALLOW_AUTO_MERGE="$ALLOW_AUTO_MERGE" node -e "
+   HOUSEKEEPING_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values housekeeping-auto-merge)
+   LEARNED_SKILLS_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values learned-skills-auto-merge)
+   ALLOW_AUTO_MERGE=$(gh api repos/{owner}/{repo} -q .allow_auto_merge 2>/dev/null)
+   HOUSEKEEPING_GRANT="$HOUSEKEEPING_GRANT" LEARNED_SKILLS_GRANT="$LEARNED_SKILLS_GRANT" ALLOW_AUTO_MERGE="$ALLOW_AUTO_MERGE" node -e "
      const fs = require('fs');
      const HOUSEKEEPING = process.env.HOUSEKEEPING_GRANT === 'true';
+     const LEARNED_SKILLS = process.env.LEARNED_SKILLS_GRANT === 'true';
      const ALLOW_AUTO_MERGE = process.env.ALLOW_AUTO_MERGE; // 'true' | 'false' | '' (probe failed — unknown)
      const armNote = ALLOW_AUTO_MERGE === 'false'
        ? ' (repo setting Allow auto-merge is OFF — arm will degrade per _shared/pr-first-merge.md Step 3, not fail)'
@@ -241,7 +246,10 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      candidates.forEach((pr) => {
        const isHousekeeping = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/.test(pr.body || '');
        let granted;
-       if (isHousekeeping) {
+       if (/<!-- wrap-up-skills-pr -->/.test(pr.body || '')) {
+         if (LEARNED_SKILLS) { console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green, learned-skills-auto-merge on — drain per tidy/actions-github-issues.md'); return; }
+         console.log('[pr-unarmed] PR #' + pr.number + ': ' + pr.title + ' — green, learned-skills-auto-merge off — a human merges or closes it'); return;
+       } else if (isHousekeeping) {
          granted = HOUSEKEEPING;
        } else {
          const linked = (pr.closingIssuesReferences || []).map((i) => i.number);
@@ -258,7 +266,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    "
    ```
 
-   Both outcomes share the `[pr-unarmed]` prefix — the row content distinguishes granted (recommends arming now) from ungranted (recommends granting first). Every row carries the repo's `allow_auto_merge` state (`ALLOW_AUTO_MERGE`, read once above via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies. **The list-time snapshot above is never trusted for the actual write**: grant labels, the `bot:blocked`/`bot:parked` exclusion (a record parked between the scan and the arm — or one whose labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]` — must still block the arm), `housekeeping-auto-merge`, and gate status (CI/draft/threads) are all re-read immediately before `gh pr merge --auto` runs, whether armed interactively or via `/claude-tweaks:tidy`'s Step 6/7 batch approval.
+   Both outcomes share the `[pr-unarmed]` prefix — the row content distinguishes granted (recommends arming now) from ungranted (recommends granting first). Every row carries the repo's `allow_auto_merge` state (`ALLOW_AUTO_MERGE`) whenever it's `false` (why: `github-pr-scan-rationale.md`). **The list-time snapshot above is never trusted for the actual write**: grant labels, the `bot:blocked`/`bot:parked` exclusion (why: `github-pr-scan-rationale.md`), `housekeeping-auto-merge`, and gate status (CI/draft/threads) are all re-read immediately before `gh pr merge --auto` runs, whether armed interactively or via `/claude-tweaks:tidy`'s Step 6/7 batch approval.
 <!-- /when -->
 
 10. **Unsettled run** — a claimed or `bot:in-progress`-labeled issue whose pipeline shows no evidence of progress since it was claimed, past a threshold. Detected purely GitHub-side, in three fetches:
@@ -408,7 +416,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     "
     ```
 
-    **Flag-only, never auto-rebase.** The lower-risk default consistent with this scope's report-only posture (`/tidy`'s documented posture for most of its scans) — an unattended rebase changes PR content without the PR author present and would need the same unconditional-at-every-`autonomy`-tier confirmation gate `dispatch/resume-confirmation.md` already establishes elsewhere in this codebase, not a weaker one just because it's a background sweep. This check's job is detection only: it feeds a human, or #2364's own close-out process, which already reuses `assess-agent-autonomy`'s `merge-check` and `_shared/pr-first-merge.md` for the approved-and-ready case and, with the human present, may offer a re-verified update (`dispatch/close-out-update.md`) — this check never re-implements that merge path or performs that update.
+    **Flag-only, never auto-rebase.** Detection only — it feeds a human or `/claude-tweaks:dispatch`'s close-out (`dispatch/close-out-update.md`); this check never rebases, updates or merges (why: `github-pr-scan-rationale.md`).
 <!-- /when -->
 
 Findings and recommendations (tidy Action Vocabulary):
@@ -426,13 +434,14 @@ Findings and recommendations (tidy Action Vocabulary):
 | `by:{skill}` issue stale (>4 weeks, the flagged code/target/journey/doc has since changed or been removed) — `{skill}` is any of `code-health`/`harness-health`/`journey-health`/`docs-health`/`ci-health` | Close (GitHub) — superseded |
 | `by:{skill}` issue still valid | Suggest `/claude-tweaks:backlog refine` or Capture to backlog — every health skill is report-only and never applies patches directly (see each skill's own SKILL.md Anti-Patterns table), so a still-valid issue always needs a human-routed fix regardless of which skill filed it |
 | Unarmed ready PR, granted (item 9) | Arm `--auto` per `_shared/pr-first-merge.md` — local action, no new merge mechanics |
+| Unarmed learned-skills PR, granted (item 9) | Drain via `/claude-tweaks:tidy` (`tidy/actions-github-issues.md`'s `## Drain learned-skills PRs`) — never armed by Arm ready PR |
 | Unarmed ready PR, ungranted (item 9) | Grant `auto:build` and `auto:merge` on every linked record, or set `housekeeping-auto-merge` for a tidy PR — judgment call, never auto-granted by this sweep |
 | Unsettled run (item 10) | Resume via the reported command, or release the claim and let a fresh dispatch pick the record back up — judgment call |
 | Stale pending-review PR, `mergeStateStatus DIRTY` (item 11) | Update from the integration branch and re-verify (typecheck, lint, full test suite) before it can merge — flag-only, never auto-rebased by this sweep; a human acts on it, or accepts close-out's offered update |
 
 Emit `[pr]` and `[gh-issue]` rows per the Output Contract. Backlog-record findings (the record-scan shapes: stale, parked-trigger, unsynced, needs-scoring, `bot:blocked`, legacy-taxonomy, `bot:parked`) no longer originate from this scope — see `tidy/step-1-records.md` for their findings table and `[backlog]`/`[parked]`/`[unsynced]`/`[scoring]`/`[blocked]`/`[legacy]`/`[bot-parked]` row prefixes. Items 9, 10, and 11 emit their own `[pr-unarmed]`, `[unsettled]`, and `[pr-stale]` prefixes instead — see the Output Contract below.
 
-**Anti-pattern: a self-scheduled per-PR check-in loop.** Do not have a session poll or re-check a single PR's arm/CI/merge state on its own schedule to "make sure it merges" — that durability lives in GitHub's own `--auto` (which merges the moment checks pass, with no session watching) plus this scheduled sweep (which catches the cases `--auto` alone can't: unarmed PRs and unsettled claims), neither of which depends on any session surviving. A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.
+**Anti-pattern: a self-scheduled per-PR check-in loop.** Do not have a session poll or re-check a single PR's arm/CI/merge state on its own schedule to "make sure it merges" — that durability lives in GitHub's own `--auto` plus this scheduled sweep (why: `github-pr-scan-rationale.md`).
 
 ## Scope: `triage-queue` (consumed by /help Stage 4.6)
 
@@ -473,7 +482,7 @@ Two collection prefixes for PR/code-health/harness-health/journey-health/docs-he
 - `[queue]` — grant-queue metrics (item 8 above, `repo-wide` scope only, derived from the single `gh issue list --state open` query already fetched): `[queue] {N} pending authorization, {M} bot:blocked, {K} backlog` — each count rendered `{N}+` when item 8's block warned that the fetch hit its cap
 - `[acceptance-gap]` — closed records with no acceptance disposition (`acceptance-gap` scope above): `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:accept #{n}`
 - `[parent-gate]` — decomposition parents with every sub-issue closed and no acceptance disposition on the parent (`parent-gate` scope above): `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:accept #{n}`, or below the oversight floor: `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
-- `[pr-unarmed]` — a green, gate-passed, plugin-created PR whose `--auto` was never armed, granted or not (`repo-wide` item 9): `[pr-unarmed] PR #{n}: {title} — {granted-or-ungranted content} — {recommendation}`
+- `[pr-unarmed]` — a green, gate-passed, plugin-created PR whose `--auto` was never armed, granted or not (`repo-wide` item 9; learned-skills PR: drain): `[pr-unarmed] PR #{n}: {title} — {granted-or-ungranted content} — {recommendation}`
 - `[unsettled]` — a claimed or `bot:in-progress` issue whose pipeline shows no progress past the threshold (`repo-wide` item 10): `[unsettled] #{n}: {PR-silent-or-no-PR content} — resume: {command}`; an unreadable registry or blob is `[unsettled] claims-registry could not be read ({reason}) — …` or `[unsettled] #{n}: claim blob could not be read ({reason}) — …`, never a resume line; an unreadable label list or PR list is `[unsettled] bot:in-progress list could not be read — …` or `[unsettled] PR list could not be read — …`
 - `[pr-stale]` — a `pending-review` PR whose `mergeStateStatus` has gone `DIRTY` since it was parked (`repo-wide` item 11, #2367): `[pr-stale] PR #{n} — pending-review, gone stale: mergeStateStatus DIRTY (...) — update from the integration branch and re-verify (...) before a human merges it`
 
@@ -495,6 +504,7 @@ Severity mapping (Template A Severity column):
 | Closed record with no acceptance disposition (`acceptance-gap` scope) | info |
 | Decomposition parent complete with no acceptance disposition (`parent-gate` scope) | info |
 | Unarmed ready PR, granted (item 9) — actionable, mechanical: arm now | medium |
+| Unarmed learned-skills PR, granted (item 9) — actionable, mechanical: drain now | medium |
 | Unarmed ready PR, ungranted (item 9) — nothing to act on until a human grants it | info |
 | Unsettled run (item 10) — a stuck claim silently blocks the record from being picked up again | medium |
 | Fresh draft PR / no PR / scan skipped | info |

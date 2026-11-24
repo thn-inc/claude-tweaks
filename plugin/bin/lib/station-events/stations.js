@@ -40,14 +40,16 @@ const KIND = Object.freeze({
 });
 const KINDS = Object.freeze(Object.values(KIND));
 
-// Carried only on `exited`; every other kind writes `outcome: null`. An `exited` is on the
-// new contract (it must carry a valid `payload.actor`) when its outcome is `sent-back` or
-// `stopped`, or when it is `passed`/`failed` and carries an actor at all; a `passed`/`failed`
-// without one, and every RETIRED_OUTCOMES line, is pre-contract and is written unchanged.
+// Carried only on `exited`; every other kind writes `outcome: null`. Every `exited` must carry a
+// valid `payload.actor`; `sent-back` also names the station it goes back to in `payload.next`.
 const OUTCOME = Object.freeze({ PASSED: 'passed', SENT_BACK: 'sent-back', FAILED: 'failed', STOPPED: 'stopped' });
 const OUTCOMES = Object.freeze(Object.values(OUTCOME));
-// Still accepted until the emitters that write them are migrated (record 8/8).
-const RETIRED_OUTCOMES = Object.freeze(['returned', 'skipped', 'abandoned']);
+// Retired outcome word -> its replacement, for the emitter's drop reason. Keys are identifiers, never string literals.
+const RETIRED_OUTCOMES = Object.freeze({
+  returned: 'sent-back',
+  skipped: 'a replanned event',
+  abandoned: 'stopped',
+});
 
 // Why an exit was not a pass, or why a plan was made. A caller's unknown or missing code is
 // normalized to REASON_UNSPECIFIED by emit.js, never dropped.
@@ -106,9 +108,10 @@ function outcomeForDriverStatus(status) {
 // `merge-call` is deliberately absent: it reports non-merges as `ok` too.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
-  'merge-ready': Object.freeze({ kind: 'entered', station: STATION.MERGE, substep: 'merge-ready' }),
-  'merge-confirm': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'passed', substep: 'merge-confirm', skipDetailPrefix: 'armed' }),
-  'merge-park': Object.freeze({ kind: 'exited', station: STATION.MERGE, outcome: 'returned', substep: 'merge-park' }),
+  'merge-ready': Object.freeze({ kind: KIND.ENTERED, station: STATION.MERGE, substep: 'merge-ready' }),
+  'merge-confirm': Object.freeze({ kind: KIND.EXITED, station: STATION.MERGE, outcome: OUTCOME.PASSED, substep: 'merge-confirm', skipDetailPrefix: 'armed', payload: Object.freeze({ actor: ACTOR.SCRIPT }) }),
+  // A park sends the record back to build: the accept `changes-requested` verdict's shape.
+  'merge-park': Object.freeze({ kind: KIND.EXITED, station: STATION.MERGE, outcome: OUTCOME.SENT_BACK, substep: 'merge-park', payload: Object.freeze({ actor: ACTOR.SCRIPT, reasonCode: REASON.UNSPECIFIED, next: STATION.BUILD }) }),
 });
 
 // Label edit -> the transitions it records, per the design's registry. The `release` station
@@ -117,31 +120,33 @@ const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
 // `bot:blocked` / `bot:parked` are absent: the emitter cannot know which
 // station's visit they end.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
+// Intake and shape exits are always the agent's: the label edit is the trace of its work.
+const AGENT_EXIT = Object.freeze({ actor: ACTOR.AGENT });
 const LABEL_TRANSITIONS = Object.freeze({
   [LABELS.NEEDS_DEFINITION]: Object.freeze({
-    removed: Object.freeze([{ kind: 'exited', station: STATION.INTAKE, outcome: 'passed' }]),
+    removed: Object.freeze([{ kind: KIND.EXITED, station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT }]),
   }),
   [LABELS.READY]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.INTAKE, outcome: 'passed' },
-      { kind: 'exited', station: STATION.SHAPE, outcome: 'passed' },
-      { kind: 'entered', station: STATION.AUTHORIZE },
+      { kind: KIND.EXITED, station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
+      { kind: KIND.EXITED, station: STATION.SHAPE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
+      { kind: KIND.ENTERED, station: STATION.AUTHORIZE },
     ]),
   }),
   [LABELS.AUTO_BUILD]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.AUTHORIZE, outcome: 'passed' },
-      { kind: 'entered', station: STATION.RELEASE },
+      { kind: KIND.EXITED, station: STATION.AUTHORIZE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.PERSON }) },
+      { kind: KIND.ENTERED, station: STATION.RELEASE },
     ]),
   }),
   [LABELS.BOT_IN_PROGRESS]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.RELEASE, outcome: 'passed' },
-      { kind: 'entered', station: STATION.BUILD },
+      { kind: KIND.EXITED, station: STATION.RELEASE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.SCRIPT }) },
+      { kind: KIND.ENTERED, station: STATION.BUILD },
     ]),
   }),
   [LABELS.ACCEPT_PENDING]: Object.freeze({
-    added: Object.freeze([{ kind: 'entered', station: STATION.ACCEPT }]),
+    added: Object.freeze([{ kind: KIND.ENTERED, station: STATION.ACCEPT }]),
   }),
 });
 
@@ -149,7 +154,7 @@ const LABEL_TRANSITIONS = Object.freeze({
 function transitionsForLabel(label, direction) {
   const entry = Object.prototype.hasOwnProperty.call(LABEL_TRANSITIONS, label) ? LABEL_TRANSITIONS[label] : null;
   const list = entry && Object.prototype.hasOwnProperty.call(entry, direction) ? entry[direction] : [];
-  return list.map((t) => ({ ...t }));
+  return list.map((t) => ({ ...t, ...(t.payload ? { payload: { ...t.payload } } : {}) }));
 }
 
 // Claim-release reason -> exited outcome of the visit the release ends. The families are the
@@ -157,20 +162,24 @@ function transitionsForLabel(label, direction) {
 // `pr-opened: spec N`, `abandoned: spec N`, `failed: {gate}`, `swept: ...`), claim-targets'
 // `never-started: ...` rollback, accept-park's `awaiting-local-acceptance` (the build visit hands
 // forward into accept, so it passed) and the driver's `drive.js settle: {outcome} at {step}`.
-// An unrecognised reason stays `returned`.
+// An unrecognised reason is `sent-back` to `release`: the record goes back to wait for a claim.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const word = (name) => new RegExp(`^${name}(?:[:\\s]|$)`);
 const RELEASE_PASSED = [word('merged'), word('pr-opened'), /^awaiting-local-acceptance$/, /^drive\.js settle: pending-review(?:\s|$)/];
-const RELEASE_ABANDONED = [word('abandoned'), word('never-started'), /^swept:/, /^drive\.js settle: refused(?:\s|$)/];
+// The `abandoned` reason is a regex literal: a retired outcome word is never spelled as a string here.
+const RELEASE_STOPPED = [/^abandoned(?:[:\s]|$)/, word('never-started'), /^swept:/, /^drive\.js settle: refused(?:\s|$)/];
 const RELEASE_FAILED = [word('failed'), /^drive\.js settle: blocked(?:\s|$)/];
 
 function outcomeForReleaseReason(reason) {
   const r = typeof reason === 'string' ? reason : '';
-  if (RELEASE_PASSED.some((re) => re.test(r))) return 'passed';
-  if (RELEASE_ABANDONED.some((re) => re.test(r))) return 'abandoned';
-  if (RELEASE_FAILED.some((re) => re.test(r))) return 'failed';
-  return 'returned';
+  if (RELEASE_PASSED.some((re) => re.test(r))) return OUTCOME.PASSED;
+  if (RELEASE_STOPPED.some((re) => re.test(r))) return OUTCOME.STOPPED;
+  if (RELEASE_FAILED.some((re) => re.test(r))) return OUTCOME.FAILED;
+  return OUTCOME.SENT_BACK;
 }
+
+// Where an unrecognised release sends the record: back to wait for a claim.
+const RELEASE_SENT_BACK_NEXT = STATION.RELEASE;
 
 // A shaping claim (`/specify`'s headless drain, specify/next-mode-shape.md's Release step) is
 // released with `shaped: #n`, `routed: needs:definition #n` or `failed: shaping`. It never entered
@@ -179,11 +188,17 @@ function outcomeForReleaseReason(reason) {
 const SHAPING_RELEASE = [/^shaped(?::|\s|$)/, /^routed(?::|\s|$)/, /^failed: shaping\s*$/];
 
 // Claim-release reason -> the station transition the release makes, or null when it makes none:
-// a fresh `{ kind: 'exited', station, outcome }` that the caller spreads into its event.
+// a fresh `{ kind: 'exited', station, outcome, payload }` that the caller spreads into its event.
+// The payload carries the contract fields (`actor`; `reasonCode` when not passed; `next` when
+// sent back); the caller merges its own fields (`reason`, `link`) over a copy of it.
 function releaseTransition(reason) {
   const r = typeof reason === 'string' ? reason : '';
   if (SHAPING_RELEASE.some((re) => re.test(r))) return null;
-  return { kind: 'exited', station: STATION.BUILD, outcome: outcomeForReleaseReason(r) };
+  const outcome = outcomeForReleaseReason(r);
+  const payload = { actor: ACTOR.SCRIPT };
+  if (outcome !== OUTCOME.PASSED) payload.reasonCode = REASON.UNSPECIFIED;
+  if (outcome === OUTCOME.SENT_BACK) payload.next = RELEASE_SENT_BACK_NEXT;
+  return { kind: KIND.EXITED, station: STATION.BUILD, outcome, payload };
 }
 
 module.exports = {
