@@ -3218,6 +3218,33 @@ test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail car
   }
 });
 
+test('#6149 the test line carries verifyExit on a red-tests stop and a verdict-less fail, and nowhere else', async () => {
+  const testLineOf = (h) => h.lines().find((l) => l.step === 'test');
+  for (const [code, want] of [[1, 1], [2, 2], [137, 137], [null, null], [undefined, null]]) {
+    const h = harness({ script: [[on('node', /verify\.js$/), { code, stdout: '', stderr: 'x' }]] });
+    await run(['#7'], h.deps);
+    const line = testLineOf(h);
+    assert.ok(Object.hasOwn(line, 'verifyExit'), String(code));
+    assert.equal(line.verifyExit, want, String(code));
+  }
+  const green = harness();
+  await run(['#7'], green.deps);
+  assert.equal(Object.hasOwn(testLineOf(green), 'verifyExit'), false);
+
+  // A verdict-less run that changed the tree: the composite carries it, the tree detail stays the prefix.
+  const dirty = leftDirtyHarness(' M src/a.js\0', { code: 2, stdout: '', stderr: 'boom' });
+  await run(['#7'], dirty.deps);
+  const dirtyLine = testLineOf(dirty);
+  assert.equal(dirtyLine.verifyExit, 2);
+  assert.ok(dirtyLine.detail.startsWith(treeDetail(1, 'src/a.js')));
+
+  // A green run that changed the tree: not a verify.js exit story.
+  const greenDirty = leftDirtyHarness(' M src/a.js\0');
+  await run(['#7'], greenDirty.deps);
+  assert.equal(testLineOf(greenDirty).status, 'fail');
+  assert.equal(Object.hasOwn(testLineOf(greenDirty), 'verifyExit'), false);
+});
+
 test('a symlinked (or non-directory) .claude-tweaks parent refuses the scope file, no test run', async () => {
   const parent = path.join(WT, '.claude-tweaks');
   for (const type of ['symlink', 'file', 'other', 'unreadable']) {
@@ -4060,6 +4087,103 @@ test('#5997: the fix round launches on the first attempt\'s profile and its line
   assert.equal(Object.hasOwn(fixLine, 'attempt'), false);
 });
 
+// --- the implementer effort ladder's first launch and fix round (#6002, Task 3) -----------------
+const LADDER = { ...RECORD_TIER, 'model-effort': 'profile', 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'medium' } } };
+const MEDIUM_LOW_RISK = tierIssue(['risk:low', 'size:medium'], keyFilesBody('a.js', 'b.js', 'c.js'));
+const reviewerLaunchEffort = (h) => h.calls.find((c) => c.kind === 'worker' && c.args[0].role === 'reviewer').args[0].effort;
+
+test('#6002 characterization: record + inherit launch opts are unchanged', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...RECORD_TIER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].model, M('standard'));
+  assert.equal(first.args[0].effort ?? null, null);
+  assert.equal(fix.args[0].model, M('standard'));
+  assert.equal(fix.args[0].effort ?? null, null);
+  const [line, fixLine] = workerLines(h);
+  assert.equal(line.effort, null);
+  assert.equal(fixLine.effort, null);
+});
+
+test('#6002 AC4.1 (first launch): risk:low size:medium starts standard at --effort low', async () => {
+  const h = harness({ policy: LADDER, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(workerCall(h).args[0].effort, 'low');
+  assert.equal(workerCall(h).args[0].model, M('standard'));
+  const [line] = workerLines(h);
+  assert.deepEqual([line.effort, line.attempt, line.profile], ['low', 1, 'standard']);
+});
+
+test('#6002 AC1.1 (driver): a risk:medium record starts at medium, an unlabeled-risk record at launchEffort', async () => {
+  for (const labels of [['risk:medium', 'size:medium'], ['size:medium']]) {
+    const h = harness({ policy: LADDER, script: [tierIssue(labels, keyFilesBody('a.js', 'b.js', 'c.js'))] });
+    assert.equal(await run(['#7'], h.deps), 0, labels.join());
+    assert.equal(workerCall(h).args[0].effort, 'medium', labels.join());
+    assert.equal(workerLines(h)[0].effort, 'medium', labels.join());
+  }
+});
+
+test('#6002 AC5.1 (first launch): model-effort inherit passes no effort under record', async () => {
+  const h = harness({ policy: RECORD_TIER, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(workerCall(h).args[0].effort ?? null, null);
+  assert.equal(workerLines(h)[0].effort, null);
+});
+
+test('#6002: the fix round launches at the green attempt\'s effort and profile; under lane it carries no explicit effort', async () => {
+  const h = fixRig({ policy: { 'express-driver-review': 'on', ...LADDER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, fix] = implementerCalls(h);
+  assert.equal(first.args[0].effort, 'low');
+  assert.equal(fix.args[0].effort, 'low');
+  assert.equal(fix.args[0].model, M('standard'));
+  const [, fixLine] = workerLines(h);
+  assert.deepEqual([fixLine.effort, fixLine.profile, fixLine.fix], ['low', 'standard', true]);
+  const lane = fixRig({ policy: { 'express-driver-review': 'on', 'model-effort': 'profile', 'model-profiles': LADDER['model-profiles'] } });
+  assert.equal(await run(['#7'], lane.deps), 0);
+  assert.equal(implementerCalls(lane)[1].args[0].effort, 'medium', 'lane: roleLaunch\'s own effort');
+});
+
+test('#6002: under record + inherit and lane the fix round passes no effort key to the run seam', async () => {
+  for (const policy of [RECORD_TIER, { 'model-effort': 'profile' }]) {
+    const seen = [];
+    const ctx = { implementer: { rule: policy === RECORD_TIER ? 'record' : 'lane', profile: 'standard', effort: 'low' }, events: { emit() {} }, shared: { interrupted: null, policy: { 'implementer-tier': { value: policy['implementer-tier'] ?? 'lane' }, 'model-effort': { value: policy['model-effort'] ?? 'inherit' } } }, workerTestMode: 'declared' };
+    await fixWorkerLaunch(ctx, { now: () => 0 }, 'x', async (_c, _d, opts) => { seen.push(opts); return { status: 'ok' }; });
+    assert.equal(Object.hasOwn(seen[0], 'effort'), false, JSON.stringify(policy));
+  }
+  const ladder = { implementer: { rule: 'record', profile: 'standard', effort: 'low' }, events: { emit() {} }, shared: { interrupted: null, policy: { 'implementer-tier': { value: 'record' }, 'model-effort': { value: 'profile' } } }, workerTestMode: 'declared' };
+  const seen = [];
+  await fixWorkerLaunch(ladder, { now: () => 0 }, 'x', async (_c, _d, opts) => { seen.push(opts); return { status: 'ok' }; });
+  assert.equal(seen[0].effort, 'low');
+});
+
+test('#6002 AC1 (driver): risk:high, and duplicated risk labels, start at launchEffort', async () => {
+  for (const labels of [['risk:high', 'size:medium'], ['risk:high', 'risk:low', 'size:medium']]) {
+    const h = harness({ policy: LADDER, script: [tierIssue(labels, keyFilesBody('a.js', 'b.js', 'c.js'))] });
+    assert.equal(await run(['#7'], h.deps), 0, labels.join());
+    assert.equal(workerCall(h).args[0].effort, 'medium', labels.join());
+  }
+});
+
+test('#6002: a roleLaunch refusal inside the ladder branch is a no-line fail and launches nothing', async () => {
+  const h = harness({ policy: LADDER, deps: { recordImplementerProfile: () => 'no-such-profile' } });
+  await run(['#7'], h.deps);
+  assert.equal(calls(h, 'worker').length, 0);
+  assert.equal(workerLines(h).length, 0);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'worker');
+  assert.match(final.stop.detail, /^no model for driver role implementer: profile no-such-profile did not resolve/);
+});
+
+test('#6002 AC7.1 (driver): the reviewer\'s effort is unchanged under the ladder', async () => {
+  const base = fixRig({ policy: { 'express-driver-review': 'on', 'model-effort': 'profile', 'model-profiles': LADDER['model-profiles'] }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], base.deps), 0);
+  const ladder = fixRig({ policy: { 'express-driver-review': 'on', ...LADDER }, script: [MEDIUM_LOW_RISK] });
+  assert.equal(await run(['#7'], ladder.deps), 0);
+  assert.equal(reviewerLaunchEffort(ladder), reviewerLaunchEffort(base));
+  assert.equal(typeof reviewerLaunchEffort(ladder), 'string');
+});
+
 // --- the implementer relaunch under implementer-tier record (#5997, Task 5) ----------------------
 const RED_REPORT = readText(path.join(__dirname, '..', '..', 'fixtures', 'driver-relaunch', 'red-report.json'));
 const REPORT_PATH = path.join(MAIN, 'verify-report.json');
@@ -4074,8 +4198,9 @@ const reportReplies = (get) => [
   [(c) => c.kind === 'readFile' && c.args[0] === REPORT_PATH, RED_REPORT],
 ];
 // A record-tier run whose first implementer launch replies `first` and its relaunch `second`; the relaunch leaves
-// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean.
-function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
+// `relaunchDirty` in the tree beside whatever is there, and each commit leaves the tree clean. `replies`
+// (#6002), when given, answers the n-th launch with its n-th entry in place of `first` and `second`.
+function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, replies = null, relaunchDirty = ' M b.js\0', script = [], issue = SMALL_RECORD, report = true, ...over } = {}) {
   let h = null;
   h = harness({
     ...over,
@@ -4084,9 +4209,10 @@ function relaunchRig({ policy = {}, first = ENVELOPE, second = ENVELOPE, relaunc
       ...script,
       issue,
       [isImplementerLaunch, (c) => {
-        if (implementerCalls(h).length === 1) return pick(first, c);
-        h.fx.dirty += relaunchDirty;
-        return pick(second, c);
+        const n = implementerCalls(h).length;
+        if (n > 1) h.fx.dirty += relaunchDirty;
+        if (replies !== null) return pick(replies[Math.min(n, replies.length) - 1], c);
+        return pick(n === 1 ? first : second, c);
       }],
       [onGit('commit'), () => { h.fx.committed = true; h.fx.dirty = ''; return ''; }],
       ...(report ? reportReplies(() => h) : []),
@@ -4440,6 +4566,204 @@ test('#5997: the fix round never relaunches or skips', async () => {
   assert.deepEqual([final.stop.step, final.stop.reason], [STEP.review, 'failing-test']);
   assert.ok(final.stop.detail.startsWith('fix round test: red tests'), final.stop.detail);
   assert.ok(noRelaunchKey(h));
+});
+
+// --- the implementer effort ladder's relaunches (#6002, Task 4) -----------------------------------
+// relaunchRig under the ladder on a risk:low size:medium record: standard at low effort first.
+// The first `count` test runs red: one entry, since the harness answers a call with the first entry that matches
+// and a second nthCall entry never sees the calls the first one took.
+const redRuns = (count) => { let seen = 0; return [(c) => isVerifyCall(c) && (seen += 1) <= count, RED_VERIFY]; };
+const ladderRig = ({ policy = {}, ...over } = {}) => relaunchRig({ issue: MEDIUM_LOW_RISK, ...over, policy: { ...LADDER, ...policy } });
+const launchModelEffort = (h) => implementerCalls(h).map((c) => [c.args[0].model, c.args[0].effort ?? null]);
+const TWO_RELAUNCH_NOTE = 'after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable@medium)';
+
+test('#6002 AC4.1: two red runs climb low → medium on standard → capable', async () => {
+  const h = ladderRig({ script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.deepEqual(lines.map((l) => [l.attempt, l.effort, l.profile]), [[1, 'low', 'standard'], [2, 'medium', 'standard'], [3, 'medium', 'capable']]);
+  assert.deepEqual(lines.slice(1).map((l) => [l.escalatedFrom, l.trigger]), [['standard', 'red-tests'], ['standard', 'red-tests']]);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 10), [
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok'],
+  ]);
+  assert.equal(h.lines().filter((l) => l.step === STEP.check).length, 1);
+  const tests = h.lines().filter((l) => l.step === STEP.test);
+  assert.equal(tests[1].detail, 'red tests; after one relaunch (red-tests, standard@low to standard@medium)', 'the second test line names the relaunch it follows');
+  assert.ok(noRelaunchKey(h));
+});
+
+test('#6002: a Fast first launch has no effort rung — its first red run steps up to standard at standard\'s launchEffort', async () => {
+  const h = ladderRig({ issue: SMALL_RECORD, script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('fast'), null], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.deepEqual(lines.map((l) => [l.attempt, l.effort ?? null, l.profile]), [[1, null, 'fast'], [2, 'medium', 'standard'], [3, 'medium', 'capable']]);
+  assert.deepEqual(lines.slice(1).map((l) => [l.escalatedFrom, l.trigger]), [['fast', 'red-tests'], ['standard', 'red-tests']]);
+});
+
+test('#6002 AC4.2: a third red run leaves as #5997\'s second failure does', async () => {
+  const control = relaunchRig({ script: [[isVerifyCall, RED_VERIFY]] });
+  await run(['#7'], control.deps);
+  const h = ladderRig({ script: [redRuns(3)] });
+  await run(['#7'], h.deps);
+  const [want, got] = [lastLine(control), lastLine(h)];
+  assert.deepEqual([got.outcome, got.stop.class, got.stop.reason, got.stop.step], [want.outcome, want.stop.class, want.stop.reason, want.stop.step]);
+  assert.equal(escalateReason(h), escalateReason(control));
+  assert.ok(escalateReason(h) !== null);
+  assert.equal(got.stop.detail, `red tests; ${TWO_RELAUNCH_NOTE}`);
+  assert.ok(got.stop.detail.includes('after two relaunches ('));
+  assert.equal(implementerCalls(h).length, 3);
+  assert.equal(verifyCalls(h).length, 3);
+});
+
+test('#6002 AC4.3: a first cannot-complete goes straight to capable', async () => {
+  const h = ladderRig({ replies: [STUCK, ENVELOPE] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.deepEqual(launchModelEffort(h)[1], [M('capable'), 'medium']);
+  const [, line] = workerLines(h);
+  assert.deepEqual([line.trigger, line.attempt, line.escalatedFrom, line.effort], ['cannot-complete', 2, 'standard', 'medium']);
+});
+
+test('#6002: red then cannot-complete climbs to capable', async () => {
+  const h = ladderRig({ script: [redRun(1)], replies: [ENVELOPE, STUCK, ENVELOPE] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('capable'), 'medium']]);
+  const lines = workerLines(h);
+  assert.equal(lines[1].effort, 'medium');
+  assert.deepEqual(lines.map((l) => [l.status, l.attempt]), [['ok', 1], ['stop', 2], ['ok', 3]]);
+  assert.deepEqual([lines[2].trigger, lines[2].escalatedFrom], ['cannot-complete', 'standard']);
+  assert.deepEqual(fromFirstWorker(h).slice(0, 8), [
+    ['worker', 'ok'], ['commit', 'ok'], ['test', 'stop'],
+    ['worker', 'stop'], ['worker', 'ok'], ['commit', 'ok'], ['test', 'ok'], ['check', 'ok'],
+  ], 'the stuck attempt queues one worker: the queued commit and test run once, after attempt 3');
+  // Attempt 2's edits are never committed alone: one commit after the first attempt, one after the third.
+  assert.equal(h.lines().filter((l) => l.step === STEP.commit).length, 2);
+});
+
+test('#6002 AC5.1: model-effort inherit keeps one relaunch with no effort', async () => {
+  const h = relaunchRig({ issue: MEDIUM_LOW_RISK, script: [redRuns(2)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), null], [M('capable'), null]]);
+  assert.ok(lastLine(h).stop.detail.includes('after one relaunch (red-tests, standard to capable)'), lastLine(h).stop.detail);
+  assert.ok(!lastLine(h).stop.detail.includes('@'));
+});
+
+test('#6002: a clamped profile step after an effort step ends the ladder with noRelaunch clamped', async () => {
+  const h = ladderRig({ policy: { 'model-ceiling': 'standard' }, script: [redRuns(2)] });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium']]);
+  const last = h.lines().filter((l) => l.step === STEP.test).at(-1);
+  assert.equal(last.noRelaunch, 'clamped');
+  assert.ok(last.detail.includes(`no relaunch: capable resolves to ${M('standard')}`), last.detail);
+  assert.equal(lastLine(h).stop.step, STEP.test);
+});
+
+test('#6002: the second relaunch\'s changedFiles is all three commits\' paths', async () => {
+  let h = null;
+  const dirtying = (d) => () => { h.fx.dirty += d; return { ...ENVELOPE }; };
+  // Neither relaunch touches a.js, the first commit's only path, nor the second b.js: both survive only through the union.
+  h = ladderRig({ relaunchDirty: '', replies: [ENVELOPE, dirtying(' M b.js\0'), dirtying('?? c.js\0')], script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(gitAddPaths(h), [['a.js'], ['b.js'], ['c.js']]);
+  assert.ok(summaryText(h).includes('express lane: a.js, b.js, c.js;'), summaryText(h));
+});
+
+test('#6002: the final line\'s costUsd sums all three launches', async () => {
+  const half = { ...ENVELOPE, costUsd: 0.5 };
+  for (const over of [{ script: [redRuns(2)], replies: [ENVELOPE, half, half] }, { script: [redRun(1)], replies: [ENVELOPE, { ...STUCK, costUsd: 0.5 }, half] }]) {
+    const h = ladderRig(over);
+    assert.equal(await run(['#7'], h.deps), 0);
+    assert.equal(implementerCalls(h).length, 3);
+    assert.equal(lastLine(h).costUsd, 1.25);
+    assert.equal(lastLine(h).turns, 9);
+  }
+});
+
+test('#6002: the attempt-3 prompt carries the first prompt and only the newest relaunch text', async () => {
+  const h = ladderRig({ script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const [first, , third] = implementerCalls(h).map((c) => c.args[0].prompt);
+  assert.ok(third.startsWith(first), 'the first prompt opens the attempt-3 prompt');
+  assert.ok(third.includes('Your previous attempt'));
+  assert.ok(!third.includes('Your first attempt'));
+  assert.equal(third.split('Relaunch.').length, 2, 'exactly one Relaunch. paragraph');
+  assert.ok(third.slice(first.length).startsWith('\nRelaunch.'));
+});
+
+test('#6002: after a first cannot-complete reaches capable, a second failure has no step-up', async () => {
+  for (const [name, over, step] of [
+    ['cannot-complete twice', { replies: [STUCK, STUCK] }, STEP.worker],
+    ['cannot-complete then red', { replies: [STUCK, ENVELOPE], script: [redRuns(1)] }, STEP.test],
+  ]) {
+    const h = ladderRig(over);
+    await run(['#7'], h.deps);
+    assert.equal(implementerCalls(h).length, 2, name);
+    const line = h.lines().filter((l) => l.step === step && l.status !== 'ok').at(-1);
+    assert.equal(line.noRelaunch, 'no-step-up', name);
+    assert.ok(line.detail.includes('no relaunch: no profile above capable'), `${name}: ${line.detail}`);
+    assert.equal(lastLine(h).stop.step, step, name);
+  }
+});
+
+test('#6002: a second-escalation step-up that does not resolve is a refused relaunch noting both relaunches', async () => {
+  const h = ladderRig({
+    script: [redRuns(2)],
+    policy: {
+      'express-driver-models': { ...POLICY['express-driver-models'], reviewer: 'standard' },
+      'model-profiles': { standard: { effort: 'medium' }, capable: { model: 'no-such-model', effort: 'medium' } },
+    },
+  });
+  await run(['#7'], h.deps);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium']]);
+  assert.equal(workerLines(h).length, 2, 'the refused relaunch writes no worker line');
+  const final = lastLine(h);
+  assert.equal(final.stop.step, STEP.worker);
+  assert.ok(final.stop.detail.startsWith('no model for driver role implementer'), final.stop.detail);
+  assert.ok(final.stop.detail.endsWith('; after two relaunches (red-tests, standard@low to standard@medium; red-tests, standard@medium to capable)'), final.stop.detail);
+});
+
+test('#6002: the ladder bound reads ctx.relaunch alone, so an attempt that set no implementer cannot queue a fourth launch', () => {
+  const policy = { 'implementer-tier': { value: 'record' }, 'model-effort': { value: 'profile' } };
+  // Attempt 3 resolved no model, so ctx.implementer still holds attempt 2 (escalations 1); ctx.relaunch holds the second relaunch.
+  const ctx = {
+    implementer: { rule: 'record', profile: 'standard', model: M('standard'), attempt: 2, effort: 'medium', escalations: 1 },
+    relaunch: { trigger: 'red-tests', from: 'standard', to: 'capable', escalations: 2, ran: true, history: [] },
+    shared: { policy }, changedFiles: ['a.js'],
+  };
+  const line = { status: 'stop', reason: 'failing-test', detail: 'red tests', halt: true };
+  const r = relaunchOrStop(ctx, line, 'red-tests', () => assert.fail('no fourth relaunch is planned'));
+  assert.equal(r, line, 'the result comes back as it was, nothing queued');
+});
+
+test('#6002: after a red first run, the fix round launches at the green relaunch\'s effort, not the first attempt\'s', async () => {
+  let h = null;
+  h = fixRig({
+    policy: { 'express-driver-review': 'on', ...LADDER },
+    script: [
+      MEDIUM_LOW_RISK,
+      redRun(1),
+      nthCall(isImplementerLaunch, 1, () => ({ ...ENVELOPE })),
+      nthCall(isImplementerLaunch, 2, () => { h.fx.dirty = ' M b.js\0'; return { ...ENVELOPE }; }),
+      nthCall(onGit('commit'), 2, () => { h.fx.dirty = ''; return ''; }),
+      ...reportReplies(() => h),
+    ],
+  });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h), [[M('standard'), 'low'], [M('standard'), 'medium'], [M('standard'), 'medium']]);
+  const [, relaunchLine, fixLine] = workerLines(h);
+  assert.deepEqual([relaunchLine.attempt, relaunchLine.effort], [2, 'medium']);
+  assert.deepEqual([fixLine.effort, fixLine.profile, fixLine.fix], ['medium', 'standard', true]);
+});
+
+test('#6002 AC7.1 (ladder): no launch above high', async () => {
+  const h = ladderRig({ policy: { 'model-profiles': { standard: { effort: 'medium' }, capable: { effort: 'max' } } }, script: [redRuns(2)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  assert.deepEqual(launchModelEffort(h).map(([, e]) => e), ['low', 'medium', 'high']);
+  assert.equal(workerLines(h)[2].effort, 'high');
 });
 
 test('AC7.1: every worker line carries the model its launch was given', async () => {
@@ -4895,6 +5219,16 @@ test('#5915 AC1: with a declared impact.command the prompt names it and no npm t
   assert.ok(opts.prompt.split('\n').includes(EDIT_LINE_LISTED), 'the edit rule excepts the list file');
   assert.ok(!opts.prompt.split('\n').includes(EDIT_LINE));
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', 'the run goes on to the test step');
+});
+
+test('#6161: the declared-test prompt says to run the command unchained and to retry a denied shape', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL)] });
+  await run(['#7'], h.deps);
+  const { prompt } = workerCall(h).args[0];
+  assert.ok(prompt.includes('Write the test list with the Write tool'));
+  assert.ok(prompt.includes('one Bash call on its own'));
+  assert.ok(prompt.includes('read-only `git status/diff/log/show/ls-files`'));
+  assert.ok(prompt.includes('that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form'));
 });
 
 test('#5915 AC2: with no declaration the prompt says not to run tests and the launch has no testCommand', async () => {
@@ -5569,6 +5903,17 @@ test('#5997: docs/driver.md documents the record profile, the one relaunch and t
   }
   const events = section('Event lines');
   for (const part of ['`profile`', '`attempt`']) assert.ok(events.includes(part), `Event lines names ${part}`);
+});
+
+test('#6002: docs/driver.md documents the effort ladder', () => {
+  const docs = readText(path.join(__dirname, '..', '..', '..', 'docs', 'driver.md'));
+  const start = docs.indexOf('**Effort ladder (#6002).**');
+  assert.notEqual(start, -1, 'the Effort ladder paragraph exists');
+  const para = docs.slice(start, docs.indexOf('\n\n', start));
+  for (const part of ['`attempt`', '`3`', 'model-effort: inherit', 'cannot-complete', 'red tests', 'Standard implementer at low effort (#6002)']) {
+    assert.ok(para.includes(part), `the Effort ladder paragraph names ${part}`);
+  }
+  assert.ok(docs.includes('four implementer launches per record'), 'the ceilings bullet names the ladder\'s worst case');
 });
 
 test('fix round: a kept evidence run that throws or survives its kill fails, and an interrupt yields', async () => {
@@ -6930,6 +7275,15 @@ test('AC8.3: an unclassified stop through the run loop is settled by the blocked
   assert.deepEqual([final.settleRow, final.unclassified, final.outcome, final.settle], ['blocked', true, 'blocked', 'done']);
   assert.equal(final.stop.class, 'bogus');
   assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+  assert.equal(settleLines(h).find((l) => l.step === 'settle-label').stopStep, 'test');
+});
+
+test('a claim-class stop\'s settle-label line names the stopped step (#6151)', async () => {
+  const h = harness({ script: [claimReply(5, '', 'x')] });
+  await run(['#7'], h.deps);
+  const label = settleLines(h).find((l) => l.step === 'settle-label');
+  assert.ok(label, 'the claim row writes a settle-label line');
+  assert.equal(label.stopStep, 'claim');
 });
 
 test('settle notes ride the final line: a claim that may lapse by TTL', async () => {
@@ -8907,6 +9261,22 @@ test('#5902 the real emitter over an unwritable main checkout: stdout, driver-ev
   }
 });
 
+test('#6149 a red test step mirrors through the real sink as exited test failed, reasonCode test-failed, actor agent', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'test-failed', 'agent']);
+});
+
+test('#6149 a verdict-less test run mirrors as infrastructure', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 2, stdout: '', stderr: 'boom' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'infrastructure', 'agent']);
+});
+
 test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
   const order = [];
   let release;
@@ -8945,7 +9315,7 @@ test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, 
   const stopLine = h.lines().find((l) => l.step === 'test');
   const ofStop = seen.filter((e) => e.discriminator === `test@${stopLine.ts}`).map((e) => [e.kind, e.station, e.outcome]);
   assert.strictEqual(stopLine.status, 'stop', 'red tests stop the record');
-  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'returned']]);
+  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'failed']]);
 
   let thrown = 0;
   const throwing = harness({ script: REDTESTS.script, deps: { stationEvent: () => { thrown += 1; throw new Error('station sink down'); } } });

@@ -52,6 +52,8 @@ printf '%s' "$PAYLOAD" | node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-engine.js" reco
 
 **Ordering is not advisory.** `Memory` and `Upstream feedback` are judged **last**, after every earlier row has been recorded — including `Broken references`, which sits before them in registry order. Their input is the set of learnings *no earlier row claimed*, so judging them early routes a learning to memory that CLAUDE.md, a decision record, or a skill update was about to absorb.
 
+**Drain step — after the Review Console and every `record` call, before the phase-trace `render`.** When `learned-skills-auto-merge` resolves `true`, run `learned-skills-pr.md`'s drain (its "Drain at the end of wrap-up" section) so `render` carries the outcome on the Skills row; with the lever off, skip it.
+
 **Step 3 — `render`, once, at the end.**
 
 ```bash
