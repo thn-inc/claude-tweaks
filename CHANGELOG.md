@@ -81,6 +81,34 @@ Three conventions follow from how this repo works, and all are visible below:
 * Write gate misses a quoted '(x' redirect target and a cd… ([#4460](https://github.com/thn-inc/claude-tweaks/issues/4460)) ([feaf9e3](https://github.com/thn-inc/claude-tweaks/commit/feaf9e34c004f23c253af0e1271f8a5b75874290))
 * Write gate misses the command after a backslash-newline… ([#4245](https://github.com/thn-inc/claude-tweaks/issues/4245)) ([5b12c69](https://github.com/thn-inc/claude-tweaks/commit/5b12c69de0342d574603e190fea7a6757a9d6b2e))
 
+### Highlights
+* The worktree write guard now catches file writes and git commits placed inside if, for, while and case blocks.
+* Test-suite hook denials stay out of every friction and guard-cost count, from one shared rule instead of three copies.
+* Improved test coverage for the worktree write guard's handling of commands split across lines with a trailing backslash.
+* Reconcile now archives abandoned multi-spec run directories whose records are all closed.
+* Console backfill no longer files a duplicate record when a crash and a plugin upgrade both land between two passes over a same-claim pair.
+* Tidy's GitHub scan now describes its merged and closed PR queries correctly and finds stale branches from abandoned PRs more reliably.
+* The session-start notice about unreviewed console items now asks you to review and acknowledge them, instead of telling Claude to do it on its own.
+* The worktree-always guard now catches a write to a quoted name starting with `(` and a `cd` written with a glued redirect.
+* The pipeline shadow guard now catches a copy into an existing run directory.
+* An express-lane merge made from `/claude-tweaks:flow` or `/claude-tweaks:dispatch #N` now gets its sampled review right away instead of waiting for the next scheduled drain.
+* A current-branch wrap-up no longer closes the issue of a spec that failed or never ran in a multi-spec run.
+* Review no longer drops a lens agent's BLOCKED or NEEDS_CONTEXT reason silently. It asks once more, then reports the lens as single-read coverage.
+* Retired the returned, skipped and abandoned outcomes from station events and published the event contract.
+* Reconcile's stuck-run record now says how to clear a run whose pull request was closed without merging.
+* Keep `/flow`'s automatic stories step when a context handoff happens before it runs.
+* Dispatched review agents are told never to delete anything outside their own scratch directory.
+* Wrote held and released station events for hold labels and stopped appending unchanged blocker snapshots.
+* Wrap-up now repairs learned-skill update PRs that conflict because two runs added to the same spot, instead of leaving them for a person to fold by hand.
+* The PR scan and `/claude-tweaks:tidy` now merge learned-skill update PRs that wrap-up left behind, when `learned-skills-auto-merge` is on.
+* Wrote a replanned station event when the stations of a claimed record change.
+* Another session can no longer mark a pipeline's draft PR ready or merge it while its build is still running, and a merge that lands mid-build is reported instead of being treated as shipped.
+* Made the release and authorize transitions write an outcome, actor and reason, plus a decided event for authorize.
+* Review can run its lens reviewers as lightweight headless workers with `review-lens-dispatch: worker`, including when review runs inside a dispatched agent.
+* Wrap-up now merges its learned-skill update PRs once CI passes (when `learned-skills-auto-merge` is on), so they no longer pile up waiting for a person.
+* Made driver exits write an outcome with actor and reason code into the station-event file.
+* Internal: record-body and PR-body section readers no longer treat a heading-shaped line inside a fenced code block as a section boundary.
+
 ## [6.178.0](https://github.com/thn-inc/claude-tweaks/compare/v6.177.0...v6.178.0) (2026-11-24)
 
 
