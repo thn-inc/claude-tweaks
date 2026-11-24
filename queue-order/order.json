@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-11-24T05:01:01.074Z",
+  "computedAt": "2026-11-24T06:20:07.269Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 6161,
-        "updatedAt": "2026-11-24T04:43:13Z",
+        "updatedAt": "2026-11-24T06:13:57Z",
         "state": "OPEN"
       },
       {
@@ -25,17 +25,12 @@
       },
       {
         "number": 6149,
-        "updatedAt": "2026-11-24T04:54:22Z",
+        "updatedAt": "2026-11-24T05:17:14Z",
         "state": "OPEN"
       },
       {
         "number": 6148,
         "updatedAt": "2026-11-23T19:41:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6147,
-        "updatedAt": "2026-11-24T04:38:05Z",
         "state": "OPEN"
       },
       {
@@ -60,7 +55,7 @@
       },
       {
         "number": 6003,
-        "updatedAt": "2026-11-24T04:54:05Z",
+        "updatedAt": "2026-11-24T06:13:21Z",
         "state": "OPEN"
       },
       {
@@ -365,7 +360,7 @@
       },
       {
         "number": 4451,
-        "updatedAt": "2026-10-30T06:50:58Z",
+        "updatedAt": "2026-11-24T06:10:09Z",
         "state": "OPEN"
       },
       {
@@ -380,12 +375,12 @@
       },
       {
         "number": 4443,
-        "updatedAt": "2026-10-30T04:28:08Z",
+        "updatedAt": "2026-11-24T06:08:53Z",
         "state": "OPEN"
       },
       {
         "number": 4442,
-        "updatedAt": "2026-10-30T04:28:03Z",
+        "updatedAt": "2026-11-24T05:57:59Z",
         "state": "OPEN"
       },
       {
@@ -395,12 +390,12 @@
       },
       {
         "number": 4431,
-        "updatedAt": "2026-10-30T04:27:55Z",
+        "updatedAt": "2026-11-24T05:49:30Z",
         "state": "OPEN"
       },
       {
         "number": 4429,
-        "updatedAt": "2026-10-30T04:27:51Z",
+        "updatedAt": "2026-11-24T05:33:48Z",
         "state": "OPEN"
       },
       {
@@ -490,7 +485,7 @@
       },
       {
         "number": 4366,
-        "updatedAt": "2026-11-24T05:00:08Z",
+        "updatedAt": "2026-11-24T05:17:11Z",
         "state": "OPEN"
       },
       {
@@ -740,7 +735,7 @@
       },
       {
         "number": 3835,
-        "updatedAt": "2026-11-23T17:53:14Z",
+        "updatedAt": "2026-11-24T05:11:46Z",
         "state": "OPEN"
       },
       {
@@ -847,7 +842,7 @@
         "number": 6161,
         "state": "OPEN",
         "title": "Tell the driver implementer its Bash runs only the unchained test command, so a refused chain is retried, not fatal",
-        "updatedAt": "2026-11-24T04:43:13Z",
+        "updatedAt": "2026-11-24T06:13:57Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -876,8 +871,8 @@
     ],
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nMake the driver mirror its step status into station events with the new outcome vocabulary, an actor and a reason code. This is task 5 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E1 | Floor map, emission 1/8: Capture pass: transition code by station, and the station order from real moves | must be merged before this starts (native blocked-by edge) |\n| E2 | Floor map, emission 2/8: Vocabulary and validation | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/stations.js` (`DRIVER_STATUS_OUTCOMES`), `plugin/bin/lib/station-events/driver-mirror.js`, `plugin/bin/lib/driver/run.js`\n- Test: `tests/bin-lib/station-events/driver-mirror.test.js`, `tests/bin-lib/driver/run.test.js`\n\nInterfaces:\n\n- Produces: `DRIVER_STATUS_OUTCOMES = { ok: 'passed', fail: 'failed', stop: <per Task 1> }`; driver `exited` lines carry `payload.actor: 'script'` for `ci`/`merge`/`pr` steps and `'agent'` for `worker`/`test`/`review`, and `payload.reasonCode: 'test-failed'` for a failed `test` step, `'infrastructure'` for a failed `ci` step whose failure is classified as infrastructure by the driver, otherwise `'unspecified'`.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `a failed test step mirrors to exited failed with reasonCode test-failed and actor agent`; `a failed ci step classified infrastructure mirrors with reasonCode infrastructure`; `an ok step mirrors to exited passed with actor`; `a step with no known reason mirrors with reasonCode unspecified`.\n2. Review focus, covered by the tests above: A transition whose code path cannot name a reason writes `unspecified` and still writes the `exited` line.\n\n## Release Note\n\nMade driver exits write an outcome with actor and reason code into the station-event file.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `a failed test step mirrors to exited failed with reasonCode test-failed and actor agent`; `a failed ci step classified infrastructure mirrors with reasonCode infrastructure`; `an ok step mirrors to exited passed with actor`; `a step with no known reason mirrors with reasonCode unspecified`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/driver-mirror.test.js tests/bin-lib/driver/run.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** the mapping in `driver-mirror.js`; use the driver's existing failure classification for `ci`, and write `unspecified` where none exists.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: driver exits carry outcome, actor and reason`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/stations.js`\n- `plugin/bin/lib/station-events/driver-mirror.js`\n- `plugin/bin/lib/driver/run.js`\n- `tests/bin-lib/station-events/driver-mirror.test.js`\n- `tests/bin-lib/driver/run.test.js`\n\n## Gotchas\n\n- Changes the driver status-to-outcome mapping.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-5 -->\nwork-fingerprint: factory-floor-map-emission:emission-5\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n\n## Decisions on the plan review (orchestrator, 2026-11-23, answering its two questions)\n\n1. **Red tests are the `test-failed` case: Reading B.** The driver's test step returns `status: 'stop'` with detail `red tests` for red tests, and `status: 'fail'` only when `verify.js` gives no verdict. Mirror them like this:\n   - test step, `stop`, detail `red tests` -> `exited` outcome `failed`, `reasonCode: 'test-failed'`, actor `agent`.\n   - test step, `fail`, a verdictless detail (timeout, spawn error, exit 2, the `verdictlessDetail` cases) -> outcome `failed`, `reasonCode: 'infrastructure'`, actor `agent`.\n   - test step, `fail` from an interrupted run -> outcome `failed`, `reasonCode: 'unspecified'`.\n   - any other driver `stop` (any step, any other reason) -> outcome `stopped`, `reasonCode: 'unspecified'`, `reasonText` set to the driver's reason; the `stop` entry of `DRIVER_STATUS_OUTCOMES` stays `stopped`, and this red-tests case is the one detail-keyed exception to it.\n   Revised tests: `a red-tests stop at the test step mirrors to exited failed with reasonCode test-failed and actor agent`; `a verdictless fail at the test step mirrors to exited failed with reasonCode infrastructure`; `an interrupted fail at the test step mirrors to exited failed with reasonCode unspecified`; `a stop at any other step mirrors to exited stopped with reasonCode unspecified and the driver reason in reasonText`. The Acceptance Criterion that says \"a failed test step\" means the red-tests case above.\n2. **`ci` infrastructure classification: Reading A.** A `ci` line whose detail is `read-failed`, `gh-absent` or `no-pr` and whose exit is non-passing gets `infrastructure`; the `ci` step always reports `ok` today, so this branch is exercised only by a test line, and every real `ci` line is written as the driver gives it (`passed`, actor `script`). State the gap in the pull request description and in `docs/reference/station-events.md` under the driver mapping: \"a red CI state is data for the reviewer, not an exit; it is not mirrored as a failure.\"\n",
-        "createdAt": "2026-11-23T15:43:15Z",
+        "body": "Surface: backend\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Overview\n\nMake the label-protocol exits (release, authorize, accept) write the new outcomes with actor and reason, and write `decided` beside the authorize and accept exits. This is task 6 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E3 | Floor map, emission 3/8: The plan at the claim | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- \"Four outcomes: `passed`, `sent-back`, `failed`, `stopped`. Held is a state, not an outcome. A skip is a `replanned` event.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/release-claim.js` (release exit), `plugin/bin/apply-refine-labels.js` (the authorize exit near line 136), `plugin/bin/accept-park.js` (the accept exit near line 735)\n- Test: `tests/bin-lib/release-claim/cli.test.js`, `tests/apply-refine-labels.test.js`, `tests/accept-park-cli.test.js`\n\nInterfaces:\n\n- Produces: `release` exits `passed` with actor `script`; `authorize` exits `passed` with actor `person` (the skill is run by the person) and a following `decided` line with `decision: 'authorize'`, `via: 'skill'`; `accept` exits `passed` for an approval, and `sent-back` with `next: 'build'` and reason `changes-requested` (with `reasonText` from the label's comment where the code holds it) for changes requested.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests,** one per caller: `a claim's release exit is passed with actor script`; `authorizing writes exited passed actor person and a decided authorize via skill`; `approving an acceptance writes exited passed and a decided accept`; `requesting changes writes exited sent-back next build with reason changes-requested`.\n\n## Release Note\n\nMade the release, authorize and accept transitions write an outcome, actor and reason, plus a decided event for authorize and accept.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests,** one per caller: `a claim's release exit is passed with actor script`; `authorizing writes exited passed actor person and a decided authorize via skill`; `approving an acceptance writes exited passed and a decided accept`; `requesting changes writes exited sent-back next build with reason changes-requested`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js tests/apply-refine-labels.test.js tests/accept-park-cli.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** by passing the new `outcome` and `payload` fields in each existing `deps.stationEvent({...})` call; add the `decided` call beside the authorize and accept exits.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: label-protocol transitions write outcome, actor and reason`.\n\n### Key Files\n\n- `plugin/bin/release-claim.js`\n- `plugin/bin/apply-refine-labels.js`\n- `plugin/bin/accept-park.js`\n- `tests/bin-lib/release-claim/cli.test.js`\n- `tests/apply-refine-labels.test.js`\n- `tests/accept-park-cli.test.js`\n\n## Gotchas\n\n- Changes outcome payloads at three label-protocol exits.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-6 -->\nwork-fingerprint: factory-floor-map-emission:emission-6\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n",
+        "createdAt": "2026-11-23T15:43:21Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -928,10 +923,94 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6149,
+        "number": 6150,
         "state": "OPEN",
-        "title": "Floor map, emission 5/8: The driver's outcomes with actor and reason",
-        "updatedAt": "2026-11-24T04:54:22Z",
+        "title": "Floor map, emission 6/8: Outcomes at the label-protocol transitions",
+        "updatedAt": "2026-11-23T16:10:21Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite `replanned` when the stations of an already-claimed record change (for example a ceremony-profile downgrade), keeping every plan version with its reason and cause. This is task 4 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E3 | Floor map, emission 3/8: The plan at the claim | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"The plan is written by claude-tweaks code at the claim, from the same ceremony profile and lane that already decide which steps a flow runs, and written as `planned`. The hub never computes a plan.\"\n- \"Every version of a plan is kept with its reason and cause.\" A plan is never rewritten silently.\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/plan.js`, `plugin/bin/lib/set-config/write.js` (the ceremony-profile downgrade), the express lane entry `plugin/bin/lib/express/cli.js` if Task 1 shows it changes the stations of a claimed item\n- Test: `tests/bin-lib/station-events/plan.test.js`, the neighbouring set-config test\n\nInterfaces:\n\n- Produces: `replanEvent({ repoName, recordNumber, before: string[], after: string[], reasonCode: string, cause: { kind: 'outcome'|'decision'|'config', ref?: string }, sessionId, runId, at }): object | null` (an event in the shape `appendStationEvent` takes; kind `replanned`; `discriminator` built from `after` joined and `at`; returns `null` when `before` and `after` are equal so an unchanged plan writes nothing).\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n\n## Release Note\n\nWrote a replanned station event when the stations of a claimed record change.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/plan.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `replanEvent`; call it from the code Task 1 names as the place a claimed item's stations change, computing `before` from `planOf` for the old profile and `after` for the new.\n- [ ] **Step 4: Run** the plan tests and the set-config tests. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write replanned when a claimed record's stations change`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/plan.js`\n- `plugin/bin/lib/set-config/write.js`\n- `plugin/bin/lib/express/cli.js`\n- `tests/bin-lib/station-events/plan.test.js`\n\n## Gotchas\n\n- Adds replanning writes from the set-config downgrade path.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-4 -->\nwork-fingerprint: factory-floor-map-emission:emission-4\n\n## Decisions (orchestrator, 2026-11-23, from the plan review of emission 3/8)\n\nA `/flow` claim happens before the Config Manifesto, so the claim-time plan is usually `standard`/`default-list`. This record therefore also covers the moment the profile or lane is fixed: when `plugin/bin/lib/set-config/write.js` writes `ceremony-profile`, or `plugin/bin/lib/flow/manifesto-write.js` writes the lane, to a run's manifest after a claim exists, compute `planOf` for the values before and after, and write one `replanned` event when the stations differ (reason `ceremony-downgrade` when a station is removed, cause `{ kind: 'config' }`; nothing when they are equal). The `before` plan is the claim's `planned` event's stations. Added tests: `fixing the profile to fast-lane after a standard claim writes one replanned without polish`; `fixing the profile to standard after a standard claim writes nothing`; `setting the lane to driver after a standard claim writes one replanned`. Keep the existing ceremony-downgrade and Test-and-Polish tests.\n",
+        "createdAt": "2026-11-23T15:43:09Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6148,
+        "state": "OPEN",
+        "title": "Floor map, emission 4/8: Replanning",
+        "updatedAt": "2026-11-23T19:41:32Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -4339,7 +4418,7 @@
         "number": 4451,
         "state": "OPEN",
         "title": "Teardown gate misses git's bare-name worktree lookup in `git worktree remove <name>`",
-        "updatedAt": "2026-10-30T06:50:58Z",
+        "updatedAt": "2026-11-24T06:10:09Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -4585,7 +4664,7 @@
         "number": 4443,
         "state": "OPEN",
         "title": "release: --as / --release-as cannot override a \"nothing to release\" stop under local-merge",
-        "updatedAt": "2026-10-30T04:28:08Z",
+        "updatedAt": "2026-11-24T06:08:53Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -4753,7 +4832,7 @@
         "number": 4431,
         "state": "OPEN",
         "title": "design-wrapper: review mode's audit cache in docs/plans/ dirties the verification pass stamp",
-        "updatedAt": "2026-10-30T04:27:55Z",
+        "updatedAt": "2026-11-24T05:49:30Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -4843,7 +4922,7 @@
         "number": 4429,
         "state": "OPEN",
         "title": "flow: multi-spec runs see friction only at the end-of-run batch reflect, so a refusal storm runs unchecked for days",
-        "updatedAt": "2026-10-30T04:27:51Z",
+        "updatedAt": "2026-11-24T05:33:48Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -6007,7 +6086,7 @@
         "number": 4366,
         "state": "OPEN",
         "title": "pr-checks.js cannot see a merge-conflicted PR: the review PR-check gate lets a DIRTY PR with no CI through",
-        "updatedAt": "2026-11-24T05:00:08Z",
+        "updatedAt": "2026-11-24T05:17:11Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -10173,7 +10252,7 @@
         "number": 4442,
         "state": "OPEN",
         "title": "build: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses",
-        "updatedAt": "2026-10-30T04:28:03Z",
+        "updatedAt": "2026-11-24T05:57:59Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -11101,18 +11180,6 @@
       "number": 6151,
       "blockedBy": [
         6150
-      ]
-    },
-    {
-      "number": 6150,
-      "blockedBy": [
-        6147
-      ]
-    },
-    {
-      "number": 6148,
-      "blockedBy": [
-        6147
       ]
     },
     {
