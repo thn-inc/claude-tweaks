@@ -1372,11 +1372,12 @@ test('#3365: a parent run dir with only a manifest does not treat manifest ids a
   assert.deepStrictEqual(resolvedIssueNumbers(runDir), []);
 });
 
+const FS_RECORD_DEPS = { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') };
+
 test('#4108: an unavailable resolution (closingRecords null) falls through to verify-expectations.json issues', () => {
   const runDir = makeTmpDir('verify-unavailable-fallthrough-');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
-  const deps = { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') };
-  assert.strictEqual(resolveRecords(deps, runDir, null).source, 'unavailable');
+  assert.strictEqual(resolveRecords(FS_RECORD_DEPS, runDir, null).source, 'unavailable');
   assert.deepStrictEqual(resolvedIssueNumbers(runDir), [41]);
 });
 
@@ -1384,8 +1385,7 @@ test('#4108: a config-rung (express) run reads closingRecords\' [] as close-noth
   const runDir = makeTmpDir('verify-config-rung-');
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'integration-model: pr-first\nspec: 41\n');
   writeExpectations(runDir, { version: 1, memory: [], upstream: [], issues: [41] });
-  const deps = { readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, readFile: (p) => fs.readFileSync(p, 'utf8') };
-  assert.strictEqual(resolveRecords(deps, runDir, null).source, 'config', 'fixture must reach the config rung');
+  assert.strictEqual(resolveRecords(FS_RECORD_DEPS, runDir, null).source, 'config', 'fixture must reach the config rung');
   assert.deepStrictEqual(resolvedIssueNumbers(runDir), []);
 });
 
