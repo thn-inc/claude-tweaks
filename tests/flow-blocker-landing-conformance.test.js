@@ -343,7 +343,7 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
 const RUN_FACTS = [
   { re: /preflight-records\.js" \{n\} --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, msg: '2.7b runs the --blocker-landing call with $INTEGRATION_BRANCH', from: ' --blocker-landing --integration-branch "$INTEGRATION_BRANCH"', to: ' --integration-branch "$INTEGRATION_BRANCH"' },
   { re: /BLOCKED[^\n]*before Step 2\.8 claims/, msg: '2.7b stops before Step 2.8 claims', from: / before Step 2\.8 claims/, to: ' before the build' },
-  { re: /`open` or `unlanded` is BLOCKED — a STOP before Step 2\.8 claims/, msg: '2.7b: open and unlanded are both BLOCKED before Step 2.8 claims', from: '`open` or `unlanded` is BLOCKED', to: '`open` proceeds; `unlanded` is BLOCKED' },
+  { re: /`open`, `unlanded` or `hollow` is BLOCKED — a STOP before Step 2\.8 claims/, msg: '2.7b: open, unlanded and hollow are all BLOCKED before Step 2.8 claims', from: '`open`, `unlanded` or `hollow` is BLOCKED', to: '`open` proceeds; `unlanded` is BLOCKED' },
   { re: /`undetermined` proceeds/, msg: '2.7b: undetermined proceeds', from: '`undetermined` proceeds', to: '`undetermined` is BLOCKED too' },
   { re: /`undetermined` proceeds, holding that file's per-blocker `SKIP`/, msg: '2.7b: undetermined holds the per-blocker SKIP', from: ", holding that file's per-blocker `SKIP`", to: '' },
   { re: /`multispec-dependency-ordering\.md`'s out-of-run verdict table/, msg: '2.7b applies the out-of-run verdict table', from: "`multispec-dependency-ordering.md`'s out-of-run verdict table", to: 'the verdict table' },
@@ -496,7 +496,7 @@ function cardRow(text) {
 
 const SECOND_CALL_FACT = "AC6.1: a second call's continuation reports blocked";
 const CARD_FACTS = [
-  [/`open` or `unlanded` out-of-run blocker/, 'AC1.1: the row names both stopping verdicts'],
+  [/`open`, `unlanded` or `hollow` out-of-run blocker/, 'AC1.1: the row names every stopping verdict'],
   [/gate `blocker-landing`/, 'AC1.1: the row names the gate'],
   [/when the run already holds claims \(a continuation re-running the pre-claim checks\), the claims rules below still apply/, "AC5.1: a continuation's held claims keep the claims rules"],
   [/`OUTCOME: build-test-blocked`, one `ISSUE #\{n\}: failed:blocker-landing` line per target, and `STATUS: BLOCKED`/, 'AC2.1: the dispatch report line'],
@@ -535,12 +535,12 @@ test('AC1.1: failure-cards.md is loaded on the blocker-landing stop', () => {
   assert.deepEqual(missingFactsOf(LOADED_BY_FACTS)(loadedBy(mutated)), [LOADED_BY_FACTS[0][1]]);
 });
 
-const GATE_SENTENCE = "An `open` or `unlanded` verdict's stop is gate `blocker-landing`";
+const GATE_SENTENCE = "An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`";
 function assertRoutesToGate(text) {
   const section = outOfRunSection(text);
   assert.match(
     section,
-    /An `open` or `unlanded` verdict's stop is gate `blocker-landing`; under `\/claude-tweaks:dispatch` report it per `failure-cards\.md`'s blocker-landing row\./,
+    /An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`; under `\/claude-tweaks:dispatch` report it per `failure-cards\.md`'s blocker-landing row\./,
     'ordering section routes the open and unlanded stops to the blocker-landing gate',
   );
   requireOrder(section, ['| `undetermined` |', GATE_SENTENCE, 'A failed blocker query is not']);
@@ -549,7 +549,7 @@ test('AC1.1: the out-of-run section names the open and unlanded stops as gate bl
   const text = readText(ORDERING);
   assertRoutesToGate(text);
   assert.throws(
-    () => assertRoutesToGate(mutate(text, /An `open` or `unlanded` verdict's stop is gate[^\n]*\n\n/, '')),
+    () => assertRoutesToGate(mutate(text, /An `open`, `unlanded` or `hollow` verdict's stop is gate[^\n]*\n\n/, '')),
     /ordering section routes the open and unlanded stops/,
   );
   // Permutation, not deletion: the sentence moves directly below the failed-query line.
@@ -639,3 +639,36 @@ test('cross-repository entries are named {repository}#{blocker} in the stop line
     { message: 'the DAG step names a qualified `owner/name#N` blocked-by entry' },
   );
 });
+
+// #6142 — the hollow verdict is named on every flow-side surface that enumerates the stopping verdicts.
+// One test per surface, so a failure names the surface; each pin goes red when its clause is deleted.
+const DOCS = path.join(__dirname, '..', 'docs');
+const JOURNEY = path.join(DOCS, 'journeys', 'stop-a-run-whose-closed-blocker-never-landed-4553.md');
+const HOLLOW_PINS = [
+  ['multispec-dependency-ordering.md: hollow row is a hard fail before claims', ORDERING, /^\| `hollow` \|.*hard fail — stop before Step 2\.8 claims, render the card below/m],
+  ['multispec-dependency-ordering.md: the gate sentence names hollow', ORDERING, /An `open`, `unlanded` or `hollow` verdict's stop is gate `blocker-landing`/],
+  ['multispec-dependency-ordering.md: the hollow stop card exists', ORDERING, /^Blocker landed hollow — stopping before any claim\.$/m],
+  ['multispec-dependency-ordering.md: the card names the cause', ORDERING, /touched none of its Key Files \(or only pipeline bookkeeping\)/],
+  ['multispec-dependency-ordering.md: a null pr reads closed by {commit}', ORDERING, /closed by \{commit\}/],
+  ['multispec-dependency-ordering.md: the card offers the reopen escape', ORDERING, /gh issue reopen \{blocker\}/],
+  ['validation.md names hollow', path.join(FLOW_DIR, 'validation.md'), /`open`, `unlanded` or `hollow` is BLOCKED/],
+  ['flow SKILL.md names hollow', path.join(FLOW_DIR, 'SKILL.md'), /an `open`\/`unlanded`\/`hollow` out-of-run blocker/],
+  ['failure-cards.md names hollow', path.join(FLOW_DIR, 'failure-cards.md'), /`open`, `unlanded` or `hollow` out-of-run blocker/],
+  ['skill-graph.md lists hollow among the blockerLanding verdicts', path.join(DOCS, 'skill-graph.md'), /`open`\/`unlanded`\/`hollow`\/`landed`/],
+  ['the journey names six verdicts including hollow', JOURNEY, /The six verdicts are `open`, `landed`, `unlanded`, `hollow`/],
+  ['the journey step 3 names hollow as a hard fail', JOURNEY, /`open`, `unlanded` and `hollow` are hard fails before Step 2\.8 claims/],
+];
+for (const [name, file, re] of HOLLOW_PINS) {
+  test(`#6142: ${name}`, () => {
+    const text = readText(file);
+    const m = text.match(re);
+    assert.ok(m, 'pin matches the live text');
+    // Go-red control: change one meaningful token of the matched clause in place (`hollow` -> `unlanded`, or
+    // the clause's last character where it names no verdict) and the pin must fail on the otherwise identical text.
+    const clause = m[0];
+    const broken = clause.includes('hollow') ? clause.replace('hollow', 'unlanded') : `${clause.slice(0, -1)}#`;
+    const mutated = text.slice(0, m.index) + broken + text.slice(m.index + clause.length);
+    assert.notEqual(mutated, text);
+    assert.doesNotMatch(mutated, re);
+  });
+}

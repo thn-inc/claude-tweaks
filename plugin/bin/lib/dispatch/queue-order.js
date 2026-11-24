@@ -114,12 +114,17 @@ function signalsMatch(persisted, current) {
 // optional and passed through as given — a caller reading a pre-upgrade blob
 // with no `bundles` field gets `undefined` back and applies its own `[]`
 // fallback (queue-pull-script.md's cache-hit path), never this module.
+// `fingerprint` (#6062) is the settings fingerprint cacheUsable compares; written
+// only when given, so a blob without it is an older writer's and always a miss,
+// and older readers ignore the extra field. Any other property is ignored, so a
+// caller may spread the expressQueuePolicy() result into the argument.
 function composeOrderBlob({
-  computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE,
+  computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE, fingerprint,
 }) {
   return {
     computedAt, runId, freshnessSignal, groups, excluded, grouping,
     ...(bundles !== undefined ? { bundles } : {}),
+    ...(fingerprint !== undefined ? { fingerprint } : {}),
   };
 }
 
@@ -132,13 +137,17 @@ function namesForeignBlocker(excluded) {
     && e.blockedBy.some((b) => typeof b === 'string' && parseCrossRepoRef(withoutUnreadableSuffix(b)) !== null));
 }
 
-// A persisted blob is reusable only when stamped with the caller's current
-// grouping rule (default GROUPING_MODE) AND its freshness signal still
-// matches. A blob without `grouping` (any older plugin install's write) fails
-// closed, and so does a current signal flagged `foreignDeclared` (buildFreshnessSignal, #4793)
-// or a blob whose exclusions name a foreign blocker (namesForeignBlocker). Never throws.
-function cacheUsable(persisted, current, grouping = GROUPING_MODE) {
-  return !!persisted && persisted.grouping === grouping
+// A persisted blob is reusable only when `key` ({ grouping, fingerprint } — the
+// expressQueuePolicy() result qualifies) matches both its `grouping` stamp and its
+// `fingerprint` (#6062: the settings the grouping reads, which the stamp alone
+// does not carry) AND its freshness signal still matches. A blob without
+// `grouping` or `fingerprint` (any older plugin install's write) fails closed,
+// as does a key without a string fingerprint, and so does a current signal flagged
+// `foreignDeclared` (buildFreshnessSignal, #4793) or a blob whose exclusions name
+// a foreign blocker (namesForeignBlocker). Never throws.
+function cacheUsable(persisted, current, key) {
+  return !!persisted && !!key && typeof key === 'object' && typeof key.fingerprint === 'string'
+    && persisted.fingerprint === key.fingerprint && persisted.grouping === key.grouping
     && !(current && current.foreignDeclared)
     && !namesForeignBlocker(persisted.excluded)
     && signalsMatch(persisted.freshnessSignal, current);

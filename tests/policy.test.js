@@ -357,6 +357,18 @@ test('planning-decisions resolves ask-all when unset and when invalid (#6051)', 
 const PLAN_AT_SPECIFY_CONFLICT_LINE = 'resolve-policy: warning: plan-at-specify is on but planning-decisions is ask-all — using "off"; set planning-decisions: asked-classes to plan at /claude-tweaks:specify\n';
 const resolvePlanAtSpecify = (opts) => require('../plugin/bin/lib/policy-schema').resolvePolicyKeys(['plan-at-specify'], opts)['plan-at-specify'];
 
+test('learned-skills-auto-merge is policyOnly, advanced, merge-safety, default false, factory-settable (#6109)', () => {
+  const K = 'learned-skills-auto-merge';
+  const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === K);
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  assert.ok(row, 'learned-skills-auto-merge row exists');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.tier, 'advanced');
+  assert.strictEqual(row.category, 'merge-safety');
+  assert.strictEqual(row.default, false);
+  assert.ok(!FACTORY_REFUSED_KEYS.includes(K));
+});
+
 test('plan-at-specify is policyOnly, defaults to off, offers exactly off and on, and is factory-settable (#6056)', () => {
   const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'plan-at-specify');
   const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');

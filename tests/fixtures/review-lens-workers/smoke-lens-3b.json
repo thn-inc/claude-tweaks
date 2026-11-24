@@ -1,0 +1,10 @@
+{
+  "lenses": [
+    {
+      "lens": "3b",
+      "brief": "You are the review lens 3b (Security) reviewer. Review commit 2601ef2d8d (#5990) as the range 2601ef2d8d~1..2601ef2d8d, in the current directory (a read-only checkout).\n\nRead the change with exactly this command, as written: git show --no-ext-diff --no-textconv 2601ef2d8d\nYou may read files in the checkout. Do not write anything.\n\nApply lens 3b's checks to the diff:\n- Input validation at system boundaries?\n- No raw SQL or command injection risks?\n- Authentication/authorization checks present where needed?\n- No secrets or sensitive data in code?\n- OWASP top 10 considerations?\n- Does every path-based allow/exemption decision resolve the real path (leaf symlink followed, `..` normalized) before deciding, and fail closed when the path is unprovable?\n\nReply with a findings table with the columns | Severity | Path:Line | Finding | Evidence |, or the single line \"No findings.\" when there are none. Keep it short: at most five findings. End the reply with the status line STATUS: DONE.",
+      "model": "haiku",
+      "reviewers": 1
+    }
+  ]
+}

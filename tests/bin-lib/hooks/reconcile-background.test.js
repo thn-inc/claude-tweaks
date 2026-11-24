@@ -7,6 +7,7 @@ const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
 
@@ -186,6 +187,11 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
   // #5555: the archive starts a detached token pass; point its transcript lookup at an empty fixture dir.
   const cfgDir = scratchDir('ct-recon-bg-cfg-');
   t.after(() => fs.rmSync(cfgDir, { recursive: true, force: true }));
+  // #6162: reconcile skips its archive check when its GitHub-health preflight (`gh api rate_limit`) fails, and the
+  // driver's test step runs with no gh credentials. A `gh` stand-in answers that one call and fails every other, as
+  // the real gh does in this remote-less fixture, so the archive rests on git evidence alone. On win32 a script stub
+  // is never spawned (path-stub.js), so the real gh still answers there.
+  if (!STUB_SKIP) t.after(installStub('gh', '#!/bin/sh\nif [ "$1" = "api" ] && [ "$2" = "rate_limit" ]; then echo 5000; exit 0; fi\nexit 1\n'));
   const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
   delete env.CLAUDE_TWEAKS_SESSION_ID;
   execFileSync('node', [HOOKS, 'reconcile-background'], { cwd: root, encoding: 'utf8', env });

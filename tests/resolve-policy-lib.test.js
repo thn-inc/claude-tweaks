@@ -353,6 +353,82 @@ test('an invalid autonomy value feeding the derivation falls back to supervised,
   assert.deepStrictEqual(result['housekeeping-auto-merge'], { value: false, source: 'default' });
 });
 
+// --- learned-skills-auto-merge autonomy-derived default (#6109) ---
+
+const LSAM = 'learned-skills-auto-merge';
+
+function resolveLsam(sources) {
+  return resolvePolicyKeys([LSAM], sources)[LSAM];
+}
+
+test('AC1.1 (a): unset + autonomy unattended derives true', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\n' }), { value: true, source: 'default' });
+});
+
+test('AC1.1 (b) AC4.2: unset + autonomy trusted derives false', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: trusted\n' }), { value: false, source: 'default' });
+});
+
+test('AC1.1 (c) AC4.2: unset + autonomy supervised derives false', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: supervised\n' }), { value: false, source: 'default' });
+});
+
+test('AC1.1 (d): unset + unattended with control-mode: on derives false', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\ncontrol-mode: on\n' }), { value: false, source: 'default' });
+});
+
+test('a malformed control-mode: On vetoes the derivation (fail closed)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\ncontrol-mode: On\n' }), { value: false, source: 'default' });
+});
+
+test('a malformed control-mode: yes vetoes the derivation (fail closed)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\ncontrol-mode: yes\n' }), { value: false, source: 'default' });
+});
+
+test('AC2.1 (a) AC4.2: explicit false at unattended wins', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'learned-skills-auto-merge: false\nautonomy: unattended\n' }), { value: false, source: 'policy' });
+});
+
+test('AC2.1 (b) AC4.2: explicit true at supervised wins', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'learned-skills-auto-merge: true\nautonomy: supervised\n' }), { value: true, source: 'policy' });
+});
+
+test('explicit true under control-mode: on wins (#580)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'learned-skills-auto-merge: true\nautonomy: unattended\ncontrol-mode: on\n' }), { value: true, source: 'policy' });
+});
+
+test('a run-config control-mode: on does not veto (control-mode is policyOnly)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\n', runConfigRaw: 'control-mode: on\n' }), { value: true, source: 'default' });
+});
+
+test('a factory control-mode: on does not veto (control-mode is factory-refused)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: unattended\n', factoryRaw: 'control-mode: on\n' }), { value: true, source: 'default' });
+});
+
+test('AC3.1 (a): a run-config value never sets the key (policyOnly)', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: supervised\n', runConfigRaw: 'learned-skills-auto-merge: true\n' }), { value: false, source: 'default' });
+});
+
+test('AC3.1 (b): a run-config autonomy: unattended never turns the default on', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: supervised\n', runConfigRaw: 'autonomy: unattended\n' }), { value: false, source: 'default' });
+});
+
+test('factory autonomy: unattended alone derives true (factory is read)', () => {
+  assert.deepStrictEqual(resolveLsam({ factoryRaw: 'autonomy: unattended\n' }), { value: true, source: 'default' });
+});
+
+test('policy autonomy: supervised over factory unattended derives false', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'autonomy: supervised\n', factoryRaw: 'autonomy: unattended\n' }), { value: false, source: 'default' });
+});
+
+test('a factory learned-skills-auto-merge: true is honored (factory-settable)', () => {
+  assert.deepStrictEqual(resolveLsam({ factoryRaw: 'learned-skills-auto-merge: true\n' }), { value: true, source: 'factory' });
+});
+
+test('set-but-invalid at unattended keeps invalid: true and derives true', () => {
+  assert.deepStrictEqual(resolveLsam({ policyRaw: 'learned-skills-auto-merge: maybe\nautonomy: unattended\n' }), { value: true, source: 'default', invalid: true });
+});
+
 // --- merge-authorization: run-config-or-arg only, never policy.yml (#715) ---
 
 test('merge-authorization: unset everywhere resolves to the ask default', () => {
