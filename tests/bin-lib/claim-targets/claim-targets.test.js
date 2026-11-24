@@ -3239,6 +3239,7 @@ test('station: a claim whose label add succeeded records exited release passed a
     assert.equal(e.sessionId, 'sess1');
     assert.equal(e.lane, 'unknown');
   }
+  assert.deepEqual(exited.payload, { actor: 'script' });
   assert.equal(exited.discriminator, `${CLAIMED_AT}:exited:release`);
   assert.equal(entered.discriminator, `${CLAIMED_AT}:entered:build`);
   assert.equal(entered.outcome, null);

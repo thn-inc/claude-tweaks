@@ -117,26 +117,28 @@ const MERGE_SUBSTEP_TRANSITIONS = Object.freeze({
 // `bot:blocked` / `bot:parked` are absent: the emitter cannot know which
 // station's visit they end.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
+// Intake and shape exits are always the agent's: the label edit is the trace of its work.
+const AGENT_EXIT = Object.freeze({ actor: ACTOR.AGENT });
 const LABEL_TRANSITIONS = Object.freeze({
   [LABELS.NEEDS_DEFINITION]: Object.freeze({
-    removed: Object.freeze([{ kind: 'exited', station: STATION.INTAKE, outcome: 'passed' }]),
+    removed: Object.freeze([{ kind: 'exited', station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT }]),
   }),
   [LABELS.READY]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.INTAKE, outcome: 'passed' },
-      { kind: 'exited', station: STATION.SHAPE, outcome: 'passed' },
+      { kind: 'exited', station: STATION.INTAKE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
+      { kind: 'exited', station: STATION.SHAPE, outcome: OUTCOME.PASSED, payload: AGENT_EXIT },
       { kind: 'entered', station: STATION.AUTHORIZE },
     ]),
   }),
   [LABELS.AUTO_BUILD]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.AUTHORIZE, outcome: 'passed' },
+      { kind: 'exited', station: STATION.AUTHORIZE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.PERSON }) },
       { kind: 'entered', station: STATION.RELEASE },
     ]),
   }),
   [LABELS.BOT_IN_PROGRESS]: Object.freeze({
     added: Object.freeze([
-      { kind: 'exited', station: STATION.RELEASE, outcome: 'passed' },
+      { kind: 'exited', station: STATION.RELEASE, outcome: OUTCOME.PASSED, payload: Object.freeze({ actor: ACTOR.SCRIPT }) },
       { kind: 'entered', station: STATION.BUILD },
     ]),
   }),
@@ -149,7 +151,7 @@ const LABEL_TRANSITIONS = Object.freeze({
 function transitionsForLabel(label, direction) {
   const entry = Object.prototype.hasOwnProperty.call(LABEL_TRANSITIONS, label) ? LABEL_TRANSITIONS[label] : null;
   const list = entry && Object.prototype.hasOwnProperty.call(entry, direction) ? entry[direction] : [];
-  return list.map((t) => ({ ...t }));
+  return list.map((t) => ({ ...t, ...(t.payload ? { payload: { ...t.payload } } : {}) }));
 }
 
 // Claim-release reason -> exited outcome of the visit the release ends. The families are the

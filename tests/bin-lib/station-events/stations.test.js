@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   STATION, STATIONS, SESSION_BOUND_STATION, PR_OPENED_FACT, PR_OPENED_TRANSITION, LABEL_TRANSITIONS, MERGE_SUBSTEP_TRANSITIONS,
-  BLOCKER_SNAPSHOT_STATION, DRIVER_STEP_STATIONS,
+  BLOCKER_SNAPSHOT_STATION, DRIVER_STEP_STATIONS, ACTORS,
   outcomeForReleaseReason, outcomeForDriverStatus, transitionsForLabel, releaseTransition,
 } = require('../../../plugin/bin/lib/station-events/stations');
 const { PARK_REASON } = require('../../../plugin/bin/lib/accept/park-grammar');
@@ -87,26 +87,49 @@ test('outcomeForDriverStatus maps ok, fail and stop', () => {
 
 test('transitionsForLabel returns each registry row', () => {
   assert.deepEqual(transitionsForLabel('needs:definition', 'removed'), [
-    { kind: 'exited', station: 'intake', outcome: 'passed' },
+    { kind: 'exited', station: 'intake', outcome: 'passed', payload: { actor: 'agent' } },
   ]);
   assert.deepEqual(transitionsForLabel('needs:definition', 'added'), []);
   assert.deepEqual(transitionsForLabel('ready', 'added'), [
-    { kind: 'exited', station: 'intake', outcome: 'passed' },
-    { kind: 'exited', station: 'shape', outcome: 'passed' },
+    { kind: 'exited', station: 'intake', outcome: 'passed', payload: { actor: 'agent' } },
+    { kind: 'exited', station: 'shape', outcome: 'passed', payload: { actor: 'agent' } },
     { kind: 'entered', station: 'authorize' },
   ]);
   assert.deepEqual(transitionsForLabel('auto:build', 'added'), [
-    { kind: 'exited', station: 'authorize', outcome: 'passed' },
+    { kind: 'exited', station: 'authorize', outcome: 'passed', payload: { actor: 'person' } },
     { kind: 'entered', station: 'release' },
   ]);
   assert.deepEqual(transitionsForLabel('bot:in-progress', 'added'), [
-    { kind: 'exited', station: 'release', outcome: 'passed' },
+    { kind: 'exited', station: 'release', outcome: 'passed', payload: { actor: 'script' } },
     { kind: 'entered', station: 'build' },
   ]);
   assert.deepEqual(transitionsForLabel('accept:pending', 'added'), [{ kind: 'entered', station: 'accept' }]);
   assert.deepEqual(Object.keys(LABEL_TRANSITIONS).sort(), ['accept:pending', 'auto:build', 'bot:in-progress', 'needs:definition', 'ready']);
   assert.deepEqual(transitionsForLabel('bot:blocked', 'added'), []);
   assert.deepEqual(transitionsForLabel('nope', 'added'), []);
+});
+
+test('every label-transition exit carries an actor', () => {
+  const expected = {
+    'needs:definition/removed': ['agent'],
+    'ready/added': ['agent', 'agent'],
+    'auto:build/added': ['person'],
+    'bot:in-progress/added': ['script'],
+  };
+  for (const [label, entry] of Object.entries(LABEL_TRANSITIONS)) {
+    for (const direction of Object.keys(entry)) {
+      const rows = transitionsForLabel(label, direction);
+      for (const row of rows.filter((r) => r.kind === 'entered')) assert.equal(Object.hasOwn(row, 'payload'), false);
+      const actors = rows.filter((r) => r.kind === 'exited').map((r) => r.payload.actor);
+      for (const a of actors) assert.match(a, ACTORS);
+      if (expected[label + '/' + direction]) assert.deepEqual(actors, expected[label + '/' + direction]);
+    }
+  }
+});
+
+test('transitionsForLabel returns a fresh payload', () => {
+  transitionsForLabel('ready', 'added')[0].payload.actor = 'mutated';
+  assert.equal(transitionsForLabel('ready', 'added')[0].payload.actor, 'agent');
 });
 
 test('transitionsForLabel returns fresh copies', () => {
