@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  drain, LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr,
+  drain, LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr, defaultReadyRun,
 } = require('../../../plugin/bin/lib/learned-skills/drain.js');
 
 const REPO = 'acme/repo';
@@ -103,7 +103,7 @@ test('AC1.3: a pending --own-pr is watched and merged when it turns green', () =
   const h = harness({ prs: [pr(6202)], views: { 6202: [pending, pending, view({ number: 6202 })] } });
   const out = drain(base({ ownPr: 6202 }), h.deps);
   assert.deepEqual(out.merged, [6202]);
-  assert.ok(h.clock.sleeps.length >= 1 && h.clock.sleeps.every((s) => s === 30000));
+  assert.deepEqual(h.clock.sleeps, [30000, 30000]);
 });
 
 test('AC1.4: a red PR is left open with no label writes', () => {
@@ -250,11 +250,44 @@ test('Decision AC: a drain touching two PRs writes two decisions lines with the 
   assert.deepEqual(h.gateCalls.map((g) => g.pr), [6241]);
 });
 
-test('own-PR ci-gate failure logs one SKIP and the merge continues', () => {
+test('own-PR ci-gate failure folds into the PR\'s one decision line and the merge continues', () => {
   const h = harness({ prs: [pr(6242)], ciGate: 3 });
   const out = drain(base({ runDir: '/run', ownPr: 6242 }), h.deps);
   assert.deepEqual(out.merged, [6242]);
-  assert.equal(h.logged.filter((l) => /^- SKIP /.test(l)).length, 1);
+  assert.equal(h.logged.length, 1);
+  assert.match(h.logged[0], /^- AUTO .*PR #6242 merged \(ci-gate not recorded, exit 3\)/);
+});
+
+test('a behind-base "Head branch is not up to date" refusal is merge-failed with that line as detail, not head-changed', () => {
+  const line = 'Head branch is not up to date with the base branch';
+  const h = harness({ prs: [pr(6243)], mergeThrows: { 6243: `${line}\nmore` } });
+  assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6243, reason: 'merge-failed', detail: line }]);
+});
+
+test('a compose failure is merge-failed with the compose error first line as detail, no merge call', () => {
+  const h = harness({ prs: [pr(6244)] });
+  h.deps.compose = () => { throw new Error('compose-subject exited 1: no marker\nsecond'); };
+  const out = drain(base(), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6244, reason: 'merge-failed', detail: 'compose-subject exited 1: no marker' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('ready-run red + DIRTY stays red; draft-skip-without-ready-trigger + DIRTY is conflicting', () => {
+  const dirty = { 6245: view({ number: 6245, mergeStateStatus: 'DIRTY', mergeable: 'CONFLICTING', statusCheckRollup: [] }) };
+  const red = harness({ prs: [pr(6245)], views: dirty, ready: { state: 'red' } });
+  assert.deepEqual(drain(base(), red.deps).leftOpen, [{ pr: 6245, reason: 'red' }]);
+  const skip = harness({ prs: [pr(6245)], views: dirty, ready: { state: 'draft-skip-without-ready-trigger' } });
+  assert.deepEqual(drain(base(), skip.deps).conflicting, [6245]);
+});
+
+test('defaultReadyRun pins the ready-run read to the drain repo, not the cwd origin', () => {
+  let seen;
+  const read = defaultReadyRun('github.com/acme/repo', {
+    makeDeps: () => ({ repoTarget: () => ({ owner: 'other', repo: 'origin' }) }),
+    resolve: (d, a) => { seen = { target: d.repoTarget(), a }; return { state: 'met' }; },
+  });
+  assert.deepEqual(read({ pr: 7, sha: SHA('a') }), { state: 'met' });
+  assert.deepEqual(seen, { target: { owner: 'acme', repo: 'repo' }, a: { pr: 7, sha: SHA('a') } });
 });
 
 test('AC5.1: in an unprotected repo (CLEAN) a drain never merges a PR whose checks have not all completed green', () => {

@@ -70,7 +70,8 @@ function classifyPr(view, headRuns, ready) {
   if (verdict.state === 'red') return 'red';
   const checks = [...(rollup || []).map(normalizeEntry), ...(Array.isArray(headRuns) ? headRuns : []).map(normalizeHeadRun)];
   if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || ''))) return 'red';
-  if (!conflicting && (r.state === 'red' || r.state === 'draft-skip-without-ready-trigger')) return 'red';
+  // Step 2.5: only `awaiting` and `draft-skip-without-ready-trigger` yield to the Conflict path; a red ready-run stays red.
+  if (r.state === 'red' || (!conflicting && r.state === 'draft-skip-without-ready-trigger')) return 'red';
   if (conflicting) return 'conflicting';
   if (view.isDraft || verdict.state !== 'green' || r.state === 'awaiting' || r.state === 'read-failed') return 'pending';
   return 'green';
@@ -107,12 +108,18 @@ function defaultCiGateRecord({ pr, headSha, gateStartEpoch, runDir, repo }) {
   ]);
 }
 
+// The ready-run read pinned to the drain's repo: its reads take owner/name from `repoTarget`, not a
+// --repo flag, so a cwd whose origin is another repo cannot redirect them.
+function defaultReadyRun(repo, { resolve = resolveReadyRun, makeDeps = readyRunDefaultDeps, cwd = process.cwd() } = {}) {
+  const [owner, name] = String(repo).split('/').slice(-2);
+  return ({ pr, sha }) => resolve({ ...makeDeps(cwd), repoTarget: () => ({ owner, repo: name }) }, { pr, sha });
+}
+
 const defaults = {
   gh: (args) => lsRealDeps.gh(args),
   ghAvailable: () => require('../repo-resolve').ghAvailable(),
   now: () => Date.now(),
   sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
-  readyRun: ({ pr, sha }) => resolveReadyRun(readyRunDefaultDeps(process.cwd()), { pr, sha }),
   ciGateRecord: defaultCiGateRecord,
   appendEntries,
   mkdir: lsRealDeps.mkdir,
@@ -124,6 +131,8 @@ function drain(opts, overrides = {}) {
   const { runDir, ownPr, repo, autoMerge } = opts;
   const deps = { ...defaults, ...overrides };
   if (!overrides.compose) deps.compose = defaultCompose(deps);
+  if (!overrides.readyRun) deps.readyRun = defaultReadyRun(repo);
+  const notes = {}; // a PR's own ci-gate miss, folded into its one decision line
   const own = ownPr ? Number(ownPr) : null;
   const lever = LEVER_ACTIONS[opts.mergeVerification] ? opts.mergeVerification : 'wait';
   const out = { merged: [], armed: [], leftOpen: [], conflicting: [] };
@@ -137,13 +146,14 @@ function drain(opts, overrides = {}) {
   };
   // One outcome per PR: the list, its decisions.md line, and (own PR only) drain.json.
   const settle = (pr, outcome, reason, detail) => {
-    if (outcome === 'merged') { out.merged.push(pr); log('AUTO', STEP, `PR #${pr} merged`, 'low'); }
-    else if (outcome === 'armed') { out.armed.push(pr); log('AUTO', STEP, `PR #${pr} armed to merge when the forge's checks pass`, 'high'); }
+    const note = notes[pr] || '';
+    if (outcome === 'merged') { out.merged.push(pr); log('AUTO', STEP, `PR #${pr} merged${note}`, 'low'); }
+    else if (outcome === 'armed') { out.armed.push(pr); log('AUTO', STEP, `PR #${pr} armed to merge when the forge's checks pass${note}`, 'high'); }
     else {
       const what = outcome === 'conflicting' ? 'conflicting' : `left open (${reason})`;
       if (outcome === 'conflicting') out.conflicting.push(pr);
       else out.leftOpen.push({ pr, reason, ...(detail ? { detail } : {}) });
-      log('SKIP', `${STEP} (degraded)`, `condition: PR #${pr} ${what}${detail ? `: ${detail}` : ''} → fallback: left for a human or a later drain.`, 'n/a');
+      log('SKIP', `${STEP} (degraded)`, `condition: PR #${pr} ${what}${detail ? `: ${detail}` : ''}${note} → fallback: left for a human or a later drain.`, 'n/a');
     }
     if (pr === own && runDir) {
       const record = { pr, outcome: outcome === 'leftOpen' ? 'left-open' : outcome, ...(reason ? { reason } : {}) };
@@ -188,7 +198,7 @@ function drain(opts, overrides = {}) {
     } catch (err) {
       const text = String((err && err.stderr) || (err && err.message) || err);
       if (/conflict/i.test(text)) return settle(n, 'conflicting');
-      if (/match-head-commit|head (branch|commit|sha)/i.test(text)) return open(n, 'head-changed');
+      if (/was modified|match-head-commit/i.test(text)) return open(n, 'head-changed');
       return open(n, 'merge-failed', firstStderrLine(err));
     }
     return settle(n, arm ? 'armed' : 'merged');
@@ -206,7 +216,7 @@ function drain(opts, overrides = {}) {
     if (n === own && runDir) {
       let code;
       try { code = deps.ciGateRecord({ pr: n, headSha: sha, gateStartEpoch: gateStart, runDir, repo }); } catch { code = 1; }
-      if (code !== 0) log('SKIP', STEP, `PR #${n} ci-gate not recorded (exit ${code})`, 'n/a');
+      if (code !== 0) notes[n] = ` (ci-gate not recorded, exit ${code})`;
     }
     return land(n, sha, false);
   };
@@ -259,4 +269,4 @@ function drain(opts, overrides = {}) {
   return out;
 }
 
-module.exports = { LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr, drain };
+module.exports = { LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr, defaultReadyRun, drain };
