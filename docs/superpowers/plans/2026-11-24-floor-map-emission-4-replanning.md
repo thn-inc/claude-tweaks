@@ -32,6 +32,14 @@ Scope keywords: replanEvent, replanned, fillRunManifest, setConfigLever
 
 ---
 
+### Already landed (commit 61bc665734, express lane)
+
+**Files:**
+- Modify: `plugin/bin/lib/station-events/plan.js` — `replanEvent` (the spec's Deliverables interface), unchanged by this plan
+- Test: `tests/bin-lib/station-events/plan.test.js` — `replanEvent returns null when the stations are unchanged` and `replanEvent for Test and Polish removed carries the after list and reason documents-only` (spec AC 1, first two names) already exist and pass; keep them
+
+Every task below re-runs `node tools/run-tests.js tests/bin-lib/station-events/plan.test.js` in its Step 4 so these stay green.
+
 ### Task 1: The replan reader and emitter
 
 **Files:**
@@ -93,7 +101,11 @@ Scope keywords: replanEvent, replanned, fillRunManifest, setConfigLever
 - Modify: `plugin/bin/set-config.js` (`realDeps.stationEvent = (e) => appendStationEvent(e)`; pass `{ stationEvent, sessionId, mainRoot: deps.stationMainRoot }` as `stationDeps` to `setConfigLever` and merged into its own `fillRunManifest(..., { stderr, ...stationDeps })`)
 - Modify: `plugin/bin/manifesto-write.js` (`realDeps.stationEvent`, passed in `writeManifesto`'s deps)
 - Modify: `docs/reference/station-events.md` (Producers table: a `replanned` row — producer `run-manifest/write.js` `fillRunManifest` via `set-config.js` / `manifesto-write.js`, station `build`, payload keys, discriminator `replanned:{after joined}:{at}`; `### Kinds` sentence "only `planned` has a producer today" → `planned` and `replanned`; Starting lists paragraph's "(emission 4/8)" sentence names the producer)
-- Test: `tests/bin-lib/set-config/write.test.js`, `tests/bin-lib/set-config/cli.test.js`, `tests/bin-lib/flow/manifesto-write.test.js`
+- Modify: `docs/reference/run-manifest.md` (the "Later, by a fill" bullet: a fill that changes `lane` or `ceremonyProfile` writes a `replanned` station event when its caller passes a sink)
+- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/run-manifest/` line: same clause, and `station-events/replan.js` named on the station-events line if one exists)
+- Test: `tests/bin-lib/set-config/write.test.js`
+- Test: `tests/bin-lib/set-config/cli.test.js`
+- Test: `tests/bin-lib/flow/manifesto-write.test.js`
 
 **Interfaces:**
 - Consumes: Task 2's `fillRunManifest` deps.
@@ -111,4 +123,4 @@ Scope keywords: replanEvent, replanned, fillRunManifest, setConfigLever
 
 - [ ] **Step 5: Commit** by path; message `feat: write replanned when a claimed record's stations change — refs #6148`.
 
-Not in scope: `lib/express/cli.js` (its `lane: 'express'` fill selects the same standard list, so it changes no stations; its `ceremony-profile=fast-lane` reaches the manifest through `set-config.js`, covered above) and `lib/driver/adopt.js` (a driver run is claimed with `--lane driver`, so its plan is already the driver list).
+Not in scope (Check B matches, ruled out): `lib/express/cli.js` (its `lane: 'express'` fill selects the same standard list, so it changes no stations; its `ceremony-profile=fast-lane` reaches the manifest through `set-config.js`, covered above) and `lib/driver/adopt.js` (a driver run is claimed with `--lane driver`, so its plan is already the driver list). `emit.js`, `stations.js`, `wrap-up/pack.js`, `docs/hooks.md`, `docs/journeys/…5902.md`, `plugin/skills/reflect/full-mode.md`, the 2026-11-23 plan, `emit.test.js`, `pipeline-cost-report/funnel.test.js` match a scope keyword but need no change: the vocabulary (`KIND.REPLANNED`, `REASON.CEREMONY_DOWNGRADE`) and emitter already exist.
