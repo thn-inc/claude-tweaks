@@ -1,0 +1,262 @@
+// plugin/bin/lib/learned-skills/drain.js — merges green learned-skills PRs at the end of wrap-up (#6112).
+//
+// A candidate is an open PR whose body carries `<!-- wrap-up-skills-pr -->`; nothing else is listed or
+// reported. Each candidate, oldest number first, is scope-checked (same repository, `learned-skills/*`
+// head, every changed file under `.claude/skills/`), read (state, head runs, ready-run), classified and
+// then merged, armed, watched or left open. The semantics are `_shared/pr-first-merge.md` Step 2.5's:
+// the strict-green rule (an empty rollup, a pending entry or run, or any completed non-success
+// conclusion is never green), the Conflict-path-first rule, and the lever table below. The drain never
+// takes Step 2.5's explicit-`off` "merge anyway" route: its green is stricter.
+//
+// leftOpen reasons (closed set, spec Decision 1): LEFT_OPEN_REASONS. `conflicting` and `armed` are
+// separate lists. A failed files/state/runs/ready-run read is `pending` with the error as `detail`,
+// never merged or watched. The one merge call is `gh pr merge --squash --delete-branch
+// --match-head-commit {sha}` with a subject composed by compose-subject's record-less form; no label
+// or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set;
+// only the own PR writes the ci-gate event and drain.json.
+//
+// Every side effect goes through `deps` so tests inject a fake gh and a fake clock.
+'use strict';
+
+const path = require('path');
+const { realDeps: lsRealDeps, firstStderrLine } = require('./learned-skills');
+const { drainPath } = require('./layout');
+const { classifyRollup, normalizeEntry, normalizeHeadRun } = require('../pr-checks/classify');
+const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
+const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
+const { formatEntry, appendEntries } = require('../log-decision/append');
+const composeSubject = require('../compose-subject');
+
+const MARKER = /<!-- wrap-up-skills-pr -->/;
+const BRANCH_PREFIX = 'learned-skills/';
+const SKILLS_PREFIX = '.claude/skills/';
+const POLL_MS = 30000;
+const LOG_SECTION = '/wrap-up';
+const STEP = 'Learned-skills drain';
+const LEVER = 'learned-skills-auto-merge=true';
+const OK_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
+
+const LEFT_OPEN_REASONS = Object.freeze([
+  'pending', 'timeout', 'red', 'head-changed', 'cross-repository', 'not-learned-skills-branch',
+  'files-outside-skills', 'merge-failed', 'no-gh',
+]);
+
+// Step 2.5's table, Value column x Green/Pending/Red. An unknown value resolves to `wait`.
+const LEVER_ACTIONS = Object.freeze({
+  'merge-when-green': Object.freeze({ green: 'merge', pending: 'arm-if-blocked-else-watch', red: 'leave-open' }),
+  wait: Object.freeze({ green: 'merge', pending: 'watch', red: 'leave-open' }),
+  off: Object.freeze({ green: 'merge', pending: 'watch', red: 'leave-open' }),
+});
+
+// null when the PR may be considered for a merge, else the first failing scope reason.
+function scopeProblem({ isCrossRepository, headRefName } = {}, files) {
+  if (isCrossRepository) return 'cross-repository';
+  if (typeof headRefName !== 'string' || !headRefName.startsWith(BRANCH_PREFIX)) return 'not-learned-skills-branch';
+  if (!Array.isArray(files) || files.length === 0) return 'files-outside-skills';
+  const inside = (p) => typeof p === 'string' && !p.split('/').includes('..') && p.startsWith(SKILLS_PREFIX) && p.length > SKILLS_PREFIX.length;
+  return files.every(inside) ? null : 'files-outside-skills';
+}
+
+// 'green' | 'pending' | 'red' | 'conflicting' | 'closed'. `ready` is the ready-run read's envelope.
+function classifyPr(view, headRuns, ready) {
+  if (!view || view.state !== 'OPEN') return 'closed';
+  const rollup = Array.isArray(view.statusCheckRollup) ? view.statusCheckRollup : null;
+  const r = ready || {};
+  const conflicting = view.mergeStateStatus === 'DIRTY' || view.mergeable === 'CONFLICTING';
+  const verdict = classifyRollup({
+    rollup, headRefOid: view.headRefOid, localHead: view.headRefOid, hasPrCi: true, headRuns,
+    readySince: r.readySince, readyWorkflows: r.readyWorkflows,
+  });
+  if (verdict.state === 'red') return 'red';
+  const checks = [...(rollup || []).map(normalizeEntry), ...(Array.isArray(headRuns) ? headRuns : []).map(normalizeHeadRun)];
+  if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || ''))) return 'red';
+  if (!conflicting && (r.state === 'red' || r.state === 'draft-skip-without-ready-trigger')) return 'red';
+  if (conflicting) return 'conflicting';
+  if (view.isDraft || verdict.state !== 'green' || r.state === 'awaiting' || r.state === 'read-failed') return 'pending';
+  return 'green';
+}
+
+const parseJson = (text, what) => {
+  try { return JSON.parse(text); } catch { throw new Error(`${what} returned unparseable JSON`); }
+};
+
+function defaultCompose(deps) {
+  return (prNumber, repo) => {
+    let stdout = '';
+    let stderr = '';
+    const code = composeSubject.run(['--housekeeping', '--pr', String(prNumber), '--repo', repo], {
+      ...composeSubject.realDeps,
+      ghAvailable: () => true, // the drain already checked gh (or its injected transport)
+      runner: (a) => deps.gh(a),
+      stdout: (s) => { stdout += s; },
+      stderr: (s) => { stderr += s; },
+    });
+    if (code !== 0) throw new Error(`compose-subject exited ${code}: ${stderr.trim().split(/\r?\n/)[0] || 'no output'}`);
+    const composed = parseJson(stdout, 'compose-subject');
+    if (!composed || typeof composed.title !== 'string' || !composed.title || typeof composed.body !== 'string') {
+      throw new Error('compose-subject printed no title and body');
+    }
+    return { title: composed.title, body: composed.body };
+  };
+}
+
+function defaultCiGateRecord({ pr, headSha, gateStartEpoch, runDir, repo }) {
+  return require('../../ci-gate-record').run([
+    '--pr', String(pr), '--head-sha', headSha, '--verdict', 'green',
+    '--gate-start-epoch', String(gateStartEpoch), '--run', runDir, '--repo', repo,
+  ]);
+}
+
+const defaults = {
+  gh: (args) => lsRealDeps.gh(args),
+  ghAvailable: () => require('../repo-resolve').ghAvailable(),
+  now: () => Date.now(),
+  sleep: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  readyRun: ({ pr, sha }) => resolveReadyRun(readyRunDefaultDeps(process.cwd()), { pr, sha }),
+  ciGateRecord: defaultCiGateRecord,
+  appendEntries,
+  mkdir: lsRealDeps.mkdir,
+  writeFile: lsRealDeps.writeFile,
+};
+
+// { runDir, integrationBranch, ownPr, repo, autoMerge, mergeVerification } -> the outcome lists.
+function drain(opts, overrides = {}) {
+  const { runDir, ownPr, repo, autoMerge } = opts;
+  const deps = { ...defaults, ...overrides };
+  if (!overrides.compose) deps.compose = defaultCompose(deps);
+  const own = ownPr ? Number(ownPr) : null;
+  const lever = LEVER_ACTIONS[opts.mergeVerification] ? opts.mergeVerification : 'wait';
+  const out = { merged: [], armed: [], leftOpen: [], conflicting: [] };
+  if (autoMerge !== true) return { ...out, disabled: true };
+
+  const log = (status, step, text, reversibility) => {
+    if (!runDir) return;
+    try {
+      deps.appendEntries({ runDir, items: [{ section: LOG_SECTION, entry: formatEntry({ status, now: deps.now(), step, text, reversibility, lever: LEVER }) }] });
+    } catch { /* the outcome lists are the record */ }
+  };
+  // One outcome per PR: the list, its decisions.md line, and (own PR only) drain.json.
+  const settle = (pr, outcome, reason, detail) => {
+    if (outcome === 'merged') { out.merged.push(pr); log('AUTO', STEP, `PR #${pr} merged`, 'low'); }
+    else if (outcome === 'armed') { out.armed.push(pr); log('AUTO', STEP, `PR #${pr} armed to merge when the forge's checks pass`, 'high'); }
+    else {
+      const what = outcome === 'conflicting' ? 'conflicting' : `left open (${reason})`;
+      if (outcome === 'conflicting') out.conflicting.push(pr);
+      else out.leftOpen.push({ pr, reason, ...(detail ? { detail } : {}) });
+      log('SKIP', `${STEP} (degraded)`, `condition: PR #${pr} ${what}${detail ? `: ${detail}` : ''} → fallback: left for a human or a later drain.`, 'n/a');
+    }
+    if (pr === own && runDir) {
+      const record = { pr, outcome: outcome === 'leftOpen' ? 'left-open' : outcome, ...(reason ? { reason } : {}) };
+      try { deps.mkdir(path.dirname(drainPath(runDir))); deps.writeFile(drainPath(runDir), JSON.stringify(record) + '\n'); } catch { /* best effort */ }
+    }
+  };
+  const open = (pr, reason, detail) => settle(pr, 'leftOpen', reason, detail);
+
+  if (!deps.ghAvailable()) {
+    if (own) open(own, 'no-gh');
+    return out;
+  }
+
+  const candidates = parseJson(deps.gh(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '200', '--json', 'number,headRefName,isCrossRepository,body']), 'gh pr list');
+  if (!Array.isArray(candidates)) throw new Error('gh pr list did not return an array');
+  const marked = candidates.filter((c) => c && MARKER.test(String(c.body || ''))).sort((a, b) => a.number - b.number);
+
+  // state + head runs + ready-run for one PR; throws on any failed read.
+  const read = (n) => {
+    const view = parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'number,state,isDraft,mergeStateStatus,mergeable,headRefOid,statusCheckRollup,title,body']), 'gh pr view');
+    if (!view || typeof view !== 'object' || Array.isArray(view)) throw new Error('gh pr view returned no object');
+    if (view.state !== 'OPEN') return { view, headRuns: [], ready: null, verdict: 'closed' };
+    if (typeof view.headRefOid !== 'string' || !view.headRefOid || !Array.isArray(view.statusCheckRollup)) throw new Error('gh pr view returned no head commit or check rollup');
+    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']), 'gh run list');
+    if (!Array.isArray(headRuns)) throw new Error('gh run list did not return an array');
+    const ready = deps.readyRun({ pr: n, sha: view.headRefOid });
+    if (!ready || ready.state === 'read-failed' || typeof ready.state !== 'string') throw new Error(`ready-run read failed: ${(ready && ready.reason) || 'no state'}`);
+    return { view, headRuns, ready, verdict: classifyPr(view, headRuns, ready) };
+  };
+
+  const mergeArgs = (n, sha, composed, arm) => [
+    'pr', 'merge', String(n), ...(arm ? ['--auto'] : []), '--repo', repo, '--squash', '--delete-branch',
+    '--match-head-commit', sha, '--subject', composed.title, '--body', composed.body,
+  ];
+
+  // The merge (or the arm) itself. Throws nothing: every failure settles the PR.
+  const land = (n, sha, arm) => {
+    let composed;
+    try { composed = deps.compose(n, repo); } catch (err) { return open(n, 'merge-failed', firstStderrLine(err)); }
+    try {
+      deps.gh(mergeArgs(n, sha, composed, arm));
+    } catch (err) {
+      const text = String((err && err.stderr) || (err && err.message) || err);
+      if (/conflict/i.test(text)) return settle(n, 'conflicting');
+      if (/match-head-commit|head (branch|commit|sha)/i.test(text)) return open(n, 'head-changed');
+      return open(n, 'merge-failed', firstStderrLine(err));
+    }
+    return settle(n, arm ? 'armed' : 'merged');
+  };
+
+  // Green verdict at `sha`: a fresh re-read, then the one merge call.
+  const mergeGreen = (n, sha, gateStart) => {
+    let fresh;
+    try { fresh = read(n); } catch (err) { return open(n, 'pending', firstStderrLine(err)); }
+    if (fresh.verdict === 'closed') return undefined;
+    if (fresh.view.headRefOid !== sha) return open(n, 'head-changed');
+    if (fresh.verdict === 'conflicting') return settle(n, 'conflicting');
+    if (fresh.verdict === 'red') return open(n, 'red');
+    if (fresh.verdict !== 'green') return open(n, 'pending');
+    if (n === own && runDir) {
+      let code;
+      try { code = deps.ciGateRecord({ pr: n, headSha: sha, gateStartEpoch: gateStart, runDir, repo }); } catch { code = 1; }
+      if (code !== 0) log('SKIP', STEP, `PR #${n} ci-gate not recorded (exit ${code})`, 'n/a');
+    }
+    return land(n, sha, false);
+  };
+
+  for (const c of marked) {
+    const n = c.number;
+    try {
+      const problem = scopeProblem(c, null);
+      let scope = problem === 'files-outside-skills' ? null : problem;
+      if (!scope) {
+        let files;
+        try {
+          files = (parseJson(deps.gh(['pr', 'view', String(n), '--repo', repo, '--json', 'files']), 'gh pr view files') || {}).files;
+        } catch (err) { open(n, 'pending', firstStderrLine(err)); continue; }
+        scope = scopeProblem(c, Array.isArray(files) ? files.map((f) => f && f.path) : []);
+      }
+      if (scope) { open(n, scope); continue; }
+
+      const gateStart = Math.floor(deps.now() / 1000);
+      let state;
+      try { state = read(n); } catch (err) { open(n, 'pending', firstStderrLine(err)); continue; }
+      const sha = state.view.headRefOid;
+      if (state.verdict === 'closed') continue;
+      if (state.verdict === 'conflicting') { settle(n, 'conflicting'); continue; }
+      if (state.verdict === 'red') { open(n, 'red'); continue; }
+      if (state.verdict === 'green') { mergeGreen(n, sha, gateStart); continue; }
+      // pending
+      if (n !== own) { open(n, 'pending'); continue; }
+      if (LEVER_ACTIONS[lever].pending === 'arm-if-blocked-else-watch' && state.view.mergeStateStatus === 'BLOCKED') {
+        land(n, sha, true);
+        continue;
+      }
+      const deadline = deps.now() + MERGE_GATE_WATCH_SECONDS * 1000;
+      let settled = false;
+      while (!settled && deps.now() < deadline) {
+        deps.sleep(POLL_MS);
+        let poll;
+        try { poll = read(n); } catch (err) { open(n, 'pending', firstStderrLine(err)); settled = true; break; }
+        if (poll.verdict === 'closed') { settled = true; break; }
+        if (poll.view.headRefOid !== sha) { open(n, 'head-changed'); settled = true; break; }
+        if (poll.verdict === 'conflicting') { settle(n, 'conflicting'); settled = true; break; }
+        if (poll.verdict === 'red') { open(n, 'red'); settled = true; break; }
+        if (poll.verdict === 'green') { mergeGreen(n, sha, gateStart); settled = true; break; }
+      }
+      if (!settled) open(n, 'timeout');
+    } catch (err) {
+      open(n, 'pending', firstStderrLine(err));
+    }
+  }
+  return out;
+}
+
+module.exports = { LEFT_OPEN_REASONS, LEVER_ACTIONS, scopeProblem, classifyPr, drain };
