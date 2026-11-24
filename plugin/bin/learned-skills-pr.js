@@ -33,7 +33,7 @@
 //   node bin/learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>
 //
 // `land` commits each captured patch (plumbing, on a temp index) to learned-skills/{run-id}, pushes it and
-// opens a ready PR that is never armed; a patch that cannot ride it is staged instead. `stage` stages
+// opens a ready PR that land never merges (wrap-up's drain does, when learned-skills-auto-merge is on); a patch that cannot ride it is staged instead. `stage` stages
 // every captured patch (local-merge). --merge-base (required) marks a captured entry whose edit the
 // run branch already carries (its patch reverse-applies to HEAD) as superseded, never delivered twice.
 // Stdout is one JSON line (pr is set only when confirmed open in this call):

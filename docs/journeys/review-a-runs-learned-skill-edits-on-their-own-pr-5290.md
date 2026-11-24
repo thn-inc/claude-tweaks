@@ -21,7 +21,7 @@ files:
 **Entry point:** `/claude-tweaks:wrap-up`'s serial-commit pass (`curation-engine.md` section 4) reaching an applied Skills-row finding on an `integration-model: pr-first` run.
 **Success state:**
 - The record's branch carries no `.claude/skills/` path, so `merge-check`'s instruction-file floor does not park it, and the record auto-merges.
-- One ready, never-armed PR on `learned-skills/{run-id}` holds the skill edits, with the body marker `<!-- wrap-up-skills-pr -->` and `refs #{n}`. Its URL is named where the maintainer looks: the console's Skill updates row, the short-circuit FYI, or the final summary.
+- One ready PR on `learned-skills/{run-id}` holds the skill edits, with the body marker `<!-- wrap-up-skills-pr -->` and `refs #{n}`. Its URL is named where the maintainer looks: the console's Skill updates row, the short-circuit FYI, or the final summary.
 - Under `local-merge`, or when the PR route fails, the edit is a staged Review Console proposal instead.
 
 ## Steps
@@ -43,7 +43,7 @@ files:
 - **Action:** after the pass and before any `record` call, `land` builds one plumbing commit per captured patch on a temp index off the integration tip, pushes `learned-skills/{run-id}`, and opens a ready PR. Each landed finding logs `AUTO {time} — Skills row: applied additive update to {skill}/SKILL.md ({section}) on learned-skills PR #{pr}. Reversibility: high; commit: {hash}.`
 - **Should feel:** separate and safe. The record's PR is unchanged, and the skill edits arrive as their own small diff.
 - **Should understand:**
-  - The PR is never armed. `_shared/github-pr-scan.md`'s item 9 skips a `<!-- wrap-up-skills-pr -->` PR on both arm routes, even when the record carries `auto:merge`.
+  - With `learned-skills-auto-merge` on, wrap-up's drain merges the PR once CI is green; otherwise a human merges or closes it. `_shared/github-pr-scan.md`'s item 9 skips a `<!-- wrap-up-skills-pr -->` PR on both arm routes, even when the record carries `auto:merge`.
   - On a resumed run, `land` reuses the open PR only when its branch still exists and every commit on it is this run's verified edit. Anything else stages instead, with a reason naming the branch and the PR.
   - A resumed run whose earlier learned-skills PR already merged (its branch deleted on merge) records each edit that PR shipped as landed against it — matched by the run and entry trailers plus `git patch-id --stable`, with the PR's commits read through `gh` and `refs/pull/{n}/head` — and opens no second PR. Edits the merged PR did not ship stage with a reason naming it. A failed PR lookup, fetch or commit read stages every remaining edit and builds nothing.
 - **Red flags:**
@@ -91,3 +91,4 @@ files:
 - Created during the build of #5290: `bin/learned-skills-pr.js` (`capture`, `land`, `stage`), `lib/learned-skills/`, the console and trace rendering of the PR URL, item 9's `<!-- wrap-up-skills-pr -->` exclusion, verify's `learned-skills-delivered` row, and `wrap-up/learned-skills-pr.md`.
 - Updated during the build of #6110: a resumed `land` recognises edits a merged learned-skills PR already shipped, looking the run branch's PRs up whether or not the branch still exists.
 - Related journeys: `keep-cant-tell-findings-through-a-console-less-auto-merge-4171.md` covers the same console-less short-circuit for review findings. `trust-a-singleton-auto-merge-to-refuse-without-a-verdict-2941.md` covers the merge-check verdict this journey keeps from parking.
+- Updated by #6112: the PR merges once green under `learned-skills-auto-merge` (wrap-up's drain); it is no longer never-armed
