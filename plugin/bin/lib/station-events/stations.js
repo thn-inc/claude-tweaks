@@ -160,20 +160,24 @@ function transitionsForLabel(label, direction) {
 // `pr-opened: spec N`, `abandoned: spec N`, `failed: {gate}`, `swept: ...`), claim-targets'
 // `never-started: ...` rollback, accept-park's `awaiting-local-acceptance` (the build visit hands
 // forward into accept, so it passed) and the driver's `drive.js settle: {outcome} at {step}`.
-// An unrecognised reason stays `returned`.
+// An unrecognised reason is `sent-back` to `release`: the record goes back to wait for a claim.
 // Names are unconfirmed pending the design's Phase 0 fixtures.
 const word = (name) => new RegExp(`^${name}(?:[:\\s]|$)`);
 const RELEASE_PASSED = [word('merged'), word('pr-opened'), /^awaiting-local-acceptance$/, /^drive\.js settle: pending-review(?:\s|$)/];
-const RELEASE_ABANDONED = [word('abandoned'), word('never-started'), /^swept:/, /^drive\.js settle: refused(?:\s|$)/];
+// The `abandoned` reason is a regex literal: a retired outcome word is never spelled as a string here.
+const RELEASE_STOPPED = [/^abandoned(?:[:\s]|$)/, word('never-started'), /^swept:/, /^drive\.js settle: refused(?:\s|$)/];
 const RELEASE_FAILED = [word('failed'), /^drive\.js settle: blocked(?:\s|$)/];
 
 function outcomeForReleaseReason(reason) {
   const r = typeof reason === 'string' ? reason : '';
-  if (RELEASE_PASSED.some((re) => re.test(r))) return 'passed';
-  if (RELEASE_ABANDONED.some((re) => re.test(r))) return 'abandoned';
-  if (RELEASE_FAILED.some((re) => re.test(r))) return 'failed';
-  return 'returned';
+  if (RELEASE_PASSED.some((re) => re.test(r))) return OUTCOME.PASSED;
+  if (RELEASE_STOPPED.some((re) => re.test(r))) return OUTCOME.STOPPED;
+  if (RELEASE_FAILED.some((re) => re.test(r))) return OUTCOME.FAILED;
+  return OUTCOME.SENT_BACK;
 }
+
+// Where an unrecognised release sends the record: back to wait for a claim.
+const RELEASE_SENT_BACK_NEXT = STATION.RELEASE;
 
 // A shaping claim (`/specify`'s headless drain, specify/next-mode-shape.md's Release step) is
 // released with `shaped: #n`, `routed: needs:definition #n` or `failed: shaping`. It never entered
@@ -182,11 +186,17 @@ function outcomeForReleaseReason(reason) {
 const SHAPING_RELEASE = [/^shaped(?::|\s|$)/, /^routed(?::|\s|$)/, /^failed: shaping\s*$/];
 
 // Claim-release reason -> the station transition the release makes, or null when it makes none:
-// a fresh `{ kind: 'exited', station, outcome }` that the caller spreads into its event.
+// a fresh `{ kind: 'exited', station, outcome, payload }` that the caller spreads into its event.
+// The payload carries the contract fields (`actor`; `reasonCode` when not passed; `next` when
+// sent back); the caller merges its own fields (`reason`, `link`) over a copy of it.
 function releaseTransition(reason) {
   const r = typeof reason === 'string' ? reason : '';
   if (SHAPING_RELEASE.some((re) => re.test(r))) return null;
-  return { kind: 'exited', station: STATION.BUILD, outcome: outcomeForReleaseReason(r) };
+  const outcome = outcomeForReleaseReason(r);
+  const payload = { actor: ACTOR.SCRIPT };
+  if (outcome !== OUTCOME.PASSED) payload.reasonCode = REASON.UNSPECIFIED;
+  if (outcome === OUTCOME.SENT_BACK) payload.next = RELEASE_SENT_BACK_NEXT;
+  return { kind: KIND.EXITED, station: STATION.BUILD, outcome, payload };
 }
 
 module.exports = {

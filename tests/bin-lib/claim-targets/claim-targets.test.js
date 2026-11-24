@@ -3382,7 +3382,7 @@ test('station: a recording stationEvent leaves exit code and stdout identical to
   assert.equal(recording.out, plain.out);
 });
 
-test('station: a rolled-back partial claim closes its build visit with exited build abandoned; --keep-going rolls back nothing', () => {
+test('station: a rolled-back partial claim closes its build visit with exited build stopped; --keep-going rolls back nothing', () => {
   const { ghApi } = makeGhApi({
     reads: {
       720: [readAbsent, confirmRead(), readOk('irrelevant', 'sha720-release')],
@@ -3398,9 +3398,9 @@ test('station: a rolled-back partial claim closes its build visit with exited bu
 
   assert.deepEqual(JSON.parse(io.out[0]).released, [720]);
   const for720 = events.filter((e) => e.recordNumber === 720);
-  assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build', 'exited:build:abandoned']);
+  assert.deepEqual(for720.map(kindStation), ['session_bound:build', 'exited:release:passed', 'entered:build', 'planned:build', 'exited:build:stopped']);
   const exit = for720[4];
-  assert.deepEqual(exit.payload, { reason: ABORT_REASON });
+  assert.deepEqual(exit.payload, { reason: ABORT_REASON, actor: 'script', reasonCode: 'unspecified' });
   assert.equal(exit.discriminator, `${CLAIMED_AT}:abort`);
   assert.equal(exit.repoName, 'acme/w');
   assert.equal(exit.runId, 'r1');

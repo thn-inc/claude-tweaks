@@ -19,14 +19,14 @@ test('outcomeForReleaseReason maps each real reason family', () => {
   }
   for (const r of ['abandoned: spec 9', 'abandoned', ABORT_REASON, 'never-started', 'swept: stale claim', 'swept: issue closed', 'swept:stale',
     'drive.js settle: refused at admission']) {
-    assert.equal(outcomeForReleaseReason(r), 'abandoned', r);
+    assert.equal(outcomeForReleaseReason(r), 'stopped', r);
   }
   for (const r of ['failed: local-ahead-of-origin', 'failed: test', 'failed', 'drive.js settle: blocked at test', 'drive.js settle: blocked at claim']) {
     assert.equal(outcomeForReleaseReason(r), 'failed', r);
   }
-  assert.equal(outcomeForReleaseReason('drive.js settle: express-escalated at check'), 'returned');
+  assert.equal(outcomeForReleaseReason('drive.js settle: express-escalated at check'), 'sent-back');
   for (const r of ['parked', 'fail-test', 'mergedX', 'merge', undefined, null, '']) {
-    assert.equal(outcomeForReleaseReason(r), 'returned', String(r));
+    assert.equal(outcomeForReleaseReason(r), 'sent-back', String(r));
   }
 });
 
@@ -37,23 +37,25 @@ test('outcomeForReleaseReason covers every outcome word settle.js can write', ()
     const word = outcomeFor(cls);
     seen.add(outcomeForReleaseReason(`drive.js settle: ${word} at test`));
   }
-  // Four words, four classes: passed (finished, pending review), abandoned (refused), failed (blocked), returned (escalated).
-  assert.deepEqual([...seen].sort(), ['abandoned', 'failed', 'passed', 'returned']);
+  // Four words, four classes: passed (finished, pending review), stopped (refused), failed (blocked), sent-back (escalated).
+  assert.deepEqual([...seen].sort(), ['failed', 'passed', 'sent-back', 'stopped']);
 });
 
 test('releaseTransition: a build release is exited build with the mapped outcome; a shaping release is no transition', () => {
-  assert.deepEqual(releaseTransition('merged: spec 5902'), { kind: 'exited', station: 'build', outcome: 'passed' });
-  assert.deepEqual(releaseTransition(PARK_REASON), { kind: 'exited', station: 'build', outcome: 'passed' });
-  assert.deepEqual(releaseTransition(ABORT_REASON), { kind: 'exited', station: 'build', outcome: 'abandoned' });
-  assert.deepEqual(releaseTransition('failed: test'), { kind: 'exited', station: 'build', outcome: 'failed' });
+  assert.deepEqual(releaseTransition('merged: spec 5902'), { kind: 'exited', station: 'build', outcome: 'passed', payload: { actor: 'script' } });
+  assert.deepEqual(releaseTransition(PARK_REASON), { kind: 'exited', station: 'build', outcome: 'passed', payload: { actor: 'script' } });
+  assert.deepEqual(releaseTransition(ABORT_REASON), { kind: 'exited', station: 'build', outcome: 'stopped', payload: { actor: 'script', reasonCode: 'unspecified' } });
+  assert.deepEqual(releaseTransition('failed: test'), { kind: 'exited', station: 'build', outcome: 'failed', payload: { actor: 'script', reasonCode: 'unspecified' } });
+  assert.deepEqual(releaseTransition('shapedX: 1'), { kind: 'exited', station: 'build', outcome: 'sent-back', payload: { actor: 'script', reasonCode: 'unspecified', next: 'release' } });
   assert.notEqual(releaseTransition('merged: spec 5902'), releaseTransition('merged: spec 5902'), 'a fresh object per call');
+  assert.notEqual(releaseTransition('merged: spec 5902').payload, releaseTransition('merged: spec 5902').payload, 'a fresh payload per call');
   // specify/next-mode-shape.md's Release step reasons: the claim was a shaping claim, no build visit opened.
   for (const r of ['shaped: #5902', 'routed: needs:definition #5902', 'failed: shaping']) {
     assert.equal(releaseTransition(r), null, r);
   }
   // Only the exact shaping fail is shaping: a build gate failure with a similar word still ends build.
   assert.equal(releaseTransition('failed: shaping-gate-test').outcome, 'failed');
-  assert.equal(releaseTransition('shapedX: 1').outcome, 'returned');
+  assert.equal(releaseTransition('shapedX: 1').outcome, 'sent-back');
 });
 
 test('STATION names every station once, in journey order, and the call-site helpers point at it', () => {

@@ -179,9 +179,11 @@ test('a merge-confirm that merged carries actor script', () => {
 });
 
 test('every mirrored merge exit passes buildLine', () => {
+  let checked = 0;
   for (const over of [{ step: 'merge-confirm', detail: 'merged' }, { step: 'merge-park', status: 'stop', detail: 'ci-red: x' }, { step: 'merge-park', status: 'stop' }]) {
-    for (const e of stationEventsFor(line(over), ID).filter((x) => x.kind === 'exited')) assert.ok(buildLine(e), JSON.stringify(over));
+    for (const e of stationEventsFor(line(over), ID).filter((x) => x.kind === 'exited')) { assert.ok(buildLine(e), JSON.stringify(over)); checked += 1; }
   }
+  assert.ok(checked >= 3, 'each of the three inputs produced an exit, so an empty filter cannot pass');
 });
 
 test('a settle-label ok line writes held why blocked at the stopped step\'s station', () => {
