@@ -53,7 +53,7 @@ The mapping, per step line (`step`, `status`, `detail`, `verifyExit`):
 
 ### Task 1: The test step's line carries the verify.js exit code
 
-**Role:** producer
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/driver/steps.js` (`testStep`'s red-tests return and verdict-less return only)
@@ -145,7 +145,7 @@ git commit -m "feat: driver exits carry outcome, actor and reason — refs #6149
 
 ### Task 3: Document the mapping and the new line field
 
-**Role:** docs
+**Role:** integration
 
 **Files:**
 - Modify: `docs/reference/station-events.md` (line 35's driver `worker` cell `stop` returned → the new mapping; line 166's driver-mirror row: outcome cell per the Decisions table, payload cell `step`, `actor`, `reasonCode`, `reasonText`; one sentence under the table: "a red CI state is data for the reviewer, not an exit; it is not mirrored as a failure.", and that the `ci` `infrastructure` branch is reached only by a non-passing `ci` line, which the driver writes today only on a throw or an interrupt)
