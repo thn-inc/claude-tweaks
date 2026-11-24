@@ -78,7 +78,9 @@ acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier ga
 thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md` Step 2.5's
 `gh run list --commit {headRefOid}` read — a head run not yet `completed` is not green), and
 re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
-`housekeeping-auto-merge` is still set) before doing anything. If any gate no longer holds — a new
+`housekeeping-auto-merge` is still set) and that no linked record carries `bot:blocked` or
+`bot:parked` before doing anything — a record parked between the scan and the arm, or one whose
+labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]`, still blocks the arm. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as
 `## Open parent gate`'s own re-verification note above states for its finding.
@@ -169,14 +171,14 @@ The `[pr-unarmed]` findings this action resolves are the `<!-- wrap-up-skills-pr
 
 The CLI resolves `learned-skills-auto-merge` and re-checks green and gate-passed itself, so the
 scan's candidate status is never trusted, and it writes its own `decisions.md` lines — hand-log
-nothing. `{disabled:true}` is a silent no-op: report nothing. Without `gh` the call prints no
-JSON line, so there is nothing to report. Report each outcome from its JSON by section: `merged`
+nothing. `{disabled:true}` is a silent no-op: report nothing. Without `gh` the call returns
+empty lists, so there is nothing to report. Report each outcome from its JSON by section: `merged`
 and `armed` go to **Applied automatically**; `conflicting` and every `leftOpen` reason (`red`,
 `files-outside-skills`, and the rest) go to **Yours**, each with a paste-ready
 `gh pr view {n} --web` line, because each needs a human.
 
 - Exit 2 is a malformed call (an unanchored or missing `--run` included): re-resolve `{run-dir}`
-  and `{integration-branch}`, then re-run once.
+  and `{integration-branch}`, then re-run once; a second exit 2 is the degrade case below (the SKIP line), merging nothing.
 - Exit 1 (a listing or repo-read failure), a call the Bash timeout killed, or no JSON line: nothing
   was merged. Log `SKIP {time} — Learned-skills drain (degraded): condition: drain exited 1 ({stderr
   line}) → fallback: the learned-skills PRs wait for a human. Reversibility: n/a.` through

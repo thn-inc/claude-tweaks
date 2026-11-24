@@ -708,6 +708,10 @@ test('actions-github-issues.md: Drain covers exit 2, logs a degrade SKIP, and ma
   assert.match(section, /Exit 2 is a malformed call[^]*re-run once/);
   assert.match(section, /Learned-skills drain \(degraded\)[^]*log-decision\.js --status SKIP --text-file/);
   assert.match(section, /killed[^]*no JSON line/);
+  assert.match(section, /Without `gh` the call returns\s+empty lists/);
+  assert.match(section, /a second exit 2 is the degrade case below \(the SKIP line\), merging nothing/);
+  assert.match(ACTIONS_GH, /that no linked record carries `bot:blocked` or\s+`bot:parked`[^]*defaulted to `\[\]`, still blocks the arm/);
+  assert.match(STEP6, /once, over every open learned-skills PR —/);
   assert.match(section, /`merged`\s+and `armed` go to \*\*Applied automatically\*\*; `conflicting` and every `leftOpen` reason[^]*go to \*\*Yours\*\*[^]*gh pr view \{n\} --web/);
 });
 

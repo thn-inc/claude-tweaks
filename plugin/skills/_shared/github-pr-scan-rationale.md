@@ -16,7 +16,7 @@ From item 9's closing note in `github-pr-scan.md`, after "Every row carries the 
 
 ## Item 9 — the re-read exclusion before the arm
 
-From item 9's closing note in `github-pr-scan.md`, after "the `bot:blocked`/`bot:parked` exclusion": (a record parked between the scan and the arm — or one whose labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]` — must still block the arm).
+From item 9's closing note in `github-pr-scan.md`, after "the `bot:blocked`/`bot:parked` exclusion": why the exclusion is re-read before the arm: the list-time snapshot can be stale — a record parked between the scan and the arm, or one whose labels the classifier's loop failed to fetch and defaulted to `[]`, would otherwise look unblocked. The binding rule is in `tidy/actions-github-issues.md`'s `## Arm ready PR` re-verify paragraph.
 
 ## Item 11 — flag-only, never auto-rebase
 
