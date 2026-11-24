@@ -159,6 +159,14 @@ test('a run that closed inside the hunk does not make a later new list mid-list'
   );
 });
 
+test('prose right under an item does not close the list: a later item still makes the hunk mid-list', () => {
+  assert.deepStrictEqual(resolveDiff3('1. a\n' + block(['2. b'], [], ['2. c', 'lazy text']) + '3. z\n'), REFUSED);
+});
+
+test('after a closed run, an item that continues the numbering still refuses', () => {
+  assert.deepStrictEqual(resolveDiff3('1. a\n' + block(['2. b'], [], ['2. c', '', 'Para.']) + '\n3. z\n'), REFUSED);
+});
+
 test('a body line shaped like a short marker passes through', () => {
   assert.deepStrictEqual(resolveDiff3('<<<<<<< x\n' + block(['a'], [], ['b'])), ok('<<<<<<< x\na\nb\n'));
 });

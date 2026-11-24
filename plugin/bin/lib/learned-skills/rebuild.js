@@ -49,14 +49,18 @@ const indentOf = (line) => line.length - line.trimStart().length;
 function itemRuns(out, start, end) {
   const runs = [];
   let run = null;
+  let blank = false;
   for (let i = start; i < end; i++) {
     const text = stripCr(out[i]);
-    if (text.trim() === '') continue;
+    if (text.trim() === '') { blank = true; continue; }
+    const afterBlank = blank;
+    blank = false;
     const it = itemOf(out[i]);
     if (run && it && it.indent === run.indent) { run.items.push({ index: i, number: it.number }); continue; }
     if (run && indentOf(text) > run.indent) continue;
-    // Prose or a heading closes a run; a sibling list item of another kind (a bullet) leaves it open.
-    if (run && !ITEM_ANY.test(text)) run.closed = true;
+    // A heading, or prose after a blank line, closes a run. Prose right under an item is a lazy continuation
+    // of it (the list goes on), and a sibling list item of another kind (a bullet) leaves it open too.
+    if (run && !ITEM_ANY.test(text) && (afterBlank || /^\s*#/.test(text))) run.closed = true;
     run = null;
     if (it) {
       run = { indent: it.indent, items: [{ index: i, number: it.number }], firstIndex: i };
@@ -72,13 +76,17 @@ function renumberRange(out, start, end) {
   const runs = itemRuns(out, start, end);
   if (runs.length === 0) return true;
   const last = runs[runs.length - 1];
-  // Only a run still open at the range's end can continue into the lines after it; look past blank lines
-  // and the run's last item's deeper-indented continuation to the first other line.
-  for (let i = end; !last.closed && i < out.length; i++) {
+  // Look past blank lines and the run's last item's deeper-indented continuation to the first other line.
+  // An item there at the run's indent makes the hunk mid-list, unless the run closed inside the range and
+  // that item restarts numbering at 1 (a new list); one that continues the numbering still refuses.
+  for (let i = end; i < out.length; i++) {
     const text = stripCr(out[i]);
     if (text.trim() === '') continue;
     const it = itemOf(out[i]);
-    if (it && it.indent === last.indent) return false;
+    if (it && it.indent === last.indent) {
+      if (last.closed && it.number === 1) break;
+      return false;
+    }
     if (indentOf(text) > last.indent) continue;
     break;
   }
