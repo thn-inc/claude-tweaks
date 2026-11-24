@@ -15,9 +15,10 @@
 // or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set;
 // only the own PR writes the ci-gate event and drain.json.
 //
-// Scope is proven twice: before the state read (the files read, so the first-failure order stays
-// cross-repository, not-learned-skills-branch, files-outside-skills) and again on the pre-merge re-read,
-// whose state call also requests `files`, so a push between the two reads is never merged unchecked.
+// Scope is proven at three points: before the state read (the files read, so the first-failure order stays
+// cross-repository, not-learned-skills-branch, files-outside-skills), on the state read that guards the
+// arm, watch and immediate-merge paths, and again on the pre-merge re-read, whose state call also
+// requests `files`, so a push between the reads is never merged unchecked.
 // `gh pr view --json files` caps at 100 entries: a list of 100 or more cannot prove scope and reports
 // `files-outside-skills`. A merge failure re-reads the PR state once; a PR no longer OPEN (a concurrent
 // drain merged it) is a no-op, and a head mismatch is classified from the "was modified" wording on
