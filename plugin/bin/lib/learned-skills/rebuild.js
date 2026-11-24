@@ -27,6 +27,7 @@ const { repoPinnedEnv } = require('../hooks/git-exec');
 const MARKER_SIZE = 32;
 
 const ITEM = /^(\s*)(\d+)([.)])(\s)/;
+const ITEM_ANY = /^\s*(?:[-*+]|\d+[.)])\s/;
 
 const stripCr = (line) => (line.endsWith('\r') ? line.slice(0, -1) : line);
 
@@ -41,45 +42,91 @@ const itemOf = (line) => {
   return m ? { indent: m[1].length, number: Number(m[2]) } : null;
 };
 
-// Renumbers the list items inside one resolved range `[start, end)` of `out`; false means a mid-list hunk.
-function renumberRange(out, start, end) {
-  let first = null;
-  for (let i = start; i < end; i++) {
-    const it = itemOf(out[i]);
-    if (it) { first = it; break; }
-  }
-  if (!first) return true;
-  const indent = first.indent;
-  const items = [];
-  for (let i = start; i < end; i++) {
-    const it = itemOf(out[i]);
-    if (it && it.indent === indent) items.push({ index: i, number: it.number });
-  }
+const indentOf = (line) => line.length - line.trimStart().length;
 
-  let prev = null;
-  for (let i = start - 1; i >= 0; i--) {
+// The contiguous runs of list items inside `[start, end)`: a run ends at the first non-blank line that is
+// neither an item at the run's indent nor a continuation (indented deeper); a later item starts a new run.
+function itemRuns(out, start, end) {
+  const runs = [];
+  let run = null;
+  for (let i = start; i < end; i++) {
     const text = stripCr(out[i]);
     if (text.trim() === '') continue;
     const it = itemOf(out[i]);
-    if (it && it.indent === indent) { prev = it.number; break; }
-    if (!it && text.length - text.trimStart().length > indent) continue;
-    if (it && it.indent > indent) continue;
-    break;
+    if (run && it && it.indent === run.indent) { run.items.push({ index: i, number: it.number }); continue; }
+    if (run && indentOf(text) > run.indent) continue;
+    run = null;
+    if (it) {
+      run = { indent: it.indent, items: [{ index: i, number: it.number }], firstIndex: i };
+      runs.push(run);
+    }
   }
-  const from = prev !== null ? prev + 1 : items[0].number;
+  return runs;
+}
 
+// Renumbers the list items inside one resolved range `[start, end)` of `out`, each run on its own;
+// false means a mid-list hunk (an item follows the range's last run).
+function renumberRange(out, start, end) {
+  const runs = itemRuns(out, start, end);
+  if (runs.length === 0) return true;
+  const last = runs[runs.length - 1];
   for (let i = end; i < out.length; i++) {
     if (stripCr(out[i]).trim() === '') continue;
     const it = itemOf(out[i]);
-    if (it && it.indent === indent) return false;
+    if (it && it.indent === last.indent) return false;
     break;
   }
 
-  items.forEach((item, n) => {
-    if (item.number === from + n) return;
-    out[item.index] = out[item.index].replace(/^(\s*)\d+/, (m, ws) => ws + String(from + n));
-  });
+  for (const { indent, items, firstIndex } of runs) {
+    let prev = null;
+    let leading = true;
+    for (let i = start; i < firstIndex; i++) if (stripCr(out[i]).trim() !== '') leading = false;
+    for (let i = leading ? start - 1 : -1; i >= 0; i--) {
+      const text = stripCr(out[i]);
+      if (text.trim() === '') continue;
+      const it = itemOf(out[i]);
+      if (it && it.indent === indent) { prev = it.number; break; }
+      if (!it && text.length - text.trimStart().length > indent) continue;
+      if (it && it.indent > indent) continue;
+      break;
+    }
+    const from = prev !== null ? prev + 1 : items[0].number;
+    items.forEach((item, n) => {
+      if (item.number === from + n) return;
+      out[item.index] = out[item.index].replace(/^(\s*)\d+/, (m, ws) => ws + String(from + n));
+    });
+  }
   return true;
+}
+
+// Merges the PR's block into the integration block: ours first, then the PR's lines, minus any list-item
+// unit (item line + its deeper-indented continuation) that ours already holds identically. Only whole
+// lessons dedupe — a blank, fence or other non-item line is never dropped on its own.
+function listUnits(lines) {
+  const units = [];
+  for (let i = 0; i < lines.length; i++) {
+    const unit = { lines: [lines[i]], item: ITEM_ANY.test(stripCr(lines[i])) };
+    if (unit.item) {
+      const indent = indentOf(stripCr(lines[i]));
+      while (i + 1 < lines.length) {
+        let j = i + 1;
+        while (j < lines.length && stripCr(lines[j]).trim() === '') j++;
+        if (j >= lines.length || indentOf(stripCr(lines[j])) <= indent) break;
+        unit.lines.push(...lines.slice(i + 1, j + 1));
+        i = j;
+      }
+    }
+    units.push(unit);
+  }
+  return units;
+}
+
+function mergeBlocks(ours, theirs) {
+  const same = (x, y) => x.length === y.length && x.every((l, n) => stripCr(l) === stripCr(y[n]));
+  if (same(ours, theirs)) return ours;
+  const have = listUnits(ours).filter((u) => u.item);
+  const kept = listUnits(theirs).filter((u) => !(u.item && have.some((h) => same(h.lines, u.lines))));
+  return [...ours, ...kept.flatMap((u) => u.lines)];
 }
 
 function resolveDiff3(text) {
@@ -102,8 +149,7 @@ function resolveDiff3(text) {
     }
     if (!closed || target !== theirs || base.length > 0 || ours.length === 0 || theirs.length === 0) return { ok: false };
     const start = out.length;
-    const have = new Set(ours.map(stripCr));
-    out.push(...ours, ...theirs.filter((l) => !have.has(stripCr(l))));
+    out.push(...mergeBlocks(ours, theirs));
     ranges.push([start, out.length]);
   }
   for (const [start, end] of ranges) {

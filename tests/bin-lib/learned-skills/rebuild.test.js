@@ -84,8 +84,64 @@ test('a two-digit renumber and an indented list renumber', () => {
   );
 });
 
-test('a blank line the PR adds is dropped when the integration side also added one', () => {
-  assert.deepStrictEqual(resolveDiff3(block(['- a', ''], [], ['', '- c'])), ok('- a\n\n- c\n'));
+test('a blank line the PR adds is kept even when the integration side also added one', () => {
+  assert.deepStrictEqual(resolveDiff3(block(['- a', ''], [], ['', '- c'])), ok('- a\n\n\n- c\n'));
+});
+
+test('two different fenced blocks keep both complete fences', () => {
+  const ours = ['```bash', 'echo a', '```'];
+  const theirs = ['```js', 'let a', '```'];
+  assert.deepStrictEqual(
+    resolveDiff3(block(ours, [], theirs)),
+    ok([...ours, ...theirs].join('\n') + '\n'),
+  );
+});
+
+test('a PR item keeps its continuation line when ours has the same continuation text', () => {
+  assert.deepStrictEqual(
+    resolveDiff3(block(['- b', '  detail ours'], [], ['- c', '  detail ours'])),
+    ok('- b\n  detail ours\n- c\n  detail ours\n'),
+  );
+});
+
+test('an identical item with an identical continuation is dropped once', () => {
+  assert.deepStrictEqual(
+    resolveDiff3(block(['- b', '  detail'], [], ['- b', '  detail', '- c', '  more'])),
+    ok('- b\n  detail\n- c\n  more\n'),
+  );
+});
+
+test('an item whose continuation differs is kept', () => {
+  assert.deepStrictEqual(
+    resolveDiff3(block(['- b', '  one'], [], ['- b', '  two'])),
+    ok('- b\n  one\n- b\n  two\n'),
+  );
+});
+
+test('identical whole blocks yield ours only', () => {
+  assert.deepStrictEqual(
+    resolveDiff3(block(['', '- a', '```', 'x', '```'], [], ['', '- a', '```', 'x', '```'])),
+    ok('\n- a\n```\nx\n```\n'),
+  );
+});
+
+test('CRLF: continuation and fence cases resolve like LF', () => {
+  const crlf = (t) => t.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(
+    resolveDiff3(crlf(block(['- b', '  detail ours'], [], ['- c', '  detail ours']))),
+    ok(crlf('- b\n  detail ours\n- c\n  detail ours\n')),
+  );
+  assert.deepStrictEqual(
+    resolveDiff3(crlf(block(['- b', '  detail'], [], ['- b', '  detail', '- c']))),
+    ok(crlf('- b\n  detail\n- c\n')),
+  );
+});
+
+test('a new list the PR adds after a paragraph is not merged into the integration list', () => {
+  assert.deepStrictEqual(
+    resolveDiff3('1. p\n2. q\n' + block(['3. r'], [], ['', 'New list:', '', '1. x', '2. y'])),
+    ok('1. p\n2. q\n3. r\n\nNew list:\n\n1. x\n2. y\n'),
+  );
 });
 
 test('a body line shaped like a short marker passes through', () => {
