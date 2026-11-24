@@ -18,7 +18,8 @@ const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const SKILL_DIR = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'review');
 const TIER = path.join(SKILL_DIR, 'step3-tier-variants.md');
 const RELEASE = path.join(SKILL_DIR, '..', 'release', 'SKILL.md');
-const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out'];
+const COVERAGE_SLOT = '{session limit twice | unavailable | timed out | blocked: {reason} | needs-context: {reason}}';
+const COVERAGE_PHRASES = ['session limit twice', 'unavailable', 'timed out', 'blocked: bundle unreadable', 'needs-context: no path for src/a.js'];
 const RULE = 'pair-line patterns are additive: add a pattern for the new wording, never replace one, so archived runs keep parsing';
 
 const L = (status, action) => `- ${status} 10:00:00 — ${action}`;
@@ -420,13 +421,15 @@ test('AC3.3: step3-tier-variants.md carries the eighth pair template', () => {
 
 test('AC3.3: each single-read-coverage alternation filling matches that form', () => {
   const [t] = liveTemplates(TIER);
+  assert.ok(t.includes(COVERAGE_SLOT), `the reason slot drifted from ${COVERAGE_SLOT} — ${RULE}`);
   for (const phrase of COVERAGE_PHRASES) {
-    const filled = fill(t.replace(/\{session limit twice \| unavailable \| timed out\}/, phrase));
+    const filled = fill(t.replace(COVERAGE_SLOT, phrase));
     assert.ok(!/[{}]/.test(filled), filled);
     assert.deepEqual(matchingForms(filled), ['single-read-coverage'], phrase);
     assert.deepEqual(classifyPairLine(`- STAGED 10:00:00 — ${filled}`), { form: 'single-read-coverage', lens: '3a', path: null, line: null });
   }
-  assert.equal(matchingForms(fill(t.replace(/\{[^}]*\|[^}]*\}/, 'exploded'))).length, 0);
+  assert.equal(matchingForms(fill(t.replace(COVERAGE_SLOT, 'exploded'))).length, 0);
+  assert.equal(matchingForms(fill(t.replace(COVERAGE_SLOT, 'blocked:'))).length, 0, 'a blocked cause with no reason is not a coverage line');
 });
 
 test('AC3.3: a reworded composed line matches no form, and a drifted template fails the twin pin (go-red controls)', () => {
