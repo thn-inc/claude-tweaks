@@ -3,7 +3,10 @@
 // Step lines become a started/exited work segment; three merge sub-steps mark
 // the merge-station visit boundary. Names live in stations.js.
 'use strict';
-const { ACTOR, DRIVER_STEP_STATIONS, KIND, MERGE_SUBSTEP_TRANSITIONS, OUTCOME, REASON, SESSION_BOUND_STATION, outcomeForDriverStatus } = require('./stations');
+const { ACTOR, DRIVER_STEP_STATIONS, KIND, MERGE_SUBSTEP_TRANSITIONS, OUTCOME, REASON, SESSION_BOUND_STATION, STATION, outcomeForDriverStatus } = require('./stations');
+const { holdEvent } = require('./blockers');
+const { LABELS } = require('../issues/record-vocabulary');
+const { SETTLE_LABEL_STEP, STEP } = require('../driver/events');
 
 // Who does the work at each driver step: a model session, or the driver's own code.
 const DRIVER_STEP_ACTORS = Object.freeze({
@@ -47,6 +50,16 @@ function stationEventsFor(event, { repoName, runId } = {}) {
   // The review fix round's own worker line (#5942) is not a work segment: the review line already spans it
   // and binds the fix session through `fixSessionId`.
   if (step === 'worker' && event.fix === true) return [];
+  // The settle that labels a stopped record bot:blocked is the driver's hold. The station is the stopped step's
+  // (a claim stop never entered build: release), read from the line's `stopStep` field. No `ref`: a driver stop
+  // has no blocking record (#6151).
+  if (step === SETTLE_LABEL_STEP) {
+    if (status !== 'ok') return [];
+    const { stopStep } = event;
+    const station = stopStep === STEP.claim ? STATION.RELEASE : (own(DRIVER_STEP_STATIONS, stopStep) ? DRIVER_STEP_STATIONS[stopStep] : STATION.BUILD);
+    const held = holdEvent({ ...base, label: LABELS.BOT_BLOCKED, added: true, station, at: ts });
+    return held ? [held] : [];
+  }
   if (own(DRIVER_STEP_STATIONS, step)) {
     const station = DRIVER_STEP_STATIONS[step];
     // The sink writes one line at step end, so `started.at` is back-computed as the line's `ts`
@@ -73,7 +86,13 @@ function stationEventsFor(event, { repoName, runId } = {}) {
     if (t.skipDetailPrefix && typeof event.detail === 'string' && event.detail.startsWith(t.skipDetailPrefix)) return [];
     const ev = { ...base, kind: t.kind, station: t.station, at: ts, payload: { substep: t.substep } };
     if (t.outcome) ev.outcome = t.outcome;
-    return [ev];
+    const out = [ev];
+    // An applied park (the structured `parked` field, never the detail text) is also a hold.
+    if (step === 'merge-park' && event.parked === true) {
+      const held = holdEvent({ ...base, label: LABELS.BOT_PARKED, added: true, station: STATION.MERGE, at: ts });
+      if (held) out.push(held);
+    }
+    return out;
   }
   return [];
 }

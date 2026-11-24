@@ -7275,6 +7275,7 @@ test('AC8.3: an unclassified stop through the run loop is settled by the blocked
   assert.deepEqual([final.settleRow, final.unclassified, final.outcome, final.settle], ['blocked', true, 'blocked', 'done']);
   assert.equal(final.stop.class, 'bogus');
   assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+  assert.equal(settleLines(h).find((l) => l.step === 'settle-label').stopStep, 'test');
 });
 
 test('settle notes ride the final line: a claim that may lapse by TTL', async () => {
