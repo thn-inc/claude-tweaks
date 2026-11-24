@@ -82,26 +82,37 @@ const HOLD_LABEL_WHY = Object.freeze({
   [LABELS.ACCEPT_CHANGES_REQUESTED]: 'changes-requested',
 });
 
-// { stationEvent, sessionId, runId } -> ({ label, added, number, repoName, station, ref }) => void.
-// Writes `held` when a hold label is added, `released` when removed; any other label is
-// ignored. `ref` rides only on `held`. Never throws.
-function makeHoldSink({ stationEvent, sessionId, runId } = {}) {
-  return ({ label, added, number, repoName, station, ref }) => {
-    const why = HOLD_LABEL_WHY[label];
-    if (!why || typeof stationEvent !== 'function') return;
+// { label, added, recordNumber, repoName, station, lane, runId, sessionId, ref, discriminator, at }
+// -> a `held` (added) / `released` event, or null for a label that is no hold. Pure and
+// clock-free: the caller supplies `discriminator`; `at` (default null) lets the emitter
+// stamp the emit time. `ref` rides only on `held`, and only as a string.
+function holdEvent({
+  label, added, recordNumber, repoName, station, lane, runId, sessionId, ref, discriminator, at,
+} = {}) {
+  const why = HOLD_LABEL_WHY[label];
+  if (!why) return null;
+  return {
+    kind: added ? KIND.HELD : KIND.RELEASED,
+    station,
+    recordNumber,
+    repoName,
+    lane: lane || 'unknown',
+    sessionId: sessionId === undefined ? null : sessionId,
+    runId: runId === undefined ? null : runId,
+    payload: added && typeof ref === 'string' ? { why, ref } : { why },
+    discriminator,
+    at: at === undefined ? null : at,
+  };
+}
+
+// { stationEvent } -> (holdEvent args) => void. Inert without a function; a throwing
+// `stationEvent` is swallowed, so a failed emit never reaches the transition.
+function makeHoldSink({ stationEvent } = {}) {
+  return (args) => {
+    if (typeof stationEvent !== 'function') return;
     try {
-      const payload = added && ref !== undefined ? { why, ref } : { why };
-      stationEvent({
-        kind: added ? KIND.HELD : KIND.RELEASED,
-        station,
-        recordNumber: number,
-        repoName,
-        lane: 'unknown',
-        sessionId,
-        runId,
-        payload,
-        discriminator: `${why}:${added ? 'add' : 'remove'}:${new Date().toISOString()}`,
-      });
+      const event = holdEvent(args);
+      if (event) stationEvent(event);
     } catch { /* a failed emit never reaches the transition */ }
   };
 }
@@ -120,4 +131,5 @@ function snapshotSinkOf(deps) {
 
 module.exports = {
   makeBlockerSnapshotSink, snapshotSinkOf, blockersChanged, lastBlockersPayload, makeHoldSink,
+  holdEvent, HOLD_LABEL_WHY,
 };

@@ -56,7 +56,8 @@ test('the sink swallows a throwing stationEvent', () => {
   assert.doesNotThrow(() => sink(11, { blockedBy: [], openBlocker: false, openBlockerIds: [] }, META));
 });
 
-const { blockersChanged, makeHoldSink } = require('../../../plugin/bin/lib/station-events/blockers');
+const { blockersChanged, makeHoldSink, holdEvent, HOLD_LABEL_WHY } = require('../../../plugin/bin/lib/station-events/blockers');
+const { HOLD_WHYS } = require('../../../plugin/bin/lib/station-events/stations');
 
 const ENTRY = { blockedBy: [5], openBlocker: true, openBlockerIds: [5] };
 const SNAP = { blockedBy: [5], openBlockerIds: [5], crossRepoBlockers: [], fetchedAt: 'a' };
@@ -83,7 +84,8 @@ test('the first snapshot for a record is appended', () => {
 
 test('adding bot:blocked writes held why blocked with the blocker ref', () => {
   const { events, stationEvent } = capture();
-  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: true, number: 11, repoName: 'acme/w', station: 'build', ref: '#5' });
+  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: true, recordNumber: 11, repoName: 'acme/w', station: 'build', ref: '#5', discriminator: 'd-1' });
+  assert.equal(events[0].discriminator, 'd-1');
   assert.equal(events[0].kind, 'held');
   assert.deepEqual(events[0].payload, { why: 'blocked', ref: '#5' });
   assert.notEqual(buildLine(events[0]), null);
@@ -91,8 +93,27 @@ test('adding bot:blocked writes held why blocked with the blocker ref', () => {
 
 test('removing it writes released why blocked', () => {
   const { events, stationEvent } = capture();
-  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: false, number: 11, repoName: 'acme/w', station: 'build', ref: '#5' });
+  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: false, recordNumber: 11, repoName: 'acme/w', station: 'build', ref: '#5', discriminator: 'd-1' });
+  assert.equal(events[0].discriminator, 'd-1');
   assert.equal(events[0].kind, 'released');
   assert.deepEqual(events[0].payload, { why: 'blocked' });
   assert.notEqual(buildLine(events[0]), null);
+});
+
+test('a non-hold label writes nothing', () => {
+  const { events, stationEvent } = capture();
+  makeHoldSink({ stationEvent })({ label: 'ready', added: true, recordNumber: 11, repoName: 'acme/w', station: 'build', discriminator: 'd-1' });
+  assert.deepEqual(events, []);
+  assert.equal(holdEvent({ label: 'ready', added: true }), null);
+});
+
+test('every hold label maps into HOLD_WHYS', () => {
+  for (const why of Object.values(HOLD_LABEL_WHY)) assert.ok(HOLD_WHYS.includes(why), why);
+  assert.deepEqual(Object.keys(HOLD_LABEL_WHY).sort(), ['accept:changes-requested', 'bot:blocked', 'bot:parked']);
+});
+
+test('bot:parked added writes held why parked with no ref', () => {
+  const { events, stationEvent } = capture();
+  makeHoldSink({ stationEvent })({ label: 'bot:parked', added: true, recordNumber: 11, repoName: 'acme/w', station: 'build', discriminator: 'd-2' });
+  assert.deepEqual(events[0].payload, { why: 'parked' });
 });
