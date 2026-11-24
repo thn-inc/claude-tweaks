@@ -58,7 +58,7 @@ function renumberRange(out, start, end) {
 
   items.forEach((item, n) => {
     if (item.number === from + n) return;
-    out[item.index] = out[item.index].replace(/^(\s*)\d+/, `$1${from + n}`);
+    out[item.index] = out[item.index].replace(/^(\s*)\d+/, (m, ws) => ws + String(from + n));
   });
   return true;
 }

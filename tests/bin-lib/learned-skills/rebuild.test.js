@@ -64,6 +64,30 @@ test('CRLF lines resolve like LF', () => {
   assert.deepStrictEqual(resolveDiff3(lf.replace(/\n/g, '\r\n')), ok('- one\n- a\n- b\n\nend\n'.replace(/\n/g, '\r\n')));
 });
 
+test('CRLF renumber and dedupe resolve like LF', () => {
+  const crlf = (s) => s.replace(/\n/g, '\r\n');
+  assert.deepStrictEqual(
+    resolveDiff3(crlf('6. f\n' + block(['7. x'], [], ['7. y']))),
+    ok(crlf('6. f\n7. x\n8. y\n')),
+  );
+  assert.deepStrictEqual(
+    resolveDiff3(crlf(block(['- a', '- b'], [], ['- b', '- c']))),
+    ok(crlf('- a\n- b\n- c\n')),
+  );
+});
+
+test('a two-digit renumber and an indented list renumber', () => {
+  assert.deepStrictEqual(resolveDiff3('9. a\n' + block(['10. x'], [], ['10. y'])), ok('9. a\n10. x\n11. y\n'));
+  assert.deepStrictEqual(
+    resolveDiff3('  1. a\n' + block(['  2. b'], [], ['  2. c'])),
+    ok('  1. a\n  2. b\n  3. c\n'),
+  );
+});
+
+test('a blank line the PR adds is dropped when the integration side also added one', () => {
+  assert.deepStrictEqual(resolveDiff3(block(['- a', ''], [], ['', '- c'])), ok('- a\n\n- c\n'));
+});
+
 test('a body line shaped like a short marker passes through', () => {
   assert.deepStrictEqual(resolveDiff3('<<<<<<< x\n' + block(['a'], [], ['b'])), ok('<<<<<<< x\na\nb\n'));
 });
