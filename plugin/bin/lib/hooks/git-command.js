@@ -1101,11 +1101,12 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseL
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
   // `cd` are read for them: an assignment word before it can span tokens that look like a
   // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
-  // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`) is the cd's own redirect, and the cd still runs.
-  const gluedCd = cdLead >= 0 && /^cd[<>]/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
+  // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`, `cd&>f`) is the cd's own redirect, and the cd still runs.
+  // A quoted `>` after the `&` (`cd&\>f`) never gets here: the segment splitter already cut at that lone `&`.
+  const gluedCd = cdLead >= 0 && /^cd(?:[<>]|&>)/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
   if ((t[cdLead] === 'cd' || gluedCd) && !(split && baseLike)) { // an index of -1 reads undefined: no cd
-    // #4460: an operator that ends the glued token (`cd> f`, `cd>> f`) takes the next word as its target, not as the argument.
-    const from = cdLead + (gluedCd && /^cd[<>][<>&|]*$/.test(rawT[cdLead]) ? 2 : 1);
+    // #4460: an operator that ends the glued token (`cd> f`, `cd>> f`, `cd&> f`) takes the next word as its target, not as the argument.
+    const from = cdLead + (gluedCd && /^cd(?:[<>]|&>)[<>&|]*$/.test(rawT[cdLead]) ? 2 : 1);
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
     const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
@@ -3467,7 +3468,9 @@ function redirectRawTargets(t, quoting) {
     // (bash 3.2 and 5), so only a bare one counts. Without span kinds every `&` counts, as before.
     let ampOp = !kindsOf;
     // #4460: whether the target's first character is a bare `(` in the source (false when a `$`
-    // expansion supplies it, as in `>$A`); null when no span kinds are known.
+    // expansion supplies it, as in `>$A`, or when the target is a word of its own, whose `(` a
+    // substitution cannot leave bare in any command bash parses); null when no span kinds are
+    // known, which reads every `(` as a process substitution, as before.
     let bareParen = null;
     if (!kindsOf) {
       const op = matchRedirectOperator(t[i]);
@@ -3505,7 +3508,6 @@ function redirectRawTargets(t, quoting) {
       i += 1; // consume the target token too — never re-scan it as its own operator
       rawTarget = t[i];
       targetKinds = kindsAt(i);
-      if (kindsOf && quoting.raw[i] !== undefined) bareParen = quoting.raw[i][0] === '(' && kindsOf[i][0] === 'b';
       // The target is a word of its own: an `&` starting it is literal unless bare.
       if (kindsOf) ampOp = rawTarget !== undefined && kindsOf[i][0] === 'b';
     }
