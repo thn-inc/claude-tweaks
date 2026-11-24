@@ -55,10 +55,11 @@
 //
 // `postMerge` returns { entries, deferred, failure? }. `deferred` lists the run dirs skipped
 // for a RETRYABLE reason — archive must not archive them in this pass, or the
-// retry never comes (archive-merged.js's `postMergeDeferred`). Exactly six
+// retry never comes (archive-merged.js's `postMergeDeferred`). Exactly seven
 // reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, the
-// transient PR lookup failure `network-failure`, `transient-failure` and
-// `budget-exhausted`. Every other skip is NOT
+// transient PR lookup failure `network-failure`, `transient-failure`,
+// `budget-exhausted` and `hollow-merge` (a run in the caller's `hollowRunDirs`,
+// below). Every other skip is NOT
 // deferred: `gh-absent`, `dry-run`, `marker-write-failed` and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
 // before it answers, and one of archive's own structurally-stuck reasons —
 // `invalid-arguments`, `no-pr-state`), so archive's stuck-run surfacing for

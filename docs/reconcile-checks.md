@@ -706,12 +706,13 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
   failed or did not run leaves `deferred` empty, so a failed post-merge never holds archive back; the one
   exception is the hollow-merge hold below, which `index.js` adds to the set itself.
-- **Hollow merges join the archive hold set (#6143).** `detectHollowMerges` lists the runs whose PR merged while
-  the run's `build` or `test` phase was unfinished; `index.js` passes them to `postMerge` as `hollowRunDirs`
-  (skipped, reason `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into
-  `postMergeDeferred` whether or not `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run
-  dir in place. `postMerge` itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the
-  archive set again so the hold also applies when `post-merge` did not run. A `hollow-merge` run's records are
+- **Hollow merges join the archive hold set (#6143).** `detectHollowMerges` lists the runs whose PR merged
+  while the run's `build` or `test` phase was unfinished, and the runs whose hollow-merge check failed, so their
+  merge state is unknown; `index.js` passes them to `postMerge` as `hollowRunDirs` (skipped, reason
+  `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into `postMergeDeferred` whether or not
+  `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run dir in place. `postMerge`
+  itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the archive set
+  again so the hold also applies when `post-merge` did not run. A `hollow-merge` run's records are
   each commented on once. A `hollow-check-failed` run is held too, and any records commented on before the check
   failed are listed in its `commented`. Both show in `result.hollowMerges`, `formatSummary`, and the background
   status file's `hollowMerges` list. A held run leaves the set on a later pass, when detection no longer reports
@@ -720,18 +721,19 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   another run.
 - **How the guard clears.** Exactly seven reasons defer a run in `post-merge`: `merge-grace`, `in-flight`,
   `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below),
-  `budget-exhausted` (below) and `hollow-merge` (the run's PR merged while it was in flight, above). A run leaves the set once `post-merge` acts on it, which for
-  `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3)
-  more passes; a `hollow-merge` run leaves once detection stops reporting it. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
-  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
-  deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
-  every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
-  because the alternative is archiving a run the reconciler still owes its steps:
+  `budget-exhausted` (below) and `hollow-merge` (the run's PR merged while it was in flight, or its hollow-merge
+  check failed, so its merge state is unknown, above). A run leaves the set once `post-merge` acts on it, which
+  for `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3) more
+  passes; a `hollow-merge` run leaves once detection stops reporting it. Nothing else defers. Each reason is
+  normally cleared by a later pass, but two cases are not: a persistent `claim-failed` (an `EACCES` or
+  `EROFS` on the run dir every pass) and a deterministic per-PR throw (the lookup maps any throw to
+  `network-failure`) defer the run on every pass, untracked, so archive never moves it. That is the residual
+  risk of the guard, kept because the alternative is archiving a run the reconciler still owes its steps:
 
   | Skip reason | Deferred | Why |
   |---|---|---|
   | `merge-grace`, `in-flight`, `claim-failed`, `network-failure`, `transient-failure`, `budget-exhausted` | yes | Retryable: the next pass can act. |
-  | `hollow-merge` | yes | The PR merged while the run's `build` or `test` phase was unfinished (#6143); held until detection stops reporting it. Also unioned into archive's set by `index.js`. |
+  | `hollow-merge` | yes | The PR merged while the run's `build` or `test` phase was unfinished, or the run's hollow-merge check failed, so its merge state is unknown (#6143); held until detection stops reporting it. Also unioned into archive's set by `index.js`. |
   | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
   | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
   | `marker-write-failed` | no | See the marker-write bullet below. |
