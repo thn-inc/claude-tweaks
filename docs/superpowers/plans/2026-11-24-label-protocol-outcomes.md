@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The release and authorize exits write the new-contract outcome with `payload.actor`, and the authorize exit is followed by a `decided` line.
+**Goal:** The release and authorize exits write the new-contract outcome with `payload.actor`, and the authorize exit is followed by a `decided` line. The accept verdict exits are recorded as a coverage gap (plan-review Decision 1).
 
 **Architecture:** Each change passes new `payload` fields into an existing `deps.stationEvent({...})` call; `emit.js` already validates actors and normalizes reason codes. The `decided` line's `outcomeRef` is `eventKey(exitedEvent)` from `plugin/bin/lib/station-events/emit.js`.
 
 **Tech Stack:** Node.js (CommonJS), `node:test`; test runner `node tools/run-tests.js <file>`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-24T062121-record-6150/work/6150-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-24T063819-record-6150/work/6150-spec.md`
 
 Scope keywords: ACTOR.PERSON, KIND.DECIDED
 
@@ -20,33 +20,30 @@ Scope keywords: ACTOR.PERSON, KIND.DECIDED
 - Every station name, kind, outcome, actor, reason and lane literal is named through `plugin/bin/lib/station-events/stations.js` (`STATION.*`, `KIND.*`, `OUTCOME.*`, `ACTOR.*`, `REASON.*`); `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.
 - Emission never blocks or fails a transition: every `deps.stationEvent` call stays in its own try/catch; no throw on any emission path.
 
-## Premise reversal: the accept exits (needs a ruling)
+## Plan-review decisions (on the record body, 2026-11-24)
 
-The spec places the accept exits (`passed` + `decided accept` on approval; `sent-back`, `next: build`, reason `changes-requested` on a changes request) in `plugin/bin/accept-park.js` "near line 735". That line is `parkSteps`' `emit` helper, used only for the `accept:pending` entry and the park's in-process claim release. No program code applies `accept:approved` or `accept:changes-requested`: `plugin/bin/accept-entry.js labels` only prints the edit (`verdictLabelEdits`), and `plugin/skills/accept/verdict-interim.md` applies it with `gh issue edit` in prose. `docs/reference/station-events.md`'s Coverage gaps (record 1/8's finding) already states this, and `.claude/skills/station-event-producer-addition` rule 4 forbids emitting before the side effect lands.
-
-So AC1's last two tests (`approving an acceptance writes exited passed and a decided accept`, `requesting changes writes exited sent-back next build with reason changes-requested`) have no code path to attach to inside this record's Files, and the spec's own constraints (no prose asked to log; no skill text changed to emit events; own Files only) rule out creating one. Producing them needs a decision this build cannot make: a new code path that applies the verdict labels (for example an `accept-entry.js apply` subcommand the accept skill calls instead of `gh issue edit`), which is a skill-prose change and a file outside this record. This plan builds the release and authorize exits and carries the accept exits as this open question.
+- **Decision 1 (Reading B):** this record covers the release exit and the authorize exit only. AC1 keeps its first two tests and drops the two accept tests. `plugin/bin/accept-park.js` and `tests/accept-park-cli.test.js` are not touched (its in-process park release keeps its current payload). No skill text changes. Task 3 states the accept gap under `docs/reference/station-events.md`'s Coverage gaps with the record's exact sentence; a follow-up record owns it.
+- **Decision 2 (Reading A):** `actor` is added only to release exits whose outcome is `passed` or `failed`. Releases whose outcome is the retired `abandoned` or `returned` are left exactly as they are (no `actor`); record 8/8 (#6152) migrates them.
 
 ## Review Focus
 
 1. A release whose reason maps to `failed` (`failed: test`) now carries `actor`, so it is a new-contract exit: its written line must carry `reasonCode: 'unspecified'`, not be dropped. Test in Task 1.
-2. A release whose reason maps to a retired outcome (`abandoned: spec 1`, unrecognised → `returned`) gains `actor` but stays a pre-contract line that `buildLine` accepts. Test in Task 1.
-3. A swept release keeps `sweptBy` / `sweptBySession` beside `actor`. Covered by Task 1's payload assertion on the merged release plus the existing sweep test, updated.
+2. A release whose reason maps to a retired outcome (`abandoned: spec 1`, `never-started: x`, a sweep) carries no `actor` and its payload is byte-identical to before. Test in Task 1.
+3. A swept release keeps `sweptBy` / `sweptBySession`; a sweep's outcome is `abandoned`, so it gains no `actor`. Covered by the existing sweep test, unchanged.
 4. The `decided` line's `outcomeRef` equals the `eventKey` the written `exited authorize` line gets from `buildLine`, including when `runId` is null. Test in Task 2.
 5. One action adding `auto:build` twice (or a replayed batch with a run dir) writes `decided` once per recorded exit, and a throwing emitter on the exit still leaves the batch's stdout and exit code unchanged. Existing throwing-emitter test covers the batch; Task 2's test asserts one `decided` per exit.
 
 ---
 
-### Task 1: Release exits carry actor `script`
+### Task 1: Release exits with a new-contract outcome carry actor `script`
 
 **Files:**
 - Modify: `plugin/bin/release-claim.js` (the `deps.stationEvent` call in `run`, near line 213)
-- Modify: `plugin/bin/accept-park.js` (`parkSteps().releaseClaim`'s `emit` of the release transition, near line 770)
 - Test: `tests/bin-lib/release-claim/cli.test.js`
-- Test: `tests/accept-park-cli.test.js`
 
 **Interfaces:**
-- Consumes: `ACTOR` from `plugin/bin/lib/station-events/stations.js` (`ACTOR.SCRIPT === 'script'`); `buildLine` from `plugin/bin/lib/station-events/emit.js`.
-- Produces: every claim-release `exited build` event's `payload` carries `actor: 'script'`, for every outcome `releaseTransition` returns.
+- Consumes: `ACTOR`, `OUTCOME` from `plugin/bin/lib/station-events/stations.js` (`ACTOR.SCRIPT === 'script'`); `buildLine` from `plugin/bin/lib/station-events/emit.js`.
+- Produces: a claim-release `exited build` event whose `outcome` is `passed` or `failed` carries `payload.actor: 'script'`; one whose outcome is retired (`abandoned`, `returned`) is unchanged.
 
 - [ ] **Step 1: Write failing tests** (AC1.1 — `a claim's release exit is passed with actor script`)
 
@@ -77,28 +74,29 @@ test('a failed release carries actor script and is written with reasonCode unspe
   assert.equal(line.payload.reasonCode, 'unspecified');
 });
 
-test('a retired-outcome release carries actor script and is still accepted', () => {
+test('a retired-outcome release carries no actor and its payload is unchanged', () => {
   const runDir = mkRun();
   const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'abandoned: spec 999'], d), 0);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.deepEqual(events[0].payload, { reason: 'abandoned: spec 999', link: null });
   const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
-  assert.equal(events[0].payload.actor, 'script');
   assert.equal(buildLine(events[0]).outcome, 'abandoned');
 });
 ```
 
-Update the existing `#5902: a released claim with --reason merged ...` deepEqual's `payload` to `{ reason: 'merged', link: 'https://x/1', actor: 'script' }`, and any other existing release-claim test that deep-equals a release payload (grep the file for `payload: {`) the same way. In `tests/accept-park-cli.test.js`, update `#5902: a park whose claim release returns released records one exited build event`'s payload to `{ reason: 'awaiting-local-acceptance', actor: 'script' }`.
+Update the existing `#5902: a released claim with --reason merged ...` deepEqual's `payload` to `{ reason: 'merged', link: 'https://x/1', actor: 'script' }`, and any other existing release-claim test that deep-equals a `passed`/`failed` release payload (grep the file for `payload: {`) the same way. Tests deep-equaling a retired-outcome payload stay as they are.
 
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js tests/accept-park-cli.test.js`. Expected: FAIL (the new tests and the updated deepEquals; no `actor` yet).
+- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js`. Expected: FAIL (the first two new tests and the updated deepEqual; no `actor` yet).
 
-- [ ] **Step 3: Implement.** In `release-claim.js`, build the payload as `{ reason, link: o.link || null, actor: ACTOR.SCRIPT }` (import `ACTOR` from `./lib/station-events/stations` beside `releaseTransition`). In `accept-park.js`'s park release `emit`, pass `payload: { reason: PARK_REASON, actor: ACTOR.SCRIPT }`. No other field changes; the `failed` reason code is left for `emit.js` to normalize to `unspecified`.
+- [ ] **Step 3: Implement.** In `release-claim.js`, import `ACTOR` and `OUTCOME` from `./lib/station-events/stations` beside `releaseTransition`, and after building `payload = { reason, link: o.link || null }` add `actor: ACTOR.SCRIPT` only when `transition.outcome === OUTCOME.PASSED || transition.outcome === OUTCOME.FAILED`. No other field changes; the `failed` reason code is left for `emit.js` to normalize to `unspecified`.
 
 Proof(auth): the change adds one `payload.actor` field to station-event lines written after `releaseClaim` returns `released`; the claim blob write, label removal and decisions.md line are untouched, which the unchanged stdout/exit/`logged` byte-identity tests (`#5902: a recording stationEvent leaves stdout, the exit code and stderr byte-identical`) keep pinned.
 
 - [ ] **Step 4: Run** the Step 2 command. Expected: PASS.
 
-- [ ] **Step 5: Commit** `git add plugin/bin/release-claim.js plugin/bin/accept-park.js tests/bin-lib/release-claim/cli.test.js tests/accept-park-cli.test.js` then commit `Write actor script on claim-release exits — refs #6150`.
+- [ ] **Step 5: Commit** `git add plugin/bin/release-claim.js tests/bin-lib/release-claim/cli.test.js` then commit `Write actor script on new-contract claim-release exits — refs #6150`.
 
 ### Task 2: Authorize exit carries actor `person` and a `decided` line
 
@@ -140,11 +138,11 @@ Proof(auth): `auto:build` is a grant label; this task changes only the station-e
 
 - [ ] **Step 5: Commit** `git add plugin/bin/apply-refine-labels.js tests/apply-refine-labels.test.js` then commit `Write actor person and a decided line at the authorize exit — refs #6150`.
 
-### Task 3: Producers table
+### Task 3: Producers table and the accept coverage gap
 
 **Files:**
-- Modify: `docs/reference/station-events.md` (the Producers table rows for `release-claim.js`, `accept-park.js`'s in-process release, and `apply-refine-labels.js`)
+- Modify: `docs/reference/station-events.md` (the Producers table rows for `release-claim.js` and `apply-refine-labels.js`; `### Kinds`; `## Coverage gaps`)
 
-- [ ] **Step 1:** Add `actor` (`script`) to the payload keys of the `release-claim.js` row and `accept-park.js`'s in-process release row; add to the `apply-refine-labels.js` row that the `auto:build` authorize exit carries `actor` (`person`) and is followed by a `decided` line at `authorize` (`decision`, `actor`, `via`, `outcomeRef` = the exit's `eventKey`, same discriminator). In `### Kinds`, `decided` now has a producer.
+- [ ] **Step 1:** Add `actor` (`script`, on a `passed` or `failed` release only; a retired-outcome release carries none until record 8/8) to the payload keys of the `release-claim.js` row; add to the `apply-refine-labels.js` row that the `auto:build` authorize exit carries `actor` (`person`) and is followed by a `decided` line at `authorize` (`decision`, `actor`, `via`, `outcomeRef` = the exit's `eventKey`, same discriminator). In `### Kinds`, `decided` now has a producer. Under `## Coverage gaps`, add the bullet: "The accept verdict exits (`passed` plus `decided accept`; `sent-back` to `build` with `changes-requested`) are not emitted: the verdict labels are applied by skill prose, so they need a code path first."
 - [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js`. Expected: PASS.
-- [ ] **Step 3: Commit** `docs/reference/station-events.md` — `Document the release and authorize outcome fields — refs #6150`.
+- [ ] **Step 3: Commit** `docs/reference/station-events.md` — `Document the release and authorize outcome fields and the accept gap — refs #6150`.
