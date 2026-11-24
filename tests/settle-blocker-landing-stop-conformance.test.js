@@ -31,7 +31,7 @@ function requireLine(text, prefix, name) {
 
 const SETTLE_FACTS = [
   [/`ISSUE #\{n\}: failed:blocker-landing`/, 'AC1.1: Settle recognizes the stop by its gate line'],
-  [/on an `open` or `unlanded` out-of-run blocker/, 'AC1.1: names both stopping verdicts'],
+  [/on an `open`, `unlanded` or `hollow` out-of-run blocker/, 'AC1.1: names every stopping verdict'],
   [/treat it as a non-failing stop: the blocker, not the record, is at fault/, 'AC1.1: non-failing stop'],
   [/The claimed case is when this run's `decisions\.md` already carries a `Step 2\.8: claimed #\{n\}` line/, 'AC5.1: the claimed case keys on the Step 2.8 claim line'],
   [/a handoff continuation of either call re-ran the pre-claim checks/, 'AC6.1: the claimed case covers a second call\'s continuation too'],
@@ -49,7 +49,7 @@ const SETTLE_FACTS = [
   [/never reaches `bot:blocked` on this stop/, 'AC1.1: never bot:blocked'],
   [/When `DISPATCH_HEADLESS=1` was set, read `_shared\/headless-self-report\.md`/, 'self-report gated on DISPATCH_HEADLESS=1'],
   [/failing-check-name `flow-step-2\.7b-blocker-landing`/, 'self-report name'],
-  [/with the stop message as the diagnostic body \(the `unlanded` card, or the `open` verdict's one-line stop, which has no card\)/, 'the self-report body exists for both verdicts: an `open` stop has no card'],
+  [/with the stop message as the diagnostic body \(the `unlanded` or `hollow` card, or the `open` verdict's one-line stop, which has no card\)/, 'the self-report body exists for both verdicts: an `open` stop has no card'],
 ];
 const settleMissing = missingFactsOf(SETTLE_FACTS);
 

@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
   classifyBlocker, classifyCrossRepository, undeterminedAll, classifyFromState, fetchBlockerLanding,
+  BOOKKEEPING_PATH_RE, commitFilesArgs, isHollow,
 } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
 
 const isGraphQL = (a) => a[0] === 'api' && a[1] === 'graphql';
 const isCompare = (a) => a[0] === 'api' && /\/compare\//.test(a[1]);
+const isCommitFiles = (a) => a[0] === 'api' && a.some((x) => /\/commits\//.test(x));
 
 const pr = (number, oid, { merged = true, base = 'production' } = {}) => ({
   number, merged, baseRefName: base, mergeCommit: oid ? { oid } : null,
@@ -25,10 +27,17 @@ const open = () => ({ number: 0, state: 'OPEN', stateReason: null, timelineItems
 
 // repository: the data.repository object to answer; statuses: sha -> compare
 // stdout, or an Error to throw. Records every argv; asserts happen after.
-function fakeRunner({ repository, statuses = {}, graphql } = {}) {
+// files: sha -> string[] | Error for the commits read (default ['src/impl.js']).
+function fakeRunner({ repository, statuses = {}, graphql, files = {} } = {}) {
   const calls = [];
   const runner = (args) => {
     calls.push(args);
+    if (isCommitFiles(args)) {
+      const sha = args[2].split('/').pop();
+      const f = files[sha] === undefined ? ['src/impl.js'] : files[sha];
+      if (f instanceof Error) throw f;
+      return f.join('\n');
+    }
     if (isGraphQL(args)) {
       if (graphql) return graphql(args);
       return JSON.stringify({ data: { repository } });
@@ -44,6 +53,7 @@ function fakeRunner({ repository, statuses = {}, graphql } = {}) {
   };
   runner.calls = calls;
   runner.compares = () => calls.filter(isCompare);
+  runner.fileReads = () => calls.filter(isCommitFiles);
   return runner;
 }
 const base = { owner: 'acme', repo: 'w', integrationBranch: 'dev' };
@@ -404,7 +414,7 @@ test('buildBlockerLandingQuery: null for [] and non-array; one b{n} alias per bl
   assert.match(q, /^query\(\$owner:String!,\$repo:String!\)\{ repository\(owner:\$owner,name:\$repo\)\{/);
   for (const n of [5, 12]) {
     assert.ok(q.includes(
-      `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`,
+      `b${n}: issue(number:${n}){ number state stateReason body labels(first:100){ nodes{ name } } timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`,
     ), `alias b${n}`);
   }
   assert.equal(q.match(/\bb\d+: issue\(/g).length, 2);
@@ -443,3 +453,244 @@ test('AC6.1 (gh-absent): classifyFromState — open/OPEN → open; closed not_pl
     assert.equal(classifyFromState(5, entry), null, JSON.stringify(entry));
   }
 });
+
+// ---- #6142: the hollow verdict ----
+const keyBody = (...files) => `### Key Files\n\n${files.map((f) => `- \`${f}\` — x\n`).join('')}`;
+const withBody = (node, body, labels = []) => ({ ...node, body, labels: { nodes: labels.map((name) => ({ name })) } });
+const closerPr = (number, oid) => ({ __typename: 'PullRequest', ...pr(number, oid) });
+const BOOK = ['docs/superpowers/plans/x.md', '.claude-tweaks/pipelines/r/work/1-spec.md'];
+
+test('#6142 AC1.1: closing commit touching only docs/superpowers/plans/x.md and .claude-tweaks/pipelines/r/work/1-spec.md → hollow with pr', () => {
+  const runner = fakeRunner({
+    repository: { b5: closed({ closer: closerPr(90, 'aaa111') }) },
+    statuses: { aaa111: 'behind' }, files: { aaa111: BOOK },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: 'aaa111', via: 'closer-pr', pr: 90 });
+});
+
+test('#6142 AC2.1: Key Files a.js, commit touches only b.js → hollow', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111') }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind' }, files: { aaa111: ['b.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: 'aaa111', via: 'closer-pr', pr: 90 });
+});
+
+test('#6142 AC3.1: commit touching a Key File → landed, unchanged 4-key shape', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111') }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind' }, files: { aaa111: ['a.js', 'b.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('#6142 AC4.1: no Key Files, commit touches a non-bookkeeping file → landed', () => {
+  const runner = fakeRunner({
+    repository: { b5: closed({ closer: closerPr(90, 'aaa111') }) },
+    statuses: { aaa111: 'behind' }, files: { aaa111: [...BOOK, 'plugin/x.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('#6142 AC5.1: replay of squash 46e21cbf6 against #6000 Key Files → hollow pr 6061', () => {
+  const sha = '46e21cbf6ca873d6cea96900237d5d60bec18a6b';
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(6061, sha) }), keyBody(
+      'plugin/bin/lib/driver/roles.js', 'plugin/bin/lib/driver/worker.js', 'plugin/bin/review-lens-workers.js', 'plugin/bin/lib/timing/transcript.js')) },
+    statuses: { [sha]: 'behind' },
+    files: { [sha]: [
+      '.claude-tweaks/pipelines/2026-11-22T104447-record-6000/work/6000-spec.md',
+      '.claude-tweaks/pipelines/2026-11-23T062258-record-6000/work/6000-spec.md',
+      'docs/plans/2026-11-22-lens-reviewer-worker-role-ledger.md',
+      'docs/superpowers/plans/2026-11-22-lens-reviewer-worker-role.md'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: sha, via: 'closer-pr', pr: 6061 });
+});
+
+test('#6142: files read throws → undetermined files-unreadable, with a probeErrors entry', () => {
+  const runner = fakeRunner({
+    repository: { b5: closed({ closer: closerPr(90, 'aaa111') }) },
+    statuses: { aaa111: 'behind' }, files: { aaa111: new Error('HTTP 502') },
+  });
+  const { results, probeErrors } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'undetermined', commit: 'aaa111', via: 'files-unreadable' });
+  assert.equal(probeErrors.length, 1);
+  assert.equal(probeErrors[0].sha, 'aaa111');
+  assert.equal(probeErrors[0].kind, 'files');
+  assert.match(probeErrors[0].message, /502/);
+});
+
+test('#6142: previous_filename of a Key File counts; a directory Key File prefix-matches', () => {
+  const landed = (keys, files) => {
+    const runner = fakeRunner({
+      repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111') }), keyBody(...keys)) },
+      statuses: { aaa111: 'behind' }, files: { aaa111: files },
+    });
+    return fetchBlockerLanding({ ...base, blockers: [5], runner }).results.get(5).verdict;
+  };
+  assert.equal(landed(['old/name.js'], ['new/name.js', 'old/name.js']), 'landed');
+  assert.equal(landed(['lib/x/'], ['lib/x/y.js']), 'landed');
+});
+
+test('#6142: a ledger outside docs/plans/*-ledger.md is not bookkeeping', () => {
+  assert.equal(BOOKKEEPING_PATH_RE.test('docs/plans/notes.md'), false);
+  assert.equal(BOOKKEEPING_PATH_RE.test('docs/plans/a-ledger.md'), true);
+  assert.equal(isHollow(['docs/plans/notes.md'], []), false);
+});
+
+test('#6142: the query fetches body and labels(first:100)', () => {
+  assert.match(buildBlockerLandingQuery([5]), /body labels\(first:100\)\{ nodes\{ name \} \}/);
+});
+
+test('#6142: commitFilesArgs argv, plus --hostname for a non-github.com host', () => {
+  assert.deepEqual(commitFilesArgs({ owner: 'acme', repo: 'w', sha: 'aaa111' }),
+    ['api', '--paginate', 'repos/acme/w/commits/aaa111', '--jq', '.files[] | .filename, (.previous_filename // empty)']);
+  assert.deepEqual(commitFilesArgs({ owner: 'acme', repo: 'w', host: 'ghe.example', sha: 'aaa111' }).slice(-2), ['--hostname', 'ghe.example']);
+});
+
+test('#6142: one commits read per distinct reachable sha; none for unreachable, open or not-applicable blockers', () => {
+  const runner = fakeRunner({
+    repository: {
+      b5: closed({ closer: closerPr(90, 'aaa111') }), b6: closed({ closer: closerPr(90, 'aaa111') }),
+      b7: closed({ closer: closerPr(91, 'bbb222') }), b8: open(),
+      b9: closed({ reason: 'NOT_PLANNED', closer: closerPr(92, 'ccc333') }),
+    },
+    statuses: { aaa111: 'behind', bbb222: 'diverged' },
+  });
+  fetchBlockerLanding({ ...base, blockers: [5, 6, 7, 8, 9], runner });
+  assert.equal(runner.fileReads().length, 1);
+});
+
+test('#6142 AC6.1 (Q1): closer PR reachable but hollow, later closing-pr-ref reachable and touching a Key File → landed via closing-pr-ref', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: BOOK, ccc333: ['a.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'ccc333', via: 'closing-pr-ref' });
+  assert.equal(runner.compares().length, 2);
+  assert.equal(runner.fileReads().length, 2);
+});
+
+test('#6142 Q1: two reachable candidates, both hollow → hollow naming the first (closer) candidate', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: BOOK, ccc333: ['other.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: 'aaa111', via: 'closer-pr', pr: 90 });
+});
+
+test('#6142 Q1: first reachable hollow, second reachable candidate files read throws → undetermined files-unreadable', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: BOOK, ccc333: new Error('HTTP 500') },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'undetermined', commit: 'ccc333', via: 'files-unreadable' });
+});
+
+test('#6142 Q1: first reachable candidate files read throws, second touches a Key File → landed via the second', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: new Error('HTTP 500'), ccc333: ['a.js'] },
+  });
+  const { results, probeErrors } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'ccc333', via: 'closing-pr-ref' });
+  assert.deepEqual(probeErrors.map((e) => [e.kind, e.sha]), [['files', 'aaa111']]);
+});
+
+test('#6142 Q1: first reachable hollow, second candidate compare throws → undetermined probe-failed', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: new Error('HTTP 404') }, files: { aaa111: BOOK },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'undetermined', commit: 'ccc333', via: 'probe-failed' });
+});
+
+test('#6142 Q1: all reachable hollow with references hasNextPage → undetermined references-truncated', () => {
+  const node = withBody({
+    ...closed({ closer: closerPr(90, 'aaa111') }),
+    closedByPullRequestsReferences: { pageInfo: { hasNextPage: true }, nodes: [pr(90, 'aaa111')] },
+  }, keyBody('a.js'));
+  const runner = fakeRunner({ repository: { b5: node }, statuses: { aaa111: 'behind' }, files: { aaa111: BOOK } });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'undetermined', commit: 'aaa111', via: 'references-truncated' });
+});
+
+test('#6142 Q1: first reachable candidate non-hollow → landed, and no later candidate is probed', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(93, 'ccc333', { base: 'dev' })] }), keyBody('a.js')) },
+    statuses: { aaa111: 'behind', ccc333: 'behind' }, files: { aaa111: ['a.js'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+  assert.equal(runner.compares().length, 1);
+});
+
+test('#6142 AC7.1/AC7.2 (Q2): an empty read is hollow with Key Files, landed without', () => {
+  const run = (node) => fetchBlockerLanding({ ...base, blockers: [5], runner: fakeRunner({
+    repository: { b5: node }, statuses: { aaa111: 'behind' }, files: { aaa111: [] } }) }).results.get(5);
+  const c = () => closed({ closer: closerPr(90, 'aaa111') });
+  assert.deepEqual(run(withBody(c(), keyBody('a.js'))), { blocker: 5, verdict: 'hollow', commit: 'aaa111', via: 'closer-pr', pr: 90 });
+  assert.deepEqual(run(c()), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('#6142 isHollow units, including Key File suffix and glob normalization', () => {
+  assert.equal(isHollow([], ['a.js']), true);
+  assert.equal(isHollow([], []), false);
+  assert.equal(isHollow(['docs/superpowers/plans/x.md'], []), true);
+  assert.equal(isHollow(['a.js'], ['a.js']), false);
+  assert.equal(isHollow(['lib/x/y.js'], ['lib/x/']), false);
+  assert.equal(isHollow(['x.js'], ['x.js:37-39']), false);
+  assert.equal(isHollow(['x.js'], ['x.js:37']), false);
+  assert.equal(isHollow(['x.js'], ['x.js#L5-L9']), false);
+  assert.equal(isHollow(['plugin/skills/foo/a.md'], ['plugin/skills/foo/*.md']), false);
+  assert.equal(isHollow(['plugin/skills/foo/sub/a.md'], ['plugin/skills/foo/*.md']), true);
+  assert.equal(isHollow(['plugin/skills/foo/sub/a.md'], ['plugin/skills/**/a.md']), false);
+});
+
+test('#6142 review: a Key File with more than three wildcard runs reads as touching nothing instead of backtracking', () => {
+  assert.equal(isHollow(['a/b/c/d/e.js'], ['*/*/*/*/e.js']), true, 'four wildcard runs never reach the regex engine, even on a path the glob would match');
+  assert.equal(isHollow(['a'.repeat(40) + '.md'], ['*a'.repeat(12) + '*b']), true);
+  assert.equal(isHollow(['a/'.repeat(60) + 'z'], ['**/'.repeat(8) + 'x']), true);
+  assert.equal(isHollow(['a/b/c/d.js'], ['*/*/*/d.js']), false, 'three wildcard runs still match');
+});
+
+test('#6142: classifyBlocker without a files map keeps the pre-hollow rules', () => {
+  const node = closed({ closer: closerPr(90, 'aaa111') });
+  assert.deepEqual(classifyBlocker(5, node, new Map([['aaa111', 'reachable']])), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('#6142 review: a ./-prefixed or ..-bearing Key File names the file git reports (no false hollow)', () => {
+  assert.equal(isHollow(['plugin/x.js'], ['./plugin/x.js']), false);
+  assert.equal(isHollow(['plugin/x.js'], ['plugin/skills/../x.js']), false);
+  assert.equal(isHollow(['plugin/a/b.md'], ['./plugin/a/']), false);
+  assert.equal(isHollow(['plugin/a/b.md'], ['./plugin/a/*.md']), false);
+  assert.equal(isHollow(['other/x.js'], ['./plugin/x.js']), true);
+});
+
+test('#6142 review: a hollow candidate from a closing-pr-ref carries that reference\'s pr, not the closer\'s', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: closerPr(90, 'aaa111'), refs: [pr(90, 'aaa111'), pr(93, 'ccc333', { base: 'dev' })] }), keyBody('src/impl.js')) },
+    statuses: { aaa111: 'diverged', ccc333: 'behind' }, files: { ccc333: ['docs/other.md'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: 'ccc333', via: 'closing-pr-ref', pr: 93 });
+});
+
+test('#6142 review: a hollow direct Commit closer reads pr null through fetchBlockerLanding', () => {
+  const runner = fakeRunner({
+    repository: { b5: withBody(closed({ closer: { __typename: 'Commit', oid: 'ddd444' } }), keyBody('src/impl.js')) },
+    statuses: { ddd444: 'behind' }, files: { ddd444: ['docs/other.md'] },
+  });
+  const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'hollow', commit: 'ddd444', via: 'closer-commit', pr: null });
+});
+
