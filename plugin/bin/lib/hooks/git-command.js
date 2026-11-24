@@ -3867,7 +3867,7 @@ function fileWriteTargets(command, cwd, opts) {
       if (creatingDirs) written = positionals;
       else if (positionals.length >= 2) written = positionals.slice(-1);
       for (const arg of written) {
-        add('install', arg);
+        add(creatingDirs ? 'install-d' : 'install', arg);
       }
       return;
     }
