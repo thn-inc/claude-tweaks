@@ -1039,7 +1039,7 @@ function testTreeStop(ctx, deps) {
 
 // verify.js's exit code for the step line: `null` when the run gave none (a timeout, a spawn error) (#6149).
 function verifyExitOf(r) {
-  return r.code === undefined ? null : r.code;
+  return r.code ?? null;
 }
 
 // Why a verify.js run gave no verdict: a null code is no exit at all (a timeout, a spawn error), any
