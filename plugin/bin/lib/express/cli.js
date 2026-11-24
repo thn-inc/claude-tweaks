@@ -22,7 +22,8 @@
 //             hand-logged fallbacks require.
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
 //             global ordinals over every express merge, comments fetched only inside
-//             a lookback, at most a fixed number of reviews per firing.
+//             a lookback, at most a fixed number of reviews per firing. --pr narrows the due
+//             set to one PR before that cap and adds found (is it in the search results).
 //   plan-lane which plan-less lane (driver, express, micro-plan) a record's bounds admit —
 //             driver/plan-lane.js's needsNoPlan verdict for one record (--issue, live, or
 //             --record-json, the gh-absent MCP path), one JSON line, exit 0 whatever the lane;
@@ -65,7 +66,7 @@ const USAGE = [
   '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>] [--protected-paths reviewer]',
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
-  '       express-lane.js samples [--every <n>] [--repo owner/name]',
+  '       express-lane.js samples [--every <n>] [--pr <n>] [--repo owner/name]',
   '       express-lane.js plan-lane (--issue <n> | --record-json <file>) [--repo owner/name]',
   "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
   "       --protected-paths reviewer: the pipeline driver's flag (bin/drive.js); merge-time protected paths are reported in bounds.protectedPaths, not refused",
@@ -109,7 +110,7 @@ const VERB_FLAGS = {
   check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines', '--protected-paths'],
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
-  samples: ['--every', '--repo'],
+  samples: ['--every', '--repo', '--pr'],
   'plan-lane': ['--issue', '--record-json', '--repo'],
 };
 
@@ -136,6 +137,7 @@ function parseArgs(argv) {
   }
   if (flags['--issue'] !== undefined) flags['--issue'] = positiveInt('--issue', flags['--issue']);
   if (flags['--every'] !== undefined) flags['--every'] = positiveInt('--every', flags['--every']);
+  if (flags['--pr'] !== undefined) flags['--pr'] = positiveInt('--pr', flags['--pr']);
   if (flags['--max-lines'] !== undefined) flags['--max-lines'] = positiveInt('--max-lines', flags['--max-lines']);
   if (flags['--protected-paths'] !== undefined && flags['--protected-paths'] !== 'reviewer') throw new UsageError(`--protected-paths must be reviewer, got "${flags['--protected-paths']}"`);
   if (flags['--repo'] !== undefined && !REPO_RE.test(flags['--repo'])) throw new UsageError(`--repo must be owner/name, got "${flags['--repo']}"`);
@@ -474,7 +476,9 @@ function runSamples(deps, flags) {
     const merges = searchMergedExpress(deps, flags, Math.floor(now / 1000) * 1000);
     const byNumber = new Map(merges.map((m) => [m.number, m]));
     const expressMerges = merges.filter((m) => m && isExpressPr(m.body) && Number.isFinite(Date.parse(m.mergedAt))).length;
-    const due = selectReviewSamples(merges, every).filter((s) => Date.parse(s.mergedAt) >= now - SAMPLES_LOOKBACK_MS);
+    const pr = flags['--pr'];
+    // --pr: the ordinal is computed over the whole set above; only then is the due set narrowed, before the cap.
+    const due = selectReviewSamples(merges, every).filter((s) => Date.parse(s.mergedAt) >= now - SAMPLES_LOOKBACK_MS && (pr === undefined || s.number === pr));
     const sampled = [];
     let capped = false;
     for (const s of due) {
@@ -484,7 +488,7 @@ function runSamples(deps, flags) {
       const m = byNumber.get(s.number);
       sampled.push({ pr: s.number, ordinal: s.ordinal, mergedAt: s.mergedAt, mergeSha: (m.mergeCommit && m.mergeCommit.oid) || null, records: fixesRecords(m.body) });
     }
-    deps.stdout(`${JSON.stringify({ every, expressMerges, sampled, capped })}\n`);
+    deps.stdout(`${JSON.stringify({ every, expressMerges, sampled, capped, ...(pr !== undefined ? { found: byNumber.has(pr) } : {}) })}\n`);
     return 0;
   } catch (err) {
     deps.stderr(`express-lane.js: samples failed: ${err && err.message}\n`);
