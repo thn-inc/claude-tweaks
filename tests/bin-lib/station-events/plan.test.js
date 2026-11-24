@@ -2,7 +2,7 @@
 // plan.js (#6147) — starting lists, planOf, planEvent.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { STARTING_LISTS, planOf, planEvent } = require('../../../plugin/bin/lib/station-events/plan');
+const { STARTING_LISTS, planOf, planEvent, replanEvent } = require('../../../plugin/bin/lib/station-events/plan');
 const { STATION, STATIONS, KIND, REASON } = require('../../../plugin/bin/lib/station-events/stations');
 const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
 
@@ -115,6 +115,18 @@ test('planEvent chooses the list by listLane and keeps lane on the line', () => 
   const ev = planEvent({ ...ARGS, lane: 'unknown', listLane: 'driver' });
   assert.equal(ev.lane, 'unknown');
   assert.equal(ev.payload.list, 'driver');
+});
+const REPLAN = { repoName: 'acme/w', recordNumber: 6148, sessionId: 's1', runId: 'r1', at: '2026-11-24T10:00:00Z', cause: { kind: 'config' } };
+test('replanEvent returns null when the stations are unchanged', () => {
+  assert.equal(replanEvent({ ...REPLAN, before: [...STATIONS], after: [...STATIONS], reasonCode: REASON.OTHER }), null);
+});
+test('replanEvent for Test and Polish removed carries the after list and reason documents-only', () => {
+  const after = STATIONS.filter((s) => s !== STATION.TEST && s !== STATION.POLISH);
+  const ev = replanEvent({ ...REPLAN, before: [...STATIONS], after, reasonCode: REASON.DOCUMENTS_ONLY });
+  assert.equal(ev.kind, KIND.REPLANNED);
+  assert.deepEqual(ev.payload, { stations: after, reasonCode: 'documents-only', cause: { kind: 'config' } });
+  assert.ok(buildLine(ev));
+  assert.equal(ev.at, REPLAN.at);
 });
 test('mutating a returned stations array leaves STARTING_LISTS unchanged', () => {
   const p = planOf({ lane: null, ceremonyProfile: null });

@@ -605,23 +605,25 @@ test('a failed release carries actor script and is written with reasonCode unspe
   assert.equal(line.payload.reasonText, undefined);
 });
 
-test('a retired-outcome release carries no actor and its payload is unchanged', () => {
+test('a release with a retired outcome is written as stopped or sent-back with an actor', () => {
   const runDir = mkRun();
   const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'abandoned: spec 999'], d), 0);
-  assert.equal(events[0].outcome, 'abandoned');
-  assert.deepEqual(events[0].payload, { reason: 'abandoned: spec 999', link: null });
-  assert.equal(buildLine(events[0]).outcome, 'abandoned');
+  assert.equal(events[0].outcome, 'stopped');
+  assert.deepEqual(events[0].payload, { reason: 'abandoned: spec 999', link: null, actor: 'script', reasonCode: 'unspecified' });
+  assert.ok(buildLine(events[0]));
+  assert.equal(buildLine(events[0]).outcome, 'stopped');
 });
 
-test('a returned release (retired outcome) carries no actor', () => {
+test('a release with an unrecognised reason is written as sent-back next release', () => {
   const runDir = mkRun();
   const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'drive.js settle: express-escalated at check'], d), 0);
-  assert.equal(events[0].outcome, 'returned');
-  assert.equal('actor' in events[0].payload, false);
+  assert.equal(events[0].outcome, 'sent-back');
+  assert.deepEqual(events[0].payload, { reason: 'drive.js settle: express-escalated at check', link: null, actor: 'script', reasonCode: 'unspecified', next: 'release' });
+  assert.ok(buildLine(events[0]));
 });
 
 test('#5902: the release discriminator names the released claim instance — a re-claim by the same run releases under a new key, a replay under the same', () => {
@@ -642,23 +644,23 @@ test('#5902: the release discriminator names the released claim instance — a r
   assert.notEqual(buildLine(first).eventKey, buildLine(reclaim).eventKey, 'so the second release is not deduplicated away');
 });
 
-test('#5902: --reason "never-started: x" records an abandoned exit; no --link carries link null', () => {
+test('#5902: --reason "never-started: x" records a stopped exit; no --link carries link null', () => {
   const runDir = mkRun();
   const out = [];
   const { d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'never-started: x'], d), 0);
   assert.equal(events.length, 1);
-  assert.equal(events[0].outcome, 'abandoned');
-  assert.deepEqual(events[0].payload, { reason: 'never-started: x', link: null });
+  assert.equal(events[0].outcome, 'stopped');
+  assert.deepEqual(events[0].payload, { reason: 'never-started: x', link: null, actor: 'script', reasonCode: 'unspecified' });
 });
 
 test('#5902: the real release reasons record the corrected outcome in the exited event', () => {
   const cases = [
-    ['merged: spec 999', 'passed'], ['pr-opened: spec 999', 'passed'], ['abandoned: spec 999', 'abandoned'],
+    ['merged: spec 999', 'passed'], ['pr-opened: spec 999', 'passed'], ['abandoned: spec 999', 'stopped'],
     ['failed: local-ahead-of-origin', 'failed'], ['drive.js settle: pending-review at summary', 'passed'],
-    ['drive.js settle: blocked at test', 'failed'], ['drive.js settle: express-escalated at check', 'returned'],
-    ['drive.js settle: refused at admission', 'abandoned'], ['swept: issue closed', 'abandoned'],
+    ['drive.js settle: blocked at test', 'failed'], ['drive.js settle: express-escalated at check', 'sent-back'],
+    ['drive.js settle: refused at admission', 'stopped'], ['swept: issue closed', 'stopped'],
   ];
   for (const [reason, outcome] of cases) {
     const runDir = mkRun();
@@ -721,10 +723,10 @@ test('#5902: a --sweep release closes the holder\'s visit — runId and discrimi
   assert.equal(events.length, 1);
   assert.equal(events[0].runId, HOLDER);
   assert.equal(events[0].discriminator, `release:${HOLDER}:2026-08-12T12:00:00.000Z`);
-  assert.equal(events[0].outcome, 'abandoned');
+  assert.equal(events[0].outcome, 'stopped');
   assert.equal(events[0].sessionId, null, 'the holder\'s session is unknown — never the sweeper\'s');
   assert.deepEqual(events[0].payload, {
-    reason: 'swept: stale claim', link: null, sweptBy: RUN_DIR_NAME, sweptBySession: 'sess-1',
+    reason: 'swept: stale claim', link: null, actor: 'script', reasonCode: 'unspecified', sweptBy: RUN_DIR_NAME, sweptBySession: 'sess-1',
   });
 
   const out2 = [];

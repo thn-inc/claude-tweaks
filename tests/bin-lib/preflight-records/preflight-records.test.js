@@ -1738,6 +1738,8 @@ test('#5902: --prefetched-json under native still runs the native fetch and hand
 test('#5902: realDeps wires a stationEvent emitter, so the real entry point emits', () => {
   const { realDeps } = require('../../../plugin/bin/preflight-records');
   assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired');
+  const { lastPayloadFromCwd } = require('../../../plugin/bin/lib/station-events/blockers');
+  assert.equal(realDeps.lastPayload, lastPayloadFromCwd, 'lastPayload is wired');
 });
 
 test('#5902: native mode builds the blocker sink from deps.stationEvent when no onSnapshot is passed', () => {
@@ -1748,6 +1750,15 @@ test('#5902: native mode builds the blocker sink from deps.stationEvent when no 
   assert.deepEqual(events.map((e) => [e.kind, e.recordNumber, e.repoName]), [
     ['blockers', 720, 'acme/w'], ['blockers', 721, 'acme/w'], ['blockers', 722, 'acme/w'],
   ]);
+});
+
+test('#5902: an unchanged snapshot is not appended through run (deps.lastPayload)', () => {
+  const events = [];
+  const d = cliDeps({ runner: snapshotRunner(), workLinks: 'native' });
+  d.deps.stationEvent = (e) => events.push(e);
+  d.deps.lastPayload = (repo, n) => (n === 721 ? { blockedBy: [], openBlockerIds: [], crossRepoBlockers: [], fetchedAt: 'old' } : null);
+  assert.equal(run(['720', '721', '722'], d.deps), 0);
+  assert.deepEqual(events.map((e) => e.recordNumber), [720, 722]);
 });
 
 test('#5902: an explicit deps.onSnapshot wins over deps.stationEvent', () => {

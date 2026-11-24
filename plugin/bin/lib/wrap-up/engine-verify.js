@@ -450,8 +450,9 @@ registerCheck('worktree-removed', ({ runDir, expectations, deps, cwd }) => {
 // The worktree comes from run-state.json via readRunStateWithParent (a
 // multi-spec spec-{N}/ dir inherits the parent's), falling back to
 // worktreeAtClose for a closed run. Which rungs may close a record is pack.js's
-// closingRecords; a resolution it empties falls through to the expectations
-// fallback below. readdir degrades to [] and headerEntries skips an
+// closingRecords; its array, empty included, is the answer, and only its
+// `null` (no records resolved) falls through to the expectations fallback
+// below. readdir degrades to [] and headerEntries skips an
 // unreadable file, so a concurrent reconcile/archive prune reads as "no
 // headers found" rather than throwing.
 const RECORD_DEPS = {
@@ -461,7 +462,7 @@ const RECORD_DEPS = {
 
 function resolvedIssueNumbers(runDir) {
   const closing = closingRecords(resolveRecords(RECORD_DEPS, runDir, recordedWorktree(runDir)));
-  if (closing.length) return closing;
+  if (Array.isArray(closing)) return closing;
   const expPath = path.join(runDir, 'verify-expectations.json');
   if (fs.existsSync(expPath)) {
     try {

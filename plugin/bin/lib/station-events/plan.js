@@ -48,4 +48,17 @@ function planEvent(input) {
   };
 }
 
-module.exports = { STARTING_LISTS, planOf, planEvent };
+// A claimed record's stations changed: one `replanned` carrying the full `after` list, its reason
+// and cause. Equal lists write nothing (null). `station` is where the item is; it defaults to build.
+function replanEvent(input) {
+  const { repoName, recordNumber, before, after, reasonCode, reasonText, cause, sessionId, runId, at, lane, station } = input !== null && typeof input === 'object' ? input : {};
+  if (!Array.isArray(before) || !Array.isArray(after) || before.join() === after.join()) return null;
+  const payload = { stations: [...after], reasonCode: reasonCode ?? REASON.UNSPECIFIED, cause: cause ?? { kind: 'config' } };
+  if (reasonText !== undefined) payload.reasonText = reasonText;
+  return {
+    repoName, recordNumber, kind: KIND.REPLANNED, station: station ?? STATION.BUILD, outcome: null,
+    lane, sessionId, runId, at, discriminator: `replanned:${after.join(',')}:${at ?? ''}`, payload,
+  };
+}
+
+module.exports = { STARTING_LISTS, LANE_UNKNOWN, planOf, planEvent, replanEvent };

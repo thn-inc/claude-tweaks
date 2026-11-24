@@ -482,6 +482,26 @@ test('CLI: a fallback-identified transcript over the cap writes no handoff — o
   }
 });
 
+// #4664: --stories-owed refuses a handoff whose list would drop build's automatic stories step.
+test('CLI: --stories-owed over the cap refuses a list without stories, or with stories after test, and accepts stories first or without test', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const steps of ['test,review', 'test,review,stories']) {
+    const fx = runFixture();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', steps, '--stories-owed'], c.deps), 0, c.err.join(''));
+    assert.strictEqual(c.json().over, true, steps);
+    assert.strictEqual(c.json().handoff, null, steps);
+    assert.match(c.json().reason, /--stories-owed/, steps);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), steps);
+  }
+  for (const steps of ['stories,test,review', 'stories,review']) {
+    const fx = runFixture();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', steps, '--stories-owed'], c.deps), 0, c.err.join(''));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8')).nextSteps, steps.split(','));
+  }
+});
+
 // flow/context-handoff.md: a top-level run (run-state.json not dispatched: true) never hands off wrap-up.
 // The refusal is handoff: null with this reason, logged as a SKIP like every other reason.
 const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
@@ -905,7 +925,7 @@ test('CLI: a non-canonical --record-steps value resumes in canonical form', asyn
   assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build auto`);
 });
 
-test('CLI: malformed --record-steps, --keep-going and --no-stories invocations exit 2 and write nothing', async () => {
+test('CLI: malformed --record-steps, --keep-going, --no-stories and --stories-owed invocations exit 2 and write nothing', async () => {
   const fx = multiRun();
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const base = ['--run', fx.runDir, '--transcript', t];
@@ -922,6 +942,8 @@ test('CLI: malformed --record-steps, --keep-going and --no-stories invocations e
     [...base, '--no-stories'],
     [...base, '--no-stories', '--next-steps', 'test'],
     [...base, '--record-steps', '--no-stories'],
+    [...base, '--stories-owed'],
+    [...base, '--record-steps', RECORD_STEPS, '--stories-owed'],
   ];
   for (const argv of cases) {
     const c = cli(fx);

@@ -1088,6 +1088,7 @@ test('AC5.7: label still missing after one retry re-drafts the PR and says so', 
     assert.deepEqual(undos[0].args, ['pr', 'ready', '9', '--repo', 'o/r', '--undo']);
     const ev = h.events.find((e) => e.step === 'merge-park');
     assert.equal(ev.status, 'stop');
+    assert.equal(ev.extra.parked, false);
     assert.match(ev.detail, /bot:parked NOT applied/);
     assert.match(ev.detail, /re-drafted/);
     assert.equal(h.logs.find((l) => l.step === 'Step 2.5 (merge-verification gate)').text,
@@ -1130,6 +1131,7 @@ test('park: a failed bootstrap read or record comment never changes the reason, 
   assert.ok(h.calls.some((c) => isGh('issue', 'edit')(c)), 'the add still runs');
   assert.ok(!h.calls.some(isUndo), 'the add landed, so no fallback');
   const ev = h.events.find((e) => e.step === 'merge-park');
+  assert.equal(ev.extra.parked, true);
   assert.match(ev.detail, /label bootstrap failed/);
   assert.match(ev.detail, /record comment failed: HTTP 502/);
   assert.doesNotMatch(ev.detail, /Command failed|--body/);

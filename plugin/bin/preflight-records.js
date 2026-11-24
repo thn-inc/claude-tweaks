@@ -113,7 +113,7 @@ const {
   parseRepo, repoResolutionNote, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { snapshotSinkOf } = require('./lib/station-events/blockers');
+const { snapshotSinkOf, lastPayloadFromCwd } = require('./lib/station-events/blockers');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo [host/]owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--prefetched-json <path>] [--blocker-landing] [--blocker-states-json <path>] [--help]\n';
 
@@ -200,6 +200,7 @@ const realDeps = {
   },
   // #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
   stationEvent: (e) => appendStationEvent(e),
+  lastPayload: lastPayloadFromCwd,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
