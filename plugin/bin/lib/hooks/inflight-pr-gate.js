@@ -28,7 +28,8 @@
 // first-line `claude-tweaks-run:` marker (a marker on a later line is quoted text); a marker run id
 // failing RUN_ID_RE; a run dir that does not canonicalize, is not a directory, or is not a direct
 // child of the main checkout's pipelines dir (a symlink out, a traversal); a missing or unreadable
-// run-state; no owner; the owner calling; an unreadable decisions.md set (readRunDecisions throws);
+// run-state; no owner; the owner calling; an unreadable decisions.md set (readRunDecisions throws) or
+// manifest.yml (readRunSpecs throws);
 // no in-flight phase; a load fault in this module (runInner requires it lazily); and any throw.
 //
 // Runs read: neither ctx.runDir nor ctx.ownedRun — the run the PR body's first-line marker names, in
@@ -44,7 +45,8 @@
 // denyResult, passed in by runInner, so this module never requires pre-tool-use.js. `deps` (test
 // seams): readPrBody(call, ctx, root) -> { body, number } | null (run from call.cwd, env ctx.env + call.env, gh
 // timeout from the main checkout `root`'s policy), mainCheckoutRoot (called once per call),
-// readRunState, readDecisions(runDir) -> string[] (throws when unreadable), fsImpl.
+// readRunState, readDecisions(runDir) -> string[] (throws when unreadable), readSpecs(runDir) -> a multi-spec
+// run's specs | null (exit-record.js's readRunSpecs; throws when unreadable), fsImpl.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -69,6 +71,7 @@ function lazy() {
     resumeVerdict: require('../flow/pr-body').resumeVerdict,
     inFlightPhase: require('../flow/inflight-run').inFlightPhase,
     readRunDecisions: require('../phase-exit/exit-record').readRunDecisions,
+    readRunSpecs: require('../phase-exit/exit-record').readRunSpecs,
   };
 }
 
@@ -133,7 +136,9 @@ function checkCall(call, ctx, d, deny) {
   if (ctx.input.session_id === owner) return {};
   let phase;
   try {
-    phase = inFlightPhase({ runState, body: pr.body, readDecisions: () => d.readDecisions(runDir) });
+    phase = inFlightPhase({
+      runState, body: pr.body, readDecisions: () => d.readDecisions(runDir), readSpecs: () => d.readSpecs(runDir),
+    });
   } catch {
     return {};
   }
@@ -170,6 +175,7 @@ function checkInflightPrGate(ctx, deps = {}, deny) {
       mainCheckoutRoot: deps.mainCheckoutRoot || wtDetect.mainCheckoutRoot,
       readRunState: deps.readRunState || ctxLib.readRunState,
       readDecisions: deps.readDecisions || ((runDir) => lib.readRunDecisions(runDir, fsImpl)),
+      readSpecs: deps.readSpecs || ((runDir) => lib.readRunSpecs(runDir, fsImpl)),
     };
     for (const call of calls) {
       let out;

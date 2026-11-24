@@ -108,3 +108,54 @@ test('readRunDecisions throws on a missing parent decisions.md, and on an unread
   };
   assert.throws(() => readRunDecisions(run, fsImpl), { code: 'EACCES' });
 });
+
+// ---- readRunSpecs and phaseExitReached (multi-spec runs, #6143) ----
+const { readRunSpecs, phaseExitReached } = require('../../../plugin/bin/lib/phase-exit/exit-record');
+const { manifestInit, transitionSpec } = require('../../../plugin/bin/lib/flow/manifest');
+
+test('readRunSpecs is null for a run with no manifest.yml', () => {
+  assert.equal(readRunSpecs(tmp()), null);
+});
+
+test('readRunSpecs returns each manifest spec in order with its status, phase and own spec-N decisions.md text', () => {
+  const run = tmp();
+  assert.equal(manifestInit({ runDir: run, specs: [1, 2, 3] }).ok, true);
+  assert.equal(transitionSpec({ runDir: run, specId: 1, status: 'complete', phase: 'wrap-up', now }).ok, true);
+  assert.equal(transitionSpec({ runDir: run, specId: 2, status: 'running', phase: 'build', now }).ok, true);
+  appendEntry({ runDir: path.join(run, 'spec-1'), section: '/build', entry: line('build') });
+  fs.mkdirSync(path.join(run, 'spec-2'));
+  const specs = readRunSpecs(run);
+  assert.deepEqual(specs.map(({ id, status, phase }) => ({ id, status, phase })), [
+    { id: 1, status: 'complete', phase: 'wrap-up' },
+    { id: 2, status: 'running', phase: 'build' },
+    { id: 3, status: 'pending', phase: undefined },
+  ]);
+  assert.equal(phaseExitRecorded(specs[0].decisions, 'build'), true);
+  assert.equal(specs[1].decisions, '', 'a spec dir with no decisions.md reads empty');
+  assert.equal(specs[2].decisions, '', 'a spec with no dir reads empty');
+});
+
+test('readRunSpecs throws on a manifest.yml that does not parse, and on an unreadable present spec file', () => {
+  const run = tmp();
+  fs.writeFileSync(path.join(run, 'manifest.yml'), 'not a manifest\n');
+  assert.throws(() => readRunSpecs(run), /does not parse/);
+  const ok = tmp();
+  manifestInit({ runDir: ok, specs: [1] });
+  appendEntry({ runDir: path.join(ok, 'spec-1'), section: '/build', entry: line('build') });
+  const fsImpl = {
+    ...fs,
+    readFileSync: (f, enc) => {
+      if (f === path.join(ok, 'spec-1', 'decisions.md')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return fs.readFileSync(f, enc);
+    },
+  };
+  assert.throws(() => readRunSpecs(ok, fsImpl), { code: 'EACCES' });
+});
+
+test('phaseExitReached counts the phase\'s own exit or any later phase\'s, never an earlier one\'s', () => {
+  const testExit = decisionsText([{ section: '/test', entry: line('test') }]);
+  assert.equal(phaseExitReached(testExit, 'build'), true);
+  assert.equal(phaseExitReached(testExit, 'test'), true);
+  assert.equal(phaseExitReached(decisionsText([{ section: '/build', entry: line('build') }]), 'test'), false);
+  assert.equal(phaseExitReached(testExit, 'nope'), false);
+});

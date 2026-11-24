@@ -2501,6 +2501,33 @@ test('hollow merge: a multi-spec run whose build and test exits are recorded onl
   assert.equal(gh.comments().length, 0);
 });
 
+test('hollow merge: a multi-spec run merged mid-series (spec 1 done, spec 2 at build) is held, though the run-wide rows are checked', async () => {
+  const { manifestInit, transitionSpec } = require('../../../plugin/bin/lib/flow/manifest');
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  assert.equal(manifestInit({ runDir: dir, specs: [6143, 6144] }).ok, true);
+  assert.equal(transitionSpec({ runDir: dir, specId: 6143, status: 'complete', phase: 'wrap-up' }).ok, true);
+  assert.equal(transitionSpec({ runDir: dir, specId: 6144, status: 'running', phase: 'build' }).ok, true);
+  logPhaseExit(path.join(dir, 'spec-6143'), 'build');
+  logPhaseExit(path.join(dir, 'spec-6143'), 'test');
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR, { check: ['build', 'test'] })) } });
+  const r = await detect(root, { gh });
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.equal(r.entries[0].phase, 'build');
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
+test('hollow merge: an unparseable manifest.yml holds the run as hollow-check-failed', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  fs.writeFileSync(path.join(dir, 'manifest.yml'), 'not a manifest\n');
+  const r = await detect(root, { gh: hollowGh({ views: { 11: view(hollowBody(HR, { check: ['build', 'test'] })) } }) });
+  assert.equal(r.entries[0].reason, 'hollow-check-failed');
+  assert.match(r.entries[0].detail, /manifest\.yml does not parse/);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+});
+
 test('AC5.1 (detection): a merged PR whose phases are all checked yields no entry, and a clean run is never read', async () => {
   const root = mainCheckout();
   addRun(root, HR, { decisions: ONE_LINE_DECISION });

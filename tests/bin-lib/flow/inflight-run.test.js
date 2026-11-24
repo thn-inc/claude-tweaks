@@ -63,3 +63,34 @@ test('a readDecisions throw propagates', () => {
 test('a build exit recorded only in a spec-2 text counts as finished', () => {
   assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader(['## /build\n', exit('build')]) }), 'test');
 });
+
+// ---- multi-spec runs: judged per spec from manifest.yml, never from the run-wide rows ----
+const both = check(check(body, 'build'), 'test');
+const spec = (status, { phase, exits = [] } = {}) => ({ id: 1, status, phase, decisions: exits.map(exit).join('') });
+
+test('a multi-spec run whose first spec exited build and test but whose second is still at build is in flight, though both rows are checked', () => {
+  const readDecisions = reader([exit('build') + exit('test')]);
+  const specs = [spec('complete', { phase: 'wrap-up', exits: ['build', 'test'] }), spec('running', { phase: 'build' })];
+  assert.equal(inFlightPhase({ runState: active, body: both, readDecisions, readSpecs: () => specs }), 'build');
+  assert.equal(readDecisions.calls, 0, 'the run-wide decisions set is not consulted');
+});
+
+test('a multi-spec run with a pending spec is in flight at build; a running spec past build is in flight at test', () => {
+  const done = spec('complete', { exits: ['build', 'test'] });
+  assert.equal(inFlightPhase({ runState: active, body: both, readDecisions: reader([]), readSpecs: () => [done, spec('pending')] }), 'build');
+  assert.equal(inFlightPhase({ runState: active, body: both, readDecisions: reader([]), readSpecs: () => [done, spec('running', { phase: 'test', exits: ['build'] })] }), 'test');
+});
+
+test('a multi-spec run is not in flight once every spec is settled or past test (an exit record or a later manifest phase)', () => {
+  const specs = [
+    spec('complete'), spec('failed'), spec('not-run'),
+    spec('running', { phase: 'wrap-up' }),
+    spec('running', { phase: 'test', exits: ['test'] }),
+  ];
+  assert.equal(inFlightPhase({ runState: active, body, readDecisions: reader([]), readSpecs: () => specs }), null);
+});
+
+test('a readSpecs throw propagates; a null readSpecs (single-spec run) falls back to the rows', () => {
+  assert.throws(() => inFlightPhase({ runState: active, body, readDecisions: reader([]), readSpecs: () => { throw new Error('manifest unreadable'); } }), /manifest unreadable/);
+  assert.equal(inFlightPhase({ runState: active, body: both, readDecisions: reader([]), readSpecs: () => null }), null);
+});

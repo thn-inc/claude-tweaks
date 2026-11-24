@@ -10,8 +10,12 @@ const fs = require('fs');
 const path = require('path');
 const { parseEntry, normalizeSection } = require('../log-decision/append');
 const { PHASE_SECTIONS } = require('../../pr-merge-state');
+const { parseManifestYaml } = require('../flow/manifest');
 
 const PHASE_EXIT_STEP = 'Phase exit';
+// Pipeline order: a phase never exits before the ones ahead of it.
+const PHASES = Object.keys(PHASE_SECTIONS);
+const SPEC_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 function phaseExitText(phase, head) {
   return `${phase} phase exited at ${head || 'unknown HEAD'}`;
@@ -57,4 +61,45 @@ function phaseExitRecorded(decisionsText, phase) {
   return false;
 }
 
-module.exports = { PHASE_EXIT_STEP, phaseExitText, readRunDecisions, phaseExitRecorded };
+// True when the text records the exit of `phase` or of any phase after it.
+function phaseExitReached(decisionsText, phase) {
+  const i = PHASES.indexOf(phase);
+  return i >= 0 && PHASES.slice(i).some((p) => phaseExitRecorded(decisionsText, p));
+}
+
+// A multi-spec run's specs, from {runDir}/manifest.yml (flow/manifest.js's shape), in manifest order:
+// [{ id, status, phase, decisions }], `decisions` being {runDir}/spec-{id}/decisions.md ('' when the
+// spec dir or its file is absent, or the dir is a symlink). null when the run has no manifest.yml (a
+// single-spec run). Throws on a manifest.yml that cannot be read (bar ENOENT) or parsed, a spec id
+// that is not a plain name, and an unreadable present spec file.
+function readRunSpecs(runDir, fsImpl = fs) {
+  const file = path.join(runDir, 'manifest.yml');
+  let text;
+  try {
+    text = fsImpl.readFileSync(file, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null;
+    throw e;
+  }
+  const manifest = parseManifestYaml(text);
+  if (!manifest) throw new Error(`${file} does not parse`);
+  return manifest.multispec.specs.map((spec) => {
+    if (!SPEC_ID_RE.test(String(spec.id))) throw new Error(`${file}: spec id ${JSON.stringify(spec.id)} is not a plain name`);
+    const dir = path.join(runDir, `spec-${spec.id}`);
+    let decisions = '';
+    let isDir = false;
+    try { isDir = fsImpl.lstatSync(dir).isDirectory(); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    if (isDir) {
+      try {
+        decisions = fsImpl.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
+      } catch (e) {
+        if (!e || e.code !== 'ENOENT') throw e;
+      }
+    }
+    return { id: spec.id, status: spec.status, phase: spec.phase, decisions };
+  });
+}
+
+module.exports = {
+  PHASE_EXIT_STEP, PHASES, phaseExitText, readRunDecisions, phaseExitRecorded, phaseExitReached, readRunSpecs,
+};

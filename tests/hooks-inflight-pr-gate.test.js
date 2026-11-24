@@ -383,6 +383,21 @@ test('a multi-spec run whose exits are recorded only in spec-1/decisions.md is a
   assertAllowedNoEvent(gate(ctxFor(fx, MERGE), { readPrBody: reader(bodyFor(fx)) }), fx);
 });
 
+test('a multi-spec run merged mid-series (spec 1 done, spec 2 at build) is denied, though the run-wide rows are checked', async () => {
+  const { manifestInit, transitionSpec } = require('../plugin/bin/lib/flow/manifest');
+  const fx = await fixture();
+  assert.strictEqual(manifestInit({ runDir: fx.runDir, specs: [1, 2] }).ok, true);
+  assert.strictEqual(transitionSpec({ runDir: fx.runDir, specId: 1, status: 'complete', phase: 'wrap-up' }).ok, true);
+  assert.strictEqual(transitionSpec({ runDir: fx.runDir, specId: 2, status: 'running', phase: 'build' }).ok, true);
+  logPhaseExit(fx.runDir, 'build', 1);
+  logPhaseExit(fx.runDir, 'test', 1);
+  const reason = denyReason(gate(ctxFor(fx, MERGE), { readPrBody: reader(bodyFor(fx, { check: ['build', 'test'] })) }));
+  assert.ok(reason && reason.includes('(build phase not finished)'), reason);
+  // An unreadable manifest.yml fails open.
+  fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), 'not a manifest\n');
+  assert.deepStrictEqual(gate(ctxFor(fx, MERGE), { readPrBody: reader(bodyFor(fx, { check: ['build', 'test'] })) }), {});
+});
+
 // ---- the marker and the run it names ----
 
 test('a marker on line 2 only is allowed', async () => {

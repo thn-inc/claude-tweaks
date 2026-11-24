@@ -71,8 +71,8 @@
 //
 // `detectHollowMerges` (#6143) finds a hollow merge: a MERGED PR whose first-line run marker names a
 // non-terminal run whose build or test phase has not finished (lib/flow/inflight-run.js's inFlightPhase,
-// over the run's whole decisions.md set). It FAILS CLOSED: a run whose check cannot finish (a by-number
-// or by-branch PR lookup answering TRANSIENT_PR_FAILURE, an unreadable body, run state or decisions.md, any
+// over the run's whole decisions.md set, or per spec for a multi-spec run's manifest.yml). It FAILS CLOSED: a run whose check cannot finish (a by-number
+// or by-branch PR lookup answering TRANSIENT_PR_FAILURE, an unreadable body, run state, decisions.md or manifest.yml, any
 // throw while checking it, from its PR lookup on) is held as `hollow-check-failed`, never settled; the other
 // runs are still judged. A definitive answer (OPEN, CLOSED, no PR, `gh-absent`, `pr-not-found`, …) gives no
 // entry. A held run's dir is in `hollowRunDirs`, which `postMerge` (and the caller's release and archive)
@@ -103,7 +103,7 @@ const { closingLinks, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-l
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { fallbackBranch } = require('../hooks/run-integrity');
 const { inFlightPhase } = require('../flow/inflight-run');
-const { readRunDecisions } = require('../phase-exit/exit-record');
+const { readRunDecisions, readRunSpecs } = require('../phase-exit/exit-record');
 const { firstLineRunId } = require('../flow/pr-checklist');
 const { neutralizeClosingPhrases } = require('../flow/closing-links');
 
@@ -700,7 +700,9 @@ async function detectHollowMerges({
       if (firstLineRunId(view.body) !== runId) continue; // not this run's PR: it settles as today
       // inFlightPhase reads a missing state as not in flight; for a marker-bearing PR that would settle it unchecked.
       if (!state || typeof state !== 'object') throw new Error(`${runId}: run-state.json is missing or unreadable`);
-      const phase = inFlightPhase({ runState: state, body: view.body, readDecisions: () => readRunDecisions(dir) });
+      const phase = inFlightPhase({
+        runState: state, body: view.body, readDecisions: () => readRunDecisions(dir), readSpecs: () => readRunSpecs(dir),
+      });
       if (!phase) continue;
       const closing = (Array.isArray(view.closingIssuesReferences) ? view.closingIssuesReferences : [])
         .filter((r) => {
