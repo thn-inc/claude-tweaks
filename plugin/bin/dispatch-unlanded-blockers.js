@@ -9,7 +9,10 @@
 // dropped candidate gets a `reason: 'unlanded-blocker'` entry in the exclusions file
 // (`detail: {blockers: [{blocker, commit}]}`) through exclusions.js's appendExclusion,
 // the one sanctioned writer, and one `AUTO — dispatch:` line on stderr. `open` is the
-// `blocked` pass's; an `undetermined` verdict keeps the candidate (one `kept` line),
+// `blocked` pass's. A `hollow` verdict (a reachable closing commit that touches none of
+// the blocker's Key Files) excludes the same way, its detail entry adding
+// `verdict: 'hollow', pr` and its AUTO line reading `#N waits — blocker #M was closed by
+// #PR with no implementation`; an `undetermined` verdict keeps the candidate (one `kept` line),
 // because /flow Step 2.7b proceeds on `undetermined` too. A cross-repository
 // `undetermined` is a CLOSED foreign blocker: it keeps the candidate as well, and the
 // `kept` line names it `owner/name#N` (#4793).
@@ -215,6 +218,10 @@ function run(argv, deps = realDeps) {
     for (const e of unlanded) {
       appendExclusion(opts.exclusions, e);
       for (const b of e.detail.blockers) {
+        if (b.verdict === 'hollow') {
+          deps.stderr(`AUTO — dispatch: #${e.records[0]} waits — blocker #${b.blocker} was closed by ${b.pr == null ? b.commit : `#${b.pr}`} with no implementation\n`);
+          continue;
+        }
         deps.stderr(`AUTO — dispatch: #${e.records[0]} excluded, blocker #${b.blocker} closed but its closing commit ${b.commit} is not on origin/${branch}\n`);
       }
     }

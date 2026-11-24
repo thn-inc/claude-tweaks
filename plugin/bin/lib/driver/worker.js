@@ -41,7 +41,7 @@
 // Anything else is `ok`. A "result object" is stdout that parses, after trimming, to
 // an object with `type: "result"`; whenever one exists, `usage`, `turns`, `denials`
 // and `costUsd` are read from it, `sessionId` is its `session_id` when that is a
-// non-empty string (else null), and `spendOverrun` is true exactly when a spend
+// non-empty string (else the pre-minted id of a lens-reviewer launch, below, else null), and `spendOverrun` is true exactly when a spend
 // ceiling was given and the reported cost is above it. The free-text `result` string
 // is never parsed.
 //
@@ -138,6 +138,18 @@
 //   the change and replied `STATUS: DONE`. Re-run the three launches with the opt-in `#6002` live probe;
 //   the Agent-tool half has no node test (an Agent dispatch cannot run outside a session).
 //
+// Pre-minted session id (#6000 whole-branch review). A `lens-reviewer` launch passes
+// `--session-id <uuid>` (a fresh `crypto.randomUUID()` per launch; `composeArgs` appends it
+// last and refuses a non-UUID), so a worker with no result object (a timeout, a death by
+// signal) still names the transcript its spend can be read from: the envelope's `sessionId`
+// falls back to that id. No other role passes it, so their argv is unchanged. CLI 2.1.325's
+// `claude --help` lists `--session-id <uuid>  Use a specific session ID for the conversation
+// (must be a valid UUID)`. Probed 2026-11-23 on that CLI on macOS (darwin), subscription login,
+// no TTY: one haiku lens-reviewer launch through this launcher under `--safe-mode --restricted`
+// returned `ok` with `session_id` equal to the minted id, its transcript was
+// `{minted}.jsonl` under the canonical cwd's projects directory, and the sum of that
+// transcript's assistant rows (readUsage) equalled the envelope's `usage` field for field.
+//
 // On win32 the default `bin` of `claude` does not find an npm-installed `claude.cmd`;
 // a win32 caller passes `bin` explicitly.
 //
@@ -187,7 +199,7 @@ const crypto = require('crypto');
 const cp = require('node:child_process');
 const { launchSpec } = require('../impeccable-engine');
 const { isAncestorOrSelf, resolveTarget, canonicalRealpath } = require('../path-guard');
-const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort } = require('./roles');
+const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainReadPaths, reopensHome, composeArgs, assertSpendCeiling, assertEffort, lensGitEnv } = require('./roles');
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
@@ -567,12 +579,13 @@ async function launchWorker(opts, deps = defaultDeps()) {
     throw new Error('settingsDir must lie outside the working directory: ' + settingsDir + ' is not outside ' + cwd);
   }
   // Derived before the settings are built, so a bad testCommand or readPaths is refused
-  // before anything is written. A caller's readPaths is used as given.
+  // before anything is written. A caller's readPaths is used as given. Only the implementer
+  // derives toolchain read paths; the lens-reviewer reads the caller's, default none.
   let { readPaths } = opts;
-  if (spec.settings && readPaths === undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
+  if (role === 'implementer' && readPaths === undefined && SANDBOX_PROBED_PLATFORMS.includes(platform)) {
     readPaths = toolchainReadPaths(testCommand, deps.toolchain || realToolchainDeps(env));
   }
-  const settingsText = spec.settings ? JSON.stringify(implementerSettings({ testCommand, platform, readPaths }), null, 2) : null;
+  const settingsText = spec.settings ? JSON.stringify(settingsFor(role, { testCommand, platform, readPaths }), null, 2) : null;
   // A caller's readPaths may not re-open the home directory the read block exists to close:
   // an entry that is HOME, the passwd home, or an ancestor of either, lexically or through a
   // link, is refused by the same reopensHome rule toolchainRoot applies on the derived side.
@@ -584,6 +597,13 @@ async function launchWorker(opts, deps = defaultDeps()) {
       }
     }
   }
+  // The lens-reviewer's git runs under a pinned environment (roles.js, "Pinned git
+  // environment"); a missing or malformed attrSource is refused here, before any write.
+  // Every other role ignores attrSource and keeps exactly the allow-listed env.
+  const gitEnv = role === 'lens-reviewer' ? lensGitEnv({ attrSource: opts.attrSource }) : null;
+  // The lens-reviewer launches under a session id minted here (header, "Pre-minted session
+  // id"), so a launch with no result object still names its transcript. No other role does.
+  const mintedSessionId = role === 'lens-reviewer' ? crypto.randomUUID() : undefined;
   const withAppend = typeof claudeMdText === 'string' && claudeMdText !== '';
 
   const written = [];
@@ -600,8 +620,8 @@ async function launchWorker(opts, deps = defaultDeps()) {
       appendPromptFile = stem + '.append.md';
       writeExclusive(appendPromptFile, claudeMdText, written);
     }
-    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform });
-    const childEnv = buildEnv(env, platform);
+    const args = composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform, sessionId: mintedSessionId });
+    const childEnv = gitEnv ? { ...buildEnv(env, platform), ...gitEnv } : buildEnv(env, platform);
     const launch = launchSpec(bin, args, platform, childEnv);
     let outcome;
     try {
@@ -610,7 +630,9 @@ async function launchWorker(opts, deps = defaultDeps()) {
     } catch (err) {
       outcome = { timedOut: false, spawnError: errorOrDefault(err) };
     }
-    return classify(outcome, { schema, spendCeiling });
+    const envelope = classify(outcome, { schema, spendCeiling });
+    if (envelope.sessionId === null && mintedSessionId !== undefined) envelope.sessionId = mintedSessionId;
+    return envelope;
   } finally {
     for (const file of written) {
       try {

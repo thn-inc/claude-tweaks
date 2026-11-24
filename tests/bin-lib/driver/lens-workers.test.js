@@ -1,0 +1,669 @@
+'use strict';
+// plugin/bin/lib/driver/lens-workers.js (#6000): runs review lens briefs as headless lens-reviewer
+// workers through worker.js's launchWorker with a fake runner, and builds the reply shape
+// review-coordination.js settle-lens-replies reads.
+const test = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const cp = require('node:child_process');
+const path = require('node:path');
+const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
+const lw = require(path.join(LIB, 'driver', 'lens-workers.js'));
+const { runLensWorkers, classifyFailure, composeLensPrompt, appendWorkerRecord, LENS_WORKER_CONCURRENCY, LENS_WORKER_TIMEOUT_MS, EXCLUDED_LENSES, FAILURE_REASONS, WORKER_DISPATCHES_FILE } = lw;
+const { ENV_ALLOW } = require(path.join(LIB, 'driver', 'worker.js'));
+const { lensAdmittedFormsNote, lensGitEnv } = require(path.join(LIB, 'driver', 'roles.js'));
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const { readText } = require('../../helpers/read-skill');
+
+const COORDINATION = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'review-coordination.js');
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+const HERMETIC_PATH = '/nonexistent-lens-workers-test-path';
+const REPLY = '| Severity | Path:Line | Finding | Evidence |\n|---|---|---|---|\n| high | src/a.js:10 | missing expiry check on token | evidence |\n\nSTATUS: DONE';
+// The result object Step 1's capture printed (CLI 2.1.325, empty CLAUDE_CONFIG_DIR), exit 1, empty stderr.
+const AUTH_FAILURE_STDOUT = JSON.stringify({ type: 'result', subtype: 'success', is_error: true, num_turns: 1, total_cost_usd: 0, usage: { input_tokens: 0, output_tokens: 0 }, permission_denials: [], terminal_reason: 'api_error', result: 'Not logged in · Please run /login', session_id: 'f8d6e559-e883-4c89-8960-2ef9462b896e' });
+
+const tmp = (t, prefix = 'lens-workers-') => {
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  return d;
+};
+const lens = (name, model = 'haiku', reviewers = 2) => ({ lens: name, brief: `brief for ${name}`, model, reviewers });
+const resultOut = (text, extra = {}) => ({ code: 0, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, num_turns: 2, total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 5 }, permission_denials: [], session_id: 's', structured_output: { text }, ...extra }) });
+
+// The lens a call belongs to, read from its prompt (each brief names its lens), and its side: the
+// launcher starts a lens's side A before its side B, so the n-th call for a lens is its n-th side.
+function sideOf(calls, call) {
+  const owner = /brief for (\S+)$/.exec(call.input)[1];
+  const before = calls.filter((c) => c.lens === owner).length;
+  return { lens: owner, side: before === 0 ? 'A' : 'B' };
+}
+
+// A fake runner: `answer({ lens, side, call })` returns the child's outcome (an object) or a
+// Promise of one; every call is recorded with the settings and appended-prompt files it named.
+function fakeRunner(answer = ({ lens: l, side }) => resultOut(`reply ${l} ${side}`)) {
+  const calls = [];
+  const runner = (call) => {
+    const id = sideOf(calls, call);
+    const record = { ...call, ...id, files: {}, kills: [] };
+    for (const flag of ['--settings', '--append-system-prompt-file']) {
+      const i = call.args.indexOf(flag);
+      if (i !== -1) record.files[flag] = fs.readFileSync(call.args[i + 1], 'utf8');
+    }
+    calls.push(record);
+    const exited = Promise.resolve(answer({ ...id, call })).then((o) => ({ signal: null, stderr: '', ...o }));
+    return { pid: 4000 + calls.length, kill(signal) { record.kills.push(signal); }, exited };
+  };
+  return { runner, calls };
+}
+
+function baseInput(t, extra = {}) {
+  return {
+    lenses: [lens('3a'), lens('3b')],
+    runDir: tmp(t, 'lens-run-'),
+    cwd: tmp(t, 'lens-cwd-'),
+    bundleText: 'BUNDLE TEXT',
+    readPaths: [],
+    attrSource: EMPTY_TREE,
+    settingsDir: tmp(t, 'lens-settings-'),
+    platform: 'darwin',
+    policy: {},
+    env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u' },
+    gitHonoursAttrSource: true,
+    ...extra,
+  };
+}
+const flagValue = (args, flag) => { const i = args.indexOf(flag); return i === -1 ? undefined : args[i + 1]; };
+const logLines = (runDir) => {
+  let text = '';
+  try { text = readText(path.join(runDir, WORKER_DISPATCHES_FILE)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+  return text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+};
+async function waitFor(cond, what) {
+  for (let i = 0; i < 2000; i += 1) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 1));
+  }
+  throw new Error('timed out waiting for ' + what);
+}
+
+test('the module constants are pinned', () => {
+  assert.strictEqual(LENS_WORKER_CONCURRENCY, 4);
+  assert.strictEqual(LENS_WORKER_TIMEOUT_MS, 900000);
+  assert.deepStrictEqual(EXCLUDED_LENSES, ['3f']);
+  assert.deepStrictEqual(FAILURE_REASONS, ['launch', 'auth', 'timeout', 'blank', 'platform', 'excluded', 'denied']);
+  assert.strictEqual(WORKER_DISPATCHES_FILE, 'worker-dispatches.jsonl');
+});
+
+test('composeLensPrompt inlines the bundle ahead of the verbatim brief', () => {
+  assert.strictEqual(composeLensPrompt('B\nX', '  brief\n'), '<review-context>\nB\nX\n</review-context>\n\n  brief\n');
+});
+
+test('AC5.1: two lenses, four workers — the reply is byte-equal in shape to what settle-lens-replies accepts', async (t) => {
+  const { runner, calls } = fakeRunner(() => resultOut(REPLY));
+  const out = await runLensWorkers(baseInput(t), { runner });
+  assert.strictEqual(calls.length, 4);
+  assert.deepStrictEqual(out.reply, {
+    started: true,
+    lenses: [{ lens: '3a', reviewers: 2 }, { lens: '3b', reviewers: 2 }],
+    reviewers: ['3a', '3b'].flatMap((l) => ['A', 'B'].map((side) => ({ lens: l, side, text: REPLY, failed: false }))),
+  });
+  assert.deepStrictEqual(out.failures, []);
+  const dir = tmp(t, 'lens-settle-');
+  const file = path.join(dir, 'reply.json');
+  fs.writeFileSync(file, JSON.stringify(out.reply));
+  const res = runCliSync(COORDINATION, ['settle-lens-replies', file, '--ctx-id', 't6000'], { env: { CLAUDE_CODE_SESSION_ID: 't6000-session', TMPDIR: dir, TMP: dir, TEMP: dir }, cwd: dir });
+  assert.strictEqual(res.code, 0, res.stderr);
+  assert.deepStrictEqual(JSON.parse(res.stdout).settled.map((s) => s.lens), ['3a', '3b']);
+});
+
+test('AC5.2: a worker that exits non-zero fails only its own side', async (t) => {
+  const { runner } = fakeRunner(({ lens: l, side }) => (l === '3a' && side === 'B' ? { code: 1, stdout: '', stderr: 'boom' } : resultOut(`reply ${l} ${side}`)));
+  const out = await runLensWorkers(baseInput(t), { runner });
+  assert.deepStrictEqual(out.reply.reviewers, [
+    { lens: '3a', side: 'A', text: 'reply 3a A', failed: false },
+    { lens: '3a', side: 'B', text: null, failed: true },
+    { lens: '3b', side: 'A', text: 'reply 3b A', failed: false },
+    { lens: '3b', side: 'B', text: 'reply 3b B', failed: false },
+  ]);
+  assert.deepStrictEqual(out.failures.map(({ lens: l, side, reason }) => [l, side, reason]), [['3a', 'B', 'launch']]);
+});
+
+test('AC2.1: an auth-failure fake yields failed: true, never text: ""', async (t) => {
+  const { runner } = fakeRunner(() => ({ code: 1, stdout: AUTH_FAILURE_STDOUT, stderr: '' }));
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3b', 'haiku', 1)] }), { runner });
+  assert.deepStrictEqual(out.reply.reviewers, [{ lens: '3b', side: 'A', text: null, failed: true }]);
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['auth']);
+});
+
+test('classifyFailure: timeout, auth, launch, denied, blank and a reply', () => {
+  const ok = (text, denials = []) => ({ status: 'ok', result: { text }, denials, detail: null });
+  assert.strictEqual(classifyFailure({ status: 'timeout', detail: 'Not logged in' }), 'timeout');
+  assert.strictEqual(classifyFailure({ status: 'fail', reason: 'exit', detail: 'Not logged in · Please run /login' }), 'auth');
+  assert.strictEqual(classifyFailure({ status: 'fail', reason: 'exit', detail: 'exit 1: boom' }), 'launch');
+  assert.strictEqual(classifyFailure({ status: 'fail', reason: 'schema', detail: null }), 'launch');
+  assert.strictEqual(classifyFailure(ok('No findings.', [{ tool_name: 'Bash', tool_input: { command: '  git log -1' } }])), 'denied');
+  assert.strictEqual(classifyFailure(ok('No findings.', [{ tool_name: 'Bash', tool_input: { command: 'git' } }])), 'denied');
+  assert.strictEqual(classifyFailure(ok('No findings.', [{ tool_name: 'Bash', tool_input: { command: 'gitk' } }])), null);
+  assert.strictEqual(classifyFailure(ok('No findings.', [{ tool_name: 'Read', tool_input: { file_path: '/etc/hosts' } }])), null);
+  assert.strictEqual(classifyFailure(ok(' \n\t')), 'blank');
+  assert.strictEqual(classifyFailure({ status: 'ok', result: {}, denials: [] }), 'blank');
+  assert.strictEqual(classifyFailure(ok('No findings.')), null);
+});
+
+// Residuals B and C (#6000 fix-wave re-review): a separator inside a quoted assignment value does
+// not split the git segment away, and a git command behind a keyword, a wrapper, a path or a
+// shell's -c script is still a git denial. One test per shape.
+const deniedReason = (command) => classifyFailure({ status: 'ok', result: { text: 'No findings.' }, denials: [{ tool_name: 'Bash', tool_input: { command } }], detail: null });
+for (const command of [
+  'A="x;y" git log',
+  "A='x|y' B=\"p&&q\" git diff",
+  '{ git log; }',
+  'if git diff --quiet; then echo same; fi',
+  'while git log -1; do break; done',
+  '! git diff',
+  'time git log',
+  'env git log',
+  'env -i A=1 git log',
+  'command git log',
+  '/usr/bin/git log',
+  'xargs git log',
+  'xargs -n 1 git show',
+  'sh -c "git log"',
+  "bash -c 'git diff HEAD'",
+  'bash -lc "cd x && git log"',
+  'echo "$(git rev-parse HEAD)"',
+  'echo "`git rev-parse HEAD`"',
+  // Residuals of the structural scan (#6000 review): every shape that hid the command position.
+  'A="$(pwd)" git log',
+  'sudo -u root git log',
+  'nice -n 5 git log',
+  'timeout 5 git log',
+  'stdbuf -oL git log',
+  'bash -o pipefail -c "git log"',
+  'bash -c -- "git log"',
+]) {
+  test(`classifyFailure: ${JSON.stringify(command)} is a git denial`, () => {
+    assert.strictEqual(deniedReason(command), 'denied');
+  });
+}
+// Over-matching is the safe direction (the side falls back to the Task path), so a command that
+// merely names git is a denial; only a command that does not name git as a word is not.
+for (const command of ['cat a; ls', 'sh -c "ls; cat a"', 'env A=1 ls', 'time ls', '{ ls; }', 'ls .gitignore', 'git-lfs ls', 'cat gitconfig', 'GIT_DIR=x ls']) {
+  test(`classifyFailure: ${JSON.stringify(command)} is not a git denial`, () => {
+    assert.strictEqual(deniedReason(command), null);
+  });
+}
+
+// Whole-branch review finding 1 (#6000): a git command inside a compound or env-prefixed
+// command line is still a git denial; a compound with no git segment is not.
+test('classifyFailure: a denied compound, env-prefixed or cd-prefixed git command is denied', () => {
+  const denied = (command) => classifyFailure({ status: 'ok', result: { text: 'No findings.' }, denials: [{ tool_name: 'Bash', tool_input: { command } }], detail: null });
+  for (const command of [
+    'cd src && git log -1',
+    'GIT_PAGER=cat git log -1',
+    'A=1 B="x y" git diff',
+    "true; git diff HEAD",
+    'ls || git status',
+    'cat a | git hash-object --stdin',
+    'echo a\ngit show HEAD',
+    'echo $(git rev-parse HEAD)',
+    'echo `git rev-parse HEAD`',
+    'sleep 1 & git log',
+  ]) assert.strictEqual(denied(command), 'denied', command);
+  for (const command of ['cat a; ls', 'GIT_DIR=x ls', 'gitk; ls', 'ls .gitattributes']) {
+    assert.strictEqual(denied(command), null, command);
+  }
+  for (const command of ['echo git', 'cd git && ls', 'A="unterminated git log']) {
+    assert.strictEqual(denied(command), 'denied', command); // over-match: falls back to the Task path
+  }
+});
+
+test('AC2.2: off SANDBOX_PROBED_PLATFORMS every side fails with reason platform and no worker starts', async (t) => {
+  const { runner, calls } = fakeRunner();
+  const out = await runLensWorkers(baseInput(t, { platform: 'linux' }), { runner });
+  assert.strictEqual(calls.length, 0);
+  assert.ok(out.reply.reviewers.every((r) => r.failed === true && r.text === null));
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['platform', 'platform', 'platform', 'platform']);
+});
+
+test('a git that does not honour GIT_ATTR_SOURCE fails every side with reason platform before any worker starts', async (t) => {
+  const { runner, calls } = fakeRunner();
+  const out = await runLensWorkers(baseInput(t, { gitHonoursAttrSource: false }), { runner });
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['platform', 'platform', 'platform', 'platform']);
+  // Without an injected boolean the deps hook decides, called once with the reviewed worktree.
+  const seen = [];
+  const input = baseInput(t);
+  delete input.gitHonoursAttrSource;
+  const again = await runLensWorkers(input, { runner, gitHonoursAttrSource: (o) => { seen.push(o.cwd); return false; } });
+  assert.deepStrictEqual(seen, [input.cwd]);
+  assert.strictEqual(calls.length, 0);
+  assert.ok(again.failures.every((f) => f.reason === 'platform'));
+});
+
+test('3f is excluded before any worker starts', async (t) => {
+  const { runner, calls } = fakeRunner();
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3b'), lens('3f')] }), { runner });
+  assert.deepStrictEqual(calls.map((c) => c.lens), ['3b', '3b']);
+  assert.deepStrictEqual(out.reply.reviewers.slice(2), [{ lens: '3f', side: 'A', text: null, failed: true }, { lens: '3f', side: 'B', text: null, failed: true }]);
+  assert.deepStrictEqual(out.failures.map((f) => [f.lens, f.side, f.reason]), [['3f', 'A', 'excluded'], ['3f', 'B', 'excluded']]);
+  assert.deepStrictEqual(out.reply.lenses, [{ lens: '3b', reviewers: 2 }, { lens: '3f', reviewers: 2 }]);
+});
+
+test('blank: whitespace text is blank; "No findings." is a reply', async (t) => {
+  const { runner } = fakeRunner(({ side }) => resultOut(side === 'A' ? '  \n ' : 'No findings.'));
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3b')] }), { runner });
+  assert.deepStrictEqual(out.reply.reviewers, [
+    { lens: '3b', side: 'A', text: null, failed: true },
+    { lens: '3b', side: 'B', text: 'No findings.', failed: false },
+  ]);
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['blank']);
+});
+
+test('AC9.1/AC9.2: a git permission denial fails the side with reason denied even when the text is "No findings."', async (t) => {
+  const gitDenial = [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git diff HEAD~1 HEAD' } }];
+  const readDenial = [{ tool_name: 'Read', tool_use_id: 'y', tool_input: { file_path: '/etc/hosts' } }];
+  const { runner } = fakeRunner(({ lens: l, side }) => {
+    if (l === '3a' && side === 'A') return resultOut('No findings.', { permission_denials: gitDenial });
+    if (l === '3b' && side === 'A') return resultOut('No findings.', { permission_denials: readDenial });
+    return resultOut(`reply ${l} ${side}`);
+  });
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3a'), lens('3b', 'haiku', 1)] }), { runner });
+  assert.deepStrictEqual(out.reply.reviewers, [
+    { lens: '3a', side: 'A', text: null, failed: true },
+    { lens: '3a', side: 'B', text: 'reply 3a B', failed: false },
+    { lens: '3b', side: 'A', text: 'No findings.', failed: false },
+  ]);
+  assert.deepStrictEqual(out.failures.map((f) => [f.lens, f.side, f.reason]), [['3a', 'A', 'denied']]);
+});
+
+test("one side's launchWorker throw fails only that side", async (t) => {
+  const { runner } = fakeRunner();
+  const real = require(path.join(LIB, 'driver', 'worker.js')).launchWorker;
+  const launchWorker = (opts, d) => {
+    if (opts.prompt.endsWith('brief for 3b') && (launchWorker.seen3b = (launchWorker.seen3b || 0) + 1) === 2) throw new RangeError('settings write failed');
+    return real(opts, d);
+  };
+  const out = await runLensWorkers(baseInput(t), { runner, launchWorker });
+  assert.deepStrictEqual(out.reply.reviewers.map((r) => [r.lens, r.side, r.failed, r.text]), [
+    ['3a', 'A', false, 'reply 3a A'], ['3a', 'B', false, 'reply 3a B'], ['3b', 'A', false, 'reply 3b A'], ['3b', 'B', true, null],
+  ]);
+  assert.deepStrictEqual(out.failures.map((f) => [f.lens, f.side, f.reason]), [['3b', 'B', 'launch']]);
+  const line = out.records.find((r) => r.lens === '3b' && r.side === 'B');
+  assert.strictEqual(line.launched, false);
+});
+
+test('a roleLaunch throw fails every non-excluded side with reason launch, no worker started', async (t) => {
+  const { runner, calls } = fakeRunner();
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3a'), lens('3f', 'haiku', 1)], policy: { 'model-effort': { value: 'x', invalid: true } } }), { runner });
+  assert.strictEqual(calls.length, 0);
+  assert.deepStrictEqual(out.failures.map((f) => [f.lens, f.side, f.reason]), [['3a', 'A', 'launch'], ['3a', 'B', 'launch'], ['3f', 'A', 'excluded']]);
+  assert.ok(out.records.every((r) => r.launched === false && r.startTs === r.endTs && r.wallClockMs === 0));
+});
+
+test("the launcher's log carries every failed side", async (t) => {
+  const { runner } = fakeRunner();
+  const input = baseInput(t, { lenses: [lens('3b'), lens('3f')] });
+  let clock = Date.UTC(2026, 10, 23, 12, 0, 0);
+  const now = () => (clock += 1000);
+  await runLensWorkers({ ...input, now }, { runner });
+  await runLensWorkers({ ...input, platform: 'linux', now }, { runner });
+  const lines = logLines(input.runDir);
+  assert.strictEqual(lines.length, 8);
+  const keyed = lines.map((l) => [l.lens, l.side, l.launched, l.failed, l.reason]);
+  assert.deepStrictEqual(keyed.slice(0, 2), [['3f', 'A', false, true, 'excluded'], ['3f', 'B', false, true, 'excluded']]);
+  assert.deepStrictEqual(keyed.slice(2, 4).sort(), [['3b', 'A', true, false, null], ['3b', 'B', true, false, null]]);
+  assert.deepStrictEqual(keyed.slice(4), [['3f', 'A', false, true, 'excluded'], ['3f', 'B', false, true, 'excluded'], ['3b', 'A', false, true, 'platform'], ['3b', 'B', false, true, 'platform']]);
+  const launched = lines.find((l) => l.launched);
+  assert.deepStrictEqual(Object.keys(launched).slice(0, 12), ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason']);
+  assert.deepStrictEqual(Object.keys(lines.find((l) => !l.launched)), ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason']);
+  assert.strictEqual(launched.kind, 'worker');
+  assert.strictEqual(launched.agentType, 'lens-reviewer');
+  assert.strictEqual(launched.metaModel, 'haiku');
+  assert.strictEqual(launched.description, `lens ${launched.lens} ${launched.side}`);
+  assert.ok(launched.wallClockMs > 0 && Date.parse(launched.endTs) - Date.parse(launched.startTs) === launched.wallClockMs);
+  for (const l of lines.filter((x) => !x.launched)) assert.ok(l.startTs === l.endTs && l.wallClockMs === 0, JSON.stringify(l));
+});
+
+test('records append as each side settles', async (t) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  // A failed assertion must not leave the held worker (and its 15-minute ceiling timer) running.
+  t.after(() => release());
+  const { runner } = fakeRunner(({ side }) => (side === 'A' ? resultOut('first') : held.then(() => resultOut('second'))));
+  const input = baseInput(t, { lenses: [lens('3b')] });
+  let done = false;
+  const run = runLensWorkers(input, { runner }).then((o) => { done = true; return o; });
+  await waitFor(() => logLines(input.runDir).length === 1, 'the first record');
+  assert.strictEqual(done, false);
+  assert.deepStrictEqual(logLines(input.runDir).map((l) => l.side), ['A']);
+  release();
+  await run;
+  assert.deepStrictEqual(logLines(input.runDir).map((l) => l.side), ['A', 'B']);
+});
+
+test('two concurrent runs on one run dir append whole lines', async (t) => {
+  const a = baseInput(t, { lenses: [lens('3a'), lens('3b'), lens('3c')] });
+  const b = { ...baseInput(t, { lenses: [lens('3d'), lens('3e', 'haiku', 1)] }), runDir: a.runDir };
+  await Promise.all([runLensWorkers(a, { runner: fakeRunner().runner }), runLensWorkers(b, { runner: fakeRunner().runner })]);
+  const text = fs.readFileSync(path.join(a.runDir, WORKER_DISPATCHES_FILE), 'utf8');
+  const lines = text.split('\n');
+  assert.strictEqual(lines.pop(), '');
+  assert.strictEqual(lines.length, 9);
+  for (const line of lines) assert.strictEqual(JSON.parse(line).kind, 'worker');
+});
+
+// The append runs inside the lock: a second append attempted between the first's acquisition and
+// its write is refused with LOCK_TIMEOUT (lock-race-test-seam), and the file holds the first line only.
+test("a record append holds the run dir's lock across its write", (t) => {
+  const runDir = tmp(t, 'lens-lock-');
+  const env = { CLAUDE_TWEAKS_LOCK_WAIT_MS: '0' };
+  let inner;
+  appendWorkerRecord(runDir, { n: 1 }, {
+    env,
+    appendFile: (file, text) => {
+      try { appendWorkerRecord(runDir, { n: 2 }, { env }); } catch (err) { inner = err; }
+      fs.appendFileSync(file, text);
+    },
+  });
+  assert.strictEqual(inner && inner.code, 'LOCK_TIMEOUT');
+  assert.deepStrictEqual(logLines(runDir), [{ n: 1 }]);
+  appendWorkerRecord(runDir, { n: 3 }, { env });
+  assert.deepStrictEqual(logLines(runDir), [{ n: 1 }, { n: 3 }]);
+});
+
+test('a failed append never changes the reply and is returned in logFailures', async (t) => {
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3b', 'haiku', 1)] }), { runner: fakeRunner().runner, appendRecord: () => { throw new Error('disk full'); } });
+  assert.deepStrictEqual(out.reply.reviewers, [{ lens: '3b', side: 'A', text: 'reply 3b A', failed: false }]);
+  assert.deepStrictEqual(out.logFailures, [{ lens: '3b', side: 'A', reason: 'disk full' }]);
+});
+
+test('Q2 note: every worker launches with the admitted-forms note', async (t) => {
+  const { runner, calls } = fakeRunner();
+  await runLensWorkers(baseInput(t), { runner });
+  assert.strictEqual(calls.length, 4);
+  for (const c of calls) assert.strictEqual(c.files['--append-system-prompt-file'], lensAdmittedFormsNote());
+});
+
+test("AC3.2 (Q3): the launch effort is the role's, the model the lens's", async (t) => {
+  const argOf = (args, flag) => { const i = args.indexOf(flag); return i === -1 ? undefined : args[i + 1]; };
+  const lenses = [lens('3a', 'haiku', 1), lens('3b', 'sonnet', 1)];
+  const { runner, calls } = fakeRunner();
+  await runLensWorkers(baseInput(t, { lenses, policy: { 'model-effort': { value: 'profile', source: 'policy' } } }), { runner });
+  assert.deepStrictEqual(calls.map((c) => [argOf(c.args, '--model'), argOf(c.args, '--effort')]), [['haiku', undefined], ['sonnet', undefined]]);
+  const stub = fakeRunner();
+  await runLensWorkers(baseInput(t, { lenses }), { runner: stub.runner, roleLaunch: (role) => { assert.strictEqual(role, 'lens-reviewer'); return { model: 'haiku', effort: 'high' }; } });
+  assert.deepStrictEqual(stub.calls.map((c) => [argOf(c.args, '--model'), argOf(c.args, '--effort')]), [['haiku', 'high'], ['sonnet', 'high']]);
+});
+
+test('timeout: a worker past LENS_WORKER_TIMEOUT_MS fails with reason timeout', async (t) => {
+  // Fake timers: the wall-clock ceiling fires at once; no other timer (the kill grace) ever fires.
+  const timers = { setTimeout: (fn, ms) => { if (ms === LENS_WORKER_TIMEOUT_MS) setImmediate(fn); return { ms }; }, clearTimeout: () => {} };
+  const calls = [];
+  const runner = (call) => {
+    let die;
+    const exited = new Promise((r) => { die = r; });
+    const record = { call, kills: [] };
+    calls.push(record);
+    return { pid: 7, kill(signal) { record.kills.push(signal); die({ code: null, signal, stdout: '', stderr: '' }); }, exited };
+  };
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3b', 'haiku', 1)] }), { runner, timers });
+  assert.deepStrictEqual(calls.map((c) => c.kills), [['SIGTERM']]);
+  assert.deepStrictEqual(out.reply.reviewers, [{ lens: '3b', side: 'A', text: null, failed: true }]);
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['timeout']);
+});
+
+test('concurrency: never more than LENS_WORKER_CONCURRENCY workers run at once', async (t) => {
+  let live = 0;
+  let peak = 0;
+  const { runner, calls } = fakeRunner(({ lens: l, side }) => {
+    live += 1;
+    peak = Math.max(peak, live);
+    return new Promise((r) => setTimeout(r, 5)).then(() => { live -= 1; return resultOut(`reply ${l} ${side}`); });
+  });
+  const out = await runLensWorkers(baseInput(t, { lenses: [lens('3a'), lens('3b'), lens('3c')] }), { runner });
+  assert.strictEqual(calls.length, 6);
+  assert.strictEqual(peak, LENS_WORKER_CONCURRENCY);
+  assert.ok(out.reply.reviewers.every((r) => r.failed === false));
+});
+
+test('Proof(auth) launcher: the worker env holds only ENV_ALLOW names', async (t) => {
+  const { runner, calls } = fakeRunner();
+  const env = { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', GH_TOKEN: 'gh-secret', GITHUB_TOKEN: 'github-secret', ANTHROPIC_API_KEY: 'sk-secret', SSH_AUTH_SOCK: '/s' };
+  await runLensWorkers(baseInput(t, { env }), { runner });
+  const allowed = new Set([...ENV_ALLOW, ...Object.keys(lensGitEnv({ attrSource: EMPTY_TREE }))]);
+  assert.strictEqual(calls.length, 4);
+  for (const c of calls) {
+    for (const key of Object.keys(c.options.env)) assert.ok(allowed.has(key), key);
+    for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY']) assert.ok(!(key in c.options.env), key);
+    assert.strictEqual(c.options.env.GIT_ATTR_SOURCE, EMPTY_TREE);
+  }
+});
+
+test('an aborted run starts no further side, and a running worker sits in deps.active until it settles', async (t) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  // A failed assertion must not leave the held worker (and its 15-minute ceiling timer) running.
+  t.after(() => release());
+  let abort = false;
+  const active = new Set();
+  const { runner, calls } = fakeRunner(() => held.then(() => resultOut('late')));
+  const input = baseInput(t, { lenses: [lens('3a'), lens('3b'), lens('3c')] });
+  const run = runLensWorkers(input, { runner, active, aborted: () => abort });
+  await waitFor(() => calls.length === 4, 'four running workers');
+  assert.strictEqual(active.size, 4);
+  abort = true;
+  release();
+  const out = await run;
+  assert.strictEqual(calls.length, 4);
+  assert.strictEqual(active.size, 0);
+  assert.strictEqual(logLines(input.runDir).length, 4);
+  assert.deepStrictEqual(out.reply.reviewers.slice(4).map((r) => r.failed), [true, true]);
+});
+
+test('a missing deps.runner is refused once, up front, with a TypeError', async (t) => {
+  const input = baseInput(t);
+  await assert.rejects(runLensWorkers(input, {}), { name: 'TypeError', message: 'deps.runner is required' });
+  assert.deepStrictEqual(logLines(input.runDir), []);
+});
+
+// Task 4 (#6000): the token fields a launched record carries, which timing reads.
+const USAGE = { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 300, cache_creation_input_tokens: 40 };
+const FULL_KEYS = ['kind', 'launched', 'lens', 'side', 'description', 'agentType', 'metaModel', 'startTs', 'endTs', 'wallClockMs', 'failed', 'reason',
+  'agentId', 'transcriptModel', 'parentAgentId', 'spawnDepth', 'tokens', 'firstTurnTokens', 'costUsd', 'notFound', 'workflowRunId', 'workflowPhase'];
+
+test('a launched record carries the envelope usage as tokens, its session id and cost; an unlaunched one carries none of that', async (t) => {
+  const { runner } = fakeRunner(({ lens: l, side }) => resultOut(`reply ${l} ${side}`, { usage: USAGE, session_id: `sess-${l}-${side}`, total_cost_usd: 0.25 }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1), lens('3f', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [] });
+  const lines = logLines(input.runDir);
+  const launched = lines.find((l) => l.launched);
+  assert.deepStrictEqual(Object.keys(launched), FULL_KEYS);
+  assert.deepStrictEqual(launched.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+  assert.strictEqual(launched.agentId, 'sess-3a-A');
+  assert.strictEqual(launched.costUsd, 0.25);
+  assert.strictEqual(launched.notFound, null);
+  assert.strictEqual(launched.firstTurnTokens, null);
+  const unlaunched = lines.find((l) => !l.launched);
+  assert.deepStrictEqual(Object.keys(unlaunched), FULL_KEYS.slice(0, 12));
+});
+
+test('firstTurnTokens is the first assistant turn of the worker transcript, found by cwd and session id', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: '/cfg' } });
+  const seen = [];
+  const locateTranscripts = (q) => { seen.push(q); return [{ path: '/t/sess-x.jsonl', mtimeMs: 1 }]; };
+  const readUsage = async () => [{ role: 'user', turnStart: false }, { role: 'assistant', turnStart: true, contextTokens: 31 }, { role: 'assistant', turnStart: true, contextTokens: 3 }];
+  await runLensWorkers(input, { runner, locateTranscripts, readUsage });
+  assert.deepStrictEqual(seen, [{ cwd: input.cwd, sessionId: 'sess-x', configDir: '/cfg' }]);
+  assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, 31);
+});
+
+// Residual A (#6000 fix-wave re-review): the envelope's usage is the total and wins over a
+// readable transcript's sum; the two are never added.
+test("the envelope's usage wins over a readable transcript's non-zero sum", async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const rows = [
+    { role: 'assistant', turnStart: true, contextTokens: 7, inputTokens: 1, outputTokens: 2, cacheRead: 3, cacheCreate: 4 },
+    { role: 'assistant', turnStart: true, contextTokens: 9, inputTokens: 5, outputTokens: 6, cacheRead: 7, cacheCreate: 8 },
+  ];
+  await runLensWorkers(input, { runner, locateTranscripts: () => [{ path: '/t/sess-x.jsonl', mtimeMs: 1 }], readUsage: async () => rows });
+  const [rec] = logLines(input.runDir);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+  assert.strictEqual(rec.firstTurnTokens, 7);
+  assert.strictEqual(rec.notFound, null);
+});
+
+test('an unreadable worker transcript leaves firstTurnTokens null and the envelope totals standing', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [{ path: '/t', mtimeMs: 1 }], readUsage: async () => { throw new Error('EACCES'); } });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.firstTurnTokens, null);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+});
+
+test('a failed worker with no usage in its envelope and no transcript is launched with tokens null and a notFound, and its minted session id', async (t) => {
+  const { runner, calls } = fakeRunner(() => ({ code: 1, stdout: '' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const start = Date.UTC(2026, 10, 23, 12, 0, 0);
+  await runLensWorkers({ ...input, now: () => start }, { runner });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.launched, true);
+  assert.strictEqual(rec.failed, true);
+  assert.strictEqual(rec.tokens, null);
+  assert.strictEqual(rec.notFound, 'no usage in the worker envelope');
+  assert.strictEqual(rec.costUsd, null);
+  assert.strictEqual(rec.agentId, flagValue(calls[0].args, '--session-id'));
+  assert.match(rec.agentId, /^[0-9a-f-]{36}$/);
+});
+
+test('a launch that throws keeps the fallback agentId', async (t) => {
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const start = Date.UTC(2026, 10, 23, 12, 0, 0);
+  await runLensWorkers({ ...input, now: () => start }, { runner: () => ({ pid: 1, kill() {}, exited: new Promise(() => {}) }), launchWorker: async (_opts, { runner }) => { runner({}); throw new Error('boom'); } });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.agentId, `lens-3a-A-${start}`);
+  assert.strictEqual(rec.tokens, null);
+});
+
+// Whole-branch review finding 3 (#6000): a timed-out worker has no result object, so its spend is
+// read from its own transcript, found by the session id the launch minted.
+test("a timed-out worker's tokens are summed from its transcript, found by the minted session id", async (t) => {
+  const { slugForCwd } = require(path.join(LIB, 'timing', 'transcript.js'));
+  const configDir = tmp(t, 'lens-cfg-');
+  const input = baseInput(t, { lenses: [lens('3b', 'haiku', 1)], env: { PATH: HERMETIC_PATH, HOME: '/h', USER: 'u', CLAUDE_CONFIG_DIR: configDir } });
+  const turn = (id, usage) => JSON.stringify({ timestamp: '2026-11-23T12:00:00.000Z', message: { role: 'assistant', id, model: 'claude-haiku', content: [], usage } });
+  const timers = { setTimeout: (fn, ms) => { if (ms === LENS_WORKER_TIMEOUT_MS) setImmediate(fn); return { ms }; }, clearTimeout: () => {} };
+  const runner = (call) => {
+    const sid = flagValue(call.args, '--session-id');
+    const dir = path.join(configDir, 'projects', slugForCwd(input.cwd));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, sid + '.jsonl'), [
+      JSON.stringify({ timestamp: '2026-11-23T11:59:59.000Z', message: { role: 'user', content: 'go' } }),
+      turn('m1', { input_tokens: 10, output_tokens: 3, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 }),
+      turn('m2', { input_tokens: 5, output_tokens: 7, cache_read_input_tokens: 200, cache_creation_input_tokens: 0 }),
+    ].join('\n') + '\n');
+    let die;
+    const exited = new Promise((r) => { die = r; });
+    return { pid: 7, kill(signal) { die({ code: null, signal, stdout: '', stderr: '' }); }, exited, sid };
+  };
+  const seen = [];
+  const out = await runLensWorkers(input, { runner: (call) => { const h = runner(call); seen.push(h.sid); return h; }, timers });
+  assert.deepStrictEqual(out.failures.map((f) => f.reason), ['timeout']);
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.agentId, seen[0]);
+  assert.deepStrictEqual(rec.tokens, { input: 15, output: 10, cacheRead: 300, cacheCreate: 20 });
+  assert.strictEqual(rec.notFound, null);
+  assert.strictEqual(rec.firstTurnTokens, 130);
+});
+
+test("a denied worker's record carries reason denied and its tokens", async (t) => {
+  const gitDenial = [{ tool_name: 'Bash', tool_use_id: 'x', tool_input: { command: 'git diff HEAD~1 HEAD' } }];
+  const { runner } = fakeRunner(() => resultOut('No findings.', { permission_denials: gitDenial, usage: USAGE }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  await runLensWorkers(input, { runner, locateTranscripts: () => [] });
+  const [rec] = logLines(input.runDir);
+  assert.strictEqual(rec.reason, 'denied');
+  assert.strictEqual(rec.failed, true);
+  assert.deepStrictEqual(rec.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+});
+
+// Fix round 1 (#6000 Task 4 review).
+test("the transcript lookup uses the worker env's config dir: HOME/.claude when CLAUDE_CONFIG_DIR is unset, never this process's", async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)] });
+  const seen = [];
+  const saved = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = '/process-cfg-must-not-be-used';
+  t.after(() => { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; });
+  await runLensWorkers(input, { runner, locateTranscripts: (q) => { seen.push(q); return []; } });
+  assert.deepStrictEqual(seen.map((q) => q.configDir), [path.join('/h', '.claude')]);
+});
+
+test('with no CLAUDE_CONFIG_DIR, HOME or USERPROFILE in the worker env the lookup is skipped', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], env: { PATH: HERMETIC_PATH, USER: 'u' } });
+  let calls = 0;
+  await runLensWorkers(input, { runner, locateTranscripts: () => { calls += 1; return []; } });
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(logLines(input.runDir)[0].firstTurnTokens, null);
+});
+
+test('the transcript lookup slugs the canonical cwd, a symlinked one included', async (t) => {
+  const { runner } = fakeRunner(() => resultOut('reply', { usage: USAGE, session_id: 'sess-x' }));
+  const real = tmp(t, 'lens-real-cwd-');
+  const link = path.join(tmp(t, 'lens-link-'), 'cwd-link');
+  fs.symlinkSync(real, link, 'dir');
+  const input = baseInput(t, { lenses: [lens('3a', 'haiku', 1)], cwd: link });
+  const seen = [];
+  await runLensWorkers(input, { runner, locateTranscripts: (q) => { seen.push(q); return []; } });
+  assert.deepStrictEqual(seen.map((q) => q.cwd), [real]);
+});
+
+// AC7.1 (#6000): one real haiku lens worker on lens 3b's brief for commit 2601ef2d8d (#5990, a
+// large diff), with an archived lens context bundle inlined. The run dir sits under the main
+// checkout's .claude-tweaks/pipelines/ (a temporary directory outside it is refused by the
+// shape-3 guard) and the reviewed tree is a temporary linked worktree, so --run is outside --cwd.
+// Fixtures: tests/fixtures/review-lens-workers/. The test prints the first-turn and total tokens.
+test('AC7.1 (#6000): live smoke — one haiku lens worker replies and its tokens are recorded', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch a real worker (spends tokens)' }, (t) => {
+  const SMOKE_COMMIT = '2601ef2d8d';
+  const FIXTURES = path.join(__dirname, '..', '..', 'fixtures', 'review-lens-workers');
+  const here = path.join(__dirname, '..', '..', '..');
+  const git = (args, cwd = here) => {
+    const r = cp.spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+    assert.strictEqual(r.status, 0, 'git ' + args.join(' ') + ' failed: ' + r.stderr);
+    return r.stdout.trim();
+  };
+  const mainRoot = path.dirname(git(['rev-parse', '--path-format=absolute', '--git-common-dir']));
+  const iso = new Date().toISOString().replace(/\.\d+Z$/, '').replace(/:/g, '');
+  const runDir = path.join(mainRoot, '.claude-tweaks', 'pipelines', iso + '-lens-smoke-' + process.pid);
+  fs.mkdirSync(runDir, { recursive: true });
+  const worktree = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'lens-smoke-wt-'))), 'tree');
+  t.after(() => {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    cp.spawnSync('git', ['worktree', 'remove', '--force', worktree], { cwd: here, windowsHide: true });
+    fs.rmSync(path.dirname(worktree), { recursive: true, force: true });
+  });
+  git(['worktree', 'add', '--detach', worktree, SMOKE_COMMIT]);
+
+  const res = spawnCli(path.join(here, 'plugin', 'bin', 'review-lens-workers.js'), [
+    '--run', runDir, '--lenses-file', path.join(FIXTURES, 'smoke-lens-3b.json'), '--cwd', worktree, '--bundle', path.join(FIXTURES, 'smoke-bundle.md'),
+  ], { env: { ...process.env } });
+  assert.strictEqual(res.code, 0, 'exit ' + res.code + ' stderr: ' + res.stderr);
+  const reply = JSON.parse(res.stdout);
+  assert.strictEqual(reply.reviewers.length, 1);
+  assert.strictEqual(reply.reviewers[0].failed, false, 'stderr: ' + res.stderr);
+  assert.ok(typeof reply.reviewers[0].text === 'string' && reply.reviewers[0].text.trim() !== '');
+  const records = logLines(runDir);
+  assert.strictEqual(records.length, 1);
+  const rec = records[0];
+  assert.notStrictEqual(rec.tokens, null);
+  assert.notStrictEqual(rec.firstTurnTokens, null);
+  assert.strictEqual(rec.reason, null, 'denied or failed: ' + JSON.stringify(rec));
+  const total = rec.tokens.input + rec.tokens.output + rec.tokens.cacheRead + rec.tokens.cacheCreate;
+  console.log('AC7.1 firstTurnTokens=' + rec.firstTurnTokens + ' totalTokens=' + total + ' tokens=' + JSON.stringify(rec.tokens) + ' costUsd=' + rec.costUsd);
+  t.diagnostic('firstTurnTokens=' + rec.firstTurnTokens + ' totalTokens=' + total + (total > 100000 ? ' (over the 100000 target)' : ''));
+});
