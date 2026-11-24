@@ -150,11 +150,11 @@ function droppedNote(dropped) {
 
 function structurallyStuckBody(paths) {
   return [
-    'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `no-repo-slug`, `tiebreak-coverage-missing`, `tiebreak-artifact-invalid`, `cant-tell-unfiled`, and `unknown-host`.',
+    'Reconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `tiebreak-coverage-missing`, `tiebreak-artifact-invalid`, and `cant-tell-unfiled`.',
     '',
     "For a `console-never-rendered-pr-closed` directory, the run's PR was closed without merging, so nothing will drive it to wrap-up: close the run (`hooks.js close-run --run {run-dir}`) and archive it (`hooks.js archive-run --run {run-dir}`), or retry the record with `/claude-tweaks:flow #{n}` if the work is still wanted.",
     '',
-    'For a `no-worktree` directory, the run has no worktree left: close and archive the run. For a `no-branch` directory, the run has no branch: close and archive the run. For a `no-pr` directory, the run never opened a PR: close and archive the run, or retry the record with `/claude-tweaks:flow #{n}`. For a `no-repo-slug` directory, the repo slug could not be resolved: fix the git remote or run-state stamp. For an `unknown-host` directory, the remote host is not recognised: correct the remote URL or close and archive the run.',
+    'For a `no-worktree` directory, the run has no worktree left: close and archive the run. For a `no-branch` directory, the run has no branch: close and archive the run. For a `no-pr` directory, the run never opened a PR: close and archive the run, or retry the record with `/claude-tweaks:flow #{n}`.',
     '',
     "For a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.",
     '',
