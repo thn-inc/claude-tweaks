@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { run, renderManifestoFyi } = require('../../../plugin/bin/set-config');
 const { readText } = require('../../helpers/read-skill');
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
 
 // Same anchoring fixture shape as tests/bin-lib/stage-item/cli.test.js: a
 // fake main checkout (.git directory) holding the real run dir, plus a
@@ -45,6 +46,20 @@ test('cli: success path writes the lever and prints the config.yml path', () => 
   assert.ok(body.includes('spec: 12'));
   assert.ok(out.join('').includes(path.join(runDir, 'config.yml')));
   assert.ok(out.join('').includes('ceremony-profile: fast-lane -> standard'));
+});
+
+test('a ceremony change during wrap-up writes no replanned', () => {
+  const { main, runDir } = fixture();
+  const logFile = path.join(main, '.claude-tweaks', 'station-events.jsonl');
+  fs.writeFileSync(logFile, JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: 'planned', station: 'build', lane: 'unknown',
+    runId: path.basename(runDir), payload: { stations: STARTING_LISTS['fast-lane'] },
+  }) + '\n');
+  const before = fs.readFileSync(logFile);
+  const { deps } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--key', 'ceremony-profile', '--value', 'standard'], deps), 0);
+  assert.ok(fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8').includes('ceremony-profile: standard'));
+  assert.ok(fs.readFileSync(logFile).equals(before));
 });
 
 test('cli: missing --run/--key/--value is exit 2', () => {
