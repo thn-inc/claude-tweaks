@@ -115,5 +115,20 @@ test('a throwing sink never throws out of replanRun', () => {
     deps: { mainRoot, stationEvent: () => { calls++; if (calls === 1) throw new Error('boom'); } },
   });
   assert.equal(calls, 2);
-  assert.equal(typeof n, 'number');
+  assert.equal(n, 1);
+});
+
+test('deps.now feeds the event discriminator', () => {
+  const { seen } = run([planLine(KIND.PLANNED, 'r1', 7, STARTING_LISTS.standard)], { lane: 'unknown', ceremonyProfile: 'fast-lane' }, 'x');
+  assert.equal(seen[0].discriminator, `replanned:${STARTING_LISTS['fast-lane'].join(',')}:2026-11-24T10:00:00.000Z`);
+});
+
+test('latestPlans skips a non-integer recordNumber and a non-string station', () => {
+  const { mainRoot } = setup([
+    planLine(KIND.PLANNED, 'r1', 'seven', STARTING_LISTS.standard),
+    planLine(KIND.PLANNED, 'r1', 8, [STATION.BUILD, 5]),
+    planLine(KIND.PLANNED, 'r1', 9, STARTING_LISTS.standard),
+  ]);
+  const map = latestPlans({ mainRoot, runId: 'r1' });
+  assert.deepEqual([...map.keys()], [9]);
 });

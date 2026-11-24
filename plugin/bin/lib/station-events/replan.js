@@ -7,12 +7,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const { planOf, replanEvent } = require('./plan');
+const { planOf, replanEvent, LANE_UNKNOWN } = require('./plan');
 const { stationEventPath } = require('./emit');
 const { KIND, REASON } = require('./stations');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-
-const LANE_UNKNOWN = 'unknown';
 
 // recordNumber -> { repoName, lane, stations } from the last `planned`/`replanned` line of `runId`.
 function latestPlans({ mainRoot, runId, fs: fsDep } = {}) {

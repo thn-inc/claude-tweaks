@@ -61,4 +61,4 @@ function replanEvent(input) {
   };
 }
 
-module.exports = { STARTING_LISTS, planOf, planEvent, replanEvent };
+module.exports = { STARTING_LISTS, LANE_UNKNOWN, planOf, planEvent, replanEvent };
