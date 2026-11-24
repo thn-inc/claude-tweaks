@@ -1101,8 +1101,12 @@ function visitSegment(tok, nestAt, effCwd, vars, handler, pathImpl = path, baseL
   // redirect words are no argument of cd (`cd > f1 sub` changes to sub). Only the words after
   // `cd` are read for them: an assignment word before it can span tokens that look like a
   // redirection (`x=$(echo >f) cd /m`, #4303), and dropping one there would shift the argument.
-  if (t[cdLead] === 'cd' && !(split && baseLike)) { // an index of -1 reads undefined: no cd
-    const from = cdLead + 1;
+  // #4460: a redirect glued to the cd name (`cd>f`, `cd>>f`, `cd<f`, `cd&>f`) is the cd's own redirect, and the cd still runs.
+  // A quoted `>` after the `&` (`cd&\>f`) never gets here: the segment splitter already cut at that lone `&`.
+  const gluedCd = cdLead >= 0 && /^cd(?:[<>]|&>)/.test(rawT[cdLead]) && spanKinds[cdLead][2] === 'b';
+  if ((t[cdLead] === 'cd' || gluedCd) && !(split && baseLike)) { // an index of -1 reads undefined: no cd
+    // #4460: an operator that ends the glued token (`cd> f`, `cd>> f`, `cd&> f`) takes the next word as its target, not as the argument.
+    const from = cdLead + (gluedCd && /^cd(?:[<>]|&>)[<>&|]*$/.test(rawT[cdLead]) ? 2 : 1);
     // The word after `cd` is its argument unless it could start a redirection (dropRedirections'
     // lead test), the common case, which skips the slices.
     const arg = from >= t.length || leadQuoted[from] || !REDIRECTION_LEAD_RE.test(rawT[from]) ? t[from]
@@ -3463,6 +3467,11 @@ function redirectRawTargets(t, quoting) {
     // (#4281), so an escaped or quoted `&` reads the same: `>\&2` and `> '&2'` write the file `&2`
     // (bash 3.2 and 5), so only a bare one counts. Without span kinds every `&` counts, as before.
     let ampOp = !kindsOf;
+    // #4460: whether the target's first character is a bare `(` in the source (false when a `$`
+    // expansion supplies it, as in `>$A`, or when the target is a word of its own, whose `(` a
+    // substitution cannot leave bare in any command bash parses); null when no span kinds are
+    // known, which reads every `(` as a process substitution, as before.
+    let bareParen = null;
     if (!kindsOf) {
       const op = matchRedirectOperator(t[i]);
       if (op) ({ plainFd, target: rawTarget } = op);
@@ -3491,6 +3500,7 @@ function redirectRawTargets(t, quoting) {
         // A substitution leaves the target's first character in place (substituteVars, above),
         // so it is `raw[opEnd]` on every branch; one a `$` put there is text too (`>$A`).
         ampOp = raw[opEnd] === '&' && kinds[opEnd] === 'b';
+        bareParen = raw[opEnd] === '(' && kinds[opEnd] === 'b';
       }
     }
     if (rawTarget === null) continue;
@@ -3514,13 +3524,16 @@ function redirectRawTargets(t, quoting) {
       if (word === '') {
         if (rawTarget !== whole) continue; // `>&)`: the word ends at the closer, a syntax error
         i += 1; // consume the word token too, as above
-        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], kindsAt(i));
-      }
+        targetKinds = kindsAt(i);
+        word = t[i] === undefined ? undefined : wordBeforeCloser(t[i], targetKinds);
+      } else if (targetKinds) targetKinds = targetKinds.slice(1);
       const stdout = plainFd === '' || Number(plainFd) === 1; // Number(null) is 0: not stdout
       if (word === undefined || !stdout || isFdDupTarget(word)) continue;
       rawTarget = word;
     }
-    if (rawTarget.startsWith('(')) continue;
+    // #4460: only a bare `(` opens a process substitution (`>(cat)`); a quoted or escaped one is file text.
+    // A `(` a `$` expansion put there is never bare (`A='(x'; echo x > $A` writes the file `(x`).
+    if (rawTarget.startsWith('(') && (targetKinds ? targetKinds[0] === 'b' : bareParen !== false)) continue;
     out.push(rawTarget);
   }
   return out;
