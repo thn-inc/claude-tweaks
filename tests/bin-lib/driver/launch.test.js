@@ -118,7 +118,8 @@ async function composedArgs(role, policyRaw, runConfigRaw = null) {
     runner: (call) => { seen = call.args; return { pid: 1, kill() {}, exited: Promise.resolve({ code: 0, signal: null, stdout: '', stderr: '' }) }; },
     launchWorker: (o, d) => launchWorker(o, d),
   };
-  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p' });
+  // attrSource (the empty tree's id) is required for the lens-reviewer and ignored by every other role.
+  await launchTracked(shared, deps, { minutes: 1, dollars: 1 }, { role, cwd: scratchDir('launch-cwd-'), settingsDir: scratchDir('launch-settings-'), prompt: 'p', attrSource: '4b825dc642cb6eb9a060e54bf8d69288fbee4904' });
   return seen;
 }
 const argModel = (args) => args[args.indexOf('--model') + 1];
@@ -247,6 +248,16 @@ test('#5942: an explorer under model-effort profile resolves resolve().launchEff
   const want = resolve('standard', { policy: { 'model-effort': 'profile' }, unattended: true }).launchEffort;
   assert.strictEqual(typeof want, 'string');
   assert.strictEqual(roleLaunch('explorer', policy).effort, want);
+});
+
+test('AC3.2 (Q3): the lens-reviewer effort comes from its DRIVER_ROLE_PROFILES row', () => {
+  assert.strictEqual(DRIVER_ROLE_PROFILES['lens-reviewer'], 'fast');
+  for (const mode of ['profile', 'inherit']) {
+    // A role map that omits lens-reviewer: the code-only row is what is read.
+    const policy = { ...policyFrom(''), 'express-driver-models': { value: { ...FOUR }, source: 'policy' }, 'model-effort': { value: mode, source: 'policy' } };
+    assert.deepStrictEqual(roleLaunch('lens-reviewer', policy), { model: 'haiku', effort: null, profile: 'fast' }, mode);
+  }
+  assert.strictEqual(modelPolicyRefusal(policyFrom('')), null);
 });
 
 test('#5942: an invalid model-effort refuses every role', () => {
