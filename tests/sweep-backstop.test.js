@@ -703,6 +703,18 @@ test('actions-github-issues.md: Drain learned-skills PRs runs the drain verb and
   assert.doesNotMatch(section, /gh pr merge/);
 });
 
+test('actions-github-issues.md: Drain covers exit 2, logs a degrade SKIP, and maps outcomes to report sections', () => {
+  const section = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Drain learned-skills PRs'), ACTIONS_GH.indexOf('## Sync to GitHub'));
+  assert.match(section, /Exit 2 is a malformed call[^]*re-run once/);
+  assert.match(section, /Learned-skills drain \(degraded\)[^]*log-decision\.js --status SKIP --text-file/);
+  assert.match(section, /killed[^]*no JSON line/);
+  assert.match(section, /`merged`\s+and `armed` go to \*\*Applied automatically\*\*; `conflicting` and every `leftOpen` reason[^]*go to \*\*Yours\*\*[^]*gh pr view \{n\} --web/);
+});
+
+test('step-6-auto.md: the preamble lets the policy-key carve-outs auto-apply at their own rows\' tiers', () => {
+  assert.match(STEP6, /`learned-skills-auto-merge`\), which auto-apply at their own rows' tiers; every other such write's disposition rides on reconcile/);
+});
+
 test('step-6-auto.md: ungranted unarmed PRs and unsettled runs never auto-apply at any tier', () => {
   const ungrantedRow = STEP6.match(/\| \*\*Unarmed ready PR, ungranted\*\*[^\n]*\n/);
   const unsettledRow = STEP6.match(/\| \*\*Unsettled run\*\*[^\n]*\n/);

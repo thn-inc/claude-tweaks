@@ -4,7 +4,7 @@ Cited from `_shared/github-pr-scan.md`; holds the why behind rules stated there,
 
 ## Item 1 — the awaiting-review row carries a command
 
-but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding.
+From item 1's awaiting-review row, on why it carries a command though it is "informational": "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding.
 
 ## Item 9 — the `bot:blocked`/`bot:parked` exclusion
 
@@ -13,6 +13,10 @@ The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parkin
 ## Item 9 — the `allow_auto_merge` state on every row
 
 From item 9's closing note in `github-pr-scan.md`, after "Every row carries the repo's `allow_auto_merge` state": (`ALLOW_AUTO_MERGE`, read once in item 9's first fence in `github-pr-scan.md` via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies.
+
+## Item 9 — the re-read exclusion before the arm
+
+From item 9's closing note in `github-pr-scan.md`, after "the `bot:blocked`/`bot:parked` exclusion": (a record parked between the scan and the arm — or one whose labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]` — must still block the arm).
 
 ## Item 11 — flag-only, never auto-rebase
 
