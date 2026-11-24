@@ -40,8 +40,11 @@ const PROC_FACTS = [
   [/For `stage` \(the direct `local-merge` call or that fallback\): every captured patch still sits only in `\{run\}\/learned-skills\/`\. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item/, 'a stage exit 1 with no JSON is handled per patch'],
   [/The body carries the `<!-- wrap-up-skills-pr -->` marker and names each record only as `refs #\{n\}`/, 'the PR body marker and refs-only naming'],
   [/The record-owned rule: the record's own commits already touch this file, so the edit stays on the run branch/, 'the record-owned rule'],
-  [/\*\*Never armed\.\*\* This file and its CLI run no merge command, and `housekeeping-auto-merge` is never read for this PR/, 'the PR is never armed'],
-  [/item 9 excludes a `<!-- wrap-up-skills-pr -->` PR from both of its arm routes/, 'the item 9 exclusion'],
+  [/only when it prints `true`, run once, after the Review Console resolves and every `record` call/, 'drain runs only when the lever is true, after the console and record'],
+  [/learned-skills-pr\.js" drain --run "\{run\}" --integration-branch "\{integration-branch\}" --own-pr \{pr-number\}/, 'runs drain with the run, integration branch and own PR'],
+  [/omit `--own-pr` when `land` opened no PR this run/, 'drain omits --own-pr when land opened no PR'],
+  [/\[lever: learned-skills-auto-merge=\{value\}\]/, 'the CLI tags each decision line with the lever'],
+  [/[Ee]xit 1[^\n]*Learned-skills drain \(degraded\)/, 'drain exit 1 logs a degraded SKIP and continues'],
   [/It rides that same patch, and `capture` returns `shared: true` for it/, 'a later row on a captured target rides the same patch'],
   [/`pack\.blastRadius\.value\.mergeBase` from `\{run-dir\}\/wrap-up-pack\.json`/, 'the merge-base comes from the wrap-up pack'],
   [/use the batch merge-base from `flow\/multispec-batch-curation\.md` step 1/, 'multi-spec uses the batch merge-base'],
@@ -86,7 +89,7 @@ test('learned-skills-pr.md: each procedure fact goes red on its own', () => {
   assertEachPatternGoesRed(PROC, PROC_FACTS, missingProc);
 });
 
-// No merge command, no --auto: the PR waits for a human (Global Constraints). The control appends each
+// No merge command, no --auto: prose never merges by hand; the drain CLI does (#6112). The control appends each
 // banned form to the live text and the check must catch it.
 const BANNED = [/gh pr merge/, /--auto\b/];
 const bannedIn = (text) => BANNED.filter((re) => re.test(text)).map(String);
@@ -104,7 +107,7 @@ test('scratch-worktree.md does not list the learned-skills PR as a caller', () =
   assert.ok(/learned-skills/.test(`${SCRATCH}\n- /claude-tweaks:wrap-up learned-skills-pr.md`), 'control: the check sees an added caller');
 });
 
-// The three fences, flags checked through the CLI's own run(): every required flag present and every
+// The four fences, flags checked through the CLI's own run(): every required flag present and every
 // value taken, so the call reaches the --run anchoring check (stubbed to "missing") instead of a
 // usage error about the call's own shape.
 const CLI = require('../plugin/bin/learned-skills-pr.js');
@@ -135,10 +138,10 @@ function runFence(fence) {
   return { code, err, verb: argv[2] };
 }
 
-test('learned-skills-pr.md fences: capture, land and stage each pass the CLI\'s own flag checks', () => {
+test('learned-skills-pr.md fences: capture, land, stage and drain each pass the CLI\'s own flag checks', () => {
   const found = fences(PROC);
-  assert.equal(found.length, 3, 'three CLI fences');
-  assert.deepEqual(found.map((f) => argvOf(f)[2]), ['capture', 'land', 'stage']);
+  assert.equal(found.length, 4, 'four CLI fences');
+  assert.deepEqual(found.map((f) => argvOf(f)[2]), ['capture', 'land', 'stage', 'drain']);
   for (const fence of found) {
     const { code, err, verb } = runFence(fence);
     assert.equal(code, 2, `${verb}: reaches the stubbed --run refusal`);
@@ -151,10 +154,10 @@ test('learned-skills-pr.md fences: capture, land and stage each pass the CLI\'s 
 const runValues = (text) => fences(text).map((f) => { const a = argvOf(f); return a[a.indexOf('--run') + 1]; });
 
 test('learned-skills-pr.md fences: every --run is the {run} placeholder, never $PIPELINE_RUN_DIR', () => {
-  assert.deepEqual(runValues(PROC), ['{run}', '{run}', '{run}']);
+  assert.deepEqual(runValues(PROC), ['{run}', '{run}', '{run}', '{run}']);
   const doctored = PROC.replace('land --run "{run}"', 'land --run "$PIPELINE_RUN_DIR"');
   assert.notEqual(doctored, PROC);
-  assert.deepEqual(runValues(doctored), ['{run}', '$PIPELINE_RUN_DIR', '{run}'], 'control: a hard-coded fence is seen');
+  assert.deepEqual(runValues(doctored), ['{run}', '$PIPELINE_RUN_DIR', '{run}', '{run}'], 'control: a hard-coded fence is seen');
 });
 
 test('control: a fence missing --merge-base fails the CLI\'s flag check', () => {
@@ -163,6 +166,72 @@ test('control: a fence missing --merge-base fails the CLI\'s flag check', () => 
   assert.notEqual(doctored, land);
   const { err } = runFence(doctored);
   assert.match(err, /--merge-base is required/);
+});
+
+// AC4.1: with learned-skills-auto-merge false the procedure runs no drain. Every drain fence sits after
+// the condition sentence, and that sentence names `true` only (never a `false` branch that runs one).
+const DRAIN_CONDITION = /only when it prints `true`, run once, after the Review Console resolves and every `record` call/;
+const drainGate = (text) => {
+  const at = text.search(DRAIN_CONDITION);
+  const drains = [...text.matchAll(/learned-skills-pr\.js" drain /g)].map((m) => m.index);
+  // The condition sentence itself: the lever resolve, then "only when it prints `true`, run once". It is not
+  // derived from DRAIN_CONDITION, so a rewritten sentence cannot satisfy it through a stray `true` nearby.
+  const namesTrueOnly = LEVER_GATE.test(text) && !/`false`[^.]*run once/.test(text);
+  return { conditionFound: at !== -1, drains: drains.length, allAfter: drains.every((i) => i > at), namesTrueOnly };
+};
+const LEVER_GATE = /--values learned-skills-auto-merge`; only when it prints `true`, run once/;
+
+test('AC4.1: with learned-skills-auto-merge false the procedure runs no drain', () => {
+  const g = drainGate(PROC);
+  assert.deepEqual(g, { conditionFound: true, drains: 1, allAfter: true, namesTrueOnly: true });
+  const stripped = PROC.replace(DRAIN_CONDITION, 'always run');
+  assert.equal(drainGate(stripped).conditionFound, false, 'control: stripping the condition sentence is seen');
+  assert.equal(drainGate(PROC.replace('only when it prints `true`', 'only when it prints `false`')).namesTrueOnly, false, 'control: a condition naming `false` is seen');
+  assert.equal(drainGate(PROC.replace('--values learned-skills-auto-merge', '--values other-lever')).namesTrueOnly, false, 'control: a condition without the lever resolve is seen');
+  const hoisted = `${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
+  assert.equal(drainGate(hoisted).allAfter, false, 'control: a drain fence before the condition is seen');
+});
+
+test('learned-skills-pr.md: the drain fence carries an explicit Bash timeout, the killed-call degrade, the no-gh and off outcomes, and no console-suffix claim', () => {
+  const section = PROC.slice(PROC.indexOf('## Drain at the end of wrap-up'), PROC.indexOf('## The PR'));
+  assert.ok(section.indexOf('timeout of `1200000` ms') !== -1 && section.indexOf('timeout of `1200000` ms') < section.indexOf('learned-skills-pr.js" drain'), 'timeout stated before the fence');
+  assert.match(section, /A call the Bash timeout still killed, or one that returned no JSON line, is the same degrade: log the same `SKIP` line/);
+  assert.match(PROC, /the console's own disposition carries no drain suffix/);
+  assert.match(section, /Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0/);
+  assert.match(section, /`merge-verification: off`[^.]*empty rollup and no head runs[^.]*`pending` at once/);
+  assert.doesNotMatch(PROC, /Review Console's Skill updates disposition append/);
+});
+
+test('learned-skills-pr.md: the drain section replaces "waits for a human"', () => {
+  assert.match(PROC, /^## Drain at the end of wrap-up$/m);
+  assert.doesNotMatch(PROC, /waits for a human|## The PR waits/);
+  assert.match(PROC, /<!-- wrap-up-skills-pr -->/);
+});
+
+// ---- curation-engine.md section 2 and the short-circuit FYIs: the drain step ----
+
+const ENGINE_DRAIN = /\*\*Drain step — after the Review Console and every `record` call, before the phase-trace `render`\.\*\* When `learned-skills-auto-merge` resolves `true`, run `learned-skills-pr\.md`'s drain/;
+test('curation-engine.md section 2 names the drain step after the console and record, before render', () => {
+  const s2 = sectionOf(ENGINE, '## 2. Invocation sequence');
+  assert.match(s2, ENGINE_DRAIN);
+  assert.ok(s2.search(ENGINE_DRAIN) > s2.indexOf('**Step 2 —'), 'after step 2 (record)');
+  assert.ok(s2.search(ENGINE_DRAIN) < s2.indexOf('**Step 3 —'), 'before step 3 (render)');
+  assert.doesNotMatch(s2.replace(ENGINE_DRAIN, ''), ENGINE_DRAIN, 'control: stripping it is seen');
+});
+
+const SC_PR_DRAIN = /Before composing this FYI, run `learned-skills-pr\.md`'s drain \(only when `learned-skills-auto-merge` resolves `true`, after `land` and every `record` call\) so the Skill updates section carries the outcome/;
+test('auto-merge-short-circuit.md: the pr-first FYI follows the drain', () => {
+  const fyi = prFirstFyi(SHORT_CIRCUIT);
+  assert.match(fyi, SC_PR_DRAIN);
+  assert.doesNotMatch(fyi.replace(SC_PR_DRAIN, ''), SC_PR_DRAIN, 'control');
+});
+test('auto-merge-short-circuit.md: the local-merge FYI follows the drain', () => {
+  const at = SHORT_CIRCUIT.indexOf('**Bindings:** `{base-branch}` = `{integration-branch}`');
+  assert.ok(at !== -1, 'local-merge slice resolves');
+  const tail = collapse(SHORT_CIRCUIT.slice(at));
+  const drainAt = tail.search(SC_PR_DRAIN);
+  const fyiAt = tail.indexOf('attach it to a `PushNotification` as a non-blocking FYI');
+  assert.ok(drainAt !== -1 && fyiAt !== -1 && drainAt < fyiAt, 'the drain sentence precedes the local-merge FYI');
 });
 
 // ---- curation-engine.md section 4: the serial-commit pass --------------------
@@ -462,4 +531,45 @@ test('AC8.1/AC8.2: a skills payload carrying pr renders the URL in the trace and
   const consoleOut = spawn(['render', '--run-dir', runDir, '--section', 'console']);
   assert.equal(consoleOut.status, 0, consoleOut.stderr);
   assert.match(consoleOut.stdout, /applied \(abc1234, learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77\)/);
+});
+
+test('Deliverable 4: learned-skills/drain.json adds the own-PR outcome to the trace and the console, through the CLI', (t) => {
+  const { buildWorklist } = require('../plugin/bin/lib/wrap-up/engine-plan');
+  const { initState } = require('../plugin/bin/lib/wrap-up/engine-record');
+  const repo = gitRepo();
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-11-13T000000-spec-6112');
+  fs.mkdirSync(path.join(runDir, 'learned-skills'), { recursive: true });
+  const worklist = buildWorklist({
+    facts: {
+      isRepo: true, changedFiles: ['src/a.js', 'src/b.js'], renamedDeleted: [], skillsLibraryExists: true,
+      multiFileDiff: true, docsTreeNonEmpty: false, journeysExist: false, journeyFiles: [],
+      claudeMdCommandRenamed: false, renamedOrDeleted: false,
+    },
+    signals: {}, ceremonyProfile: 'standard', budgets: {},
+  });
+  initState({ runDir, worklist, now: new Date(2026, 10, 13, 12, 0, 0), telemetryPath: null });
+  const payload = {
+    version: 1, rowId: 'skills', result: 'findings', gapDetection: 'run', detail: 'Read 1',
+    read: [{ path: '.claude/skills/a/SKILL.md', mode: 'full' }],
+    findings: [{
+      kind: 'patch', summary: 'Add a row', targetPath: '.claude/skills/a/SKILL.md',
+      action: 'applied', stagePath: null, commit: 'abc1234', pr: LS_PR,
+    }],
+  };
+  const spawn = (args, input) => spawnSync(process.execPath, [ENGINE_CLI, ...args], { cwd: repo, input, encoding: 'utf8' });
+  assert.equal(spawn(['record', '--run-dir', runDir, '--dry-run'], JSON.stringify(payload)).status, 0);
+  const drainFile = path.join(runDir, 'learned-skills', 'drain.json');
+  const renders = () => ['trace', 'console'].map((s) => {
+    const r = spawn(['render', '--run-dir', runDir, '--section', s]);
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout;
+  });
+  const [plainTrace, plainConsole] = renders();
+  fs.writeFileSync(drainFile, '{not json');
+  assert.deepEqual(renders(), [plainTrace, plainConsole]);
+  fs.writeFileSync(drainFile, JSON.stringify({ pr: 77, outcome: 'merged' }));
+  const [trace, consoleOut] = renders();
+  assert.ok(trace.includes(`learned-skills PR ${LS_PR} — merged`), trace);
+  assert.ok(consoleOut.includes(`learned-skills PR ${LS_PR} — merged)`), consoleOut);
 });

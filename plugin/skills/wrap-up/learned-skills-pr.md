@@ -1,6 +1,6 @@
 # Learned-Skills PR — keeping auto-applied skill edits off the run branch
 
-Cited from `curation-engine.md` section 4's serial-commit pass, which reads this file for every applied finding named under "When it applies". `merge-check`'s agent-instruction floor parks a run whose own diff carries a `.claude/skills/**` edit, so an auto-applied Skills-row edit committed on the run branch would park a record whose own change could have merged (#5290). This file moves that edit off the run branch: onto a separate learned-skills PR that waits for a human, or into a staged Review Console proposal. Its one CLI is `bin/learned-skills-pr.js`. That file's header is the authoritative contract for every route and exit code quoted here.
+Cited from `curation-engine.md` section 4's serial-commit pass, which reads this file for every applied finding named under "When it applies". `merge-check`'s agent-instruction floor parks a run whose own diff carries a `.claude/skills/**` edit, so an auto-applied Skills-row edit committed on the run branch would park a record whose own change could have merged (#5290). This file moves that edit off the run branch: onto a separate learned-skills PR that the drain at the end of wrap-up merges once it is green (`learned-skills-auto-merge`), or into a staged Review Console proposal. Its one CLI is `bin/learned-skills-pr.js`. That file's header is the authoritative contract for every route and exit code quoted here.
 
 ## When it applies
 
@@ -75,8 +75,23 @@ Match each finding to the output by the `id` its `capture` printed. Findings tha
 - **Staged** (`staged[]`): set `action: "staged"` and `stagePath` to the absolute `staged[].stagePath`, and remove `commit`. A staged finding carries no `pr`.
 - **Superseded**: the edit rides the run branch. Its `commit` is the run-branch commit made above.
 
-## The PR waits for a human
+## Drain at the end of wrap-up
 
-- **Never armed.** This file and its CLI run no merge command, and `housekeeping-auto-merge` is never read for this PR. `_shared/github-pr-scan.md`'s item 9 excludes a `<!-- wrap-up-skills-pr -->` PR from both of its arm routes, the housekeeping marker and the run-marker grant, even when the source record carries `auto:merge`.
+Resolve the lever from the run's own config, the same read the CLI makes: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run}" --values learned-skills-auto-merge`; only when it prints `true`, run once, after the Review Console resolves and every `record` call, before the phase-trace report. On the auto-merge short-circuit path, where no console renders, run it after `land` and every `record` call and before the FYI is composed. A pending own PR holds the call in a watch of up to 900 s, so give the Bash call a timeout of `1200000` ms:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run}" --integration-branch "{integration-branch}" --own-pr {pr-number}
+```
+
+`{pr-number}` is `land`'s `pr.number`; omit `--own-pr` when `land` opened no PR this run. With the lever off, run nothing: no drain call is made and the PR stays open for a human to merge.
+
+It prints one JSON line, `{merged, armed, leftOpen: [{pr, reason, detail?}], conflicting}`, and exits 0 on any outcome:
+
+- `merged`: green, so the CLI merged it. `armed`: checks still pending, so auto-merge is set and GitHub merges it when they pass. `leftOpen`: not merged, each with its `reason` (red or pending checks, a head that moved, a PR outside the learned-skills scope, a failed merge with its `detail`). `conflicting`: the PR cannot merge cleanly and needs a human. Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0. Under `merge-verification: off`, an own PR with no checks at all (an empty rollup and no head runs) is reported `leftOpen` `pending` at once, without the watch.
+- The CLI logs one `decisions.md` line per PR it classified, this run's and other runs' alike, tagged `[lever: learned-skills-auto-merge={value}]` (`AUTO` for merged and armed, `SKIP` for left open and conflicting). Hand-log nothing for it.
+- Exit 1 (a listing or repo-read failure): nothing was merged. Log `SKIP {time} — Learned-skills drain (degraded): condition: drain exited 1 ({stderr line}) → fallback: the learned-skills PRs wait for a human. Reversibility: n/a.` through `log-decision.js --status SKIP`, the stderr line passed by `--text-file`, and continue. Exit 2 is a malformed call: fix it and re-run. A call the Bash timeout still killed, or one that returned no JSON line, is the same degrade: log the same `SKIP` line the same way, with the stderr line replaced by `drain killed or returned no output`.
+
+## The PR
+
 - **Body.** The body carries the `<!-- wrap-up-skills-pr -->` marker and names each record only as `refs #{n}`. It never carries a closing keyword or the run marker.
-- **Where a human sees it.** The Review Console's Skill updates disposition reads `applied ({commit}, learned-skills PR {url})`. On the short-circuit path, which renders no console, the FYI `PushNotification` carries that same engine-rendered section (`auto-merge-short-circuit.md`). The final summary's Phase 2 trace appends `learned-skills PR {url}` to the Skills row's Detail cell. Both come from `render` (`curation-engine.md` section 2, Step 3), never from hand-composed text.
+- **Where a human sees it.** The phase-trace Skills row appends the drain outcome after the PR URL (`— merged`, `— armed`, `— conflicting`, `— left open: {reason}`), for this run's PR only. The Skill updates disposition reads `applied ({commit}, learned-skills PR {url})`. On the short-circuit path, which renders no console, the FYI `PushNotification` carries that same engine-rendered section (`auto-merge-short-circuit.md`) with the same suffix. On the interactive path the drain runs after the console resolves, so the console's own disposition carries no drain suffix. The final summary's Phase 2 trace appends `learned-skills PR {url}` to the Skills row's Detail cell. Both come from `render` (`curation-engine.md` section 2, Step 3), never from hand-composed text.

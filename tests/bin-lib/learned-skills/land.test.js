@@ -1,6 +1,6 @@
 'use strict';
 // learned-skills-pr land + stage (#5290): captured patches ride one plumbing commit each onto
-// learned-skills/{run-id} behind a ready, never-armed PR; anything that cannot ride is staged.
+// learned-skills/{run-id} behind a ready PR that land never merges; anything that cannot ride is staged.
 // Real git against a bare origin; `gh` is a fake that records argv + stdin and throws on anything unhandled.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -146,7 +146,7 @@ test('opens a ready unarmed PR with the marker and refs-only link', (t) => {
   assert.ok(body.includes('refs #5290'));
   assert.doesNotMatch(body, /<!-- claude-tweaks-run:/);
   assert.doesNotMatch(body, /\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#\d/i);
-  assert.equal(gh.calls.some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), false, 'never armed');
+  assert.equal(gh.calls.some((c) => c.args[0] === 'pr' && c.args[1] === 'merge'), false, 'land makes no merge call');
   const confirm = gh.calls.findIndex((c, i) => i > create && c.args[0] === 'pr' && c.args[1] === 'list'
     && c.args.includes('--head') && c.args.includes(BRANCH) && c.args[c.args.indexOf('--state') + 1] === 'all');
   assert.ok(confirm > create, 'a confirming PR read follows the create');
