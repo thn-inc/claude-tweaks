@@ -465,6 +465,30 @@ test('a throwing exit emitter writes no decided line', () => {
   assert.deepStrictEqual(seen, ['exited', 'entered']);
 });
 
+test('an exit the emitter reports not written gets no decided line, and entered release still emits', () => {
+  const seen = [];
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify([{ issue: 118, addLabels: ['auto:build'] }]),
+    stationEvent: (e) => { seen.push(e.kind); return e.kind === 'exited' ? { written: false } : { written: true }; },
+  });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(seen, ['exited', 'entered']);
+});
+
+test('a throwing decided call still lets entered release emit, with stdout and exit unchanged', () => {
+  const actions = [{ issue: 118, addLabels: ['auto:build'] }];
+  const plain = fakeDeps({ readFile: () => JSON.stringify(actions) });
+  const plainCode = run(['actions.json'], plain);
+  const seen = [];
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify(actions),
+    stationEvent: (e) => { seen.push(e.kind); if (e.kind === 'decided') throw new Error('boom'); },
+  });
+  assert.strictEqual(run(['actions.json'], deps), plainCode);
+  assert.deepStrictEqual(seen, ['exited', 'decided', 'entered']);
+  assert.strictEqual(deps.calls.stdout.join(''), plain.calls.stdout.join(''));
+});
+
 test('run: station events — adding ready records its three transitions', () => {
   const { deps, events } = stationDeps([{ issue: 7, addLabels: ['ready'] }]);
   assert.strictEqual(run(['actions.json'], deps), 0);

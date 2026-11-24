@@ -144,10 +144,12 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
         payload: authorizes ? { label, direction, actor: ACTOR.PERSON } : { label, direction },
         discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
       };
+      let exitResult;
       try {
-        deps.stationEvent(event);
+        exitResult = deps.stationEvent(event);
       } catch { continue; /* emission is best-effort — never fails the batch */ }
-      if (!authorizes) continue;
+      // A dropped exit line (`written: false`) leaves nothing for `outcomeRef` to point at.
+      if (!authorizes || (exitResult && exitResult.written === false)) continue;
       try {
         deps.stationEvent({
           kind: KIND.DECIDED,

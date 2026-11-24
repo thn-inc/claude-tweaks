@@ -602,6 +602,7 @@ test('a failed release carries actor script and is written with reasonCode unspe
   assert.equal(line.outcome, 'failed');
   assert.equal(line.payload.actor, 'script');
   assert.equal(line.payload.reasonCode, 'unspecified');
+  assert.equal(line.payload.reasonText, undefined);
 });
 
 test('a retired-outcome release carries no actor and its payload is unchanged', () => {
