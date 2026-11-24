@@ -696,7 +696,10 @@ test('actions-github-issues.md: Drain learned-skills PRs runs the drain verb and
   assert.match(ACTIONS_GH, /## Drain learned-skills PRs/);
   assert.match(ACTIONS_GH, /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
   assert.match(ACTIONS_GH, /re-checks green and gate-passed itself/);
-  const section = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Drain learned-skills PRs'), ACTIONS_GH.indexOf('## Release claim'));
+  const start = ACTIONS_GH.indexOf('## Drain learned-skills PRs');
+  const end = ACTIONS_GH.indexOf('## Sync to GitHub');
+  assert.ok(start >= 0 && end > start, 'Drain section must precede ## Sync to GitHub');
+  const section = ACTIONS_GH.slice(start, end);
   assert.doesNotMatch(section, /gh pr merge/);
 });
 
