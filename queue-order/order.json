@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-24T08:55:22.823Z",
+  "computedAt": "2026-11-24T10:21:47.835Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -14,33 +14,18 @@
         "state": "OPEN"
       },
       {
-        "number": 6150,
-        "updatedAt": "2026-11-24T07:59:55Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6148,
-        "updatedAt": "2026-11-23T19:41:32Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6143,
-        "updatedAt": "2026-11-24T08:06:06Z",
+        "updatedAt": "2026-11-24T09:29:29Z",
         "state": "OPEN"
       },
       {
         "number": 6114,
-        "updatedAt": "2026-11-23T07:27:03Z",
+        "updatedAt": "2026-11-24T09:02:26Z",
         "state": "OPEN"
       },
       {
         "number": 6113,
-        "updatedAt": "2026-11-23T07:26:56Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6003,
-        "updatedAt": "2026-11-24T06:20:34Z",
+        "updatedAt": "2026-11-24T09:04:16Z",
         "state": "OPEN"
       },
       {
@@ -85,7 +70,7 @@
       },
       {
         "number": 4895,
-        "updatedAt": "2026-11-03T09:36:38Z",
+        "updatedAt": "2026-11-24T09:36:57Z",
         "state": "OPEN"
       },
       {
@@ -100,7 +85,7 @@
       },
       {
         "number": 4831,
-        "updatedAt": "2026-11-16T00:38:49Z",
+        "updatedAt": "2026-11-24T09:01:44Z",
         "state": "OPEN"
       },
       {
@@ -120,12 +105,12 @@
       },
       {
         "number": 4764,
-        "updatedAt": "2026-11-23T17:20:13Z",
+        "updatedAt": "2026-11-24T08:59:44Z",
         "state": "OPEN"
       },
       {
         "number": 4741,
-        "updatedAt": "2026-11-24T08:45:58Z",
+        "updatedAt": "2026-11-24T08:57:11Z",
         "state": "OPEN"
       },
       {
@@ -730,7 +715,7 @@
       },
       {
         "number": 3788,
-        "updatedAt": "2026-10-24T05:39:21Z",
+        "updatedAt": "2026-11-24T10:18:39Z",
         "state": "OPEN"
       },
       {
@@ -740,12 +725,12 @@
       },
       {
         "number": 3731,
-        "updatedAt": "2026-10-30T06:34:58Z",
+        "updatedAt": "2026-11-24T10:18:08Z",
         "state": "OPEN"
       },
       {
         "number": 2724,
-        "updatedAt": "2026-11-15T15:12:22Z",
+        "updatedAt": "2026-11-24T09:47:36Z",
         "state": "OPEN"
       },
       {
@@ -783,8 +768,8 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite `replanned` when the stations of an already-claimed record change (for example a ceremony-profile downgrade), keeping every plan version with its reason and cause. This is task 4 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E3 | Floor map, emission 3/8: The plan at the claim | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"The plan is written by claude-tweaks code at the claim, from the same ceremony profile and lane that already decide which steps a flow runs, and written as `planned`. The hub never computes a plan.\"\n- \"Every version of a plan is kept with its reason and cause.\" A plan is never rewritten silently.\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n- The station order is the confirmed one from Task 1, not the order in this repository's `STATION` constant by assumption.\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/plan.js`, `plugin/bin/lib/set-config/write.js` (the ceremony-profile downgrade), the express lane entry `plugin/bin/lib/express/cli.js` if Task 1 shows it changes the stations of a claimed item\n- Test: `tests/bin-lib/station-events/plan.test.js`, the neighbouring set-config test\n\nInterfaces:\n\n- Produces: `replanEvent({ repoName, recordNumber, before: string[], after: string[], reasonCode: string, cause: { kind: 'outcome'|'decision'|'config', ref?: string }, sessionId, runId, at }): object | null` (an event in the shape `appendStationEvent` takes; kind `replanned`; `discriminator` built from `after` joined and `at`; returns `null` when `before` and `after` are equal so an unchanged plan writes nothing).\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n\n## Release Note\n\nWrote a replanned station event when the stations of a claimed record change.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `replanEvent returns null when the stations are unchanged`; `replanEvent for Test and Polish removed carries the after list and reason documents-only`; `downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/plan.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `replanEvent`; call it from the code Task 1 names as the place a claimed item's stations change, computing `before` from `planOf` for the old profile and `after` for the new.\n- [ ] **Step 4: Run** the plan tests and the set-config tests. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write replanned when a claimed record's stations change`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/plan.js`\n- `plugin/bin/lib/set-config/write.js`\n- `plugin/bin/lib/express/cli.js`\n- `tests/bin-lib/station-events/plan.test.js`\n\n## Gotchas\n\n- Adds replanning writes from the set-config downgrade path.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-4 -->\nwork-fingerprint: factory-floor-map-emission:emission-4\n\n## Decisions (orchestrator, 2026-11-23, from the plan review of emission 3/8)\n\nA `/flow` claim happens before the Config Manifesto, so the claim-time plan is usually `standard`/`default-list`. This record therefore also covers the moment the profile or lane is fixed: when `plugin/bin/lib/set-config/write.js` writes `ceremony-profile`, or `plugin/bin/lib/flow/manifesto-write.js` writes the lane, to a run's manifest after a claim exists, compute `planOf` for the values before and after, and write one `replanned` event when the stations differ (reason `ceremony-downgrade` when a station is removed, cause `{ kind: 'config' }`; nothing when they are equal). The `before` plan is the claim's `planned` event's stations. Added tests: `fixing the profile to fast-lane after a standard claim writes one replanned without polish`; `fixing the profile to standard after a standard claim writes nothing`; `setting the lane to driver after a standard claim writes one replanned`. Keep the existing ceremony-downgrade and Test-and-Polish tests.\n",
-        "createdAt": "2026-11-23T15:43:09Z",
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nWrite `held` and `released` when the hold labels (`bot:blocked`, `bot:parked`, `accept:changes-requested`) are added and removed, and stop appending blocker snapshots that did not change. This is task 7 of 8 in the plan \"Factory Floor Map: claude-tweaks Emission Implementation Plan\". Goal of the whole plan: claude-tweaks code writes, for the `build a record` process, the plan when a record is claimed, an outcome with reason and actor at every transition it performs, and hold and release facts, as new lines in the station-event file. The extension point is the existing emitter in `plugin/bin/lib/station-events/`, whose single vocabulary home is `stations.js`. New facts are new event kinds and new `payload` fields on existing kinds, so the file stays version 1 and old readers ignore what they do not know.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Hub-side reading, folding or display of these events (the hub plan, `thn-inc/dispatch`).\n- Any other task of this plan: each of the eight records owns exactly its own Files.\n- Cutting a release; claude-tweaks ships by release tag and that is the owner's decision.\n- No prose is asked to log: no skill text is changed to emit events.\n\n## Prerequisites\n\n| Record | Title | Status |\n|---|---|---|\n| E6 | Floor map, emission 6/8: Outcomes at the label-protocol transitions | must be merged before this starts (native blocked-by edge) |\n\n## Current State\n\nSpec: `/Users/thomasholknielsen/Code Workspaces/factory/docs/superpowers/specs/2026-11-23-factory-floor-map-design.md` (also landing in `thn-inc/dispatch` at `docs/superpowers/specs/2026-11-23-factory-floor-map-design.md`; the plans at `docs/superpowers/plans/`). Sections that apply: \"The model\", \"Outcomes and reasons\", \"Events\", and Order step 0.\n\nRepository: `/Users/thomasholknielsen/Code Workspaces/claude-tweaks` (`thn-inc/claude-tweaks`). Test runner: `node tools/run-tests.js <file.test.js>`; stack Node.js (CommonJS) with `node:test`.\n\n#### The event contract (shared with the hub plan)\n\nLines keep their existing fields (`v: 1`, `eventKey`, `repoName`, `recordNumber`, `kind`, `station`, `at`, `outcome`, `lane`, `sessionId`, `runId`, `payload`). New:\n\n| Kind | Filed under station | `payload` |\n|---|---|---|\n| `planned` | the station the item is at when written (at the claim: `build`) | `{ process: 'build-a-record', processVersion: 1, list: string, stations: string[], reasonCode: string, reasonText?: string }`; `stations` is the full ordered list, including stations already passed |\n| `replanned` | the station the item is at | `{ stations: string[], reasonCode: string, reasonText?: string, cause: { kind: 'outcome' \\| 'decision' \\| 'config', ref?: string } }` |\n| `held` | the station the item is at | `{ why: 'blocked' \\| 'parked' \\| 'changes-requested' \\| 'waiting-on-you', ref?: string }` |\n| `released` | the station the item is at | `{ why: <same set> }` |\n| `decided` | the station the decision was made at | `{ decision: 'authorize' \\| 'accept' \\| 'unblock', actor: string, via: 'panel' \\| 'skill' \\| 'rule', outcomeRef: string }` (`outcomeRef` is the `eventKey` of the `exited` it caused) |\n| `exited` (extended) | unchanged | `outcome` is one of `passed \\| sent-back \\| failed \\| stopped`; `payload.actor` always; `payload.reasonCode` for every outcome except `passed`; `payload.next` (a station id) for `sent-back`; `payload.reasonText?` |\n\n`actor` is `agent`, `script`, `person` or `rule:<id>`. Reason codes are the closed list `REASON_CODES` (Task 2). A reason nothing knows is `unspecified`.\n\n### Global Constraints that apply to this task\n\n- \"No prose is asked to log; only code that already makes the transition does.\" Every new line is written from code that already performs the transition.\n- \"A reason that nothing knows is `unspecified`, counted and shown, never silently dropped, and never blocks the outcome.\"\n- Every station name, kind, outcome and lane literal lives in `plugin/bin/lib/station-events/stations.js`; `tests/bin-lib/station-events/station-literal-conformance.test.js` scans for violations.\n- Emission never blocks or fails a transition (`appendStationEvent` already drops a bad line to stderr and returns).\n\n## Deliverables\n\nFiles:\n\n- Modify: `plugin/bin/lib/station-events/blockers.js`, `plugin/bin/resolve-blockers.js`, the code Task 1 names as adding and removing `bot:blocked`, `bot:parked` and `accept:changes-requested`\n- Test: `tests/bin-lib/station-events/blockers.test.js`, `tests/resolve-blockers-cli.test.js`\n\nInterfaces:\n\n- Produces: `blockersChanged(previous: object | null, next: object): boolean` in `blockers.js`, comparing the snapshot without its `fetchedAt`; `resolve-blockers.js` appends a `blockers` line only when it returns true, using the last line for that record in the station-event file as `previous`; adding a hold label writes `held` and removing it writes `released`, each with `why` from `HOLD_WHYS`.\n\n## Acceptance Criteria\n\n1. The task's tests exist and pass, exactly as the plan states them: **Step 1: Write failing tests:** `an unchanged snapshot is not appended`; `a changed blocker set is appended`; `the first snapshot for a record is appended`; `adding bot:blocked writes held why blocked with the blocker ref`; `removing it writes released why blocked`.\n\n## Release Note\n\nWrote held and released station events for hold labels and stopped appending unchanged blocker snapshots.\n\n## Technical Approach\n\n### Data / API Surface\n\nThe interfaces under Deliverables are the contract surface for this record; the event contract in Current State is the shared line shape.\n\n### Task steps (from the plan, in order)\n\n- [ ] **Step 1: Write failing tests:** `an unchanged snapshot is not appended`; `a changed blocker set is appended`; `the first snapshot for a record is appended`; `adding bot:blocked writes held why blocked with the blocker ref`; `removing it writes released why blocked`.\n- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/blockers.test.js tests/resolve-blockers-cli.test.js`. Expected: FAIL.\n- [ ] **Step 3: Implement** `blockersChanged` and the last-line read (bounded read of the file's tail, not the whole file); call it before appending; emit `held`/`released` from the hold-label code.\n- [ ] **Step 4: Run** the Step 2 command. Expected: PASS.\n- [ ] **Step 5: Commit** `feat: write hold and release; stop appending unchanged blocker snapshots`.\n\n### Key Files\n\n- `plugin/bin/lib/station-events/blockers.js`\n- `plugin/bin/resolve-blockers.js`\n- `tests/bin-lib/station-events/blockers.test.js`\n- `tests/resolve-blockers-cli.test.js`\n\n## Gotchas\n\n- Changes blocker snapshot appending and adds hold/release writes.\n- Where a step says \"the code Task 1 names\" or \"per Task 1\", read the sections of `docs/reference/station-events.md` that record 1/8 (E1) merges; they are the source of those names and lists.\n- Emission never blocks or fails a transition: `appendStationEvent` drops a bad line to stderr and returns; do not add a throw on any emission path.\n\n\n<!-- work-fingerprint: factory-floor-map-emission:emission-7 -->\nwork-fingerprint: factory-floor-map-emission:emission-7\n\n## Decisions (orchestrator, 2026-11-23)\n\nIf this record needs a reason code that is not in `REASON_CODES` (`plugin/bin/lib/station-events/stations.js`), it may add the code to that list with a test and make no other change to that file. Lines this record writes carry `payload.actor`, so they get the full checks of the contract.\n",
+        "createdAt": "2026-11-23T15:43:27Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -835,10 +820,10 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6148,
+        "number": 6151,
         "state": "OPEN",
-        "title": "Floor map, emission 4/8: Replanning",
-        "updatedAt": "2026-11-23T19:41:32Z",
+        "title": "Floor map, emission 7/8: Hold state, and blocker snapshots only when they changed",
+        "updatedAt": "2026-11-23T16:10:24Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -848,162 +833,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: irreversible-side-effect\n**Related:** #3963, #4366\n\n## Current State\n\n- `plugin/skills/_shared/github-pr-scan.md` item 9 states \"A `<!-- wrap-up-skills-pr -->` PR … is never a candidate\" and its inline filter returns `false` for that marker; `plugin/skills/tidy/step-6-auto.md` has an arm row for `[pr-unarmed]` PRs under `housekeeping-auto-merge`.\n- After the sibling sub-issues, every wrap-up drains open learned-skills PRs when `learned-skills-auto-merge` is `true`. Repos where wrap-up stops running still need a human-run path, and `github-pr-scan` still refuses the marker by name, which would contradict the new rule. (The one-time drain of the PRs open at ship belongs to the rebuild sub-issue.)\n\n## Deliverables\n\n1. `github-pr-scan.md` item 9: replace the never-a-candidate line with: a marker PR is a `[pr-unarmed]` candidate only when `learned-skills-auto-merge` resolves `true`, never under `housekeeping-auto-merge` or a linked record's `auto:merge` grant. Update the inline filter to match, reading the key the same way it reads `HOUSEKEEPING_GRANT`. An unset or unreadable key resolves `false`, so the PR is not a candidate (fail closed). The marker check and the key are tested together: a marker PR that links a record carrying `auto:merge` is a candidate only through the key. The key comes from the policy-key sub-issue and the `drain` verb from the drain sub-issue; this unit is blocked by them.\n2. `tidy/step-6-auto.md`: one row that runs `node \"${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js\" drain --integration-branch {integration-branch}` for those candidates, auto-applied at the tiers the existing arm row uses, staged otherwise. The row is gated on `learned-skills-auto-merge` alone, never satisfied by `housekeeping-auto-merge`; the generic arm row is fenced to non-marker PRs, so this row is the only one that sees marker PRs; `drain` re-checks green and gate-passed itself rather than trusting the scan's candidate status.\n   The new `tidy/step-6-auto.md` row auto-applies at exactly the tiers the existing `[pr-unarmed]` arm row auto-applies at, and only when `learned-skills-auto-merge` resolves `true`; when it resolves `false` the row stages at every tier. The row names `learned-skills-auto-merge` as its carve-out from the \"outward GitHub write, never auto per reversibility floor\" rule, in the same edit and in the same form the arm row already uses for `housekeeping-auto-merge`: the policy key is the human's standing grant. Acceptance: a conformance test pins the new row's per-tier cells and the carve-out sentence.\n3. Both files are at the read rail (`github-pr-scan.md` 52,287 B, `step-6-auto.md` 52,211 B, rail 52,500 B): make room first by moving existing rationale to an appendix sub-file each file already cites (or creating one), so each ends under the rail with the new text in and at least 300 B of margin, re-checked after rebasing over #3963 and #4366. Moved rationale stays reachable through a cite from the appendix, and the full suite stays green (it pins some of that prose).\n\n## Acceptance Criteria\n\n- A conformance test pins item 9's filter: a marker PR is a candidate with `learned-skills-auto-merge=true` and not with it `false`, and never through `housekeeping-auto-merge` alone (update `tests/sweep-backstop.test.js` or the test that pins item 9's filter today; never delete the pin).\n- A marker PR that links a record carrying an `auto:merge` grant is not a candidate unless `learned-skills-auto-merge` is `true`, and an unset or unreadable key yields no candidate.\n- `tests/wrap-up-learned-skills-pr.test.js` no longer pins the never-armed wording and pins the new rule instead.\n- `node plugin/bin/context-cost-report.js --plugin-root plugin` reports both files under 52,500 B.\n- `npm test -- --full` passes.\n\n## Release Note\n\nThe PR scan and `/claude-tweaks:tidy` now merge learned-skill update PRs that wrap-up left behind, when `learned-skills-auto-merge` is on.\n\n## Technical Approach\n\nKeep the scan read-only: it reports candidates; tidy Step 6 runs the drain. The drain verb, its merge path and its rebuild come from the sibling sub-issues; this unit only routes to them.\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — item 9 exclusion and filter\n- `plugin/skills/tidy/step-6-auto.md` — drain row\n- `plugin/skills/tidy/actions-github-issues.md` — only if Step 6's arm action is defined there\n- `tests/sweep-backstop.test.js` — item 9 filter pin\n- `tests/wrap-up-learned-skills-pr.test.js` — never-armed pin replaced\n\n## Gotchas\n\n- #3963 and #4366 also edit `github-pr-scan.md` and `step-6-auto.md`; expect rebases.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:let-the-pr-scan-and-tidy-drain-learned-skills-prs-that-wrap -->\nwork-fingerprint: learned-skills-auto-merge:let-the-pr-scan-and-tidy-drain-learned-skills-prs-that-wrap\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(irreversible-side-effect): …`.\n\n",
-        "createdAt": "2026-11-23T07:01:49Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6114,
-        "state": "OPEN",
-        "title": "Let the PR scan and tidy drain learned-skills PRs that wrap-up left behind",
-        "updatedAt": "2026-11-23T07:27:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: irreversible-side-effect\n\n## Current State\n\n- The learned-skills `drain` (sibling sub-issue) reports a `DIRTY` learned-skills PR as `conflicting` and leaves it open.\n- The conflicts behind #6088 are two runs appending a bullet or numbered item at the same anchor of the same `.claude/skills/**` file. #6083 folded ten such PRs by hand with a 3-way merge that kept both sides where both only added lines, then fixed a duplicated numbered item and a numbering collision. #6097 and #6098 both edit `.claude/skills/skill-prose-conformance-tests/SKILL.md` today.\n- #6088 dropped the human-review floor for the learned-skills PR, so a rebuild needs no reviewer.\n\n## Deliverables\n\n1. When `drain` meets a conflicting marker PR, it rebuilds the PR's branch: a 3-way merge of the PR's head onto the current integration tip, done through git plumbing on a temp index (never touching any worktree's own branch, index or files, as `land` does). The rebuild is one result commit whose parent is the integration tip; its message carries the union of the PR commits' run-id and entry-id trailers, in order, so no entry loses its trailer.\n2. A conflict hunk where **both sides only add lines** at the same spot is resolved by keeping both: the integration side's lines first, then the PR's. The predicate: with `git merge-file --diff3`, a conflict block is a pure double-append only when its base section is empty and both its ours and theirs sections are non-empty; any other block, and any `merge-tree` conflict type other than a content conflict (modify/delete, rename), refuses. A line the PR adds that already appears verbatim among the integration side's added lines is dropped, so one lesson added twice stays once. Afterwards, within each resolved hunk, a numbered-list collision (two items with the same number, or numbering that no longer increases by one) is renumbered so the list stays consecutive. An item is a line matching `^\\s*\\d+[.)]\\s`. Renumbering applies only when the resolved hunk ends its list (the next line is not an item at that indent); a mid-list hunk refuses with the `conflict needs a human` reason.\n3. A conflict hunk where either side deletes or changes an existing line is not auto-resolved: the PR is left open and reported `leftOpen: {pr, reason: \"conflict needs a human: {file}\"}`, naming every conflicted file, comma-joined.\n4. A successful rebuild is pushed with `git push --force-with-lease=refs/heads/learned-skills/{run-id}:{old-head}` to the PR's own branch only (never the integration branch, never a branch not named `learned-skills/*`), keeps every commit's run-id and entry-id trailers, and the PR then follows the drain's pending path (merged by a later drain once green, where green means checks on the rebuilt head SHA: a status that predates the head is pending). The push uses the session's own git credentials, not `GITHUB_TOKEN`, so CI runs on the new head. A rejected lease is `leftOpen` reason `lease-rejected` with no retry; a head ref outside `learned-skills/*` is never touched.\n5. The drain's JSON gains `rebuilt:[…]`, and each rebuild or refusal is logged to `decisions.md` (`AUTO` for a rebuild, `SKIP` for a refusal) with the tag `[lever: learned-skills-auto-merge={value}]`.\n6. Migration (#6088 Deliverable 3): after this ships and the installed plugin carries it (`claude plugin update`, not a stale cache), run `learned-skills-pr.js drain` on this repository, at most 3 passes each waiting out CI, until no learned-skills PR is left open except any reported `conflict needs a human`, which gets a PR comment naming the file. That drains the PRs the old never-armed path opened (five as of 2026-11-23: #6089, #6092, #6096, #6097, #6098; the last two edit the same file), so the old and new shapes do not coexist.\n\n## Acceptance Criteria\n\n- A fixture repo test: two learned-skills branches each append one bullet after the same line of one file; after the first merges, `drain` rebuilds the second so the file holds both bullets (integration's first) and the PR's diff against the tip adds only its own bullet.\n- A fixture test where both branches append item `7.` to the same numbered list ends with items `7.` and `8.`.\n- A fixture test where the PR changes a line the integration side also changed leaves the PR open, pushes nothing, and reports the file.\n- A test pins that the push uses `--force-with-lease` with the expected old head and targets only `refs/heads/learned-skills/*`.\n- Each new test was seen failing with the rebuild reverted.\n- `npm test -- --full` passes.\n- After the post-ship drain settles (at most 3 passes), `gh pr list --state open --search \"wrap-up-skills-pr in:body\"` lists no PR except those reported as needing a human; that output is quoted in a comment on this record.\n\n## Release Note\n\nWrap-up now repairs learned-skill update PRs that conflict because two runs added to the same spot, instead of leaving them for a person to fold by hand.\n\n## Technical Approach\n\nUse `git merge-tree --write-tree` against the integration tip to detect conflicts and produce the merged tree; for conflicted files, run `git merge-file` per file and post-process conflict blocks: a block whose base section is empty on both sides is a pure double-append and is unioned; any other block refuses. Build the result commit with `commit-tree` on a temp index, carrying the PR's commits' trailers in the message. Keep the algorithm in a pure function over three strings (base, ours, theirs) so it is unit-testable without git. The `git-ground-truth-test-env` project skill covers fixture git environments.\n\n### Key Files\n\n- `plugin/bin/lib/learned-skills/rebuild.js` — new: conflict classification, union, renumbering, plumbing commit, lease push\n- `plugin/bin/lib/learned-skills/drain.js` — call the rebuild for a conflicting PR\n- `plugin/bin/learned-skills-pr.js` — header contract names `rebuilt`\n- `tests/bin-lib/learned-skills/rebuild.test.js` — new: pure union/renumber cases and fixture-repo cases\n\n## Gotchas\n\n- A union of two pure appends gives the same text the two PRs would have produced if merged one after the other without conflict, so it introduces nothing a sequential merge would not; a block with any deleted or changed line is exactly where a contradiction could hide, which is why it refuses.\n- `merge-tree` needs git ≥ 2.38; on an older git the rebuild refuses with `leftOpen` reason `git-too-old` instead of falling back to a temp worktree (that would break the no-worktree rule). Confirm the CI and Windows runners' git versions at build time.\n- Renumbering must stay inside the resolved hunk; never renumber a list the PR did not touch.\n- Two appended bullets can still contradict each other; no step checks that. The accepted backstop is the green-CI gate, and a verbatim duplicate is the only semantic case the rebuild handles.\n\n\n<!-- work-fingerprint: learned-skills-auto-merge:rebuild-a-conflicting-learned-skills-pr-on-the-integration-t -->\nwork-fingerprint: learned-skills-auto-merge:rebuild-a-conflicting-learned-skills-pr-on-the-integration-t\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(irreversible-side-effect): …`.\n",
-        "createdAt": "2026-11-23T07:01:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
-            "name": "risk:high",
-            "description": "Scoring: high blast radius — human review required",
-            "color": "D93F0B"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6113,
-        "state": "OPEN",
-        "title": "Rebuild a conflicting learned-skills PR on the integration tip during the drain",
-        "updatedAt": "2026-11-23T07:26:56Z",
-        "facets": {
-          "origin": null,
-          "risk": "high",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1744,7 +1573,7 @@
         "number": 4895,
         "state": "OPEN",
         "title": "reconcile: removal-failed stuck on /Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow-spec-4738",
-        "updatedAt": "2026-11-03T09:36:38Z",
+        "updatedAt": "2026-11-24T09:36:57Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1996,7 +1825,7 @@
         "number": 4831,
         "state": "OPEN",
         "title": "dispatch/task-prompt.md: the foreground-wait rule reaches each dispatched call twice, and the file sits 27 B under the Read-limit rail",
-        "updatedAt": "2026-11-16T00:38:49Z",
+        "updatedAt": "2026-11-24T09:01:44Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2308,7 +2137,7 @@
         "number": 4764,
         "state": "OPEN",
         "title": "Windows regression: 1 test file(s) newly failing after ba69ced99",
-        "updatedAt": "2026-11-23T17:20:13Z",
+        "updatedAt": "2026-11-24T08:59:44Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2398,7 +2227,7 @@
         "number": 4741,
         "state": "OPEN",
         "title": "Review a multi-spec record against its own commit range",
-        "updatedAt": "2026-11-24T08:45:58Z",
+        "updatedAt": "2026-11-24T08:57:11Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9760,7 +9589,7 @@
         "number": 3788,
         "state": "OPEN",
         "title": "Reconcile the never-run rule with the console-residue SessionStart banner",
-        "updatedAt": "2026-10-24T05:39:21Z",
+        "updatedAt": "2026-11-24T10:18:39Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -9838,7 +9667,7 @@
         "number": 3731,
         "state": "OPEN",
         "title": "wrap-up Section D never proves the recorded pid or port belongs to the server it recorded",
-        "updatedAt": "2026-10-30T06:34:58Z",
+        "updatedAt": "2026-11-24T10:18:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -9862,108 +9691,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #4191, #4438, #2767, #3721, #3975, #3977, #3982, #4209, #4312, #4330, #4355\n\n## Current State\n\nReconcile's `archive-merged` check reports run directories stuck at `structurally-stuck` past the escalation threshold, and `escalate-residue.js` keeps this record's stuck-paths list in sync with them. As of 2026-10-28 two directories are listed, both with `lastError: \"stuck at console-never-rendered-pr-closed\"` and `count: 24` in `.claude-tweaks/reconcile-cache.json`'s `residueFailures`:\n\n<!-- stuck-paths -->\n- `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-11T165407-record-1982`\n- `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T123248-record-1664`\n- `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-10-17T213454-record-3078`\n- `C:\\development\\claude-tweaks\\.claude-tweaks\\pipelines\\2026-09-05T082834-record-605`\n<!-- /stuck-paths -->\n\n- `2026-09-11T165407-record-1982`: `run-state.json` status `active`, `pr` #2242 (CLOSED, never merged), empty `staged/`. Record #1982 is closed (completed).\n- `2026-09-01T123248-record-1664`: `run-state.json` status `active`, `pr` #1762 (CLOSED, never merged), empty `staged/`. Record #1664 is closed (not planned).\n\n`console-never-rendered-pr-closed` (`plugin/bin/lib/reconcile/archive-merged.js:2559`) fires when a run's PR is CLOSED unmerged: nothing will ever drive the run to wrap-up, so no console will render. The auto-filed body this record was born with (`plugin/bin/lib/reconcile/escalate-residue.js:121`) names that reason in its list but, unlike `console-never-rendered-staged-pending`, `merged-partial`, `tiebreak-*`, `cant-tell-unfiled` and `pr-not-found`, gives it no remedy paragraph — and the same is true of `no-worktree`, `no-branch` and `no-pr`. A reader of this record is told the dirs are stuck but not what clears them.\n\n## Deliverables\n\n1. Close and archive both listed run directories: `node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" close-run --run \"{dir}\"`, then `node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" archive-run --run \"{dir}\"`, reading each command's stdout for its success line. Both runs' PRs are closed and both origin records are closed, so there is no pipeline left to resume.\n2. Add a remedy paragraph for `console-never-rendered-pr-closed` to the structurally-stuck body template in `plugin/bin/lib/reconcile/escalate-residue.js`, in the same style as the existing per-reason paragraphs: the run's PR was closed without merging, so close the run (`close-run`) and archive it, or retry the record with `/claude-tweaks:flow #{n}` if the work is still wanted. Add one-line remedies for `no-worktree`, `no-branch` and `no-pr` alongside it.\n3. Extend the body-template test in `tests/bin-lib/reconcile/escalate-residue.test.js` (its reason loop at line 287 already enumerates six reasons) so every reason in the \"skip reasons that feed this record\" sentence has a remedy paragraph.\n\n## Acceptance Criteria\n\n- After the next `hooks.js reconcile --checks archive` pass, neither listed directory appears under `structurally-stuck` in `.claude-tweaks/reconcile-cache.json`, and both exist under `.claude-tweaks/pipelines/archive/`.\n- `escalate-residue.js`'s rendered structurally-stuck body contains a remedy paragraph naming `console-never-rendered-pr-closed`, `no-worktree`, `no-branch` and `no-pr`.\n- A test in `tests/bin-lib/reconcile/escalate-residue.test.js` fails if a reason named in the body's reason list has no matching remedy paragraph, and passes with deliverable 2 in place (verified by reverting deliverable 2).\n- When the stuck-paths list empties, reconcile closes this record itself (`escalate-residue.js`'s empty-list close path); this record is not closed by hand.\n\n## Release Note\n\nReconcile's stuck-run record now says how to clear a run whose pull request was closed without merging.\n\n## Technical Approach\n\nDeliverable 1 is operational and runs from the main checkout (run directories are gitignored, so it needs no worktree). Deliverable 2 edits only the prose array that builds the structurally-stuck body; `withStuckPaths` already replaces only the stuck-paths block on update (the #2724 comment at `escalate-residue.js:92`), so the new paragraph does not disturb existing records' shaped text. Deliverable 3 parses the reason list out of the rendered body and asserts each reason appears in a remedy paragraph.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/escalate-residue.js` — add remedy paragraphs to the structurally-stuck body template\n- `plugin/bin/lib/reconcile/archive-merged.js` — reference only: where `console-never-rendered-pr-closed` is assigned\n- `tests/bin-lib/reconcile/escalate-residue.test.js` — every listed reason has a remedy paragraph\n\n## Gotchas\n\n- Reconcile rewrites only the first `<!-- stuck-paths -->` block in this body. The live list is the one under Current State; the copy inside Original request below is the historical snapshot and goes stale.\n- Keep the `reconcile-residue-9326b55a` fingerprint marker in the body: `escalate-residue.js` finds this record by it.\n- The run directories live under the main checkout's `.claude-tweaks/pipelines/`; resolve paths through `hooks.js resolve-run-dir --root-only`, never relative to a worktree.\n\n## Original request\n\nreconcile: structurally-stuck run directories\n\nReconcile has one or more run directories stuck at `structurally-stuck` past the escalation threshold. The skip reasons that feed this record are `no-worktree`, `no-branch`, `no-pr`, `console-never-rendered-pr-closed`, `console-never-rendered-staged-pending`, `pr-not-found`, `merged-partial`, `tiebreak-coverage-missing`, `tiebreak-artifact-invalid`, and `cant-tell-unfiled`.\n\nFor a `console-never-rendered-staged-pending` directory, a merged run's `staged/` holds pending (or unreadable) items and no console was ever rendered — apply or delete the files under `staged/` (and any `spec-*/staged/`), or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.\n\nFor a `merged-partial` directory, the records the run's merged PR was meant to close (the closing-keyword links on that PR) are still open: ship them in a later PR, or close/release them if they were abandoned; the next reconcile then archives the dir and drops it from this record.\n\nFor a `tiebreak-coverage-missing` or `tiebreak-artifact-invalid` directory, the run's review-findings.json lists a finding with no tiebreak verdict line in decisions.md, or is malformed: re-run the review step's findings writer and tiebreak for that run, or delete review-findings.json if the run predates the tiebreak; the next reconcile then archives the dir and drops it from this record.\n\nFor a `cant-tell-unfiled` directory, the run merged through an auto-merge path (the wrap-up short-circuit or the dispatch bundle Auto-merge gate) with no Review Console and holds a can't-tell finding no record was filed for: file it through `wrap-up/review-console.md`'s Can't-tell filings step (`console-filings.js --run {run-dir}`; a `spec-N/`-prefixed id is filed and logged with `--run {run-dir}/spec-N`, its own `decisions.md`), logging `{item} filed as #{n} (work-fingerprint {fp})` for each, or write a resolved `console.json`; the next reconcile then archives the dir and drops it from this record.\n\nEach directory's exact reason is the `lastError` (`stuck at <reason>`) on its `structurally-stuck` entry under `residueFailures` in the main checkout's `.claude-tweaks/reconcile-cache.json`.\n\nFor a `pr-not-found` directory, the `pr.number` stamped in its `run-state.json` names a PR that GitHub confirms does not exist — correct or clear that stamp.\n\n<!-- stuck-paths -->\n- `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-11T165407-record-1982`\n- `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-09-01T123248-record-1664`\n<!-- /stuck-paths -->\n\nFiled automatically by `bin/lib/reconcile` — see #644/#1811.\n\n<!-- fingerprint: reconcile-residue-9326b55a -->\n",
-        "createdAt": "2026-09-21T03:33:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC6moyjw",
-            "name": "fix-on-worktree-record-2582",
-            "description": "Fixed on worktree-record-2582, not yet on the default branch",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAAC6nLeDQ",
-            "name": "fix-on-worktree-record-2741",
-            "description": "Fixed on worktree-record-2741, not yet on the default branch",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 2724,
-        "state": "OPEN",
-        "title": "reconcile: structurally-stuck run directories",
-        "updatedAt": "2026-11-15T15:12:22Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -10843,14 +10570,7 @@
       "number": 6152,
       "blockedBy": [
         6151,
-        6150,
         6148
-      ]
-    },
-    {
-      "number": 6151,
-      "blockedBy": [
-        6150
       ]
     },
     {
