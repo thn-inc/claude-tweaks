@@ -4,9 +4,9 @@
 
 **Goal:** When the learned-skills drain meets a conflicting marker PR, rebuild its branch on the integration tip (pure double-append conflicts only) and force-push it under a lease, instead of leaving it for a human.
 
-**Architecture:** A new module `plugin/bin/lib/learned-skills/rebuild.js` holds a pure diff3 post-processor (`resolveDiff3`) and a git-plumbing `rebuild()` that fetches into scratch refs, runs `git merge-tree --write-tree -z`, resolves each content conflict with `git merge-file --diff3 --object-id`, builds one commit on a temp index with `commit-tree`, and pushes it with `--force-with-lease`. `drain.js` calls it (through an injectable `deps.rebuild`) wherever a PR classifies `conflicting`, then sends a rebuilt PR down its existing pending path.
+**Architecture:** A new module `plugin/bin/lib/learned-skills/rebuild.js` holds a pure diff3 post-processor (`resolveDiff3`) and a git-plumbing `rebuild()` that fetches into scratch refs, runs `git merge-tree --write-tree -z`, resolves each content conflict with `git merge-file --diff3` over blob files in a temp dir, builds one commit on a temp index with `commit-tree`, and pushes it with `--force-with-lease`. `drain.js` calls it (through an injectable `deps.rebuild`) wherever a PR classifies `conflicting`, then sends a rebuilt PR down its existing pending path.
 
-**Tech Stack:** Node 18+ CommonJS, git >= 2.43 (`merge-file --object-id`), `node --test`.
+**Tech Stack:** Node 18+ CommonJS, git >= 2.38 (`merge-tree --write-tree`), `node --test`.
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-24T085708-record-6113/work/6113-spec.md`
 
@@ -19,10 +19,12 @@ Scope keywords: LEFT_OPEN_REASONS, leftOpen
 - A refusal for an unresolvable hunk is `leftOpen: {pr, reason: "conflict needs a human: {files}"}`, every conflicted file comma-joined (`, `), in merge-tree's path order (spec Deliverable 3).
 - An item line is one matching `^\s*\d+[.)]\s` (spec Deliverable 2).
 - Each rebuild or refusal writes one `decisions.md` line tagged `[lever: learned-skills-auto-merge=true]` — `AUTO` for a rebuild, `SKIP` for a refusal (spec Deliverable 5; the existing `LEVER` constant in drain.js already renders the tag).
-- git older than 2.43 refuses with `leftOpen` reason `git-too-old` (spec Gotcha names 2.38 for `merge-tree`; this plan's `merge-file --object-id` needs 2.43, so the floor is 2.43 — deliberate departure, logged as a premise line at build).
+- git older than 2.38 refuses with `leftOpen` reason `git-too-old` (spec Gotcha: "`merge-tree` needs git ≥ 2.38; on an older git the rebuild refuses with `leftOpen` reason `git-too-old`"). `merge-file` therefore runs on blob files written to the temp dir (`cat-file blob`), never `--object-id` (2.43+).
+- The push runs on `gitEnv()` minus `GITHUB_TOKEN` (spec Deliverable 4: "The push uses the session's own git credentials, not `GITHUB_TOKEN`, so CI runs on the new head"): the session's own credential helper and `GH_TOKEN` stay; only the Actions token, whose pushes trigger no CI, is dropped.
+- A mid-list hunk refuses (spec Deliverable 2, literal: "a mid-list hunk refuses with the `conflict needs a human` reason"): a resolved hunk that contains an item and is followed (next non-blank line) by an item at that indent refuses, whether or not its numbering collides.
 - Governing skill `gh-api-module-pattern` (git-seam.md), quoted: "**An argv array stops shell injection, not flag injection.** … For `git` the separator is **`--end-of-options`, not `--`** … **`--end-of-options` alone never resolves a revision — it needs `--verify` alongside it.**"
 - Governing skill `gh-api-module-pattern` (git-seam.md), quoted: "A module that builds commits on a scratch `GIT_INDEX_FILE` (`read-tree`, `apply --cached`, `write-tree`, `commit-tree`) layers the index onto `repoPinnedEnv()`, never onto `process.env` … Its `gitEnv(extra)` is the shape to copy, `{ ...repoPinnedEnv(), GIT_LITERAL_PATHSPECS: '1', ...extra }`".
-- Governing skill `gh-api-module-pattern` (git-seam.md), quoted: "Fetch into a per-call scratch ref with `--no-tags` … and `--no-write-fetch-head` … and name the source in full, `refs/heads/{branch}:{scratch}` … Push the branch with `--no-verify`". Scratch refs: `refs/claude-tweaks/rebuild/{pr}/base` and `refs/claude-tweaks/rebuild/{pr}/head`, deleted with `update-ref -d` in a `finally`.
+- Governing skill `gh-api-module-pattern` (git-seam.md), quoted: "Fetch into a per-call scratch ref with `--no-tags` … and `--no-write-fetch-head` … and name the source in full, `refs/heads/{branch}:{scratch}` … Push the branch with `--no-verify`". Scratch refs are per call: `refs/claude-tweaks/rebuild/{pr}-{nonce}/base` and `…/head`, `{nonce}` = `${process.pid}-${crypto.randomBytes(4).toString('hex')}`, deleted with `update-ref -d` in a `finally`.
 - Governing skill `gh-api-module-pattern` (git-seam.md), quoted: "**A `git` path-list read also needs `-z`.**" — `merge-tree` runs with `-z` and its output is split on NUL.
 - Governing skill `git-ground-truth-test-env`, quoted: "A fixture that needs a commit identity does not run `git config user.name` and `git config user.email` … An inline `-c user.name=... -c user.email=...` or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` is also free." Tests use `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env as `tests/bin-lib/learned-skills/land.test.js` does.
 - Governing skill `windows-checkout-test-parity`: the rebuild reads blobs, never a checkout, so `core.autocrlf` does not reach it; `resolveDiff3` must accept CRLF lines (marker lines matched after stripping a trailing `\r`), pinned by a test built from the LF text.
@@ -53,6 +55,7 @@ Scope keywords: LEFT_OPEN_REASONS, leftOpen
   - `AC2.1: both append 7. to a list ends 7. and 8.`: `'6. f\n' + block(['7. x'], [], ['7. y'])` → `'6. f\n7. x\n8. y\n'`.
   - `numbering that stops increasing by one is renumbered`: `'1. a\n' + block(['2. b'], [], ['5. c']) + '\ntext\n'` → `'1. a\n2. b\n3. c\n\ntext\n'`.
   - `a mid-list collision refuses`: `'1. a\n' + block(['2. b'], [], ['2. c']) + '3. d\n'` → `{ ok: false }`.
+  - `a mid-list hunk refuses even without a collision`: `'1. a\n' + block(['- x', '2. b'], [], ['- y']) + '3. c\n'` → `{ ok: false }`; and a bullet-only hunk among numbered items (`'1. a\n' + block(['- x'], [], ['- y']) + '2. b\n'`) resolves (no item in the hunk).
   - `a consecutive list is left as it is`: `'1. a\n' + block(['2. b'], [], ['- c'])` → `'1. a\n2. b\n- c\n'`.
   - `a non-empty base refuses (a changed line)`: `block(['x2'], ['x'], ['x3'])` → `{ ok: false }`.
   - `an empty side refuses`: `block([], [], ['y'])` and `block(['y'], [], [])` → `{ ok: false }`.
@@ -76,9 +79,9 @@ if none: skip
 prev   = walk back from range start: skip blank lines; a line with indent > indent is a continuation, skip;
          an item at that indent -> its number, stop; anything else -> none, stop
 start  = prev != null ? prev + 1 : number of items[0]
+next   = first non-blank line after the range; if it is an item at that indent -> return { ok: false }   (mid-list hunk)
 collision = some items[i].number != start + i
 if !collision: skip
-next   = first non-blank line after the range; if it is an item at that indent -> return { ok: false }
 rewrite items[i]'s number to start + i (keep indent, delimiter and the rest of the line)
 ```
 
@@ -93,13 +96,16 @@ Expected: PASS
 
 ### Task 2: `rebuild()` — plumbing commit and leased push
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/learned-skills/rebuild.js`
 - Test: `tests/bin-lib/learned-skills/rebuild.test.js`
 
 **Interfaces:**
 - Consumes: `resolveDiff3` (Task 1); `realDeps`, `gitEnv`, `firstStderrLine` from `./learned-skills`; `GIT_TIMEOUT_MS`, `GIT_PUSH_TIMEOUT_MS` from `../shared-primitives`.
-- Produces: `MIN_GIT = [2, 43]`; `rebuild({ pr: number, headRef: string, oldHead: string, integrationBranch: string, cwd: string }, deps = { git: realDeps.git, mkdtemp, rm }) -> { ok: true, commit: string, tip: string } | { ok: false, reason: 'not-learned-skills-branch' | 'git-too-old' | 'head-changed' | 'lease-rejected' | 'rebuild-failed' | string /* 'conflict needs a human: a, b' */, detail?: string }`. Never throws: any unexpected git failure is `rebuild-failed` with `detail` = `firstStderrLine(err)`.
+- Produces: `MIN_GIT = [2, 38]`; `rebuild({ pr: number, headRef: string, oldHead: string, integrationBranch: string, cwd: string }, deps = { git: realDeps.git, mkdtemp, rm, writeFile, env: process.env, nonce }) -> { ok: true, commit: string, tip: string } | { ok: false, reason: 'not-learned-skills-branch' | 'git-too-old' | 'head-changed' | 'lease-rejected' | 'rebuild-failed' | string /* 'conflict needs a human: a, b' */, detail?: string }`. Never throws: any unexpected git failure is `rebuild-failed` with `detail` = `firstStderrLine(err)`.
 
 Proof(irreversible-side-effect): the only remote write is one `git push --force-with-lease=refs/heads/{headRef}:{oldHead}` to a `learned-skills/*` ref (pinned by the push-argv test below), so it can replace only the exact head GitHub reported and fetched back; any concurrent push makes it fail as `lease-rejected`; the old head sha is named in the AUTO decision line (Task 3) for recovery.
 
@@ -113,9 +119,11 @@ Proof(irreversible-side-effect): the only remote write is one `git push --force-
   - `a head ref outside learned-skills/* is never touched`: `headRef: 'main'` and `headRef: 'feature/x'` → `reason: 'not-learned-skills-branch'`, zero git calls.
   - `a rejected lease is lease-rejected, no retry`: `deps.git` pushes a new commit to origin `learned-skills/B` just before forwarding the `push` call → `reason: 'lease-rejected'`, exactly one push recorded.
   - `a head that moved before the fetch is head-changed`: `oldHead` = a sha that is not origin's tip → `reason: 'head-changed'`, no push.
-  - `git older than 2.43 refuses`: `deps.git` answers `version` with `git version 2.42.9` → `reason: 'git-too-old'`, only the version call recorded; `git version 2.47.1.windows.1` passes the check.
+  - `git older than 2.38 refuses`: `deps.git` answers `version` with `git version 2.37.9` → `reason: 'git-too-old'`, only the version call recorded; `git version 2.47.1.windows.1` passes the check.
   - `a rebuilt PR rebuilt again keeps every trailer pair once, in order`: B's history has a commit with pairs (B,1),(B,2) and a later commit (B,2) → message lists `Learned-Skills-Run: B / Learned-Skills-Entry: 1` then `… 2`, each once.
   - `scratch refs and the temp dir are removed`: after any outcome, `git for-each-ref refs/claude-tweaks/rebuild` prints nothing and the temp dir is gone.
+  - `scratch refs are per call`: two calls with injected nonces `n1`/`n2` fetch into `refs/claude-tweaks/rebuild/2-n1/…` and `…/2-n2/…` (recorded fetch argv), and a ref created under another nonce before the call survives it.
+  - `the push drops GITHUB_TOKEN only`: with `deps.env` = `{ ...process.env, GITHUB_TOKEN: 'x', GH_TOKEN: 'y' }`, the recorded push call's `opts.env` has no `GITHUB_TOKEN` and keeps `GH_TOKEN: 'y'`.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -124,15 +132,15 @@ Expected: FAIL (`rebuild is not a function`)
 
 - [ ] **Step 3: Implement `rebuild` in `rebuild.js`.** Order (every call `{ cwd }`; rev arguments after `--end-of-options`; remote calls with the timeouts above):
   1. `headRef` must start `learned-skills/` and differ from `integrationBranch`, else `not-learned-skills-branch` before any git call.
-  2. `git version`: parse `/(\d+)\.(\d+)/`; below `MIN_GIT` → `git-too-old`.
+  2. `git version`: parse `/(\d+)\.(\d+)/`; below `MIN_GIT` (2.38) → `git-too-old`.
   3. `fetch --no-tags --no-write-fetch-head origin +refs/heads/{integrationBranch}:{base} +refs/heads/{headRef}:{head}` (scratch refs from Global Constraints); `rev-parse --verify --end-of-options {head}^{commit}` ≠ `oldHead` → `head-changed`.
   4. `tip` = `rev-parse --verify` of the base scratch ref; `mb` = `merge-base --end-of-options {tip} {oldHead}`.
   5. Trailers: `log --reverse --format=%B%x00 --end-of-options {mb}..{oldHead}`; collect `Learned-Skills-Run:`/`Learned-Skills-Entry:` lines in order, pairing each Run with the next Entry, dropping a repeated pair.
   6. `merge-tree --write-tree -z --end-of-options {tip} {oldHead}` (exit 1 = conflicts: read stdout from the thrown error). Parse: first NUL field = tree; then `mode sha stage\tpath` fields until an empty field; then messages as `count, path×count, type, message`. A path conflicts when it has stage entries; it is a content conflict only when it has stages 1, 2 and 3 and every message naming it has type `Auto-merging` or `CONFLICT (contents)`. Any other conflicted path is unresolvable.
-  7. Per content conflict: `merge-file -p --diff3 --marker-size=32 -L ours -L base -L theirs --object-id {stage2} {stage1} {stage3}` (non-zero exit with stdout = conflicts, read from the error) → `resolveDiff3`; `ok: false` → unresolvable.
+  7. Per content conflict: write the three stage blobs (`cat-file blob {oid}`, `encoding: 'buffer'`) to `ours`/`base`/`theirs` files in the temp dir, then `merge-file -p --diff3 --marker-size=32 -L ours -L base -L theirs {ours} {base} {theirs}` (non-zero exit with stdout = conflicts, read from the error) → `resolveDiff3`; `ok: false` → unresolvable.
   8. Any unresolvable path → `{ ok: false, reason: 'conflict needs a human: ' + allConflictedPaths.join(', ') }` (every conflicted path, merge-tree order).
   9. Temp index in `mkdtemp`: `read-tree --end-of-options {tree}`; per resolved path `hash-object -w --stdin` (input = text) then `update-index --cacheinfo {stage2 mode},{oid},{path}`; `write-tree`; `commit-tree {tree} -p {tip} -F -` with message `Rebuild learned-skills PR #{pr} on {integrationBranch}\n\n` + trailer lines + `\n`. All on `gitEnv({ GIT_INDEX_FILE })`.
-  10. Push (Global Constraints form); stderr matching `/stale info|\[rejected\]/` → `lease-rejected`; any other failure → `rebuild-failed`.
+  10. Push (Global Constraints form) with `opts.env` = `gitEnv()` minus `GITHUB_TOKEN` (built from `deps.env`); stderr matching `/stale info|\[rejected\]/` → `lease-rejected`; any other failure → `rebuild-failed`.
   11. `finally`: `update-ref -d` both scratch refs (errors ignored), remove the temp dir.
 
 - [ ] **Step 4: Run to verify they pass**
@@ -145,6 +153,9 @@ Expected: PASS
 - [ ] **Step 6: Commit** — `Add the learned-skills PR rebuild — plumbing merge on the tip and a leased push (refs #6113)`.
 
 ### Task 3: Drain integration, CLI contract and prose
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/learned-skills/drain.js`
@@ -169,6 +180,8 @@ Expected: PASS
   - Update `a sibling turned DIRTY by an earlier merge…` to expect the rebuild (rebuilt `[6206]`).
   - `a rebuilt own PR follows the pending path to a merge on the new head`: own PR views `[dirty(a), pending(a) /* GitHub lag */, green(c), green(c)]`, rebuild → commit `SHA('c')` → `merged: [n]`, the merge argv carries `--match-head-commit` `SHA('c')`.
   - `an own PR that turns conflicting mid-watch is rebuilt` (replaces the poll-conflicting expectation wherever a test expects `conflicting` from a poll).
+  - `a PR conflicting again after its rebuild settles conflicting`: own PR views `[dirty(a), dirty(c)]`, rebuild ok → `rebuilt: [n]`, `conflicting: [n]`, rebuild called once.
+  - `a rebuild mid-watch keeps the watch deadline`: own PR pending then dirty at poll k, rebuild ok, then pending forever → `leftOpen` `timeout` with total sleeps equal to a plain pending own PR's (`MERGE_GATE_WATCH_SECONDS*1000/30000` polls).
   - The whole-shape asserts (`{ merged: [], armed: [], leftOpen: [], conflicting: [] }`) gain `rebuilt: []`; `LEFT_OPEN_REASONS is exactly the closed set` lists the thirteen values.
   - `a gh pr merge conflict is conflicting` stays as is: a conflict reported by the merge call itself is still `conflicting` (no rebuild; a later drain sees DIRTY and rebuilds).
   - `AC1.1 AC1.2: drain rebuilds the second of two double-append PRs (real git)`: Task 2's fixture (origin + clone, A merged to `main`), fake gh listing PR B as DIRTY with head B, `rebuild` left at its real default with `cwd: clone` → `rebuilt: [B's number]`; origin `learned-skills/B`'s file holds `- a` then `- b`; `git diff origin/main origin/learned-skills/B` adds only `+- b`.
@@ -178,7 +191,7 @@ Expected: PASS
 Run: `node --test tests/bin-lib/learned-skills/drain.test.js tests/bin-lib/learned-skills/drain-cli.test.js`
 Expected: FAIL after Step 1 (rebuild never called; `rebuilt` undefined)
 
-- [ ] **Step 3: Implement in `drain.js`**: `out.rebuilt = []`; a `rebuildOrSettle(n, headRef, oldHead)` used at the three classified-conflicting sites (state verdict, `mergeGreen`'s recheck, the poll) — calls `deps.rebuild` (a throw → `rebuild-failed`, `detail` = `firstStderrLine(err)`), on `ok` pushes `n` to `rebuilt`, logs `AUTO` `PR #${n} rebuilt on ${integrationBranch} (old head ${oldHead})` with reversibility `med`, then: not own → `open(n, 'pending')`; own → the existing watch with `sha = commit`, where a poll whose head still equals `oldHead` keeps polling; on refusal `open(n, reason, detail)`. The `conflict` branch of `land`'s merge-call error stays `settle(n, 'conflicting')`. Update the header comment (the `integrationBranch … reserved` paragraph and the leftOpen reasons line). `learned-skills-pr.js`: contract line, USAGE line, `cwd: deps.cwd()` in `common`. Prose: say a conflicting PR is rebuilt on the integration tip when every conflict is a pure double append (listed in `rebuilt`, then pending) and otherwise left open as `conflict needs a human: {files}`, `lease-rejected`, `git-too-old` or `rebuild-failed`; `conflicting` now means only a conflict the merge call itself reported.
+- [ ] **Step 3: Implement in `drain.js`**: `out.rebuilt = []`; a `rebuildOrSettle(n, headRef, oldHead)` used at the three classified-conflicting sites (state verdict, `mergeGreen`'s recheck, the poll) — calls `deps.rebuild` (a throw → `rebuild-failed`, `detail` = `firstStderrLine(err)`), on `ok` pushes `n` to `rebuilt`, logs `AUTO` `PR #${n} rebuilt on ${integrationBranch} (old head ${oldHead})` with reversibility `med`, then: not own → `open(n, 'pending')`; own → the existing watch with `sha = commit` — one watch per PR: the deadline and `gateStart` computed before the first rebuild stand (a rebuild at the poll or `mergeGreen` site continues the running watch, never starts a new one), the arm-if-`BLOCKED` branch is not taken after a rebuild, and a poll whose head still equals `oldHead` keeps polling; at most one rebuild per PR per drain — a PR that classifies conflicting again after its rebuild settles `conflicting`; on refusal `open(n, reason, detail)`. The `conflict` branch of `land`'s merge-call error stays `settle(n, 'conflicting')`. Update the header comment (the `integrationBranch … reserved` paragraph and the leftOpen reasons line). `learned-skills-pr.js`: contract line, USAGE line, `cwd: deps.cwd()` in `common`. Prose: say a conflicting PR is rebuilt on the integration tip when every conflict is a pure double append (listed in `rebuilt`, then pending) and otherwise left open as `conflict needs a human: {files}`, `lease-rejected`, `git-too-old` or `rebuild-failed`; `conflicting` now means only a conflict the merge call itself reported.
 
 - [ ] **Step 4: Byte check** — `wc -c plugin/skills/wrap-up/learned-skills-pr.md` stays under 52,500 (RAIL_BYTES).
 
@@ -211,4 +224,4 @@ Expected: PASS
 Waived AC7.1: the post-ship drain needs the released plugin installed; it runs after merge and release (Deliverable 6), outside this build.
 Waived AC7.2: same — the quoted `gh pr list` output exists only after that drain.
 
-Gotcha (confirm CI and Windows runner git versions): Task 2 Step 4's runner pass on this host (git 2.56) plus PR CI on ubuntu and windows runners, whose rebuild tests fail as `git-too-old` if a runner's git is below 2.43; Waived `.github/workflows/`: read-only, confirmed by that CI run.
+Gotcha (confirm CI and Windows runner git versions): Task 2 Step 4's runner pass on this host (git 2.56) plus PR CI on ubuntu and windows runners, whose rebuild tests fail as `git-too-old` if a runner's git is below 2.38; Waived `.github/workflows/`: read-only, confirmed by that CI run.
