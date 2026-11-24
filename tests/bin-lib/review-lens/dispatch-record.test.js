@@ -19,6 +19,14 @@ test('appends entries in order and reads them back', () => {
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, LENS_DISPATCH_FILE), 'utf8')).v, 1);
 });
 
+test('a worker-path entry appends and reads back', () => {
+  const dir = scratchDir('lens-dispatch-');
+  const entry = { ...BASE, path: 'worker' };
+  appendLensDispatch({ runDir: dir, entry });
+  assert.deepStrictEqual(readLensDispatch(dir), { state: 'ok', entries: [entry] });
+  assert.match(entryProblem({ ...BASE, path: 'driver' }), /task, workflow, worker/);
+});
+
 test('an identical entry is not appended twice', () => {
   const dir = scratchDir('lens-dispatch-');
   appendLensDispatch({ runDir: dir, entry: BASE });

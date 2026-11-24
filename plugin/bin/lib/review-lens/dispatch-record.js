@@ -13,7 +13,9 @@
 // File shape: {"v": 1, "entries": [{lens, reviewers, path, round, status}, ...]}, entries in append order.
 //   lens       one of LENS_IDS ('3a'..'3h')
 //   reviewers  1 or 2 — how many reviewers the lens was dispatched with
-//   path       'task' (Task-tool dispatch) or 'workflow' (the review-lens-fanout workflow)
+//   path       'task' (Task-tool dispatch), 'workflow' (the review-lens-fanout workflow) or
+//              'worker' (headless lens-reviewer workers, review-lens-workers.js); an older build reads a
+//              file holding a 'worker' entry as an `error` state (history skips that run, never a crash)
 //   round      integer >= 1 — the review round
 //   status     'completed' (both of a pair's final replies were DONE / DONE_WITH_CONCERNS, or a single-reviewer
 //              lens's one reply was usable), 'blocked' (either reviewer's final reply was BLOCKED / NEEDS_CONTEXT,
@@ -33,7 +35,7 @@ const LENS_DISPATCH_FILE = 'lens-dispatch.json';
 const DISPATCH_SCHEMA_VERSION = 1;
 const LENS_IDS = Object.freeze(['3a', '3b', '3c', '3d', '3e', '3f', '3g', '3h']);
 const STATUSES = Object.freeze(['completed', 'failed', 'blocked']);
-const PATHS = Object.freeze(['task', 'workflow']);
+const PATHS = Object.freeze(['task', 'workflow', 'worker']);
 const ENTRY_KEYS = ['lens', 'reviewers', 'path', 'round', 'status'];
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

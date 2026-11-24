@@ -576,8 +576,52 @@ test('#5902: a released claim with --reason merged records one exited build pass
   assert.deepEqual(events[0], {
     kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 999, repoName: 'acme/w',
     runId: RUN_DIR_NAME, sessionId: 'sess-1', lane: 'unknown',
-    payload: { reason: 'merged', link: 'https://x/1' }, discriminator: `release:${RUN_DIR_NAME}:2026-08-16T11:00:00.000Z`,
+    payload: { reason: 'merged', link: 'https://x/1', actor: 'script' }, discriminator: `release:${RUN_DIR_NAME}:2026-08-16T11:00:00.000Z`,
   });
+});
+
+const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
+
+test("a claim's release exit is passed with actor script", () => {
+  const runDir = mkRun();
+  const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'merged', '--link', 'https://x/1'], d), 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].outcome, 'passed');
+  assert.equal(events[0].payload.actor, 'script');
+  assert.ok(buildLine(events[0]), 'the line is accepted on the new contract');
+});
+
+test('a failed release carries actor script and is written with reasonCode unspecified', () => {
+  const runDir = mkRun();
+  const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'failed: test'], d), 0);
+  const line = buildLine(events[0]);
+  assert.equal(line.outcome, 'failed');
+  assert.equal(line.payload.actor, 'script');
+  assert.equal(line.payload.reasonCode, 'unspecified');
+  assert.equal(line.payload.reasonText, undefined);
+});
+
+test('a retired-outcome release carries no actor and its payload is unchanged', () => {
+  const runDir = mkRun();
+  const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'abandoned: spec 999'], d), 0);
+  assert.equal(events[0].outcome, 'abandoned');
+  assert.deepEqual(events[0].payload, { reason: 'abandoned: spec 999', link: null });
+  assert.equal(buildLine(events[0]).outcome, 'abandoned');
+});
+
+test('a returned release (retired outcome) carries no actor', () => {
+  const runDir = mkRun();
+  const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
+  const events = withStationSpy(d);
+  assert.equal(run(['999', '--run', runDir, '--reason', 'drive.js settle: express-escalated at check'], d), 0);
+  assert.equal(events[0].outcome, 'returned');
+  assert.equal('actor' in events[0].payload, false);
 });
 
 test('#5902: the release discriminator names the released claim instance — a re-claim by the same run releases under a new key, a replay under the same', () => {
