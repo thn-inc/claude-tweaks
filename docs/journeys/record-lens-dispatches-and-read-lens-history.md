@@ -9,7 +9,7 @@ files:
 
 # Record Lens Dispatches and Read Each Lens's History
 
-**Persona:** a `/claude-tweaks:review` session inside a pipeline run that has just reached a Step 3 lens verdict (or a lens failure) on the Task path or the workflow path, and, later, a maintainer or a future lens selector that wants to know how often each lens has actually found something in this repository.
+**Persona:** a `/claude-tweaks:review` session inside a pipeline run that has just reached a Step 3 lens verdict (or a lens failure) on the Task path, the workflow path or the worker path, and, later, a maintainer or a future lens selector that wants to know how often each lens has actually found something in this repository.
 **Goal:** every agent lens dispatch leaves one entry in the run's `lens-dispatch.json`, and `readLensHistory` turns those entries plus each run's `step-yield.json` into a per-lens confirmed-finding rate over the lens's last 20 closed runs, saying plainly when there is not enough history yet.
 **Entry point:** a lens whose verdict or final failure is known, a pipeline run directory (`$PIPELINE_RUN_DIR`), and the main checkout's `.claude-tweaks/pipelines/` root.
 **Success state:** `lens-dispatch.json` holds one `{lens, reviewers, path, round, status}` entry per lens per round, written only through the CLI; `readLensHistory` returns `{lenses, skipped, errors}` with all eight lenses, each `insufficient: true` until it has 20 qualifying runs, and nothing it could not read is silently dropped.
@@ -17,8 +17,8 @@ files:
 ## Steps
 
 ### 1. Record a lens's dispatch — the review session
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" record-lens-dispatch --run "$PIPELINE_RUN_DIR" --lens {lens} --reviewers {1|2} --path {task|workflow} --status {completed|failed|blocked} --round {n}`
-- **Action:** run the call once the lens's verdict or failure is known, with the values `step3-lens-dispatch-record.md` maps from what happened: `completed` when both pair replies were `DONE`/`DONE_WITH_CONCERNS` (or a single-reviewer lens's one reply was usable), `blocked` when either reviewer's final reply was `BLOCKED`/`NEEDS_CONTEXT`, `failed` when the replies never came; `--path workflow` for a lens `settle-lens-replies` settled and for a `single-reviewer` workflow lens whose one reviewer was usable (`--reviewers 1`), `task` otherwise; lens 3h is always `--path task --reviewers 1`.
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/review-coordination.js" record-lens-dispatch --run "$PIPELINE_RUN_DIR" --lens {lens} --reviewers {1|2} --path {task|workflow|worker} --status {completed|failed|blocked} --round {n}`
+- **Action:** run the call once the lens's verdict or failure is known, with the values `step3-lens-dispatch-record.md` maps from what happened: `completed` when both pair replies were `DONE`/`DONE_WITH_CONCERNS` (or a single-reviewer lens's one reply was usable), `blocked` when either reviewer's final reply was `BLOCKED`/`NEEDS_CONTEXT`, `failed` when the replies never came; `--path workflow` for a lens `settle-lens-replies` settled and for a `single-reviewer` workflow lens whose one reviewer was usable (`--reviewers 1`), `--path worker` for the same two cases on the worker path (replies from the `review-lens-workers.js` launcher), `task` otherwise (3f, 3h, every re-dispatched lens, every lens after a fallback); lens 3h is always `--path task --reviewers 1`.
 - **Should feel:** one plain command per lens, recorded whatever any lens-selection policy says, with no hand-written JSON.
 - **Should understand:**
   - An identical repeat call is a no-op (`duplicate: true`), so a resumed review cannot double-count a lens.
@@ -49,4 +49,5 @@ files:
 
 ## Origin
 - Created during the build of #5998 (Phase 10 of the pipeline economy design), which added `plugin/bin/lib/review-lens/dispatch-record.js`, the `review-coordination.js record-lens-dispatch` verb, `plugin/bin/lib/review-lens/history.js`, and the Step 3 recording prose in `plugin/skills/review/step3-lens-dispatch-record.md`. `plugin/bin/review-lens-select.js` calls `readLensHistory` (#6001).
+- Step 1 updated during the build of #6003, which added the `worker` path value for lenses settled from headless-worker replies.
 - Related journeys: `settle-a-lens-fan-out-in-one-call-5598.md` (the workflow settle call whose settled lenses step 1 records) and `run-review-lenses-through-a-workflow-5599.md` (the workflow path).

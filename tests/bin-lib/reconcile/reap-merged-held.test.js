@@ -79,3 +79,14 @@ test('reapMerged: a dry run reports an unverifiable hold without appending an ev
   assert.deepEqual(result.skipped.map((s) => s.reason), ['held-unverifiable']);
   assert.throws(() => fs.statSync(path.join(runDir, 'events.jsonl')), /ENOENT/);
 });
+
+test('reapMerged: a worktree a hollow-merge hold owns (#6143), by path or by branch, is skipped hollow-merge and kept', () => {
+  const { root, wtPath } = buildReapableFixture();
+  for (const held of [{ heldWorktrees: [fs.realpathSync(wtPath)] }, { heldBranches: ['worktree-issue-1'] }]) {
+    const result = reapMerged({ cwd: root, prStates: merged(root), ...held });
+    assert.deepEqual(result.skipped.map((s) => s.reason), ['hollow-merge'], JSON.stringify(held));
+    assert.equal(result.reaped.length, 0);
+    assert.equal(fs.statSync(wtPath).isDirectory(), true);
+  }
+  assert.equal(reapMerged({ cwd: root, prStates: merged(root) }).reaped.length, 1, 'with no hold the same worktree reaps');
+});

@@ -11,7 +11,19 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   release → post-merge → archive → archive-branches → remote-prune → ledger-residue → plan-refs → reap`, reap
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
-  finished with. `post-merge` sits immediately before `archive` because it hands archive the run
+  finished with. The hollow-merge detection pre-step (#6143, `post-merge.js`'s `detectHollowMerges`) runs
+  immediately before `release` whenever `release`, `post-merge`, `archive`, `archive-branches`, `remote-prune` or
+  `reap` is in the pass: it finds merged PRs whose run was still in flight and hands release (`hollowRunIds`),
+  post-merge (`hollowRunDirs`) and archive (via `postMergeDeferred`) the runs to leave alone, hands
+  archive-branches and remote-prune (`heldBranches`) and reap (`heldWorktrees`, `heldBranches`) the branches and
+  worktrees those runs own (`hollowRunRefs`; each skips them `hollow-merge`), and fills `result.hollowMerges`. It
+  fails closed: a setup failure or a throw skips every one of those six checks in the pass with `{ check: '<the
+  requested ones, comma-joined>', reason: 'hollow-merge-check-failed' }`, except `no-remote` and `unknown-host` (an
+  origin the #4933 host gate refuses before any `gh` call, which release and post-merge refuse too), where the
+  check can never run and there is nothing to hold, so they run with empty sets. It runs on any work backend: only its record comment needs
+  `github-issues`, so another backend's hollow run is held with no comment. It reads the pass's one shared PR-state resolver,
+  warmed first with every non-terminal run's PR number (and each PR-less run's branch), and checks the pass budget
+  between runs: an exhausted budget returns `budget-exhausted`, so the pass fails closed rather than settle an unjudged run. `post-merge` sits immediately before `archive` because it hands archive the run
   dirs it must leave in place this pass (see the Post-merge closes section below).
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
@@ -102,7 +114,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
-   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, planRefs, console, residuePlan, residueErrors, hollowMerges, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -698,20 +710,42 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   `postMergeDeferred`, and `archiveMerged` skips each listed run `post-merge-pending`, resolved-path
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
-  failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
-- **How the guard clears.** Exactly six reasons defer a run: `merge-grace`, `in-flight`,
-  `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below)
-  and `budget-exhausted` (below). A run leaves the set once `post-merge` acts on it, which for
-  `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3)
-  more passes. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
-  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
-  deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
-  every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
-  because the alternative is archiving a run the reconciler still owes its steps:
+  failed or did not run leaves `deferred` empty, so a failed post-merge never holds archive back; the one
+  exception is the hollow-merge hold below, which `index.js` adds to the set itself.
+- **Hollow merges join the archive hold set (#6143).** `detectHollowMerges` lists the runs whose PR merged
+  while the run's `build` or `test` phase was unfinished, and the runs whose hollow-merge check failed, so their
+  merge state is unknown; `index.js` passes them to `postMerge` as `hollowRunDirs` (skipped, reason
+  `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and unions them into `postMergeDeferred` whether or not
+  `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run dir in place. `postMerge`
+  itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the archive set
+  again so the hold also applies when `post-merge` did not run. The branches and worktrees those runs own
+  (`post-merge.js`'s `hollowRunRefs`: the recorded `worktree`, its live branch, `pr.branch`) go to
+  archive-branches, remote-prune and reap, which skip them `hollow-merge`, so the run stays resumable. A `hollow-merge` run's records are
+  each commented on once: the comment and its marker are written under the run's post-merge claim
+  (`takeClaim`/`releaseClaim`, the lock Steps 4.0/4.0b take), with the marker read after the claim is taken, so an
+  inline reconcile racing `reconcile-background` cannot post twice; a claim another pass holds posts nothing that
+  pass, and the run is still held. A `hollow-merge` run merged within `MERGE_GRACE_MS` is held with no comment
+  (`detail` says the comment is deferred); a pass past the grace posts it. A `hollow-check-failed` run is held too, and any records commented on before the check
+  failed are listed in its `commented`. Both show in `result.hollowMerges`, `formatSummary`, and the background
+  status file's `hollowMerges` list. A held run leaves the set on a later pass, when detection no longer reports
+  it: its phase exits were recorded or the run reached a terminal state, or (for `hollow-check-failed`) a later
+  check succeeds and finds no hollow merge — the lookup recovers, the PR is not MERGED, or the marker names
+  another run.
+- **How the guard clears.** Exactly seven reasons defer a run in `post-merge`: `merge-grace`, `in-flight`,
+  `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below),
+  `budget-exhausted` (below) and `hollow-merge` (the run's PR merged while it was in flight, or its hollow-merge
+  check failed, so its merge state is unknown, above). A run leaves the set once `post-merge` acts on it, which
+  for `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3) more
+  passes; a `hollow-merge` run leaves once detection stops reporting it. Nothing else defers. Each reason is
+  normally cleared by a later pass, but two cases are not: a persistent `claim-failed` (an `EACCES` or
+  `EROFS` on the run dir every pass) and a deterministic per-PR throw (the lookup maps any throw to
+  `network-failure`) defer the run on every pass, untracked, so archive never moves it. That is the residual
+  risk of the guard, kept because the alternative is archiving a run the reconciler still owes its steps:
 
   | Skip reason | Deferred | Why |
   |---|---|---|
   | `merge-grace`, `in-flight`, `claim-failed`, `network-failure`, `transient-failure`, `budget-exhausted` | yes | Retryable: the next pass can act. |
+  | `hollow-merge` | yes | The PR merged while the run's `build` or `test` phase was unfinished, or the run's hollow-merge check failed, so its merge state is unknown (#6143); held until detection stops reporting it. Also unioned into archive's set by `index.js`. |
   | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
   | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
   | `marker-write-failed` | no | See the marker-write bullet below. |
@@ -878,7 +912,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
-- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `hollow-merge`, `release`, `post-merge`, `archive`,
   `archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses
