@@ -15,6 +15,9 @@
 // step's `unparsed`; one whose instant cannot be placed lands in `unattributed`;
 // a source that cannot be read (anything but ENOENT) counts in the top-level
 // `unparsed` and is never read as absent.
+//
+// Since #6143 every phase exit writes one AUTO `Phase exit` record (lib/phase-exit/exit-record.js),
+// so a step's `decisions.AUTO` is one higher than on earlier releases: compare across that boundary with this in mind.
 'use strict';
 const fs = require('fs');
 const path = require('path');

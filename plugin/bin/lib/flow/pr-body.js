@@ -11,6 +11,7 @@
 const { escapeRegExp } = require('../shared-primitives');
 const { neutralizeClosingPhrases } = require('./closing-links');
 const { expressMarker } = require('../express/sampling');
+const { fencedLineMask } = require('../markdown-blocks');
 
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
@@ -341,11 +342,12 @@ function parsePremiseReversals(text) {
 // up to the next level 1-3 heading. Headings survive both a gh read and a
 // gh-absent MCP read (only `<!-- ... -->` spans are stripped).
 function locateSpecSummary(lines) {
-  const start = lines.findIndex((l) => l.trim() === '### Spec summary');
+  const fenced = fencedLineMask(lines, { unclosedAsText: true });
+  const start = lines.findIndex((l, i) => !fenced[i] && l.trim() === '### Spec summary');
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^#{1,3}\s/.test(lines[i])) { end = i; break; }
+    if (!fenced[i] && /^#{1,3}\s/.test(lines[i])) { end = i; break; }
   }
   return { start, end };
 }

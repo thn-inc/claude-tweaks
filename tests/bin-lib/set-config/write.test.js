@@ -221,6 +221,59 @@ test('setConfigLever: a later ceremony-profile change overwrites ceremonyProfile
   assert.deepEqual({ ...second, ceremonyProfile: null }, { ...first, ceremonyProfile: null });
 });
 
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
+const { STATION, KIND } = require('../../../plugin/bin/lib/station-events/stations');
+
+// The scratch root above fixtureRunDir()'s run dir doubles as the main root; its log holds a standard-claim `planned` line.
+function replanFixture() {
+  const runDir = fixtureRunDir();
+  seedManifest(runDir);
+  const mainRoot = path.resolve(runDir, '..', '..', '..');
+  fs.mkdirSync(path.join(mainRoot, '.git')); // resolvable by mainCheckoutRoot, so a default-sink regression would append here
+  const logFile = path.join(mainRoot, '.claude-tweaks', 'station-events.jsonl');
+  fs.writeFileSync(logFile, JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',
+    runId: path.basename(runDir), payload: { stations: STARTING_LISTS.standard },
+  }) + '\n');
+  return { runDir, mainRoot, logFile };
+}
+
+test('downgrading the ceremony profile on a claimed record writes one replanned with reason ceremony-downgrade', () => {
+  const { runDir, mainRoot } = replanFixture();
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, KIND.REPLANNED);
+  assert.equal(events[0].payload.reasonCode, 'ceremony-downgrade');
+  assert.equal(events[0].payload.cause.kind, 'config');
+  assert.equal(events[0].payload.stations.includes('polish'), false);
+});
+
+test('fixing the profile to standard after a standard claim writes nothing via setConfigLever', () => {
+  const { runDir, mainRoot } = replanFixture();
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'standard', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.deepEqual(events, []);
+});
+
+test('setConfigLever without stationDeps writes no event', () => {
+  const { runDir, logFile } = replanFixture();
+  const before = fs.readFileSync(logFile, 'utf8');
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane' });
+  assert.equal(fs.readFileSync(logFile, 'utf8'), before);
+  assert.equal(before.split('\n').filter(Boolean).length, 1);
+});
+
+test('setConfigLever with a failed manifest fill still replans from the written value', () => {
+  const { runDir, mainRoot } = replanFixture();
+  fs.rmSync(path.join(runDir, runManifest.MANIFEST_FILE));
+  fs.mkdirSync(path.join(runDir, runManifest.MANIFEST_FILE));
+  const events = [];
+  setConfigLever({ runDir, key: 'ceremony-profile', value: 'fast-lane', stationDeps: { stationEvent: (e) => events.push(e), mainRoot } });
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0].payload.stations, STARTING_LISTS['fast-lane']);
+});
+
 test('setConfigLever: setting another key leaves manifest.json untouched, and does not create one', () => {
   const runDir = fixtureRunDir();
   setConfigLever({ runDir, key: 'mode', value: 'auto' });

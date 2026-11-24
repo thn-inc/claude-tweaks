@@ -53,6 +53,47 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.178.0](https://github.com/thn-inc/claude-tweaks/compare/v6.177.0...v6.178.0) (2026-11-24)
+
+
+### Features
+
+* Floor map, emission 1/8: Capture pass: transition code… ([#6145](https://github.com/thn-inc/claude-tweaks/issues/6145)) ([f73173b](https://github.com/thn-inc/claude-tweaks/commit/f73173baec802206534a2b362ccca41c727ab483))
+* Floor map, emission 2/8: Vocabulary and validation ([#6146](https://github.com/thn-inc/claude-tweaks/issues/6146)) ([8d21732](https://github.com/thn-inc/claude-tweaks/commit/8d217321dd5b1527624c6d1db1839d9558cccd98))
+* Floor map, emission 3/8: The plan at the claim ([#6147](https://github.com/thn-inc/claude-tweaks/issues/6147)) ([4e7336a](https://github.com/thn-inc/claude-tweaks/commit/4e7336a46ccf3b8801acd62b33957806ab00ee0b))
+* Launch the driver implementer at the record's profile… ([#5997](https://github.com/thn-inc/claude-tweaks/issues/5997)) ([5b5fd17](https://github.com/thn-inc/claude-tweaks/commit/5b5fd176d69a8a123ad49fb9a96521efed3b3fab))
+* Let a protected path require the driver's reviewer… ([#6019](https://github.com/thn-inc/claude-tweaks/issues/6019)) ([b8811c2](https://github.com/thn-inc/claude-tweaks/commit/b8811c277a6ba3879f57c652177c09612c30e93b))
+* Make the protected-path list a policy value a project… ([#6020](https://github.com/thn-inc/claude-tweaks/issues/6020)) ([5ead712](https://github.com/thn-inc/claude-tweaks/commit/5ead71250c116b591eae0b7bcd153f09341ccfeb))
+* Replay task and whole-branch reviewers, and measure what… ([#5992](https://github.com/thn-inc/claude-tweaks/issues/5992)) ([a8f33fe](https://github.com/thn-inc/claude-tweaks/commit/a8f33fe0a54a281b3d3f61a3852ba63714382b3b))
+* Start an implementer at the lowest effort its record… ([#6002](https://github.com/thn-inc/claude-tweaks/issues/6002)) ([4bda1e9](https://github.com/thn-inc/claude-tweaks/commit/4bda1e9318228f4a9ba7b59a546db7910a2862d7))
+* Take the standard lane's implementer profile from the… ([#5999](https://github.com/thn-inc/claude-tweaks/issues/5999)) ([6deea95](https://github.com/thn-inc/claude-tweaks/commit/6deea95a083dec9504d1ed8af1d033c582996ddf))
+
+
+### Bug Fixes
+
+* Arm record-less tidy housekeeping PRs… ([#5208](https://github.com/thn-inc/claude-tweaks/issues/5208)) ([c98bd97](https://github.com/thn-inc/claude-tweaks/commit/c98bd9725ae8d97c4fd1a41b6bd8a950a9f01f88))
+* Let a resumed learned-skills land recognise edits a… ([#6110](https://github.com/thn-inc/claude-tweaks/issues/6110)) ([497a4f4](https://github.com/thn-inc/claude-tweaks/commit/497a4f41d497aba70156ca3a512cba502b296834))
+* Pick flow's context-handoff branch from the caller, not… ([#5270](https://github.com/thn-inc/claude-tweaks/issues/5270)) ([0779ffd](https://github.com/thn-inc/claude-tweaks/commit/0779ffdad989c013baa0723490b562b4e988f236))
+* Tell the driver implementer its Bash runs only the… ([#6161](https://github.com/thn-inc/claude-tweaks/issues/6161)) ([7d33c5d](https://github.com/thn-inc/claude-tweaks/commit/7d33c5d66b946b9025b9f96e991269c7bcc11659))
+* Treat a dispatch blocker as landed only when its closing… ([#6142](https://github.com/thn-inc/claude-tweaks/issues/6142)) ([a75ee03](https://github.com/thn-inc/claude-tweaks/commit/a75ee032804afbd1c7c69555d5a3702b12c54986))
+* Two reconcile tests need gh credentials, so the driver's… ([#6162](https://github.com/thn-inc/claude-tweaks/issues/6162)) ([4d84b1e](https://github.com/thn-inc/claude-tweaks/commit/4d84b1e5cd7f25fdd73fda510bdbe1f103ca70b8))
+
+### Highlights
+* Driver-built records no longer fall back to the slow path because the worker misread a refused test command as Bash being switched off.
+* Wrote the plan as a planned station event when a record is claimed, once per record and run.
+* Made implementers start at a lower reasoning effort when the record's risk allows it, and raise the effort before moving to a larger model when an attempt fails.
+* Dispatch no longer builds a record whose blocker was closed by a merge that carried no implementation.
+* A human resuming a dispatched pipeline run no longer gets stranded with a dispatcher-only handoff block when the session crosses its context cap.
+* Added the station-event vocabulary and validation for plans, reasons, actors and holds, with legacy outcomes still accepted.
+* The dispatch queue pull no longer reuses a cached group order after a change to a setting that decides how records are grouped.
+* Add a `learned-skills-auto-merge` setting that lets wrap-up's learned-skill update PRs merge on their own once CI passes; it is on by default only at `autonomy: unattended`.
+* Documented which code performs each station transition, the confirmed station order, and the starting lists the plan can begin from.
+* Tidy's housekeeping PRs now arm for auto-merge when you have opted in, instead of always being left unarmed.
+* Made the pipeline driver start small records on the cheapest model and retry a failed attempt once on the next model up, before handing the record to the full pipeline.
+* Maintainer tooling only, nothing ships: the review replay can replay task and whole-branch reviewers, and measure how much of what task reviews catch the whole-branch review would have caught on its own.
+* Fix a resumed wrap-up so it recognises learned-skill edits whose PR already merged, instead of opening a duplicate PR or staging them again.
+* Made each build pick its implementer model from the record's size and file count through one shared rule, and move a stuck task to the next model up once.
+
 ## [6.177.0](https://github.com/thn-inc/claude-tweaks/compare/v6.176.0...v6.177.0) (2026-11-23)
 
 

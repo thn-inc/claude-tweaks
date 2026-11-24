@@ -3218,6 +3218,33 @@ test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail car
   }
 });
 
+test('#6149 the test line carries verifyExit on a red-tests stop and a verdict-less fail, and nowhere else', async () => {
+  const testLineOf = (h) => h.lines().find((l) => l.step === 'test');
+  for (const [code, want] of [[1, 1], [2, 2], [137, 137], [null, null], [undefined, null]]) {
+    const h = harness({ script: [[on('node', /verify\.js$/), { code, stdout: '', stderr: 'x' }]] });
+    await run(['#7'], h.deps);
+    const line = testLineOf(h);
+    assert.ok(Object.hasOwn(line, 'verifyExit'), String(code));
+    assert.equal(line.verifyExit, want, String(code));
+  }
+  const green = harness();
+  await run(['#7'], green.deps);
+  assert.equal(Object.hasOwn(testLineOf(green), 'verifyExit'), false);
+
+  // A verdict-less run that changed the tree: the composite carries it, the tree detail stays the prefix.
+  const dirty = leftDirtyHarness(' M src/a.js\0', { code: 2, stdout: '', stderr: 'boom' });
+  await run(['#7'], dirty.deps);
+  const dirtyLine = testLineOf(dirty);
+  assert.equal(dirtyLine.verifyExit, 2);
+  assert.ok(dirtyLine.detail.startsWith(treeDetail(1, 'src/a.js')));
+
+  // A green run that changed the tree: not a verify.js exit story.
+  const greenDirty = leftDirtyHarness(' M src/a.js\0');
+  await run(['#7'], greenDirty.deps);
+  assert.equal(testLineOf(greenDirty).status, 'fail');
+  assert.equal(Object.hasOwn(testLineOf(greenDirty), 'verifyExit'), false);
+});
+
 test('a symlinked (or non-directory) .claude-tweaks parent refuses the scope file, no test run', async () => {
   const parent = path.join(WT, '.claude-tweaks');
   for (const type of ['symlink', 'file', 'other', 'unreadable']) {
@@ -5192,6 +5219,16 @@ test('#5915 AC1: with a declared impact.command the prompt names it and no npm t
   assert.ok(opts.prompt.split('\n').includes(EDIT_LINE_LISTED), 'the edit rule excepts the list file');
   assert.ok(!opts.prompt.split('\n').includes(EDIT_LINE));
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', 'the run goes on to the test step');
+});
+
+test('#6161: the declared-test prompt says to run the command unchained and to retry a denied shape', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL)] });
+  await run(['#7'], h.deps);
+  const { prompt } = workerCall(h).args[0];
+  assert.ok(prompt.includes('Write the test list with the Write tool'));
+  assert.ok(prompt.includes('one Bash call on its own'));
+  assert.ok(prompt.includes('read-only `git status/diff/log/show/ls-files`'));
+  assert.ok(prompt.includes('that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form'));
 });
 
 test('#5915 AC2: with no declaration the prompt says not to run tests and the launch has no testCommand', async () => {
@@ -7238,6 +7275,15 @@ test('AC8.3: an unclassified stop through the run loop is settled by the blocked
   assert.deepEqual([final.settleRow, final.unclassified, final.outcome, final.settle], ['blocked', true, 'blocked', 'done']);
   assert.equal(final.stop.class, 'bogus');
   assert.deepEqual(settleLines(h).map((l) => l.step), ['settle-comment-record', 'settle-label', 'settle-release']);
+  assert.equal(settleLines(h).find((l) => l.step === 'settle-label').stopStep, 'test');
+});
+
+test('a claim-class stop\'s settle-label line names the stopped step (#6151)', async () => {
+  const h = harness({ script: [claimReply(5, '', 'x')] });
+  await run(['#7'], h.deps);
+  const label = settleLines(h).find((l) => l.step === 'settle-label');
+  assert.ok(label, 'the claim row writes a settle-label line');
+  assert.equal(label.stopStep, 'claim');
 });
 
 test('settle notes ride the final line: a claim that may lapse by TTL', async () => {
@@ -9215,6 +9261,22 @@ test('#5902 the real emitter over an unwritable main checkout: stdout, driver-ev
   }
 });
 
+test('#6149 a red test step mirrors through the real sink as exited test failed, reasonCode test-failed, actor agent', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'test-failed', 'agent']);
+});
+
+test('#6149 a verdict-less test run mirrors as infrastructure', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 2, stdout: '', stderr: 'boom' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'infrastructure', 'agent']);
+});
+
 test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
   const order = [];
   let release;
@@ -9253,7 +9315,7 @@ test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, 
   const stopLine = h.lines().find((l) => l.step === 'test');
   const ofStop = seen.filter((e) => e.discriminator === `test@${stopLine.ts}`).map((e) => [e.kind, e.station, e.outcome]);
   assert.strictEqual(stopLine.status, 'stop', 'red tests stop the record');
-  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'returned']]);
+  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'failed']]);
 
   let thrown = 0;
   const throwing = harness({ script: REDTESTS.script, deps: { stationEvent: () => { thrown += 1; throw new Error('station sink down'); } } });

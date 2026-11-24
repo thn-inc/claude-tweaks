@@ -133,14 +133,21 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
 // { title, number, scope?, tag? } -> { title, body } — the record-less housekeeping form (#5208): a
 // `chore` subject from a housekeeping PR's own title (one leading Conventional-Commits prefix
 // stripped), a body of that title plus an optional `[{tag}]` paragraph, and no `Release-Note:` or
-// `Fixes`/`Refs` lines — the PR links no record.
-function composeHousekeepingSubject({ title, number, scope, tag } = {}) {
+// `Fixes` lines — the PR links no record. Optional `refs` (positive integers) each become a
+// `Refs #n` line, one block as the body's last paragraph (the learned-skills PR names the records
+// whose wrap-up produced it without closing them).
+function composeHousekeepingSubject({ title, number, scope, tag, refs } = {}) {
   if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
   const cleanTitle = typeof title === 'string' ? title.replace(/^(?:feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(?:\([^)]*\))?!?:(?:\s+|$)/i, '').trim() : '';
   if (!cleanTitle) throw usage(`title must be a non-empty string for #${number}`);
   const { head, suffix } = subjectHead({ prefixBase: 'chore', scope, breaking: false, number, cleanTitle });
   const paragraphs = [cleanTitle];
   if (typeof tag === 'string' && tag.trim()) paragraphs.push(`[${tag.trim()}]`);
+  const refList = Array.isArray(refs) ? refs : [];
+  for (const n of refList) {
+    if (!Number.isInteger(n) || n <= 0) throw usage(`refs entries must be positive integers, got ${JSON.stringify(n)}`);
+  }
+  if (refList.length) paragraphs.push(refList.map((n) => `Refs #${n}`).join('\n'));
   return { title: head + suffix, body: paragraphs.join('\n\n') };
 }
 

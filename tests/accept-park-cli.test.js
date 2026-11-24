@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { runCli } = require('./helpers/run-cli');
+const { buildLine } = require('../plugin/bin/lib/station-events/emit');
 const { renderPacket } = require('../plugin/bin/lib/wrap-up/packet-render');
 const { parkStateOf } = require('../plugin/bin/lib/accept/park');
 const { POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
@@ -1504,8 +1505,9 @@ test('#5902: a park whose claim release returns released records one exited buil
   const exited = rec.events.filter((e) => e.station === 'build');
   assert.deepEqual(exited, [{
     kind: 'exited', station: 'build', outcome: 'passed', recordNumber: 7, repoName: 'o/r', lane: 'unknown', runId: RUN_ID,
-    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance' }, discriminator: `release:${RUN_ID}:2026-11-16T09:00:00.000Z`,
+    sessionId: 'sess-park', payload: { reason: 'awaiting-local-acceptance', actor: 'script' }, discriminator: `release:${RUN_ID}:2026-11-16T09:00:00.000Z`,
   }]);
+  assert.ok(buildLine(exited[0]), 'the park exit line is accepted by the emitter');
 });
 
 test('#5902: the park release discriminator names the released claim instance', async () => {

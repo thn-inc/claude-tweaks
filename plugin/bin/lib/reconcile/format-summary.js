@@ -233,6 +233,17 @@ function formatCheckSkipLines(result) {
   });
 }
 
+// #6143: one line per run held because its PR merged while the run was in flight. `pr` is null for a
+// `hollow-check-failed` entry whose check threw before a PR was known, so that line names the run only.
+function formatHollowMergeLines(result) {
+  if (!Array.isArray(result.hollowMerges)) return [];
+  return result.hollowMerges.map((e) => {
+    if (e.reason === 'hollow-check-failed') return `hollow-merge check failed for run ${e.runId}; held this pass`;
+    const commented = Array.isArray(e.commented) && e.commented.length ? `; commented on ${e.commented.map((n) => `#${n}`).join(', ')}` : '';
+    return `hollow merge held: PR #${e.pr} (run ${e.runId}) — ${e.phase} unfinished; claim, auto:build and run dir kept${commented}`;
+  });
+}
+
 // #4798: Step 4.0b's parents left open and its step-wide skips, flattened from every post-merge entry
 // whatever its action or verdict — a `marker-write-failed` or `error` entry folds into the aggregated `skipped:`
 // line, so these lines are the only place its fields show. Same two lines SessionStart prints.
@@ -275,6 +286,8 @@ function formatSummary(result) {
     const taken = scopedEntries(cat, arr).filter((e) => cat.takenActions.includes(e.action));
     if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}${cat.suffix ? cat.suffix(taken) : ''}`);
   }
+
+  lines.push(...formatHollowMergeLines(result));
 
   lines.push(...formatPostMergeStep40bLines(result));
 

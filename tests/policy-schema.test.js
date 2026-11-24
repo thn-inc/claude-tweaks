@@ -1180,8 +1180,8 @@ test('#6056: the policyOnly bullet names plan-at-specify', () => {
   assert.ok(line.includes('`plan-at-specify` (#6056)'), 'the policyOnly bullet does not name plan-at-specify');
 });
 
-test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599)', () => {
-  const cases = [[null, 'task'], ['review-lens-dispatch: sideways\n', 'task'], ['review-lens-dispatch: workflow\n', 'workflow']];
+test('review-lens-dispatch resolves task by default and for an invalid value, workflow when set (#5599), worker when set (#6003)', () => {
+  const cases = [[null, 'task'], ['review-lens-dispatch: sideways\n', 'task'], ['review-lens-dispatch: workflow\n', 'workflow'], ['review-lens-dispatch: worker\n', 'worker']];
   for (const [policy, expected] of cases) {
     const repo = tmpRepo();
     try {
@@ -1199,10 +1199,26 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
     const r = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
     assert.strictEqual(r.status, 0, r.stderr);
     assert.strictEqual(r.stdout.trim(), 'workflow', r.stderr);
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'review-lens-dispatch: worker\n');
+    const w = driverCli(['--run', runDir, '--values', 'review-lens-dispatch'], repo);
+    assert.strictEqual(w.status, 0, w.stderr);
+    assert.strictEqual(w.stdout.trim(), 'worker', w.stderr);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
     fs.rmSync(runDir, { recursive: true, force: true });
   }
+});
+
+test('AC6.3: the review-lens-dispatch removal condition names worker and #5825', () => {
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js')).split('\n');
+  const row = lines.findIndex((l) => l.includes("{ key: 'review-lens-dispatch'"));
+  assert.ok(row > 0, 'the review-lens-dispatch row is missing');
+  let start = row;
+  while (start > 0 && lines[start - 1].trim().startsWith('//')) start--;
+  const block = lines.slice(start, row).join('\n');
+  // The header comment line already says `worker`, so a bare /worker/ passes without the removal sentence; pin the sentence's own clause.
+  assert.match(block, /`worker` is a permanent third value/);
+  assert.match(block, /#5825/);
 });
 
 test('review-lens-selection resolves tier by default and for an invalid value, adaptive when set (#6001)', () => {

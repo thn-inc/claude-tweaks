@@ -78,7 +78,9 @@ acceptance-labeling guard below — beyond that, only `step-6-auto.md`'s tier ga
 thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md` Step 2.5's
 `gh run list --commit {headRefOid}` read — a head run not yet `completed` is not green), and
 re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
-`housekeeping-auto-merge` is still set) before doing anything. If any gate no longer holds — a new
+`housekeeping-auto-merge` is still set) and that no linked record carries `bot:blocked` or
+`bot:parked` before doing anything — a record parked between the scan and the arm, or one whose
+labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]`, still blocks the arm. A PR carrying the `<!-- wrap-up-skills-pr -->` marker is never armed here — **Drain learned-skills PRs** takes it. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as
 `## Open parent gate`'s own re-verification note above states for its finding.
@@ -152,6 +154,43 @@ removal sequence any release does, resolving the issue's own open/closed state i
 blob is releasable unconditionally, a `'live'` blob only when the issue reads closed. Never pass
 `--remove-grants` here — grant retention on a swept release is the standing retry request
 (`_shared/issue-claims.md`'s Grant revocation section), and this action doesn't opt out of it.
+
+## Drain learned-skills PRs
+
+The `[pr-unarmed]` findings this action resolves are the `<!-- wrap-up-skills-pr -->` PRs
+`_shared/github-pr-scan.md` item 9 offers only under `learned-skills-auto-merge` — a
+`github-issues`-only action. Run it once for the whole finding set, never per PR. The CLI acts on every open learned-skills PR, not only the listed candidates (it also reaches ones the scan did not offer, such as a PR younger than `pr-unarmed-age-hours`).
+
+1. Resolve `{integration-branch}` by `_shared/integration-branch.md`'s Resolution ladder.
+2. Resolve `{run-dir}`: tidy's own run dir (pipeline, or the Standalone auto fallback). An
+   interactive standalone run has none, so first mint one with
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug tidy --standalone tidy --create`
+   and use the printed path.
+3. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run-dir}" --integration-branch {integration-branch}`
+   with a Bash timeout of `1200000` ms, as `wrap-up/learned-skills-pr.md`'s drain watch does.
+
+The CLI resolves `learned-skills-auto-merge` and re-checks green and gate-passed itself, so the
+scan's candidate status is never trusted, and it writes its own `decisions.md` lines — hand-log
+nothing. `{disabled:true}` is a silent no-op: report nothing. Without `gh` the call returns
+empty lists, so there is nothing to report. Report each outcome from its JSON by section: `merged`
+and `armed` go to **Applied automatically**; `conflicting` and every `leftOpen` reason (`red`,
+`files-outside-skills`, and the rest) go to **Yours**, each with a paste-ready
+`gh pr view {n} --web` line, because each needs a human.
+
+- Exit 2 is a malformed call (an unanchored or missing `--run` included): re-resolve `{run-dir}`
+  and `{integration-branch}`, then re-run once; a second exit 2 is the degrade case below (the SKIP line), merging nothing.
+- Exit 1 (a listing or repo-read failure), or a second exit 2: nothing was merged. Log `SKIP {time} —
+  Learned-skills drain (degraded): condition: drain exited {1|2} ({stderr line}) → fallback: the
+  learned-skills PRs wait for a human. Reversibility: n/a.` through
+  `log-decision.js --status SKIP --text-file` (the CLI throws before it logs, so this line is the
+  only trace). Report it under **Yours**.
+- A call the Bash timeout killed, or no JSON line: the outcome is unknown, since the CLI merges one
+  PR at a time and prints its JSON only at the end, so some may have merged or armed. Log the same
+  SKIP with `condition: drain killed or returned no output (merge state unknown)` and report it
+  under **Yours** as unknown, never as nothing merged; the CLI's own `decisions.md` lines name any
+  PR it merged before the kill.
+
+This action never merges by any other route.
 
 ## Sync to GitHub
 

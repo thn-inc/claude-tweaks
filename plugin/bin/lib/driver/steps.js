@@ -643,7 +643,7 @@ function workerPrompt(ctx, { minutes, dollars, maxLines, tests }) {
     '',
     tests ? 'Edit only the Key Files and test files (the test list file below excepted).' : 'Edit only the Key Files and test files.',
     tests
-      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish.`
+      ? `Tests: run only the test files that cover what you changed, by explicit path — write their repo-relative paths, one per line, to ${WORKER_TEST_LIST} and run \`${tests.declared}\` with {files} as that path. Never run the whole suite; the driver runs the full check after you finish. Write the test list with the Write tool and make every edit with Edit or Write, never a shell script. Run the test command as one Bash call on its own (no \`&&\`, \`;\`, pipe, redirect or \`mkdir\`); Bash otherwise admits only read-only \`git status/diff/log/show/ls-files\`. A denied Bash call means that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form before reporting cannot-complete.`
       : 'Tests: do not run tests — the driver runs the project\'s check after it commits your change.',
     `Limits: the change stays within ${maxLines} implementation lines (the diff bound check applies; deleted test lines count toward it); the launch ends at ${minutes} minutes of wall clock or $${dollars} of spend.`,
     'When you finish, report status done (or cannot-complete), a one-line commit title and a one-to-two-sentence summary.',
@@ -1037,6 +1037,11 @@ function testTreeStop(ctx, deps) {
   return { status: 'fail', detail: `the worktree differs from HEAD after the test step on ${changed.length} path(s): ${namedPaths(changed)}` };
 }
 
+// verify.js's exit code for the step line: `null` when the run gave none (a timeout, a spawn error) (#6149).
+function verifyExitOf(r) {
+  return r.code ?? null;
+}
+
 // Why a verify.js run gave no verdict: a null code is no exit at all (a timeout, a spawn error), any
 // other non-zero code that is not a red run (2: usage or infrastructure error) names its own stderr.
 function verdictlessDetail(r) {
@@ -1233,15 +1238,16 @@ const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) 
   if (flagStop) return flagStop;
   // A red run's tree is not read here (#5454): the record stops on it with nothing pushed, or, under
   // implementer-tier record, the relaunch commit stages that tree and the next run's tree check reads it (#5997).
-  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests' };
+  // `verifyExit` is the key the station mirror reads to tell red tests from a verdict-less run (#6149).
+  if (r.code === 1) return { status: 'stop', reason: 'failing-test', detail: 'red tests', extra: { verifyExit: 1 } };
   // A green or verdict-less run: a worktree that differs from HEAD means the verdict is not about the commit (#5454).
   const treeStop = testTreeStop(ctx, deps);
   // A verdict-less run keeps its cause beside the tree detail, which stays the prefix.
-  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}` };
+  if (treeStop) return r.code === 0 ? treeStop : { ...treeStop, detail: `${treeStop.detail}; ${verdictlessDetail(r)}`, extra: { verifyExit: verifyExitOf(r) } };
   // verify.js: exit 1 is a failed check (red tests, handled above, before the tree read). No exit at
   // all (a timeout, a spawn error) or any other non-zero exit (2: usage or infrastructure error) means
   // the run itself gave no verdict, so it is a `fail`, not a gate saying no.
-  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r) };
+  if (r.code !== 0) return { status: 'fail', detail: verdictlessDetail(r), extra: { verifyExit: verifyExitOf(r) } };
   return { status: 'ok', detail };
 });
 

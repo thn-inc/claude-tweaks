@@ -51,7 +51,7 @@ files:
 - **URL:** `node plugin/bin/resolve-policy.js --all`
 - **Action:** Run with no key arguments.
 - **Should feel:** One call replacing key-by-key enumeration — the whole config, self-describing.
-- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers, `trusted-authors` and `learned-skills-auto-merge` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the record that wires each one drops the marker (#4816) — a #4608 record, or for `learned-skills-auto-merge` #6088's learned-skills drain sub-issue.
+- **Should understand:** Every schema key returns its `{value, source}` envelope decorated with `summary`/`category`/`tier`/`type`/`default` — a JSON `null` default means no default. `--all` composes with `--run`. `--all --values` and `--all <key>` are invocation errors. The deploy, dev and acceptance levers and `trusted-authors` resolve and validate today, but nothing in the plugin acts on them yet. Their summaries open "Not yet used" until the record that wires each one drops the marker (#4816) — a #4608 record. `learned-skills-auto-merge` is read by wrap-up's learned-skills drain and no longer carries the marker (#6112).
 - **Red flags:** A registered key missing from the output; a row missing `summary`/`category`/`tier`; `--all` accepting key arguments; a control-mode key's summary reading as live behavior (no "Not yet used" opener) while no plugin code consumes it.
 
 ### 5. Confirm the enforcement hook honors the same alias — `plugin/bin/lib/policy.js`
@@ -126,3 +126,4 @@ files:
 - Step 2 updated during build of #4141 — `--values` now writes a stderr warning for each present-but-invalid requested key. The rejected raw value reaches the CLI through `resolvePolicyKeys`'s optional `onInvalid` callback (`plugin/bin/lib/policy-schema.js`), so the JSON entry shape is unchanged
 - Path-swept during build of #418 — the payload moved into `plugin/`, so every step's command and every code citation gained the `plugin/` prefix. No step's behavior, expectation, or red flag changed.
 - Related specs: #328 (parent — policy read-path family), #602 (`worktree.always` → `worktree-always`, hook read path), #334 (run-config direct reads onto `--run`), #682 (`resolveWorktreeAlways` + session-start verdict banner)
+- Updated by #6112: step 4 drops `learned-skills-auto-merge` from the "Not yet used" levers; wrap-up's drain reads it

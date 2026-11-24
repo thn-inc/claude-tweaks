@@ -90,6 +90,26 @@ test('AC1.1: the refuted claim\'s line, from its composer, is an AUTO line that 
   assert.match(line, /found it at src\/b\.js:12\)/);
 });
 
+function assertBlockedRoute(text) {
+  const sec = between(text, '> **Partner death or unavailable lens agent.**', '> - Findings both agents report');
+  assert.match(sec, /`BLOCKED` or `NEEDS_CONTEXT` with a non-absence reason/);
+  assert.match(sec, /re-prompted once via `SendMessage`/);
+  assert.match(sec, /single-read coverage as a dead partner/);
+  assert.match(sec, /`blocked: \{reason\}` or `needs-context: \{reason\}`/);
+  assert.match(sec, /Step 7 summary and PR verdict comment, naming the lens and the agent's stated reason/);
+}
+
+test('a non-absence BLOCKED/NEEDS_CONTEXT reply is re-prompted once, then routed to single-read coverage', () => {
+  assertBlockedRoute(read());
+});
+
+test('go-red: dropping the re-prompt-once sentence fails the blocked-route assertions', () => {
+  const live = read();
+  const mutated = live.replace('is re-prompted once via `SendMessage`', 'is ignored');
+  assert.notEqual(mutated, live);
+  assert.throws(() => assertBlockedRoute(mutated), /re-prompted once/);
+});
+
 test('placement: note after Scratch path, bullet between only-one and vacuity bullets, both outside Calibration', () => {
   const d = read();
   const scratch = d.indexOf('> **Scratch path (per dispatch).**');

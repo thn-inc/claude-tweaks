@@ -355,6 +355,7 @@ test('resolveInputs: no headers anywhere and no manifest → records [] and sour
   assert.deepStrictEqual(inputs.records, []);
   assert.strictEqual(inputs.record, null);
   assert.strictEqual(inputs.sources.records, 'unavailable');
+  assert.strictEqual(inputs.closingRecords, null, '#4108: no records resolved is no decision, not an empty closing set');
 });
 
 // #5347: an express run writes no materialized header or manifest; its record
@@ -1737,7 +1738,14 @@ test('AC1.2: a header-resolved pack has inputs.closingRecords equal to inputs.re
 
 test('closingRecords keeps records only for the two header rungs (Ruling R1, decided once)', () => {
   for (const source of ['headers', 'worktree-headers']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), [7, 8]);
-  for (const source of ['manifest', 'worktree-manifest', 'config', 'unavailable']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+  for (const source of ['manifest', 'worktree-manifest', 'config']) assert.deepStrictEqual(closingRecords({ records: [7, 8], source }), []);
+});
+
+test('#4108: closingRecords is array-or-null: [] on a manifest rung (decided: none), null only when unavailable (no decision)', () => {
+  assert.deepStrictEqual(closingRecords({ records: [41, 42], source: 'manifest' }), []);
+  assert.strictEqual(closingRecords({ records: [], source: 'unavailable' }), null);
+  assert.deepStrictEqual(closingRecords({ records: [41], source: 'headers' }), [41]);
+  assert.deepStrictEqual(closingRecords({ records: [41], source: 'worktree-headers' }), [41]);
 });
 
 test('#3399: a worktree-manifest rung yields an empty closing set', () => {

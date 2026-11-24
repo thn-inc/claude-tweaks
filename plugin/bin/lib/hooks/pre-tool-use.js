@@ -2436,7 +2436,7 @@ function checkDispatchConfigGate(ctx, commandGitTargets, deps = {}) {
 // `deps` is run()'s own pass-through of its test-only override bag — see
 // run()'s header comment below — forwarded verbatim to checkReviewConsoleAskGate,
 // checkDispatchPromptGate, checkTeardownGate, checkPipelineShadowGuard,
-// checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
+// checkInflightPrGate, checkDispatchConfigGate and checkBookkeepingStampsGate as their own `deps`
 // parameter, and read directly by E1 at the tail of this function.
 function runInner(ctx, indeterminateTargets, warnings, deps) {
   // #3712: no other gate applies to AskUserQuestion.
@@ -2473,6 +2473,15 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 
   const psGate = checkPowershellOpaqueCommand(ctx);
   if (psGate.json) return psGate;
+
+  // #6143: required lazily inside the try, as the Agent/Task gate is above: a load-time fault in
+  // inflight-pr-gate.js (or a module it requires) must cost only this gate, never the gates after it.
+  if (ctx.input && ctx.input.tool_name === 'Bash') {
+    let inflightGate;
+    try { inflightGate = require('./inflight-pr-gate'); } catch { inflightGate = null; }
+    const inflight = inflightGate ? inflightGate.checkInflightPrGate(ctx, deps, denyResult) : {};
+    if (inflight.json) return inflight;
+  }
 
   // #3225: before the stamps gate — config.yml is Step 3's write, which the
   // documented order puts ahead of every stamp-bearing commit.
@@ -2615,8 +2624,10 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
 // and its `findRunByWorktreePath` lookup, #3769, and checkDispatchPromptGate's
 // reads), `toplevel` (replaces the `git rev-parse --show-toplevel` probe in E1
 // and checkDispatchConfigGate), checkReviewConsoleAskGate's `readConsoleCeiling`,
-// and checkDispatchPromptGate's `mainCheckoutRoot`, `readRunState` and
-// `loadTaskPrompt` (#4589, that module's header comment). The production
+// checkDispatchPromptGate's `mainCheckoutRoot`, `readRunState` and
+// `loadTaskPrompt` (#4589, that module's header comment), and
+// checkInflightPrGate's `readPrBody`, `mainCheckoutRoot`, `readRunState`,
+// `readDecisions` and `fsImpl` (#6143, inflight-pr-gate.js's header comment). The production
 // call site (bin/hooks.js's `main()`) calls `mod.run({...})` with a single argument, so
 // `deps` is always `{}` there; only a test passes a second argument. Adding
 // this parameter is what lets a test exercise checkBookkeepingStampsGate's
