@@ -7,7 +7,7 @@ description: Use when adding or changing a station-event producer (a plugin/bin 
 
 ## Overview
 
-Program code writes a station event at the moment it makes a transition; no skill prose writes one. `docs/reference/station-events.md` is the reader's contract (line format, stations, the Producers table, Coverage gaps). This skill is the change-side checklist. The Coverage gaps section lists the transitions that have no producer yet (`express-lane.js`, `bot:blocked`/`bot:parked`, the standard-lane merge, `accept:*` verdict labels), and each one is a future use of this skill.
+Program code writes a station event at the moment it makes a transition; no skill prose writes one. `docs/reference/station-events.md` is the reader's contract (line format, stations, the Producers table, Coverage gaps). This skill is the change-side checklist. The Coverage gaps section lists the transitions that have no producer yet (`express-lane.js`, the standard-lane merge, `accept:*` verdict labels; `bot:blocked`/`bot:parked` holds have producers since #6151), and each one is a future use of this skill.
 
 ## The registration set
 
@@ -15,7 +15,7 @@ Program code writes a station event at the moment it makes a transition; no skil
 |---|---|
 | `plugin/bin/lib/station-events/stations.js` | Any new station, kind, lane or outcome, a `LABEL_TRANSITIONS` row, a `DRIVER_STEP_STATIONS` entry, a release-reason pattern. It is the only file under `plugin/bin` that spells a station name. |
 | The producer CLI's exported `realDeps` | `stationEvent: (e) => appendStationEvent(e)`, never wired only under `require.main === module`. |
-| The producer's `run()` | Emits through `deps.stationEvent`. A native-dependency fetch uses `snapshotSinkOf(deps)` from `lib/station-events/blockers.js` as its `onSnapshot`. |
+| The producer's `run()` | Emits through `deps.stationEvent`. A native-dependency fetch uses `snapshotSinkOf(deps)` from `lib/station-events/blockers.js` as its `onSnapshot`, and wires `lastPayload: lastPayloadFromCwd` in its exported `realDeps` so an unchanged snapshot is not appended (a missing `lastPayload` means every snapshot appends, silently). |
 | The producer's own test file | `assert.equal(typeof realDeps.stationEvent, 'function', 'stationEvent is wired')`, plus fake-emitter assertions. |
 | `tests/bin-lib/station-events/failure-isolation.test.js` | A case for the new CLI. |
 | `docs/reference/station-events.md` | A Producers row (kind, station, outcome, payload keys, discriminator), and the item removed from Coverage gaps. |
