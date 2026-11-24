@@ -2312,20 +2312,31 @@ test('#4303: the cd after an assignment word that never closes is not followed',
     }
   });
 
-  // #4244 (ADR 0028): the compound keywords, read from the record's list. bash runs the command after each.
+  // #4244 (ADR 0028): the compound keywords, read from the record's list, and which of them commandWord
+  // skips: a command follows the seven lead words; `fi`, `done`, `esac`, `in`, `for` and `case` never
+  // precede one at command position (bash 3.2 and 5 run `in cp x M/f.js` as a missing command `in`).
   test('#4244: the exported compound-keyword set matches the record\'s list', () => {
     assert.deepStrictEqual([...gitCommand.COMPOUND_KEYWORDS].sort(),
       ['case', 'do', 'done', 'elif', 'else', 'esac', 'fi', 'for', 'if', 'in', 'then', 'until', 'while']);
     assert.ok(Object.isFrozen(gitCommand.COMPOUND_KEYWORDS));
+    const lead = ['do', 'elif', 'else', 'if', 'then', 'until', 'while'];
+    for (const w of gitCommand.COMPOUND_KEYWORDS) {
+      assert.strictEqual(gitCommand.commandWord([w, 'cp'], undefined, '/r').index, lead.includes(w) ? 1 : 0, w);
+    }
   });
 
+  // bash 3.2 and 5 write M/f.js for each (run from a scratch dir holding M/). The `while … done; cp` and
+  // `until … done; cp` shapes are the record's own AC1 cases: the cp is its own segment, so they, like the
+  // `case` item, report at base too and pin against regression only; the `break` loops go red there.
   test('#4244: a write or commit after a compound keyword reports its /main target', () => {
     includesFor(['if true; then cp x /main/f.js; fi', 'for f in a; do cp x /main/f.js; done', 'while false; do :; done; cp x /main/f.js',
       'case x in x) cp a /main/f.js;; esac', 'if false; then :; else cp x /main/f.js; fi', 'until true; do :; done; cp x /main/f.js',
-      'if false; then :; elif true; then cp x /main/f.js; fi', 'if cp x /main/f.js; then :; fi', 'then cp x /main/f.js'], MAIN_F);
+      'if false; then :; elif true; then cp x /main/f.js; fi', 'if cp x /main/f.js; then :; fi', 'then cp x /main/f.js',
+      'while true; do cp x /main/f.js; break; done', 'until false; do cp x /main/f.js; break; done'], MAIN_F);
     assert.deepStrictEqual(gitCommand.gitTargets('if true; then git -C /main commit -m x; fi', '/r'), [{ action: 'commit', dir: path.resolve('/main') }]);
-    // A quoted keyword is a command name, never skipped.
+    // A quoted or escaped keyword is a command name, never skipped (bash 3.2 and 5 write nothing).
     assert.deepStrictEqual(files('"then" cp x /main/f.js'), []);
+    assert.deepStrictEqual(files('\\then cp x /main/f.js'), []);
   });
 }
 

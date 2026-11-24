@@ -822,10 +822,10 @@ const PATH_PREFIX_WORDS = Object.freeze(['doas', 'env', 'nice', 'nohup', 'sudo',
 const SHELL_PREFIX_WORDS = Object.freeze(['!', 'builtin', 'command', 'time']);
 
 // #4244 (ADR 0028): the compound keywords that structure a list: `in` follows `for NAME` or `case WORD`
-// and is no command-position word, so only COMMAND_LEAD_KEYWORDS (the ones a command follows) are
-// skipped by commandWord. The prefixes `!`/`time` and the cd forms are other records'. Pinned by the tests.
+// and is no command-position word, so commandWord skips only the ones a command follows, the shared
+// COMPOUND_LEAD_WORDS set (#4281). The prefixes `!`/`time` and the cd forms are other records'. Pinned,
+// with which of them commandWord skips, by the tests.
 const COMPOUND_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'for', 'do', 'done', 'case', 'esac', 'in']);
-const COMMAND_LEAD_KEYWORDS = Object.freeze(['if', 'then', 'elif', 'else', 'while', 'until', 'do']);
 
 // How each prefix word reads its options, each per its own manual (bash's builtins, GNU and BSD
 // env/nice/time, sudo(8), doas(1)): `value` the short letters that take a value (readShortCluster),
@@ -895,7 +895,8 @@ function longOptionName(word, names) {
 // #4448: the command word bash runs in segment `t` (its values; `quoting` is the walk's `{ raw,
 // spanKinds, leadQuoted, pathImpl }`, and with none every word reads bare, tokenQuoting), read from
 // `dir` (the segment's cwd). Every assignment word
-// (assignmentWordEnd) and redirection (redirectionWidth) is skipped, then each STRIPPED_PREFIX_WORDS
+// (assignmentWordEnd) and redirection (redirectionWidth) is skipped, then a bare COMPOUND_LEAD_WORDS
+// keyword (#4244, not under `shellOnly`) or each STRIPPED_PREFIX_WORDS
 // word with its options (PREFIX_OPTIONS), and the loop runs again. Returns `{ index, dir, unprovable,
 // split }`: `index` is the command word's, or -1 when no word is left or a `stop` option is read; `dir` the
 // cwd it runs in (env -C, sudo -D), and `unprovable` true when such a value cannot be resolved (dir
@@ -968,8 +969,9 @@ function commandWord(t, quoting, dir, { shellOnly = false } = {}) {
     if (i >= t.length) return noCommand();
     const word = t[i];
     // A bare compound keyword at command position (`then cp x /M/b`) is no command: the one after it is.
-    // The cd lead (shellOnly) leaves them: a cd in a body is #4572's.
-    if (!shellOnly && COMMAND_LEAD_KEYWORDS.includes(word) && raw[i] === word && spanKinds[i] === 'b'.repeat(word.length)) {
+    // The cd lead (shellOnly) leaves them: a cd in a body is #4572's. The set's `!` is a stripped prefix
+    // too (PREFIX_OPTIONS null), so reading it here changes nothing.
+    if (!shellOnly && COMPOUND_LEAD_WORDS.has(word) && raw[i] === word && spanKinds[i] === 'b'.repeat(word.length)) {
       i += 1;
       continue;
     }
@@ -3395,6 +3397,7 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
 // A keyword or opener counts only as a bare word (#4281): bash reserves no quoted or
 // escaped word, so `\[\[ x > f \]\]`, `"[[" x > f ]]` and `\if [[ x > f ]]` are commands
 // whose redirect runs. Given `quoting`, each word is read pre-substitution with its spanKinds.
+// processKillLead and commandWord (#4244) skip the same lead words: this set is their one copy.
 const COMPOUND_LEAD_WORDS = new Set(['if', 'elif', 'while', 'until', 'then', 'do', 'else', '!']);
 
 function compoundBodyEnd(t, quoting) {
@@ -3976,7 +3979,9 @@ function mkdirTargets(command, cwd, opts) {
 module.exports = {
   gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The stripped command prefixes and their reader (#4448), reused by later recognisers.
-  STRIPPED_PREFIX_WORDS, commandWord, COMPOUND_KEYWORDS,
+  STRIPPED_PREFIX_WORDS, commandWord,
+  // The compound keywords (#4244), reused by #4572's recogniser.
+  COMPOUND_KEYWORDS,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };
