@@ -23,6 +23,11 @@ Scope keywords: ACTOR.PERSON, KIND.DECIDED
 ## Plan-review decisions (on the record body, 2026-11-24)
 
 - **Decision 1 (Reading B):** this record covers the release exit and the authorize exit only. AC1 keeps its first two tests and drops the two accept tests. `plugin/bin/accept-park.js` and `tests/accept-park-cli.test.js` are not touched (its in-process park release keeps its current payload). No skill text changes. Task 3 states the accept gap under `docs/reference/station-events.md`'s Coverage gaps with the record's exact sentence; a follow-up record owns it.
+Waived AC1.3: dropped by plan-review Decision 1 — no program code applies the accept verdict labels; a follow-up record owns it.
+Waived AC1.4: dropped by plan-review Decision 1 — no program code applies the accept verdict labels; a follow-up record owns it.
+Waived plugin/bin/accept-park.js: removed from this record's Files by plan-review Decision 1; not touched.
+Waived tests/accept-park-cli.test.js: removed from this record's Files by plan-review Decision 1; not touched.
+
 - **Decision 2 (Reading A):** `actor` is added only to release exits whose outcome is `passed` or `failed`. Releases whose outcome is the retired `abandoned` or `returned` are left exactly as they are (no `actor`); record 8/8 (#6152) migrates them.
 
 ## Review Focus
@@ -31,11 +36,13 @@ Scope keywords: ACTOR.PERSON, KIND.DECIDED
 2. A release whose reason maps to a retired outcome (`abandoned: spec 1`, `never-started: x`, a sweep) carries no `actor` and its payload is byte-identical to before. Test in Task 1.
 3. A swept release keeps `sweptBy` / `sweptBySession`; a sweep's outcome is `abandoned`, so it gains no `actor`. Covered by the existing sweep test, unchanged.
 4. The `decided` line's `outcomeRef` equals the `eventKey` the written `exited authorize` line gets from `buildLine`, including when `runId` is null. Test in Task 2.
-5. One action adding `auto:build` twice (or a replayed batch with a run dir) writes `decided` once per recorded exit, and a throwing emitter on the exit still leaves the batch's stdout and exit code unchanged. Existing throwing-emitter test covers the batch; Task 2's test asserts one `decided` per exit.
+5. One action adding `auto:build` twice (or a replayed batch with a run dir) writes `decided` once per recorded exit, and a throwing emitter on the exit still leaves the batch's stdout and exit code unchanged. `decided` is attempted only when the exit's own `stationEvent` call returned without throwing, so the existing throwing-emitter test's attempt count stays 5; Task 2's test asserts one `decided` per exit.
 
 ---
 
 ### Task 1: Release exits with a new-contract outcome carry actor `script`
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/release-claim.js` (the `deps.stationEvent` call in `run`, near line 213)
@@ -88,7 +95,10 @@ test('a retired-outcome release carries no actor and its payload is unchanged', 
 
 Update the existing `#5902: a released claim with --reason merged ...` deepEqual's `payload` to `{ reason: 'merged', link: 'https://x/1', actor: 'script' }`, and any other existing release-claim test that deep-equals a `passed`/`failed` release payload (grep the file for `payload: {`) the same way. Tests deep-equaling a retired-outcome payload stay as they are.
 
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js`. Expected: FAIL (the first two new tests and the updated deepEqual; no `actor` yet).
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `node tools/run-tests.js tests/bin-lib/release-claim/cli.test.js`
+Expected: FAIL after Step 1 (the first two new tests and the updated deepEqual; no `actor` yet).
 
 - [ ] **Step 3: Implement.** In `release-claim.js`, import `ACTOR` and `OUTCOME` from `./lib/station-events/stations` beside `releaseTransition`, and after building `payload = { reason, link: o.link || null }` add `actor: ACTOR.SCRIPT` only when `transition.outcome === OUTCOME.PASSED || transition.outcome === OUTCOME.FAILED`. No other field changes; the `failed` reason code is left for `emit.js` to normalize to `unspecified`.
 
@@ -99,6 +109,8 @@ Proof(auth): the change adds one `payload.actor` field to station-event lines wr
 - [ ] **Step 5: Commit** `git add plugin/bin/release-claim.js tests/bin-lib/release-claim/cli.test.js` then commit `Write actor script on new-contract claim-release exits — refs #6150`.
 
 ### Task 2: Authorize exit carries actor `person` and a `decided` line
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/apply-refine-labels.js` (`emitLabelTransitions`, near line 120)
@@ -126,11 +138,14 @@ test('authorizing writes exited passed actor person and a decided authorize via 
 });
 ```
 
-Update the existing `adding auto:build records exited authorize passed + entered release` test: its triple list becomes `['exited authorize passed', 'decided authorize', 'entered release']`, `events[0].payload` gains `actor: 'person'`, and its `events[1].outcome` assertion moves to `events[2]`. Grep the file for other tests that list `auto:build` triples or index events after an authorize exit (`runId is the run dir basename`, `a comment failure after a successful edit`) and update them the same way.
+Update the existing `adding auto:build records exited authorize passed + entered release` test: its triple list becomes `['exited authorize passed', 'decided authorize', 'entered release']`, `events[0].payload` gains `actor: 'person'`, and its `events[1].outcome` assertion moves to `events[2]`. Grep the file for other tests that list `auto:build` triples or index events after an authorize exit (`runId is the run dir basename`, `a comment failure after a successful edit`) and update them the same way. Also update: `a recording stationEvent leaves stdout ...` (`events.length` 5 → 6), `a host-qualified --repo reduces to owner/name` (`events.length` 2 → 3), and `two actions on one issue are not deduped` (insert `'5 decided authorize'` after `'5 exited authorize passed'`). The throwing-emitter test's `attempts, 5` stays 5 (no `decided` after a throwing exit call). Add one assertion that a re-authorize action (`addLabels: ['auto:build'], removeLabels: ['bot:blocked']`) also writes `decision: 'authorize'` (plan-review clarification).
 
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/apply-refine-labels.test.js`. Expected: FAIL.
+- [ ] **Step 2: Run the test to verify it fails**
 
-- [ ] **Step 3: Implement.** In `emitLabelTransitions`, when `t.kind === KIND.EXITED && t.station === STATION.AUTHORIZE`, add `actor: ACTOR.PERSON` to that event's payload; after emitting it (its own try), emit the `decided` event with `kind: KIND.DECIDED, station: STATION.AUTHORIZE`, the same `recordNumber`, `repoName`, `lane`, `runId`, `sessionId` and `discriminator`, and `outcomeRef: eventKey(exitedEvent)`, inside its own try/catch. Only the authorize exit changes; intake, shape and release exits are untouched.
+Run: `node tools/run-tests.js tests/apply-refine-labels.test.js`
+Expected: FAIL after Step 1.
+
+- [ ] **Step 3: Implement.** In `emitLabelTransitions`, when `t.kind === KIND.EXITED && t.station === STATION.AUTHORIZE`, add `actor: ACTOR.PERSON` to that event's payload; after emitting it (its own try), emit the `decided` event — only when the exit's `stationEvent` call returned without throwing — with `kind: KIND.DECIDED, station: STATION.AUTHORIZE`, `decision: 'authorize'` for every `auto:build` add (a re-authorize that also removes `bot:blocked` included), the same `recordNumber`, `repoName`, `lane`, `runId`, `sessionId` and `discriminator`, and `outcomeRef: eventKey(exitedEvent)`, inside its own try/catch. Only the authorize exit changes; intake, shape and release exits are untouched.
 
 Proof(auth): `auto:build` is a grant label; this task changes only the station-event lines written after `gh issue edit` succeeded — the edit argv, the `failed` routing and stdout stay byte-identical, pinned by the existing `a failed edit records nothing` and `a recording stationEvent leaves stdout and exit code byte-identical` tests.
 
@@ -143,6 +158,9 @@ Proof(auth): `auto:build` is a grant label; this task changes only the station-e
 **Files:**
 - Modify: `docs/reference/station-events.md` (the Producers table rows for `release-claim.js` and `apply-refine-labels.js`; `### Kinds`; `## Coverage gaps`)
 
-- [ ] **Step 1:** Add `actor` (`script`, on a `passed` or `failed` release only; a retired-outcome release carries none until record 8/8) to the payload keys of the `release-claim.js` row; add to the `apply-refine-labels.js` row that the `auto:build` authorize exit carries `actor` (`person`) and is followed by a `decided` line at `authorize` (`decision`, `actor`, `via`, `outcomeRef` = the exit's `eventKey`, same discriminator). In `### Kinds`, `decided` now has a producer. Under `## Coverage gaps`, add the bullet: "The accept verdict exits (`passed` plus `decided accept`; `sent-back` to `build` with `changes-requested`) are not emitted: the verdict labels are applied by skill prose, so they need a code path first."
-- [ ] **Step 2: Run** `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js`. Expected: PASS.
+- [ ] **Step 1:** Add `actor` (`script`, on a `passed` or `failed` release only; a retired-outcome release carries none until record 8/8) to the payload keys of the `release-claim.js` row; add to the `apply-refine-labels.js` row that the `auto:build` authorize exit carries `actor` (`person`) and is followed by a `decided` line at `authorize` (`decision`, `actor`, `via`, `outcomeRef` = the exit's `eventKey`, same discriminator). In `### Kinds`, `decided` now has a producer. Under `## Coverage gaps`, add the bullet: "The accept verdict exits (`passed` plus `decided accept`; `sent-back` to `build` with `changes-requested`) are not emitted: the verdict labels are applied by skill prose, so they need a code path first." Extend the existing release bullet with: "`accept-park.js`'s in-process release is still written without `actor` (pre-contract)."
+- [ ] **Step 2: Run the station-event doc tests**
+
+Run: `node tools/run-tests.js tests/bin-lib/station-events/transition-table.test.js`
+Expected: PASS.
 - [ ] **Step 3: Commit** `docs/reference/station-events.md` — `Document the release and authorize outcome fields and the accept gap — refs #6150`.
