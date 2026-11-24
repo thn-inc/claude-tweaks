@@ -12,7 +12,7 @@ The `bot:blocked`/`bot:parked` exclusion is what keeps this sweep from un-parkin
 
 ## Item 9 — the `allow_auto_merge` state on every row
 
-(`ALLOW_AUTO_MERGE`, read once above via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies.
+From item 9's closing note in `github-pr-scan.md`, after "Every row carries the repo's `allow_auto_merge` state": (`ALLOW_AUTO_MERGE`, read once in item 9's first fence in `github-pr-scan.md` via `gh api repos/{owner}/{repo} -q .allow_auto_merge`) whenever it's `false`, so a recommendation to "arm" never implies a live `--auto` arm will succeed on a repo where it can't — the degrade path still applies.
 
 ## Item 11 — flag-only, never auto-rebase
 
@@ -20,4 +20,4 @@ The lower-risk default consistent with this scope's report-only posture (`/tidy`
 
 ## Anti-pattern — a self-scheduled per-PR check-in loop
 
-GitHub's own `--auto` merges the moment checks pass, with no session watching, and this scheduled sweep catches the cases `--auto` alone can't: unarmed PRs and unsettled claims — neither depends on any session surviving. A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.
+The parentheticals cut from the scan's sentence, verbatim: `--auto` "(which merges the moment checks pass, with no session watching)" and the sweep "(which catches the cases `--auto` alone can't: unarmed PRs and unsettled claims), neither of which depends on any session surviving." A per-PR loop dies with the session that started it and duplicates what the sweep already covers on a schedule nothing has to remember to run.
