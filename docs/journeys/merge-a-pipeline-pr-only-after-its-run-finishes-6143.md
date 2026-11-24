@@ -56,7 +56,7 @@ files:
 - **Action:** Read the summary line `held as hollow merges (run unfinished…)`, or the separate check-failed line.
 - **Should feel:** Like a clear alarm. The record should not look shipped.
 - **Should understand:**
-  - Known gaps let some merges reach this step: a `gh pr merge` inside a loop, `$(…)` or `sh -c` is not seen by the gate.
+  - Known gaps let some merges reach this step: a `gh pr merge` inside `$(…)` or `sh -c`, or one whose PR number is a variable (the usual loop shape), is not seen by the gate.
   - Reconcile's `detectHollowMerges` holds such a run through release, post-merge and archive. It posts one comment on the record, claimed so that two racing passes post only one.
   - A check that fails is held and reported as `hollow-check-failed` and retried next pass. A whole-pass failure holds everything as `hollow-merge-check-failed`.
   - A project where the check cannot apply (`not-github-issues`, `no-remote`, `unknown-host`) settles as before.

@@ -161,16 +161,24 @@ test('#6143: gh pr merge --disable-auto is a cancel, like gh pr ready --undo', (
 // these shapes fails here until the doc is updated, and the doc must keep naming the gaps.
 test('#6143: the Known gaps shapes are unparsed, and docs/hooks.md names them with the reconcile backstop', () => {
   for (const c of [
-    'if true; then gh pr merge 5; fi', 'for pr in 1 2; do gh pr merge "$pr"; done', 'while read p; do gh pr merge 5; done',
     'x=$(gh pr merge 5)', 'x=`gh pr merge 5`', 'bash -c "gh pr merge 5"', "sh -c 'gh pr merge 5'",
   ]) assert.deepStrictEqual(ghPrLifecycleCalls(c, CWD), [], c);
+  // #4244: commandWord skips a compound keyword, so a call in an if/for/while/until condition or body is read.
+  for (const c of [
+    'if true; then gh pr merge 5; fi', 'while read p; do gh pr merge 5; done', 'until false; do gh pr merge 5; done',
+    'if gh pr merge 5; then :; fi', 'if x; then :; else gh pr merge 5; fi',
+  ]) assert.deepStrictEqual(pick(ghPrLifecycleCalls(c, CWD)), [{ verb: 'merge', selector: '5', repo: null, undo: false }], c);
+  // The #6061 batch loop is read too, but its selector is the variable, so the gate's PR read still fails.
+  assert.deepStrictEqual(pick(ghPrLifecycleCalls('for pr in 1 2; do gh pr merge "$pr"; done', CWD)), [{ verb: 'merge', selector: '$pr', repo: null, undo: false }]);
+  assert.deepStrictEqual(ghPrLifecycleCalls('if true; then echo gh pr merge 5; fi', CWD), [], 'an argument is not a call');
   assert.strictEqual(ghPrLifecycleCalls('gh pr merge $pr', CWD)[0].selector, '$pr', 'a variable selector is read literally');
   const doc = readText(path.join(__dirname, '..', 'docs', 'hooks.md'));
   const entry = doc.split('\n').find((l) => l.startsWith('- **In-flight PR gate (block tier, #6143):**'));
   assert.ok(entry, 'gate entry present');
   assert.ok(entry.includes('**Known gaps:**'), 'Known gaps clause present');
   const gaps = entry.slice(entry.indexOf('**Known gaps:**'));
-  for (const phrase of ['`if`/`for`/`while`', '`$(…)`', 'backtick', '`bash -c`', '`gh pr merge $pr`', '#6061', '`detectHollowMerges`', 'Defer-reason: genuinely-larger']) {
+  assert.ok(!gaps.includes('`if`/`for`/`while` body, a'), 'if/for/while bodies are no longer listed as unparsed');
+  for (const phrase of ['since #4244', '`if`/`for`/`while`/`until`', '`$(…)`', 'backtick', '`bash -c`', '`gh pr merge $pr`', '#6061', '`detectHollowMerges`', 'Defer-reason: genuinely-larger']) {
     assert.ok(gaps.includes(phrase), phrase);
   }
 });
