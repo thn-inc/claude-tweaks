@@ -3582,6 +3582,32 @@ test('a corrupt run manifest plans the default list and leaves the claim unchang
   assert.equal(io.out.join('\n'), io2.out.join('\n'));
 });
 
+test('a multi-target claim reads the run manifest once', () => {
+  const dir = manifestRunDir({ lane: 'driver', ceremonyProfile: 'standard' });
+  const manifestPath = path.join(dir, 'manifest.json');
+  const { ghApi } = claimFixture([720, 721]);
+  const { deps } = baseDeps({ ghApi, gh: makeGh({}).gh });
+  deps.appendClaimLog = () => {};
+  const events = withRecorder(deps);
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function wrapped(file, ...rest) {
+    if (file === manifestPath) reads += 1;
+    return realRead.call(this, file, ...rest);
+  };
+  let code;
+  try {
+    code = run(['--run-id', STATION_RUN_ID, '--targets', '720,721', '--run', dir], deps);
+  } finally {
+    fs.readFileSync = realRead;
+  }
+  assert.equal(code, 0);
+  assert.equal(reads, 1);
+  const planned = events.filter((e) => e.kind === 'planned');
+  assert.deepEqual(planned.map((e) => e.recordNumber), [720, 721]);
+  assert.deepEqual(planned.map((e) => e.payload.list), ['driver', 'driver']);
+});
+
 test('readRunManifestPlanInputs returns nulls for a missing dir, a missing file and a non-object JSON', () => {
   const nulls = { lane: null, ceremonyProfile: null };
   assert.deepEqual(readRunManifestPlanInputs(path.join(os.tmpdir(), 'ct-no-such-dir-6147')), nulls);
