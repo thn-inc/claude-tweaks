@@ -154,3 +154,22 @@ test('#6143: gh pr merge --disable-auto is a cancel, like gh pr ready --undo', (
   // Not a ready flag: gh refuses it there, so it cancels nothing.
   assert.strictEqual(ghPrLifecycleCalls('gh pr ready --disable-auto 5', CWD)[0].undo, false);
 });
+
+// docs/hooks.md's in-flight PR gate entry names the shapes the parser does not reach ("Known gaps"), with
+// reconcile's hollow-merge hold as the backstop. Pinned both ways: a walker that starts reaching one of
+// these shapes fails here until the doc is updated, and the doc must keep naming the gaps.
+test('#6143: the Known gaps shapes are unparsed, and docs/hooks.md names them with the reconcile backstop', () => {
+  for (const c of [
+    'if true; then gh pr merge 5; fi', 'for pr in 1 2; do gh pr merge "$pr"; done', 'while read p; do gh pr merge 5; done',
+    'x=$(gh pr merge 5)', 'x=`gh pr merge 5`', 'bash -c "gh pr merge 5"', "sh -c 'gh pr merge 5'",
+  ]) assert.deepStrictEqual(ghPrLifecycleCalls(c, CWD), [], c);
+  assert.strictEqual(ghPrLifecycleCalls('gh pr merge $pr', CWD)[0].selector, '$pr', 'a variable selector is read literally');
+  const doc = require('node:fs').readFileSync(path.join(__dirname, '..', 'docs', 'hooks.md'), 'utf8');
+  const entry = doc.split('\n').find((l) => l.startsWith('- **In-flight PR gate (block tier, #6143):**'));
+  assert.ok(entry, 'gate entry present');
+  assert.ok(entry.includes('**Known gaps:**'), 'Known gaps clause present');
+  const gaps = entry.slice(entry.indexOf('**Known gaps:**'));
+  for (const phrase of ['`if`/`for`/`while`', '`$(…)`', 'backtick', '`bash -c`', '`gh pr merge $pr`', '#6061', '`detectHollowMerges`', 'Defer-reason: genuinely-larger']) {
+    assert.ok(gaps.includes(phrase), phrase);
+  }
+});
