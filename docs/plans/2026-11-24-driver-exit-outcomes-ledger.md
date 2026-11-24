@@ -2,4 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | ops | Pre-flight branch-divergence: origin/main 5 commits ahead of the branch at resume | open | Held from flow Step 2.5; closed by the pre-verification catch-up merge |
+| 1 | ops | Pre-flight branch-divergence: origin/main 5 commits ahead of the branch at resume | fixed | Pre-review catch-up merged origin/main in 04436be430 (conflicts resolved; HEAD 16 ahead, 0 behind) |
