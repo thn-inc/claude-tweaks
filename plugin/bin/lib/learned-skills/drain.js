@@ -9,7 +9,7 @@
 // takes Step 2.5's explicit-`off` "merge anyway" route: its green is stricter.
 //
 // leftOpen reasons (closed set, spec Decision 1): LEFT_OPEN_REASONS. `conflicting` and `armed` are
-// separate lists. A failed files/state/runs/ready-run read is `pending` with the error as `detail`,
+// separate lists; `rebuilt` lists the PRs whose conflict the rebuild cleared (#6113). A failed files/state/runs/ready-run read is `pending` with the error as `detail`,
 // never merged or watched. The one merge call is `gh pr merge --squash --delete-branch
 // --match-head-commit {sha}` with a subject composed by compose-subject's record-less form; no label
 // or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set;
@@ -27,7 +27,11 @@
 // Under `mergeVerification: off` the rollup of a repo with no PR CI stays empty forever, so an own PR
 // whose rollup is empty and which has no head runs is left open `pending` at once, without the watch.
 //
-// `integrationBranch` is accepted for the CLI contract (spec Deliverable 1) and reserved: nothing here reads it.
+// A PR that classifies conflicting is rebuilt on the integration tip (rebuild.js: a pure double append, one
+// leased push) and then follows the pending path, the own PR on the running watch's deadline, with at most one
+// rebuild per PR per drain. A refusal is left open with the rebuild's reason (`conflict needs a human: {files}`,
+// `lease-rejected`, `git-too-old`, `rebuild-failed`). `conflicting` now means only a conflict the merge call
+// itself reported, or a PR that conflicts again after its rebuild.
 //
 // Every side effect goes through `deps` so tests inject a fake gh and a fake clock.
 'use strict';
@@ -38,6 +42,7 @@ const { drainPath } = require('./layout');
 const { classifyRollup, normalizeEntry, normalizeHeadRun } = require('../pr-checks/classify');
 const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
 const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
+const { rebuild: realRebuild } = require('./rebuild');
 const { formatEntry, appendEntries } = require('../log-decision/append');
 const composeSubject = require('../compose-subject');
 
@@ -54,6 +59,7 @@ const OK_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 const LEFT_OPEN_REASONS = Object.freeze([
   'pending', 'timeout', 'red', 'head-changed', 'cross-repository', 'not-learned-skills-branch',
   'files-outside-skills', 'merge-failed', 'no-gh',
+  'lease-rejected', 'git-too-old', 'rebuild-failed', 'conflict needs a human',
 ]);
 
 // Step 2.5's table, Value column x Green/Pending/Red. An unknown value resolves to `wait`.
@@ -140,17 +146,20 @@ const defaults = {
   mkdir: lsRealDeps.mkdir,
   writeFile: lsRealDeps.writeFile,
 };
+const defaultRebuild = (cwd) => (args) => realRebuild({ ...args, cwd });
 
 // { runDir, integrationBranch, ownPr, repo, autoMerge, mergeVerification } -> the outcome lists.
 function drain(opts, overrides = {}) {
   const { runDir, ownPr, repo, autoMerge } = opts;
+  const cwd = opts.cwd || process.cwd();
   const deps = { ...defaults, ...overrides };
   if (!overrides.compose) deps.compose = defaultCompose(deps);
+  if (!overrides.rebuild) deps.rebuild = defaultRebuild(cwd);
   if (!overrides.readyRun) deps.readyRun = defaultReadyRun(repo);
   const notes = {}; // a PR's own ci-gate miss, folded into its one decision line
   const own = ownPr ? Number(ownPr) : null;
   const lever = LEVER_ACTIONS[opts.mergeVerification] ? opts.mergeVerification : 'wait';
-  const out = { merged: [], armed: [], leftOpen: [], conflicting: [] };
+  const out = { merged: [], armed: [], leftOpen: [], conflicting: [], rebuilt: [] };
   if (autoMerge !== true) return { ...out, disabled: true };
 
   const log = (status, step, text, reversibility) => {
@@ -176,6 +185,26 @@ function drain(opts, overrides = {}) {
     }
   };
   const open = (pr, reason, detail) => settle(pr, 'leftOpen', reason, detail);
+
+  // A classified-conflicting PR: rebuild it once on the integration tip. The new head, or null when the PR
+  // was settled (refused, failed, or conflicting again after its rebuild).
+  const rebuiltOnce = new Set();
+  const rebuildOrSettle = (n, headRef, oldHead) => {
+    if (rebuiltOnce.has(n)) { settle(n, 'conflicting'); return null; }
+    rebuiltOnce.add(n);
+    let res;
+    try { res = deps.rebuild({ pr: n, headRef, oldHead, integrationBranch: opts.integrationBranch }); } catch (err) {
+      open(n, 'rebuild-failed', firstStderrLine(err));
+      return null;
+    }
+    if (!res || res.ok !== true) {
+      open(n, (res && res.reason) || 'rebuild-failed', res && res.detail);
+      return null;
+    }
+    out.rebuilt.push(n);
+    log('AUTO', STEP, `PR #${n} rebuilt on ${opts.integrationBranch} (old head ${oldHead})`, 'med');
+    return res.commit;
+  };
 
   if (!deps.ghAvailable()) {
     if (own) open(own, 'no-gh');
@@ -227,6 +256,7 @@ function drain(opts, overrides = {}) {
   const filePaths = (files) => (Array.isArray(files) ? files.map((f) => f && f.path) : []);
 
   // Green verdict at `sha`: a fresh re-read, then the one merge call.
+  // Returns { rebuilt: newHead } when the own PR was rebuilt and its watch must continue on that head.
   const mergeGreen = (n, sha, gateStart, cand) => {
     let fresh;
     try { fresh = read(n); } catch (err) { return open(n, 'pending', firstStderrLine(err)); }
@@ -234,7 +264,11 @@ function drain(opts, overrides = {}) {
     if (fresh.view.headRefOid !== sha) return open(n, 'head-changed');
     const recheck = scopeProblem(cand, filePaths(fresh.view.files));
     if (recheck) return open(n, recheck);
-    if (fresh.verdict === 'conflicting') return settle(n, 'conflicting');
+    if (fresh.verdict === 'conflicting') {
+      const commit = rebuildOrSettle(n, cand.headRefName, sha);
+      if (!commit) return undefined;
+      return n === own ? { rebuilt: commit } : open(n, 'pending');
+    }
     if (fresh.verdict === 'red') return open(n, 'red');
     if (fresh.verdict !== 'green') return open(n, 'pending');
     if (n === own && runDir) {
@@ -243,6 +277,35 @@ function drain(opts, overrides = {}) {
       if (code !== 0) notes[n] = ` (ci-gate not recorded, exit ${code})`;
     }
     return land(n, sha, false);
+  };
+
+  // The own PR's one bounded watch; `lag` is a head a poll may still report while GitHub catches up.
+  const watch = (n, sha, lag, gateStart, c, deadline) => {
+    let cur = sha;
+    let stale = lag;
+    while (deps.now() < deadline) {
+      deps.sleep(POLL_MS);
+      let poll;
+      try { poll = read(n); } catch (err) { return open(n, 'pending', firstStderrLine(err)); }
+      if (poll.verdict === 'closed') return undefined;
+      const head = poll.view.headRefOid;
+      if (stale && head === stale) continue;
+      if (head !== cur) return open(n, 'head-changed');
+      if (poll.verdict === 'conflicting') {
+        const commit = rebuildOrSettle(n, c.headRefName, cur);
+        if (!commit) return undefined;
+        stale = cur;
+        cur = commit;
+        continue;
+      }
+      if (poll.verdict === 'red') return open(n, 'red');
+      if (poll.verdict === 'green') {
+        const r = mergeGreen(n, cur, gateStart, c);
+        if (r && r.rebuilt) { stale = cur; cur = r.rebuilt; continue; }
+        return undefined;
+      }
+    }
+    return open(n, 'timeout');
   };
 
   for (const c of marked) {
@@ -266,9 +329,19 @@ function drain(opts, overrides = {}) {
       if (state.verdict === 'closed') continue;
       const stateScope = scopeProblem(c, filePaths(state.view.files)); // before any arm, watch or merge
       if (stateScope) { open(n, stateScope); continue; }
-      if (state.verdict === 'conflicting') { settle(n, 'conflicting'); continue; }
+      if (state.verdict === 'conflicting') {
+        const commit = rebuildOrSettle(n, c.headRefName, sha);
+        if (!commit) continue;
+        if (n !== own) { open(n, 'pending'); continue; }
+        watch(n, commit, sha, gateStart, c, deps.now() + MERGE_GATE_WATCH_SECONDS * 1000);
+        continue;
+      }
       if (state.verdict === 'red') { open(n, 'red'); continue; }
-      if (state.verdict === 'green') { mergeGreen(n, sha, gateStart, c); continue; }
+      if (state.verdict === 'green') {
+        const r = mergeGreen(n, sha, gateStart, c);
+        if (r && r.rebuilt) watch(n, r.rebuilt, sha, gateStart, c, deps.now() + MERGE_GATE_WATCH_SECONDS * 1000);
+        continue;
+      }
       // pending
       if (n !== own) { open(n, 'pending'); continue; }
       if (opts.mergeVerification === 'off' && state.view.statusCheckRollup.length === 0 && state.headRuns.length === 0) { open(n, 'pending'); continue; }
@@ -276,19 +349,7 @@ function drain(opts, overrides = {}) {
         land(n, sha, true);
         continue;
       }
-      const deadline = deps.now() + MERGE_GATE_WATCH_SECONDS * 1000;
-      let settled = false;
-      while (!settled && deps.now() < deadline) {
-        deps.sleep(POLL_MS);
-        let poll;
-        try { poll = read(n); } catch (err) { open(n, 'pending', firstStderrLine(err)); settled = true; break; }
-        if (poll.verdict === 'closed') { settled = true; break; }
-        if (poll.view.headRefOid !== sha) { open(n, 'head-changed'); settled = true; break; }
-        if (poll.verdict === 'conflicting') { settle(n, 'conflicting'); settled = true; break; }
-        if (poll.verdict === 'red') { open(n, 'red'); settled = true; break; }
-        if (poll.verdict === 'green') { mergeGreen(n, sha, gateStart, c); settled = true; break; }
-      }
-      if (!settled) open(n, 'timeout');
+      watch(n, sha, null, gateStart, c, deps.now() + MERGE_GATE_WATCH_SECONDS * 1000);
     } catch (err) {
       open(n, 'pending', firstStderrLine(err));
     }
