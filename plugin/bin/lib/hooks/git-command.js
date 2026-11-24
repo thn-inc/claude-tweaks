@@ -1831,6 +1831,7 @@ function leadingRedirectOpEnd(raw, kinds, nest) {
 // Over-counting only leaves the state nested, which resolves no target.
 function advanceNesting(nest, raw, kinds, end) {
   let { stack, tick, sq } = nest;
+  let kd = nest.kd || '';
   for (let j = 0; j < end; j += 1) {
     if (kinds[j] !== 'd') continue;
     const c = raw[j];
@@ -1838,9 +1839,15 @@ function advanceNesting(nest, raw, kinds, end) {
     if (c === '\\') { if (kinds[j + 1] === 'd') j += 1; continue; }
     if (c === '`') tick = !tick;
     else if (c === '$' && (raw[j + 1] === '(' || raw[j + 1] === '{') && kinds[j + 1] === 'd') {
-      // #4247: a `$(case …` level ('k') closes only at the `)` after `esac`, since a pattern's `)` is not its closer.
-      stack += raw[j + 1] === '{' ? 'p' : /^\(\s*case\s/.test(raw.slice(j + 1)) ? 'k' : 'c';
+      // #4247: a `$(case …` level ('k') closes at the first `)` once every `case` in it has met its `esac`
+      // (`kd` counts the open cases per 'k' level), since a pattern's `)` is not its closer.
+      const isK = raw[j + 1] === '(' && /^\(\s*case\s/.test(raw.slice(j + 1));
+      stack += raw[j + 1] === '{' ? 'p' : isK ? 'k' : 'c';
+      if (isK) kd += '0';
       j += 1;
+    } else if (stack.endsWith('k') && (c === 'c' || c === 'e') && (j === 0 || /[\s;&|(]/.test(raw[j - 1])) && /^(case|esac)(?![\w-])/.test(raw.slice(j))) {
+      kd = kd.slice(0, -1) + Math.max(0, Math.min(9, Number(kd[kd.length - 1]) + (c === 'c' ? 1 : -1)));
+      j += 3;
     } else if (stack !== '' || tick) {
       const inParam = stack.endsWith('p');
       if (inParam) { if (c === '}') stack = stack.slice(0, -1); }
@@ -1849,11 +1856,14 @@ function advanceNesting(nest, raw, kinds, end) {
       else if (stack !== '' && (c === ')' || c === '}')) {
         // #4247: a closer pops only its own opener; a bare `}` or a pattern `)` is word text, which stays nested.
         const top = stack[stack.length - 1];
-        if (c === '}' ? top === 'g' : top === 'c' || (top === 'k' && /\besac\s*;?\s*$/.test(raw.slice(0, j)))) stack = stack.slice(0, -1);
+        if (c === '}' ? top === 'g' : top === 'c' || (top === 'k' && kd.endsWith('0'))) {
+          stack = stack.slice(0, -1);
+          if (top === 'k') kd = kd.slice(0, -1);
+        }
       }
     }
   }
-  return { stack, tick, sq };
+  return { stack, tick, sq, kd };
 }
 
 function isNested(nest) {
