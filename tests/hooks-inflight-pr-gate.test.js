@@ -287,6 +287,38 @@ test('the default runner with no prefix keeps the hook env (no GH_REPO/GH_HOST a
   assert.strictEqual(gh.ghEnv(), '|');
 });
 
+test('a main checkout with no pipelines dir is allowed without reading the PR, and the root resolves once per call', async () => {
+  const project = mkTmp('ct-ipg-nopipes-');
+  git(['-C', project, 'init', '-q']);
+  const fx = { project, runDir: path.join(project, '.claude-tweaks', 'pipelines', R) };
+  const { mainCheckoutRoot } = require('../plugin/bin/lib/hooks/worktree-detect');
+  const roots = [];
+  const counted = (cwd) => { roots.push(cwd); return mainCheckoutRoot(cwd); };
+  const read = reader(bodyFor(fx));
+  assertAllowedNoEvent(gate(ctxFor(fx, MERGE), { readPrBody: read, mainCheckoutRoot: counted }), fx);
+  assert.strictEqual(read.calls.length, 0, 'no PR read for a checkout that can name no run');
+  assert.strictEqual(roots.length, 1);
+
+  const live = await fixture();
+  roots.length = 0;
+  assert.ok(denyReason(gate(ctxFor(live, MERGE), { readPrBody: reader(bodyFor(live)), mainCheckoutRoot: counted })));
+  assert.strictEqual(roots.length, 1, 'the PR read and the run lookup share one resolved root');
+});
+
+test('the default runner bounds the PR read by the main checkout\'s gh-timeout-ms when the call runs in a subdirectory', { skip: skipWin }, async () => {
+  const fx = await fixture();
+  fs.writeFileSync(path.join(fx.project, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 1000\n');
+  const sub = path.join(fx.project, 'sub');
+  fs.mkdirSync(sub);
+  const gh = stubGh({ exit: 0, json: { body: bodyFor(fx), number: 5 } });
+  // A gh slower than the policy's 1000 ms but faster than the 5000 ms default: killed only when the policy applies.
+  const ghPath = path.join(gh.env.PATH.split(path.delimiter)[0], 'gh');
+  fs.writeFileSync(ghPath, fs.readFileSync(ghPath, 'utf8').replace('#!/bin/sh\n', '#!/bin/sh\nsleep 2.5 </dev/null >/dev/null 2>&1\n'));
+  const env = { ...gh.env };
+  delete env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  assertAllowedNoEvent(gate({ ...ctxFor(fx, `cd ${sub} && gh pr merge 5`, {}, env), cwd: fx.project }), fx);
+});
+
 // ---- AC3: no owner, and the phase-exit record ----
 
 test('a named run with no run-state.json is allowed', async () => {
