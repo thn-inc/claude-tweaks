@@ -22,7 +22,7 @@ All five must hold:
 ## On the outcome
 
 - **`express-escalated`** — continue at Step 3, unchanged, with no note. Step 3's adoption pack reads the run dir as case 3 (`steps-and-gates.md`'s Adopting an inherited run directory): no `config.yml`, no `dispatched` stamp, and `decisions.md` content beyond Step 2.8's claim (the `## /express-lane` entries). Its backfills — PR-early lifecycle and materialize commit — are the normal path's own first steps; the worktree is already recorded, and the committed edit leaves the clean tree `/claude-tweaks:build`'s Adopt-or-create adopts.
-- **Any other outcome** (`merged`, `armed`, `pending-review`, `blocked`) — render the note below and end the run: no Manifesto, no Pipeline Summary. On `blocked`, the worktree, branch, claim and run dir stay for a human (`_shared/express-lane.md`'s Outcomes), and the note's detail line names what stopped it.
+- **Any other outcome** (`merged`, `armed`, `pending-review`, `blocked`) — render the note below and end the run: no Manifesto, no Pipeline Summary. On `blocked`, the worktree, branch, claim and run dir stay for a human (`_shared/express-lane.md`'s Outcomes), and the note's detail line names what stopped it. After a `merged` outcome, and only when `express-lane` resolves `true`, run `express-lane.js samples --pr {pr}` once the note is rendered, and finish `_shared/express-lane.md`'s own-PR check before the run ends: its review call is the one in `express-prompt.md`, in the `/claude-tweaks:dispatch` skill's directory, and a PR the check leaves to the next drain's sweep is named on a line after the note.
 
 ```
 ## Flow: Express lane

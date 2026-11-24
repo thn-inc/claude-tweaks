@@ -307,6 +307,16 @@ test('escalateResidue: structurally-stuck — N stuck directories in one pass pr
   for (const p of paths) assert.match(issueBody, new RegExp(p.replace(/\//g, '\\/')), `expected ${p} in final body: ${issueBody}`);
 });
 
+test('structurallyStuckBody: every reason in the feeding list has a remedy paragraph', () => {
+  const lines = structurallyStuckBody(['/x/run-a']).split('\n');
+  const reasons = [...lines[0].matchAll(/`([a-z-]+)`/g)].map((m) => m[1]).filter((r) => r !== 'structurally-stuck');
+  assert.ok(reasons.length >= 10);
+  const remedies = lines.slice(1).filter((l) => /^For an? /.test(l));
+  for (const reason of reasons) {
+    assert.ok(remedies.some((l) => l.includes('`' + reason + '`')), `no remedy paragraph for \`${reason}\``);
+  }
+});
+
 test('structurallyStuckBody: names every feeding skip reason, the cache lastError, and the pr-not-found stamp remedy (#3543)', () => {
   const body = structurallyStuckBody(['/x/run-a']);
   for (const reason of ['no-worktree', 'no-branch', 'no-pr', 'console-never-rendered-pr-closed', 'console-never-rendered-staged-pending', 'pr-not-found']) {

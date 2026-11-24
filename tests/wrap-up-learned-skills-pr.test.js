@@ -200,6 +200,8 @@ test('learned-skills-pr.md: the drain fence carries an explicit Bash timeout, th
   assert.match(section, /Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0/);
   assert.match(section, /`merge-verification: off`[^.]*empty rollup and no head runs[^.]*`pending` at once/);
   assert.doesNotMatch(PROC, /Review Console's Skill updates disposition append/);
+  assert.match(section, /`rebuilt`/);
+  assert.match(section, /conflict needs a human/);
 });
 
 test('learned-skills-pr.md: the drain section replaces "waits for a human"', () => {

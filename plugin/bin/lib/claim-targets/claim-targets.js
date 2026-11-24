@@ -626,9 +626,10 @@ function run(argv, deps) {
   function emitRollbackExit(issue) {
     if (!claimedAtByIssue.has(issue)) return;
     const claimedAt = claimedAtByIssue.get(issue);
+    const transition = releaseTransition(ABORT_REASON);
     emitStation(issue, claimedAt, {
-      ...releaseTransition(ABORT_REASON),
-      payload: { reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
+      ...transition,
+      payload: { ...transition.payload, reason: ABORT_REASON }, discriminator: `${claimedAt}:abort`,
     });
   }
 
