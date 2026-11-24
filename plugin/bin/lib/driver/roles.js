@@ -1,7 +1,8 @@
 'use strict';
 // Worker roles for the driver's headless `claude -p` launcher: the per-role tool
 // list, the argument list the launcher composes, and the generated settings for
-// the one role that may run commands (the implementer). Pure data and builders;
+// the two roles that may run commands (the implementer, and the lens-reviewer's
+// read-only git forms). Pure data and builders;
 // nothing here spawns a process or touches the file system.
 //
 // What the rights rest on. These facts were probed on 2026-11-12 with Claude Code
@@ -190,10 +191,132 @@
 // `CLAUDE_CODE_TMPDIR` in the worker's environment did not move the sandbox's
 // writable temporary root.
 //
+// The lens-reviewer role (#6000). A read-only headless lens reviewer: it reads a change
+// and returns one free-text reply (LENS_REPLY_SCHEMA), and it has no Write or Edit tool
+// and no network on any platform. Its generated settings (`lensReviewerSettings`) are
+// `defaultMode: dontAsk` with a closed allow list. On a sandbox-probed platform the list
+// is Read, Grep, Glob and the three git forms in LENS_GIT_RULES (`git diff`, `git show` and
+// `git log`, each with `--no-ext-diff --no-textconv` pinned); the deny list is the
+// implementer's plus the flags of those forms that write a file (`--output`), run a program
+// (`--ext-diff`, `--textconv`, `--show-signature`, a `%G` format placeholder) or read outside
+// the working directory (`--no-index`), plus `git grep`, `git status` and `git blame` whole
+// (see "Probe results" below), plus Edit and Write. Two deny rules are backstops, not live
+// controls, because nothing admits the command they name: `git -c *` and
+// `* --open-files-in-pager*`. `git grep` was
+// dropped from the allow list in Task 1's review: it runs a program through `-O<prog>` as its
+// first argument, bundled (`-nO<prog>`), or through an abbreviated long option
+// (`--open=<prog>`), and turns on configured textconv through `--textc`; git accepts those
+// abbreviations for grep (the diff family rejects them), so no deny pattern closes it. The
+// worker's rights, not its prompt, are what contain it, and the Grep tool covers
+// working-tree search. The read block is
+// on; and the sandbox block is the implementer's, with `allowRead` set to the caller's
+// `readPaths` (the reviewed worktree's git common dir) and `filesystem.denyWrite` set to the
+// working directory. Off the probed platforms the allow list is Read alone, there is no
+// sandbox block, and `toolsFor` launches it with Read alone: Grep and Glob are on only where
+// they were probed (#5258), and Bash only where the sandbox was. The note its prompt carries
+// (`lensAdmittedFormsNote`) is derived from LENS_GIT_RULES, so the admitted forms it names
+// and the allow list cannot drift. Widening the allow list, or dropping a deny rule, means
+// re-probing every form it admits per the headless-worker-launch skill.
+//
+// Probe results (lens-reviewer, #6000). Probed 2026-11-23 with Claude Code CLI 2.1.325 and
+// git 2.56.0 on macOS (darwin), under a claude.ai subscription login, launched with no TTY,
+// through `launchWorker` with the real runner on haiku: the opt-in `AC4.1 (#6000)` live test in
+// `tests/bin-lib/driver/worker.test.js`. Each vector had its own throwaway repository with a
+// signed HEAD and a linked worktree as `cwd`, the common dir as `readPaths`, `* diff=evil` in
+// a tracked `.gitattributes`, and repo config naming a script for `diff.evil.command`,
+// `diff.evil.textconv`, `core.pager`, `core.fsmonitor` and `gpg.program`. Each script printed a
+// sentinel to stderr (which git passes into the Bash tool result) and touched a marker under
+// the system temporary directory; the scripts sat in the common dir, so a program that did not
+// start was not merely unreadable, and a plain-git control before each launch proved every one
+// but the pager (which needs a TTY) starts when asked. Evidence is each launch's transcript
+// (`tool_use`/`tool_result` by `session_id`) plus the envelope `denials`. Vectors the
+// admitted-forms note made the worker decline (7, 8, 9, 11, 16) were settled by a third,
+// rights-only launch without the note. Results:
+// - Denied by a deny rule (in `denials`): `--output=` on diff, log and show (1);
+//   `git -c core.pager=… log …` (7); a `GIT_EXTERNAL_DIFF=…` prefix (8); `git grep -O…`,
+//   `git grep --open=…` and `git grep one` (9); `--no-index /etc/hosts` (10); the chained
+//   `touch` (11, the whole compound refused); a later `--ext-diff` or `--textconv` after the
+//   pinned flags, `--show-signature` and `--format=%GS` (15); `git status --short` and
+//   `git blame a.txt` (16). No file was written and no marker appeared.
+// - Ran with nothing started: the pinned diff, show and log forms (3, 4, 5); the pager never
+//   starts with no TTY. Abbreviations (`--outp=`, `--ext`, `--textc`, and `--show-sig`
+//   off-line) are rejected by git itself (exit 129/128) before anything is written (14); the
+//   deny list does not name them.
+// - Narrowed by this probe: `--show-signature` and `%G` placeholders start `gpg.program` on a
+//   signed commit (plain git, then denied live), and `git grep`, `git status` and `git blame`
+//   ran with no allow rule and started fsmonitor or textconv, so each is now denied whole.
+// - Not closed by any rule, so closed by the environment (Task 2b): the CLI's own read-only
+//   command table admits bare `git diff`, `git log -p` and `git show` with no allow rule and no
+//   denial (2). Without the pinned environment, bare `git diff HEAD~1 HEAD` started the
+//   configured external diff, bare `git log -p` and `git show HEAD` the textconv filter, and
+//   the pinned `git diff --no-ext-diff --no-textconv` with no revisions (a worktree compare)
+//   started `core.fsmonitor` (6). A deny rule naming the bare forms would refuse the pinned
+//   ones too, so the allow list cannot hold these programs back. The sandbox contained them
+//   even then: each program's write outside the working directory failed (`touch` "Operation
+//   not permitted") and its network reach failed (`curl` exit 56).
+// - Pinned git environment (Task 2b). Every lens-reviewer launch adds `lensGitEnv` to the
+//   worker's allow-listed env, and `launchWorker` refuses a launch without a well-formed
+//   `attrSource` (the reviewed repository's empty tree id). The env is the worker process's,
+//   so it governs the whole process tree: the `claude` CLI's own git calls as well as every
+//   git the worker's Bash runs. The lens-reviewer requires a git that honours
+//   `GIT_ATTR_SOURCE` (an older git ignores it silently, so the tracked `.gitattributes`
+//   route would fail open), checked by `gitHonoursAttrSource` before launch: an older git is
+//   the unprobed cell, kept off. Each setting and what it stops:
+//   `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, any program the system or
+//   global config defines (a diff driver, fsmonitor, a pager); `diff.external` emptied, the
+//   repository's external diff (bare `git diff` and `git diff A B` now exit 128, "cannot run
+//   : No such file or directory": they fail closed, and the pinned `--no-ext-diff` forms
+//   still work); `core.fsmonitor=false`, the fsmonitor hook on any worktree compare, status
+//   or blame; `GIT_ATTR_SOURCE` set to the empty tree, the tracked `.gitattributes` that
+//   picks a diff driver (its external command and its textconv); `core.attributesFile`
+//   pointed at `/dev/null`, an attributes file the repository config names; `core.pager=cat`,
+//   a configured pager (it starts only with a TTY, so it has no negative test). Textconv has
+//   no fixed key to clear (it is per driver, `diff.<driver>.textconv`), so the spec's
+//   "textconv disabled through GIT_CONFIG_COUNT" is met by closing every attributes source
+//   the environment can reach: `GIT_ATTR_SOURCE` and `core.attributesFile`. Plain git (no
+//   worker): the default-suite `AC10.1 (#6000)` test in `tests/bin-lib/driver/worker.test.js`
+//   shows no program starts under the pinned env for bare and pinned `diff`, `log -p`, `show`,
+//   `status` and `blame`, and removing any one setting starts the program it stops. Live
+//   (2026-11-23, CLI 2.1.325, git 2.56.0, macOS 27.0.1, subscription login, no TTY, haiku,
+//   vectors 2-6, 13a, 13b and the new 17 of `AC4.1 (#6000)`): vector 2 and 17's bare
+//   `git diff HEAD~1 HEAD` errored with exit 128 and started nothing; 17's bare `git log -p -1`
+//   and `git show HEAD` (now vector 17b, which asserts they ran) printed the raw diff with no
+//   textconv; 6's worktree compare started
+//   no fsmonitor; the pinned forms (3, 4, 5, 13a, 13b) printed real git output, so
+//   `/dev/null` as the global and attributes file and `GIT_ATTR_SOURCE` are readable and
+//   accepted under the sandbox and the read block. No program start remained.
+// - The accepted residual, sandbox-contained: what the environment cannot reach.
+//   `$GIT_DIR/info/attributes` is read whatever `GIT_ATTR_SOURCE` says (the AC10.1 test's
+//   global and system sub-cases name their driver there), so a driver it names and the
+//   repository config defines still starts both of its programs. Plain git under the pinned
+//   env, 2026-11-23: its external command (`diff.<driver>.command`) started on bare
+//   `git diff HEAD~1 HEAD`, since a per-driver command takes precedence over the emptied
+//   `diff.external`; its textconv started on bare `git log -p -1` and `git show HEAD`; the
+//   pinned `--no-ext-diff --no-textconv` forms started neither. A reviewed change cannot
+//   write `info/attributes`, since it is repository-local and untracked. Repository config
+//   keys not overridden (any other program-starting key, and `diff.<driver>.command` and
+//   `diff.<driver>.textconv` reached through `info/attributes`) stay as the repository's own
+//   config names them. Such a program runs
+//   inside the sandbox: Task 2's probe refused its writes outside the working directory and
+//   its network reach. Adding a `GIT_CONFIG_KEY_n`, changing `lensGitEnv`, or widening the
+//   allow list means re-probing (the AC10.1 test and `AC4.1 (#6000)` with
+//   `DRIVER_LIVE_SMOKE=1`).
+// - `filesystem.denyWrite: ['.']` was accepted: every launch returned `ok` (12).
+// - Linked-worktree reads (13): `git log` and `git show` in the pinned forms succeeded from
+//   the worktree with the common dir in `readPaths`, and also with `readPaths: []`, so on this
+//   host the common-dir grant was not needed for these reads (git's own reads of the common
+//   dir went through, apparently the CLI's git carve-out).
+// Not probed: Linux and Windows hosts; other entries of the CLI's read-only table (for
+// example `git cat-file`, `git shortlog`, `git ls-files`) and their textconv or filter flags;
+// `diff.external` config live (plain git only, AC10.1) and `pager.<cmd>` config; a
+// TTY-attached launch. Widening the allow list,
+// or dropping a deny rule, means re-probing.
+//
 // Permission denials are data for the driver's event line, never a reason to widen a
 // list: there is no path here that composes wider rights after a denial.
 
 const path = require('node:path');
+const cp = require('node:child_process');
 const { isAncestorOrSelf } = require('../path-guard');
 const { EFFORT_SCALE } = require('../model-profiles/profiles');
 
@@ -262,6 +385,17 @@ const ACCEPTANCE_RESULT_SCHEMA = deepFreeze({
   additionalProperties: false,
 });
 
+// The lens-reviewer's reply: one free-text block. `required` is derived from the names.
+const LENS_REPLY_PROPERTIES = {
+  text: { type: 'string' },
+};
+const LENS_REPLY_SCHEMA = deepFreeze({
+  type: 'object',
+  properties: LENS_REPLY_PROPERTIES,
+  required: Object.keys(LENS_REPLY_PROPERTIES),
+  additionalProperties: false,
+});
+
 const SANDBOX_PROBED_PLATFORMS = deepFreeze(['darwin']);
 
 const ROLES = deepFreeze({
@@ -270,18 +404,22 @@ const ROLES = deepFreeze({
   explorer: { tools: ['Read', 'Grep', 'Glob'], settings: false },
   'merge-check': { tools: ['Read', 'Grep', 'Glob'], settings: false },
   acceptance: { tools: ['Read', 'Grep', 'Glob'], settings: false },
+  'lens-reviewer': { tools: ['Read', 'Grep', 'Glob', 'Bash'], settings: true },
 });
 
 // The work profile each role launches on unless policy `express-driver-models` overrides
-// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` keeps its
-// code-only row. `launch.js` resolves the profile through `profiles.js`. A new role in
-// ROLES needs a row here (AC6.1).
+// it (#5917). That policy may set only the POLICY_DRIVER_ROLES; `explorer` and
+// `lens-reviewer` keep their code-only rows. `launch.js` resolves the profile through
+// `profiles.js`. A new role in ROLES needs a row here (AC6.1). `lens-reviewer` is `fast`
+// because each lens picks its own model and `fast` carries no effort dial, so a haiku lens
+// never receives `--effort` (#6000).
 const DRIVER_ROLE_PROFILES = deepFreeze({
   implementer: 'standard',
   reviewer: 'capable',
   explorer: 'standard',
   'merge-check': 'standard',
   acceptance: 'standard',
+  'lens-reviewer': 'fast',
 });
 const POLICY_DRIVER_ROLES = deepFreeze(['implementer', 'reviewer', 'merge-check', 'acceptance']);
 
@@ -332,6 +470,23 @@ function assertReadPaths(readPaths, platform) {
   }
 }
 
+// A second layer, not the only one: with `dontAsk`, a closed allow list and
+// `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
+// rules keep them refused if a later change widens the allow list or the sandbox.
+const IMPLEMENTER_DENY = deepFreeze(['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)']);
+
+// The sandbox block every settings role gets on a sandbox-probed platform. A fresh object each call.
+function sandboxBlock(readPaths) {
+  return {
+    enabled: true,
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    failIfUnavailable: true,
+    network: { allowedDomains: [], strictAllowlist: true },
+    filesystem: { allowRead: readPaths.slice() },
+  };
+}
+
 function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
   assertReadPaths(readPaths, platform);
   if (testCommand !== undefined) assertTestCommand(testCommand);
@@ -341,23 +496,130 @@ function implementerSettings({ testCommand, platform, readPaths = [] } = {}) {
     if (testCommand !== undefined) allow.push('Bash(' + testCommand + ' *)');
     allow.push('Bash(git status *)', 'Bash(git diff *)', 'Bash(git log *)', 'Bash(git show *)', 'Bash(git ls-files *)');
   }
-  // A second layer, not the only one: with `dontAsk`, a closed allow list and
-  // `autoAllowBashIfSandboxed: false`, these commands are already refused. The deny
-  // rules keep them refused if a later change widens the allow list or the sandbox.
-  const deny = ['Bash(gh *)', 'Bash(git push *)', 'Bash(git commit *)', 'Bash(git add *)', 'Bash(curl *)', 'Bash(wget *)'];
-  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny } };
+  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny: IMPLEMENTER_DENY.slice() } };
   if (sandboxed) {
     settings.permissions.blockReadsOutsideWorkingDirectories = true;
-    settings.sandbox = {
-      enabled: true,
-      autoAllowBashIfSandboxed: false,
-      allowUnsandboxedCommands: false,
-      failIfUnavailable: true,
-      network: { allowedDomains: [], strictAllowlist: true },
-      filesystem: { allowRead: readPaths.slice() },
-    };
+    settings.sandbox = sandboxBlock(readPaths);
   }
   return settings;
+}
+
+// The lens-reviewer's only shell commands (see "The lens-reviewer role" above). Each
+// diff-shaped form pins `--no-ext-diff --no-textconv`, so no configured diff program or
+// text conversion filter runs.
+const LENS_GIT_RULES = deepFreeze([
+  'Bash(git diff --no-ext-diff --no-textconv *)',
+  'Bash(git show --no-ext-diff --no-textconv *)',
+  'Bash(git log --no-ext-diff --no-textconv *)',
+]);
+// The implementer's deny rules plus every flag of the admitted forms that writes a file
+// (`--output`), runs a program (`--ext-diff`, `--textconv`, and signature verification
+// through `--show-signature` or a `%G` format placeholder, which start `gpg.program`) or
+// reads outside the working directory (`--no-index`), and the two file-writing tools. Then
+// `git grep`, `git status` and `git blame` whole: the CLI's own read-only table admits them
+// with no allow rule, and each started a configured program in the live probe (see the
+// header). The `git -c` and `--open-files-in-pager` rules are backstops only: no allow rule
+// or read-only table entry admits them.
+const LENS_DENY = deepFreeze([
+  ...IMPLEMENTER_DENY,
+  'Bash(* --output*)', 'Bash(* --ext-diff*)', 'Bash(* --textconv*)', 'Bash(* --no-index*)',
+  'Bash(* --show-signature*)', 'Bash(*%G*)',
+  'Bash(git grep *)', 'Bash(git status *)', 'Bash(git blame *)',
+  'Bash(* --open-files-in-pager*)', 'Bash(git -c *)', 'Edit', 'Write',
+]);
+
+function lensReviewerSettings({ platform, readPaths = [] } = {}) {
+  assertReadPaths(readPaths, platform);
+  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
+  const allow = sandboxed ? ['Read', 'Grep', 'Glob', ...LENS_GIT_RULES] : ['Read'];
+  const settings = { permissions: { defaultMode: 'dontAsk', allow, deny: LENS_DENY.slice() } };
+  if (sandboxed) {
+    settings.permissions.blockReadsOutsideWorkingDirectories = true;
+    settings.sandbox = sandboxBlock(readPaths);
+    settings.sandbox.filesystem.denyWrite = ['.'];
+  }
+  return settings;
+}
+
+// The lens-reviewer worker's pinned git environment (see "Pinned git environment" in the
+// header). The empty config is the null device, a literal POSIX path: the lens-reviewer has
+// Bash only on darwin, so no other platform runs git under this env.
+const LENS_EMPTY_GIT_CONFIG = '/dev/null';
+// Each pair overrides a repository config key that starts a program from a read-only git
+// command (or, for core.attributesFile, names the attributes that pick a textconv driver).
+// GIT_CONFIG_COUNT is derived from this list's length.
+const LENS_GIT_CONFIG_PAIRS = deepFreeze([
+  ['diff.external', ''],
+  ['core.fsmonitor', 'false'],
+  ['core.attributesFile', LENS_EMPTY_GIT_CONFIG],
+  ['core.pager', 'cat'],
+]);
+const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// The env a lens-reviewer worker's git runs under: no system or global config, the pairs
+// above, and attributes read from `attrSource` (the reviewed repository's empty tree id), so
+// no tracked .gitattributes names a diff driver.
+function lensGitEnv({ attrSource } = {}) {
+  if (typeof attrSource !== 'string' || !OBJECT_ID.test(attrSource)) {
+    throw new TypeError('attrSource must be a 40- or 64-character lowercase hex object id, got ' + JSON.stringify(attrSource));
+  }
+  const env = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: LENS_EMPTY_GIT_CONFIG, GIT_CONFIG_COUNT: String(LENS_GIT_CONFIG_PAIRS.length) };
+  LENS_GIT_CONFIG_PAIRS.forEach(([key, value], i) => {
+    env['GIT_CONFIG_KEY_' + i] = key;
+    env['GIT_CONFIG_VALUE_' + i] = value;
+  });
+  env.GIT_ATTR_SOURCE = attrSource;
+  return Object.freeze(env);
+}
+
+// A name that can never resolve to a tree (a ref name cannot hold a space). Not an all-zero
+// id: git 2.56.0 accepts any full-length hex id as an attribute source without looking it up
+// (`check-attr` exits 0), so a zero id cannot tell an honouring git from an ignoring one.
+const UNRESOLVABLE_ATTR_SOURCE = 'no such attr source';
+
+// True only when the git in `cwd` honours GIT_ATTR_SOURCE, by its behaviour rather than its
+// version. A control `git check-attr diff -- .` without the variable must exit 0, then the
+// same command with UNRESOLVABLE_ATTR_SOURCE must fail with git's own refusal naming the
+// variable (git 2.56.0: exit 128, "fatal: bad --attr-source or GIT_ATTR_SOURCE"). A git
+// that ignores the variable exits 0 on the second run. A failed control (not a repository,
+// no git), a spawn error or any other outcome is false: the lens-reviewer stays off.
+function gitHonoursAttrSource({ cwd, spawnSync = cp.spawnSync, env = process.env } = {}) {
+  if (typeof cwd !== 'string' || cwd === '') return false;
+  const base = { PATH: env.PATH, HOME: env.HOME, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: LENS_EMPTY_GIT_CONFIG };
+  const checkAttr = (childEnv) => spawnSync('git', ['-C', cwd, 'check-attr', 'diff', '--', '.'], { env: childEnv, encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  try {
+    const control = checkAttr(base);
+    if (!control || control.error || control.status !== 0) return false;
+    const probe = checkAttr({ ...base, GIT_ATTR_SOURCE: UNRESOLVABLE_ATTR_SOURCE });
+    if (!probe || probe.error || typeof probe.status !== 'number' || probe.status === 0) return false;
+    return /GIT_ATTR_SOURCE/.test(String(probe.stderr || ''));
+  } catch {
+    return false;
+  }
+}
+
+// The command forms the lens-reviewer may run, for its appended system prompt. Derived from
+// LENS_GIT_RULES, so the note and the allow list cannot drift.
+function lensAdmittedFormsNote() {
+  const forms = LENS_GIT_RULES.map((rule) => rule.replace(/^Bash\(/, '').replace(/ \*\)$/, ''));
+  return [
+    'You are a read-only reviewer: you read and report, and you change nothing.',
+    'The only shell commands you may run are these forms, each followed by its own arguments:',
+    ...forms,
+    'Run each exactly as written, with nothing prepended, appended or chained (`;`, `&&`, `|`).',
+    'Every other file read goes through the Read tool.',
+    'A refused command is refused: do not rephrase it or retry it in another form.',
+  ].join('\n');
+}
+
+// The generated settings for a role: the implementer's or the lens-reviewer's, or null for a
+// role that launches with no settings file.
+function settingsFor(role, { testCommand, platform, readPaths } = {}) {
+  const spec = specFor(role);
+  if (!spec.settings) return null;
+  if (role === 'implementer') return implementerSettings({ testCommand, platform, readPaths });
+  if (role === 'lens-reviewer') return lensReviewerSettings({ platform, readPaths });
+  throw new Error('no settings builder for role ' + role);
 }
 
 // The first word of a command as a real path: an absolute word is the path, a relative
@@ -475,14 +737,22 @@ function assertEffort(value) {
 }
 
 // The tools a role launches with on a platform: Bash is dropped for a role that carries
-// generated settings when the platform is not sandbox-probed. A fresh array each call.
+// generated settings when the platform is not sandbox-probed, and so are the
+// lens-reviewer's Grep and Glob, which were probed for it only where the sandbox was
+// (#5258). A fresh array each call.
 function toolsFor(role, platform) {
   const spec = specFor(role);
-  const sandboxed = SANDBOX_PROBED_PLATFORMS.includes(platform);
-  return spec.tools.filter((tool) => !(tool === 'Bash' && spec.settings && !sandboxed));
+  if (SANDBOX_PROBED_PLATFORMS.includes(platform)) return spec.tools.slice();
+  const unprobed = role === 'lens-reviewer' ? ['Bash', 'Grep', 'Glob'] : ['Bash'];
+  return spec.tools.filter((tool) => !(spec.settings && unprobed.includes(tool)));
 }
 
-function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform } = {}) {
+// A pre-minted session id (`--session-id`, which the CLI requires to be a UUID): absent
+// adds nothing, so a launch without one keeps its argv; anything else but a lowercase
+// UUID is refused. worker.js mints one for the lens-reviewer only (its header says why).
+const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeiling, model, effort, platform, sessionId } = {}) {
   const spec = specFor(role);
   if (spec.settings && (typeof settingsFile !== 'string' || settingsFile === '')) {
     throw new Error('settingsFile is required for role ' + role + ' and must be a non-empty string');
@@ -493,6 +763,9 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   assertSpendCeiling(spendCeiling);
   assertEffort(effort);
   if (typeof platform !== 'string' || platform === '') throw new TypeError('platform is required and must be a non-empty string');
+  if (sessionId !== undefined && !(typeof sessionId === 'string' && SESSION_ID_PATTERN.test(sessionId))) {
+    throw new TypeError('sessionId must be a lowercase UUID string, got ' + String(sessionId));
+  }
   const args = ['-p', '--safe-mode', '--restricted', '--tools', toolsFor(role, platform).join(','), '--disable-slash-commands', '--strict-mcp-config'];
   if (spec.settings) args.push('--settings', settingsFile);
   args.push('--permission-prompts', 'none', '--output-format', 'json', '--json-schema', JSON.stringify(schema));
@@ -500,7 +773,8 @@ function composeArgs({ role, settingsFile, appendPromptFile, schema, spendCeilin
   if (spendCeiling !== undefined) args.push('--max-budget-usd', String(spendCeiling));
   if (model) args.push('--model', model);
   if (effort !== undefined && effort !== null) args.push('--effort', effort);
+  if (sessionId !== undefined) args.push('--session-id', sessionId);
   return args;
 }
 
-module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };
+module.exports = { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, LENS_REPLY_SCHEMA, LENS_GIT_RULES, LENS_EMPTY_GIT_CONFIG, SANDBOX_PROBED_PLATFORMS, ROLES, DRIVER_ROLE_PROFILES, POLICY_DRIVER_ROLES, implementerSettings, lensReviewerSettings, lensGitEnv, gitHonoursAttrSource, lensAdmittedFormsNote, settingsFor, toolchainRoot, toolchainReadPaths, reopensHome, composeArgs, toolsFor, assertSpendCeiling, assertEffort, assertTestCommand };

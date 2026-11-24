@@ -45,6 +45,11 @@ const { lstatType, resolveLeaf, canonicalRealpath, isAncestorOrSelf } = require(
 const { isPathContained } = require('../shared-primitives');
 const { isProcedurePath, classifyToolCall, readFileKey, bashProcedureFiles } = require('./turn-class');
 
+// The headless lens workers' log (#6000): lib/driver/lens-workers.js appends one JSON line per side
+// to it in the run directory, readWorkerDispatches below reads it. Defined here because the driver
+// module requires this one.
+const WORKER_DISPATCHES_FILE = 'worker-dispatches.jsonl';
+
 const TRANSCRIPT_SLUG_RULE = 'replace every character not in [A-Za-z0-9-] with "-" (observed: "/", " ", and "." all become "-")';
 
 function slugForCwd(cwd) {
@@ -714,4 +719,38 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
   return { built, ids: ids.size, excluded };
 }
 
-module.exports = { TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, mergeUsage, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP };
+// A headless worker is no transcript-backed subagent: its record is the only source of its numbers.
+// runDir, { window, fsImpl } -> { items, excludedOutsideWindow, notes }, never throws. Reads
+// WORKER_DISPATCHES_FILE line by line: a line that is not a JSON object goes to `notes` (and so does
+// a file that cannot be read, or a symlink, which is not followed), a `launched: false` line and a line
+// whose `kind` is not `worker` are not dispatches and count nowhere, and with a `window` ({ start,
+// end } in epoch ms) only an item whose `startTs` falls inside it is kept; one with no parseable
+// `startTs` is counted in excludedOutsideWindow. An absent file is no items and no note. Each item
+// is the record with the subagent item keys it lacks defaulted (procedureFiles and transcriptPath
+// null, so dispatchFileReads skips it) and `tokens` null unless it is an object.
+function readWorkerDispatches(runDir, { window = null, fsImpl = fs } = {}) {
+  const out = { items: [], excludedOutsideWindow: 0, notes: [] };
+  try {
+    const file = path.join(runDir, WORKER_DISPATCHES_FILE);
+    const t = lstatType(file, { fsImpl });
+    if (t.type === 'missing') return out;
+    if (t.type !== 'file') { out.notes.push(`${WORKER_DISPATCHES_FILE} is not a regular file (${t.type}); not read`); return out; }
+    const lines = fsImpl.readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (!line.trim()) return;
+      let rec;
+      try { rec = JSON.parse(line); } catch { rec = null; }
+      if (rec === null || typeof rec !== 'object' || Array.isArray(rec)) { out.notes.push(`${WORKER_DISPATCHES_FILE} line ${i + 1} is not a JSON object; skipped`); return; }
+      if (rec.kind !== 'worker' || rec.launched !== true) return;
+      const ms = Date.parse(rec.startTs);
+      if (window && !(Number.isFinite(ms) && ms >= window.start && ms <= window.end)) { out.excludedOutsideWindow += 1; return; }
+      const tokens = rec.tokens !== null && typeof rec.tokens === 'object' && !Array.isArray(rec.tokens) ? rec.tokens : null;
+      out.items.push({ procedureFiles: null, procedureFileRows: null, transcriptPath: null, ...rec, tokens });
+    });
+  } catch (err) {
+    out.notes.push(`${WORKER_DISPATCHES_FILE} not readable (${(err && err.code) || 'EUNKNOWN'})`);
+  }
+  return out;
+}
+
+module.exports = { WORKER_DISPATCHES_FILE, readWorkerDispatches, TRANSCRIPT_SLUG_RULE, slugForCwd, locateTranscripts, mergeUsage, readUsage, readPromptRows, isProcedurePath, resultBytes, statTranscriptOrThrow, subagentsDirFor, readDispatches, isAgentTranscriptPath, locateTaskTranscripts, runIdsNamed, RUN_ID_NAMED_RE, FIRST_ENTRY_CAP };
