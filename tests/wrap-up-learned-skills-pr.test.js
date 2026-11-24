@@ -195,7 +195,8 @@ test('AC4.1: with learned-skills-auto-merge false the procedure runs no drain', 
 test('learned-skills-pr.md: the drain fence carries an explicit Bash timeout, the killed-call degrade, the no-gh and off outcomes, and no console-suffix claim', () => {
   const section = PROC.slice(PROC.indexOf('## Drain at the end of wrap-up'), PROC.indexOf('## The PR'));
   assert.ok(section.indexOf('timeout of `1200000` ms') !== -1 && section.indexOf('timeout of `1200000` ms') < section.indexOf('learned-skills-pr.js" drain'), 'timeout stated before the fence');
-  assert.match(section, /killed, or one that returned no JSON line, is the same degrade|killed or returned no output/);
+  assert.match(section, /A call the Bash timeout still killed, or one that returned no JSON line, is the same degrade: log the same `SKIP` line/);
+  assert.match(PROC, /the console's own disposition carries no drain suffix/);
   assert.match(section, /Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0/);
   assert.match(section, /`merge-verification: off`[^.]*empty rollup and no head runs[^.]*`pending` at once/);
   assert.doesNotMatch(PROC, /Review Console's Skill updates disposition append/);

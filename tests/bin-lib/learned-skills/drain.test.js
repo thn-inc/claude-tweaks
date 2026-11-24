@@ -53,7 +53,10 @@ function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, merg
     }
     if (a === 'run' && b === 'list') return JSON.stringify(runs[args[args.indexOf('--commit') + 1]] || []);
     if (a === 'pr' && b === 'merge') {
-      if (mergeThrows[n] !== undefined) throw Object.assign(new Error('Command failed: gh pr merge'), { stderr: mergeThrows[n] });
+      if (mergeThrows[n] !== undefined) {
+        const t = typeof mergeThrows[n] === 'object' ? mergeThrows[n] : { stderr: mergeThrows[n] };
+        throw Object.assign(new Error(t.message || 'Command failed: gh pr merge'), { stderr: t.stderr });
+      }
       return '';
     }
     throw new Error(`unexpected gh ${args.join(' ')}`);
@@ -200,6 +203,11 @@ test('an empty-stderr merge failure whose message carries the command line is me
   const out = drain(base(), h.deps);
   assert.equal(out.leftOpen[0].reason, 'merge-failed');
   assert.match(out.leftOpen[0].detail, /Command failed/);
+  // the message carries the command line (with the subject/body and the flag name): only stderr may classify
+  const cmd = harness({ prs: [pr(6229)], mergeThrows: { 6229: { stderr: '', message: 'Command failed: gh pr merge 6229 --match-head-commit abc --subject "was modified conflict"' } } });
+  const cmdOut = drain(base(), cmd.deps);
+  assert.equal(cmdOut.leftOpen[0].reason, 'merge-failed');
+  assert.deepEqual(cmdOut.conflicting, []);
   const old = harness({ prs: [pr(6218)], mergeThrows: { 6218: 'unknown flag: --match-head-commit' } });
   assert.equal(drain(base(), old.deps).leftOpen[0].reason, 'merge-failed');
 });
