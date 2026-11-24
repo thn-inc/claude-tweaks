@@ -9,7 +9,7 @@
 // per-check properties, not by a global lock.
 'use strict';
 const path = require('path');
-const HOLLOW_CHECK_NOT_APPLICABLE = ['not-github-issues', 'no-remote'];
+const HOLLOW_CHECK_NOT_APPLICABLE = ['not-github-issues', 'no-remote', 'unknown-host'];
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { findNonCanonicalRunDirs } = require('../hooks/context');
 const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReapWorktrees } = require('../hooks/worktree-reap');
@@ -558,9 +558,10 @@ async function reconcileInner(opts, state) {
   if (checks.includes('release') || checks.includes('post-merge') || checks.includes('archive')) {
     try {
       const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun }));
-      // `not-github-issues` and `no-remote`: this project has no GitHub work records to comment on or no
-      // PR to ask about, so the check has nothing to hold. Treating them as a failed check would skip
-      // archive for every such project, which never had the hazard.
+      // `not-github-issues`, `no-remote` and `unknown-host`: this project has no GitHub work records to
+      // comment on, no PR to ask about, or an origin the #4933 host gate refuses before any gh call (release
+      // and post-merge refuse it too), so the check can never run and has nothing to hold. Treating them as a
+      // failed check would skip archive on every pass for every such project, which never had the hazard.
       if (h.failure && !HOLLOW_CHECK_NOT_APPLICABLE.includes(h.failure)) {
         hollowCheckFailed = true;
         result.skipped.push({ check: 'release,post-merge,archive', reason: 'hollow-merge-check-failed', detail: h.detail ? `${h.failure}: ${h.detail}` : h.failure });

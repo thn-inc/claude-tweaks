@@ -1041,8 +1041,10 @@ test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post
   }
 });
 
-test('(#6143): a project with no GitHub work records or no remote has nothing to hold, so the three checks still run', async () => {
-  for (const failure of ['not-github-issues', 'no-remote']) {
+test('(#6143): a project with no GitHub work records, no remote or an origin on an unknown host has nothing to hold, so the three checks still run', async () => {
+  // `unknown-host`: setupContext refuses the origin (#4933) before any gh call, so the check can never run;
+  // treating it as a failure would hold release, post-merge and archive on every pass, forever.
+  for (const failure of ['not-github-issues', 'no-remote', 'unknown-host']) {
     const { r, order, releaseOpts, postMergeOpts } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
     assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive'], failure);
     assert.deepEqual(releaseOpts.hollowRunIds, []);
