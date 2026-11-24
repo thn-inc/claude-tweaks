@@ -53,6 +53,34 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.179.0](https://github.com/thn-inc/claude-tweaks/compare/v6.178.0...v6.179.0) (2026-11-24)
+
+
+### Features
+
+* Floor map, emission 4/8: Replanning ([#6148](https://github.com/thn-inc/claude-tweaks/issues/6148)) ([c30ea2e](https://github.com/thn-inc/claude-tweaks/commit/c30ea2e2b6093f52287fb1c2114bccac0eb6d891))
+* Floor map, emission 5/8: The driver's outcomes with… ([#6149](https://github.com/thn-inc/claude-tweaks/issues/6149)) ([15af9f6](https://github.com/thn-inc/claude-tweaks/commit/15af9f65f8d3a4e0b87ee9ddfec74bc14f43c50f))
+* Floor map, emission 6/8: Outcomes at the label-protocol… ([#6150](https://github.com/thn-inc/claude-tweaks/issues/6150)) ([37af35e](https://github.com/thn-inc/claude-tweaks/commit/37af35eba64789459973f5f0e859bbcff816a613))
+* Floor map, emission 7/8: Hold state, and blocker… ([#6151](https://github.com/thn-inc/claude-tweaks/issues/6151)) ([c6f7915](https://github.com/thn-inc/claude-tweaks/commit/c6f7915151a818b6e2da31342c1af57fd6f99988))
+* Floor map, emission 8/8: Retire the old outcomes and… ([#6152](https://github.com/thn-inc/claude-tweaks/issues/6152)) ([1debf2f](https://github.com/thn-inc/claude-tweaks/commit/1debf2fdbcd1360498d1bfa32ff30f8aef45a0e7))
+* flow: a context-cap handoff taken before the automatic… ([#4664](https://github.com/thn-inc/claude-tweaks/issues/4664)) ([41705ae](https://github.com/thn-inc/claude-tweaks/commit/41705ae577919c329b37497a1b701dbe17b57f7c))
+* Merge green learned-skills PRs at the end of every… ([#6112](https://github.com/thn-inc/claude-tweaks/issues/6112)) ([5f12cd9](https://github.com/thn-inc/claude-tweaks/commit/5f12cd9ae6aafcb317e830d6c29308f1805122f7))
+* Rebuild a conflicting learned-skills PR on the… ([#6113](https://github.com/thn-inc/claude-tweaks/issues/6113)) ([3d20db4](https://github.com/thn-inc/claude-tweaks/commit/3d20db4ae6f7e63e097201d32f6857983ef287d0))
+* Run review lenses as lean headless workers behind… ([#6003](https://github.com/thn-inc/claude-tweaks/issues/6003)) ([4ea5175](https://github.com/thn-inc/claude-tweaks/commit/4ea5175749629badaedd24bdd6d1a5a0343f8fb1))
+
+
+### Bug Fixes
+
+* Console backfill can file a twin for a same-claim pair… ([#4162](https://github.com/thn-inc/claude-tweaks/issues/4162)) ([73e4cc8](https://github.com/thn-inc/claude-tweaks/commit/73e4cc86c3be66473799683028a1fafa9b8ab59f))
+* github-pr-scan item 4 wrongly treats the closed and… ([#3905](https://github.com/thn-inc/claude-tweaks/issues/3905)) ([7d692fb](https://github.com/thn-inc/claude-tweaks/commit/7d692fb65446141228a4748330b2ca3c199c64ab))
+* Pipeline shadow guard misses a run dir made through a… ([#4452](https://github.com/thn-inc/claude-tweaks/issues/4452)) ([8cd8d63](https://github.com/thn-inc/claude-tweaks/commit/8cd8d6361dfa22703c19bfa13b53189fd0adf9e2))
+* reconcile: isClosedSlugStuck should also cover state-less… ([#4191](https://github.com/thn-inc/claude-tweaks/issues/4191)) ([8cac682](https://github.com/thn-inc/claude-tweaks/commit/8cac682022758d47e93dfa61887c01c91c886f3e))
+* Refuse to ready or merge a pipeline PR while its run is… ([#6143](https://github.com/thn-inc/claude-tweaks/issues/6143)) ([88cdbe8](https://github.com/thn-inc/claude-tweaks/commit/88cdbe82f593f9daf4cabb335449f9755e910904))
+* Subagent Scratch rule never forbids deleting outside the… ([#4472](https://github.com/thn-inc/claude-tweaks/issues/4472)) ([0ed54f0](https://github.com/thn-inc/claude-tweaks/commit/0ed54f0a756d5ce09565d91b4dbf8b8626220137))
+* Write gate misses a command after a compound keyword or… ([#4244](https://github.com/thn-inc/claude-tweaks/issues/4244)) ([bd90a77](https://github.com/thn-inc/claude-tweaks/commit/bd90a77ce47bdb662e832e65a4a96e040c07f9a3))
+* Write gate misses a quoted '(x' redirect target and a cd… ([#4460](https://github.com/thn-inc/claude-tweaks/issues/4460)) ([feaf9e3](https://github.com/thn-inc/claude-tweaks/commit/feaf9e34c004f23c253af0e1271f8a5b75874290))
+* Write gate misses the command after a backslash-newline… ([#4245](https://github.com/thn-inc/claude-tweaks/issues/4245)) ([5b12c69](https://github.com/thn-inc/claude-tweaks/commit/5b12c69de0342d574603e190fea7a6757a9d6b2e))
+
 ## [6.178.0](https://github.com/thn-inc/claude-tweaks/compare/v6.177.0...v6.178.0) (2026-11-24)
 
 
