@@ -799,7 +799,8 @@ const ONE_CALL_FACTS = [
 ];
 const OWN_PR_FACTS = [
   [/After a `merged` outcome, and only when `express-lane` resolves `true`, run `express-lane\.js samples --pr \{pr\}`/, 'explicit form: own-PR sampling gated on express-lane'],
-  [/On `found: false`, a non-zero exit or a review that does not complete, name the PR in the report as "left to the next drain's sweep"/, 'left to the next drain'],
+  [/ in the `#N`\/`#N,#M` forms \(a bare drain's Step 3 sweep covers its merges\)/, 'explicit forms only: a bare drain sweeps at loop termination'],
+  [/finish `_shared\/express-lane\.md`'s own-PR check/, 'the shared section owns the review call and the left-to-the-next-drain line'],
 ];
 test('#4365 SKILL.md Step 5 explicit-form express path samples its own PR', () => {
   const text = step5(readText(SKILL));

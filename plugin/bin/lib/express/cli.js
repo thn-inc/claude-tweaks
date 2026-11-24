@@ -22,7 +22,8 @@
 //             hand-logged fallbacks require.
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
 //             global ordinals over every express merge, comments fetched only inside
-//             a lookback, at most a fixed number of reviews per firing.
+//             a lookback, at most a fixed number of reviews per firing. --pr narrows the due
+//             set to one PR before that cap and adds found (is it in the search results).
 //   plan-lane which plan-less lane (driver, express, micro-plan) a record's bounds admit —
 //             driver/plan-lane.js's needsNoPlan verdict for one record (--issue, live, or
 //             --record-json, the gh-absent MCP path), one JSON line, exit 0 whatever the lane;

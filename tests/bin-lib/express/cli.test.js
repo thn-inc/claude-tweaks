@@ -141,6 +141,9 @@ test('malformed invocations exit 2 before any side effect', () => {
     ['samples', '--every', '0'],
     ['samples', '--every', ''],
     ['samples', '--every', '2.5'],
+    ['samples', '--pr', '0'],
+    ['samples', '--pr', '-3'],
+    ['samples', '--pr', 'abc'],
     ['samples', '--repo', '--every'],
     ['escalate', '--run', fx.runDir, '--issue', '7', '--reason', 'nope', '--detail-file', detail],
     ['escalate', '--run', fx.runDir, '--issue', '7', '--reason', 'gate-denial'],
@@ -743,6 +746,25 @@ test('samples --pr: filters the due set to that PR and reports found', () => {
   const h = samplesHarness(fx);
   run(['samples', '--every', '5'], h.deps);
   assert.ok(!('found' in h.json()));
+});
+
+test('samples --pr: the just-merged PR is sampled even when 3 older due PRs fill the per-firing cap', () => {
+  const fx = fixture();
+  const all = samplesHarness(fx);
+  assert.strictEqual(run(['samples', '--every', '1'], all.deps), 0);
+  assert.deepStrictEqual(all.json().sampled.map((s) => s.pr), [101, 102, 103]);
+  assert.strictEqual(all.json().capped, true);
+  const own = samplesHarness(fx);
+  assert.strictEqual(run(['samples', '--every', '1', '--pr', '110'], own.deps), 0);
+  assert.deepStrictEqual(own.json(), { every: 1, expressMerges: 10, sampled: [{ pr: 110, ordinal: 10, mergedAt: '2026-10-10T12:00:00Z', mergeSha: 'sha110', records: [909, 959] }], capped: false, found: true });
+});
+
+test('samples --pr: a PR merged before the 30-day lookback is found but not sampled', () => {
+  const fx = fixture();
+  const h = samplesHarness(fx, new Set(), { now: () => Date.parse('2026-11-07T12:00:00Z') });
+  assert.strictEqual(run(['samples', '--every', '5', '--pr', '105'], h.deps), 0);
+  assert.strictEqual(h.json().found, true);
+  assert.deepStrictEqual(h.json().sampled, []);
 });
 
 test('samples: the merged-PR search gets its own longer timeout; 1000 merges in one second exits 1, never sampled', () => {
