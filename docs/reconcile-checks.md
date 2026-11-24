@@ -18,7 +18,9 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   or a throw skips all three checks for the pass with `{ check: 'release,post-merge,archive', reason:
   'hollow-merge-check-failed' }`, except `not-github-issues`, `no-remote` and `unknown-host` (an origin the #4933
   host gate refuses before any `gh` call, which release and post-merge refuse too), where the check can never run
-  and there is nothing to hold, so the three run with empty sets. It reads the pass's one shared PR-state resolver. `post-merge` sits immediately before `archive` because it hands archive the run
+  and there is nothing to hold, so the three run with empty sets. It reads the pass's one shared PR-state resolver,
+  warmed first with every non-terminal run's PR number (and each PR-less run's branch), and checks the pass budget
+  between runs: an exhausted budget returns `budget-exhausted`, so the pass fails closed rather than settle an unjudged run. `post-merge` sits immediately before `archive` because it hands archive the run
   dirs it must leave in place this pass (see the Post-merge closes section below).
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in

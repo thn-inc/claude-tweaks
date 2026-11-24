@@ -645,13 +645,10 @@ function hollowMarked(decisionsText, pr, n) {
 // (the live worktree entry's branch for `state.worktree`, else fallbackBranch — releaseMerged's join). null
 // when neither gives one; throws on a transient by-branch answer. `worktrees` is a lazy reader of the parsed `git worktree list`.
 async function hollowCandidatePr(root, dir, state, prStates, worktrees) {
-  const stamped = state && state.pr && state.pr.number;
-  if (Number.isInteger(stamped) && stamped > 0) return stamped;
+  const stamped = stampedPr(state);
+  if (stamped !== null) return stamped;
   if (typeof prStates.byBranchAsync !== 'function') return null;
-  const wtEntry = state && state.worktree
-    ? worktrees().find((w) => path.resolve(w.path) === path.resolve(state.worktree))
-    : null;
-  const branch = (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state);
+  const branch = hollowRunBranch(root, dir, state, worktrees);
   if (!branch) return null;
   // freshNull, as releaseMerged joins the same branch: a "no PR" persisted by an earlier pass is re-asked live,
   // so detection never accepts a stale null that release then bypasses to find (and settle) the merged PR.
@@ -662,12 +659,47 @@ async function hollowCandidatePr(root, dir, state, prStates, worktrees) {
   return Number.isInteger(number) && number > 0 ? number : null;
 }
 
+function stampedPr(state) {
+  const stamped = state && state.pr && state.pr.number;
+  return Number.isInteger(stamped) && stamped > 0 ? stamped : null;
+}
+
+// A PR-less run's branch: the live worktree entry's for `state.worktree`, else fallbackBranch. Throws on a corrupt state.
+function hollowRunBranch(root, dir, state, worktrees) {
+  const wtEntry = state && state.worktree
+    ? worktrees().find((w) => path.resolve(w.path) === path.resolve(state.worktree))
+    : null;
+  return (wtEntry && wtEntry.branch) || fallbackBranch(root, dir, state) || null;
+}
+
+// Warm the pass's resolver with every run's PR number, and each PR-less run's branch (freshNull, as the loop asks),
+// in one batched read, so detectHollowMerges' loop makes no cold lookup per run and post-merge's own prefetch,
+// later in the pass, finds these numbers answered. Best-effort: a run this cannot place is left to the loop.
+async function prefetchHollowPrStates(root, runs, prStates, worktrees) {
+  if (typeof prStates.prefetch !== 'function') return;
+  const numbers = [];
+  const branches = [];
+  for (const { dir, state } of runs) {
+    try {
+      const stamped = stampedPr(state);
+      if (stamped !== null) numbers.push(stamped);
+      else if (typeof prStates.byBranchAsync === 'function') {
+        const branch = hollowRunBranch(root, dir, state, worktrees);
+        if (branch) branches.push(branch);
+      }
+    } catch { /* the loop holds this run */ }
+  }
+  try { await prStates.prefetch({ numbers, branches, freshNull: true }); } catch { /* warm-up only */ }
+}
+
 // The hollow-merge check (see the header). -> { entries, hollowRunDirs, failure? }. Each entry is
 // { runDir, runId, pr, action: 'held', reason: 'hollow-merge' | 'hollow-check-failed', phase?, records?,
 // commented?, detail? }. Spawns only through setupContext's `timedGh` (`deps.gh` in tests); `deps.readSpecNumber`
-// is the config.yml seam.
+// is the config.yml seam. `budgetExceeded` (the pass's wall-clock budget) is checked between runs, as postMerge
+// checks it; once it reads true the check returns `budget-exhausted`: a run left unjudged may be a hollow merge,
+// so the caller fails the pass closed rather than settle it.
 async function detectHollowMerges({
-  cwd, prStates, dryRun = false, now = Date.now, deps = {},
+  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
 } = {}) {
   const entries = [];
   const hollowRunDirs = [];
@@ -687,7 +719,10 @@ async function detectHollowMerges({
   };
 
   // Non-terminal runs only: a `clean` run is never in flight.
-  for (const { dir, state } of listRunDirsWithState(root)) {
+  const runs = listRunDirsWithState(root);
+  await prefetchHollowPrStates(root, runs, prStates, worktrees);
+  for (const { dir, state } of runs) {
+    if (typeof budgetExceeded === 'function' && budgetExceeded()) return { entries, hollowRunDirs, failure: 'budget-exhausted' };
     const runId = path.basename(dir);
     const commented = [];
     let pr = null;

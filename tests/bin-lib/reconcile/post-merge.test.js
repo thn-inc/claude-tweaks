@@ -2826,6 +2826,37 @@ test('hollow merge: the by-branch lookup refuses a persisted "no PR" answer (fre
   assert.deepEqual(r.hollowRunDirs, [dir]);
 });
 
+test('hollow merge: the resolver is warmed with every run\'s PR number and each PR-less run\'s branch before the first lookup', async () => {
+  const { root } = branchRunFixture();
+  addRun(root, '2026-11-23T100000-record-1', { pr: 11, decisions: ONE_LINE_DECISION });
+  addRun(root, '2026-11-23T110000-record-2', { pr: 12, decisions: ONE_LINE_DECISION });
+  addRun(root, '2026-11-20T090000-record-3', { pr: 13, status: 'clean', decisions: ONE_LINE_DECISION });
+  const calls = [];
+  const prStates = {
+    prefetch: async (opts) => { calls.push(['prefetch', opts]); },
+    byNumberAsync: async (n) => { calls.push(['byNumber', n]); return { number: n, state: 'OPEN' }; },
+    byBranchAsync: async (b, opts) => { calls.push(['byBranch', b, opts]); return null; },
+  };
+  const r = await detect(root, { gh: hollowGh(), prStates });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [] });
+  assert.equal(calls[0][0], 'prefetch', 'the warm-up precedes every lookup');
+  const warmed = calls[0][1];
+  assert.deepEqual({ ...warmed, numbers: [...warmed.numbers].sort() }, { numbers: [11, 12], branches: ['feat-6143'], freshNull: true }, 'clean runs excluded');
+  assert.deepEqual(calls.slice(1).map((c) => c[0]).sort(), ['byBranch', 'byNumber', 'byNumber']);
+});
+
+test('hollow merge: the pass budget is checked between runs; an exhausted budget fails the check closed with no lookup', async () => {
+  const root = mainCheckout();
+  addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const lookups = [];
+  const prStates = { byNumberAsync: async (n) => { lookups.push(n); return merged(); } };
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detectHollowMerges({ cwd: root, prStates, deps: { gh }, budgetExceeded: () => true });
+  assert.deepEqual(r, { entries: [], hollowRunDirs: [], failure: 'budget-exhausted' });
+  assert.deepEqual(lookups, []);
+  assert.equal(gh.calls.length, 0);
+});
+
 test('hollow merge: a setup failure returns the failure with empty sets', async () => {
   const root = mainCheckout({ origin: false });
   addRun(root, HR, { decisions: ONE_LINE_DECISION });

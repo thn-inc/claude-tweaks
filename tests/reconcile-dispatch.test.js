@@ -1014,6 +1014,8 @@ test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive
   assert.deepEqual(archiveOpts.postMergeDeferred, [runDir], 'archive leaves the hollow run dir in place');
   assert.equal(hollowOpts.prStates, releaseOpts.prStates, 'detection and release read ONE per-pass PR-state resolver');
   assert.equal(hollowOpts.prStates, postMergeOpts.prStates);
+  assert.equal(typeof hollowOpts.budgetExceeded, 'function', 'detection checks the pass budget');
+  assert.equal(hollowOpts.budgetExceeded(), false);
   assert.deepEqual(r.hollowMerges, [entry]);
   assert.ok(formatSummary(r).split('\n').includes(
     'hollow merge held: PR #77 (run 2026-11-23T1-hollow) — build unfinished; claim, auto:build and run dir kept; commented on #5',

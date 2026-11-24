@@ -557,7 +557,8 @@ async function reconcileInner(opts, state) {
   let hollowCheckFailed = false;
   if (checks.includes('release') || checks.includes('post-merge') || checks.includes('archive')) {
     try {
-      const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun }));
+      // Its own PR warm-up runs first, and the pass budget is checked between runs (a run left unjudged fails the pass closed).
+      const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() }));
       // `not-github-issues`, `no-remote` and `unknown-host`: this project has no GitHub work records to
       // comment on, no PR to ask about, or an origin the #4933 host gate refuses before any gh call (release
       // and post-merge refuse it too), so the check can never run and has nothing to hold. Treating them as a
