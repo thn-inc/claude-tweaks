@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { readText } = require('../../helpers/read-skill');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -392,7 +393,7 @@ function leverTable(text) {
 }
 
 test("twin pin: LEVER_ACTIONS rows equal Step 2.5's table Value column", () => {
-  const text = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-first-merge.md'), 'utf8');
+  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-first-merge.md'));
   const { cols, values } = leverTable(text);
   assert.deepEqual(cols, ['Value', 'Green', 'Pending', 'Red']);
   assert.deepEqual(Object.keys(LEVER_ACTIONS).sort(), [...values].sort());
