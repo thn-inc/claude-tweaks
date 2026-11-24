@@ -1912,7 +1912,7 @@ async function runReconcile(argv, deps) {
       out.background = background;
     }
   } catch {
-    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
+    out = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, hollowMerges: null, skipped: [{ check: 'all', reason: 'reconcile-threw' }], timings: null };
     if (!checksList.length) out.background = { checks: CLI_DEFERRED_CHECKS, spawned: false, reason: 'not-converged' };
   }
   if (jsonOut) {
@@ -2119,6 +2119,9 @@ async function runReconcileBackground(argv, deps) {
       // Swallowed escalate/resolve failures this pass saw (#4180): a count plus the latest one — the
       // prune half exists only in this pass's in-memory result, so this file is its one durable trace.
       // Prune failures carry `at: null` (this pass), so they rank newest.
+      // Runs held because their PR merged while the run was in flight (#6143): the only durable trace a
+      // detached pass leaves, so the next SessionStart can name each one.
+      hollowMerges: (r.hollowMerges || []).map((e) => ({ runId: e.runId, pr: e.pr, reason: e.reason, ...(e.phase ? { phase: e.phase } : {}) })),
       residueErrors: (r.residueErrors || []).length,
       lastResidueError: latestResidueError(r.residueErrors),
       skipped: r.skipped || [],

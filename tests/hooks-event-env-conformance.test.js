@@ -13,8 +13,9 @@
 //           three default to the real process.env when `env` is left out, and a git child started
 //           without an `env` option inherits it, which no runtime tripwire can see.
 //
-// Every hook event module is listed (session-start.js joined in Task 5 of #5377), and so are the two
-// event-path modules that are not an event's own file: dispatch-prompt-gate.js and skill-invocation.js.
+// Every hook event module is listed (session-start.js joined in Task 5 of #5377), and so are the
+// event-path modules that are not an event's own file: dispatch-prompt-gate.js, skill-invocation.js,
+// and (#6143) inflight-pr-gate.js and the named-run.js both gates share.
 //
 // Both scans read blank-mode text (string, template and regex bodies blanked, comments blanked), so a
 // message that mentions `process.env` is not code. The verdict is taken on that same text, and a
@@ -43,6 +44,8 @@ const EVENT_MODULES = [
   'plugin/bin/lib/hooks/session-start.js',
   'plugin/bin/lib/hooks/dispatch-prompt-gate.js',
   'plugin/bin/lib/hooks/skill-invocation.js',
+  'plugin/bin/lib/hooks/inflight-pr-gate.js',
+  'plugin/bin/lib/hooks/named-run.js',
 ];
 const CALL_NAMES = ['repoInfo', 'runGit', 'writeRunState', 'resolveIntegrationBranch', 'preferRemoteTrackingRef'];
 
@@ -62,6 +65,8 @@ const FLOORS = {
   'plugin/bin/lib/hooks/session-start.js': { repoInfo: 1, runGit: 0, writeRunState: 1, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
   'plugin/bin/lib/hooks/dispatch-prompt-gate.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
   'plugin/bin/lib/hooks/skill-invocation.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/inflight-pr-gate.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
+  'plugin/bin/lib/hooks/named-run.js': { repoInfo: 0, runGit: 0, writeRunState: 0, resolveIntegrationBranch: 0, preferRemoteTrackingRef: 0 },
 };
 
 function lineOf(src, offset) {

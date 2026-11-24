@@ -763,6 +763,32 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
 });
 
+test('SessionStart names the hollow merges a prior background pass held (#6143)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false,
+    summary: { hollowMerges: [{ runId: 'run-a', pr: 7, reason: 'hollow-merge', phase: 'build' }, { runId: 'run-b', pr: null, reason: 'hollow-check-failed' }] },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctxText = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctxText.includes('1 merged PR(s) held as hollow merges (run unfinished; claim and run dir kept): run-a (PR #7, build unfinished); '), ctxText);
+  assert.ok(ctxText.includes('1 run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): run-b.'), ctxText);
+});
+
+test('SessionStart renders a hollow-check-failed entry with a known PR as a check failure, never as an unfinished run (#6143)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false,
+    summary: { hollowMerges: [{ runId: 'run-c', pr: 9, reason: 'hollow-check-failed', detail: 'PR #9 state lookup: transient' }] },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  const ctxText = out.json.hookSpecificOutput.additionalContext;
+  assert.ok(ctxText.includes('1 run(s) held because the hollow-merge check failed (merge state unknown; claim and run dir kept): run-c (PR #9).'), ctxText);
+  assert.doesNotMatch(ctxText, /held as hollow merges/);
+});
+
 test('SessionStart surfaces a prior background pass failed plan-ref deletions, and stays silent at zero', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
