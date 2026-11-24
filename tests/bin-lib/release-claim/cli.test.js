@@ -580,6 +580,8 @@ test('#5902: a released claim with --reason merged records one exited build pass
   });
 });
 
+const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
+
 test("a claim's release exit is passed with actor script", () => {
   const runDir = mkRun();
   const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
@@ -588,7 +590,6 @@ test("a claim's release exit is passed with actor script", () => {
   assert.equal(events.length, 1);
   assert.equal(events[0].outcome, 'passed');
   assert.equal(events[0].payload.actor, 'script');
-  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
   assert.ok(buildLine(events[0]), 'the line is accepted on the new contract');
 });
 
@@ -597,7 +598,6 @@ test('a failed release carries actor script and is written with reasonCode unspe
   const { d } = deps({ content: live(RUN_DIR_NAME), out: [], mainRoot: rootOf(runDir) });
   const events = withStationSpy(d);
   assert.equal(run(['999', '--run', runDir, '--reason', 'failed: test'], d), 0);
-  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
   const line = buildLine(events[0]);
   assert.equal(line.outcome, 'failed');
   assert.equal(line.payload.actor, 'script');
@@ -612,7 +612,6 @@ test('a retired-outcome release carries no actor and its payload is unchanged', 
   assert.equal(run(['999', '--run', runDir, '--reason', 'abandoned: spec 999'], d), 0);
   assert.equal(events[0].outcome, 'abandoned');
   assert.deepEqual(events[0].payload, { reason: 'abandoned: spec 999', link: null });
-  const { buildLine } = require('../../../plugin/bin/lib/station-events/emit');
   assert.equal(buildLine(events[0]).outcome, 'abandoned');
 });
 
