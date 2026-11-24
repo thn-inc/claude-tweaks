@@ -41,7 +41,7 @@ test('the tier assertion can go red', () => {
   assertEachPatternGoesRed(degradeSentence(readText(STEP3)), TIERS, tiersMissing);
 });
 
-const LOG_LINE_LITERAL = 'Log `STAGED {HH:MM:SS} — Reproduction: lens "{lens}" {session limit twice | unavailable | timed out}; single-read coverage. Reversibility: high.` to `decisions.md`';
+const LOG_LINE_LITERAL = 'Log `STAGED {HH:MM:SS} — Reproduction: lens "{lens}" {session limit twice | unavailable | timed out | blocked: {reason} | needs-context: {reason}}; single-read coverage. Reversibility: high.` to `decisions.md`';
 const CAVEAT = /carry a one-line coverage-caveat into the Step 7 summary and the PR verdict comment naming the affected lens/;
 const LINE_TAIL = 'single-read coverage. Reversibility: high.';
 
