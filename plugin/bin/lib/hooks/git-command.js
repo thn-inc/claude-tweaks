@@ -48,6 +48,8 @@ function segmentSpansWith(str, spans) {
     // Unquoted: a backslash escapes the next character, so `\"` opens no
     // quote and `\\` is a literal backslash — matching bash semantics.
     if (ch === '\\' && i + 1 < str.length) {
+      // A backslash-newline is removed before bash tokenizes, so `&\<nl>&` is `&&` (#4245).
+      if (str[i + 1] === '\n') { i += 1; continue; }
       current += ch + str[i + 1];
       i += 1;
       continue;
@@ -116,8 +118,10 @@ function segmentSpansWith(str, spans) {
         continue;
       }
     }
-    if (ch === '&' && str[i + 1] === '&') { cut(i); i += 1; continue; }
-    if (ch === '|' && str[i + 1] === '|') { cut(i); i += 1; continue; }
+    let nx = i + 1; // the operator's second char, past any backslash-newline between them
+    while (str[nx] === '\\' && str[nx + 1] === '\n') nx += 2;
+    if (ch === '&' && str[nx] === '&') { cut(i); i = nx; continue; }
+    if (ch === '|' && str[nx] === '|') { cut(i); i = nx; continue; }
     // `>|` is bash's noclobber-override redirect operator, not a pipe — a
     // glued `|` immediately after `>` (#3080) must not fabricate a segment
     // break here, or the operator token never reaches the tokenizer whole.
