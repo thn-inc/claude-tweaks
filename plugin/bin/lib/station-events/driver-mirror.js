@@ -57,7 +57,9 @@ function stationEventsFor(event, { repoName, runId } = {}) {
   if (step === SETTLE_LABEL_STEP) {
     if (status !== 'ok') return [];
     const { stopStep } = event;
-    const station = stopStep === STEP.claim ? STATION.RELEASE : (own(DRIVER_STEP_STATIONS, stopStep) ? DRIVER_STEP_STATIONS[stopStep] : STATION.BUILD);
+    let station = STATION.BUILD;
+    if (stopStep === STEP.claim) station = STATION.RELEASE;
+    else if (own(DRIVER_STEP_STATIONS, stopStep)) station = DRIVER_STEP_STATIONS[stopStep];
     const held = holdEvent({ ...base, label: LABELS.BOT_BLOCKED, added: true, station, at: ts });
     return held ? [held] : [];
   }

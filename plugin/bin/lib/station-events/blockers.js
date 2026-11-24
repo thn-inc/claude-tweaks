@@ -105,11 +105,11 @@ function holdEvent({
     recordNumber,
     repoName,
     lane: lane || 'unknown',
-    sessionId: sessionId === undefined ? null : sessionId,
-    runId: runId === undefined ? null : runId,
+    sessionId: sessionId ?? null,
+    runId: runId ?? null,
     payload: added && typeof ref === 'string' ? { why, ref } : { why },
     discriminator,
-    at: at === undefined ? null : at,
+    at: at ?? null,
   };
 }
 
