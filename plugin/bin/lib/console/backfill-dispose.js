@@ -395,6 +395,11 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
   };
   const batchFiled = new Map();
   const batchDigested = new Map();
+  // fingerprint -> the existing record number a same-pass item matched (by its claim or its item marker).
+  const batchMatched = new Map();
+  // item id -> its filing entry / its digest line index in out.digest.lines, so a same-pass twin's item marker can join it (#4162).
+  const filingOf = new Map();
+  const lineOf = new Map();
 
   for (const run of workList.runs) {
     for (const item of run.items) {
@@ -447,26 +452,43 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         const byTitle = number === null && d.source === 'staged-kind' && d.proposal.minted === true ? titles.get(normalizeTitle(d.proposal.title)) : undefined;
         const matched = number !== null ? number : (byTitle === undefined ? null : byTitle);
         if (matched !== null) {
+          if (fp) batchMatched.set(fp, matched);
           out.reuse.push({ itemId: d.itemId, number: matched });
           ref = `#${matched}`;
+        } else if (fp && batchMatched.has(fp)) {
+          out.reuse.push({ itemId: d.itemId, number: batchMatched.get(fp) });
+          ref = `#${batchMatched.get(fp)}`;
         } else if (fp && batchFiled.has(fp)) {
-          out.reuse.push({ itemId: d.itemId, number: null, sameAs: batchFiled.get(fp) });
+          const twin = batchFiled.get(fp);
+          out.reuse.push({ itemId: d.itemId, number: null, sameAs: twin });
+          if (item.kind === 'finding') {
+            // The twin's record carries this item's marker, so the next pass finds it there if its claim has moved.
+            const filing = filingOf.get(twin);
+            const fpOwn = itemFingerprint(item);
+            filing.text += `${filing.text.endsWith('\n') ? '' : '\n'}<!-- work-fingerprint: ${fpOwn} -->\nwork-fingerprint: ${fpOwn}\n`;
+          }
         } else {
           if (fp) batchFiled.set(fp, d.itemId);
-          out.file.push({ itemId: d.itemId, fingerprint: fp, title: d.proposal.title, text: d.proposal.text });
+          const filing = { itemId: d.itemId, fingerprint: fp, title: d.proposal.title, text: d.proposal.text };
+          out.file.push(filing);
+          filingOf.set(d.itemId, filing);
         }
       } else if (d.action === 'digest') {
         // A duplicate's ref is the comment holding its entry: an already-posted one's URL now; a same-pass
         // twin's once that line is posted (`sameAs`, resolved by the procedure as a filing's is).
         const held = batchDigested.has(d.digest.fingerprint) ? null : heldDigestComment(digestComments, d.digest, item);
         if (batchDigested.has(d.digest.fingerprint)) {
+          const twin = batchDigested.get(d.digest.fingerprint);
           out.digest.duplicates.push(d.itemId);
-          out.digest.sameAs.push({ itemId: d.itemId, sameAs: batchDigested.get(d.digest.fingerprint) });
+          out.digest.sameAs.push({ itemId: d.itemId, sameAs: twin });
+          // The twin's line carries this item's marker too, so the next pass finds it there if its claim has moved (#4162).
+          if (item.kind === 'finding') out.digest.lines[lineOf.get(twin)] += ` ${itemMarkerOf(item)}`;
         } else if (held) {
           out.digest.duplicates.push(d.itemId);
           ref = commentRef(held);
         } else {
           batchDigested.set(d.digest.fingerprint, d.itemId);
+          lineOf.set(d.itemId, out.digest.lines.length);
           out.digest.lines.push(d.digest.line);
         }
       }
