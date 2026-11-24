@@ -142,7 +142,7 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
         lane: 'unknown',
         runId,
         sessionId: deps.sessionId || null,
-        payload: authorizes ? { label, direction, actor: ACTOR.PERSON } : { label, direction },
+        payload: { ...t.payload, label, direction },
         discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
       };
       let exitResult;

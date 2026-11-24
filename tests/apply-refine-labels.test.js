@@ -496,11 +496,20 @@ test('run: station events — adding ready records its three transitions', () =>
   assert.ok(events.every((e) => e.sessionId === null && e.lane === 'unknown'));
 });
 
+test('ready added writes intake and shape exits with actor agent', () => {
+  const { deps, events } = stationDeps([{ issue: 7, addLabels: ['ready'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  const exits = events.filter((e) => e.kind === 'exited');
+  assert.deepStrictEqual(exits.map((e) => e.station), ['intake', 'shape']);
+  assert.deepStrictEqual(exits.map((e) => e.payload.actor), ['agent', 'agent']);
+  assert.deepStrictEqual(exits[0].payload, { actor: 'agent', label: 'ready', direction: 'added' });
+});
+
 test('run: station events — removing needs:definition records exited intake passed', () => {
   const { deps, events } = stationDeps([{ issue: 9, removeLabels: ['needs:definition'] }]);
   assert.strictEqual(run(['actions.json'], deps), 0);
   assert.deepStrictEqual(events.map(triple), ['exited intake passed']);
-  assert.deepStrictEqual(events[0].payload, { label: 'needs:definition', direction: 'removed' });
+  assert.deepStrictEqual(events[0].payload, { actor: 'agent', label: 'needs:definition', direction: 'removed' });
   assert.strictEqual(events[0].discriminator, 'refine:9:removed:needs:definition:2023-11-14T22:13:20.000Z');
 });
 

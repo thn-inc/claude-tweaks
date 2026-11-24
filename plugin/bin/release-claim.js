@@ -52,7 +52,7 @@ const {
   parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
-const { releaseTransition, ACTOR, OUTCOME } = require('./lib/station-events/stations');
+const { releaseTransition } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
@@ -212,9 +212,7 @@ function run(argv, deps = realDeps) {
     try {
       const visitRunId = r.sweptFrom || runId;
       const ownSession = deps.sessionId || '';
-      const payload = { reason, link: o.link || null };
-      // `actor` marks a new-contract exit; the retired outcomes (abandoned, returned) stay without it.
-      if (transition.outcome === OUTCOME.PASSED || transition.outcome === OUTCOME.FAILED) payload.actor = ACTOR.SCRIPT;
+      const payload = { ...transition.payload, reason, link: o.link || null };
       if (r.sweptFrom) {
         payload.sweptBy = runId;
         if (ownSession) payload.sweptBySession = ownSession;
