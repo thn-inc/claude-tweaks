@@ -10,6 +10,7 @@ files:
   - plugin/bin/release-claim.js
   - plugin/bin/resolve-blockers.js
   - plugin/bin/accept-park.js
+  - plugin/bin/apply-refine-labels.js
   - docs/reference/station-events.md
 ---
 
@@ -57,9 +58,17 @@ files:
 - **Should understand:** stdout prints `{"written":true}`, then `{"written":false,"reason":"payload.next is not a station: undefined"}` (with the same reason on stderr as `claude-tweaks: station event dropped: …`), then `{"written":true}`, then two lines. The `failed` line's payload reads `{"actor":"agent","reasonCode":"unspecified","reasonText":"made-up"}`: the unknown code is normalized and the original kept. The `passed` line's payload is still exactly `{"step":"worker"}`. Actor-less `passed`/`failed` lines and retired outcomes (`returned`, `skipped`, `abandoned`) stay accepted unchanged until record 8/8 (#6152) retires them.
 - **Red flags:** The `failed` line dropped, or written with `reasonCode: "made-up"`; a `sent-back` written with no `next`; a `reasonCode` or `actor` key added to the actor-less `passed`; a throw or non-zero exit.
 
+### 6. Release a claim and grant `auto:build`, then read who did it — terminal, the main checkout's file
+- **URL:** `tail -n 4 "$(git rev-parse --path-format=absolute --git-common-dir)/../.claude-tweaks/station-events.jsonl"` after a real `release-claim.js --reason merged` and a `/claude-tweaks:backlog refine` batch that adds `auto:build` (both through `apply-refine-labels.js`)
+- **Action:** Read the release line and the authorize lines the two label-protocol exits wrote. Nothing in the skill prose logs these: the CLIs that make the transition write them.
+- **Should feel:** Attributable. Every new-contract exit says who moved the record, and a grant says it was a person's decision.
+- **Should understand:** A release whose outcome is `passed` or `failed` carries `payload.actor` `"script"` (a `failed` one also gets `reasonCode` `"unspecified"`); a release whose outcome is the retired `abandoned` or `returned` is unchanged, with no `actor`, until record 8/8 (#6152). Adding `auto:build` writes `exited` at `authorize` with `payload.actor` `"person"`, then a `decided` line at `authorize` whose payload is `{"decision":"authorize","actor":"person","via":"skill","outcomeRef":…}` (`outcomeRef` equals the exit line's `eventKey`, same discriminator; a re-authorize that also removes `bot:blocked` writes the same `decision`), then `entered` at `release`. When the exit line was not written, no `decided` line follows it. The accept verdict exits write nothing yet (`docs/reference/station-events.md`'s Coverage gaps; #6186).
+- **Red flags:** An `actor` on an `abandoned` or `returned` release; a `decided` line whose `outcomeRef` matches no `exited` line in the file; a `decided` line with no preceding authorize exit; a changed stdout or exit code from either CLI.
+
 ## Origin
 - Created during build of record #5902 (station events: program code appends one line per pipeline transition to the main checkout's `.claude-tweaks/station-events.jsonl` for the factory-floor ledger).
 - Steps 1 and 2 were run live in this session against the worktree's `emit.js` (two lines with one `eventKey`; a read-only `.claude-tweaks` dropped with one `EACCES` stderr line and no throw). Step 3 is pinned by `tests/bin-lib/claim-targets/cli.test.js` and the linked-worktree case in `tests/bin-lib/station-events/emit.test.js` rather than re-run against a live claim, which would write a real claim record.
 - Step 4 added during build of record #5957 (the log and its lock are listed in the main checkout's `.git/info/exclude` at append time, so a project without `/init`'s `.gitignore` rows stays clean). Run live in this session against the worktree's `emit.js`: `status: ""` and both entries printed. Pinned by the AC1.1/AC3.1 tests in `tests/bin-lib/station-events/emit.test.js`.
 - Step 5 added during build of record #6146 (station-event vocabulary and validation: plans, reasons, actors, holds). Run live in this session against the worktree's `emit.js`, output as stated. Pinned by the reasonCode, sent-back and actor-less tests in `tests/bin-lib/station-events/emit.test.js`.
 - Step 3 updated during build of record #6147 (the plan at the claim: one `planned` line per newly claimed record and run, list chosen lane first, then ceremony profile, else `standard`). The `planned` line was emitted live in this session through `appendStationEvent(planEvent(…))` with lane `driver` (payload as stated). The claim-path ordering, the re-claim and resume cases, and the default list are pinned by the `#5902` station-event tests in `tests/bin-lib/claim-targets/claim-targets.test.js`.
+- Step 6 added during build of record #6150 (outcomes at the label-protocol transitions: actor on new-contract releases, actor and a `decided` line at the authorize exit). Not run against a live claim or grant, which would write real records; pinned by the actor tests in `tests/bin-lib/release-claim/cli.test.js` and the authorize/decided tests in `tests/apply-refine-labels.test.js`.
