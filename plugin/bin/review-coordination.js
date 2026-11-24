@@ -6,7 +6,8 @@
 //   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]
 //   node bin/review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>
 //   node bin/review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]
-//   node bin/review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]
+//   node bin/review-coordination.js merge-lens-replies --out <file> --lens <id> --reviewers 1|2 --side-a <text-file|-> [--side-b <text-file|->] [--into <reply.json>]
+//   node bin/review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>]
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
@@ -93,6 +94,13 @@
 // JSON line {settled, needsSession, violations, overflow, skipped}; --run/--only/--hold append each settled lens's
 // pair lines as categorise-reproduction --run --lens does (settled items then carry entries and logged), --hold
 // entries being {lens, ...finding}. Every refusal is one stderr line, exit 2, before anything is written.
+// merge-lens-replies (#6003) folds one lens's Task-path reply texts into a settle-lens-replies input so one settle call
+// settles every lens: it reads --into when given (a bare or `result`-wrapped reply, as settle-lens-replies reads it),
+// drops every lenses/reviewers entry for --lens, appends {lens, reviewers} and one {lens, side, text, failed} per side
+// (the text file's whole content, UTF-8, byte-exact; `-` for a side that failed or never answered: text null, failed true),
+// and writes {lenses, reviewers} to --out atomically (--out may be --into). It prints {out, lenses, replaced}. --side-b is
+// required with --reviewers 2 and refused with 1. Every refusal (a missing flag, a lens token outside the finding-line class, an
+// unreadable text file, an empty or invalid --into) is one stderr line, exit 2, with nothing written; a failed write of --out exits 3.
 // record-lens-dispatch (#5998) is the one sanctioned writer of the run dir's lens-dispatch.json (lib/review-lens/
 // dispatch-record.js documents the file): it appends {lens, reviewers, path, round, status} (--round defaults to 1) under a
 // fail-closed lock and prints {path, entry, duplicate}. An identical entry already present is not appended again
@@ -102,7 +110,7 @@
 // Exit 0 ok; 2 malformed invocation (a blank resolve-tiebreak --run included) or unreadable/invalid input (check-coverage:
 // also a run dir that does not exist); 3 run dir unanchored (write-findings, check-coverage, resolve-tiebreak --run,
 // categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or missing (write-findings,
-// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included).
+// resolve-tiebreak --run, categorise-reproduction --run, log-reproduction-judgment, settle-lens-replies --run, record-lens-dispatch), or the append failed (record-lens-dispatch, a held lock included), or the --out write failed (merge-lens-replies).
 'use strict';
 
 const fs = require('node:fs');
@@ -126,13 +134,15 @@ const { pairEntries, holdKey, absenceRefuted, vacuityDowngraded, vacuityReconfir
 const { classifyPairLine } = require('./lib/timing/pair-lines');
 const { parseLensReply } = require('./lib/lens-reply');
 const { entryProblem, appendLensDispatch } = require('./lib/review-lens/dispatch-record');
+const { writeFileAtomic } = require('./lib/atomic-write');
 const { resolvePrinted } = require('./session-tmp-resolve');
 
 const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
   '       review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>\n' +
   '       review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
-  '       review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]\n' +
+  '       review-coordination.js merge-lens-replies --out <file> --lens <id> --reviewers 1|2 --side-a <text-file|-> [--side-b <text-file|->] [--into <reply.json>]\n' +
+  '       review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>]\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
@@ -611,7 +621,64 @@ function settleLensReplies(rest, deps) {
   return 0;
 }
 
-// record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>] (#5998).
+// merge-lens-replies --out <file> --lens <id> --reviewers 1|2 --side-a <text-file|-> [--side-b <text-file|->] [--into <reply.json>] (#6003).
+// Every refusal (exit 2) precedes the write; --into is read before --out is written, so the two may be one file.
+function mergeLensReplies(rest, deps) {
+  const parsedFlags = parseValueFlags(rest, ['--out', '--lens', '--reviewers', '--side-a', '--side-b', '--into'], deps, { brief: true });
+  if (parsedFlags.exitCode !== undefined) return parsedFlags.exitCode;
+  const { flags, positional } = parsedFlags;
+  const refuse = (message) => { deps.stderr(`review-coordination.js: ${message}\n`); return 2; };
+  if (positional.length !== 0) return refuse('merge-lens-replies takes no positional arguments');
+  for (const need of ['out', 'lens', 'reviewers', 'side-a']) {
+    if (flags[need] === undefined) return refuse(`merge-lens-replies needs --${need}`);
+  }
+  if (!LENS_SEGMENT_RE.test(flags.lens)) return refuse(`--lens must be one plain token of letters, digits, _ or -, got ${JSON.stringify(flags.lens)}`);
+  if (flags.reviewers !== '1' && flags.reviewers !== '2') return refuse(`--reviewers must be 1 or 2, got ${JSON.stringify(flags.reviewers)}`);
+  const reviewers = Number(flags.reviewers);
+  if (reviewers === 1 && flags['side-b'] !== undefined) return refuse('--side-b applies only with --reviewers 2');
+  if (reviewers === 2 && flags['side-b'] === undefined) return refuse('--reviewers 2 needs --side-b');
+  const sides = [['A', flags['side-a']]];
+  if (reviewers === 2) sides.push(['B', flags['side-b']]);
+  const added = [];
+  for (const [side, source] of sides) {
+    if (source === '-') {
+      added.push({ lens: flags.lens, side, text: null, failed: true });
+      continue;
+    }
+    let text;
+    try {
+      text = fs.readFileSync(at(deps, source), 'utf8');
+    } catch (err) {
+      return refuse(`cannot read ${source}: ${err.message}`);
+    }
+    added.push({ lens: flags.lens, side, text, failed: false });
+  }
+  let lenses = [];
+  let kept = [];
+  let replaced = false;
+  if (flags.into !== undefined) {
+    const input = readJson(flags.into, deps);
+    if (input.failed) return 2;
+    const checked = settleInputProblem(input.value, flags.into);
+    if (checked.problem) return refuse(checked.problem);
+    replaced = checked.lenses.some((l) => l.lens === flags.lens);
+    lenses = checked.lenses.filter((l) => l.lens !== flags.lens);
+    kept = checked.reviewers.filter((e) => e.lens !== flags.lens);
+  }
+  const merged = { lenses: [...lenses, { lens: flags.lens, reviewers }], reviewers: [...kept, ...added] };
+  const valid = settleInputProblem(merged, flags.out);
+  if (valid.problem) return refuse(valid.problem);
+  try {
+    writeFileAtomic(at(deps, flags.out), JSON.stringify(merged, null, 2) + '\n');
+  } catch (err) {
+    deps.stderr(`review-coordination.js: cannot write ${flags.out}: ${(err && err.message) || err}\n`);
+    return 3;
+  }
+  deps.stdout(JSON.stringify({ out: flags.out, lenses: merged.lenses.map((l) => l.lens), replaced }) + '\n');
+  return 0;
+}
+
+// record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>] (#5998).
 // Every flag refusal (exit 2) precedes the run dir anchoring (exit 3), which precedes the write.
 function recordLensDispatch(rest, deps) {
   const parsedFlags = parseValueFlags(rest, ['--run', '--lens', '--reviewers', '--path', '--status', '--round'], deps, { brief: true });
@@ -724,6 +791,7 @@ function run(argv, overrides = {}) {
   }
   if (command === 'log-reproduction-judgment') return logReproductionJudgment(rest, deps);
   if (command === 'settle-lens-replies') return settleLensReplies(rest, deps);
+  if (command === 'merge-lens-replies') return mergeLensReplies(rest, deps);
   if (command === 'record-lens-dispatch') return recordLensDispatch(rest, deps);
   if (command === 'detect-overlap') {
     if (rest.length !== 1) {

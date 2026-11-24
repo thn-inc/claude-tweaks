@@ -48,7 +48,7 @@ files:
 
 ### 5. The maintainer reads an unchanged trail
 - **URL:** the run's `decisions.md`; the PR's `### Phases` section
-- **Action:** **Maintainer** compares this run's `decisions.md` with an older run's. On the clean path the entries are the same (AC3.1's fixture pins this); the timestamps differ.
+- **Action:** **Maintainer** compares this run's `decisions.md` with an older run's. On the clean path the entries are the same (AC3.1's fixture pins this) apart from one `Phase exit` AUTO line per phase (`{phase} phase exited at {head}`, #6143), which the run's in-flight check reads as that phase finished; the timestamps differ.
 - **Should feel:** Trustworthy. Fewer turns, the same record.
 - **Should understand:** Non-clean paths carry extra degrade-trace lines by design (the IL-131 skip, a refused branch, a dirty tree, the Manifesto levers path). Six classes of entry stay with the calling skill (`_shared/auto-decision-log.md`).
 - **Red flags:** A clean-path entry missing that the old sequence wrote. The same entry written twice, once by the CLI and once by hand.

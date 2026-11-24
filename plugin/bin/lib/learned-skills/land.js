@@ -1,7 +1,7 @@
 // plugin/bin/lib/learned-skills/land.js — delivers captured Skills-row patches (#5290).
 // `capture` (learned-skills.js) left each edit as a patch file under {runDir}/learned-skills/;
 //   land   builds one plumbing commit per patch on refs/heads/learned-skills/{run-id}, pushes it and
-//          opens a ready, never-armed PR (no merge call of any kind exists here);
+//          opens a ready PR (no merge call of any kind exists here; the drain, drain.js, merges it);
 //   stage  writes each captured patch as a staged Review Console proposal (local-merge, no forge).
 // Every downgrade goes through learned-skills.js's `stageEntry`, so the staging-time gate and the
 // STAGED log line are the one implementation. The worktree's own branch, index and files are never
@@ -275,7 +275,7 @@ function prBody(records, entries) {
     '',
     ...rows,
     '',
-    'Opened ready and never armed: a human merges this, or closes it.',
+    "Opened ready: wrap-up's drain merges it once CI is green when learned-skills-auto-merge is on; otherwise a human merges or closes it.",
     '',
   ].join('\n');
   return neutralizeClosingPhrases(text).text;

@@ -216,6 +216,17 @@ test('composeHousekeepingSubject: chore subject from the PR title, body has no R
   assert.equal(tagged.body, 'Prune plans\n\n[housekeeping]');
 });
 
+test('composeHousekeepingSubject: refs become Refs lines in a last block, never Fixes; none leaves the body unchanged', () => {
+  const out = composeHousekeepingSubject({ title: 'Add learned skill updates from wrap-up of #6112', number: 6200, refs: [6112] });
+  assert.equal(out.title, 'chore: Add learned skill updates from wrap-up of #6112 (#6200)');
+  assert.ok(out.body.endsWith('Refs #6112'), out.body);
+  assert.doesNotMatch(out.body, /Fixes/);
+  const two = composeHousekeepingSubject({ title: 'Add x', number: 9, tag: 't', refs: [3, 1] });
+  assert.equal(two.body, 'Add x\n\n[t]\n\nRefs #3\nRefs #1');
+  assert.equal(composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [] }).body, 'Add x');
+  assert.throws(() => composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [0] }), (err) => err instanceof ComposeSubjectError && /refs entries must be positive integers, got 0/.test(err.message));
+});
+
 test('composeHousekeepingSubject: a Conventional-Commits-shaped title loses its prefix, an over-long one truncates within the budget', () => {
   assert.equal(composeHousekeepingSubject({ title: 'chore(tidy)!: Prune plans', number: 9 }).title, 'chore: Prune plans (#9)');
   const long = composeHousekeepingSubject({ title: 'Prune '.repeat(30).trim(), number: 5207 });

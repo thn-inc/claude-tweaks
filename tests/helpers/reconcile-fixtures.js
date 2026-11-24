@@ -108,6 +108,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     release: releaseMod.releaseMerged,
     reap: reapMod.reapMerged,
     postMerge: postMergeMod.postMerge,
+    detectHollow: postMergeMod.detectHollowMerges,
     prefetchPostMerge: postMergeMod.prefetchPostMergePrStates,
   };
   // order: which stubbed checks ran, in call order (#4599); postMergeOpts: what post-merge was handed.
@@ -119,6 +120,13 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
   preflight.ghHealthCheckAsync = async () => health;
   // The PR-state warm-up (#4032) is its own step: record it, with the resolver it was handed.
   postMergeMod.prefetchPostMergePrStates = async (root, prStates) => { out.order.push('prefetch'); out.prefetchArgs = { root, prStates }; };
+  // #6143: the hollow-merge check runs ahead of release; default to a clean pass, `extra.hollow` overrides.
+  postMergeMod.detectHollowMerges = async (opts) => {
+    out.hollowCalls = (out.hollowCalls || 0) + 1; // not in `order`: existing order assertions predate the check
+    out.hollowOpts = opts;
+    if (extra.hollow) return extra.hollow(opts);
+    return { entries: [], hollowRunDirs: [] };
+  };
   postMergeMod.postMerge = async (opts) => {
     out.order.push('post-merge');
     out.postMergeOpts = opts;
@@ -134,7 +142,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     };
     return { archived: [], skipped: [] };
   };
-  releaseMod.releaseMerged = () => { out.order.push('release'); return { released: [], skipped: [] }; };
+  releaseMod.releaseMerged = (opts) => { out.order.push('release'); out.releaseOpts = opts; return { released: [], skipped: [] }; };
   reapMod.reapMerged = () => {
     out.reapCalled = true;
     return { reaped: [], skipped: [], portsRelease: [] };
@@ -152,6 +160,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     releaseMod.releaseMerged = original.release;
     reapMod.reapMerged = original.reap;
     postMergeMod.postMerge = original.postMerge;
+    postMergeMod.detectHollowMerges = original.detectHollow;
     postMergeMod.prefetchPostMergePrStates = original.prefetchPostMerge;
     delete require.cache[indexPath];
   }

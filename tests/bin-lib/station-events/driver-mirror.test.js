@@ -157,6 +157,39 @@ test('merge sub-steps: ready enters, a merged confirm exits passed, a park exits
   assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'returned']]);
 });
 
+test('a settle-label ok line writes held why blocked at the stopped step\'s station', () => {
+  const events = stationEventsFor(line({ step: 'settle-label', status: 'ok', stopStep: 'test' }), ID);
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], { repoName: 'acme/widgets', recordNumber: 7, lane: 'driver', runId: 'run-1', sessionId: null, discriminator: `settle-label@${TS}`,
+    kind: 'held', station: 'test', at: TS, payload: { why: 'blocked' } });
+  assert.ok(buildLine(events[0]));
+});
+
+test('a settle-label stop at a step with no station is held at build', () => {
+  for (const over of [{ stopStep: 'check' }, {}]) {
+    const [e] = stationEventsFor(line({ step: 'settle-label', status: 'ok', ...over }), ID);
+    assert.deepEqual([e.station, e.payload], ['build', { why: 'blocked' }]);
+  }
+});
+
+test('a settle-label after a claim stop is held at release', () => {
+  const [e] = stationEventsFor(line({ step: 'settle-label', status: 'ok', stopStep: 'claim' }), ID);
+  assert.equal(e.station, 'release');
+});
+
+test('a failed settle-label writes no hold', () => {
+  assert.deepEqual(stationEventsFor(line({ step: 'settle-label', status: 'fail', stopStep: 'test' }), ID), []);
+});
+
+test('an applied park writes held why parked at merge beside the returned exit', () => {
+  const events = stationEventsFor(line({ step: 'merge-park', status: 'stop', parked: true, detail: 'ci-red: bot:parked applied to record 7' }), ID);
+  assert.deepEqual(kinds(events), [['exited', 'merge', 'returned'], ['held', 'merge', undefined]]);
+  assert.deepEqual(events[1].payload, { why: 'parked' });
+  assert.equal(events[1].at, TS);
+  assert.equal(events[1].discriminator, `merge-park@${TS}`);
+  assert.deepEqual(kinds(stationEventsFor(line({ step: 'merge-park', status: 'stop', parked: false, detail: 'ci-red: x' }), ID)), [['exited', 'merge', 'returned']]);
+});
+
 test('an armed confirm, a failed ready or confirm, merge-call and the unmapped steps give nothing', () => {
   assert.deepEqual(stationEventsFor(line({ step: 'merge-confirm', detail: 'armed — auto-merge armed' }), ID), []);
   assert.deepEqual(stationEventsFor(line({ step: 'merge-confirm', status: 'stop', detail: 'state-read-failed: x' }), ID), []);

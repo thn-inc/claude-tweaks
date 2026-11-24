@@ -77,6 +77,9 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   const pr = {
     number: 3630100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
     mergeCommit: { oid: NEW }, closingIssuesReferences: [],
+    // `gh pr view` prints a body: the hollow-merge check (#6143, any work backend) reads it, and one with no
+    // run marker settles as before. Without it the check fails closed and holds the run.
+    body: '',
   };
   const dataDir = scratchDir('ct-recon-async-gh-');
   const issueLog = path.join(dataDir, 'issue-calls.log');
@@ -694,8 +697,9 @@ test('#4421: an over-budget return after archive ran persists ownerlessNonClean 
   const { root, run, mk, cacheJson } = ownerlessFixture();
   for (let i = 1; i <= 3; i++) mk(`2026-10-26T10000${i}-record-${i}`, { status: 'active' }); // owner-less, non-clean
   seedOwnerlessCache(root);
-  // Calls 1-6 are the checks up to and including archive's own (post-merge adds one, #4599); the 7th (after archive) trips.
-  const r = await withBudgetExceededFrom(7, () => run({ checks: ['archive', 'archive-branches'] }));
+  // Calls 1-9 are the checks up to and including archive's own (post-merge adds one, #4599; the hollow-merge check,
+  // #6143, one per non-terminal run: three here); the 10th (after archive) trips.
+  const r = await withBudgetExceededFrom(10, () => run({ checks: ['archive', 'archive-branches'] }));
   assert.equal(r.ownerlessNonClean, 3, 'archive ran before the budget tripped');
   assert.ok(r.skipped.some((s) => s.check === 'archive-branches' && s.reason === 'budget-exceeded'), 'the pass returned early, before finalize');
   assert.equal(cacheJson().ownerlessNonClean, 3);
