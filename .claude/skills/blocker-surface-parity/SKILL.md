@@ -34,6 +34,7 @@ Many surfaces read a record's blockers, and each must reach the same verdict, or
 3. **Make the new input a required argument.** `filterCandidates` and `partitionByOpenBodyBlockers` throw `TypeError` without a foreign `Map` (`new Map()` for none), so a caller that never learned the rule fails loudly instead of reading every foreign blocker as absent.
 4. **State the freshness signal cannot see means a cache miss.** A foreign issue closing changes nothing in this repository, so `cacheUsable` misses while any `auto:build` body declares a qualified line or a persisted exclusion names a foreign blocker.
 5. **Cover both `work-links` modes and both transports** on every row of the table, or say in the row's prose which one the surface does not support and what it prints instead.
+6. **A new landing verdict lands on every landing surface.** A verdict beside `unlanded` (`hollow`, #6142: the closing merge carried no implementation) is named by the unlanded-blocker pass and its report line, the /flow 2.7b stop card and failure card, and the dispatch Settle and queue-pull notes that list the stopping verdicts. Derive the list with `git grep -n -l -w unlanded -- plugin tests` and add a conformance assertion per surface.
 
 ## Tests
 
