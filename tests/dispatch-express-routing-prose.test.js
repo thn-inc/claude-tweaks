@@ -797,6 +797,16 @@ const STEP6_EXCEPTION_FACTS = [
 const ONE_CALL_FACTS = [
   [/read in the one `--values express-lane express-driver` call above, not a second one/, 'the Express lane paragraph names the one express-lane express-driver call'],
 ];
+const OWN_PR_FACTS = [
+  [/After a `merged` outcome, and only when `express-lane` resolves `true`, run `express-lane\.js samples --pr \{pr\}`/, 'explicit form: own-PR sampling gated on express-lane'],
+  [/ in the `#N`\/`#N,#M` forms \(a bare drain's Step 3 sweep covers its merges\)/, 'explicit forms only: a bare drain sweeps at loop termination'],
+  [/finish `_shared\/express-lane\.md`'s own-PR check/, 'the shared section owns the review call and the left-to-the-next-drain line'],
+];
+test('#4365 SKILL.md Step 5 explicit-form express path samples its own PR', () => {
+  const text = step5(readText(SKILL));
+  assert.deepEqual(missingFactsOf(OWN_PR_FACTS)(text), []);
+  assertEachFactGoesRed(text, OWN_PR_FACTS);
+});
 const step6 = (text) => between(text, '### Step 6: Settle', '## Reporting');
 
 test('#5232 settle-and-merge.md names the driver route blocked stop as the exception to its main-thread rule', () => {
