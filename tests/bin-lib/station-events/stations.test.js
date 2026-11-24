@@ -81,7 +81,7 @@ test('every station a table or constant names is a member of STATIONS', () => {
 test('outcomeForDriverStatus maps ok, fail and stop', () => {
   assert.equal(outcomeForDriverStatus('ok'), 'passed');
   assert.equal(outcomeForDriverStatus('fail'), 'failed');
-  assert.equal(outcomeForDriverStatus('stop'), 'returned');
+  assert.equal(outcomeForDriverStatus('stop'), 'stopped');
   assert.equal(outcomeForDriverStatus('weird'), null);
 });
 

@@ -8934,6 +8934,22 @@ test('#5902 the real emitter over an unwritable main checkout: stdout, driver-ev
   }
 });
 
+test('#6149 a red test step mirrors through the real sink as exited test failed, reasonCode test-failed, actor agent', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 1, stdout: '', stderr: '' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'test-failed', 'agent']);
+});
+
+test('#6149 a verdict-less test run mirrors as infrastructure', async () => {
+  const seen = [];
+  const h = harness({ deps: { stationEvent: (e) => seen.push(e) }, script: [[on('node', /verify\.js$/), { code: 2, stdout: '', stderr: 'boom' }]] });
+  await run(['#7'], h.deps);
+  const e = seen.find((x) => x.kind === 'exited' && x.payload.step === 'test');
+  assert.deepStrictEqual([e.station, e.outcome, e.payload.reasonCode, e.payload.actor], ['test', 'failed', 'infrastructure', 'agent']);
+});
+
 test('#5902 an interrupted worker still writes its final line and terminates when deps.stationEvent throws', async () => {
   const order = [];
   let release;
@@ -8972,7 +8988,7 @@ test('#5902 a settled stop: the stop line mirrors, settle lines mirror nothing, 
   const stopLine = h.lines().find((l) => l.step === 'test');
   const ofStop = seen.filter((e) => e.discriminator === `test@${stopLine.ts}`).map((e) => [e.kind, e.station, e.outcome]);
   assert.strictEqual(stopLine.status, 'stop', 'red tests stop the record');
-  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'returned']]);
+  assert.deepStrictEqual(ofStop, [['started', 'test', undefined], ['exited', 'test', 'failed']]);
 
   let thrown = 0;
   const throwing = harness({ script: REDTESTS.script, deps: { stationEvent: () => { thrown += 1; throw new Error('station sink down'); } } });
