@@ -1471,9 +1471,10 @@ test('recordNumbersFromSlug: parses one or more record numbers off a record-{n}[
   assert.deepEqual(recordNumbersFromSlug('/tmp/2026-08-27T105511-record-1378-816'), [1378, 816]);
   assert.deepEqual(recordNumbersFromSlug('/tmp/2026-09-14T175427-record-1732-1811'), [1732, 1811]);
   assert.deepEqual(recordNumbersFromSlug('/tmp/2026-08-01T090000-record-42'), [42]);
+  assert.deepEqual(recordNumbersFromSlug('/tmp/2026-08-17T125939-spec-783-784-781'), [783, 784, 781]);
 });
 
-test('recordNumbersFromSlug: null for a non-record slug (topic name, standalone, multi-spec parent)', () => {
+test('recordNumbersFromSlug: null for a non-record slug (topic name, standalone)', () => {
   assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-meal-planning'), null);
   assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-adhoc-standalone'), null);
   assert.equal(recordNumbersFromSlug('/tmp/2026-08-01T090000-tidy-standalone'), null);
@@ -1698,6 +1699,43 @@ test('archiveMerged: leaves a config.yml-only run dir in place while any one slu
   const ghWrapper = installGhIssueStateWrapper({ 9003: 'CLOSED', 9004: 'OPEN' });
   try {
     const result = archiveMerged({ cwd: root });
+    assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT in archived, got ${JSON.stringify(result)}`);
+    assert.equal(fs.existsSync(runDir), true);
+  } finally {
+    ghWrapper.restore();
+  }
+});
+
+// #4191: the same pass archives a state-less multi-spec `spec-{n}-{m}` dir,
+// but never under `work-backend: local-files`, whose numbers are not issues.
+function configOnlySpecRun(runId, claudeMd = null) {
+  const root = fs.realpathSync(makeRepo());
+  if (claudeMd) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+  const backdated = new Date(Date.now() - (STRUCTURALLY_STUCK_TTL_MS * 2));
+  fs.utimesSync(runDir, backdated, backdated);
+  return runDir;
+}
+
+test('archiveMerged: archives a config.yml-only spec-{n}-{m} run dir once every slug record is CLOSED (#4191)', { skip: STUB_SKIP }, () => {
+  const runDir = configOnlySpecRun('2026-08-30T105718-spec-9005-9006');
+  const ghWrapper = installGhIssueStateWrapper({ 9005: 'CLOSED', 9006: 'CLOSED' });
+  try {
+    const result = archiveMerged({ cwd: path.resolve(runDir, '..', '..', '..') });
+    assert.ok(result.archived.includes(runDir), `expected ${runDir} in archived, got ${JSON.stringify(result)}`);
+    assert.equal(fs.existsSync(runDir), false);
+  } finally {
+    ghWrapper.restore();
+  }
+});
+
+test('archiveMerged: leaves a config.yml-only spec-{n} run dir in place under work-backend: local-files, even with that issue CLOSED (#4191)', { skip: STUB_SKIP }, () => {
+  const runDir = configOnlySpecRun('2026-08-30T105718-spec-9007', '# P\n\nwork-backend: local-files\n');
+  const ghWrapper = installGhIssueStateWrapper({ 9007: 'CLOSED' });
+  try {
+    const result = archiveMerged({ cwd: path.resolve(runDir, '..', '..', '..') });
     assert.ok(!result.archived.includes(runDir), `expected ${runDir} NOT in archived, got ${JSON.stringify(result)}`);
     assert.equal(fs.existsSync(runDir), true);
   } finally {

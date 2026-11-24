@@ -1124,7 +1124,9 @@ function shellWorkTwinDiffers(root, dir) {
   return pairs.some(([src, dest]) => isDir(src) && isDir(dest) && !compareWorkTwin(root, src, dest).identical);
 }
 
-// #1811 Deliverable 3: a run dir shaped `{timestamp}-record-{n}[-{m}...]`
+// #1811 Deliverable 3: a run dir shaped `{timestamp}-record-{n}[-{m}...]` —
+// or, since #4191, `{timestamp}-spec-{n}[-{m}...]` (a multi-spec run, which
+// isOrphanedMint skips because its config.yml is present) —
 // whose own record number(s) — not a PR — are named in its slug. The one
 // case this predicate exists for is a run dir with config.yml but NO
 // run-state.json at all (materialize.md's own worktree-first commit never
@@ -1137,10 +1139,11 @@ function shellWorkTwinDiffers(root, dir) {
 // record in the slug is independently CLOSED — nothing left to build.
 const RECORD_SLUG_RE = /-(?:record|spec)-(\d+(?:-\d+)*)$/;
 
-// dir basename -> record numbers named in a `record-{n}[-{m}...]` slug, or
-// null when the basename doesn't match that shape (a topic-name run, a
-// `*-tidy-standalone*`/`*-sweep-standalone*` run, a multi-spec `spec-{n}/`
-// slug, etc. — none of those are this predicate's concern).
+// dir basename -> record numbers named in a `record-{n}[-{m}...]` or
+// `spec-{n}[-{m}...]` slug, or null when the basename doesn't match that
+// shape (a topic-name run, a `*-tidy-standalone*`/`*-sweep-standalone*` run,
+// etc. — none of those are this predicate's concern). Shared with
+// runRecordSet's manifest-less path.
 function recordNumbersFromSlug(dir) {
   const m = RECORD_SLUG_RE.exec(path.basename(dir));
   if (!m) return null;
@@ -1159,10 +1162,6 @@ function recordNumbersFromSlug(dir) {
 // Any manifest spec id that is not a positive-integer string (`abc`, `0x10`,
 // `1e3`) yields null too: it is not a GitHub issue number, so closingIssuesReferences
 // can never attest it, and the run is left unchecked rather than coerced.
-// Separate from RECORD_SLUG_RE on purpose: that regex stays record-only for
-// isClosedSlugStuck.
-const RUN_RECORD_SLUG_RE = /-(?:record|spec)-(\d+(?:-\d+)*)$/;
-
 function runRecordSet(dir) {
   const manifest = readManifest(dir);
   const ids = [];
@@ -1177,7 +1176,7 @@ function runRecordSet(dir) {
     }
     return [...new Set(ids)];
   }
-  const m = RUN_RECORD_SLUG_RE.exec(path.basename(dir));
+  const m = RECORD_SLUG_RE.exec(path.basename(dir));
   if (!m) return null;
   for (const raw of m[1].split('-')) {
     const n = Number(raw);
@@ -2420,9 +2419,10 @@ function archiveMerged({
   const repoSlug = target && !repoRefusal ? target.slug : null;
   const residueRepo = residueRepoOf(target);
   // #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
-  // closingIssuesReferences can never attest them: the record check stays off.
-  // Read once per pass; an absent file or line (unconfigured) keeps the check
-  // (pr-first is GitHub-backed by construction).
+  // closingIssuesReferences can never attest them: the record check stays off,
+  // and so does isClosedSlugStuck's issue-state probe (#4191). Read once per
+  // pass; an absent file or line (unconfigured) keeps the check (pr-first is
+  // GitHub-backed by construction).
   const recordCheckApplies = readWorkBackend(root) !== 'local-files';
 
   // #4032: `cache`, when given, is the pass-shared run-integrity cache — the
@@ -2511,8 +2511,10 @@ function archiveMerged({
     // 'orphaned-mint' — wrongly — for this shape, since config.yml IS
     // present here) and never tracked toward move-failed/structurally-stuck
     // escalation on success (trackArchiveResult's own success branch clears
-    // both).
-    if (isClosedSlugStuck(root, dir, state)) {
+    // both). Off under `work-backend: local-files` (recordCheckApplies): a
+    // local-files record number is not a GitHub issue, so an unrelated CLOSED
+    // issue of the same number must not archive the dir (#4191).
+    if (recordCheckApplies && isClosedSlugStuck(root, dir, state)) {
       finishArchiveAttempt(cacheBatch, residueRepo, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
