@@ -526,7 +526,7 @@ test('run: station events — two actions on one issue are not deduped against e
 });
 
 test('run: station events — a label with no table row records nothing', () => {
-  const { deps, events } = stationDeps([{ issue: 3, addLabels: ['priority:high'], removeLabels: ['bot:blocked'] }]);
+  const { deps, events } = stationDeps([{ issue: 3, addLabels: ['priority:high'], removeLabels: ['wip'] }]);
   assert.strictEqual(run(['actions.json'], deps), 0);
   assert.deepStrictEqual(events, []);
 });
@@ -615,4 +615,38 @@ test('run: station events — with no run dir the discriminator ends with the in
   const runArgv = ['actions.json', '--run', '/repo/.claude-tweaks/pipelines/run-1'];
   assert.deepStrictEqual(discs(runArgv, 1700000000000), discs(runArgv, 1700000999000));
   assert.strictEqual(discs(runArgv, 1700000000000)[0], 'refine:118:added:auto:build:run-1');
+});
+
+test('removing bot:blocked writes released why blocked at authorize', () => {
+  const { buildLine } = require('../plugin/bin/lib/station-events/emit');
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['auto:build'], removeLabels: ['bot:blocked'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  const released = events.filter((e) => e.kind === 'released');
+  assert.strictEqual(released.length, 1);
+  assert.strictEqual(released[0].station, 'authorize');
+  assert.deepStrictEqual(released[0].payload, { why: 'blocked' });
+  assert.strictEqual(released[0].discriminator, 'refine:118:removed:bot:blocked:2023-11-14T22:13:20.000Z');
+  assert.ok(buildLine(released[0]), 'the released line is accepted');
+  assert.deepStrictEqual(events.filter((e) => e.kind !== 'released').map(triple),
+    ['exited authorize passed', 'decided authorize', 'entered release']);
+});
+
+test('adding bot:parked writes held why parked at authorize', () => {
+  const { buildLine } = require('../plugin/bin/lib/station-events/emit');
+  const { deps, events } = stationDeps([{ issue: 118, addLabels: ['bot:parked'] }]);
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  const held = events.filter((e) => e.kind === 'held');
+  assert.strictEqual(held.length, 1);
+  assert.strictEqual(held[0].station, 'authorize');
+  assert.deepStrictEqual(held[0].payload, { why: 'parked' });
+  assert.ok(buildLine(held[0]), 'the held line is accepted');
+});
+
+test('a throwing emitter on a hold event never fails the batch', () => {
+  const deps = fakeDeps({
+    readFile: () => JSON.stringify([{ issue: 118, addLabels: ['bot:parked'] }]),
+    stationEvent: (e) => { if (e.kind === 'held') throw new Error('boom'); },
+  });
+  assert.strictEqual(run(['actions.json'], deps), 0);
+  assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).ok, [118]);
 });
