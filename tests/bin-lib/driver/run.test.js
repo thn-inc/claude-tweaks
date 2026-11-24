@@ -5194,6 +5194,16 @@ test('#5915 AC1: with a declared impact.command the prompt names it and no npm t
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok', 'the run goes on to the test step');
 });
 
+test('#6161: the declared-test prompt says to run the command unchained and to retry a denied shape', async () => {
+  const h = harness({ script: [scopeIs('file'), ...declares(DECL)] });
+  await run(['#7'], h.deps);
+  const { prompt } = workerCall(h).args[0];
+  assert.ok(prompt.includes('Write the test list with the Write tool'));
+  assert.ok(prompt.includes('one Bash call on its own'));
+  assert.ok(prompt.includes('read-only `git status/diff/log/show/ls-files`'));
+  assert.ok(prompt.includes('that command shape is outside the allow list, not that Bash is unavailable: retry in the allowed form'));
+});
+
 test('#5915 AC2: with no declaration the prompt says not to run tests and the launch has no testCommand', async () => {
   const h = harness();
   await run(['#7'], h.deps);

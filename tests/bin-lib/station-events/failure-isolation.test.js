@@ -163,7 +163,7 @@ function resolveOnce(stationEventFor) {
 
 describe('an unwritable station file never changes a CLI result', () => {
   const cases = [
-    ['claim-targets', claimOnce, 6],
+    ['claim-targets', claimOnce, 8],
     ['release-claim', releaseOnce, 1],
     ['resolve-blockers (onSnapshot)', resolveOnce, 2],
   ];
@@ -182,7 +182,7 @@ describe('an unwritable station file never changes a CLI result', () => {
   }
 
   const existingDirCases = [
-    ['claim-targets', claimOnce, 6],
+    ['claim-targets', claimOnce, 8],
     ['release-claim', releaseOnce, 1],
   ];
   for (const [name, once, expectedEvents] of existingDirCases) {
