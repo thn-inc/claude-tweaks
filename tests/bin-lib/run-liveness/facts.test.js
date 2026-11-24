@@ -4,14 +4,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
-const os = require('os');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('path');
 const { gatherFacts, prFact } = require('../../../plugin/bin/lib/run-liveness/facts');
 
 const DAY = 24 * 60 * 60 * 1000;
 
 function tmpRun(name = '2026-10-01T000000-record-5') {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-facts-'));
+  const root = scratchDir('ct-facts-');
   const dir = path.join(root, '.claude-tweaks', 'pipelines', name);
   fs.mkdirSync(dir, { recursive: true });
   return { root, dir };
@@ -99,7 +99,7 @@ test('no branch name yields every branch fact unknown', () => {
 
 test('git status failure yields dirty null; clean and dirty read as booleans', () => {
   const { root, dir } = tmpRun();
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-facts-wt-'));
+  const wt = scratchDir('ct-facts-wt-');
   const run = (answer) => gatherFacts({
     root, dir, state: { worktree: wt }, branch: null, prState: null,
     deps: { git: (args) => (args.join(' ') === '--no-optional-locks status --porcelain' ? answer : MISSING), listStaged: () => [] },

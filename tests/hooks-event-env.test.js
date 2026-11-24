@@ -409,7 +409,13 @@ test('session-start reads nothing from process.env', async () => {
   const { repo, home, env } = sessionStartFixture();
   fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'worktree-always: true\nport-services: web\n');
   mkRunAt(repo, '2026-07-01T090000-spec-1', repo);
-  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1', 'run-state.json'), JSON.stringify({ status: 'interrupted' }));
+  // #3977: the banner lists a run only once reconcile cached it as orphaned and its session reads dead,
+  // so the run's liveness probes run here too, under the tripwire.
+  const { seedOrphan, deadOwner, writeOldEvents } = require('./helpers/orphan-fixture');
+  const staleRun = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.writeFileSync(path.join(staleRun, 'run-state.json'), JSON.stringify({ status: 'interrupted', ...deadOwner() }));
+  writeOldEvents(staleRun);
+  seedOrphan(repo, staleRun);
   const bare = addOrigin(repo);
   const { spawn } = fakeSpawn();
   try {
@@ -417,7 +423,7 @@ test('session-start reads nothing from process.env', async () => {
     assert.strictEqual(res.code, 0);
     const context = JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
     assert.match(context, /Interaction style/);
-    assert.match(context, /unfinished pipeline run/);
+    assert.match(context, /orphaned pipeline run/);
     assert.match(context, /worktree-always: ON/);
     assert.match(context, /claude-tweaks: ports \d+-\d+ \(/);
     assert.ok(fs.existsSync(path.join(home, '.claude-tweaks', 'ports.json')), 'the port registry lands under the injected home');

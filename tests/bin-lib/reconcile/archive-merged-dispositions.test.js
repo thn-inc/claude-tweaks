@@ -4,9 +4,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { scratchDir } = require('../../helpers/tmp-dir');
+const { writeIdentity } = require('../../helpers/git-fixtures');
 const { archiveMerged, STALE_INTERRUPTED_TTL_MS } = require('../../../plugin/bin/lib/reconcile/archive-merged');
 const { QUIET_FLOOR_MS, STAGED_OUTCOME_REASON } = require('../../../plugin/bin/lib/run-liveness/disposition');
 
@@ -18,10 +19,9 @@ function git(cwd, ...args) {
 }
 
 function repo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dispositions-')));
+  const root = fs.realpathSync(scratchDir('ct-dispositions-'));
   git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 't@example.com');
-  git(root, 'config', 'user.name', 't');
+  writeIdentity(root, { name: 't', email: 't@example.com' });
   fs.writeFileSync(path.join(root, 'CLAUDE.md'), '# P\n\nwork-backend: local-files\n');
   fs.writeFileSync(path.join(root, '.gitignore'), '.claude-tweaks/\n');
   git(root, 'add', '.');

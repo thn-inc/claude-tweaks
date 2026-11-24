@@ -5,7 +5,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const os = require('os');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end');
@@ -14,7 +14,7 @@ const { hookEnv, runHookCli } = require('./helpers/hook-event');
 const { TERMINAL_SESSION_END_REASONS } = sessionEnd;
 
 function project() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-session-end-')));
+  const root = fs.realpathSync(scratchDir('ct-session-end-'));
   execFileSync('git', ['init', '-q', '-b', 'main', root]);
   fs.writeFileSync(path.join(root, '.gitignore'), '.claude-tweaks/\n');
   return root;
