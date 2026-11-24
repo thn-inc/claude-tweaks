@@ -3220,7 +3220,7 @@ test('verify exit 1 is the red-tests stop; any other non-zero exit is a fail car
 
 test('#6149 the test line carries verifyExit on a red-tests stop and a verdict-less fail, and nowhere else', async () => {
   const testLineOf = (h) => h.lines().find((l) => l.step === 'test');
-  for (const [code, want] of [[1, 1], [2, 2], [137, 137], [null, null]]) {
+  for (const [code, want] of [[1, 1], [2, 2], [137, 137], [null, null], [undefined, null]]) {
     const h = harness({ script: [[on('node', /verify\.js$/), { code, stdout: '', stderr: 'x' }]] });
     await run(['#7'], h.deps);
     const line = testLineOf(h);

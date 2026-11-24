@@ -22,14 +22,16 @@ function isoOrNull(ms) {
 
 // A red-tests stop (verifyExit 1) is a failure; any other stop is a stop. `verifyExit` is present only
 // on the lines that decided from verify.js's exit code (steps.js).
+const isRedTests = (step, event) => step === 'test' && event.status === 'stop' && event.verifyExit === 1;
+
 function exitOutcome(step, event) {
-  return step === 'test' && event.status === 'stop' && event.verifyExit === 1 ? OUTCOME.FAILED : outcomeForDriverStatus(event.status);
+  return isRedTests(step, event) ? OUTCOME.FAILED : outcomeForDriverStatus(event.status);
 }
 
 function exitPayload(step, event, outcome) {
   const payload = { step, actor: DRIVER_STEP_ACTORS[step] };
   if (outcome === OUTCOME.PASSED) return payload;
-  if (step === 'test' && event.verifyExit === 1) payload.reasonCode = REASON.TEST_FAILED;
+  if (isRedTests(step, event)) payload.reasonCode = REASON.TEST_FAILED;
   else if (step === 'test' && event.status === 'fail' && Object.hasOwn(event, 'verifyExit')) payload.reasonCode = REASON.INFRASTRUCTURE;
   else if (step === 'ci' && CI_READ_FAILURE_DETAILS.includes(event.detail)) payload.reasonCode = REASON.INFRASTRUCTURE;
   else payload.reasonCode = REASON.UNSPECIFIED;

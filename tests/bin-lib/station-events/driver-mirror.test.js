@@ -40,7 +40,7 @@ test('AC1.1: a red-tests stop at the test step mirrors to exited failed with rea
 });
 
 test('AC1.1: a verdictless fail at the test step mirrors to exited failed with reasonCode infrastructure', () => {
-  for (const verifyExit of [2, 137, null]) {
+  for (const verifyExit of [1, 2, 137, null]) {
     const e = exitedOf({ step: 'test', status: 'fail', detail: 'verify exited 2', verifyExit });
     assert.deepEqual(shape(e), ['failed', 'infrastructure', 'agent'], String(verifyExit));
     assert.ok(buildLine(e));
@@ -58,9 +58,14 @@ test('AC1.1: a failed ci step classified infrastructure mirrors with reasonCode 
   assert.ok(buildLine(s));
 });
 
+test('an interrupted fail at the test step mirrors to exited failed with reasonCode unspecified', () => {
+  const e = exitedOf({ step: 'test', status: 'fail', detail: 'interrupted by SIGTERM' });
+  assert.deepEqual(shape(e), ['failed', 'unspecified', 'agent']);
+  assert.ok(buildLine(e));
+});
+
 test('AC1.4 AC2.1: a step with no known reason mirrors with reasonCode unspecified', () => {
   const cases = [
-    { step: 'test', status: 'fail', detail: 'interrupted by SIGTERM' },
     { step: 'test', status: 'fail', detail: 'the worktree differs from HEAD after the test step on 1 path(s): a.js' },
     { step: 'ci', status: 'fail', detail: 'interrupted by SIGTERM' },
     { step: 'worker', status: 'fail' },
@@ -71,7 +76,6 @@ test('AC1.4 AC2.1: a step with no known reason mirrors with reasonCode unspecifi
     assert.equal(e.outcome, 'failed');
     assert.ok(buildLine(e));
   }
-  assert.equal(exitedOf(cases[0]).payload.actor, 'agent');
 });
 
 test('AC2.1: a stop at any other step mirrors to exited stopped with reasonCode unspecified and the driver reason in reasonText', () => {
@@ -81,7 +85,9 @@ test('AC2.1: a stop at any other step mirrors to exited stopped with reasonCode 
   const detail = '.claude-tweaks/verify-scope.json is not a regular file (dir); verify.js was not run';
   const t = exitedOf({ step: 'test', status: 'stop', detail });
   assert.deepEqual([t.outcome, t.payload.reasonCode, t.payload.actor, t.payload.reasonText], ['stopped', 'unspecified', 'agent', detail]);
-  assert.equal(Object.hasOwn(exitedOf({ step: 'pr', status: 'stop' }).payload, 'reasonText'), false);
+  const bare = exitedOf({ step: 'pr', status: 'stop' });
+  assert.ok(buildLine(bare));
+  assert.equal(Object.hasOwn(bare.payload, 'reasonText'), false);
   // The structured field, not the text, is the key.
   assert.equal(exitedOf({ step: 'test', status: 'stop', detail: 'red tests' }).outcome, 'stopped');
 });
@@ -96,6 +102,7 @@ test('an ok step mirrors to exited passed with actor and no reason', () => {
     const e = exitedOf({ step });
     assert.equal(e.outcome, 'passed');
     assert.equal(e.payload.actor, actor);
+    assert.ok(buildLine(e));
     assert.equal(Object.hasOwn(e.payload, 'reasonCode'), false);
     assert.equal(Object.hasOwn(e.payload, 'reasonText'), false);
   }
