@@ -147,7 +147,10 @@ function run(argv, deps = realDeps) {
 
   const parsed = parseArgs(argv);
   if (parsed.error) return fail(EXIT_INVOCATION, `${parsed.error}\n${USAGE}`);
-  const { '--spec-file': specFile, '--rule': ruleFlag, '--run': runDir, '--from': from } = parsed.opts;
+  const {
+    '--spec-file': specFile, '--rule': ruleFlag, '--run': runDir, '--from': from,
+    '--attempt-profile': ap, '--attempt-effort': ae, '--escalations': esc, '--trigger': trig,
+  } = parsed.opts;
   const attempt = ATTEMPT_FLAGS.filter((f) => parsed.opts[f] !== undefined);
   if (attempt.length > 0 && attempt.length < ATTEMPT_FLAGS.length) {
     const missing = ATTEMPT_FLAGS.filter((f) => parsed.opts[f] === undefined);
@@ -162,7 +165,6 @@ function run(argv, deps = realDeps) {
   }
 
   if (attempt.length > 0) {
-    const { '--attempt-profile': ap, '--attempt-effort': ae, '--escalations': esc, '--trigger': trig } = parsed.opts;
     if (!Object.hasOwn(PROFILES, ap)) return fail(EXIT_INVOCATION, `--attempt-profile ${JSON.stringify(ap)} is not a profile — expected ${Object.keys(PROFILES).join(', ')}`);
     if (!ATTEMPT_EFFORTS.includes(ae)) return fail(EXIT_INVOCATION, `--attempt-effort ${JSON.stringify(ae)} is not valid — expected ${ATTEMPT_EFFORTS.join(', ')}`);
     if (!/^[0-9]$/.test(esc) || Number(esc) > MAX_ESCALATIONS) return fail(EXIT_INVOCATION, `--escalations ${JSON.stringify(esc)} is not valid — expected 0..${MAX_ESCALATIONS}`);
@@ -215,7 +217,6 @@ function run(argv, deps = realDeps) {
     const start = base === null ? null : startEffort({ risk: readRisk(text), launchEffort: resolve(base, { policy }).launchEffort });
     let next = null;
     if (ladder && attempt.length > 0) {
-      const { '--attempt-profile': ap, '--attempt-effort': ae, '--escalations': esc, '--trigger': trig } = parsed.opts;
       next = nextAttempt({
         profile: ap,
         effort: ae === 'inherit' ? null : ae,
