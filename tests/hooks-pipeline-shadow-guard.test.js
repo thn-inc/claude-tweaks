@@ -38,6 +38,20 @@ function assertAllowed(out) {
   assert.deepStrictEqual(out, {}, 'expected no deny, but got: ' + JSON.stringify(out));
 }
 
+test('#4452: a cp / mv / install into an EXISTING pipelines dir of a linked worktree is denied', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  const pipelines = path.join(wt, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  for (const cmd of [`cp a ${shellQuote(pipelines)}`, `cd ./x/../.claude-tweaks || cp a ${shellQuote(pipelines + '/')}`, `mv a ${shellQuote(pipelines)}`, `install a ${shellQuote(pipelines)}`]) {
+    assertDenied(pre.run({ env: process.env, input: bashInput(cmd, main), runDir: null, runState: null, cwd: main }));
+  }
+  // The same copy into the main checkout's pipelines dir stays allowed.
+  const mainPipelines = path.join(main, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(mainPipelines, { recursive: true });
+  assertAllowed(pre.run({ env: process.env, input: bashInput(`cp a ${shellQuote(mainPipelines)}`, main), runDir: null, runState: null, cwd: main }));
+});
+
 test('AC: mkdir <worktree>/.claude-tweaks/pipelines/x is denied', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
