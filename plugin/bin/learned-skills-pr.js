@@ -144,8 +144,8 @@ function defaultResolvePolicy(runDir, exec = execFileSync) {
 }
 
 const realDeps = {
-  ghAvailable: () => ghAvailable(),
-  resolvePolicy: (runDir) => defaultResolvePolicy(runDir),
+  ghAvailable,
+  resolvePolicy: defaultResolvePolicy,
   repoView: () => libDeps.gh(['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']),
   drainLib: drain,
   cwd: () => process.cwd(),
@@ -236,7 +236,10 @@ function runDrain(o, target, deps, usageError) {
     const { autoMerge, mergeVerification } = deps.resolvePolicy(target.dir);
     const common = { runDir: target.dir, integrationBranch: o.integrationBranch, ownPr: o.ownPr ? Number(o.ownPr) : undefined, autoMerge: autoMerge === true, mergeVerification };
     let result;
-    if (!deps.ghAvailable()) {
+    if (!common.autoMerge) {
+      // The lever is off: the library reports {disabled:true} before it reads anything, so neither gh nor the repo is touched.
+      result = deps.drainLib({ ...common, repo: o.repo });
+    } else if (!deps.ghAvailable()) {
       result = deps.drainLib({ ...common, repo: o.repo }, { ghAvailable: () => false });
     } else {
       let repo = o.repo;
@@ -253,6 +256,6 @@ function runDrain(o, target, deps, usageError) {
   }
 }
 
-module.exports = { run, parseArgs, USAGE, defaultResolvePolicy };
+module.exports = { run, parseArgs, USAGE, defaultResolvePolicy, realDeps };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

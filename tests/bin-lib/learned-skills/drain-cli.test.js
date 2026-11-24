@@ -5,6 +5,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cli = require('../../../plugin/bin/learned-skills-pr.js');
 const { drain } = require('../../../plugin/bin/lib/learned-skills/drain.js');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const repoResolve = require('../../../plugin/bin/lib/repo-resolve.js');
+const { realDeps: libDeps } = require('../../../plugin/bin/lib/learned-skills/learned-skills.js');
 
 const DIR = '/main/.claude-tweaks/pipelines/run-1';
 const RESULT = { merged: [3], armed: [], leftOpen: [], conflicting: [] };
@@ -73,16 +78,52 @@ test('a library throw is exit 1 with the drain-failed stderr line', () => {
 test('a repo-read failure is exit 1 and the library never runs', () => {
   const h = harness({ repoView: () => { throw new Error('no remote'); } });
   assert.equal(cli.run(['drain', '--run', DIR, '--integration-branch', 'main'], h.deps), 1);
-  assert.match(h.err.join(''), /drain failed: could not read the repository/);
+  assert.match(h.err.join(''), /drain failed: could not read the repository: no remote/);
   assert.equal(h.calls.lib.length, 0);
 });
 
 test('without gh: no repo read, the library prints its no-gh result, exit 0', () => {
-  const h = harness({ ghAvailable: () => false, drainLib: drain });
-  h.deps.repoView = () => { throw new Error('repo must not be read'); };
-  const code = cli.run(['drain', '--run', DIR, '--integration-branch', 'main', '--own-pr', '7'], h.deps);
-  assert.equal(code, 0);
-  assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [{ pr: 7, reason: 'no-gh' }], conflicting: [] });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drain-cli-'));
+  try {
+    const h = harness({ ghAvailable: () => false, drainLib: drain, resolveTarget: () => ({ ok: true, dir }) });
+    h.deps.repoView = () => { throw new Error('repo must not be read'); };
+    const code = cli.run(['drain', '--run', dir, '--integration-branch', 'main', '--own-pr', '7'], h.deps);
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [{ pr: 7, reason: 'no-gh' }], conflicting: [] });
+    const decisions = fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8');
+    assert.match(decisions, /PR #7 left open \(no-gh\)/);
+    assert.match(decisions, /learned-skills-auto-merge=true/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'learned-skills', 'drain.json'), 'utf8')), { pr: 7, outcome: 'left-open', reason: 'no-gh' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a false lever never reads gh or the repo: the library reports disabled even when the repo read would fail', () => {
+  const h = harness({
+    resolvePolicy: () => ({ autoMerge: false, mergeVerification: 'wait' }),
+    ghAvailable: () => { throw new Error('gh must not be probed'); },
+    repoView: () => { throw new Error('repo must not be read'); },
+    drainLib: drain,
+  });
+  assert.equal(cli.run(['drain', '--run', DIR, '--integration-branch', 'main', '--own-pr', '7'], h.deps), 0);
+  assert.deepEqual(JSON.parse(h.out.join('')), { merged: [], armed: [], leftOpen: [], conflicting: [], disabled: true });
+  assert.equal(h.err.join(''), '');
+});
+
+test('realDeps wiring: ghAvailable and resolvePolicy are the real helpers, repoView asks gh for nameWithOwner', () => {
+  assert.equal(cli.realDeps.ghAvailable, repoResolve.ghAvailable);
+  assert.equal(cli.realDeps.resolvePolicy, cli.defaultResolvePolicy);
+  assert.equal(cli.realDeps.drainLib, drain);
+  const real = libDeps.gh;
+  const seen = [];
+  libDeps.gh = (args) => { seen.push(args); return 'o/r\n'; };
+  try {
+    assert.equal(cli.realDeps.repoView(), 'o/r\n');
+  } finally {
+    libDeps.gh = real;
+  }
+  assert.deepEqual(seen, [['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner']]);
 });
 
 test('without gh the library is called with ghAvailable false', () => {
