@@ -3629,6 +3629,7 @@ test('readRunManifestPlanInputs returns nulls for a missing dir, a missing file 
   assert.deepEqual(read(manifestRunDir('[1,2]')), nulls);
   assert.deepEqual(read(manifestRunDir('null')), nulls);
   assert.deepEqual(read(manifestRunDir({ lane: 3, ceremonyProfile: 'fast-lane' })), { lane: null, ceremonyProfile: 'fast-lane' });
+  assert.deepEqual(read(manifestRunDir({ lane: 'driver', ceremonyProfile: 7 })), { lane: 'driver', ceremonyProfile: null });
 });
 
 test('a run dir that fails the anchoring check plans the default list', () => {
