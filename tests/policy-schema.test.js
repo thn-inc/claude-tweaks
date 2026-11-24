@@ -1210,7 +1210,7 @@ test('review-lens-dispatch resolves task by default and for an invalid value, wo
 });
 
 test('AC6.3: the review-lens-dispatch removal condition names worker and #5825', () => {
-  const lines = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'), 'utf8').split('\n');
+  const lines = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js')).split('\n');
   const row = lines.findIndex((l) => l.includes("{ key: 'review-lens-dispatch'"));
   assert.ok(row > 0, 'the review-lens-dispatch row is missing');
   let start = row;
