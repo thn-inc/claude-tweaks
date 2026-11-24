@@ -11,6 +11,7 @@
 const { escapeRegExp } = require('../shared-primitives');
 const { neutralizeClosingPhrases } = require('./closing-links');
 const { expressMarker } = require('../express/sampling');
+const { fencedLineMask } = require('../markdown-blocks');
 
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
@@ -344,8 +345,9 @@ function locateSpecSummary(lines) {
   const start = lines.findIndex((l) => l.trim() === '### Spec summary');
   if (start === -1) return null;
   let end = lines.length;
+  const fenced = fencedLineMask(lines);
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^#{1,3}\s/.test(lines[i])) { end = i; break; }
+    if (!fenced[i] && /^#{1,3}\s/.test(lines[i])) { end = i; break; }
   }
   return { start, end };
 }
