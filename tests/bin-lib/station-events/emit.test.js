@@ -424,6 +424,8 @@ test('an exited passed without actor is dropped', () => {
 
 test('an exited failed without actor is dropped', () => {
   dropped(exitedEvent('failed', { reason: 'failed: test', link: null }), /actor/);
+  dropped(exitedEvent('failed', { actor: undefined }), /actor/);
+  dropped(exitedEvent('failed', { actor: null }), /actor/);
 });
 
 test('an exited with a non-object payload is dropped, not thrown', () => {

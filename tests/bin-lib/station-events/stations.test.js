@@ -170,10 +170,16 @@ test('every exited line in LABEL_TRANSITIONS and every releaseTransition passes 
       }
     }
   }
-  for (const reason of ['merged: spec 1', 'abandoned: spec 1', 'failed: test', 'never-started', 'something else']) {
+  const reasons = ['merged: spec 1', 'abandoned: spec 1', 'failed: test', 'never-started', 'something else'];
+  for (const reason of reasons) {
     const t = releaseTransition(reason);
     assert.ok(buildLine({ ...base, ...t, discriminator: reason }), reason);
     checked += 1;
   }
-  assert.ok(checked >= 10, 'the exits were walked, so an empty filter cannot pass');
+  // The expected count comes from the raw table, so a row that stops yielding an exit fails.
+  let tableExits = 0;
+  for (const rows of Object.values(LABEL_TRANSITIONS)) {
+    for (const list of Object.values(rows)) tableExits += list.filter((x) => x.kind === 'exited').length;
+  }
+  assert.equal(checked, tableExits + reasons.length, 'every exit row and release reason was walked');
 });
