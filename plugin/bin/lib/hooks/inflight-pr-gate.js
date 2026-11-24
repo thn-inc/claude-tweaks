@@ -77,11 +77,14 @@ function defaultReadPrBody(call, ctx) {
   const { execFileSync } = require('child_process');
   const { ghOptions, injectedGhDeps } = require('../repo-resolve');
   const { ghTimeoutMsAt } = require('../shared-primitives');
-  const env = { ...ctx.env, ...(call.env && typeof call.env === 'object' ? call.env : {}) };
+  const callEnv = call.env && typeof call.env === 'object' ? call.env : {};
+  const env = { ...ctx.env, ...callEnv };
   // A carried GH_REPO goes on as --repo (an -R/--repo value wins, as in gh), so ghOptions sees an explicit
   // repo and adds no GH_HOST from the cwd's origin: a two-part value then reads on GH_HOST or github.com,
   // and a three-part `host/o/r` on its own host, exactly as gh reads GH_REPO.
-  const repo = isNonEmptyString(call.repo) ? call.repo : (call.env && isNonEmptyString(call.env.GH_REPO) ? call.env.GH_REPO : null);
+  let repo = null;
+  if (isNonEmptyString(call.repo)) repo = call.repo;
+  else if (isNonEmptyString(callEnv.GH_REPO)) repo = callEnv.GH_REPO;
   const args = ['pr', 'view', '--json', 'body,number'];
   if (repo !== null) args.push('--repo', repo);
   if (call.selector !== null && call.selector !== undefined) args.push('--', call.selector);
