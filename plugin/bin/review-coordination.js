@@ -6,7 +6,7 @@
 //   node bin/review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]
 //   node bin/review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>
 //   node bin/review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]
-//   node bin/review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]
+//   node bin/review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>]
 //   node bin/review-coordination.js detect-overlap <findings-by-lens.json>
 //   node bin/review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>
 //   node bin/review-coordination.js resolve-debate <verdictA> <verdictB>
@@ -132,7 +132,7 @@ const USAGE =
   'usage: review-coordination.js categorise-reproduction <agentA.json> <agentB.json> [--lens <lens> --run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
   '       review-coordination.js log-reproduction-judgment <judgment.json> --lens <lens> --run <dir>\n' +
   '       review-coordination.js settle-lens-replies <result.json> --ctx-id <id> [--run <dir> --only confirmed|unconfirmed [--hold <file>]]\n' +
-  '       review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]\n' +
+  '       review-coordination.js record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>]\n' +
   '       review-coordination.js detect-overlap <findings-by-lens.json>\n' +
   '       review-coordination.js corroborate-cross-lens <unconfirmed-by-lens.json>\n' +
   '       review-coordination.js resolve-debate <verdictA> <verdictB>\n' +
@@ -611,7 +611,7 @@ function settleLensReplies(rest, deps) {
   return 0;
 }
 
-// record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>] (#5998).
+// record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>] (#5998).
 // Every flag refusal (exit 2) precedes the run dir anchoring (exit 3), which precedes the write.
 function recordLensDispatch(rest, deps) {
   const parsedFlags = parseValueFlags(rest, ['--run', '--lens', '--reviewers', '--path', '--status', '--round'], deps, { brief: true });
