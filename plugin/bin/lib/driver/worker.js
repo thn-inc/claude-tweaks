@@ -127,6 +127,16 @@
 //   `ok` means only that conforming output arrived; the verdict is `result.status`. A change
 //   to `RESULT_SCHEMA`, the sandbox flags or the Fast profile's model needs a re-probe
 //   (re-run: the opt-in `AC9.1 (#5997)` live probe).
+// - Standard implementer at low effort (#6002). Probed on 2026-11-23 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), under a subscription login, launched from a process with no TTY, every launch
+//   under `--safe-mode --restricted`, on the model alias `sonnet` (what `resolve('standard')`
+//   returns under this repository's policy) with `--effort low`. Three implementer launches,
+//   each in a fresh git repository holding a committed `greet.js`, asking for `greet('Ann')`
+//   to return `Hello Ann!`, each returned a valid result envelope (`status: ok`, `result.status`
+//   `done`, 4 turns, about $0.03, no denials) with the working change in the tree. Three
+//   Agent-tool dispatches at `model: sonnet`, `effort: low` on the same fixture each committed
+//   the change and replied `STATUS: DONE`. Re-run the three launches with the opt-in `#6002` live probe;
+//   the Agent-tool half has no node test (an Agent dispatch cannot run outside a session).
 //
 // Pre-minted session id (#6000 whole-branch review). A `lens-reviewer` launch passes
 // `--session-id <uuid>` (a fresh `crypto.randomUUID()` per launch; `composeArgs` appends it
