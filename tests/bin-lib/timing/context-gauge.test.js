@@ -483,6 +483,18 @@ test('CLI: a fallback-identified transcript over the cap writes no handoff — o
 });
 
 // flow/context-handoff.md: a top-level run (run-state.json not dispatched: true) never hands off wrap-up.
+test('CLI: --stories-owed over the cap refuses a list without stories and accepts one carrying it', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'test,review', '--stories-owed'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().handoff, null);
+  assert.match(c.json().reason, /--stories-owed/);
+  const c2 = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'stories,test,review', '--stories-owed'], c2.deps), 0, c2.err.join(''));
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8')).nextSteps, ['stories', 'test', 'review']);
+});
+
 // The refusal is handoff: null with this reason, logged as a SKIP like every other reason.
 const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-state.json not dispatched: true) never hands off wrap-up — flow/context-handoff.md: continue in place';
 

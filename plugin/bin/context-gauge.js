@@ -103,6 +103,7 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') { o.help = true; continue; }
     if (a === '--keep-going') { o.keepGoing = true; continue; }
     if (a === '--no-stories') { o.noStories = true; continue; }
+    if (a === '--stories-owed') { o.storiesOwed = true; continue; }
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
@@ -164,7 +165,7 @@ const TOP_LEVEL_WRAPUP_REASON = 'handoff.json not written: a top-level run (run-
 
 // Measure, and write the handoff when over. Never throws: every failure is a
 // `reason` on the result (the fail-open contract); several join with '; '.
-async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, noStories = false, transcriptArg }, deps) {
+async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, noStories = false, storiesOwed = false, transcriptArg }, deps) {
   const result = { contextTokens: null, cap, over: false, transcript: null, handoff: null, reason: null };
   const reasons = [];
   const done = (why) => {
@@ -201,6 +202,8 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
     return done(`measurement failed: ${errText(e)}`);
   }
   if (!result.over || !nextSteps) return done();
+  // --stories-owed: build's automatic stories step has not run yet; a list without it would drop it for good.
+  if (storiesOwed && !nextSteps.includes('stories')) return done(`handoff.json not written: --stories-owed but --next-steps omits stories (put stories before test), or run stories first: continue in place`);
   if (!HANDS_OFF.has(identified)) return done(NOT_IDENTIFIED_REASON);
   // flow/context-handoff.md: a top-level run never hands off wrap-up; a dispatched run may.
   if (nextSteps.includes('wrap-up')) {
@@ -303,7 +306,7 @@ async function run(argv, overrides = {}) {
   const runId = path.basename(runDir);
   if (!ctxLib.RUN_ID_RE.test(runId)) return usageError(`--run basename is not a run id (a spec- subdir answers for its parent run): ${runId}`);
 
-  const result = await measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps, keepGoing: Boolean(o.keepGoing), noStories: Boolean(o.noStories), transcriptArg: o.transcript }, deps);
+  const result = await measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps, keepGoing: Boolean(o.keepGoing), noStories: Boolean(o.noStories), storiesOwed: Boolean(o.storiesOwed), transcriptArg: o.transcript }, deps);
   if (result.reason) {
     try {
       deps.appendDecision(runDir, formatEntry({
