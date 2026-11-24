@@ -606,6 +606,48 @@ test("twin pin: LEVER_ACTIONS rows equal Step 2.5's table Value column", () => {
   assert.notDeepEqual(Object.keys(LEVER_ACTIONS).sort(), leverTable(drifted).values.sort());
 });
 
+test('an unexpected rebuild reason becomes rebuild-failed naming it', () => {
+  for (const [reason, detail] of [['made-up', 'unexpected rebuild reason: made-up'], [undefined, 'unexpected rebuild reason: none']]) {
+    const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason }) });
+    assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6204, reason: 'rebuild-failed', detail }]);
+  }
+  for (const reason of ['lease-rejected', 'git-too-old', 'head-changed', 'not-learned-skills-branch', 'conflict needs a human: a, b']) {
+    const h = harness({ prs: [pr(6204)], views: { 6204: dirtyView(6204) }, rebuild: () => ({ ok: false, reason }) });
+    assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6204, reason }], reason);
+  }
+});
+
+test('under off, a rebuilt own PR with no checks at all is pending at once, without the watch', () => {
+  const h = harness({ prs: [pr(6295)], views: { 6295: dirtyView(6295) }, rebuild: REBUILT });
+  const out = drain(base({ ownPr: 6295, mergeVerification: 'off' }), h.deps);
+  assert.deepEqual(out.rebuilt, [6295]);
+  assert.deepEqual(out.leftOpen, [{ pr: 6295, reason: 'pending' }]);
+  assert.equal(h.clock.sleeps.length, 0);
+  const wait = harness({ prs: [pr(6296)], views: { 6296: dirtyView(6296) }, rebuild: REBUILT });
+  assert.deepEqual(drain(base({ ownPr: 6296, mergeVerification: 'wait' }), wait.deps).leftOpen, [{ pr: 6296, reason: 'timeout' }]);
+});
+
+test('under merge-when-green, a rebuilt own PR that reads BLOCKED pending at the new head is never armed', () => {
+  const blockedC = view({ number: 6297, headRefOid: SHA('c'), mergeStateStatus: 'BLOCKED', statusCheckRollup: RUNNING });
+  const h = harness({ prs: [pr(6297)], views: { 6297: [dirtyView(6297), blockedC] }, rebuild: REBUILT });
+  const out = drain(base({ ownPr: 6297, mergeVerification: 'merge-when-green' }), h.deps);
+  assert.deepEqual(out.rebuilt, [6297]);
+  assert.deepEqual(out.armed, []);
+  assert.equal(h.merges().length, 0);
+  assert.deepEqual(out.leftOpen, [{ pr: 6297, reason: 'timeout' }]);
+});
+
+test('after a rebuild the ci-gate record gets the pre-rebuild gateStart and the rebuilt head', () => {
+  const green = view({ number: 6298, headRefOid: SHA('c') });
+  const h = harness({ prs: [pr(6298)], views: { 6298: [dirtyView(6298), green] }, rebuild: REBUILT });
+  const out = drain(base({ runDir: '/run', ownPr: 6298 }), h.deps);
+  assert.deepEqual(out.merged, [6298]);
+  assert.equal(h.gateCalls.length, 1);
+  assert.equal(h.gateCalls[0].headSha, SHA('c'));
+  assert.equal(h.gateCalls[0].gateStartEpoch, 1_700_000_000);
+  assert.ok(h.clock.t > 1_700_000_000_000, 'the clock advanced past the gate start');
+});
+
 test('AC1.1 AC1.2: drain rebuilds the second of two double-append PRs (real git)', (t) => {
   const fx = rebuildFixture(t);
   const append = (after, line) => (repo) => {

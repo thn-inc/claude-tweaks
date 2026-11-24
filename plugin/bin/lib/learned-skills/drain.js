@@ -12,7 +12,7 @@
 // separate lists; `rebuilt` lists the PRs whose conflict the rebuild cleared (#6113). A failed files/state/runs/ready-run read is `pending` with the error as `detail`,
 // never merged or watched. The one merge call is `gh pr merge --squash --delete-branch
 // --match-head-commit {sha}` with a subject composed by compose-subject's record-less form; no label
-// or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set;
+// or issue call exists here. Every classified PR writes one decisions.md line when a run dir is set (a rebuilt PR also gets its `AUTO` rebuild line);
 // only the own PR writes the ci-gate event and drain.json.
 //
 // Scope is proven at three points: before the state read (the files read, so the first-failure order stays
@@ -54,6 +54,7 @@ const FILES_CAP = 100; // gh pr view --json files returns at most 100 entries
 const LOG_SECTION = '/wrap-up';
 const STEP = 'Learned-skills drain';
 const LEVER = 'learned-skills-auto-merge=true';
+const CONFLICT_PREFIX = 'conflict needs a human: ';
 const OK_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 
 const LEFT_OPEN_REASONS = Object.freeze([
@@ -198,7 +199,10 @@ function drain(opts, overrides = {}) {
       return null;
     }
     if (!res || res.ok !== true) {
-      open(n, (res && res.reason) || 'rebuild-failed', res && res.detail);
+      const reason = res && res.reason;
+      const known = typeof reason === 'string' && (LEFT_OPEN_REASONS.includes(reason) || reason.startsWith(CONFLICT_PREFIX));
+      if (known) open(n, reason, res.detail);
+      else open(n, 'rebuild-failed', `unexpected rebuild reason: ${reason === undefined ? 'none' : String(reason)}`);
       return null;
     }
     out.rebuilt.push(n);
@@ -332,7 +336,9 @@ function drain(opts, overrides = {}) {
       if (state.verdict === 'conflicting') {
         const commit = rebuildOrSettle(n, c.headRefName, sha);
         if (!commit) continue;
-        if (n !== own) { open(n, 'pending'); continue; }
+        // The plain pending path's shortcut: under `off`, no checks at all means nothing to watch for.
+        const noChecks = opts.mergeVerification === 'off' && state.view.statusCheckRollup.length === 0 && state.headRuns.length === 0;
+        if (n !== own || noChecks) { open(n, 'pending'); continue; }
         watch(n, commit, sha, gateStart, c, deps.now() + MERGE_GATE_WATCH_SECONDS * 1000);
         continue;
       }
