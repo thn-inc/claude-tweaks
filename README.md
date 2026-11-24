@@ -65,10 +65,10 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
      │
   review ───────────────►  Review Summary     ◄───  dispatching-parallel-agents
      │  calls: design review (Impeccable critique + audit — advisory)
-     │         visualize (diagram gap finding — Lens 3i-diagram),
      │         reflect,
      │         simplify,
      │         visual-review (calls: design survey — Creative Opportunities)
+     │  suggests: visualize (diagram gap finding — Lens 3i-diagram; the user runs it)
      │
   polish ───────────────►  Polished Code      (frontend specs only)
      │  calls: design polish (refinement set + suggestion-driven + intent-driven)

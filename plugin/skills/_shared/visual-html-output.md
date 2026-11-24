@@ -131,7 +131,7 @@ Copy the generated file into your docs app's static-asset directory
 
 | Context | Default | Still asks? |
 |---|---|---|
-| Invoked via a soft-hook caller already producing a doc (e.g. `/journeys`, `/specify`, `/review`) | Save as project doc | No |
+| Invoked via a soft-hook caller already producing a doc (e.g. `/journeys`, `/specify`) | Save as project doc | No |
 | Invoked directly, ad-hoc, no calling context | — | Yes — `AskUserQuestion`: `"Save as a project doc"` / `"Just show me now (not saved)"` / `"Both"` |
 
 "Just show me now" still writes the core fragment + standalone wrapper to a scratch path first, so there's something the user can open locally regardless of whether the output is meant to be a durable project doc. It just never lands under a project's `docs/` tree, is never registered in `REGISTRY.md`, and the MDX-embed reference snippet from Step 5 is not offered (there's nothing to embed if it isn't staying in the project).

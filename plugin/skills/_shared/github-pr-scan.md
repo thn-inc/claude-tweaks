@@ -88,7 +88,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — the `Fresh` and `Review` bands), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but the row still carries its trailing `gh pr view {n} --web` command (why: `github-pr-scan-rationale.md`). A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
 3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
-4. **Merged/closed PRs with local remnants** — de-duplicate the union of the merged and closed results by `number`, so a PR present in both is one candidate and yields at most one finding; then cross-check each `headRefName` against the local branches. `--state closed` also returns merged PRs, so the two results overlap; both queries are still needed — the merged query reaches merged PRs beyond the closed query's `{resolved-limit}`-row window, and the closed query covers PRs closed without merging. `{resolved-limit}` rows per state overrun one Bash result, so each list goes to a session-scoped file (`_shared/session-tmp-root.md`). Resolve the three paths once, substituting the printed literals for `{merged-path}`, `{closed-path}` and `{branches-path}` below:
+4. **Merged/closed PRs with local remnants** — de-duplicate the union of the merged and closed results by `number`, so a PR present in both is one candidate and yields at most one finding; then cross-check each `headRefName` against the local branches. `--state closed` also returns merged PRs (47 of its 50 rows in one sweep), so the closed query adds `--search is:unmerged` to spend its `{resolved-limit}`-row window on PRs closed without merging; the merged query covers merged PRs, and the de-duplication stays as a guard. `{resolved-limit}` rows per state overrun one Bash result, so each list goes to a session-scoped file (`_shared/session-tmp-root.md`). Resolve the three paths once, substituting the printed literals for `{merged-path}`, `{closed-path}` and `{branches-path}` below:
 
    `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" MERGED=pr-scan-merged.json CLOSED=pr-scan-closed.json BRANCHES=pr-scan-branches.txt`
 
@@ -97,7 +97,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    ```
 
    ```bash
-   gh pr list --state closed --limit {resolved-limit} --json number,headRefName > "{closed-path}"
+   gh pr list --state closed --search is:unmerged --limit {resolved-limit} --json number,headRefName > "{closed-path}"
    ```
 
    ```bash
