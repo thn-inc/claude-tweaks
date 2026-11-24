@@ -100,7 +100,7 @@ function renumberRange(out, start, end) {
       if (text.trim() === '') continue;
       const it = itemOf(out[i]);
       if (it && it.indent === indent) { prev = it.number; break; }
-      if (!it && text.length - text.trimStart().length > indent) continue;
+      if (!it && indentOf(text) > indent) continue;
       if (it && it.indent > indent) continue;
       break;
     }
@@ -113,9 +113,7 @@ function renumberRange(out, start, end) {
   return true;
 }
 
-// Merges the PR's block into the integration block: ours first, then the PR's lines, minus any list-item
-// unit (item line + its deeper-indented continuation) that ours already holds identically. Only whole
-// lessons dedupe — a blank, fence or other non-item line is never dropped on its own.
+// Splits lines into units: a list item with its deeper-indented continuation, or any other single line.
 function listUnits(lines) {
   const units = [];
   for (let i = 0; i < lines.length; i++) {
@@ -135,6 +133,9 @@ function listUnits(lines) {
   return units;
 }
 
+// Merges the PR's block into the integration block: ours first, then the PR's lines, minus any list-item
+// unit (item line + its deeper-indented continuation) that ours already holds identically. Only whole
+// lessons dedupe — a blank, fence or other non-item line is never dropped on its own.
 function mergeBlocks(ours, theirs) {
   const same = (x, y) => x.length === y.length && x.every((l, n) => stripCr(l) === stripCr(y[n]));
   if (same(ours, theirs)) return ours;
