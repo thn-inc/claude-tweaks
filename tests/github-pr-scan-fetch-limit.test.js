@@ -305,7 +305,7 @@ for (const shell of ['bash', 'zsh']) {
         .replaceAll('{branches-path}', forwardSlashes(path.join(tmp, 'branches.txt')))
         .replaceAll('{REPO_ROOT}', forwardSlashes(repo));
       const run = (limit, rows, text = fence) => runFence(withPaths(`${fetches}\n${text}`), { limit, ghRows: prRows(rows), shell });
-      // The stub serves the same rows to both states, as `--state closed` also returns merged PRs (#4819):
+      // The stub serves the same rows to both states (it ignores `--search`), so the two lists overlap (#4819):
       // the block de-duplicates by `number`, so each remnant prints once, under the first state that holds it.
       const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4'];
       // A limit above the list: each remnant once, no cap row.

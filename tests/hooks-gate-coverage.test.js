@@ -493,6 +493,44 @@ test('#4303: redirectWriteTargets without quoting reads `>& file`, and no `2>&` 
   assert.deepStrictEqual(redirectWriteTargets(['echo', 'x', '>>&/main/f.js'], '/r'), []);
 });
 
+// #4460: a quoted or escaped `(` is file text: bash 3.2 and 5 write /r/(x for `echo x > '(x'`, `> "(x"`,
+// `> \(x` and the csh forms `>& '(x'` and `>&'(x'`. A `(` that a `$` expansion supplies is text too:
+// `A='(x'; echo x > $A` and `>$A` write /r/(x. Only a bare `(` opens a process substitution, which
+// writes no file: `cat <(true)` and `echo x >(cat)` resolve no target.
+test('#4460: a quoted, escaped or expanded `(` redirect target is a file, a bare `<(` or `>(` is a process substitution', () => {
+  const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file);
+  for (const cmd of ["echo x > '(x'", 'echo x > "(x"', 'echo x > \\(x', "echo x >& '(x'", "echo x >&'(x'",
+    "A='(x'; echo x > $A", "A='(x'; echo x >$A"]) {
+    assert.deepStrictEqual(files(cmd), [path.resolve('/r/(x')], cmd);
+  }
+  assert.deepStrictEqual(files('cat <(true)'), []);
+  assert.deepStrictEqual(files('echo x >(cat)'), []);
+  // With no span kinds the scan cannot tell a quoted `(` from a bare one, and reads it as bare, as before #4460.
+  assert.deepStrictEqual(gitCommand.redirectWriteTargets(['echo', 'x', '>(cat)'], '/r'), []);
+});
+
+// #4460: a redirect glued to the cd name is the cd's own redirect. bash 3.2 and 5 write /r/f in the
+// cwd, then change to /main and write /main/g.js, for `cd>f /main; cp a g.js` and for `cd>>f`, `cd<>f`,
+// `cd&>f` and the operator-ended `cd> f`, `cd>> f` and `cd&> f`, whose next word is the redirect's
+// target, not the cd's argument. bash 5 runs `cd&>>f` the same way and bash 3.2 rejects it as a syntax
+// error, so it is read as bash 5 writes. An input redirect glued the same way writes no file, and the
+// cd still runs: bash 3.2 and 5 write /main/g.js for `cd<&0 /main`, `cd<<<x /main` and `cd<<< x /main`.
+// A quoted or escaped operator is no redirect: bash 3.2 and 5 run a program named `cd>f` for
+// `'cd>f' /main` and `cd\>f /main`, and the copy lands in /r.
+test('#4460: a cd with a redirect glued to its name still changes the cwd', () => {
+  for (const cmd of ['cd>f /main; cp a g.js', 'cd>>f /main; cp a g.js', 'cd<>f /main; cp a g.js', 'cd&>f /main; cp a g.js',
+    'cd&>>f /main; cp a g.js', 'cd> f /main; cp a g.js', 'cd>> f /main; cp a g.js', 'cd&> f /main; cp a g.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file).sort(),
+      [path.resolve('/main/g.js'), path.resolve('/r/f')].sort(), cmd);
+  }
+  for (const cmd of ['cd<&0 /main; cp a g.js', 'cd<<<x /main; cp a g.js', 'cd<<< x /main; cp a g.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/main/g.js')], cmd);
+  }
+  for (const cmd of ["'cd>f' /main; cp a g.js", 'cd\\>f /main; cp a g.js']) {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), [path.resolve('/r/g.js')], cmd);
+  }
+});
+
 // #4303: GNU getopt reads `-t` inside a short-option cluster: its value is the rest of the
 // cluster, else the next word, and `--target-directory` may be abbreviated (cp, mv, install and
 // ln have no other `--t…` option). bash 3.2 and 5 with GNU cp: `cp -rt M src` writes M/src;
@@ -3811,6 +3849,16 @@ test('e2e #4303: a write after a case arm whose pattern list holds a | and cds i
   for (const command of [`case x in a|x) cd ${m};; esac; echo x > f.js`, `case x in x|y) cd ${m}; echo x > f.js;; esac`]) {
     assert.strictEqual(decisionFor(command), 'deny', command);
   }
+});
+// #4460: a cd with a redirect glued to its name still runs, so the copy after it lands in the main
+// checkout: bash 3.2 and 5, started in the worktree, write `f` there and `main/g.js` for each. A cd
+// into the worktree stays allowed. The path is single-quoted, so this runs on every platform.
+test('e2e #4460: a write after a cd with a glued redirect into the main checkout is DENIED', () => {
+  const { main, wt, decisionFor } = linkedWorktree4303();
+  for (const command of [`cd>f ${shellQuote(main)}; cp a g.js`, `cd&>f ${shellQuote(main)}; cp a g.js`]) {
+    assert.strictEqual(decisionFor(command), 'deny', command);
+  }
+  assert.notStrictEqual(decisionFor(`cd>f ${shellQuote(wt)}; cp a g.js`), 'deny');
 });
 // #4303: bash 3.2 and 5 write nothing for `(( a>1 || b>2 ))`. From the main checkout it
 // resolved `main/1` and `main/2` before #4303, a spurious deny there. No path is spliced in, so

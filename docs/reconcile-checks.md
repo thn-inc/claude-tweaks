@@ -410,7 +410,8 @@ handling regardless of whether a worktree was ever stamped — see the by-number
 main loop, landed via #1962/#2226/#2228/#2231):
 
 - **`isClosedSlugStuck`** — a run dir with `config.yml` but NO `run-state.json` at all (slug
-  `{timestamp}-record-{n}[-{m}...]`, e.g. the shape underlying #1811's own original report) has no
+  `{timestamp}-record-{n}[-{m}...]`, e.g. the shape underlying #1811's own original report, or
+  `{timestamp}-spec-{n}[-{m}...]`, a state-less multi-spec run dir, #4191) has no
   branch, no PR, and nothing the classifier or the by-number probe can resolve — it escalates at
   `structurally-stuck` forever with no path to resolution. Terminal once every record number named
   in the slug (`recordNumbersFromSlug`) independently resolves `CLOSED` via `gh issue view` (not a
