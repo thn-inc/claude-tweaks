@@ -657,10 +657,9 @@ test('#6142 isHollow units, including Key File suffix and glob normalization', (
 });
 
 test('#6142 review: a Key File with more than three wildcard runs reads as touching nothing instead of backtracking', () => {
-  const started = Date.now();
+  assert.equal(isHollow(['a/b/c/d/e.js'], ['*/*/*/*/e.js']), true, 'four wildcard runs never reach the regex engine, even on a path the glob would match');
   assert.equal(isHollow(['a'.repeat(40) + '.md'], ['*a'.repeat(12) + '*b']), true);
   assert.equal(isHollow(['a/'.repeat(60) + 'z'], ['**/'.repeat(8) + 'x']), true);
-  assert.ok(Date.now() - started < 1000, 'the over-cap entries must not reach the regex engine');
   assert.equal(isHollow(['a/b/c/d.js'], ['*/*/*/d.js']), false, 'three wildcard runs still match');
 });
 
