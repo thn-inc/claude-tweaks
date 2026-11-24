@@ -23,8 +23,9 @@
 // `--housekeeping --pr <n>` (#5208) is the record-less form for tidy's and wrap-up residue-sweep's
 // housekeeping PRs, which link no record: it reads the PR with `gh pr view`, composes a `chore:`
 // subject from its title (closing phrases neutralized) with no Release-Note or Fixes line, and
-// takes no <n>, --keep-open or --range. A PR body carrying neither `<!-- tidy-housekeeping-pr -->`
-// nor `<!-- wrap-up-residue-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
+// takes no <n>, --keep-open or --range. A learned-skills PR (`<!-- wrap-up-skills-pr -->`) is accepted
+// too and additionally carries one `Refs #n` body line per `refs #n` in its body. A PR body carrying
+// none of `<!-- tidy-housekeeping-pr -->`, `<!-- wrap-up-residue-pr -->` or `<!-- wrap-up-skills-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
 // record), is refused (exit 1); a failed or unparseable read exits 3.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
@@ -85,11 +86,23 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
+// Every distinct `refs #n` in a learned-skills PR body, first-seen order.
+function learnedSkillsRefs(body) {
+  const seen = [];
+  for (const m of String(body).matchAll(/\brefs #(\d+)\b/gi)) {
+    const n = Number(m[1]);
+    if (n > 0 && !seen.includes(n)) seen.push(n);
+  }
+  return seen;
+}
+
 const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--housekeeping] [--help]\n';
 
 // A housekeeping PR's own marker — the record-less form refuses a PR without one (#5208). Same
 // pair _shared/github-pr-scan.md's HOUSEKEEPING_MARKER matches.
 const HOUSEKEEPING_MARKER = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/;
+// The learned-skills PR's marker — kept apart from HOUSEKEEPING_MARKER, which is tied to that pair.
+const LEARNED_SKILLS_MARKER = /<!-- wrap-up-skills-pr -->/;
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -368,8 +381,8 @@ function run(argv, deps = realDeps) {
       deps.stderr(`compose-subject.js: gh pr view ${opts.pr} returned unparseable JSON\n`);
       return 3;
     }
-    if (!housekeepingPr || typeof housekeepingPr !== 'object' || !HOUSEKEEPING_MARKER.test(housekeepingPr.body || '')) {
-      deps.stderr(`compose-subject.js: PR #${opts.pr} carries no housekeeping marker (<!-- tidy-housekeeping-pr --> or <!-- wrap-up-residue-pr -->) — the record-less form is for housekeeping PRs only\n`);
+    if (!housekeepingPr || typeof housekeepingPr !== 'object' || !(HOUSEKEEPING_MARKER.test(housekeepingPr.body || '') || LEARNED_SKILLS_MARKER.test(housekeepingPr.body || ''))) {
+      deps.stderr(`compose-subject.js: PR #${opts.pr} carries no housekeeping marker (<!-- tidy-housekeeping-pr -->, <!-- wrap-up-residue-pr --> or <!-- wrap-up-skills-pr -->) — the record-less form is for housekeeping PRs only\n`);
       return 1;
     }
     // A record-linked PR that merely quotes the marker must not take the record-less path — it
@@ -480,6 +493,7 @@ function run(argv, deps = realDeps) {
       number: Number(opts.pr),
       scope,
       tag: opts.tag,
+      refs: LEARNED_SKILLS_MARKER.test(housekeepingPr.body || '') ? learnedSkillsRefs(housekeepingPr.body) : undefined,
     }) : composeSubject({
       type: aggregateType(records),
       title: subjectRecord.title,

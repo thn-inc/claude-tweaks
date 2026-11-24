@@ -1310,6 +1310,28 @@ test('--housekeeping refuses a PR body with no housekeeping marker (exit 1), acc
   assert.equal(run(['--housekeeping', '--pr', '5207'], residue.deps), 0, residue.out.stderr);
 });
 
+test('AC1.1 AC2.1: --housekeeping accepts the wrap-up-skills-pr marker; body carries Refs, never Fixes, and no undefined', () => {
+  const pr = { number: 6200, title: 'Add learned skill updates from wrap-up of #6112, #6113', body: '<!-- wrap-up-skills-pr -->\nLearned skill updates from wrap-up (refs #6112, refs #6113).', closingIssuesReferences: [] };
+  const { deps, out } = fakeDeps({ prView: pr });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.ok(title.startsWith('chore: Add learned skill updates from wrap-up of #6112, #6113'), title);
+  assert.ok(title.endsWith('(#6200)'), title);
+  assert.ok(body.includes('Refs #6112\nRefs #6113'), body);
+  assert.ok(!/Fixes/.test(body), body);
+  assert.ok(!/undefined/.test(title + body), title + body);
+});
+
+test('--housekeeping learned-skills refs: case-insensitive, de-duplicated, first-seen order; tidy marker adds no Refs', () => {
+  const pr = { number: 6200, title: 'Add learned skill updates', body: '<!-- wrap-up-skills-pr -->\nRefs #7, refs #5, REFS #7', closingIssuesReferences: [] };
+  const { deps, out } = fakeDeps({ prView: pr });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  assert.ok(JSON.parse(out.stdout).body.endsWith('Refs #7\nRefs #5'), out.stdout);
+  const tidy = fakeDeps({ prView: { ...HK_PR, body: '<!-- tidy-housekeeping-pr -->\nrefs #12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], tidy.deps), 0, tidy.out.stderr);
+  assert.doesNotMatch(JSON.parse(tidy.out.stdout).body, /Refs/);
+});
+
 test('--housekeeping refuses a marker-quoting PR that links a record (closingIssuesReferences non-empty), no output written', () => {
   const body = 'Fixes #5208\n\nStamps `<!-- tidy-housekeeping-pr -->` on tidy PRs.';
   const { deps, out } = fakeDeps({ prView: { ...HK_PR, body, closingIssuesReferences: [{ number: 5208 }] } });
