@@ -8,6 +8,7 @@ files:
   - plugin/bin/lib/reconcile/origin-head.js
   - plugin/bin/lib/reconcile/residue-summary.js
   - plugin/bin/lib/reconcile/format-summary.js
+  - plugin/bin/lib/run-liveness/disposition.js
   - plugin/bin/lib/hooks/session-start.js
   - docs/reconcile-checks.md
 ---
@@ -70,9 +71,19 @@ files:
   - The background status file carries a count and the latest error, not the full list. Run step 3 for the list.
 - **Red flags:** The same error repeats session after session. The underlying `gh` problem (auth, rate limit, a deleted issue) needs a human. Escalation is one-shot, so a failed escalate is not retried on its own.
 
+### 5. Read which runs reconcile would close (report-only, #3977)
+- **URL:** the same dry run's `runDispositions` key (`--json`), or its compact lines: `would close {run} ({reason}, evidence: ...)`, `orphaned: N run dirs`, `unknown liveness: N run dirs`
+- **Action:** Check every `would close` line on a formal run against what you know about that run. Read `orphaned` for runs whose session is gone but which hold something a human must settle (an open PR, unpushed commits, a non-review staged item).
+- **Should feel:** Like a dry run of a cleanup you have not yet allowed. Nothing in this release closes a run.
+- **Should understand:**
+  - A run whose session is provably `live` is in neither list and is skipped by every archive path (`skipped` reason `live`). An `unknown` verdict, or any fact that could not be read (no PR state without `gh`, an unknown branch or worktree state), is left alone and only counted.
+  - A real pass writes `wouldClose`, `orphaned` and `reportOnlyPassAt` to `reconcile-cache.json`; a dry run writes none of them. The SessionStart banner lists only the cached orphans whose session still reads `dead`.
+- **Red flags:** A `would close` line for a run you are still driving, or for a run with an open PR. That is a false positive: report it through `/claude-tweaks:feedback` before #3978 turns closing on.
+
 ## Origin
 - Created during build of #4180 (reconcile: make `--dry-run` write nothing, and record why an escalate or resolve failed).
 - All steps were built in this session.
+- Updated by #3977: step 5 reads the report-only run-disposition lines.
 - Updated by #5393: step 3's `error` text leads with `gh`'s stderr and a short command, and never carries a flag value.
 - Related records:
   - #2724 (first dry-run guard on the exempt clear)
