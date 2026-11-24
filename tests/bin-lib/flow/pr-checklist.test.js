@@ -3,8 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
-const { setPhaseRow, firstLineRunId, readRunReversals } = require('../../../plugin/bin/lib/flow/pr-checklist');
+const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+const { setPhaseRow, firstLineRunId, readRunReversals, phaseRowStates, uncheckedBuildOrTest } = require('../../../plugin/bin/lib/flow/pr-checklist');
 
 const body = composePrEarlyBody({
   runId: 'R1', specSummary: 'S', target: '#1', nextStep: 'build', fixesLines: ['Fixes #1'],
@@ -171,4 +171,53 @@ test("readRunReversals reads a bundle's per-spec decisions.md files", () => {
     readManifest: () => null,
   });
   assert.deepEqual(single, [path.join(runDir, 'decisions.md')]);
+});
+
+test('phaseRowStates reads checked and unchecked rows inside the span only', () => {
+  const fresh = phaseRowStates(body);
+  assert.equal(fresh.span, true);
+  assert.deepEqual(Object.keys(fresh.rows).sort(), ['build', 'polish', 'review', 'test', 'wrap-up']);
+  assert.ok(Object.values(fresh.rows).every((v) => v === 'unchecked'));
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  assert.equal(phaseRowStates(built).rows.build, 'checked');
+  assert.equal(phaseRowStates(built).rows.test, 'unchecked');
+  assert.equal(phaseRowStates(built.replace('- [x] build', '- [X] build')).rows.build, 'checked');
+  assert.equal(phaseRowStates(`${built}\n- [ ] build\n`).rows.build, 'checked');
+  assert.deepEqual(phaseRowStates(built.replace(/\n/g, '\r\n')), phaseRowStates(built));
+});
+
+test('phaseRowStates: a duplicate row for one phase reads unchecked when any copy is unchecked', () => {
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  const dupAfter = built.replace('- [x] build', '- [x] build\n- [ ] build');
+  const dupBefore = built.replace('- [x] build', '- [ ] build\n- [x] build');
+  assert.notEqual(dupAfter, built);
+  assert.equal(phaseRowStates(dupAfter).rows.build, 'unchecked');
+  assert.equal(phaseRowStates(dupBefore).rows.build, 'unchecked');
+  assert.deepEqual(uncheckedBuildOrTest(dupAfter), ['build', 'test']);
+});
+
+test('phaseRowStates reads the plain-text companion span when the HTML markers are absent', () => {
+  const plain = setPhaseRow({ body, phase: 'build' }).body
+    .replace('<!-- phases-start -->\n', '').replace('<!-- phases-end -->\n', '');
+  assert.ok(!plain.includes('<!-- phases-'));
+  assert.ok(plain.includes('[claude-tweaks-phases-start]'));
+  const states = phaseRowStates(plain);
+  assert.equal(states.span, true);
+  assert.equal(states.rows.build, 'checked');
+  assert.equal(states.rows.test, 'unchecked');
+});
+
+test('phaseRowStates: no span gives span false, rows {}', () => {
+  const express = composeExpressBody({ runId: 'R1', specSummary: 'S', fixesLines: ['Fixes #1'] });
+  assert.deepEqual(phaseRowStates(express), { span: false, rows: {} });
+});
+
+test('uncheckedBuildOrTest lists the unchecked build/test rows in order', () => {
+  assert.deepEqual(uncheckedBuildOrTest(body), ['build', 'test']);
+  const built = setPhaseRow({ body, phase: 'build' }).body;
+  assert.deepEqual(uncheckedBuildOrTest(built), ['test']);
+  const both = setPhaseRow({ body: built, phase: 'test' }).body;
+  assert.deepEqual(uncheckedBuildOrTest(both), []);
+  const removed = setPhaseRow({ body, phase: 'build', remove: true }).body;
+  assert.deepEqual(uncheckedBuildOrTest(removed), ['test']);
 });

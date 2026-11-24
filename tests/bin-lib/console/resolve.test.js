@@ -722,6 +722,18 @@ test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M
   assert.match(table, /reflect-a\\\|b\.md/);
 });
 
+test('renderTable counts each AUTO decisions.md line as an auto-applied entry, and no other status', () => {
+  const decisions = '## /build\n- AUTO 12:00:00 — Common Step 3: simplified a.js. Reversibility: high.\n- SKIP 12:00:01 — x (skipped): condition: c → fallback: f. Reversibility: n/a.\n## /review\n- AUTO 12:01:00 — Fix: b.js. Reversibility: high.\n';
+  const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.match(renderTable(r), /Auto-applied entries in decisions\.md: 2 \(already in commits/);
+});
+
+test('#6143: renderTable does not count a Phase exit record as an auto-applied entry', () => {
+  const decisions = '## /build\n- AUTO 12:00:00 — Phase exit: build phase exited at abc1234. Reversibility: n/a.\n- AUTO 12:00:01 — Common Step 3: simplified a.js. Reversibility: high.\n## /test\n- AUTO 12:05:00 — Phase exit: test phase exited at abc1234. Reversibility: n/a.\n';
+  const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  assert.match(renderTable(r), /Auto-applied entries in decisions\.md: 1 \(already in commits/);
+});
+
 test('a needs-human merge-check verdict in decisions.md resolves the merge half to leave-open (#1932 AC3)', () => {
   const decisions = '## /wrap-up\n- AUTO 12:00:00 — Auto-merge short-circuit: #7 assess-agent-autonomy verdict needs-human — Review Console renders normally. Reversibility: n/a.\n';
   const r = resolveAll({ runDir: fixture({ decisions, staged: { 'reflect-1.md': 'x' }, headers: [7] }), policy: 'console-auto', deps: deps() });

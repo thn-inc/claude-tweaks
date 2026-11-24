@@ -661,3 +661,15 @@ test('a prune-remote b1-deleted copy lacks build/b1 on the origin but keeps its 
   assert.strictEqual(onOrigin('refs/heads/build/b2'), 0);
   assert.strictEqual(pinnedGit(f.dir, ['rev-parse', '--verify', 'refs/remotes/origin/build/b1']).length, 40);
 });
+
+test('pruneRemote: a branch in heldBranches (a hollow-merge hold, #6143) is skipped hollow-merge before the screen and stays on origin', () => {
+  const dir = pruneRemoteFixture('merged').dir;
+  const screened = [];
+  const screen = (root, branches) => { screened.push(...branches); return permissiveScreen(root, branches); };
+  const r = pruneRemote({
+    cwd: dir, integration: 'main', dryRun: false, resolvePr: () => ({ number: 1, state: 'MERGED' }), resolvePrBulk: screen, heldBranches: ['build/merged'],
+  });
+  assert.deepStrictEqual(r.entries.find((e) => e.name === 'build/merged'), { name: 'build/merged', kind: 'remote-branch', action: 'skip', reason: 'hollow-merge' });
+  assert.ok(!screened.includes('build/merged'));
+  assert.match(git(dir, 'ls-remote', 'origin', 'refs/heads/build/merged'), /build\/merged/);
+});

@@ -2195,7 +2195,7 @@ test('record-lens-dispatch refuses malformed flags with exit 2 and writes nothin
     [over('--lens', '3z'), lensMsg],
     [over('--lens', '__proto__'), lensMsg],
     [over('--reviewers', '3'), 'reviewers must be 1 or 2'],
-    [over('--path', 'agent'), 'path must be one of task, workflow'],
+    [over('--path', 'agent'), 'path must be one of task, workflow, worker'],
     [over('--status', 'done'), 'status must be one of completed, failed, blocked'],
     [[...ok, '--round', '0'], '--round must be a positive integer, got "0"'],
     [[...ok, '--round', 'x'], '--round must be a positive integer, got "x"'],
@@ -2244,5 +2244,5 @@ test('record-lens-dispatch exits 3 when the lock is held', (t) => {
 test('--help names record-lens-dispatch', () => {
   const { deps, out } = fakeDeps(process.cwd());
   assert.strictEqual(run(['--help'], deps), 0);
-  assert.ok(out.join('').includes('record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow --status completed|failed|blocked [--round <n>]'));
+  assert.ok(out.join('').includes('record-lens-dispatch --run <dir> --lens <3a..3h> --reviewers 1|2 --path task|workflow|worker --status completed|failed|blocked [--round <n>]'));
 });

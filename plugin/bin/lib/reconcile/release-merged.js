@@ -352,7 +352,9 @@ function logGrantRemoval(runDir, root, reason) {
 // (pr-state-cache.js) Phase 1.5's two batches ask instead of pr-state.js
 // directly; bound as `prStateResolver` because Phase 1.5 names a local
 // `prStates` (its resolved results).
-async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResolver, gateDeps } = {}) {
+async function releaseMerged({
+  cwd, ghApi: ghApiOverride, prStates: prStateResolver, gateDeps, hollowRunIds = [],
+} = {}) {
   const released = [];
   const skipped = [];
   const root = cwd || process.cwd();
@@ -586,7 +588,11 @@ async function releaseMerged({ cwd, ghApi: ghApiOverride, prStates: prStateResol
   );
 
   // Phase 3: decide + write, synchronous (writes stay serial — see header comment).
+  const hollow = new Set(hollowRunIds);
   for (const c of candidates) {
+    // A merge made while its run was in flight (post-merge.js detectHollowMerges) is held whole: no
+    // tombstone, no bot:in-progress removal, no grant strip, so the work stays claimed and authorized.
+    if (hollow.has(c.runId)) { skipped.push({ issueNumber: c.issueNumber, runId: c.runId, reason: 'hollow-merge' }); continue; }
     const issueState = issueStateByIssue.get(c.issueNumber);
     const decision = decideRelease(c.classifiedState, c.prState, issueState, c.closesIssue);
     if (decision.action === 'skip') {
