@@ -164,7 +164,7 @@ A review-marked decision line is a `Reproduction:` pair line. Seven forms are co
 | `absence-refuted` | `… absence claim {path}:{symbol} refuted by ground-truth check (…). Not staged.` | 0 | +1 | 0 |
 | `vacuity-downgraded` | `lens "3f" vacuity finding … downgraded to unconfirmed …` | 0 | 0 | +1 |
 | `vacuity-reconfirmed` | `lens "3f" vacuity finding … re-confirmed by executed run: …` | 0 | +1 | 0 |
-| `single-read-coverage` | `… {session limit twice \| unavailable \| timed out}; single-read coverage.` | 0 | 0 | 0 |
+| `single-read-coverage` | `… {session limit twice \| unavailable \| timed out \| blocked: {reason} \| needs-context: {reason}}; single-read coverage.` | 0 | 0 | 0 |
 | `coincidence` | `… findings {path}:{lineA} / {path}:{lineB} share a location but not substance; both staged unconfirmed.` | 0 | +2 | 0 |
 
 `raised = both + one`. A relabel adds to no finding count. A `vacuity-downgraded` line relabels a finding already counted and adds none. `vacuity-reconfirmed` counts one `+1` as the spec says; **a finding that was reproduced, downgraded and then re-confirmed therefore counts in both `both` and `one`.** `single-read-coverage` is a coverage notice; its findings are counted by their own `not-reproduced` lines. The six spec forms are these rows with `reproduced-severity-contested` folded into `reproduced`.
