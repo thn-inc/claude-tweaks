@@ -62,7 +62,7 @@ const path = require('path');
 const ctxLib = require('./lib/hooks/context');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { canonicalRealpath } = require('./lib/path-guard');
-const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
+const { FRICTION_EVENT_TYPES, isTestTaggedEvent } = require('./lib/friction-lens-vocab');
 
 const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
 
@@ -86,13 +86,13 @@ function parseArgs(argv) {
 // than aborting the whole read (matches appendEvent's own best-effort
 // posture — one bad line must never hide every good one).
 //
-// #1337 (widened #2282): a gate-denial or wd-guard-refusal event written by
-// the test suite's own exercise of pre-tool-use.js's deny logic
-// (CT_HOOKS_TEST_MODE — see that file's appendEvent calls) carries
-// `test: true`. Those are dropped here rather than at the write site, so the
-// underlying test that asserts the event IS written still sees it — only
-// this aggregation-facing read excludes it, keeping a real operator denial
-// (never tagged) unaffected.
+// #1337 (widened #2282): a denial event written by the test suite's own
+// exercise of pre-tool-use.js's deny logic (CT_HOOKS_TEST_MODE — see that
+// file's appendEvent calls) carries `test: true`. isTestTaggedEvent
+// (friction-lens-vocab.js, #4259) owns which types that covers. Those are
+// dropped here rather than at the write site, so the underlying test that
+// asserts the event IS written still sees it — only this aggregation-facing
+// read excludes it, keeping a real operator denial (never tagged) unaffected.
 //
 // #1402: a `primary`-sourced event carrying `attribution: 'fallback'` is
 // evidence context.js's own appendEvent doc comment says a reader "may [need
@@ -191,7 +191,7 @@ function readEvents(runDir, source) {
     try {
       const parsed = JSON.parse(line);
       if (!parsed || typeof parsed !== 'object') continue;
-      if ((parsed.type === 'gate-denial' || parsed.type === 'wd-guard-refusal') && parsed.test === true) continue;
+      if (isTestTaggedEvent(parsed)) continue;
       if (source === 'primary' && parsed.attribution === 'fallback') continue;
       if (parsed.type === 'contract-violation' && (parsed.variant === 'lenient' || parsed.variant === 'foreign-contract')) continue;
       if (claimBoundary) {

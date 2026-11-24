@@ -24,4 +24,12 @@ const FRICTION_EVENT_TYPES = Object.freeze([
   'zero-tool-use-verdict',
 ]);
 
-module.exports = { FRICTION_EVENT_TYPES };
+// #4259: the one `test: true` exclusion shared by friction-events,
+// calibration and phase-timing. Covers the denial/refusal types the test-mode
+// hooks tag, including gate-exempt-gitignored (dropped from calibration too).
+const TEST_TAGGED_TYPES = Object.freeze(['gate-denial', 'wd-guard-refusal', 'gate-exempt-gitignored']);
+function isTestTaggedEvent(parsed) {
+  return Boolean(parsed) && TEST_TAGGED_TYPES.includes(parsed.type) && parsed.test === true;
+}
+
+module.exports = { FRICTION_EVENT_TYPES, isTestTaggedEvent };
