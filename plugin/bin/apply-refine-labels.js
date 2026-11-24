@@ -31,8 +31,8 @@ const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
-const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
-const { transitionsForLabel } = require('./lib/station-events/stations');
+const { appendStationEvent, toRepoName, eventKey } = require('./lib/station-events/emit');
+const { transitionsForLabel, ACTOR, KIND, STATION } = require('./lib/station-events/stations');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
@@ -132,16 +132,35 @@ function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, 
       const fact = `${t.kind}|${t.station}|${t.outcome || ''}`;
       if (recorded.has(fact)) continue;
       recorded.add(fact);
+      // The authorize exit is the person's grant; it also writes a `decided` line that points at it.
+      const authorizes = t.kind === KIND.EXITED && t.station === STATION.AUTHORIZE;
+      const event = {
+        ...t,
+        recordNumber: issue,
+        repoName,
+        lane: 'unknown',
+        runId,
+        sessionId: deps.sessionId || null,
+        payload: authorizes ? { label, direction, actor: ACTOR.PERSON } : { label, direction },
+        discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
+      };
+      let exitResult;
+      try {
+        exitResult = deps.stationEvent(event);
+      } catch { continue; /* emission is best-effort — never fails the batch */ }
+      // A dropped exit line (`written: false`) leaves nothing for `outcomeRef` to point at.
+      if (!authorizes || (exitResult && exitResult.written === false)) continue;
       try {
         deps.stationEvent({
-          ...t,
+          kind: KIND.DECIDED,
+          station: STATION.AUTHORIZE,
           recordNumber: issue,
           repoName,
           lane: 'unknown',
           runId,
           sessionId: deps.sessionId || null,
-          payload: { label, direction },
-          discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
+          payload: { decision: 'authorize', actor: ACTOR.PERSON, via: 'skill', outcomeRef: eventKey(event) },
+          discriminator: event.discriminator,
         });
       } catch { /* emission is best-effort — never fails the batch */ }
     }

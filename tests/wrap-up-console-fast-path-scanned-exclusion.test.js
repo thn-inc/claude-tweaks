@@ -55,8 +55,18 @@ test('review-console.md: Empty-console fast path names the SCANNED exclusion alo
 // decision-bearing-entries test — a degrade-trace line, not a decision.
 test('review-console.md: Empty-console fast path also excludes SKIP audit lines, alongside SCANNED', () => {
   assert.match(REVIEW_CONSOLE, /`SKIP` audit lines are also excluded/);
-  assert.match(REVIEW_CONSOLE, /Three kinds of entry never count toward this test/);
+  assert.match(REVIEW_CONSOLE, /Four kinds of entry never count toward this test/);
   assert.match(REVIEW_CONSOLE, /\*\*`SKIP` audit lines\*\* do not count as decision-bearing/);
+});
+
+// #6143: bin/phase-exit.js's AUTO `Phase exit` record traces a phase boundary, not a decision.
+test('Phase exit record lines are excluded from the fast path and render as informational trace lines', () => {
+  assert.match(REVIEW_CONSOLE, /and so are `Phase exit` record lines, see below/);
+  assert.match(REVIEW_CONSOLE, /\*\*`Phase exit` record lines\*\* \(`AUTO \{time\} — Phase exit: \{phase\} phase exited at \{sha\}`/);
+  assert.match(WRAP_UP_SKILL, /and so are `Phase exit` record lines/);
+  assert.match(REVIEW_CONSOLE_INTERACTIVE, /`Phase exit` record line .* as an informational trace line/);
+  assert.match(CONSOLE_TEMPLATE, /`Phase exit` record line .* renders the same way: `Status` = `Informational`/);
+  assert.match(read('wrap-up', 'review-console-appendix.md'), /`Auto-decisions` counts this spec's `AUTO` entries except `Phase exit` record lines/);
 });
 
 test('SKILL.md Phase 4 restatement carries the same SCANNED exclusion', () => {
@@ -120,8 +130,20 @@ const DECISION_BEARING_STATUSES = ['AUTO', 'STAGED', 'KEPT-PROMPT', 'REFUSED', '
 function hasDecisionBearingEntry(decisionsMdContent) {
   return decisionsMdContent
     .split('\n')
+    .filter((line) => !/^- AUTO \d{2}:\d{2}:\d{2} — Phase exit: /.test(line.trim()))
     .some((line) => DECISION_BEARING_STATUSES.some((status) => line.trim().startsWith(`- ${status} `) || line.trim().startsWith(`${status} `)));
 }
+
+test('fixture: Phase exit records alone have no decision-bearing entry; with a real AUTO finding they still do', () => {
+  const exits = [
+    '## /build',
+    '- AUTO 12:00:00 — Phase exit: build phase exited at abc1234. Reversibility: n/a.',
+    '## /test',
+    '- AUTO 12:10:00 — Phase exit: test phase exited at def5678. Reversibility: n/a.',
+  ];
+  assert.equal(hasDecisionBearingEntry(exits.join('\n')), false);
+  assert.equal(hasDecisionBearingEntry([...exits, '- AUTO 12:11:00 — Common Step 3: simplified src/foo.js. Reversibility: high.'].join('\n')), true);
+});
 
 test('fixture: a decisions.md holding only SCANNED lines has no decision-bearing entry (fast path reachable)', () => {
   const decisionsMd = [

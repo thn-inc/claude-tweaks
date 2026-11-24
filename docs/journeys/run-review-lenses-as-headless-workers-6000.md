@@ -9,7 +9,7 @@ files:
 
 # Run Review Lenses as Headless Workers
 
-**Persona:** a plugin maintainer (or the worker-path dispatcher #6003 once it exists) who holds the lens briefs a `/claude-tweaks:review` Step 3 fan-out would send and wants them run as lean, read-only headless `claude -p` workers instead of in-session Task agents.
+**Persona:** a plugin maintainer (or `/claude-tweaks:review`'s worker path, `step3-worker-dispatch.md`, under `review-lens-dispatch: worker`) who holds the lens briefs a `/claude-tweaks:review` Step 3 fan-out would send and wants them run as lean, read-only headless `claude -p` workers instead of in-session Task agents.
 **Goal:** one `review-lens-workers.js` call runs every launchable lens side, prints the same reply JSON the workflow script returns, names every side that failed and why, and leaves a per-side log the timing report reads.
 **Entry point:** `node plugin/bin/review-lens-workers.js --run <run-dir> --lenses-file <json> --cwd <reviewed-worktree> --bundle <file>`.
 **Success state:** exit 0 with the reply on one stdout line, ready for `review-coordination.js settle-lens-replies`; every failed side has one `review-lens-workers: lens {lens} {side} failed: {reason}` line on stderr; `worker-dispatches.jsonl` in the run directory holds one line per side.
@@ -48,7 +48,7 @@ files:
 ### 4. Read the per-side failures and fall back — the maintainer
 - **URL:** stderr lines `review-lens-workers: lens {lens} {side} failed: {reason}`, with a worker-written detail in parentheses when the envelope carries one
 - **Action:** read each reason, then run the failed sides through the Task path; the settle step's `needsSession` handling finishes a lens with a failed side the same way it does a failed workflow reviewer. The reasons are:
-  - `excluded`: lens 3f, whose discrimination checks run tests in a scratch checkout a read-only role cannot do; it never reaches a worker, and #6003's dispatcher is to route it to the Task path.
+  - `excluded`: lens 3f, whose discrimination checks run tests in a scratch checkout a read-only role cannot do; it never reaches a worker, and the review's worker path dispatches it on the Task path beside the launcher.
   - `platform`: off the sandbox-probed platforms (the role has no Bash there), or the git in `--cwd` does not honour `GIT_ATTR_SOURCE`.
   - `launch`: the role's launch could not be built, a launch threw, or the worker ended with a failure that is not `auth` or `timeout`.
   - `auth`: the worker reported `Not logged in`.
@@ -88,4 +88,5 @@ files:
 
 ## Origin
 - Created during the build of #6000, which added `plugin/bin/review-lens-workers.js`, `plugin/bin/lib/driver/lens-workers.js`, the `lens-reviewer` role in `plugin/bin/lib/driver/roles.js` and the worker log read by `timing/transcript.js`.
+- Persona and step 4 updated during the build of #6003, which wired this CLI into `/claude-tweaks:review` Step 3 as the `worker` value of `review-lens-dispatch`.
 - Related journeys: `run-review-lenses-through-a-workflow-5599.md` (the workflow path this one parallels), `settle-a-lens-fan-out-in-one-call-5598.md` (the settle verb that reads this reply), `attribute-agent-cost-to-dispatches-3375.md` (where the worker log's items show up).

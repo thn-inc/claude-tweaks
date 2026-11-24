@@ -22,6 +22,8 @@ const { bookkeepingPermissions } = require('../issues/autonomy');
 const { UPSTREAM_FILING_TARGET, upstreamFilingRoute, parseStagedUpstream } = require('../issues/upstream-ownership');
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
+const { parseEntry } = require('../log-decision/append');
+const { PHASE_EXIT_STEP } = require('../phase-exit/exit-record');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
 // #3942: the apply reason on a deferral ruling — its ratify files a backlog record
@@ -941,8 +943,10 @@ function renderRows({ items, cleanup, merge, intro, dropped = [] }) {
   return lines.join('\n');
 }
 
+// A Phase exit record (#6143) traces a phase boundary, not an applied decision, so it is not counted.
 function renderTable(result) {
-  const autoCount = decisionLines(result.snapshot.decisions).filter((l) => /^- AUTO /.test(l)).length;
+  const autoCount = decisionLines(result.snapshot.decisions)
+    .filter((l) => /^- AUTO /.test(l) && (parseEntry(l) || {}).location !== PHASE_EXIT_STEP).length;
   return renderRows({ items: result.items, cleanup: result.sections.cleanup, merge: result.merge, dropped: result.droppedByTiebreak, intro: `Auto-applied entries in decisions.md: ${autoCount} (already in commits — override = revert).` });
 }
 
