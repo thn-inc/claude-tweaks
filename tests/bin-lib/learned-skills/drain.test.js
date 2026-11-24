@@ -298,6 +298,53 @@ test('merge-when-green with a pending own PR that is not BLOCKED degrades to the
   assert.equal(h.merges().length, 0);
 });
 
+test('a BLOCKED own PR whose state read lists a file outside .claude/skills/ is never armed (files-outside-skills, no merge call)', () => {
+  const pushed = view({ number: 6250, mergeStateStatus: 'BLOCKED', statusCheckRollup: RUNNING, files: [{ path: 'plugin/bin/x.js' }] });
+  const h = harness({ prs: [pr(6250)], views: { 6250: pushed } });
+  const out = drain(base({ ownPr: 6250, mergeVerification: 'merge-when-green' }), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6250, reason: 'files-outside-skills' }]);
+  assert.deepEqual(out.armed, []);
+  assert.equal(h.merges().length, 0);
+});
+
+test('the watch: a head that changes during the bounded watch is head-changed, no merge', () => {
+  const pending = view({ number: 6251, statusCheckRollup: RUNNING });
+  const moved = view({ number: 6251, statusCheckRollup: RUNNING, headRefOid: SHA('b') });
+  const h = harness({ prs: [pr(6251)], views: { 6251: [pending, moved] } });
+  assert.deepEqual(drain(base({ ownPr: 6251 }), h.deps).leftOpen, [{ pr: 6251, reason: 'head-changed' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('the watch: a rollup that turns red during the watch is red, no merge', () => {
+  const pending = view({ number: 6252, statusCheckRollup: RUNNING });
+  const red = view({ number: 6252, statusCheckRollup: [{ name: 't', status: 'COMPLETED', conclusion: 'FAILURE' }] });
+  const h = harness({ prs: [pr(6252)], views: { 6252: [pending, red] } });
+  assert.deepEqual(drain(base({ ownPr: 6252 }), h.deps).leftOpen, [{ pr: 6252, reason: 'red' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('mergeGreen: green at classification but red at the pre-merge re-read is red, no merge', () => {
+  const red = view({ number: 6253, statusCheckRollup: [{ name: 't', status: 'COMPLETED', conclusion: 'FAILURE' }] });
+  const h = harness({ prs: [pr(6253)], views: { 6253: [view({ number: 6253 }), red] } });
+  assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6253, reason: 'red' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('mergeGreen: green at classification but pending at the pre-merge re-read is not merged (pending)', () => {
+  const h = harness({ prs: [pr(6254)], views: { 6254: [view({ number: 6254 }), view({ number: 6254, statusCheckRollup: RUNNING })] } });
+  assert.deepEqual(drain(base(), h.deps).leftOpen, [{ pr: 6254, reason: 'pending' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('under off, an empty rollup with a running head run still gets the watch (not the immediate pending)', () => {
+  const running = [{ name: 'ci', workflowName: 'ci', status: 'IN_PROGRESS', conclusion: null, url: 'u' }];
+  const h = harness({ prs: [pr(6255)], views: { 6255: view({ number: 6255, statusCheckRollup: [] }) }, runs: { [SHA('a')]: running } });
+  const out = drain(base({ ownPr: 6255, mergeVerification: 'off' }), h.deps);
+  assert.deepEqual(out.leftOpen, [{ pr: 6255, reason: 'timeout' }]);
+  assert.ok(h.clock.sleeps.length > 0);
+  assert.equal(h.merges().length, 0);
+});
+
 test('Decision AC: a drain touching two PRs writes two decisions lines with the lever tag, and no ci-gate write for the other run', () => {
   const h = harness({ prs: [pr(6240), pr(6241)] });
   const out = drain(base({ runDir: '/run', ownPr: 6241 }), h.deps);

@@ -188,7 +188,7 @@ test('AC4.1: with learned-skills-auto-merge false the procedure runs no drain', 
   assert.equal(drainGate(stripped).conditionFound, false, 'control: stripping the condition sentence is seen');
   assert.equal(drainGate(PROC.replace('only when it prints `true`', 'only when it prints `false`')).namesTrueOnly, false, 'control: a condition naming `false` is seen');
   assert.equal(drainGate(PROC.replace('--values learned-skills-auto-merge', '--values other-lever')).namesTrueOnly, false, 'control: a condition without the lever resolve is seen');
-  const hoisted =`${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
+  const hoisted = `${PROC.slice(PROC.indexOf('learned-skills-pr.js" drain'))}\n${PROC}`;
   assert.equal(drainGate(hoisted).allAfter, false, 'control: a drain fence before the condition is seen');
 });
 

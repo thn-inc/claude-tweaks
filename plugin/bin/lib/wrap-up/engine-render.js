@@ -53,7 +53,7 @@ function prWithDrain(pr, drain) {
   const text = `learned-skills PR ${pr}`;
   if (!drain || typeof drain !== 'object' || !DRAIN_OUTCOMES.has(drain.outcome)) return text;
   const n = String(drain.pr);
-  if (!/^[1-9]\d*$/.test(n) ||!pr.endsWith(`/pull/${n}`)) return text;
+  if (!/^[1-9]\d*$/.test(n) || !pr.endsWith(`/pull/${n}`)) return text;
   if (drain.outcome === 'left-open') {
     return typeof drain.reason === 'string' && drain.reason !== ''
       ? `${text} — left open: ${drain.reason}` : `${text} — left open`;

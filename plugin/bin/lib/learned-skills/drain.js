@@ -263,6 +263,8 @@ function drain(opts, overrides = {}) {
       try { state = read(n); } catch (err) { open(n, 'pending', firstStderrLine(err)); continue; }
       const sha = state.view.headRefOid;
       if (state.verdict === 'closed') continue;
+      const stateScope = scopeProblem(c, filePaths(state.view.files)); // before any arm, watch or merge
+      if (stateScope) { open(n, stateScope); continue; }
       if (state.verdict === 'conflicting') { settle(n, 'conflicting'); continue; }
       if (state.verdict === 'red') { open(n, 'red'); continue; }
       if (state.verdict === 'green') { mergeGreen(n, sha, gateStart, c); continue; }
