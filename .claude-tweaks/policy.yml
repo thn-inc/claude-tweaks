@@ -24,6 +24,9 @@ express-driver-protected-paths: reviewer
 # the same runs (tools/pipeline-cost-report.js's review-results-by-role-and-tier table) means set this back to lane.
 implementer-tier: record
 project-maturity: established
+# release-tip-moves (#6188): sibling dispatch sessions merge while a release is reviewed, so the default of 2 held v6.178.0 on 2026-11-23.
+# Revert signal: delete this row once #6187 (release from a fixed reviewed commit) lands.
+release-tip-moves: 6
 # release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
 # release-train: false
 specify-decomposition-log: true
