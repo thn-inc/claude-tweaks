@@ -11,7 +11,13 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   release → post-merge → archive → archive-branches → remote-prune → ledger-residue → plan-refs → reap`, reap
   deliberately last because it physically removes worktrees — running it earlier would make every
   later check's live `git worktree list`-derived branch lookup fail for exactly the runs `reap` just
-  finished with. `post-merge` sits immediately before `archive` because it hands archive the run
+  finished with. The hollow-merge detection pre-step (#6143, `post-merge.js`'s `detectHollowMerges`) runs
+  immediately before `release` whenever `release`, `post-merge` or `archive` is in the pass: it finds merged PRs
+  whose run was still in flight and hands release (`hollowRunIds`), post-merge (`hollowRunDirs`) and archive (via
+  `postMergeDeferred`) the runs to leave alone, and fills `result.hollowMerges`. It fails closed: a setup failure
+  or a throw skips all three checks for the pass with `{ check: 'release,post-merge,archive', reason:
+  'hollow-merge-check-failed' }`, except `not-github-issues` and `no-remote`, where there is nothing to hold and the
+  three run with empty sets. It reads the pass's one shared PR-state resolver. `post-merge` sits immediately before `archive` because it hands archive the run
   dirs it must leave in place this pass (see the Post-merge closes section below).
   `red-tip` runs immediately after `mirror` so it reads the ref the shared fetch just refreshed
   instead of fetching a second time. See the ordering comment directly above the dispatch block in
@@ -102,7 +108,7 @@ against reality than trusting it in the abstract; do that for whichever check yo
    `plugin/skills/tidy/step-6-auto.md`'s Step 6 table.
 4. **`bin/hooks.js`'s `reconcile-threw` fallback** — a **hand-maintained duplicate** of
    `reconcile()`'s result shape (`{ mirror, redTip, worktrees, claims, postMerge, runs, branches,
-   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }`), substituted only when `reconcile()` itself
+   remoteBranches, ledgerResidue, console, residuePlan, residueErrors, hollowMerges, skipped, timings }`), substituted only when `reconcile()` itself
    throws. If the new check populates a new top-level result key, this literal needs that key
    added too — an omission here doesn't throw or fail a lint; it just silently under-reports on the
    one code path (a genuine throw inside `reconcile()`) that almost never runs in normal testing,
@@ -699,6 +705,11 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
   failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
+- **Hollow merges are held, not deferred (#6143).** `detectHollowMerges` lists the runs whose PR merged while
+  the run's `build` or `test` phase was unfinished; `index.js` passes them to `postMerge` as `hollowRunDirs`
+  (skipped, reason `hollow-merge`), to `releaseMerged` as `hollowRunIds`, and appends them to
+  `postMergeDeferred` so archive leaves the run dir in place. Each held run is commented on once and shown in
+  `result.hollowMerges`, `formatSummary`, and the background status file's `hollowMerges` list.
 - **How the guard clears.** Exactly six reasons defer a run: `merge-grace`, `in-flight`,
   `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below)
   and `budget-exhausted` (below). A run leaves the set once `post-merge` acts on it, which for
@@ -878,7 +889,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   { count, ms, maxMs } } } } }` (`timing.js`'s `summarizeTimings`, milliseconds to one decimal), or
   `null` when the summarizer itself faulted: measurement never changes what a pass does.
   `hooks.js`'s `reconcile-threw` fallback carries `timings: null` for the same shape reason.
-- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `release`, `post-merge`, `archive`,
+- **Phase names** are `setup`, `mirror`, `red-tip`, `console`, `hollow-merge`, `release`, `post-merge`, `archive`,
   `archive-branches`, `remote-prune`, `ledger-residue`, `plan-refs`, `reap` and `finalize`; only phases that ran
   appear. `setup` is the residual — wall time outside every timed phase — so an early return still
   reports where its time went. `subprocessMs` can exceed `ms` for a phase that runs subprocesses

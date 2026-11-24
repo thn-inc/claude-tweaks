@@ -763,6 +763,17 @@ test('SessionStart renders a prior background pass\'s reaped/branch/remote-prune
   assert.match(out.json.hookSpecificOutput.additionalContext, /2 closed record plan ref\(s\) deleted on origin/);
 });
 
+test('SessionStart names the hollow merges a prior background pass held (#6143)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(project, '.claude-tweaks', 'reconcile-background-status.json'), JSON.stringify({
+    completedAt: Date.now(), surfaced: false,
+    summary: { hollowMerges: [{ runId: 'run-a', pr: 7, reason: 'hollow-merge', phase: 'build' }, { runId: 'run-b', pr: null, reason: 'hollow-check-failed' }] },
+  }));
+  const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(out.json.hookSpecificOutput.additionalContext, /2 merged PR\(s\) held as hollow merges \(run unfinished; claim and run dir kept\): run-a \(PR #7, build unfinished\), run-b \(check failed\)/);
+});
+
 test('SessionStart surfaces a prior background pass failed plan-ref deletions, and stays silent at zero', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });

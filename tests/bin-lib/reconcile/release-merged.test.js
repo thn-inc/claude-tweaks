@@ -1605,6 +1605,7 @@ test('hollow-merge: a listed runId is skipped, no tombstone write, no label edit
     assert.deepEqual(apiCalls.filter((c) => c.includes('/labels/')), [], 'no label edit (bot:in-progress or grant)');
     const ghCalls = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
     assert.ok(!/(^|\s)(-X|--method)\s+(PUT|DELETE|POST|PATCH)/m.test(ghCalls), `no write through the gh runner, saw: ${ghCalls}`);
+    assert.ok(!/claims\/issue-22/.test(ghCalls), `the gh runner never touched the claim blob (no tombstone write), saw: ${ghCalls}`);
     assert.ok(!fs.existsSync(path.join(runDir, 'decisions.md')), 'no grant-strip log entry');
   } finally {
     process.env.PATH = originalPath;

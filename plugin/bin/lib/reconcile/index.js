@@ -162,7 +162,7 @@ async function reconcileInner(opts, state) {
   const requestedChecks = Array.isArray(opts.checks) && opts.checks.length ? opts.checks : ALL_CHECKS;
   let checks = expandChecks(requestedChecks);
   const cwd = opts.cwd || process.cwd();
-  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, skipped: [] };
+  const result = { mirror: null, redTip: null, worktrees: null, claims: null, postMerge: null, runs: null, branches: null, remoteBranches: null, ledgerResidue: null, planRefs: null, console: null, residuePlan: null, residueErrors: null, hollowMerges: null, skipped: [] };
 
   // Declined-learning store prune (#1399) — local, gitignored bookkeeping unrelated to git/
   // GitHub reachability, so it runs unconditionally on every reconcile pass regardless of
@@ -557,7 +557,7 @@ async function reconcileInner(opts, state) {
   let hollowCheckFailed = false;
   if (checks.includes('release') || checks.includes('post-merge') || checks.includes('archive')) {
     try {
-      const h = await detectHollowMerges({ cwd: root, prStates, dryRun });
+      const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun }));
       // `not-github-issues` and `no-remote`: this project has no GitHub work records to comment on or no
       // PR to ask about, so the check has nothing to hold. Treating them as a failed check would skip
       // archive for every such project, which never had the hazard.

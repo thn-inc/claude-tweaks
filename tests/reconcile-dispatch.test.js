@@ -1004,10 +1004,11 @@ test('AC4.1: SessionStart passes no budgetMs (default budget); the background pa
 test('AC4.1 (#6143): a hollow merge is handed to release, post-merge and archive as a hold, kept out of archive, and shown in the summary', async () => {
   const runDir = '/p/.claude-tweaks/pipelines/2026-11-23T1-hollow';
   const entry = { runDir, runId: '2026-11-23T1-hollow', pr: 77, action: 'held', reason: 'hollow-merge', phase: 'build', records: [5], commented: [5] };
-  const { r, order, releaseOpts, postMergeOpts, archiveOpts, hollowOpts } = await reconcileWithAsyncMerge(['release', 'archive'], {
+  const { r, order, releaseOpts, postMergeOpts, archiveOpts, hollowOpts, hollowCalls } = await reconcileWithAsyncMerge(['release', 'archive'], {
     hollow: async () => ({ entries: [entry], hollowRunDirs: [runDir] }),
   });
   assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
+  assert.equal(hollowCalls, 1, 'detection runs once per pass');
   assert.deepEqual(releaseOpts.hollowRunIds, ['2026-11-23T1-hollow']);
   assert.deepEqual(postMergeOpts.hollowRunDirs, [runDir]);
   assert.deepEqual(archiveOpts.postMergeDeferred, [runDir], 'archive leaves the hollow run dir in place');
@@ -1034,6 +1035,7 @@ test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post
     const { r, order, archiveCalled } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow });
     assert.deepEqual(order, [], 'none of release, post-merge, archive ran');
     assert.equal(archiveCalled, false);
+    assert.equal(r.hollowMerges, null, 'a failed check reports no hold list');
     assert.equal(r.skipped.filter((s) => s.check === 'release,post-merge,archive' && s.reason === 'hollow-merge-check-failed').length, 1);
     assert.ok(formatSummary(r).split('\n').some((l) => l.startsWith('skipped: release,post-merge,archive — hollow-merge-check-failed')));
   }
@@ -1041,8 +1043,11 @@ test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post
 
 test('(#6143): a project with no GitHub work records or no remote has nothing to hold, so the three checks still run', async () => {
   for (const failure of ['not-github-issues', 'no-remote']) {
-    const { r, order } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
+    const { r, order, releaseOpts, postMergeOpts } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
     assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive'], failure);
+    assert.deepEqual(releaseOpts.hollowRunIds, []);
+    assert.deepEqual(postMergeOpts.hollowRunDirs, []);
+    assert.equal(r.hollowMerges, null);
     assert.ok(!r.skipped.some((s) => s.reason === 'hollow-merge-check-failed'));
   }
 });

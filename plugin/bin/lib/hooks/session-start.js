@@ -439,6 +439,13 @@ async function run(ctx) {
             `worktree(s) left in place: ${s.notableWorktrees.map((w) => `${path.basename(w.path)} (${w.reason})`).join(', ')}`,
           );
         }
+        // Runs a prior pass held because their PR merged while the run was in flight (#6143). An older status
+        // file lacks the field.
+        if (Array.isArray(s.hollowMerges) && s.hollowMerges.length) {
+          lines.push(
+            `${s.hollowMerges.length} merged PR(s) held as hollow merges (run unfinished; claim and run dir kept): ${s.hollowMerges.map((e) => `${path.basename(String(e.runId))}${e.pr ? ` (PR #${e.pr}${e.phase ? `, ${e.phase} unfinished` : ''})` : ' (check failed)'}`).join(', ')}`,
+          );
+        }
         // Escalate/resolve failures the pass swallowed (#4180) — a count plus the latest one; absent
         // (an older status file) or zero renders nothing.
         if (typeof s.residueErrors === 'number' && s.residueErrors > 0) {
