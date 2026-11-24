@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ (CommonJS), `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-24T044846-record-6003/work/6003-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-24T061032-record-6003/work/6003-spec.md` (re-materialized with the two plan-review Decisions: question 1 Reading B — this plan's existing AC4 reading; question 2 Reading A — Task 3b's stubbed-launcher test)
 
 Scope keywords: review-lens-dispatch, merge-lens-replies
 
@@ -117,6 +117,29 @@ Proof(public-contract): an installed 6.177.0 build resolves `review-lens-dispatc
 - [ ] **Step 4: Run** `node --test tests/bin-lib/review-coordination/ tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js` — Expected: PASS.
 - [ ] **Step 5: Commit** — `git commit -m "Add merge-lens-replies — fold Task-path lens replies into one settle set, refs #6003"`.
 
+### Task 3b: Stubbed-launcher test (AC2, AC3, AC7 — spec Decision 2, Reading A)
+
+**Role:** integration
+**Review risk:** high
+
+The spec's Decision 2 defines "a test with a stubbed launcher": the reply is produced by `plugin/bin/review-lens-workers.js` (in-process through `runCli`, `deps.runner` a fake runner — the injectable-runner seam `tests/bin-lib/driver/review-lens-workers-cli.test.js` already uses), never hand-written launcher-shaped JSON. Each reply is then fed through `merge-lens-replies` and `settle-lens-replies`. Task 3's fixture-JSON tests and Task 4's prose pins stay beside it; neither stands in for it.
+
+**Files:**
+- Test: `tests/bin-lib/review-coordination/lens-worker-launcher-settle.test.js` (create; reuse the fixture/`fakeRunner`/`deps` shapes of `tests/bin-lib/driver/review-lens-workers-cli.test.js` — copy the minimal helpers it needs, or move them to `tests/helpers/` only if both files then import them)
+- Waived `plugin/bin/review-lens-workers.js`, `plugin/bin/lib/driver/lens-workers.js`: exercised, unchanged.
+
+**Interfaces:**
+- Consumes: `review-lens-workers.js` `run(argv, deps)` via `runCli` with `deps.runner`; Task 3's `merge-lens-replies`; `settle-lens-replies <file> --ctx-id <id>`.
+
+- [ ] **Step 1: Write the tests** — four cases, each: run the launcher in-process with a fake runner answering per (lens, side) with a Template A reply text (`resultOut(text)`) or a failure (`{ code: 1, stdout: '' }` / blank text), write the launcher's stdout to a session-temp reply file, run the merge(s) the worker-path procedure (Task 4 `## Read the reply` / `## Merge`) prescribes for that reply, then one `settle-lens-replies` call:
+  - `AC3.1/AC3.2: one lens failed — only that lens is merged from the Task path, one settle call settles all` — lenses 3a, 3b (2 reviewers each); the runner fails both of 3b's sides; assert the launcher reply marks only 3b failed, merge 3b from two Task-reply text files, settle exit 0 with `settled` covering 3a and 3b, and the 3a reviewer texts in the merged file are byte-equal to the launcher's (3a not run twice — the runner saw exactly 4 calls, none re-run).
+  - `AC3.1: one side failed — the whole lens is replaced, never a half pair` — 3b side B only fails; merge 3b (both sides) from Task replies; settle as above.
+  - `AC2.2: every side failed — the reply reads as every worker failed` — every runner call fails; assert every `reviewers[].failed` is `true` (the `every worker failed` condition) and that the Task-path replies for every lens merged into a fresh file (no `--into`) settle in one call with exit 0.
+  - `AC2.2: nothing on stdout — the reply reads as a launch error` — launcher exit non-zero with empty stdout (an argv refusal, e.g. a `--bundle` path that does not exist, exit 2); assert stdout is empty and `merge-lens-replies --into {that empty file}` exits 2 writing no `--out` (the `launch error` read), then the Task-path replies settle in one call.
+  - `AC7.1: mixed review — 3f from the Task path beside worker lenses in one settle call` — lenses 3a, 3b on the launcher (both succeed); merge `--lens 3f --reviewers 2` from Task replies `--into` the launcher reply; one settle call settles 3a, 3b, 3f.
+- [ ] **Step 2: Run** `node --test tests/bin-lib/review-coordination/lens-worker-launcher-settle.test.js` — Expected: PASS once Task 3 has landed (this task follows it; Check C: it depends on Task 3's verb, so it is not a red-first test of new production code — it proves the seam end-to-end). Prove discrimination: temporarily delete `merge-lens-replies`'s dispatch line in `review-coordination.js`, re-run and confirm every case that merges goes red, then restore the line (`git diff` on that file empty) before committing.
+- [ ] **Step 3: Commit** — `git commit -m "Test the worker path end to end through a stubbed launcher — merge and one settle call, refs #6003"`.
+
 ### Task 4: Step 3 worker-path procedure
 
 **Role:** judgment
@@ -186,8 +209,8 @@ Run by the orchestrating session itself (a dispatched Task agent — the `/claud
 | Spec item | Task |
 |---|---|
 | Deliverable 1, AC6.1–AC6.6 | Task 1 |
-| Deliverable 2, AC2.1, AC7.1 | Tasks 3, 4 |
-| Deliverable 3, AC2.2, AC3.1, AC3.2, AC4.1 | Tasks 3, 4 |
+| Deliverable 2, AC2.1, AC7.1 | Tasks 3, 3b, 4 |
+| Deliverable 3, AC2.2, AC3.1, AC3.2, AC4.1 | Tasks 3, 3b, 4 |
 | Deliverable 4, AC5.1, AC8.1, AC8.2 | Task 5 |
 | Deliverable 5, AC9.1 | Task 6 |
 | AC1.1 | Task 4 Step 4 |
