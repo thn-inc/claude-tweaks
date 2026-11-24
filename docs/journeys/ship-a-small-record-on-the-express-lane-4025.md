@@ -76,14 +76,14 @@ files:
 - **Red flags:** An `already-shipped` close of an escalated record; a second express attempt in the same run dir; an escalation line after the PR exists.
 
 ### 5. Trust the post-merge sample review
-- **URL:** the end of a bare `/claude-tweaks:dispatch` drain, `node plugin/bin/express-lane.js samples`
+- **URL:** the end of a bare `/claude-tweaks:dispatch` drain, `node plugin/bin/express-lane.js samples`; or, for its own PR, the `/claude-tweaks:flow` or `/claude-tweaks:dispatch #N` session that merged it, `samples --pr {pr}`
 - **Action:** After several express merges, let a drain finish, then read the `express-review` comment on a sampled PR.
 - **Should feel:** The robustness check still exists. It just runs after merge, off the critical path.
 - **Should understand:**
   - Every Nth express merge (by ordinal, so the selection is stable) gets the normal review lenses at a tier of at least `medium`, at most 3 per firing. A capped backlog is named in the drain report.
   - Each confirmed finding is filed as a record at every autonomy level, then a marker comment means the PR is never sampled again.
   - A sampled PR left unreviewed 30 days after its merge ages out.
-  - Sampling runs only at the end of a bare drain, so an express merge made from `/flow` or an explicit `/dispatch #N` is reviewed only when a later bare drain runs within the 30-day lookback (whether the merging session should sample it is #4365).
+  - A bare drain's end sweeps every due PR. An express merge made from `/flow` or an explicit `/dispatch #N` checks its own PR right away (#4365): if the sampler picks it, that session reviews it. A PR the search index has not caught up with, or whose review did not complete, is named "left to the next drain's sweep" and covered by a later drain within the 30-day lookback.
 - **Red flags:** A sampled PR with a marker comment but a finding that was never filed; the same finding filed twice after a retried sweep (each filed body names `express-review of PR #{n}`, which the retry searches for before filing).
 
 ## Origin

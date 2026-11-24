@@ -148,8 +148,12 @@ const PAIR_FORMS = Object.freeze([
     // Path and command stop at their own delimiters (as in absence-refuted): linear in the line's length.
     ['Reproduction: lens "(3f)" vacuity finding ((?:(?! re-confirmed by executed run: )[^\\n])+):(\\d+) re-confirmed by executed run: (?:(?! → )[^\\n])+ → [^\\n]+\\. Confirmed\\.'], { lens: 1, path: 2, line: 3 }),
   form('single-read-coverage', { both: 0, one: 0, relabel: 0 },
-    'Reproduction: lens "{lens}" {session limit twice | unavailable | timed out}; single-read coverage. Reversibility: high.',
-    [`Reproduction: ${LENS} (?:session limit twice|unavailable|timed out); single-read coverage\\.`], { lens: 1, path: null, line: null }),
+    'Reproduction: lens "{lens}" {session limit twice | unavailable | timed out | blocked: {reason} | needs-context: {reason}}; single-read coverage. Reversibility: high.',
+    [`Reproduction: ${LENS} (?:session limit twice|unavailable|timed out); single-read coverage\\.`,
+      // A lens still BLOCKED/NEEDS_CONTEXT after its one re-prompt (#3835): a free-text reason that stops at the
+      // first `; single-read coverage.`, so a line repeating it is read in time linear in its length.
+      `Reproduction: ${LENS} (?:blocked|needs-context): (?:(?!; single-read coverage\\.)[^\\n])+; single-read coverage\\.`],
+    { lens: 1, path: null, line: null }),
   form('coincidence', { both: 0, one: 2, relabel: 0 },
     'Reproduction: lens "{lens}" findings {path}:{lineA} / {path}:{lineB} share a location but not substance; both staged unconfirmed. Reversibility: high.',
     [`Reproduction: ${LENS} findings (.+):(\\d+) / \\2:\\d+ share a location but not substance; both staged unconfirmed\\.`], { lens: 1, path: 2, line: 3 }),

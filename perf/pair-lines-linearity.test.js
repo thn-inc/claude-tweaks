@@ -21,6 +21,7 @@ const LINES = [
   ['absence-refuted, repeated tail', `Reproduction: lens "3a" absence claim a:b refuted by ground-truth check (${'x found it at y:1). '.repeat(400)}`],
   ['coincidence, repeated locations', `Reproduction: lens "3a" findings ${'a:1 / a:1 '.repeat(400)}`],
   ['coincidence, repeated separator', `Reproduction: lens "3a" findings ${'a:1 / '.repeat(400)}share a location but not substance; both staged unconfirmed.`],
+  ['single-read-coverage, repeated blocked reason', `Reproduction: lens "3a" blocked: ${'x; single-read coverage. Reversibility: high. '.repeat(400)}x`],
   ['vacuity-reconfirmed, repeated clause', `Reproduction: lens "3f" vacuity finding ${'a:1 re-confirmed by executed run: x → y. Confirmed. '.repeat(400)}`],
 ];
 
