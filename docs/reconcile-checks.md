@@ -714,7 +714,10 @@ Development-sidebar link names), within the 10-minute reopen window after `merge
   `post-merge` ran, so archive skips them `post-merge-pending` and leaves the run dir in place. `postMerge`
   itself skips each such run `hollow-merge` and defers it; `index.js` unions the same runs into the archive set
   again so the hold also applies when `post-merge` did not run. A `hollow-merge` run's records are
-  each commented on once. A `hollow-check-failed` run is held too, and any records commented on before the check
+  each commented on once: the comment and its marker are written under the run's post-merge claim
+  (`takeClaim`/`releaseClaim`, the lock Steps 4.0/4.0b take), with the marker read after the claim is taken, so an
+  inline reconcile racing `reconcile-background` cannot post twice; a claim another pass holds posts nothing that
+  pass, and the run is still held. A `hollow-check-failed` run is held too, and any records commented on before the check
   failed are listed in its `commented`. Both show in `result.hollowMerges`, `formatSummary`, and the background
   status file's `hollowMerges` list. A held run leaves the set on a later pass, when detection no longer reports
   it: its phase exits were recorded or the run reached a terminal state, or (for `hollow-check-failed`) a later

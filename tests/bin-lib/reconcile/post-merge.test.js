@@ -2337,6 +2337,83 @@ test('hollow merge: a second detectHollowMerges call on the same fixture holds a
   assert.equal(hollowMarkers(dir).length, 1);
 });
 
+// The comment and its marker are posted under the run's post-merge claim (takeClaim/releaseClaim), so an inline
+// reconcile racing reconcile-background cannot both read "unmarked" and post twice (lock-race-test-seam).
+test('hollow merge: the comment is posted while this pass holds the run\'s post-merge claim, released after', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const inner = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  let interloper = null;
+  const gh = (args, input) => {
+    // The seam: a second pass trying to claim the run at the moment the first posts its comment.
+    if (args[0] === 'issue' && args[1] === 'comment') interloper = takeClaim(dir, Date.now());
+    return inner(args, input);
+  };
+  const r = await detect(root, { gh });
+  assert.equal(inner.comments().length, 1);
+  assert.deepEqual(r.entries[0].commented, [6143]);
+  assert.deepEqual(interloper, { ok: false, reason: 'in-flight' }, 'a second taker is refused while the comment is posted');
+  assert.equal(fs.existsSync(lockOf(dir)), false, 'the claim is released after the comment and its marker');
+});
+
+test('hollow merge: a run whose post-merge claim another pass holds is still held, with no comment and no marker', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const held = takeClaim(dir, Date.now());
+  assert.equal(held.ok, true);
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r.entries, [{ runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [6143], commented: [] }]);
+  assert.deepEqual(r.hollowRunDirs, [dir]);
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), held.token, 'the other pass\'s claim is left alone');
+  releaseClaim(dir, held.token);
+  const next = await detect(root, { gh });
+  assert.deepEqual(next.entries[0].commented, [6143], 'the next pass, with the claim free, comments');
+  assert.equal(gh.comments().length, 1);
+});
+
+test('hollow merge: the marker is read after the claim is taken, so a pass that marked the record first is not repeated', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  // A racing pass that finished (commented and marked) between this pass's first read and its claim.
+  const racing = (runDir, nowMs) => {
+    appendEntry({
+      runDir, section: '/reconcile', createParent: false,
+      entry: formatEntry({ status: 'AUTO', now: NOW, step: HOLLOW_STEP, text: `hollow merge of PR #11 commented on #6143 (merged ${HOLLOW_MERGED_AT}, build unfinished)` }),
+    });
+    return takeClaim(runDir, nowMs);
+  };
+  const r = await detect(root, { gh, extra: { takeClaim: racing } });
+  assert.equal(gh.comments().length, 0, 'no second comment');
+  assert.deepEqual(r.entries[0].commented, []);
+  assert.equal(hollowMarkers(dir).length, 1);
+});
+
+test('hollow merge: a claim taken over mid-loop stops the comments; the run is still held and the next pass finishes', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const inner = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) } });
+  let takenOver = false;
+  const gh = (args, input) => {
+    const out = inner(args, input);
+    // Another pass takes the claim over right after the first comment lands.
+    if (args[0] === 'issue' && args[1] === 'comment' && !takenOver) { takenOver = true; fs.writeFileSync(lockOf(dir), 'other-holder'); }
+    return out;
+  };
+  const r = await detect(root, { gh });
+  assert.deepEqual(inner.comments().map((c) => c.args[2]), ['6143'], 'no comment after the claim was lost');
+  assert.equal(r.entries[0].reason, 'hollow-merge');
+  assert.deepEqual(r.entries[0].commented, [6143]);
+  assert.equal(fs.readFileSync(lockOf(dir), 'utf8'), 'other-holder', 'the successor\'s claim is not released');
+  fs.unlinkSync(lockOf(dir));
+  const healed = hollowGh({ views: { 11: view(hollowBody(HR), [ref(6143), ref(6144)]) } });
+  await detect(root, { gh: healed });
+  assert.deepEqual(healed.comments().map((c) => c.args[2]), ['6144']);
+});
+
 test('hollow merge: a throwing second comment holds the run as hollow-check-failed; the next pass comments only on the second record', async () => {
   const root = mainCheckout();
   const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });

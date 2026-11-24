@@ -79,7 +79,9 @@
 // must leave alone this pass: `postMerge` skips it `hollow-merge` and defers it. For a hollow merge it
 // posts one comment per record (the PR's closing references in this repo, else config.yml's `spec:`),
 // each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
-// on that record again. A PR with no run marker, or one naming another run, gets no entry and settles as
+// on that record again. The comments and markers are written under the run's post-merge claim (takeClaim,
+// the lock Steps 4.0/4.0b take), the marker read after it is taken, so two racing passes post one comment; a
+// claim another pass holds posts nothing this pass and the run is still held. A PR with no run marker, or one naming another run, gets no entry and settles as
 // today. A setup failure returns `failure` with empty sets; the caller then fails the whole pass closed.
 'use strict';
 const fs = require('fs');
@@ -713,20 +715,31 @@ async function detectHollowMerges({
         records = spec ? [Number(spec)] : [];
       }
       const mergedAt = view.mergedAt || prState.mergedAt || UNKNOWN_MERGE_TIME;
-      if (!dryRun) {
-        for (const n of records) {
-          if (hollowMarked(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), pr, n)) continue;
-          const { text } = neutralizeClosingPhrases(hollowCommentText({ pr, runId, mergedAt, phase }), { owner, repo });
-          timedGh(['issue', 'comment', String(n), '--body-file', '-'], text);
-          commented.push(n);
-          appendEntry({
-            runDir: dir,
-            section: HOLLOW_SECTION,
-            entry: formatEntry({
-              status: 'AUTO', now: Date.now(), step: HOLLOW_STEP, text: `${hollowMarkerPrefix(pr, n)} (merged ${mergedAt}, ${phase} unfinished)`,
-            }),
-            createParent: false,
-          });
+      // Each comment and its marker are posted under the run's post-merge claim, the lock Steps 4.0/4.0b take,
+      // with the marker read only once the claim is held: two racing passes (an inline reconcile and
+      // reconcile-background) cannot both read "unmarked" and post twice. A claim another pass holds (or one
+      // that cannot be taken) posts nothing this pass; the run is still held, and a later pass comments.
+      const claim = !dryRun && records.length > 0 ? (deps.takeClaim || takeClaim)(dir, Date.now()) : null;
+      if (claim && claim.ok) {
+        try {
+          for (const n of records) {
+            // A falsy token (a `deps.takeClaim` fake) never loses; a claim taken over since stops the loop.
+            if (claim.token && !heartbeatClaim(dir, claim.token, Date.now())) break;
+            if (hollowMarked(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8'), pr, n)) continue;
+            const { text } = neutralizeClosingPhrases(hollowCommentText({ pr, runId, mergedAt, phase }), { owner, repo });
+            timedGh(['issue', 'comment', String(n), '--body-file', '-'], text);
+            commented.push(n);
+            appendEntry({
+              runDir: dir,
+              section: HOLLOW_SECTION,
+              entry: formatEntry({
+                status: 'AUTO', now: Date.now(), step: HOLLOW_STEP, text: `${hollowMarkerPrefix(pr, n)} (merged ${mergedAt}, ${phase} unfinished)`,
+              }),
+              createParent: false,
+            });
+          }
+        } finally {
+          releaseClaim(dir, claim.token);
         }
       }
       entries.push({
