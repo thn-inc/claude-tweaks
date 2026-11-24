@@ -177,13 +177,14 @@ New section content (facts the tests pin):
 **Files:**
 - Modify: `plugin/bin/learned-skills-pr.js:36` header, `plugin/bin/lib/learned-skills/land.js:4` header and `:278` PR body sentence (→ `Opened ready: wrap-up's drain merges it once CI is green when learned-skills-auto-merge is on; otherwise a human merges or closes it.`), `plugin/bin/lib/reconcile/archive-branches.js:54` comment
 - Modify: `docs/skill-graph.md:807` (the `wrap-up/learned-skills-pr.md` row only — not 809)
+- Modify: `docs/getting-started.md:69` (the `/claude-tweaks:wrap-up` paragraph's "never armed and waits for a human" clause → the PR merges itself once CI is green when `learned-skills-auto-merge` is on, otherwise a human merges it)
 - Modify: `docs/plugin-structure.md:152` (list `drain.js`) and `:318` (`capture|land|stage|drain`), `docs/journeys/review-a-runs-learned-skill-edits-on-their-own-pr-5290.md:24,46` (the PR merges once green under the lever; add an "Updated by #6112" line). `docs/decisions/0040-*.md` is a decision record — history, not edited.
 - Modify: `plugin/bin/lib/policy-schema.js:152` summary (drop `Not yet used.`), `plugin/skills/_shared/policy-schema.md:100` (`Not yet read — …` → names the drain as the reader; no net growth), `docs/journeys/resolve-a-policy-key.md` and `docs/journeys/review-project-policy.md` (drop `learned-skills-auto-merge` from the "Not yet used" lists; add an "Updated by #6112" line)
 - Test: `tests/resolve-policy-control-mode.test.js` (remove `learned-skills-auto-merge` from `NOT_YET_USED`), `tests/bin-lib/learned-skills/land.test.js` (any pin on the body sentence; keep `never armed` assertion meaning "land itself never merges" but rename its message to `land makes no merge call`)
 
 - [ ] **Step 1:** Edit `NOT_YET_USED` first; run `node --test tests/resolve-policy-control-mode.test.js` — Expected: FAIL (summary still opens "Not yet used").
 - [ ] **Step 2:** Make the edits above.
-- [ ] **Step 3: Verify** `git grep -n -i -E "never armed|never-armed|waits for a human|wait for a human" -- plugin docs/skill-graph.md README.md` lists only lines owned by other mechanisms (dispatch/settle-and-merge, tidy, github-pr-scan, release, pr-first-merge-post-merge, skill-graph 547/809) — none about the learned-skills PR; `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,604.
+- [ ] **Step 3: Verify** `git grep -n -i -E "never armed|never-armed|waits for a human|wait for a human" -- plugin docs/skill-graph.md docs/getting-started.md README.md` lists only lines owned by other mechanisms (dispatch/settle-and-merge, tidy, github-pr-scan, release, pr-first-merge-post-merge, skill-graph 547/809) — none about the learned-skills PR; `wc -c plugin/skills/_shared/policy-schema.md` ≤ 51,604.
 - [ ] **Step 4: Run** `node --test tests/resolve-policy-control-mode.test.js tests/policy.test.js tests/bin-lib/learned-skills/land.test.js` and any test file grep finds pinning the edited sentences — Expected: PASS.
 AC7.1 (`npm test -- --full` passes) is proved by `/build`'s Common Step 5 and `/test`, after this task.
 
