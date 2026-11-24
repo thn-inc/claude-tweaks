@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { ghPrLifecycleCalls, GH_PR_LIFECYCLE } = require('../plugin/bin/lib/hooks/git-command');
+const { readText } = require('./helpers/read-skill');
 
 const CWD = path.resolve('/work/tree');
 const pick = (calls) => calls.map(({ verb, selector, repo, undo }) => ({ verb, selector, repo, undo }));
@@ -164,7 +165,7 @@ test('#6143: the Known gaps shapes are unparsed, and docs/hooks.md names them wi
     'x=$(gh pr merge 5)', 'x=`gh pr merge 5`', 'bash -c "gh pr merge 5"', "sh -c 'gh pr merge 5'",
   ]) assert.deepStrictEqual(ghPrLifecycleCalls(c, CWD), [], c);
   assert.strictEqual(ghPrLifecycleCalls('gh pr merge $pr', CWD)[0].selector, '$pr', 'a variable selector is read literally');
-  const doc = require('node:fs').readFileSync(path.join(__dirname, '..', 'docs', 'hooks.md'), 'utf8');
+  const doc = readText(path.join(__dirname, '..', 'docs', 'hooks.md'));
   const entry = doc.split('\n').find((l) => l.startsWith('- **In-flight PR gate (block tier, #6143):**'));
   assert.ok(entry, 'gate entry present');
   assert.ok(entry.includes('**Known gaps:**'), 'Known gaps clause present');

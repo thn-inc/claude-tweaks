@@ -177,7 +177,7 @@ function stubGh({ exit, json }) {
   if (json) fs.writeFileSync(jsonFile, JSON.stringify(json));
   fs.writeFileSync(path.join(bin, 'gh'),
     `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvFile}"\npwd -P > "${pwdFile}"\nprintf '%s|%s' "$GH_REPO" "$GH_HOST" > "${envFile}"\n${json ? `cat "${jsonFile}"\n` : ''}exit ${exit}\n`);
-  fs.chmodSync(path.join(bin, 'gh'), 0o755);
+  fs.chmodSync(path.join(bin, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.GH_HOST;
   delete env.GH_REPO;
