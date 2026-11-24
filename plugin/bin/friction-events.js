@@ -86,10 +86,11 @@ function parseArgs(argv) {
 // than aborting the whole read (matches appendEvent's own best-effort
 // posture — one bad line must never hide every good one).
 //
-// #1337 (widened #2282): a gate-denial or wd-guard-refusal event written by
-// the test suite's own exercise of pre-tool-use.js's deny logic
-// (CT_HOOKS_TEST_MODE — see that file's appendEvent calls) carries
-// `test: true`. Those are dropped here rather than at the write site, so the
+// #1337 (widened #2282): a denial event written by the test suite's own
+// exercise of pre-tool-use.js's deny logic (CT_HOOKS_TEST_MODE — see that
+// file's appendEvent calls) carries `test: true`. isTestTaggedEvent
+// (friction-lens-vocab.js, #4259) owns which types that covers. Those are
+// dropped here rather than at the write site, so the
 // underlying test that asserts the event IS written still sees it — only
 // this aggregation-facing read excludes it, keeping a real operator denial
 // (never tagged) unaffected.
