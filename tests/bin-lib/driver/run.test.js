@@ -7278,6 +7278,14 @@ test('AC8.3: an unclassified stop through the run loop is settled by the blocked
   assert.equal(settleLines(h).find((l) => l.step === 'settle-label').stopStep, 'test');
 });
 
+test('a claim-class stop\'s settle-label line names the stopped step (#6151)', async () => {
+  const h = harness({ script: [claimReply(5, '', 'x')] });
+  await run(['#7'], h.deps);
+  const label = settleLines(h).find((l) => l.step === 'settle-label');
+  assert.ok(label, 'the claim row writes a settle-label line');
+  assert.equal(label.stopStep, 'claim');
+});
+
 test('settle notes ride the final line: a claim that may lapse by TTL', async () => {
   const h = harness({ script: [claimReply(5, '', 'x')] });
   await run(['#7'], h.deps);

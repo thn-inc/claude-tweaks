@@ -1,7 +1,8 @@
 // plugin/bin/lib/station-events/driver-mirror.js — maps one driver event line
 // (run.js's sink) to the station events it records (#5902). Pure: no I/O.
 // Step lines become a started/exited work segment; three merge sub-steps mark
-// the merge-station visit boundary. Names live in stations.js.
+// the merge-station visit boundary; a `settle-label` line and an applied
+// `merge-park` also become `held` events (#6151). Names live in stations.js.
 'use strict';
 const { ACTOR, DRIVER_STEP_STATIONS, KIND, MERGE_SUBSTEP_TRANSITIONS, OUTCOME, REASON, SESSION_BOUND_STATION, STATION, outcomeForDriverStatus } = require('./stations');
 const { holdEvent } = require('./blockers');
