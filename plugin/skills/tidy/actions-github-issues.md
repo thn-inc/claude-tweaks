@@ -80,7 +80,7 @@ thread count fresh, plus the head-sha workflow runs (`_shared/pr-first-merge.md`
 re-check the grant (every linked record still carries `auto:build` and `auto:merge`, or
 `housekeeping-auto-merge` is still set) and that no linked record carries `bot:blocked` or
 `bot:parked` before doing anything — a record parked between the scan and the arm, or one whose
-labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]`, still blocks the arm. If any gate no longer holds — a new
+labels the classifier's `gh issue view` loop failed to fetch and defaulted to `[]`, still blocks the arm. A PR carrying the `<!-- wrap-up-skills-pr -->` marker is never armed here — **Drain learned-skills PRs** takes it. If any gate no longer holds — a new
 commit landed, a check regressed, a thread reopened, the grant was revoked — this is a silent
 no-op: skip it, don't error, and don't report it as armed in the applied-report either, exactly as
 `## Open parent gate`'s own re-verification note above states for its finding.
@@ -179,12 +179,16 @@ and `armed` go to **Applied automatically**; `conflicting` and every `leftOpen` 
 
 - Exit 2 is a malformed call (an unanchored or missing `--run` included): re-resolve `{run-dir}`
   and `{integration-branch}`, then re-run once; a second exit 2 is the degrade case below (the SKIP line), merging nothing.
-- Exit 1 (a listing or repo-read failure), a call the Bash timeout killed, or no JSON line: nothing
-  was merged. Log `SKIP {time} — Learned-skills drain (degraded): condition: drain exited 1 ({stderr
-  line}) → fallback: the learned-skills PRs wait for a human. Reversibility: n/a.` through
+- Exit 1 (a listing or repo-read failure), or a second exit 2: nothing was merged. Log `SKIP {time} —
+  Learned-skills drain (degraded): condition: drain exited {1|2} ({stderr line}) → fallback: the
+  learned-skills PRs wait for a human. Reversibility: n/a.` through
   `log-decision.js --status SKIP --text-file` (the CLI throws before it logs, so this line is the
-  only trace), with the stderr line replaced by `drain killed or returned no output` for a killed
-  or empty call. Report it under **Yours**.
+  only trace). Report it under **Yours**.
+- A call the Bash timeout killed, or no JSON line: the outcome is unknown, since the CLI merges one
+  PR at a time and prints its JSON only at the end, so some may have merged or armed. Log the same
+  SKIP with `condition: drain killed or returned no output (merge state unknown)` and report it
+  under **Yours** as unknown, never as nothing merged; the CLI's own `decisions.md` lines name any
+  PR it merged before the kill.
 
 This action never merges by any other route.
 

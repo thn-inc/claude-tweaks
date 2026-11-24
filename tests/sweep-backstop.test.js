@@ -710,9 +710,16 @@ test('actions-github-issues.md: Drain covers exit 2, logs a degrade SKIP, and ma
   assert.match(section, /killed[^]*no JSON line/);
   assert.match(section, /Without `gh` the call returns\s+empty lists/);
   assert.match(section, /a second exit 2 is the degrade case below \(the SKIP line\), merging nothing/);
-  assert.match(ACTIONS_GH, /that no linked record carries `bot:blocked` or\s+`bot:parked`[^]*defaulted to `\[\]`, still blocks the arm/);
+  assert.match(section, /killed, or no JSON line: the outcome is unknown[^]*never as nothing merged/);
+  assert.match(section, /drain exited \{1\|2\}/);
   assert.match(STEP6, /once, over every open learned-skills PR —/);
   assert.match(section, /`merged`\s+and `armed` go to \*\*Applied automatically\*\*; `conflicting` and every `leftOpen` reason[^]*go to \*\*Yours\*\*[^]*gh pr view \{n\} --web/);
+});
+
+test('actions-github-issues.md: Arm ready PR re-verify holds on bot:blocked/bot:parked and never arms a learned-skills marker PR', () => {
+  const arm = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Arm ready PR'), ACTIONS_GH.indexOf('## Drain learned-skills PRs'));
+  assert.match(arm, /that no linked record carries `bot:blocked` or\s+`bot:parked`[^]*defaulted to `\[\]`, still blocks the arm/);
+  assert.match(arm, /carrying the `<!-- wrap-up-skills-pr -->` marker is never armed here/);
 });
 
 test('step-6-auto.md: the preamble lets the policy-key carve-outs auto-apply at their own rows\' tiers', () => {
