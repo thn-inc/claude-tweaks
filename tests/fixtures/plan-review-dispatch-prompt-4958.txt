@@ -1,0 +1,40 @@
+[Use: Capable]
+{effortLine}
+
+Task: review one implementation plan against its spec, once, before any task is built. Read-only.
+
+Read:
+- Spec: {absolute path to the worktree's work/{n}-spec.md}
+- Plan: {absolute path to the plan file}
+You may also read any file in the repository at {absolute worktree root}, read-only, to check what the plan integrates with. Do not create, modify, or delete any file; run no test suite, build, or server; make no git or gh call that writes.
+
+Find five classes of problem, and only these:
+- spec gap — the spec does not decide something the plan must decide (a value, a rule, a precedence, what happens on failure).
+- undecided behaviour — an input class, failure mode, or UI state no task covers. If covering it needs a product decision the spec does not make, report it as a spec gap instead.
+- cross-task contract — one task produces something another consumes (a name, a shape, an order, a file, a flag) and the two disagree or the producer is missing, or a task disagrees with the spec about it.
+- missing-review-risk (#3378) — a task whose own text touches concurrency (locks, queues, async ordering, retries, transactions, shared mutable state), decision logic (branching on computed state such as permissions, eligibility, pricing, or ranking), or rendering-heavy UI (many states, layout, animation), but carries no `**Review risk:** high` line. Evidence names the signal: "touches {signal} without `Review risk: high`".
+- mischaracterized-role (#3378) — a task marked `**Role:** transcription` whose own plan text does not already contain the complete code to write (a signature-plus-tests task, or one left for the implementer to derive, is `integration`, not `transcription` — `build/plan-authoring-checks.md`'s Per-task role/review-risk markers paragraph). Evidence quotes the task's own Step 1/Step 3 text showing the gap.
+
+Do not repeat SDD's pre-flight conflict table. That scan runs later and already checks plan-internal contradictions — a task against the plan's Global Constraints, or a step the plan mandates that the review rubric forbids (example: Global Constraints say "no new dependencies" and Task 4 adds one). Your cross-task class is producer/consumer agreement between tasks, and each task against the spec (example: Task 2 returns `{ok, value}` and Task 5 reads `.result`).
+
+For every spec-gap row, set Resolution:
+- intent-resolvable — only when you can quote a spec sentence that settles it; put that sentence in Evidence. No quotable sentence means needs-human.
+- needs-human — whenever settling it would alter or loosen an existing Acceptance Criterion or an observable contract, or it has two defensible readings.
+Write "—" in Resolution on every other row.
+On a needs-human row, Suggested resolution names both defensible readings: "Reading A: … / Reading B: …" (for a criterion change, Reading A keeps the criterion as written).
+
+OUTPUT FORMAT (required):
+Return ONLY a markdown table, no preamble:
+
+| Severity | Class | Resolution | Path:Line | Finding | Evidence | Suggested resolution |
+|---|---|---|---|---|---|---|
+| high | spec gap | intent-resolvable | work/42-spec.md:31 | Retry count on a 429 is unset | Spec: "Retries follow the existing gh policy." | Add: "A 429 retries per _shared/github-rate-limit.md." |
+| medium | cross-task contract | — | docs/superpowers/plans/{plan}.md:120 | Task 2 returns `{ok, value}`; Task 5 reads `.result` | Task 2 Interfaces vs Task 5 Step 3 | Task 5 reads `.value` |
+
+Class: spec gap / undecided behaviour / cross-task contract / missing-review-risk / mischaracterized-role
+Severity scale: critical / high / medium / low / info
+If no findings: return literal text "No findings."
+Return at most 7 rows, needs-human rows first, then highest severity first; if more were found, append a final row reading "+N more" with the count in place of N — never omit this row when findings exceed the cap.
+Do not add narration, headers, or summaries before or after the table.
+
+End your reply with one line, its last non-empty line: STATUS: {DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED}

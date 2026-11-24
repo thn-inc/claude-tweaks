@@ -90,8 +90,8 @@ dots so integration-branch drift is excluded. Pr-first fences pass `--pr {n}`, w
   per-record field or renaming either key would need expand-contract across users'
   `policy.yml` files.
 - Every fence must name a diff source. `tests/merge-subject-composer-conformance.test.js`'s
-  `COMPOSER_CALL` regex pins this at all six call lines, so a fence added later without one fails
-  the suite.
+  `LOCAL_COMPOSER_CALL` and `PR_FIRST_COMPOSER_CALL` regexes pin this at all six call lines, so a
+  fence added later without one fails the suite.
 - Pr-first resolution costs a network read. A PR over GitHub's diff-size limit exits 3 when
   `commit-scope-paths` is set, because there is no files-API fallback. The exit names the PR and
   never falls back to an unscoped subject.

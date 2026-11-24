@@ -3,6 +3,9 @@ files:
   - plugin/bin/lib/timing/transcript.js
   - plugin/bin/lib/timing/derive.js
   - plugin/bin/phase-timing.js
+  - plugin/bin/lib/timing/run-timing.js
+  - plugin/bin/lib/driver/lens-workers.js
+  - plugin/bin/lib/timing/at-close.js
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/flow/multispec-summary.md
@@ -36,6 +39,7 @@ files:
   - Neither column is comparable to the phase table's minutes, and the Dispatches tokens are never added to the phase table's main-session `Tokens` column.
   - Tier comes from the meta file's model alias when it names one. Otherwise it comes from the transcript's own `claude-…` id. A model matching no family shows as `unmapped (raw: …)` with its name, never guessed.
   - Role comes from the dispatch description. `unlabelled` growing between runs is the drift signal that a dispatch site renamed its descriptions.
+  - Agents a workflow script started (`{sessionId}/subagents/workflows/{runId}/`) count here like Task agents, with the label the script gave them as their description; in `timing.json` their items also carry `workflowRunId` and `workflowPhase`, which a Task agent's item omits (#5597).
 - **Red flags:**
   - A large `unlabelled` row on a run you know ran per-task SDD reviews: a description shape the patterns do not recognize yet.
   - `Elapsed (min)` times 60 well above `Agent-seconds`: the union rounding regressed.
@@ -47,15 +51,31 @@ files:
   - `dispatch agent-{id}: transcript not found ({code})` (`symlink` when the file is a symlink, which is never followed);
   - `dispatch agent-{id}: transcript has no usage rows`;
   - `dispatch agent-{id}: meta not found (description null)`, or `meta not readable ({code|malformed|symlink}) (description null)` for a meta file that exists but cannot be used;
-  - `dispatches: {n} outside the run window excluded`.
+  - `dispatches: {n} outside the run window excluded`;
+  - for a workflow run directory: `workflows/ directory …` or `workflow run directory is a symlink (not followed) at …` / `… not readable ({code}) at …`, `no agent-* transcripts in {run dir}`, and `workflow run {runId}: run file agentCount {n}, {m} agent(s) found in …` when the run's own agent count disagrees with the transcripts found (#5597).
 - **Should feel:** Every dispatch is either counted or named, with nothing quietly dropped.
 - **Should understand:**
   - The run window runs from the run's first to its last `events.jsonl` timestamp, not counting a `worktree-reaped` event (it fires hours after the session ends). Dispatches entirely outside it belong to other work in the same session and are excluded.
   - A run with no events reports the whole session and says `whole session — no run events`.
   - A not-found dispatch carries no numbers in any bucket. An orphan transcript (no meta) still counts, under `unlabelled`.
+  - A dispatched run's `timing.json` written at close (#5647) also reads the `subagents/` directories of its dispatching and resuming sessions. The Task calls whose prompt names the run are left out of these tables, because their tokens are already in `totals.tokens`, so they are not missing dispatches. From a directory reached only through those calls, only the agents they started are kept, so another record's agents in the same session are not counted. The run's own-slug directory keeps the window rule above, minus those Task calls.
 - **Red flags:** A dispatch that you know ran, appearing in neither a table nor a line.
 
-### 4. Compare against the baseline
+### 4. Read headless lens workers beside the subagents
+- **URL:** the same two tables, for a run whose run directory holds `worker-dispatches.jsonl` (written by `plugin/bin/review-lens-workers.js`, #6000)
+- **Action:** read the `lens reviewer` role row as before; its count now includes the headless `claude -p` workers that ran lens sides, which have no `subagents/` transcript of their own. In `timing.json` their items carry `kind: 'worker'`.
+- **Should feel:** a headless lens worker is billed like any other lens reviewer seat, with no separate section to add up.
+- **Should understand:**
+  - Items come from `worker-dispatches.jsonl` in the run directory, and only records with `launched: true` count; a side no worker started for (`excluded`, `platform`, a launch refusal) is never a dispatch.
+  - A worker item's description is `lens {lens} {side}`, which the role patterns book under `lens reviewer`.
+  - Its tokens are the worker envelope's usage; a timed-out worker has none, so its tokens come from its own transcript.
+  - The same run window applies: a worker whose start is outside it is counted in `dispatches: {n} outside the run window excluded`.
+  - A run with no `worker-dispatches.jsonl` renders exactly as before.
+  - Items are sorted by start time only when worker items exist; without them the order is unchanged.
+  - A run with only worker items still has a `Dispatches` section; the missing `subagents/` directory is named in the lines after the tables.
+- **Red flags:** a launched lens worker missing from the `lens reviewer` row; an unlaunched side counted as a dispatch; item order changing on a run with no worker file.
+
+### 5. Compare against the baseline
 - **URL:** `docs/reference/dispatch-cost-baseline.md`
 - **Action:** Before claiming a cost-shape record saved time or tokens, run the same command form on its run and compare tier and role rows against the baseline's tables.
 - **Should feel:** One measured before and one measured after, not an estimate.
@@ -69,4 +89,8 @@ files:
 
 ## Origin
 
-Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged.
+Built by #3375 (multi-spec run `2026-10-17T144508-spec-3375-3380`) — part of the "Build dispatch cost shape" decomposition from #3229. #3413 (run `2026-10-19T044738-record-3413`) moved the Dispatches render rules out of the three summary templates into `_shared/timing-render.md`, which all three now cite; the rendered output is unchanged. #5597 (run `2026-11-16T003729-record-5597`) added agents started by a workflow script and their run-directory lines.
+
+#5647 (run `2026-11-21T181802-spec-5647`) scoped a dispatched run's at-close `dispatches` to the Task calls that ran it.
+
+#6000 added Step 4: headless lens workers logged in `worker-dispatches.jsonl` appear as `kind: 'worker'` items under `lens reviewer`; the baseline comparison became Step 5. See `run-review-lenses-as-headless-workers-6000.md`.

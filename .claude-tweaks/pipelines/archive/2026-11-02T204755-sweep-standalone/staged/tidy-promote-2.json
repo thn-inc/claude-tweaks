@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "parked",
+  "record": 4520,
+  "title": "Pin maxBuffer on unbounded git reads in plugin/bin…",
+  "action": "Promote (trigger met) — run /claude-tweaks:specify #4520",
+  "command": "/claude-tweaks:specify #4520"
+ }
+]

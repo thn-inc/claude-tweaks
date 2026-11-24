@@ -3,6 +3,12 @@
 // child (this same entry file, re-invoked with --__daemon__) and returns once
 // the child's server-info file exists and its port answers. Node builtins
 // only (#1202 AC 8).
+// Exports { run, realDeps, … }: run(argv, deps) resolves the exit code and
+// reaches the outside world only through deps (stdout, stderr, cwd, env, spawn,
+// kill, onStarted) — the entry contract is
+// .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md. The daemon path
+// resolves only once its server has closed and its SIGTERM/SIGINT handlers are
+// removed, so an in-process call leaves no listener or open server behind.
 'use strict';
 
 const fs = require('node:fs');
@@ -10,6 +16,7 @@ const path = require('node:path');
 const http = require('node:http');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
+const { cwdOrUndefined } = require('../health-core/io.js');
 
 const DEFAULT_PORT_BASE = 4173;
 const DEFAULT_IDLE_MINUTES = 240;
@@ -49,9 +56,15 @@ function requireOpts(opts, names, command) {
   }
 }
 
-function pidAlive(pid) {
+// A --dir/--state value as one absolute, normalized path. An absolute value never reads d.cwd(),
+// so a deleted working directory fails only a relative one.
+function resolveFrom(d, p) {
+  return path.isAbsolute(p) ? path.resolve(p) : path.resolve(d.cwd(), p);
+}
+
+function pidAlive(pid, kill = (p, s) => process.kill(p, s)) {
   try {
-    process.kill(pid, 0);
+    kill(pid, 0);
     return true;
   } catch (err) {
     // ESRCH means the pid genuinely doesn't exist — dead. Any other error
@@ -116,14 +129,14 @@ async function findFreePortFrom(base) {
   throw new Error(`no free port found in ${base}..${port - 1} (${MAX_PORT_PROBE_ATTEMPTS} attempts)`);
 }
 
-async function cmdStart(opts) {
+async function cmdStart(opts, d) {
   requireOpts(opts, ['dir', 'state'], 'start');
-  const dir = opts.dir;
-  const stateDir = opts.state;
+  const dir = resolveFrom(d, opts.dir);
+  const stateDir = resolveFrom(d, opts.state);
   fs.mkdirSync(stateDir, { recursive: true });
 
   const existing = readInfo(stateDir);
-  if (existing && pidAlive(existing.pid) && (await probePort(existing.port)) !== null) {
+  if (existing && pidAlive(existing.pid, d.kill) && (await probePort(existing.port)) !== null) {
     throw new Error(`already running at ${existing.url}`);
   }
 
@@ -140,22 +153,24 @@ async function cmdStart(opts) {
   const requestedPort = opts.port ? Number(opts.port) : await findFreePortFrom(DEFAULT_PORT_BASE);
   const idleMinutes = opts['idle-minutes'] ? Number(opts['idle-minutes']) : DEFAULT_IDLE_MINUTES;
 
-  const child = spawn(
+  // The daemon's cwd is undefined when d.cwd() throws (a deleted working directory): the child
+  // then inherits it, as before the entry contract; its --dir/--state are absolute either way.
+  const child = d.spawn(
     process.execPath,
     [
       BIN_ENTRY,
       'start',
       '--dir',
-      path.resolve(dir),
+      dir,
       '--state',
-      path.resolve(stateDir),
+      stateDir,
       '--port',
       String(requestedPort),
       '--idle-minutes',
       String(idleMinutes),
       '--__daemon__',
     ],
-    { detached: true, stdio: 'ignore', windowsHide: true },
+    { cwd: cwdOrUndefined(d), env: d.env, detached: true, stdio: 'ignore', windowsHide: true },
   );
   child.unref();
 
@@ -166,23 +181,46 @@ async function cmdStart(opts) {
   });
 
   if (!info) throw new Error('server did not start within 5s');
-  process.stdout.write(`${JSON.stringify(info)}\n`);
+  d.stdout(`${JSON.stringify(info)}\n`);
+  return 0;
 }
 
-async function runDaemon(opts) {
+// Runs the server in this process until it stops — on SIGTERM/SIGINT, on its
+// idle timeout, or through the `stop` handed to d.onStarted — and resolves 0
+// only after the server has closed and both signal handlers are removed.
+async function runDaemon(opts, d) {
   // eslint-disable-next-line global-require
   const { startServer } = require('./server.js');
-  const { stop } = await startServer({
-    dir: path.resolve(opts.dir),
-    stateDir: path.resolve(opts.state),
+  const { server, info, stop } = await startServer({
+    dir: resolveFrom(d, opts.dir),
+    stateDir: resolveFrom(d, opts.state),
     port: Number(opts.port) || 0,
     // `|| DEFAULT` would silently replace an explicit `--idle-minutes 0`
     // (Number('0') is falsy) with the 240-minute default — check presence,
     // not truthiness (review finding).
     idleMinutes: opts['idle-minutes'] !== undefined ? Number(opts['idle-minutes']) : DEFAULT_IDLE_MINUTES,
   });
+  // Attached before anything can call stop: no await sits between startServer
+  // resolving and this line, so the idle timer cannot fire first.
+  const closed = new Promise((resolve) => {
+    server.once('close', resolve);
+  });
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
+  try {
+    d.onStarted({ info, stop });
+    await closed;
+    // 'close' fires while libuv is still closing the listening handle; it is
+    // released in the loop's close phase, which runs before the next timers
+    // phase — so resolve from there, with no server handle left behind.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  } finally {
+    process.removeListener('SIGTERM', stop);
+    process.removeListener('SIGINT', stop);
+  }
+  return 0;
 }
 
 function writeStoppedMarker(stateDir) {
@@ -193,30 +231,29 @@ function writeStoppedMarker(stateDir) {
   }
 }
 
-function reportAlreadyStopped(stateDir) {
+function reportAlreadyStopped(stateDir, d) {
   writeStoppedMarker(stateDir);
-  process.stdout.write('already stopped\n');
+  d.stdout('already stopped\n');
+  return 0;
 }
 
-async function cmdStop(opts) {
+async function cmdStop(opts, d) {
   requireOpts(opts, ['state'], 'stop');
-  const stateDir = opts.state;
+  const stateDir = resolveFrom(d, opts.state);
   const info = readInfo(stateDir);
-  if (!info || !pidAlive(info.pid)) {
-    reportAlreadyStopped(stateDir);
-    return;
+  if (!info || !pidAlive(info.pid, d.kill)) {
+    return reportAlreadyStopped(stateDir, d);
   }
   try {
-    process.kill(info.pid, 'SIGTERM');
+    d.kill(info.pid, 'SIGTERM');
   } catch {
     // TOCTOU: the process could have died between the pidAlive check above
     // and this call (its own idle timeout fired, or an independent crash) —
     // that's still "already stopped", not a failure (review finding).
-    reportAlreadyStopped(stateDir);
-    return;
+    return reportAlreadyStopped(stateDir, d);
   }
   await waitFor(
-    () => fs.existsSync(path.join(stateDir, 'server-stopped')) || !pidAlive(info.pid),
+    () => fs.existsSync(path.join(stateDir, 'server-stopped')) || !pidAlive(info.pid, d.kill),
     { timeoutMs: 3000, intervalMs: 50 },
   );
   // The daemon's SIGTERM handler normally writes the marker, but the wait can
@@ -229,32 +266,54 @@ async function cmdStop(opts) {
   // is a no-op, and stop is a stale-PID-tolerant contract regardless of which
   // path gets there.
   writeStoppedMarker(stateDir);
-  process.stdout.write('stopped\n');
+  d.stdout('stopped\n');
+  return 0;
 }
 
-async function cmdStatus(opts) {
+async function cmdStatus(opts, d) {
   requireOpts(opts, ['state'], 'status');
-  const stateDir = opts.state;
+  const stateDir = resolveFrom(d, opts.state);
   const info = readInfo(stateDir);
   if (!info) {
-    process.stdout.write('never-started\n');
-    return;
+    d.stdout('never-started\n');
+    return 0;
   }
   if ((await probePort(info.port, info.key)) !== null) {
-    process.stdout.write('running\n');
-    return;
+    d.stdout('running\n');
+    return 0;
   }
   const stoppedMarker = fs.existsSync(path.join(stateDir, 'server-stopped'));
-  process.stdout.write(stoppedMarker ? 'stopped\n' : 'crashed\n');
+  d.stdout(stoppedMarker ? 'stopped\n' : 'crashed\n');
+  return 0;
 }
 
-async function main(argv) {
-  const { command, opts } = parseArgs(argv);
-  if (opts.daemon) return runDaemon(opts);
-  if (command === 'start') return cmdStart(opts);
-  if (command === 'stop') return cmdStop(opts);
-  if (command === 'status') return cmdStatus(opts);
-  throw new Error(`unknown command: ${command || '(none)'} — expected start|stop|status`);
+async function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
+  try {
+    const { command, opts } = parseArgs(argv);
+    if (opts.daemon) return await runDaemon(opts, d);
+    if (command === 'start') return await cmdStart(opts, d);
+    if (command === 'stop') return await cmdStop(opts, d);
+    if (command === 'status') return await cmdStatus(opts, d);
+    throw new Error(`unknown command: ${command || '(none)'} — expected start|stop|status`);
+  } catch (err) {
+    d.stderr(`visual-decide: ${err.message}\n`);
+    return 1;
+  }
 }
 
-module.exports = { main, parseArgs, readInfo, probePort, pidAlive, findFreePortFrom, waitFor };
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  get env() {
+    return process.env;
+  },
+  // The real spawn names windowsHide in its own argument text so
+  // tests/windows-hide-spawn-conformance.test.js sees it; cmdStart passes it too.
+  spawn: (cmd, args, opts) => spawn(cmd, args, { ...opts, windowsHide: true }),
+  kill: (pid, sig) => process.kill(pid, sig),
+  onStarted: () => {},
+};
+
+module.exports = { run, realDeps, parseArgs, readInfo, probePort, pidAlive, findFreePortFrom, waitFor };

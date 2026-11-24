@@ -30,11 +30,64 @@ function compareVersions(a, b) {
 // internal clone and never mutates this regex's lastIndex, so reuse across calls is safe.
 const HEADER_RE = /^## (?:v(\d+\.\d+\.\d+) — (.+)|\[(\d+\.\d+\.\d+)\]\(\S+\) \(\d{4}-\d{2}-\d{2}\)|(\d+\.\d+\.\d+) \(\d{4}-\d{2}-\d{2}\))$/gm;
 
+// The `## Older releases` footer a changelog-max-releases trim (#5563) appends after the
+// newest N sections. These patterns are the only footer grammar in the plugin — every
+// footer reader goes through parseChangelogFooter, never a pattern of its own. The footer
+// is the LAST `## Older releases` line that has its record line under it; the record line
+// (`Full file up to vX.Y.Z: commit <sha>`) is written by the first trim and never changes,
+// while the `Newest release removed:` line is rewritten by every trim that removes a section.
+const FOOTER_HEADING = '## Older releases';
+const FOOTER_HEADING_RE = /^## Older releases$/gm;
+const SHA_PATTERN = '[0-9a-f]{40}|[0-9a-f]{64}';
+const FOOTER_SHA_RE = new RegExp(`^(?:${SHA_PATTERN})$`);
+const FOOTER_RECORD_RE = new RegExp(`^Full file up to v(\\d+\\.\\d+\\.\\d+): commit (${SHA_PATTERN})$`, 'm');
+const FOOTER_NEWEST_RE = /^Newest release removed: v(\d+\.\d+\.\d+)$/m;
+const FOOTER_LINK_RE = new RegExp(`^- \\[CHANGELOG\\.md at [0-9a-f]{12}\\]\\((\\S+?)/blob/(?:${SHA_PATTERN})/CHANGELOG\\.md\\)$`, 'm');
+
+function parseChangelogFooter(text) {
+  const headings = [...text.matchAll(FOOTER_HEADING_RE)];
+  for (let i = headings.length - 1; i >= 0; i -= 1) {
+    const index = headings[i].index;
+    const tail = text.slice(index);
+    const record = FOOTER_RECORD_RE.exec(tail);
+    if (!record) continue;
+    const newest = FOOTER_NEWEST_RE.exec(tail);
+    const link = FOOTER_LINK_RE.exec(tail);
+    return {
+      index,
+      sha: record[2],
+      version: record[1],
+      newestRemoved: newest ? newest[1] : null,
+      repoUrl: link ? link[1] : null,
+    };
+  }
+  return null;
+}
+
+function renderChangelogFooter({ version, sha, newestRemoved, repoUrl }) {
+  let out = `${FOOTER_HEADING}\n\n`
+    + `Full file up to v${version}: commit ${sha}\n\n`
+    + `Newest release removed: v${newestRemoved}\n\n`
+    + `    git show ${sha}:CHANGELOG.md\n\n`
+    + 'A release removed by a later trim keeps its notes in the file at its own tag, without the Highlights block added after the tag: `git show v<version>:CHANGELOG.md`.\n';
+  if (repoUrl) {
+    out += `\n- [CHANGELOG.md at ${sha.slice(0, 12)}](${repoUrl}/blob/${sha}/CHANGELOG.md)\n`
+      + `- [All releases](${repoUrl}/releases)\n`;
+  }
+  return out;
+}
+
 function parseChangelogVersions(changelogText) {
+  return entriesBeforeFooter(changelogText, parseChangelogFooter(changelogText));
+}
+
+function entriesBeforeFooter(changelogText, footer) {
   const matches = [...changelogText.matchAll(HEADER_RE)];
   return matches.map((match, i) => {
     const start = match.index + match[0].length;
-    const end = i + 1 < matches.length ? matches[i + 1].index : changelogText.length;
+    let end = i + 1 < matches.length ? matches[i + 1].index : changelogText.length;
+    // The section the footer follows ends at the footer, so its body never carries it.
+    if (footer && footer.index >= start && footer.index < end) end = footer.index;
     return {
       version: match[1] || match[3] || match[4],
       title: match[1] ? match[2].trim() : '',
@@ -43,12 +96,81 @@ function parseChangelogVersions(changelogText) {
   });
 }
 
+// `partial` (non-enumerable, so the array still deep-equals a plain one) is true only when
+// a trim removed a version the range can reach: the file carries a footer and oldVersion
+// (exclusive) is older than its newest removed version. A malformed oldVersion throws only
+// where it always did (from the filter, when the file has sections); with nothing to filter
+// it yields [] and partial false, as on the pre-footer code.
 function extractChangelogRange(changelogText, oldVersion, newVersion) {
-  return parseChangelogVersions(changelogText).filter(
+  const footer = parseChangelogFooter(changelogText);
+  const range = entriesBeforeFooter(changelogText, footer).filter(
     (entry) =>
       compareVersions(entry.version, oldVersion) > 0 &&
       compareVersions(entry.version, newVersion) <= 0,
   );
+  const partial = Boolean(footer && footer.newestRemoved !== null
+    && /^\d+\.\d+\.\d+$/.test(String(oldVersion).trim())
+    && compareVersions(oldVersion, footer.newestRemoved) < 0);
+  Object.defineProperty(range, 'partial', { value: partial, enumerable: false });
+  return range;
+}
+
+// Keep the header and the newest `count` sections byte-for-byte, drop the rest, and end the
+// file with the footer. Only the gap between the last kept section and the footer is
+// normalised (one blank line). An existing footer is kept verbatim except its
+// `Newest release removed:` line; a first trim renders one and needs the commit sha whose
+// CHANGELOG.md still holds the full file.
+function trimChangelog(text, count, { sha, repoUrl } = {}) {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new TypeError(`trimChangelog: count must be an integer >= 1, got ${String(count)}`);
+  }
+  const footer = parseChangelogFooter(text);
+  const bodyEnd = footer ? footer.index : text.length;
+  const sections = [...text.matchAll(HEADER_RE)].filter((m) => m.index < bodyEnd);
+  if (sections.length <= count) return { text, removed: [] };
+
+  const versionOf = (m) => m[1] || m[3] || m[4];
+  const removed = sections.slice(count).map(versionOf);
+  const newestLine = `Newest release removed: v${removed[0]}`;
+
+  let footerText;
+  if (footer) {
+    footerText = text.slice(footer.index);
+    footerText = FOOTER_NEWEST_RE.test(footerText)
+      ? footerText.replace(FOOTER_NEWEST_RE, newestLine)
+      : footerText.replace(FOOTER_RECORD_RE, (line) => `${line}\n\n${newestLine}`);
+  } else {
+    if (!sha) throw new Error('trimChangelog: a first trim needs a commit sha');
+    if (!FOOTER_SHA_RE.test(sha)) {
+      throw new Error(`trimChangelog: sha must be a 40- or 64-character lowercase hex commit id, got "${sha}"`);
+    }
+    footerText = renderChangelogFooter({
+      version: versionOf(sections[0]),
+      sha,
+      newestRemoved: removed[0],
+      repoUrl: repoUrl || null,
+    });
+  }
+
+  const kept = cutTrailingGap(text.slice(0, sections[count].index));
+  return { text: `${kept}\n\n${footerText}`, removed };
+}
+
+// Drop the trailing gap: the last content line's terminator (LF or CRLF) and every
+// whitespace-only line after it. Spaces and tabs ending the last content line (a Markdown
+// hard break) are section bytes and stay. One backward pass with no regex — a regex for the
+// run restarts at every newline of a run in the middle of the text (quadratic, #5563).
+function cutTrailingGap(s) {
+  let cut = s.length;
+  let i = s.length;
+  while (i > 0) {
+    const c = s[i - 1];
+    if (c === '\n') cut = i - 1;
+    else if (c !== ' ' && c !== '\t' && c !== '\r') break;
+    i -= 1;
+  }
+  if (cut < s.length && s[cut - 1] === '\r') cut -= 1;
+  return s.slice(0, cut);
 }
 
 // Any line that LOOKS like a `## v...` version heading, however malformed —
@@ -124,4 +246,8 @@ module.exports = {
   findHeadingDefects,
   findCoverageGaps,
   nextVersion,
+  FOOTER_HEADING,
+  parseChangelogFooter,
+  renderChangelogFooter,
+  trimChangelog,
 };

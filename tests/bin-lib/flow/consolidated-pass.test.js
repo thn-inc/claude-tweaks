@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { checkPassReentry, REENTRY_REASONS } = require('../../../plugin/bin/lib/flow/consolidated-pass');
@@ -27,7 +28,7 @@ function manifestText(statuses) {
 // Builds {tmp}/.claude-tweaks/pipelines[/archive]/<run>/ with the files the
 // rule reads. Pass `null` for a file to omit it.
 function makeRun(o = {}) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-'));
+  const tmp = scratchDir('ct-pass-reentry-');
   const parent = path.join(tmp, '.claude-tweaks', 'pipelines', ...(o.archived ? ['archive'] : []));
   const runDir = path.join(parent, '2026-08-01T090000-spec-11-12');
   fs.mkdirSync(runDir, { recursive: true });
@@ -177,7 +178,7 @@ test('#3497 offline never calls the PR resolver', () => {
 
 // #3497 I1: a run whose parent session is still live is never re-entered.
 // The lock and last-commit probes are injected through deps.probes, so no live pid is needed.
-const WT = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-wt-'));
+const WT = scratchDir('ct-pass-reentry-wt-');
 const OLD = Date.parse('2026-01-01T00:00:00Z');
 const thrower = (message) => () => { throw new Error(message); };
 const NO_CALL = (name) => () => { throw new Error(`${name} must not be called`); };
@@ -265,7 +266,7 @@ test('AC4.1: real probes — a quiet non-interrupted parent is eligible with or 
 });
 
 test('AC3.2: a real unborn-HEAD parent worktree is indeterminate: no-commits', () => {
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-reentry-unborn-'));
+  const wt = scratchDir('ct-pass-reentry-unborn-');
   fixtureGit(['init', '-q', wt]);
   const run = makeRun({ runState: { status: 'active', sessionId: 'parent', worktree: wt } });
   const r = checkPassReentry(run, { deps: deps() });
@@ -367,7 +368,7 @@ test('REENTRY_REASONS is frozen and lists every reason the rule can return', () 
 
 test('#3497 review a symlink into pipelines/archive/ still reads as archived', () => {
   const archived = makeRun({ archived: true });
-  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pass-link-')), 'run');
+  const link = path.join(scratchDir('ct-pass-link-'), 'run');
   fs.symlinkSync(archived, link);
   assert.equal(checkPassReentry(link, { deps: deps() }).reason, 'archived');
 });

@@ -4,17 +4,23 @@
 // _shared/pr-checklist-refresh.md's Phase-checklist update used to spell out,
 // and keeps each guard that prose left to the reader as its own branch:
 //
+//   0. Phase-exit record (#6143, lib/phase-exit/exit-record.js): one AUTO `Phase exit`
+//      line, `{phase} phase exited at {head}`, under the phase's section, in every
+//      route, ahead of every other line and the push -- unless the run is closed
+//      (see 4). lib/flow/inflight-run.js reads it as that phase finished.
 //   1. Route. `git rev-parse --git-dir --git-common-dir` equal -> current-branch
 //      (no worktree branch: no bookkeeping, no push). Else integration-model via
-//      resolve-policy.js --run: local-merge -> no push, no gh; pr-first -> on.
+//      resolve-policy.js's core, in-process: local-merge -> no push, no gh; pr-first -> on.
 //      Either skip writes git-discipline.md's SKIP line at build only.
 //      An unresolvable model pushes nothing and writes one SKIP degrade trace.
 //   2. Branch guard (pr-first). A detached HEAD or the integration branch
 //      (integration-branch policy, else origin/HEAD, else main) is refused: no
 //      push, no merge-state read; the commit check and the checklist still run.
 //      So is a --worktree whose real path is not an active run's recorded
-//      `worktree` -- the check hooks/pre-tool-use.js's E1 loop makes for a Bash
-//      push -- which also appends E1's `wd-push-mismatch` event.
+//      `worktree`. hooks/pre-tool-use.js's E1 loop compares the same two paths
+//      for a Bash push, but only logs its `wd-push-mismatch` event and lets the
+//      push through; here the push is refused and the same event is appended.
+//      Both fail open on a path they cannot prove.
 //   3. Commit check. Uncommitted paths are logged and the push goes ahead.
 //   4. Bookkeeping, in worktree mode under either model: a run-state with no
 //      `worktree` runs `hooks.js record-worktree`; under pr-first, one with no
@@ -25,17 +31,17 @@
 //      (_shared/pr-early-run-lifecycle.md).
 //   5. Push, under GIT_PUSH_TIMEOUT_MS (the consumer's pre-push hook runs
 //      inside it). Still no recorded PR after step 4 -> the push is skipped unless
-//      one of hooks/pre-tool-use.js checkBookkeepingStampsGate's PR-stamp release
-//      conditions holds ([IL-131]): prExempt, a closed run, a logged `PR-early run
-//      lifecycle: … FAILED` line, or a first-publish push whose Step 1 line is
-//      logged. A push from this process is invisible to that PreToolUse gate, so
-//      the gate's rule is applied here. A failed push is logged and never written
-//      to run-state.json; the next phase exit's push retries. A landed push on a
-//      run that is not closed appends the same `{type:'commit', action:'push',
-//      dir, hash}` events.jsonl line hooks/post-tool-use.js writes for a Bash
-//      `git push` (through the same context.js appendEvent, deduped the same
-//      way): lib/timing/derive.js starts the merge phase at the first push after
-//      wrap-up starts.
+//      hooks/pre-tool-use.js's prStampReleased releases it ([IL-131]) -- the rule
+//      checkBookkeepingStampsGate's PR-stamp branch also calls: a closed run, a
+//      `pr` stamp, prExempt, or a logged `PR-early run lifecycle: … FAILED` line;
+//      a first publish releases only on its Step 1 line. A push from this process
+//      is invisible to that PreToolUse gate, so the gate's rule is applied here.
+//      A failed push is logged and never written to run-state.json; the next
+//      phase exit's push retries. A landed push on a run that is not closed
+//      appends the same `{type:'commit', action:'push', dir, hash}` events.jsonl
+//      line hooks/post-tool-use.js writes for a Bash `git push` (through the
+//      same context.js appendEvent, deduped the same way): lib/timing/derive.js
+//      starts the merge phase at the first push after wrap-up starts.
 //   6. Checklist: bin/pr-checklist.js in-process, every pr-first route that got
 //      past step 1. Its exit 4/5 lines are its own.
 //   7. Merge state: bin/pr-merge-state.js in-process, only after a push landed.
@@ -53,16 +59,19 @@
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { formatEntry, appendEntry } = require('../log-decision/append');
+const { PHASE_EXIT_STEP, phaseExitText } = require('./exit-record');
 const { readRunStateWithParent, appendEvent, readEventLines } = require('../hooks/context');
-const { hasLoggedPrDegrade, hasLoggedPrEarlyStep1, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
+const { prStampReleased, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
 const { canonicalRealpath } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
+const { parseStatusPorcelainZ } = require('../git-z');
 const prChecklist = require('../../pr-checklist');
 const prMergeState = require('../../pr-merge-state');
+const { resolvePolicy, callerDeps, scalarValue, EXIT_OK } = require('../../resolve-policy');
 
 const { PHASE_SECTIONS } = prMergeState;
 const BIN = path.resolve(__dirname, '..', '..');
-const RESOLVE_POLICY_JS = path.join(BIN, 'resolve-policy.js');
 const HOOKS_JS = path.join(BIN, 'hooks.js');
 
 // The Common Step 7 phase-exit push SKIP text callers hand-logged before #4026 (this
@@ -78,12 +87,24 @@ const realDeps = {
   git: (args, { timeout = GIT_TIMEOUT_MS } = {}) => execFileSync('git', args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, windowsHide: true, maxBuffer: LARGE_MAX_BUFFER_BYTES,
   }),
-  gh: (args, cwd) => execFileSync('gh', args, {
+  gh: (args, cwd) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
-  resolvePolicy: (runDir, key, cwd) => execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, '--values', key], {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
-  }).split('\n')[0].trim(),
+  })),
+  // In-process through resolve-policy.js's core: a degraded forge detection stays visible on the entry
+  // (a Q10-unpinned run re-detects `integration-model` here) and must not route a degraded `local-merge` --
+  // a degraded entry throws, which runPhaseExit's unresolved branch logs (record #4578 plan review).
+  // No kill timeout is kept: forge detection is bounded by gh-timeout-ms x FORGE_PROBE_ATTEMPTS plus
+  // GIT_REMOTE_PROBE_TIMEOUT_MS, the root lookup by callerDeps' GIT_TIMEOUT_MS, and the local
+  // policy.yml/config.yml read is unbounded by decision (spec `## Plan Review Clarifications`, Reading A).
+  // A non-OK result throws `resolve-policy: <message>`, the detail line the child's stderr used to give.
+  resolvePolicy: (runDir, key, cwd) => {
+    // stderr discarded: the child's piped stderr was never forwarded, so the forge probe's GHE/origin notes stay off this process's stderr.
+    const out = resolvePolicy({ keys: [key], runDir }, callerDeps({ cwd, stderr: () => {} }));
+    if (out.code !== EXIT_OK) throw new Error(`resolve-policy: ${out.message}`);
+    const entry = out.result[key];
+    if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
+    return scalarValue(entry);
+  },
   hooks: (args, cwd) => execFileSync(process.execPath, [HOOKS_JS, ...args], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),
@@ -113,20 +134,6 @@ function isArchivedRun(runDir) {
   const runIdDir = /^spec-/.test(path.basename(abs)) ? path.dirname(abs) : abs;
   const archive = path.dirname(runIdDir);
   return path.basename(archive) === 'archive' && path.basename(path.dirname(archive)) === 'pipelines';
-}
-
-// `git status --porcelain -z` records -> the paths they name. A rename or copy
-// carries its source path as the next NUL-separated record, skipped here.
-function parsePorcelainZ(out) {
-  const recs = String(out || '').split('\0');
-  const paths = [];
-  for (let i = 0; i < recs.length; i++) {
-    const rec = recs[i];
-    if (rec.length < 4) continue;
-    paths.push(rec.slice(3));
-    if (rec[0] === 'R' || rec[0] === 'C') i++;
-  }
-  return paths;
 }
 
 class InvalidWorktreeError extends Error {}
@@ -167,6 +174,12 @@ function runPhaseExit(opts, overrides = {}) {
   env.branch = firstLine(tryGit(['-C', wt, 'branch', '--show-current'])) || null;
   env.head = firstLine(tryGit(['-C', wt, 'rev-parse', 'HEAD'])) || null;
 
+  // 0. The phase-exit record, ahead of every route's own lines and any push. A closed run is never written.
+  let state = null;
+  try { state = deps.readRunState(runDir); } catch { state = null; }
+  const closed = isClosedRun(state, runDir);
+  if (!closed) log('AUTO', PHASE_EXIT_STEP, phaseExitText(phase, env.head));
+
   if (path.resolve(wt, gitDir) === path.resolve(wt, commonDir)) {
     env.route = 'current-branch';
     env.bookkeeping = { worktree: 'n/a', pr: 'n/a' };
@@ -187,10 +200,6 @@ function runPhaseExit(opts, overrides = {}) {
   }
   env.route = model;
 
-  let state = null;
-  try { state = deps.readRunState(runDir); } catch { state = null; }
-  const closed = isClosedRun(state, runDir);
-
   if (model === 'local-merge') {
     env.bookkeeping = bookkeeping({ deps, runDir, wt, phase, state, closed, log, prFirst: false, branch: null });
     env.push = { state: 'skipped', reason: 'integration-model=local-merge' };
@@ -206,8 +215,9 @@ function runPhaseExit(opts, overrides = {}) {
     env.push = { state: 'refused', reason: `${label} is not a run branch` };
     log('AUTO', 'Phase-exit push', `refused to push ${label} at ${phase} exit — not a run branch`);
   } else if (!closed && hasWorktree(state)) {
-    // The run's assigned worktree vs --worktree -- the check hooks/pre-tool-use.js's E1
-    // loop makes for a Bash push, which never sees this process's push. Fails open on an
+    // The run's assigned worktree vs --worktree -- the two paths hooks/pre-tool-use.js's E1
+    // loop compares for a Bash push, which never sees this process's push. A mismatch is
+    // refused here, where E1 logs `wd-push-mismatch` and allows the push. Fails open on an
     // unprovable path, as that loop does ("cannot prove the target -> allow", pre-tool-use.js).
     const expected = canonicalRealpath(state.worktree);
     const actual = canonicalRealpath(wt);
@@ -222,7 +232,7 @@ function runPhaseExit(opts, overrides = {}) {
 
   // 3. Commit check -- also on a refused branch, so a dirty tree still leaves its trace.
   try {
-    const dirty = parsePorcelainZ(deps.git(['-C', wt, '--no-optional-locks', 'status', '--porcelain', '-z']));
+    const dirty = parseStatusPorcelainZ(deps.git(['-C', wt, '--no-optional-locks', 'status', '--porcelain', '-z'])).map((r) => r.path);
     env.commit = { clean: dirty.length === 0, dirty };
     if (dirty.length) log('AUTO', 'Phase-exit push', `${dirty.length} uncommitted path(s) at ${phase} exit not included in the push`);
   } catch (e) {
@@ -235,7 +245,10 @@ function runPhaseExit(opts, overrides = {}) {
   // 5. Push.
   if (pushBranch && !prPushReleased(deps, runDir, wt, pushBranch, state, env.bookkeeping)) {
     env.push = { state: 'skipped', reason: 'no recorded PR — open it first (pr-early-run-lifecycle)' };
-    log('SKIP', 'Phase-exit push', `condition: no recorded PR for ${pushBranch} and no PR-early run lifecycle FAILED line → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md)`);
+    const condition = firstPublishPush(deps, wt)
+      ? `no PR-early run lifecycle Step 1 line for ${pushBranch}`
+      : `no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${pushBranch}`;
+    log('SKIP', 'Phase-exit push', `condition: ${condition} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md)`);
   } else if (pushBranch) {
     const timeout = GIT_PUSH_TIMEOUT_MS;
     try {
@@ -268,24 +281,19 @@ function checklistFlags({ remove, fixes, summaryFile }) {
   return flags;
 }
 
-// Whether a pr-first push may go ahead with no recorded PR. Mirrors
-// hooks/pre-tool-use.js checkBookkeepingStampsGate's PR-stamp branch ([IL-131]),
-// through that file's own predicates: a recorded PR (pr present or backfilled),
-// prExempt, a logged `PR-early run lifecycle: … FAILED` line (on the run dir or,
-// as lib/pr-bookkeeping/precondition.js also reads it, a per-spec dir's parent),
-// or the #989/#1800 first-publish release -- the branch has no upstream of its
-// own yet and this branch's Step 1 line is logged. A closed run (status clean) is
-// released outright, as that gate returns early on one.
+// A throw reads as tracked (not a first publish): only prExempt or the degrade line can then release.
+function firstPublishPush(deps, wt) {
+  try { return deps.hasNoUpstreamYet(wt) === true; } catch { return false; }
+}
+
+// Whether a pr-first push may go ahead with no recorded PR ([IL-131]): a PR this
+// phase exit found (present or backfilled), else hooks/pre-tool-use.js's
+// prStampReleased -- the same rule checkBookkeepingStampsGate's PR-stamp branch
+// calls for a Bash push (#4344), so the two cannot drift. A first publish (no
+// upstream of its own yet) releases only on its Step 1 line.
 function prPushReleased(deps, runDir, wt, branch, state, bookkeepingResult) {
   if (bookkeepingResult.pr === 'present' || bookkeepingResult.pr === 'backfilled') return true;
-  if (state && (state.prExempt || state.status === 'clean' || hasPr(state))) return true;
-  const absRunDir = path.resolve(runDir);
-  const dirs = [runDir];
-  if (/^spec-/.test(path.basename(absRunDir))) dirs.push(path.dirname(absRunDir));
-  if (dirs.some((d) => hasLoggedPrDegrade(d))) return true;
-  let noUpstream = false;
-  try { noUpstream = deps.hasNoUpstreamYet(wt) === true; } catch { noUpstream = false; }
-  return noUpstream && hasLoggedPrEarlyStep1(runDir, branch);
+  return prStampReleased({ runState: state, runDir, branch, model: 'pr-first', hasNoUpstream: firstPublishPush(deps, wt) });
 }
 
 // The push breadcrumb hooks/post-tool-use.js writes for a Bash `git push`: same type,
@@ -434,4 +442,4 @@ function backfillPr({ deps, runDir, wt, branch, step, log, result, details }) {
   }
 }
 
-module.exports = { runPhaseExit, realDeps, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
+module.exports = { runPhaseExit, prPushReleased, realDeps, checklistFlags, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };

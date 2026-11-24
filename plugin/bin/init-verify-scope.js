@@ -63,66 +63,63 @@ function parseArgs(argv) {
   };
 }
 
-function printSkippedWarnings(skipped) {
+function printSkippedWarnings(skipped, d) {
   for (const s of skipped || []) {
-    process.stderr.write(`warning: skipped ${s.glob || s.path} — ${s.reason}\n`);
+    d.stderr(`warning: skipped ${s.glob || s.path} — ${s.reason}\n`);
   }
 }
 
-function runDrift(root, targetPath, json) {
+function runDrift(root, targetPath, json, d) {
   const parsed = readDeclaration(targetPath);
   if (!parsed.ok) {
-    for (const err of parsed.errors) process.stderr.write(`${err}\n`);
-    process.exitCode = 1;
-    return;
+    for (const err of parsed.errors) d.stderr(`${err}\n`);
+    return 1;
   }
   if (parsed.missing) {
-    if (json) process.stdout.write(`${JSON.stringify({ declared: false })}\n`);
-    else process.stdout.write(`no declaration at ${targetPath}\n`);
-    process.exitCode = 0;
-    return;
+    if (json) d.stdout(`${JSON.stringify({ declared: false })}\n`);
+    else d.stdout(`no declaration at ${targetPath}\n`);
+    return 0;
   }
   const workspace = detectWorkspace({ root });
   const { missingSuites, extraSuites } = diffAgainstWorkspace(parsed.decl, workspace);
   const skipped = workspace.skipped || [];
   if (json) {
-    process.stdout.write(`${JSON.stringify({
+    d.stdout(`${JSON.stringify({
       declared: true, missingSuites, extraSuites, skipped,
     })}\n`);
   } else {
     const extra = extraSuites.length ? extraSuites.join(', ') : 'none';
     const missing = missingSuites.length ? missingSuites.join(', ') : 'none';
-    process.stdout.write(`drift: suites ${extra} not in workspace; packages ${missing} have no suite\n`);
+    d.stdout(`drift: suites ${extra} not in workspace; packages ${missing} have no suite\n`);
   }
-  printSkippedWarnings(skipped);
-  process.exitCode = 0;
+  printSkippedWarnings(skipped, d);
+  return 0;
 }
 
-function main() {
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
   let parsed;
   try {
-    parsed = parseArgs(process.argv.slice(2));
+    parsed = parseArgs(argv);
   } catch (err) {
     if (!(err instanceof UsageError)) throw err;
-    process.stderr.write(`init-verify-scope.js: ${err.message}\n${USAGE}\n`);
-    process.exitCode = 2;
-    return;
+    d.stderr(`init-verify-scope.js: ${err.message}\n${USAGE}\n`);
+    return 2;
   }
 
-  const root = path.resolve(parsed.root);
+  // An absolute --root never reads d.cwd(), so a deleted working directory fails only a relative one.
+  const root = path.isAbsolute(parsed.root) ? path.resolve(parsed.root) : path.resolve(d.cwd(), parsed.root);
   let rootStat = null;
   try { rootStat = fs.statSync(root); } catch { /* doesn't exist, or unreadable */ }
   if (!rootStat || !rootStat.isDirectory()) {
-    process.stderr.write(`init-verify-scope.js: --root is not a directory: ${parsed.root}\n${USAGE}\n`);
-    process.exitCode = 2;
-    return;
+    d.stderr(`init-verify-scope.js: --root is not a directory: ${parsed.root}\n${USAGE}\n`);
+    return 2;
   }
 
   const targetPath = path.join(root, '.claude-tweaks', 'verify-scope.json');
 
   if (parsed.drift) {
-    runDrift(root, targetPath, parsed.json);
-    return;
+    return runDrift(root, targetPath, parsed.json, d);
   }
 
   // detectWorkspace reads the root package.json once and returns its scripts
@@ -149,20 +146,28 @@ function main() {
 
   const skipped = workspace.skipped || [];
   if (parsed.json) {
-    process.stdout.write(`${JSON.stringify({
+    d.stdout(`${JSON.stringify({
       declaration: decl, written, existed, path: targetPath, skipped,
     })}\n`);
   } else {
-    process.stdout.write('Proposed .claude-tweaks/verify-scope.json:\n');
-    process.stdout.write(`${JSON.stringify(decl, null, 2)}\n`);
-    if (existed) process.stdout.write(`exists: ${targetPath} (left unchanged)\n`);
-    else if (written) process.stdout.write(`written: ${targetPath}\n`);
-    else process.stdout.write('not written (pass --write)\n');
+    d.stdout('Proposed .claude-tweaks/verify-scope.json:\n');
+    d.stdout(`${JSON.stringify(decl, null, 2)}\n`);
+    if (existed) d.stdout(`exists: ${targetPath} (left unchanged)\n`);
+    else if (written) d.stdout(`written: ${targetPath}\n`);
+    else d.stdout('not written (pass --write)\n');
   }
-  printSkippedWarnings(skipped);
-  process.exitCode = 0;
+  printSkippedWarnings(skipped, d);
+  return 0;
 }
 
-module.exports = { parseArgs, UsageError };
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+};
 
-if (require.main === module) main();
+module.exports = {
+  run, realDeps, parseArgs, UsageError,
+};
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

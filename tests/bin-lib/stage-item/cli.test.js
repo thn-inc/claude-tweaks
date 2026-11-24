@@ -2,13 +2,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/stage-item');
-const { readText } = require('../../helpers/read-skill');
+const { classifyStagedItem } = require('../../../plugin/bin/lib/console/resolve');
+const { specShapedBody } = require('../../../plugin/bin/lib/issues/record');
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sicli-'));
+  const root = scratchDir('sicli-');
   const main = path.join(root, 'main');
   const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', '2026-08-20T090000-spec-12');
@@ -243,6 +245,30 @@ test('AC1.2: cli: a canonical id prints nothing to stderr (#3370)', () => {
   assert.equal(b.err.join(''), '');
 });
 
+test('AC1.1: --id review-followup-1 (.md) stages with no refusal (#4484)', () => {
+  const { main, runDir } = fixture();
+  const md = path.join(path.dirname(main), 'proposal.md');
+  fs.writeFileSync(md, 'Title: t\n');
+  const { deps, out, err } = fakeDeps(main);
+  assert.equal(run(['--run', runDir, '--id', 'review-followup-1', '--file', md, '--allocate'], deps), 0);
+  assert.ok(fs.existsSync(path.join(fs.realpathSync(runDir), 'staged', 'review-followup-1.md')));
+  assert.ok(out.join('').split('\n')[0].endsWith(path.join('staged', 'review-followup-1.md')), `the first stdout line must be the written path: ${out.join('')}`);
+  assert.equal(err.join(''), '');
+});
+
+test('#4484: a header+specShapedBody record proposal classifies to Queue writes', () => {
+  const body = specShapedBody({
+    currentState: 'The finding is confirmed.',
+    deliverables: '- Fix it.',
+    acceptanceCriteria: ['x'],
+    releaseNote: 'No user-visible change.',
+    filedBy: 'review',
+    provenance: { origin: 'spec #1 review (3a)', deferReason: 'genuinely-larger' },
+  });
+  const text = 'Title: t\nType: task\nLabels: ready\nDefer-reason: genuinely-larger\nFinding: high security — x\n\n' + body;
+  assert.deepEqual(classifyStagedItem('review-followup-1.md', text), { section: 'Queue writes' });
+});
+
 // #3488: producers whose runs never reach the wrap-up Review Console are exempt from the
 // unmapped-prefix refusal (AC1.2: a mapped or exempt id still exits 0); a mapped id (upstream-draft-) classifies cleanly on its own.
 for (const [id, why, titlePrefix] of [
@@ -263,19 +289,15 @@ for (const [id, why, titlePrefix] of [
   });
 }
 
-// #3488: the shipped-close staging call in queue-pull-script.md must not redirect stderr —
-// `2>&1` silencing hid a real staging failure from the firing's log.
-function assertShippedCloseStderrVisible(text) {
-  const line = text.split('\n').find((l) => /--id "shipped-close-/.test(l));
-  assert.ok(line, 'no shipped-close- stage-item line found');
-  assert.doesNotMatch(line, /2>/);
-}
+// #3488: the shipped-close staging call must not silence stderr (`2>&1` hid a real staging failure
+// from the firing's log). #5230: that call is the queue-pull module's; the stderr forwarding is
+// pinned in tests/bin-lib/dispatch/queue-pull.test.js ("#5230 shipped: … stage-item.js stderr …").
 
-test('queue-pull-script.md: the shipped-close- stage-item line does not silence stderr (#3488)', () => {
-  const text = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'dispatch', 'queue-pull-script.md'));
-  assertShippedCloseStderrVisible(text);
-});
-
-test('queue-pull-script.md pin control: the original 2>&1 line is rejected (#3488)', () => {
-  assert.throws(() => assertShippedCloseStderrVisible('... --id "shipped-close-$NUM" --file "$FILE" >/dev/null 2>&1 || true'));
+test('AC4.1: cli: --run naming an archived (no longer present) run dir is refused (exit 3), nothing recreated (#5280)', () => {
+  const { main, runDir, sourceFile } = fixture();
+  fs.rmSync(runDir, { recursive: true });
+  const { deps } = fakeDeps(main);
+  const code = run(['--run', runDir, '--id', 'visual-review-late-1', '--allocate', '--file', sourceFile], deps);
+  assert.equal(code, 3);
+  assert.equal(fs.existsSync(runDir), false);
 });

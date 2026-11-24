@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps,
+  run, parseArgs, shellQuote, extractSection, firstSentence, isUnknownIssueTypeField, fetchIssueTypeGraphQL, realDeps, USAGE,
 } = require('../../plugin/bin/lib/compose-subject.js');
 const { ComposeSubjectError } = require('../../plugin/bin/lib/release/subject.js');
 
@@ -24,19 +24,45 @@ const RECORDS = {
   2269: { number: 2269, title: 'Wontfix footer', body: '## Overview\n\nFooter shape two.\n\n## Release Note\n\nNote with wontfix footer.\n\n_Filed by `x`. Close to resolve; label `wontfix` to suppress future reports of this finding._', labels: [{ name: 'type:task' }], issueType: null },
   2271: { number: 2271, title: 'Footer-only release note', body: '## Overview\n\nOnly a footer.\n\n## Release Note\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
   2272: { number: 2272, title: 'CRLF footer', body: '## Overview\r\n\r\nCRLF footer.\r\n\r\n## Release Note\r\n\r\nNote with CRLF footer.\r\n\r\n_Filed by `x` via specShapedBody._\r\n', labels: [{ name: 'type:task' }], issueType: null },
+  10: { number: 10, title: 'Bundle lowest', body: '## Overview\n\nLowest record.\n\n## Release Note\n\nAdded the lowest thing.\n', labels: [{ name: 'type:bug' }], issueType: null },
+  11: { number: 11, title: 'Bundle middle', body: '## Overview\n\nMiddle record.\n\n## Release Note\n\nFixed the middle thing.\n', labels: [{ name: 'type:task' }], issueType: null },
+  12: { number: 12, title: 'Bundle top', body: '## Overview\n\nTop record.\n\n## Release Note\n\nChanged the top thing.\n', labels: [{ name: 'type:task' }], issueType: null },
   2273: { number: 2273, title: 'Footer-shaped prose mid-note', body: '## Overview\n\nMid-note line.\n\n## Release Note\n\n_Filed by the planner_\n\nMore note after.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2280: { number: 2280, title: 'Release Note behind an unclosed fence', body: '## Overview\n\nFenced.\n\n```\nnever closed\n\n## Release Note\n\nHidden note.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2281: { number: 2281, title: 'Breaking Change behind an unclosed fence', body: '## Overview\n\nB.\n\n```\nopen\n\n## Breaking Change\n\nUse --new.\n\n## Release Note\n\nNote.\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
+  2282: { number: 2282, title: 'Unclosed fence, no Release Note at all', body: '## Overview\n\nFenced.\n\n```\nnever closed\n', labels: [{ name: 'type:task' }], issueType: null },
 };
+
+const nodeFs = require('node:fs');
+const nodeOs = require('node:os');
+const nodePath = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+// A directory path that is never created: the fakes never touch the filesystem under it.
+const PHANTOM_CWD = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-cwd');
+const INJECTED_ENV = Object.freeze({ PATH: process.env.PATH || '', COMPOSE_SUBJECT_MARKER: 'injected' });
+// A home directory that is never created: no gh hosts.yml is readable under it, so the origin gate and
+// host pin never read the developer's own.
+const PHANTOM_HOME = nodePath.join(nodeOs.tmpdir(), 'compose-subject-phantom-home');
+// The injected process context every deps object carries (#5386).
+const FAKE_CTX = { cwd: () => PHANTOM_CWD, env: INJECTED_ENV, homeDir: () => PHANTOM_HOME };
 
 function fakeDeps({
   records = RECORDS, ghAvailable = () => true, remoteUrl = () => 'git@github.com:acme/repo.git', failView = false,
-  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null,
+  commitScope = null, commitScopePaths = [], changedFiles = null, prFiles = null, writeError = null, prView = null,
 } = {}) {
   const out = { stdout: '', stderr: '', calls: [], gitCalls: [], files: {}, dirs: [] };
   const deps = {
+    ...FAKE_CTX,
     ghAvailable,
     remoteUrl,
     runner: (args) => {
       out.calls.push(args);
+      if (args[0] === 'pr' && args[1] === 'view') {
+        if (prView === null) throw new Error('gh pr view must not be called');
+        if (prView instanceof Error) throw prView;
+        return JSON.stringify(prView);
+      }
       if (args[0] === 'pr') {
         assert.deepEqual(args.slice(0, 2), ['pr', 'diff']);
         if (prFiles instanceof Error) throw prFiles;
@@ -91,12 +117,38 @@ test('single record: conventional subject from type label, summary from Overview
   assert.ok(out.calls[0].includes('number,title,body,labels,issueType'));
 });
 
-test('bundle: releaseNote is derived from the subject record only — a companion record\'s own section is required but never rendered', () => {
+test('bundle: every record\'s Release Note renders, lowest number first (#4634 flips #2580 AC 3)', () => {
   const { deps, out } = fakeDeps();
   assert.equal(run(['2251,2252'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
-  assert.match(parsed.body, /Release-Note: Made merge subjects Conventional Commits shaped\./);
-  assert.ok(!parsed.body.includes('Made reconcile squash-aware.'), parsed.body);
+  assert.ok(parsed.body.includes('Release-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.'), parsed.body);
+});
+
+const BUNDLE_NOTES = 'Release-Note: Added the lowest thing.\nRelease-Note: Fixed the middle thing.\nRelease-Note: Changed the top thing.';
+
+test('AC1.1: compose-subject 10,11,12 writes three Release-Note lines in number order, then the Fixes lines', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['12,10,11'], deps), 0, out.stderr);
+  assert.equal(JSON.parse(out.stdout).body, `Lowest record.\n\n${BUNDLE_NOTES}\n\nFixes #10\nFixes #11\nFixes #12`);
+});
+
+test('AC1.2: with --keep-open 11 the body still has three notes, and #11\'s footer line is Refs #11', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10,11,12', '--keep-open', '11'], deps), 0, out.stderr);
+  assert.equal(JSON.parse(out.stdout).body, `Lowest record.\n\n${BUNDLE_NOTES}\n\nFixes #10\nRefs #11\nFixes #12`);
+});
+
+test('AC2.1: compose-subject 10 output equals the pre-#4634 composer byte for byte', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10'], deps), 0, out.stderr);
+  assert.equal(out.stdout, '{"title":"fix: Bundle lowest (#10)","body":"Lowest record.\\n\\nRelease-Note: Added the lowest thing.\\n\\nFixes #10"}\n');
+});
+
+test('AC3.1: a bundle where any record has an empty ## Release Note section still fails with the existing message', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['10,11,2271'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2271 carry no non-empty "## Release Note" section/);
+  assert.equal(out.stdout, '');
 });
 
 test('exit 1: a record with no ## Release Note section fails loudly, regardless of breaking', () => {
@@ -167,7 +219,7 @@ test('bundle: subject from the lowest number, one Fixes line per record ascendin
   assert.equal(run(['2252,2251', '--tag', 'auto-merge'], deps), 0, out.stderr);
   const parsed = JSON.parse(out.stdout);
   assert.equal(parsed.title, 'feat: Merge-time conventional subject (#2251)');
-  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252');
+  assert.equal(parsed.body, 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.\n\nFixes #2251\nFixes #2252');
 });
 
 test('bundle Type aggregation: a type:feature sibling wins over the lowest-numbered type:task record (discriminating: the old lowest-record-only logic yields chore: here)', () => {
@@ -270,6 +322,7 @@ test('exit 2: gh absent, or owner/repo unresolvable without --repo', () => {
   assert.equal(run(['2251'], r.deps), 2);
   r = fakeDeps({ remoteUrl: () => { throw new Error('not a git repo'); } });
   assert.equal(run(['2251'], r.deps), 2);
+  assert.match(r.out.stderr, /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
   r = fakeDeps({ remoteUrl: () => { throw new Error('not a git repo'); } });
   assert.equal(run(['2251', '--repo', 'acme/repo'], r.deps), 0, r.out.stderr);
 });
@@ -356,6 +409,7 @@ test('run(): REST issueType rejection retries without the field, then still reso
   const out = { stdout: '', stderr: '', calls: [] };
   let attempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -387,6 +441,7 @@ test('run(): REST issueType rejection + no type:* label falls back to the GraphQ
   const out = { stdout: '', stderr: '' };
   let viewAttempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -416,6 +471,7 @@ test('run(): REST issueType rejection + no label + GraphQL fallback also finds n
   const out = { stdout: '', stderr: '' };
   let viewAttempt = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: (args) => {
@@ -440,6 +496,7 @@ test('run(): a genuine gh failure (not the issueType rejection) on the first vie
   const out = { stdout: '', stderr: '' };
   let calls = 0;
   const deps = {
+    ...FAKE_CTX,
     ghAvailable: () => true,
     remoteUrl: () => 'git@github.com:acme/repo.git',
     runner: () => { calls++; throw new Error('HTTP 404: Not Found'); },
@@ -482,7 +539,8 @@ test('--scope (#3028): parsed, threaded into the subject, breaking keeps ! after
 
 test('realDeps.runner (#3028) pipes gh stderr instead of inheriting it, and keeps windowsHide', () => {
   const src = require('node:fs').readFileSync(require.resolve('../../plugin/bin/lib/compose-subject.js'), 'utf8');
-  const line = src.split('\n').find((l) => l.includes("runner: (args) => execFileSync('gh'"));
+  // Any parameter list: the pin is that the runner key calls execFileSync('gh', ...), not its parameter names.
+  const line = src.split('\n').find((l) => /^\s*runner:\s*\([^)]*\)\s*=>\s*execFileSync\('gh'/.test(l));
   assert.ok(line, 'realDeps.runner line must exist');
   assert.ok(line.includes("stdio: ['ignore', 'pipe', 'pipe']"), line);
   assert.ok(line.includes('windowsHide: true'), line);
@@ -795,15 +853,528 @@ test('--keep-open: a number outside the record list, or a malformed value, exits
   assert.match(out.stderr, /--keep-open names #2252, not in the record list/);
 });
 
-test('--keep-open absent: the body is byte-identical to the pre-#4199 composer, JSON and --out-dir alike', () => {
-  const PRE_4199_BODY = 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\n\nFixes #2251\nFixes #2252';
+test('--keep-open absent: every footer line is Fixes, JSON and --out-dir alike', () => {
+  const NO_KEEP_OPEN_BODY = 'Makes the merge subject conventional.\n\n[auto-merge]\n\nRelease-Note: Made merge subjects Conventional Commits shaped.\nRelease-Note: Made reconcile squash-aware.\n\nFixes #2251\nFixes #2252';
   const json = fakeDeps();
   assert.equal(run(['2251,2252', '--tag', 'auto-merge'], json.deps), 0, json.out.stderr);
-  assert.equal(json.out.stdout, `${JSON.stringify({ title: 'feat: Merge-time conventional subject (#2251)', body: PRE_4199_BODY })}\n`);
+  assert.equal(json.out.stdout, `${JSON.stringify({ title: 'feat: Merge-time conventional subject (#2251)', body: NO_KEEP_OPEN_BODY })}\n`);
   const files = fakeDeps();
   assert.equal(run(['2251,2252', '--tag', 'auto-merge', '--out-dir', '/x/subj'], files.deps), 0, files.out.stderr);
-  assert.equal(files.out.files[require('node:path').join('/x/subj', 'body.md')], PRE_4199_BODY);
+  assert.equal(files.out.files[require('node:path').join('/x/subj', 'body.md')], NO_KEEP_OPEN_BODY);
   assert.deepEqual(parseArgs(['2251']).keepOpen, []);
   const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
   assert.match(USAGE, /\[--keep-open <n>\[,<m>\.\.\.\]\]/);
+});
+
+test('exit 1: a Release Note hidden by an unclosed fence is named as the fence, not as missing (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a Breaking Change hidden by an unclosed fence is named as the fence (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2281'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: breaking is set on #2281 (unclosed-fence at line 5) but an unclosed code fence hides the "## Breaking Change" section — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a bundle with both a missing and a hidden Release Note prints both lines, missing first (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280,2290'], deps), 1);
+  assert.equal(out.stderr,
+    'compose-subject.js: record(s) #2290 carry no non-empty "## Release Note" section\n'
+    + 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: an unclosed fence with no Release Note heading behind it keeps the missing-section message (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2282'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2282 carry no non-empty "## Release Note" section/);
+  assert.doesNotMatch(out.stderr, /unclosed-fence/);
+});
+
+// ---- Script-entry pins (#5386): the CLI run as a real script, committed before the entry split. ----
+const { spawnCli } = require('../helpers/run-cli');
+const { STUB_SKIP } = require('../helpers/path-stub');
+
+const CLI_PATH = require('node:path').join(__dirname, '..', '..', 'plugin', 'bin', 'compose-subject.js');
+const STUB_ISSUE = {
+  number: 7,
+  title: 'Fix the widget',
+  body: '## Overview\n\nFixes the widget.\n\n## Release Note\n\nThe widget works.\n',
+  labels: [{ name: 'type:bug' }],
+  issueType: null,
+};
+// The four git variables that would point a child at the test runner's own repository.
+const GIT_REPO_VARS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'];
+
+// A `gh` stub that answers exactly the calls compose-subject's success path makes for
+// `7 --repo owner/name`: `gh --version` and `gh issue view 7 …`; any other call exits 1.
+// -> { dir, env, log, cleanup }; env is process.env minus GIT_*/GH_HOST, with the stub dir first on PATH.
+function ghStubFixture() {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-ghstub-'));
+  const log = path.join(dir, 'gh.log');
+  try {
+    fs.writeFileSync(path.join(dir, 'issue.json'), JSON.stringify(STUB_ISSUE));
+    const script = [
+      '#!/bin/sh',
+      `printf '%s\\n' "$*" >> '${log}'`,
+      'if [ "$1" = "--version" ]; then echo "gh version 2.0.0"; exit 0; fi',
+      `if [ "$1 $2 $3" = "issue view 7" ]; then cat '${path.join(dir, 'issue.json')}'; exit 0; fi`,
+      'echo "stub gh: unexpected call: $*" >&2',
+      'exit 1',
+      '',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'gh'), script);
+    fs.chmodSync(path.join(dir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+  const env = { ...process.env, PATH: dir + path.delimiter + (process.env.PATH || '') };
+  for (const k of [...GIT_REPO_VARS, 'GH_HOST']) delete env[k];
+  return { dir, env, log, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+// Proves the script entry: a real process composes a subject from a record read through a stub gh on PATH.
+test('AC5.1 AC7.1: a record with a Type and a Release Note composes a subject — exit 0, stdout asserted', { skip: STUB_SKIP }, () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const stub = ghStubFixture();
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-subject-cwd-'));
+  try {
+    const res = spawnCli(CLI_PATH, ['7', '--repo', 'owner/name'], { env: stub.env, cwd });
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal(res.stdout, `${JSON.stringify({
+      title: 'fix: Fix the widget (#7)',
+      body: 'Fixes the widget.\n\nRelease-Note: The widget works.\n\nFixes #7',
+    })}\n`);
+    assert.equal(res.stderr, '');
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+    stub.cleanup();
+  }
+});
+
+// Proves the script entry's refusal path: a real process exits non-zero and prints the usage on stderr.
+test('AC7.1: --bogus exits 1 with the usage on stderr', () => {
+  const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
+  const res = spawnCli(CLI_PATH, ['--bogus']);
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.equal(res.stderr, `unknown argument: --bogus\n${USAGE}`);
+});
+
+// ---- Injected cwd and env (#5386): every seam `run` reaches takes them from deps. ----
+
+// process.env minus the variables that would point a git child at the test runner's own repository.
+function envWithoutGitRepoVars(extra = {}) {
+  const env = { ...process.env, ...extra };
+  for (const k of GIT_REPO_VARS) delete env[k];
+  return env;
+}
+
+
+test('AC8.1: run reads commit-scope through deps.cwd()', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  const seen = [];
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.readCommitScope = (cwd) => { seen.push(['scope', cwd]); return null; };
+  deps.readCommitScopePaths = (cwd) => { seen.push(['paths', cwd]); return ['plugin/bin/=bin']; };
+  assert.equal(run(['2251', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.deepEqual(seen, [['scope', PHANTOM_CWD], ['paths', PHANTOM_CWD]]);
+});
+
+test('AC8.1: realDeps.readCommitScope and readCommitScopePaths read the policy under the cwd they are given', (t) => {
+  const dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-policy-arg-'));
+  t.after(() => nodeFs.rmSync(dir, { recursive: true, force: true }));
+  nodeFs.mkdirSync(nodePath.join(dir, '.claude-tweaks'));
+  nodeFs.writeFileSync(nodePath.join(dir, '.claude-tweaks', 'policy.yml'), 'commit-scope: web\ncommit-scope-paths: plugin/bin/=bin\n');
+  assert.equal(realDeps.readCommitScope(dir), 'web');
+  assert.deepEqual(realDeps.readCommitScopePaths(dir), ['plugin/bin/=bin']);
+});
+
+test('AC8.1: runner, gitRunner, ghAvailable and the fetchIssueType runner receive the injected cwd and env', () => {
+  const { deps, out } = fakeDeps({ commitScopePaths: ['plugin/bin/=bin'], changedFiles: '' });
+  const expected = { cwd: PHANTOM_CWD, env: INJECTED_ENV };
+  const seen = { runner: [], gitRunner: [], ghAvailable: [], remoteUrl: [], fetchRunner: [] };
+  const viewRunner = deps.runner;
+  let first = true;
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.ghAvailable = (o) => { seen.ghAvailable.push(o); return true; };
+  deps.remoteUrl = (o) => { seen.remoteUrl.push(o); return 'git@github.com:acme/repo.git'; };
+  deps.gitRunner = (args, o) => { seen.gitRunner.push(o); return ''; };
+  // The first view is rejected for the issueType field so the GraphQL fallback runs and receives its runner.
+  deps.runner = (args, o) => {
+    seen.runner.push(o);
+    if (first) { first = false; throw new Error('Unknown JSON field: "issueType"'); }
+    return args[0] === 'api' ? '{}' : viewRunner(args);
+  };
+  deps.fetchIssueType = (runner) => { runner(['api', 'graphql']); return { name: 'Bug' }; };
+  deps.readCommitScopePaths = () => ['plugin/bin/=bin'];
+  assert.equal(run(['2263', '--range', 'main...feat'], deps), 0, out.stderr);
+  assert.match(out.stdout, /^\{"title":"fix: /);
+  // runner: the failed view, its retry, and the call the fetchIssueType runner made.
+  assert.equal(seen.runner.length, 3);
+  // Each seam also gets the injected home directory and stderr, for the gh host and hosts.yml lookups.
+  const ctxOf = (o) => ({ cwd: o.cwd, env: o.env });
+  for (const o of [...seen.runner, ...seen.gitRunner, ...seen.ghAvailable, ...seen.remoteUrl]) {
+    assert.deepEqual(ctxOf(o), expected);
+    assert.equal(o.homeDir(), PHANTOM_HOME);
+    assert.equal(o.stderr, deps.stderr);
+  }
+  assert.equal(seen.gitRunner.length, 1);
+  assert.equal(seen.ghAvailable.length, 1);
+  assert.equal(seen.remoteUrl.length, 1);
+});
+
+test('AC8.1: pinGhHost receives the injected cwd and env for an explicit --repo', () => {
+  const { deps, out } = fakeDeps();
+  const seen = [];
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.pinGhHost = (spec, o) => { seen.push([spec.owner, spec.repo, o]); };
+  assert.equal(run(['2251', '--repo', 'owner/name'], deps), 0, out.stderr);
+  assert.equal(seen.length, 1);
+  const [owner, name, o] = seen[0];
+  assert.deepEqual([owner, name, o.cwd, o.env, o.homeDir(), o.stderr], ['owner', 'name', PHANTOM_CWD, INJECTED_ENV, PHANTOM_HOME, deps.stderr]);
+});
+
+test('AC8.1: the origin gate reads an exported GH_HOST from the injected env', () => {
+  const origin = 'https://git.corp.example/owner/name.git';
+  const admitted = fakeDeps({ remoteUrl: () => origin });
+  admitted.deps.cwd = () => PHANTOM_CWD;
+  admitted.deps.env = { ...INJECTED_ENV, GH_HOST: 'git.corp.example' };
+  assert.equal(run(['2251'], admitted.deps), 0, admitted.out.stderr);
+  assert.ok(admitted.out.calls[0].includes('git.corp.example/owner/name'), admitted.out.calls[0].join(' '));
+
+  const refused = fakeDeps({ remoteUrl: () => origin });
+  refused.deps.cwd = () => PHANTOM_CWD;
+  refused.deps.env = INJECTED_ENV;
+  assert.equal(run(['2251'], refused.deps), 2);
+  assert.match(refused.out.stderr, /is not a known GitHub host/);
+});
+
+test('AC8.1: the injected homeDir stays lazy — an exported GH_HOST never reaches it', () => {
+  const origin = 'https://git.corp.example/owner/name.git';
+  const boom = () => { throw new Error('homeDir() must not run when GH_HOST decides the lookup'); };
+  const env = { ...INJECTED_ENV, GH_HOST: 'git.corp.example' };
+  // The origin gate, with and without a caller-supplied gateDeps overlay.
+  for (const gateDeps of [undefined, { remoteUrl: () => origin }]) {
+    const { deps, out } = fakeDeps({ remoteUrl: () => origin });
+    Object.assign(deps, { env, homeDir: boom, gateDeps });
+    assert.equal(run(['2251'], deps), 0, out.stderr);
+  }
+  // realDeps.pinGhHost for an explicit --repo: the exported GH_HOST wins before the home is read.
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  _resetGhHostCache();
+  assert.equal(realDeps.pinGhHost({ host: 'git.corp.example', owner: 'owner', repo: 'name' }, { cwd: PHANTOM_CWD, env, homeDir: boom, stderr: () => {} }), null);
+  _resetGhHostCache();
+});
+
+test('AC8.1: the origin read follows deps.cwd()', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-origin-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  const setupEnv = envWithoutGitRepoVars();
+  execFileSync('git', ['init', '-q'], { cwd: repo, env: setupEnv, stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/fixture/repo.git'], { cwd: repo, env: setupEnv, stdio: 'ignore', windowsHide: true });
+  // Real remoteUrl (not faked): only the injected cwd points it at the fixture repository.
+  const { deps, out } = fakeDeps({ remoteUrl: realDeps.remoteUrl });
+  deps.cwd = () => repo;
+  deps.env = envWithoutGitRepoVars();
+  assert.equal(run(['2251'], deps), 0, out.stderr);
+  assert.ok(out.calls[0].includes('fixture/repo'), out.calls[0].join(' '));
+});
+
+test('AC8.1: a relative --out-dir lands under deps.cwd(), not the process cwd', () => {
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  assert.equal(run(['2251', '--out-dir', nodePath.join('rel', 'out')], deps), 0, out.stderr);
+  const resolvedDir = PHANTOM_CWD + nodePath.sep + nodePath.join('rel', 'out');
+  assert.deepEqual(out.dirs, [resolvedDir]);
+  assert.deepEqual(Object.keys(out.files), ['title.txt', 'body.md', 'message.txt'].map((f) => nodePath.join(resolvedDir, f)));
+});
+
+test('AC8.1: a failed write under a relative --out-dir names the path as typed, not the resolved one', () => {
+  const typed = nodePath.join('rel', 'out');
+  const resolvedFile = nodePath.join(PHANTOM_CWD + nodePath.sep + typed, 'title.txt');
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  deps.writeFile = (p) => { throw new Error(`EACCES: permission denied, open '${p}'`); };
+  assert.equal(run(['2251', '--out-dir', typed], deps), 3);
+  const typedFile = nodePath.join(typed, 'title.txt');
+  assert.equal(out.stderr, `compose-subject.js: could not write ${typedFile}: EACCES: permission denied, open '${typedFile}'\n`);
+  assert.ok(!out.stderr.includes(resolvedFile));
+});
+
+test('AC8.1: an absolute --out-dir is handed to fs unchanged even with a deps.cwd()', () => {
+  const abs = nodePath.join(nodeOs.tmpdir(), 'compose-subject-abs-out');
+  const { deps, out } = fakeDeps();
+  deps.cwd = () => PHANTOM_CWD;
+  deps.env = INJECTED_ENV;
+  assert.equal(run(['2251', '--out-dir', abs], deps), 0, out.stderr);
+  assert.deepEqual(out.dirs, [abs]);
+});
+
+// A deleted working directory: process.cwd() throws ENOENT. `--repo --scope` and an absolute --out-dir
+// need no cwd, so the compose still exits 0, as it did before #5386 took cwd from deps. pinGhHost is
+// left out, as in fakeDeps: its real host lookup is not what this pins.
+test('--repo --scope with an absolute --out-dir composes when deps.cwd() throws (deleted cwd)', () => {
+  const { runCliSync } = require('../helpers/run-cli');
+  const abs = nodePath.join(nodeOs.tmpdir(), 'compose-subject-deleted-cwd-out');
+  const deletedCwd = () => { throw Object.assign(new Error('ENOENT: process.cwd failed'), { code: 'ENOENT' }); };
+  const { deps, out } = fakeDeps();
+  delete deps.stdout; // the helper's own collectors capture stdout and stderr
+  delete deps.stderr;
+  const res = runCliSync(CLI_PATH, ['2251', '--repo', 'o/r', '--scope', 'x', '--out-dir', abs], {
+    deps: { ...deps, cwd: deletedCwd, pinGhHost: undefined },
+  });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(res.stdout, "'feat(x): Merge-time conventional subject (#2251)'\n");
+  assert.deepEqual(out.dirs, [abs]);
+  assert.deepEqual(Object.keys(out.files), ['title.txt', 'body.md', 'message.txt'].map((f) => nodePath.join(abs, f)));
+});
+
+// The real children, not faked seams: each gets the injected values from an env-only or cwd-only fixture.
+test('AC8.1: realDeps.ghAvailable looks `gh` up on the injected PATH', { skip: STUB_SKIP }, (t) => {
+  const withGh = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gh-present-'));
+  const withoutGh = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gh-absent-'));
+  t.after(() => { nodeFs.rmSync(withGh, { recursive: true, force: true }); nodeFs.rmSync(withoutGh, { recursive: true, force: true }); });
+  nodeFs.writeFileSync(nodePath.join(withGh, 'gh'), '#!/bin/sh\necho "gh version 2.0.0"\n');
+  nodeFs.chmodSync(nodePath.join(withGh, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  assert.equal(realDeps.ghAvailable({ cwd: withGh, env: { PATH: withGh } }), true);
+  // An empty PATH directory: a real `gh` elsewhere on the machine must not answer.
+  assert.equal(realDeps.ghAvailable({ cwd: withoutGh, env: { PATH: withoutGh } }), false);
+});
+
+test('AC8.1: realDeps.runner starts gh in the injected cwd with the injected env', { skip: STUB_SKIP }, (t) => {
+  const stubDir = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-runner-stub-')));
+  const cwd = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-runner-cwd-')));
+  t.after(() => { nodeFs.rmSync(stubDir, { recursive: true, force: true }); nodeFs.rmSync(cwd, { recursive: true, force: true }); });
+  nodeFs.writeFileSync(nodePath.join(stubDir, 'gh'), '#!/bin/sh\nprintf "cwd=%s marker=%s" "$(pwd -P)" "$COMPOSE_SUBJECT_MARKER"\n');
+  nodeFs.chmodSync(nodePath.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  const env = envWithoutGitRepoVars({ PATH: stubDir + nodePath.delimiter + (process.env.PATH || ''), COMPOSE_SUBJECT_MARKER: 'from-injected-env' });
+  delete env.GH_HOST;
+  assert.equal(realDeps.runner(['version-probe'], { cwd, env }), `cwd=${cwd} marker=from-injected-env`);
+});
+
+test('AC8.1: realDeps.gitRunner starts git in the injected cwd with the injected env', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-gitrunner-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  const env = envWithoutGitRepoVars({ GIT_AUTHOR_NAME: 'Env Proof', GIT_AUTHOR_EMAIL: 'env-proof@example.invalid' });
+  execFileSync('git', ['init', '-q'], { cwd: repo, env, stdio: 'ignore', windowsHide: true });
+  // git prints the toplevel with forward slashes on Windows; path.resolve gives the native spelling.
+  assert.equal(nodePath.resolve(realDeps.gitRunner(['rev-parse', '--show-toplevel'], { cwd: repo, env }).trim()), repo);
+  assert.match(realDeps.gitRunner(['var', 'GIT_AUTHOR_IDENT'], { cwd: repo, env }), /^Env Proof <env-proof@example\.invalid> /);
+});
+
+test('AC8.1: realDeps.remoteUrl runs git with the injected env', (t) => {
+  const repo = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-remote-env-')));
+  t.after(() => nodeFs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q'], { cwd: repo, env: envWithoutGitRepoVars(), stdio: 'ignore', windowsHide: true });
+  execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/real/repo.git'], { cwd: repo, env: envWithoutGitRepoVars(), stdio: 'ignore', windowsHide: true });
+  // Only the injected env (GIT_CONFIG_GLOBAL naming a config file with an insteadOf rewrite) changes the answer.
+  const globalConfig = nodePath.join(repo, 'global-gitconfig');
+  nodeFs.writeFileSync(globalConfig, '[url "https://github.com/envonly/"]\n\tinsteadOf = https://github.com/real/\n');
+  const env = envWithoutGitRepoVars({ GIT_CONFIG_GLOBAL: globalConfig });
+  assert.equal(realDeps.remoteUrl({ cwd: repo, env }).trim(), 'https://github.com/envonly/repo.git');
+});
+
+test('AC8.1: realDeps.cwd and realDeps.env are the ambient values', () => {
+  assert.equal(realDeps.cwd(), process.cwd());
+  assert.equal(realDeps.env, process.env);
+});
+
+test('AC8.1: realDeps.homeDir is the ambient home', () => {
+  assert.equal(realDeps.homeDir(), nodeOs.homedir());
+});
+
+// ---- Injected home directory and stderr (#5386): the gh host lookups read them, not the real ones. ----
+const GHE_HOST = 'ghe.example.test';
+const GHE_ORIGIN = `https://${GHE_HOST}/owner/name.git`;
+
+// A fixture home whose gh hosts.yml names GHE_HOST: an injected homeDir finds it, the real home never does.
+function hostsHome(t) {
+  const home = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-hosts-home-')));
+  t.after(() => nodeFs.rmSync(home, { recursive: true, force: true }));
+  nodeFs.mkdirSync(nodePath.join(home, '.config', 'gh'), { recursive: true });
+  nodeFs.writeFileSync(nodePath.join(home, '.config', 'gh', 'hosts.yml'), `${GHE_HOST}:\n`);
+  return home;
+}
+
+// Repo A has no remote; repo B has the GHE origin. `GIT_DIR=<B>/.git` in the injected env only
+// makes a child whose cwd is A read B's remote. -> { a, env } with env free of GH_* and, when
+// given, a stub directory first on PATH.
+function originPair(t, stubDir) {
+  const { committedRepo, cleanGitEnv } = require('../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'cs-a-' });
+  const b = committedRepo({ prefix: 'cs-b-' });
+  t.after(() => { for (const d of [a.dir, b.dir]) nodeFs.rmSync(d, { recursive: true, force: true }); });
+  b.git('remote', 'add', 'origin', GHE_ORIGIN);
+  const env = { ...cleanGitEnv(), GIT_DIR: nodePath.join(b.dir, '.git') };
+  if (stubDir) env.PATH = stubDir + nodePath.delimiter + (process.env.PATH || '');
+  for (const k of ['GH_HOST', 'GH_REPO', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME']) delete env[k];
+  return { a, b, env };
+}
+
+test('AC8.1: the origin gate reads gh hosts.yml from the injected homeDir', (t) => {
+  const { deps, out } = fakeDeps({ remoteUrl: () => GHE_ORIGIN });
+  const home = hostsHome(t);
+  deps.homeDir = () => home;
+  assert.equal(run(['2251'], deps), 0, out.stderr);
+  assert.ok(out.calls[0].includes(`${GHE_HOST}/owner/name`), out.calls[0].join(' '));
+  // Without that home the same origin is refused, so the admission above came from the injected one.
+  const refused = fakeDeps({ remoteUrl: () => GHE_ORIGIN });
+  assert.equal(run(['2251'], refused.deps), 2);
+});
+
+test('AC8.1: realDeps.runner takes the gh host from the injected env, homeDir and stderr', { skip: STUB_SKIP }, (t) => {
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  const stubDir = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'compose-subject-hoststub-')));
+  t.after(() => nodeFs.rmSync(stubDir, { recursive: true, force: true }));
+  nodeFs.writeFileSync(nodePath.join(stubDir, 'gh'), '#!/bin/sh\nprintf %s "$GH_HOST"\n');
+  nodeFs.chmodSync(nodePath.join(stubDir, 'gh'), 0o755); // root-safe: exec-bit stub, not a denial simulation
+  const { a, env } = originPair(t, stubDir);
+  const notes = [];
+  _resetGhHostCache();
+  t.after(_resetGhHostCache);
+  const home = hostsHome(t);
+  const out = realDeps.runner(['issue', 'view', '1'], { cwd: a.dir, env, homeDir: () => home, stderr: (s) => notes.push(s) });
+  assert.equal(out, GHE_HOST);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], new RegExp(GHE_HOST));
+});
+
+test('AC8.1: realDeps.pinGhHost reads the origin and hosts.yml from the injected context', (t) => {
+  const { _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve.js');
+  const { a, env } = originPair(t);
+  const spec = { host: GHE_HOST, owner: 'owner', repo: 'name' };
+  t.after(_resetGhHostCache);
+  // The origin host is known only through the injected home: explicit --repo on that very host needs no pin.
+  _resetGhHostCache();
+  const home = hostsHome(t);
+  assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => home, stderr: () => {} }), null);
+  // An injected home with no hosts.yml leaves the origin host unknown, so the explicit host is pinned.
+  _resetGhHostCache();
+  assert.equal(realDeps.pinGhHost(spec, { cwd: a.dir, env, homeDir: () => PHANTOM_HOME, stderr: () => {} }), GHE_HOST);
+});
+
+const HK_PR = { number: 5207, title: 'Prune 111 completed execution plans', body: '<!-- tidy-housekeeping-pr -->\nTidy housekeeping.', closingIssuesReferences: [] };
+
+test('AC2.1: --housekeeping --pr {n} --out-dir {d} exits 0 and writes a chore subject and a body with no Release-Note or Fixes line', () => {
+  const { deps, out } = fakeDeps({ prView: HK_PR });
+  const code = run(['--housekeeping', '--pr', '5207', '--out-dir', '/tmp/hk'], deps);
+  assert.equal(code, 0, out.stderr);
+  const title = 'chore: Prune 111 completed execution plans (#5207)';
+  assert.equal(out.files[nodePath.join(nodePath.resolve(PHANTOM_CWD, '/tmp/hk'), 'title.txt')], title);
+  const body = out.files[nodePath.join(nodePath.resolve(PHANTOM_CWD, '/tmp/hk'), 'body.md')];
+  assert.equal(body, 'Prune 111 completed execution plans');
+  assert.equal(out.stdout, `'${title}'\n`);
+  assert.deepEqual(out.calls[0].slice(0, 3), ['pr', 'view', '5207']);
+  assert.ok(out.calls[0].includes('acme/repo'));
+  assert.equal(out.calls[0][out.calls[0].indexOf('--json') + 1], 'number,title,body,closingIssuesReferences');
+  assert.ok(!out.calls.some((c) => c[0] === 'issue'), 'no gh issue view in the record-less form');
+});
+
+test('AC2.2: --pr {n} with no <n> and no --housekeeping still exits 1 with missing <n> argument', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['--pr', '5207', '--out-dir', '/tmp/hk'], deps), 1);
+  assert.match(out.stderr, /^missing <n> argument\n/);
+  assert.equal(out.calls.length, 0);
+});
+
+test('--housekeeping usage errors: with a record number, --keep-open, --range, or without --pr — exit 1, no gh call', () => {
+  for (const argv of [['5207', '--housekeeping', '--pr', '1'], ['--housekeeping', '--pr', '1', '--keep-open', '2'], ['--housekeeping', '--range', 'a...b'], ['--housekeeping', '--pr', '1', '--range', 'a...b'], ['--housekeeping']]) {
+    const { deps, out } = fakeDeps({ prView: HK_PR });
+    assert.equal(run(argv, deps), 1, argv.join(' '));
+    assert.equal(out.calls.length, 0, argv.join(' '));
+  }
+});
+
+test('--housekeeping refuses a PR body with no housekeeping marker (exit 1), accepts the wrap-up-residue-pr marker', () => {
+  const plain = fakeDeps({ prView: { ...HK_PR, body: 'Fixes #12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], plain.deps), 1);
+  assert.match(plain.out.stderr, /no housekeeping marker/);
+  const residue = fakeDeps({ prView: { ...HK_PR, body: '<!-- wrap-up-residue-pr -->' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], residue.deps), 0, residue.out.stderr);
+});
+
+test('AC1.1 AC2.1: --housekeeping accepts the wrap-up-skills-pr marker; body carries Refs, never Fixes, and no undefined', () => {
+  const pr = { number: 6200, title: 'Add learned skill updates from wrap-up of #6112, #6113', body: '<!-- wrap-up-skills-pr -->\nLearned skill updates from wrap-up (refs #6112, refs #6113).', closingIssuesReferences: [] };
+  const { deps, out } = fakeDeps({ prView: pr });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.ok(title.startsWith('chore: Add learned skill updates from wrap-up of #6112, #6113'), title);
+  assert.ok(title.endsWith('(#6200)'), title);
+  assert.ok(body.includes('Refs #6112\nRefs #6113'), body);
+  assert.ok(!/Fixes/.test(body), body);
+  assert.ok(!/undefined/.test(title + body), title + body);
+});
+
+test('--housekeeping learned-skills refs: case-insensitive, de-duplicated, first-seen order; tidy marker adds no Refs', () => {
+  const pr = { number: 6200, title: 'Add learned skill updates', body: '<!-- wrap-up-skills-pr -->\nRefs #7, refs #5, REFS #7', closingIssuesReferences: [] };
+  const { deps, out } = fakeDeps({ prView: pr });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  assert.ok(JSON.parse(out.stdout).body.endsWith('Refs #7\nRefs #5'), out.stdout);
+  const tidy = fakeDeps({ prView: { ...HK_PR, body: '<!-- tidy-housekeeping-pr -->\nrefs #12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], tidy.deps), 0, tidy.out.stderr);
+  assert.doesNotMatch(JSON.parse(tidy.out.stdout).body, /Refs/);
+});
+
+test('--housekeeping learned-skills refs: `refs #0` and a non-safe integer (`refs #1e21` digits) are dropped, the subject still composes', () => {
+  const body = `<!-- wrap-up-skills-pr -->\nrefs #0, Refs #${'9'.repeat(25)}, refs #8`;
+  const { deps, out } = fakeDeps({ prView: { number: 6200, title: 'Add learned skill updates', body, closingIssuesReferences: [] } });
+  assert.equal(run(['--housekeeping', '--pr', '6200'], deps), 0, out.stderr);
+  const composed = JSON.parse(out.stdout);
+  assert.ok(composed.body.endsWith('Refs #8'), composed.body);
+  assert.doesNotMatch(composed.body, /Refs #0|e\+|9{10}/);
+});
+
+test('--housekeeping refuses a marker-quoting PR that links a record (closingIssuesReferences non-empty), no output written', () => {
+  const body = 'Fixes #5208\n\nStamps `<!-- tidy-housekeeping-pr -->` on tidy PRs.';
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, body, closingIssuesReferences: [{ number: 5208 }] } });
+  assert.equal(run(['--housekeeping', '--pr', '5207', '--out-dir', '/tmp/hk'], deps), 1);
+  assert.match(out.stderr, /links no record/);
+  assert.deepEqual(out.files, {});
+  assert.equal(out.stdout, '');
+});
+
+test('--housekeeping neutralizes a cross-repo closing phrase in the PR title', () => {
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, title: 'Prune plans, closes other/repo#12' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.doesNotMatch(`${title}\n${body}`, /closes other\/repo#12/);
+  assert.ok(title.startsWith('chore:'), title);
+});
+
+test('--housekeeping neutralizes a closing phrase in the PR title', () => {
+  const { deps, out } = fakeDeps({ prView: { ...HK_PR, title: 'Prune plans (closes #12)' } });
+  assert.equal(run(['--housekeeping', '--pr', '5207'], deps), 0, out.stderr);
+  const { title, body } = JSON.parse(out.stdout);
+  assert.doesNotMatch(`${title}\n${body}`, /closes #12/);
+  assert.ok(title.startsWith('chore: Prune plans'), title);
+  assert.ok(body.length > 0);
+});
+
+test('--housekeeping: a failed or unparseable gh pr view exits 3', () => {
+  assert.equal(run(['--housekeeping', '--pr', '5207'], fakeDeps({ prView: new Error('boom') }).deps), 3);
+  const bad = fakeDeps({ prView: HK_PR });
+  const runner = bad.deps.runner;
+  bad.deps.runner = (args) => (args[1] === 'view' ? 'not json' : runner(args));
+  assert.equal(run(['--housekeeping', '--pr', '5207'], bad.deps), 3);
+});
+
+test('USAGE advertises --housekeeping', () => {
+  assert.match(USAGE, /--housekeeping/);
 });

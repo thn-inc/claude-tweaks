@@ -28,6 +28,13 @@ for (const [label, piece] of [
   ['an unterminated heredoc inside "$( repeated', '"$(<<X\n"'],
   ['a "$( # comment repeated', '"$( #"'],
   ['an unquoted ${a repeated', '${a'],
+  // #4246: the heredoc scan reads each `${` once; a closed span is skipped whole, an unclosed one falls through.
+  ['a closed ${x:-<<E} repeated', '${x:-<<E}'],
+  ['an unclosed ${x:-<<E repeated', '${x:-<<E'],
+  // #4246: every unclosed `$(` opens a frame; each newline reads the innermost `"$(` frame's start
+  // from the top frame, not by walking every open frame (4.6 s at 120 KB before).
+  ['an unclosed $( and newline repeated', '$(\n'],
+  ['an unclosed $( <<E heredoc repeated', '$( <<E\nE\n'],
 ]) {
   test(`fileWriteTargets: ${label} (60 KB) stays linear`, () => {
     const { value, ms } = timed(() => fileWriteTargets(`echo ${piece.repeat(Math.floor(60000 / piece.length))} && cp a /main/f.js`, '/r'));
@@ -45,3 +52,26 @@ for (const [route, group] of [
     assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
   });
 }
+
+// #4303: the real cwds a collapse kept grew one segment per relative cd (78 s through the hook at
+// 44 KB, before a collapse kept only the lost cwd, which never grows), and every event scanned
+// each open substitution level (3 s through the hook for a 4,000-deep nest, 3 s in the function
+// alone at 12,000, before the level stack).
+test('fileWriteTargets: 4,000 relative-cd brace groups stay linear', () => {
+  const { ms } = timed(() => fileWriteTargets(`${distinct((i) => `{ cd a${i}; }; `, 4000)}cp a ../f.js`, '/r', { overflowCwd: '/main' }));
+  assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+});
+
+// #4246: a `)` that closes on its heredoc's opener line marks that frame's own heredocs; scanning
+// every heredoc pending on the line instead took 1.1 s at this size (40,000 on one line).
+test('fileWriteTargets: 40,000 same-line-closed $(<<E) on one line stay linear', () => {
+  const { value, ms } = timed(() => fileWriteTargets(`echo ${'$(<<E) '.repeat(40000)} && cp a /main/f.js`, '/r'));
+  assert.ok(value.some((t) => t.file === path.resolve('/main/f.js')), JSON.stringify(value));
+  assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+});
+
+test('fileWriteTargets: a 12,000-deep closed $( ) nest stays linear', () => {
+  const { value, ms } = timed(() => fileWriteTargets(`${'x=$(true; '.repeat(12000)}cp a f.js${')'.repeat(12000)}`, '/r'));
+  assert.deepStrictEqual(value, [{ action: 'copy', file: path.resolve('/r/f.js') }]);
+  assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+});

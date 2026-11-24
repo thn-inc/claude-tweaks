@@ -19,6 +19,8 @@
 // valid for its own firing regardless of whether its write landed.
 
 const { createNamespacedState } = require('../health-core/durable-state');
+const { parseCrossRepoDependencies, parseCrossRepoRef } = require('../issues/cross-repo-refs');
+const { withoutUnreadableSuffix } = require('../issues/record-dependencies');
 
 const NAMESPACE = 'queue-order';
 
@@ -28,8 +30,11 @@ const GROUPING_MODE = 'per-record';
 
 // #4025: with the express lane on, express-eligible records stay out of
 // fast-lane bundles, so those groups are stamped apart from GROUPING_MODE's.
-function groupingMode(expressEnabled) {
-  return expressEnabled ? 'per-record+express' : GROUPING_MODE;
+// #6011: with the driver half on, driver-routable records also stay out of
+// fast-lane bundles; each lane combination stamps its own value, and an
+// existing value never changes meaning.
+function groupingMode(expressEnabled, driverEnabled = false) {
+  return GROUPING_MODE + (expressEnabled ? '+express' : '') + (driverEnabled ? '+driver' : '');
 }
 
 function fileSpecs() {
@@ -63,13 +68,20 @@ function writeOrder(root, blob, opts) {
 // blob's freshnessSignal.issues shape, deduped by number (last write wins —
 // callers are expected to pass each number once, but this normalizes rather
 // than trusting that).
+//
+// #4793: `foreignDeclared: true` is set (and the key is absent otherwise) when any issue's body
+// declares a qualified 'Blocked by owner/name#N' line. A foreign issue closing changes nothing in
+// this signal, so a hit would replay a stale foreign verdict (a record excluded as "state
+// unreadable" would stay excluded in a quiet queue); cacheUsable treats the flag as a miss.
 function buildFreshnessSignal(issues) {
   const byNumber = new Map();
+  let foreignDeclared = false;
   for (const i of Array.isArray(issues) ? issues : []) {
     if (!i || typeof i.number !== 'number') continue;
     byNumber.set(i.number, { number: i.number, updatedAt: i.updatedAt, state: i.state });
+    if (parseCrossRepoDependencies(i.body).length > 0) foreignDeclared = true;
   }
-  return { issues: [...byNumber.values()] };
+  return { issues: [...byNumber.values()], ...(foreignDeclared ? { foreignDeclared: true } : {}) };
 }
 
 // Exact-match comparison per AC1/AC2/AC3: same set of issue numbers, and for
@@ -102,21 +114,42 @@ function signalsMatch(persisted, current) {
 // optional and passed through as given — a caller reading a pre-upgrade blob
 // with no `bundles` field gets `undefined` back and applies its own `[]`
 // fallback (queue-pull-script.md's cache-hit path), never this module.
+// `fingerprint` (#6062) is the settings fingerprint cacheUsable compares; written
+// only when given, so a blob without it is an older writer's and always a miss,
+// and older readers ignore the extra field. Any other property is ignored, so a
+// caller may spread the expressQueuePolicy() result into the argument.
 function composeOrderBlob({
-  computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE,
+  computedAt, runId, freshnessSignal, groups, excluded, bundles, grouping = GROUPING_MODE, fingerprint,
 }) {
   return {
     computedAt, runId, freshnessSignal, groups, excluded, grouping,
     ...(bundles !== undefined ? { bundles } : {}),
+    ...(fingerprint !== undefined ? { fingerprint } : {}),
   };
 }
 
-// A persisted blob is reusable only when stamped with the caller's current
-// grouping rule (default GROUPING_MODE) AND its freshness signal still
-// matches. A blob without `grouping` (any older plugin install's write) fails
-// closed. Never throws.
-function cacheUsable(persisted, current, grouping = GROUPING_MODE) {
-  return !!persisted && persisted.grouping === grouping
+// #4793: true when a persisted exclusion ({number, blockedBy}[]) names a foreign blocker, i.e. a
+// blockedBy entry that is an 'owner/name#N' string (optionally suffixed ' (state unreadable)'). A
+// native or body-declared foreign blocker closing changes nothing in the freshness signal, so a
+// hit would replay that exclusion after the blocker closed. Matched with cross-repo-refs.js's grammar.
+function namesForeignBlocker(excluded) {
+  return Array.isArray(excluded) && excluded.some((e) => e && Array.isArray(e.blockedBy)
+    && e.blockedBy.some((b) => typeof b === 'string' && parseCrossRepoRef(withoutUnreadableSuffix(b)) !== null));
+}
+
+// A persisted blob is reusable only when `key` ({ grouping, fingerprint } — the
+// expressQueuePolicy() result qualifies) matches both its `grouping` stamp and its
+// `fingerprint` (#6062: the settings the grouping reads, which the stamp alone
+// does not carry) AND its freshness signal still matches. A blob without
+// `grouping` or `fingerprint` (any older plugin install's write) fails closed,
+// as does a key without a string fingerprint, and so does a current signal flagged
+// `foreignDeclared` (buildFreshnessSignal, #4793) or a blob whose exclusions name
+// a foreign blocker (namesForeignBlocker). Never throws.
+function cacheUsable(persisted, current, key) {
+  return !!persisted && !!key && typeof key === 'object' && typeof key.fingerprint === 'string'
+    && persisted.fingerprint === key.fingerprint && persisted.grouping === key.grouping
+    && !(current && current.foreignDeclared)
+    && !namesForeignBlocker(persisted.excluded)
     && signalsMatch(persisted.freshnessSignal, current);
 }
 

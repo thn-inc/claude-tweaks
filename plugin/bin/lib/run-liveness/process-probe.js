@@ -8,8 +8,8 @@ const MAX_ANCESTOR_HOPS = 8;
 // `ps -o lstart=` prints in the caller's TZ and locale; the stored start time is compared by
 // equality across different processes, so pin both (a TZ/locale difference would otherwise
 // make a live owner look like pid reuse).
-function psEnv() {
-  return { ...process.env, LC_ALL: 'C', TZ: 'UTC' };
+function psEnv(env = process.env) {
+  return { ...env, LC_ALL: 'C', TZ: 'UTC' };
 }
 
 // #3845: Claude Code sets CLAUDE_PID to its own pid in every process it spawns
@@ -31,7 +31,7 @@ function pidStartTime(pid, deps = {}) {
     if (!Number.isInteger(pid) || pid <= 0) return null;
     const run = deps.execFileSync || childProcess.execFileSync;
     const out = run('ps', ['-o', 'lstart=', '-p', String(pid)],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv() });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv(deps.env) });
     const text = typeof out === 'string' ? out.trim() : '';
     return text === '' ? null : text;
   } catch {
@@ -50,7 +50,7 @@ function ancestorClaudePid(deps = {}) {
     for (let hop = 0; hop < MAX_ANCESTOR_HOPS; hop++) {
       if (!Number.isInteger(pid) || pid <= 0) return null;
       const out = run('ps', ['-o', 'ppid=,comm=', '-p', String(pid)],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv() });
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000, windowsHide: true, env: psEnv(deps.env) });
       const m = /^\s*(\d+)\s+(.+?)\s*$/.exec(typeof out === 'string' ? out : '');
       if (!m) return null;
       if (path.basename(m[2]) === 'claude') return pid;
@@ -67,7 +67,7 @@ function ancestorClaudePid(deps = {}) {
 function resolveOwnerPid(env, deps = {}) {
   const fromEnv = claudePid(env);
   if (fromEnv !== null) return { pid: fromEnv, pidSource: 'env' };
-  const fromAncestry = (deps.ancestorClaudePid || ancestorClaudePid)();
+  const fromAncestry = (deps.ancestorClaudePid || ancestorClaudePid)({ env });
   if (Number.isInteger(fromAncestry) && fromAncestry > 0) return { pid: fromAncestry, pidSource: 'ancestry' };
   return { pid: null, pidSource: null };
 }

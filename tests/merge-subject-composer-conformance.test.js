@@ -21,6 +21,10 @@ const LOCAL_SITES = [
   'plugin/skills/dispatch/settle-and-merge.md',
   'plugin/skills/flow/worktree-merge.md',
 ];
+// #4073: the composer and --no-ff merge fences live once in the shared sequence; the four
+// LOCAL_SITES cite it. LOCAL_FENCE_FILES lists the files that still carry the fences.
+const LOCAL_SEQUENCE = 'plugin/skills/_shared/local-merge-sequence.md';
+const LOCAL_FENCE_FILES = [LOCAL_SEQUENCE];
 
 // Frozen pre-change excerpts (byte-for-byte from the pre-#2251 files).
 const PRE_PR_FIRST_SITE = `gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \\
@@ -124,20 +128,33 @@ test('AC3.1: each pr-first fence is one plain command', () => {
   assert.match(PRE_EVAL_PR_FIRST_SITE, /\beval\b|\$\(|\|\|/);
 });
 
-for (const rel of LOCAL_SITES) {
-  test(`${path.basename(rel)}: the --no-ff merge sources -m from the composer`, () => {
+for (const rel of LOCAL_FENCE_FILES) {
+  test(`${path.basename(rel)}: the --no-ff merge sources -F from the composer`, () => {
     const text = read(rel);
     assert.match(text, LOCAL_COMPOSER_CALL, 'composer line composes to {subject-dir}');
     assert.match(text, LOCAL_MERGE_FORM, 'merge takes -F {subject-dir}/message.txt');
+    assert.match(text, /`\{subject-dir\}`(?: —)? resolves per `_shared\/pr-first-merge\.md` Step 3/, 'pointer to the {subject-dir} definition');
+  });
+}
+
+for (const rel of [LOCAL_SEQUENCE, ...LOCAL_SITES]) {
+  test(`${path.basename(rel)}: no free-form -m subject and no eval of the composer output`, () => {
+    const text = read(rel);
     assert.doesNotMatch(text, STALE_LOCAL_FORM, 'no free-form -m subject remains');
     // Fixed-string counts: BSD grep reads a mid-pattern `$` as an anchor.
     assert.equal(text.split('eval "$SUBJECT_EXPORTS"').length - 1, 0, 'no eval of the composer output');
     assert.equal(text.split('SUBJECT_EXPORTS=').length - 1, 0);
     assert.equal(text.split('--shell').length - 1, 0);
     assert.equal(text.split('$SUBJECT_TITLE').length - 1, 0);
-    assert.ok(text.includes('`{subject-dir}` resolves per `_shared/pr-first-merge.md` Step 3'), 'pointer to the {subject-dir} definition');
   });
 }
+
+test('go-red: a local-merge-sequence.md copy whose composer line loses --range fails LOCAL_COMPOSER_CALL', () => {
+  const live = read(LOCAL_SEQUENCE);
+  const doctored = live.replace(' --range {base-branch}...{branch}', '');
+  assert.notEqual(doctored, live);
+  assert.doesNotMatch(doctored, LOCAL_COMPOSER_CALL);
+});
 
 test('go-red proof: the frozen pre-change local-merge forms match the stale pattern and not the new one', () => {
   for (const pre of [PRE_LOCAL_SITE, PRE_WORKTREE_MERGE_SITE]) {
@@ -191,7 +208,7 @@ function sweepShellEvalFences(root) {
 test('AC1.1: no fenced block anywhere in plugin/skills/** evals compose-subject.js --shell output', () => {
   const skillsRoot = path.join(ROOT, 'plugin/skills');
   const { files, hits } = sweepShellEvalFences(skillsRoot);
-  for (const rel of [PR_FIRST, ...LOCAL_SITES]) {
+  for (const rel of [PR_FIRST, LOCAL_SEQUENCE, ...LOCAL_SITES]) {
     assert.ok(files.includes(path.relative(skillsRoot, path.join(ROOT, rel))), `sweep reached ${rel}`);
   }
   assert.deepEqual(hits, []);
@@ -210,4 +227,18 @@ test('AC1.1 go-red: the same sweep flags a frozen pre-#3522 eval fence, indented
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
+});
+
+test('AC1.1: every housekeeping arm site composes with the record-less --housekeeping form', () => {
+  const HK_CALL = 'compose-subject.js" --housekeeping --pr {pr-number} --out-dir "{subject-dir}"';
+  const text = read(PR_FIRST);
+  const start = text.indexOf('## Step 3:');
+  const step3 = text.slice(start, text.indexOf('\n## ', start + 1));
+  assert.match(step3, /--housekeeping/, 'pr-first-merge.md Step 3 documents the record-less form');
+  assert.match(step3, /--housekeeping[^\n]*branch 1|branch 1[^\n]*--housekeeping/, "the record-less form covers every composer fence, branch 1's immediate-merge degrade included");
+  assert.ok(read('plugin/skills/tidy/step-7-5-worktree-always.md').includes(HK_CALL), 'tidy Step 7.5 carries the full record-less command');
+  assert.match(read('plugin/skills/tidy/actions-github-issues.md'), /housekeeping-marker flavor composes with Step 3's record-less `--housekeeping` form/, 'Arm ready PR splits the flavors: marker flavor composes record-less');
+  const sweep = read('plugin/skills/wrap-up/residue-sweep.md');
+  assert.match(sweep, /record-less `--housekeeping` form[^\n]*Step 3 branch 1's degrade/, "residue-sweep composes record-less and runs Step 3 branch 1's degrade");
+  assert.doesNotMatch(sweep, /not its degrade chain/, "residue-sweep runs Step 3 branch 1's immediate-merge degrade (record Decision)");
 });

@@ -1,21 +1,28 @@
 // tests/hooks-pre-tool-use.test.js
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+const { harnessWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
+const { canonicalRealpath } = require('../plugin/bin/lib/path-guard');
 const { shellQuote } = require('./helpers/shell-quote');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
+const { readText } = require('./helpers/read-skill');
+const { gitRepo, gitRepoWithCommit, gitRepoOnLocalMain, mainAndWorktree, GH_TIMEOUT_ENV, unpinnedRepoWithOrigin } = require('./helpers/pre-tool-use');
+const { warmCallStartsNoGit } = require('./helpers/git-trace');
+const { pinnedGit: git } = require('./helpers/pinned-git');
+const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
+// A hook event's context always carries env (hooks.js builds it); a hand-built one passes it explicitly.
+const BASE_ENV = Object.freeze({ ...process.env });
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
-function gitRepo() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
-  execFileSync('git', ['-C', dir, 'init', '-q']);
-  return fs.realpathSync(dir);
-}
 function mkRun(worktree, sessionId) {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1run-'));
+  const project = scratchDir('ct-e1run-');
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
   fs.mkdirSync(run, { recursive: true });
   const state = worktree ? { status: 'active', worktree } : { status: 'active' };
@@ -27,7 +34,7 @@ function mkRun(worktree, sessionId) {
 // listRunDirs(ctx.cwd) can see siblings — mirrors two parallel /flow
 // terminals sharing one main checkout.
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1proj-'));
+  const dir = scratchDir('ct-e1proj-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -46,25 +53,20 @@ function mkRunAt(project, name, worktree) {
 // have no shared main-checkout root, so they now read as two different
 // projects — which is exactly the OUT-of-project scenario, not the
 // wrong-checkout-of-THIS-project scenario most of these tests intend.
-function mainAndWorktree() {
-  const main = gitRepoWithCommit();
-  const wt = linkedWorktreeOf(main);
-  return { main, wt };
-}
 const bashInput = (command, cwd) => ({ tool_name: 'Bash', tool_input: { command }, cwd });
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test('commit in the assigned worktree is allowed', () => {
   const wt = gitRepo();
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
 test('commit in the main checkout is still denied with corrective reason', () => {
   const { main, wt } = mainAndWorktree();
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput('git commit -m "x"', main), runDir: run, runState: state, cwd: main });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', main), runDir: run, runState: state, cwd: main });
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
   assert.match(spec.permissionDecisionReason, new RegExp(esc(wt)));
@@ -81,7 +83,7 @@ test('commit in an out-of-repo scratch git repo is allowed (#861)', () => {
   const { wt } = mainAndWorktree();
   const scratch = gitRepo(); // an unrelated repo — no shared main checkout with wt
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput('git commit -m "x"', scratch), runDir: run, runState: state, cwd: scratch });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', scratch), runDir: run, runState: state, cwd: scratch });
   assert.deepStrictEqual(out, {});
 });
 
@@ -89,7 +91,7 @@ test('wrong-checkout commit from a FOREIGN session is allowed with a warn and lo
   const { main, wt } = mainAndWorktree();
   const { run, state } = mkRun(wt, 'owner-session');
   const input = { ...bashInput('git commit -m "x"', main), session_id: 'bystander-session' };
-  const out = pre.run({ input, runDir: run, runState: state, cwd: main });
+  const out = pre.run({ env: BASE_ENV, input, runDir: run, runState: state, cwd: main });
   assert.ok(!(out.json && out.json.hookSpecificOutput), 'foreign-session commit must not be denied');
   assert.match(out.json.systemMessage, /allowing this commit/);
   assert.match(out.json.systemMessage, new RegExp(esc(wt)));
@@ -103,7 +105,7 @@ test('wrong-checkout commit from the OWNING session is still denied', () => {
   const { main, wt } = mainAndWorktree();
   const { run, state } = mkRun(wt, 'owner-session');
   const input = { ...bashInput('git commit -m "x"', main), session_id: 'owner-session' };
-  const out = pre.run({ input, runDir: run, runState: state, cwd: main });
+  const out = pre.run({ env: BASE_ENV, input, runDir: run, runState: state, cwd: main });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
   const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
   assert.match(events, /"type":"wd-deny"/);
@@ -114,6 +116,7 @@ test('missing or malformed session identity on either side falls back to deny (s
   const { main: legacyMain, wt: legacyWt } = mainAndWorktree();
   const legacy = mkRun(legacyWt);
   const legacyOut = pre.run({
+    env: BASE_ENV,
     input: { ...bashInput('git commit -m "x"', legacyMain), session_id: 'bystander-session' },
     runDir: legacy.run, runState: legacy.state, cwd: legacyMain,
   });
@@ -123,6 +126,7 @@ test('missing or malformed session identity on either side falls back to deny (s
   const { main: noCallerMain, wt: noCallerWt } = mainAndWorktree();
   const noCaller = mkRun(noCallerWt, 'owner-session');
   const noCallerOut = pre.run({
+    env: BASE_ENV,
     input: bashInput('git commit -m "x"', noCallerMain),
     runDir: noCaller.run, runState: noCaller.state, cwd: noCallerMain,
   });
@@ -132,6 +136,7 @@ test('missing or malformed session identity on either side falls back to deny (s
   const { main: corruptMain, wt: corruptWt } = mainAndWorktree();
   const corrupt = mkRun(corruptWt, { nested: true });
   const corruptOut = pre.run({
+    env: BASE_ENV,
     input: { ...bashInput('git commit -m "x"', corruptMain), session_id: 'bystander-session' },
     runDir: corrupt.run, runState: corrupt.state, cwd: corruptMain,
   });
@@ -160,12 +165,14 @@ test('#1563/#1099: commit from a genuinely different LIVE worktree, run has no r
   const { run, state } = mkRun(assignedWt); // no sessionId recorded
 
   const withoutSessionId = pre.run({
+    env: BASE_ENV,
     input: bashInput('git commit -m "x"', callerWt), runDir: run, runState: state, cwd: callerWt,
   });
   assert.strictEqual(withoutSessionId.json.hookSpecificOutput, undefined);
   assert.ok(withoutSessionId.json.systemMessage && withoutSessionId.json.systemMessage.includes('different session'));
 
   const withSessionId = pre.run({
+    env: BASE_ENV,
     input: { ...bashInput('git commit -m "x"', callerWt), session_id: 'caller-session' },
     runDir: run, runState: state, cwd: callerWt,
   });
@@ -186,6 +193,7 @@ test('#1099 AC1 dual case: session cwd inside the assigned worktree still denies
   const elsewhereWt = linkedWorktreeOf(main); // a second, genuinely different live worktree of the same repo
   const { run, state } = mkRun(assignedWt); // no sessionId recorded
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(elsewhereWt)} commit -m "x"`, assignedWt),
     runDir: run, runState: state, cwd: assignedWt,
   });
@@ -196,14 +204,14 @@ test('git -C into the assigned worktree from elsewhere is allowed', () => {
   const wt = gitRepo();
   const other = gitRepo();
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput(`git -C ${shellQuote(wt)} commit -m "x"`, other), runDir: run, runState: state, cwd: other });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`git -C ${shellQuote(wt)} commit -m "x"`, other), runDir: run, runState: state, cwd: other });
   assert.deepStrictEqual(out, {});
 });
 
 test('push mismatch logs but never denies', () => {
   const { main, wt } = mainAndWorktree();
   const { run, state } = mkRun(wt);
-  const out = pre.run({ input: bashInput('git push origin main', main), runDir: run, runState: state, cwd: main });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git push origin main', main), runDir: run, runState: state, cwd: main });
   assert.deepStrictEqual(out, {});
   const events = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
   assert.match(events, /"type":"wd-push-mismatch"/);
@@ -212,12 +220,12 @@ test('push mismatch logs but never denies', () => {
 test('ambiguity allows: no worktree assigned, non-repo dir, non-Bash tool, no run dir', () => {
   const wt = gitRepo();
   const { run, state } = mkRun(null);
-  assert.deepStrictEqual(pre.run({ input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: run, runState: state, cwd: wt }), {});
   const assigned = mkRun(wt);
-  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nonrepo-'));
-  assert.deepStrictEqual(pre.run({ input: bashInput('git commit -m "x"', nonRepo), runDir: assigned.run, runState: assigned.state, cwd: nonRepo }), {});
-  assert.deepStrictEqual(pre.run({ input: { tool_name: 'Edit', tool_input: {}, cwd: wt }, runDir: assigned.run, runState: assigned.state, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git commit -m "x"', wt), runDir: null, runState: null, cwd: wt }), {});
+  const nonRepo = scratchDir('ct-nonrepo-');
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', nonRepo), runDir: assigned.run, runState: assigned.state, cwd: nonRepo }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: {}, cwd: wt }, runDir: assigned.run, runState: assigned.state, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', wt), runDir: null, runState: null, cwd: wt }), {});
 });
 
 test('two live runs: commit in the OLDER run\'s own worktree is allowed even when the resolved run is the NEWER one, and logs wd-ambiguous on the resolved run', () => {
@@ -228,6 +236,7 @@ test('two live runs: commit in the OLDER run\'s own worktree is allowed even whe
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt); // resolved run
 
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(olderWt)} commit -m "x"`, project),
     runDir: newer.run,
     runState: newer.state,
@@ -235,14 +244,14 @@ test('two live runs: commit in the OLDER run\'s own worktree is allowed even whe
   });
   assert.deepStrictEqual(out, {});
   const events = fs.readFileSync(path.join(newer.run, 'events.jsonl'), 'utf8');
-  assert.match(events, /"type":"wd-ambiguous"/);
-  assert.match(events, new RegExp(esc(olderWt)));
+  const matched = events.split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    .filter((e) => e.type === 'wd-ambiguous').map((e) => e.matched);
+  assert.deepStrictEqual(matched, [canonicalRealpath(olderWt)]);
 });
 
 test('three concurrent live runs: a commit in THIS run\'s own assigned worktree never logs wd-ambiguous, even with multiple unrelated sibling worktrees registered as live candidates (#1329)', () => {
   const project = tmpProject();
-  const main = gitRepoWithCommit();
-  const ownWt = linkedWorktreeOf(main);
+  const { main, wt: ownWt } = mainAndWorktree();
   const siblingWtA = linkedWorktreeOf(main);
   const siblingWtB = linkedWorktreeOf(main);
   // Two unrelated concurrent sibling runs registered BEFORE the resolved
@@ -256,6 +265,7 @@ test('three concurrent live runs: a commit in THIS run\'s own assigned worktree 
   const own = mkRunAt(project, '2026-07-03T090000-spec-3', ownWt);
 
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(ownWt)} commit -m "x"`, project),
     runDir: own.run,
     runState: own.state,
@@ -271,14 +281,14 @@ test('two live runs: commit in a THIRD repo matching neither worktree is still d
   // project (still in-scope for this gate), distinct from thirdRepo being a
   // genuinely unrelated repo (which #861 now allows — covered by its own
   // test above).
-  const main = gitRepoWithCommit();
-  const olderWt = linkedWorktreeOf(main);
+  const { main, wt: olderWt } = mainAndWorktree();
   const newerWt = linkedWorktreeOf(main);
   const thirdRepo = main;
   mkRunAt(project, '2026-07-01T090000-spec-1', olderWt);
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt);
 
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(thirdRepo)} commit -m "x"`, project),
     runDir: newer.run,
     runState: newer.state,
@@ -298,6 +308,7 @@ test('two live runs: a push mismatch matching another live worktree is not logge
   const newer = mkRunAt(project, '2026-07-02T090000-spec-2', newerWt);
 
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(olderWt)} push origin main`, project),
     runDir: newer.run,
     runState: newer.state,
@@ -309,32 +320,20 @@ test('two live runs: a push mismatch matching another live worktree is not logge
 
 test('deny reason substitutes CLAUDE_PLUGIN_ROOT when set, else keeps the literal placeholder', () => {
   const { main, wt } = mainAndWorktree();
-  const orig = process.env.CLAUDE_PLUGIN_ROOT;
+  const withoutRoot = { ...BASE_ENV };
+  delete withoutRoot.CLAUDE_PLUGIN_ROOT;
 
-  try {
-    delete process.env.CLAUDE_PLUGIN_ROOT;
-    const { run: run1, state: state1 } = mkRun(wt);
-    const withoutEnv = pre.run({ input: bashInput('git commit -m "x"', main), runDir: run1, runState: state1, cwd: main });
-    assert.match(withoutEnv.json.hookSpecificOutput.permissionDecisionReason, /\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js/);
+  const { run: run1, state: state1 } = mkRun(wt);
+  const withoutEnv = pre.run({ env: withoutRoot, input: bashInput('git commit -m "x"', main), runDir: run1, runState: state1, cwd: main });
+  assert.match(withoutEnv.json.hookSpecificOutput.permissionDecisionReason, /\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js/);
 
-    process.env.CLAUDE_PLUGIN_ROOT = '/opt/claude-tweaks';
-    const { run: run2, state: state2 } = mkRun(wt);
-    const withEnv = pre.run({ input: bashInput('git commit -m "x"', main), runDir: run2, runState: state2, cwd: main });
-    assert.match(withEnv.json.hookSpecificOutput.permissionDecisionReason, /\/opt\/claude-tweaks\/bin\/hooks\.js/);
-  } finally {
-    if (orig === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
-    else process.env.CLAUDE_PLUGIN_ROOT = orig;
-  }
+  const { run: run2, state: state2 } = mkRun(wt);
+  const withEnv = pre.run({ env: { ...BASE_ENV, CLAUDE_PLUGIN_ROOT: '/opt/claude-tweaks' }, input: bashInput('git commit -m "x"', main), runDir: run2, runState: state2, cwd: main });
+  assert.match(withEnv.json.hookSpecificOutput.permissionDecisionReason, /\/opt\/claude-tweaks\/bin\/hooks\.js/);
 });
 
-function gitRepoWithCommit() {
-  const dir = gitRepo();
-  execFileSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'init', '-q']);
-  return dir;
-}
-
 function linkedWorktreeOf(main) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-wtparent-'));
+  const parent = scratchDir('ct-e1-wtparent-');
   const wt = path.join(parent, 'wt');
   execFileSync('git', ['-C', main, 'worktree', 'add', '-q', wt, '-b', `wt-branch-${path.basename(parent)}`]);
   return fs.realpathSync(wt);
@@ -347,16 +346,16 @@ function withPolicy(repo, content) {
 
 test('worktree-required: policy off allows Edit/Write/NotebookEdit/commit in the main checkout', () => {
   const repo = gitRepoWithCommit();
-  assert.deepStrictEqual(pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo }), {});
-  assert.deepStrictEqual(pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'b.txt') } }, runDir: null, runState: null, cwd: repo }), {});
-  assert.deepStrictEqual(pre.run({ input: { tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') } }, runDir: null, runState: null, cwd: repo }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git commit -m "x"', repo), runDir: null, runState: null, cwd: repo }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'b.txt') } }, runDir: null, runState: null, cwd: repo }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') } }, runDir: null, runState: null, cwd: repo }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', repo), runDir: null, runState: null, cwd: repo }), {});
 });
 
 test('worktree-required: denies a covered Edit outside a worktree under the pre-#602 spelling worktree.always: true — the alias keeps un-migrated projects gated', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree.always: true\n');
-  const out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
   const spec = out.json.hookSpecificOutput;
   assert.strictEqual(spec.permissionDecision, 'deny');
   assert.match(spec.permissionDecisionReason, /worktree-always/);
@@ -375,7 +374,7 @@ test('worktree-required: an indeterminate repo status ALLOWS but says so out lou
   wtDetect.repoInfo = () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true });
   let out;
   try {
-    out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
+    out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
   } finally {
     wtDetect.repoInfo = real;
   }
@@ -407,12 +406,34 @@ test('worktree-required: a DEFINITIVE non-repo answer allows silently, with no w
   wtDetect.repoInfo = () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: false });
   let out;
   try {
-    out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
+    out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
   } finally {
     wtDetect.repoInfo = real;
   }
   assert.ok(!out.json || !out.json.systemMessage,
     'git answering "not a repo" is a real answer — nothing to warn about');
+});
+
+// #4303: a target resolved from a cwd the shell scanner lost (past its cwd cap) follows the same
+// rule. From a worktree-always repo, `G16 echo x > out.txt` (16 groups `{ cd /tmp/ct-4303-nK; }`,
+// every cd failing): bash 3.2 and 5 write out.txt in the repo. With git's answer indeterminate,
+// an earlier revision of this branch denied the lost target; base d9aa6b82d allows and warns, as
+// the gate does for every other indeterminate target, so a load spike never freezes a run.
+test('worktree-required #4303: a lost target with an indeterminate repo status ALLOWS but says so out loud', () => {
+  const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
+  const repo = gitRepoWithCommit();
+  withPolicy(repo, 'worktree-always: true\n');
+  const groups = Array.from({ length: 16 }, (_, i) => `{ cd /tmp/ct-4303-n${i}; }; `).join('');
+  const real = wtDetect.repoInfo;
+  wtDetect.repoInfo = () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true });
+  let out;
+  try {
+    out = pre.run({ env: BASE_ENV, input: bashInput(`${groups}echo x > out.txt`, repo), runDir: null, runState: null, ownedRun: {}, cwd: repo });
+  } finally {
+    wtDetect.repoInfo = real;
+  }
+  assert.ok(!out.json || !out.json.hookSpecificOutput || out.json.hookSpecificOutput.permissionDecision !== 'deny', JSON.stringify(out));
+  assert.match(out.json.systemMessage, /could not determine/i);
 });
 
 test('worktree-required: policy on allows Edit inside a linked worktree', () => {
@@ -421,23 +442,23 @@ test('worktree-required: policy on allows Edit inside a linked worktree', () => 
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
-  const out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(wt, 'a.txt') } }, runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(wt, 'a.txt') } }, runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
 test('worktree-required: policy on denies Write to a not-yet-existing file, and NotebookEdit, in the main checkout', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const writeOut = pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'new', 'brand-new.txt') } }, runDir: null, runState: null, cwd: repo });
+  const writeOut = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(repo, 'new', 'brand-new.txt') } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(writeOut.json.hookSpecificOutput.permissionDecision, 'deny');
-  const nbOut = pre.run({ input: { tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') } }, runDir: null, runState: null, cwd: repo });
+  const nbOut = pre.run({ env: BASE_ENV, input: { tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(nbOut.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
 test('worktree-required: policy on denies a git commit in the main checkout even with NO pipeline run dir at all', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git commit -m "x"', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
@@ -451,7 +472,7 @@ test('worktree-required: policy on denies a bare "git push" in the main checkout
   // "git commit/push".
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git push origin main', repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'a bare git push must be denied from a non-isolated checkout, same as git commit');
   assert.match(out.json.hookSpecificOutput.permissionDecisionReason, /worktree-always/);
 });
@@ -462,7 +483,7 @@ test('worktree-required: policy on allows "git push" from inside a linked worktr
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
-  const out = pre.run({ input: bashInput('git push origin HEAD', wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git push origin HEAD', wt), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
@@ -473,10 +494,12 @@ test('powershell-opaque gate: a plain `powershell -File <path>` is allowed in a 
   withPolicy(repo, 'worktree-always: true\n');
   const wt = linkedWorktreeOf(repo);
   const inWorktree = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -NoProfile -File C:/x/probe.ps1', wt), runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(inWorktree, {}, 'allowed inside the isolated worktree');
   const inMain = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -NoProfile -File C:/x/probe.ps1', repo), runDir: null, runState: null, cwd: repo,
   });
   assert.deepStrictEqual(inMain, {}, 'a plain -File invocation is not opaque text — this gate never denies it, even from the main checkout');
@@ -486,11 +509,13 @@ test('powershell-opaque gate: `-Command "git push"` and `-EncodedCommand ...` ar
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const cmdOut = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -Command "git push"', repo), runDir: null, runState: null, cwd: repo,
   });
   assert.strictEqual(cmdOut.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.match(cmdOut.json.hookSpecificOutput.permissionDecisionReason, /powershell|pwsh/);
   const encOut = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -EncodedCommand QQBCAEMA', repo), runDir: null, runState: null, cwd: repo,
   });
   assert.strictEqual(encOut.json.hookSpecificOutput.permissionDecision, 'deny');
@@ -503,6 +528,7 @@ test('powershell-opaque gate: `-Command`/`-EncodedCommand` are allowed from insi
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -Command "git push"', wt), runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(out, {});
@@ -511,6 +537,7 @@ test('powershell-opaque gate: `-Command`/`-EncodedCommand` are allowed from insi
 test('powershell-opaque gate: policy off allows `-Command` from the main checkout, same as every other gate here', () => {
   const repo = gitRepoWithCommit();
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput('powershell -Command "git push"', repo), runDir: null, runState: null, cwd: repo,
   });
   assert.deepStrictEqual(out, {});
@@ -524,7 +551,7 @@ test('powershell-opaque gate: policy off allows `-Command` from the main checkou
 // host git config.
 function cloneWithOrigin() {
   const origin = gitRepoWithCommit();
-  const local = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-clone-'));
+  const local = scratchDir('ct-e1-clone-');
   execFileSync('git', ['clone', '-q', origin, local]);
   const branch = execFileSync('git', ['-C', local, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
   return { local: fs.realpathSync(local), branch };
@@ -534,7 +561,7 @@ test('ff-integration-branch push exemption: a provable fast-forward push of the 
   const { local, branch } = cloneWithOrigin();
   withPolicy(local, 'worktree-always: true\n');
   execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
-  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
   assert.deepStrictEqual(out, {}, 'a pure fast-forward of the integration branch must be exempt');
 });
 
@@ -544,7 +571,7 @@ test('ff-integration-branch push exemption: a diverged (non-fast-forward) push o
   // Diverge: rewrite local HEAD instead of advancing it, so origin/{branch}
   // is no longer an ancestor.
   execFileSync('git', ['-C', local, 'commit', '--amend', '--allow-empty', '-m', 'diverged', '-q']);
-  const out = pre.run({ input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`git push origin ${branch}`, local), runDir: null, runState: null, cwd: local });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'a diverged push must not be exempt');
 });
 
@@ -552,7 +579,7 @@ test('ff-integration-branch push exemption: a --force push of an otherwise-fast-
   const { local, branch } = cloneWithOrigin();
   withPolicy(local, 'worktree-always: true\n');
   execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'local advance', '-q']);
-  const out = pre.run({ input: bashInput(`git push origin ${branch} --force`, local), runDir: null, runState: null, cwd: local });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`git push origin ${branch} --force`, local), runDir: null, runState: null, cwd: local });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'the exemption grammar admits no flags at all, --force included');
 });
 
@@ -561,7 +588,7 @@ test('ff-integration-branch push exemption: a fast-forward push of a NON-integra
   withPolicy(local, 'worktree-always: true\n');
   execFileSync('git', ['-C', local, 'checkout', '-q', '-b', 'feature-branch']);
   execFileSync('git', ['-C', local, 'commit', '--allow-empty', '-m', 'feature work', '-q']);
-  const out = pre.run({ input: bashInput('git push origin feature-branch', local), runDir: null, runState: null, cwd: local });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git push origin feature-branch', local), runDir: null, runState: null, cwd: local });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny', 'only the resolved integration branch itself qualifies');
 });
 
@@ -569,7 +596,7 @@ test('worktree-required: policy is read from the EDIT TARGET\'s own repo, not th
   const policyRepo = gitRepoWithCommit();
   withPolicy(policyRepo, 'worktree-always: true\n');
   const otherRepo = gitRepoWithCommit(); // no policy
-  const out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(otherRepo, 'a.txt') } }, runDir: null, runState: null, cwd: policyRepo });
+  const out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(otherRepo, 'a.txt') } }, runDir: null, runState: null, cwd: policyRepo });
   assert.deepStrictEqual(out, {});
 });
 
@@ -584,25 +611,25 @@ test('deny paths always carry exit: 0 — the deny signal is JSON permissionDeci
   // reason message actually shown — this test guards against that.
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const gateOut = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
+  const gateOut = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'a.txt') } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(gateOut.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.strictEqual(gateOut.exit, 0);
 
   const { main, wt } = mainAndWorktree();
   const { run, state } = mkRun(wt);
-  const wdOut = pre.run({ input: bashInput('git commit -m "x"', main), runDir: run, runState: state, cwd: main });
+  const wdOut = pre.run({ env: BASE_ENV, input: bashInput('git commit -m "x"', main), runDir: run, runState: state, cwd: main });
   assert.strictEqual(wdOut.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.strictEqual(wdOut.exit, 0);
 });
 
 test('worktree-required: a policy file in an ancestor directory OUTSIDE the target repo does not leak in (repo-scoped, not filesystem-ancestor-scoped)', () => {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-ancestor-'));
+  const parent = scratchDir('ct-e1-ancestor-');
   withPolicy(parent, 'worktree-always: true\n');
   const nestedRepo = path.join(parent, 'nested-repo');
   fs.mkdirSync(nestedRepo, { recursive: true });
   execFileSync('git', ['-C', nestedRepo, 'init', '-q']);
   execFileSync('git', ['-C', nestedRepo, 'commit', '--allow-empty', '-m', 'init', '-q']);
-  const out = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: path.join(nestedRepo, 'a.txt') } }, runDir: null, runState: null, cwd: nestedRepo });
+  const out = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: path.join(nestedRepo, 'a.txt') } }, runDir: null, runState: null, cwd: nestedRepo });
   assert.deepStrictEqual(out, {});
 });
 
@@ -611,13 +638,13 @@ test('worktree-required: policy on denies a non-git Bash file write in the main 
   withPolicy(repo, 'worktree-always: true\n');
   const target = path.join(repo, 'a.txt');
 
-  const tee = pre.run({ input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
+  const tee = pre.run({ env: BASE_ENV, input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(tee.json.hookSpecificOutput.permissionDecision, 'deny');
 
-  const cp = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
+  const cp = pre.run({ env: BASE_ENV, input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(cp.json.hookSpecificOutput.permissionDecision, 'deny');
 
-  const mv = pre.run({ input: bashInput(`mv source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
+  const mv = pre.run({ env: BASE_ENV, input: bashInput(`mv source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(mv.json.hookSpecificOutput.permissionDecision, 'deny');
 });
 
@@ -628,21 +655,21 @@ test('worktree-required: a non-git Bash file write inside a linked worktree is a
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
   const target = path.join(wt, 'a.txt');
-  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`cp source.txt ${shellQuote(target)}`, wt), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
 test('worktree-required: /dev/null is not treated as a file-write target', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('cp source.txt /dev/null', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('cp source.txt /dev/null', repo), runDir: null, runState: null, cwd: repo });
   assert.deepStrictEqual(out, {});
 });
 
 test('worktree-required: a Bash command with no file-write shape at all (e.g. a plain read) is allowed', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput('cat a.txt | grep foo', repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('cat a.txt | grep foo', repo), runDir: null, runState: null, cwd: repo });
   assert.deepStrictEqual(out, {});
 });
 
@@ -655,6 +682,7 @@ test('worktree-required: a compound Bash command checks EVERY git commit/push ta
   const violating = gitRepoWithCommit();
   withPolicy(violating, 'worktree-always: true\n');
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`git -C ${shellQuote(compliant)} commit -q --allow-empty -m "a" && git -C ${shellQuote(violating)} commit -q --allow-empty -m "b"`, compliant),
     runDir: null, runState: null, cwd: compliant,
   });
@@ -668,6 +696,7 @@ test('worktree-required: a compound Bash command checks EVERY cp/mv/tee write ta
   const violating = gitRepoWithCommit();
   withPolicy(violating, 'worktree-always: true\n');
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(
       `cp source.txt ${shellQuote(path.join(compliant, 'a.txt'))} && cp source.txt ${shellQuote(path.join(violating, 'b.txt'))}`,
       compliant,
@@ -705,6 +734,7 @@ test('worktree-required: a cp into the main checkout\'s .claude-tweaks/pipelines
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`cp ${shellQuote(path.join(wt, 'decisions.md'))} ${shellQuote(archivePathIn(repo, 'decisions.md'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
@@ -715,6 +745,7 @@ test('worktree-required: a cp into any OTHER main-checkout path is still denied 
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
+    env: BASE_ENV,
     input: bashInput(`cp ${shellQuote(path.join(wt, 'x.js'))} ${shellQuote(path.join(repo, 'src', 'x.js'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
@@ -732,6 +763,7 @@ test('worktree-required: the exemption is a prefix on pipelines/, not on .claude
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
+    env: BASE_ENV,
     input: { tool_name: 'Write', tool_input: { file_path: path.join(repo, '.claude-tweaks', 'other.yml') } },
     runDir: null, runState: null, cwd: wt,
   });
@@ -748,7 +780,7 @@ test('worktree-required: git commit/push stay denied even when issued from insid
   const runDir = path.join(repo, '.claude-tweaks', 'pipelines', '2026-08-06T000000-record-1');
   fs.mkdirSync(runDir, { recursive: true });
   for (const cmd of ['git commit -m "x"', 'git push origin main']) {
-    const out = pre.run({ input: bashInput(cmd, runDir), runDir: null, runState: null, cwd: runDir });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, runDir), runDir: null, runState: null, cwd: runDir });
     assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny',
       `${cmd} from inside a run dir must stay denied — the exemption covers file writes only`);
   }
@@ -758,6 +790,7 @@ test('worktree-required: a Write into the main checkout\'s run-dir archive is al
   const repo = repoWithCommittedPolicy();
   const wt = linkedWorktreeOf(repo);
   const out = pre.run({
+    env: BASE_ENV,
     input: { tool_name: 'Write', tool_input: { file_path: archivePathIn(repo, 'config.yml') } },
     runDir: null, runState: null, cwd: wt,
   });
@@ -803,7 +836,7 @@ test('worktree-required: sed -i against the main checkout is denied (#70)', () =
     `sed -i '' -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`, // BSD: suffix is a separate arg
     `sed -ni 's/x/y/p' ${shellQuote(path.join(repo, 'a.js'))}`, // bundled short flags
   ]) {
-    const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.strictEqual(decisionOf(out), 'deny', `must deny: ${cmd}`);
   }
 });
@@ -815,7 +848,7 @@ test('worktree-required: a READ-only sed against the main checkout stays allowed
     `sed 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
     `sed -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`,
   ]) {
-    const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.deepStrictEqual(out, {}, `must allow (no in-place flag): ${cmd}`);
   }
 });
@@ -823,6 +856,7 @@ test('worktree-required: a READ-only sed against the main checkout stays allowed
 test('worktree-required: perl -i against the main checkout is denied, -I is not in-place (#70)', () => {
   const repo = policedRepo();
   const denied = pre.run({
+    env: BASE_ENV,
     input: bashInput(`perl -pi -e 's/x/y/' ${shellQuote(path.join(repo, 'a.js'))}`, '/tmp'),
     runDir: null, runState: null, cwd: '/tmp',
   });
@@ -830,6 +864,7 @@ test('worktree-required: perl -i against the main checkout is denied, -I is not 
   // -Idir contains an 'i' but is an include path, not --in-place. Treating it
   // as in-place would deny an ordinary read-only perl invocation.
   const allowed = pre.run({
+    env: BASE_ENV,
     input: bashInput(`perl -Ilib -e 'print 1' ${shellQuote(path.join(repo, 'a.js'))}`, '/tmp'),
     runDir: null, runState: null, cwd: '/tmp',
   });
@@ -845,7 +880,7 @@ test('worktree-required: install/ln/truncate/dd against the main checkout are de
     `truncate -s 0 ${shellQuote(path.join(repo, 'a.js'))}`,
     `dd if=/dev/zero of=${shellQuote(path.join(repo, 'a.js'))}`,
   ]) {
-    const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
     assert.strictEqual(decisionOf(out), 'deny', `must deny: ${cmd}`);
   }
 });
@@ -856,12 +891,14 @@ test('worktree-required: the new shapes are allowed inside a worktree and under 
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
   const inWorktree = pre.run({
+    env: BASE_ENV,
     input: bashInput(`sed -i 's/x/y/' ${shellQuote(path.join(wt, 'a.js'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
   assert.deepStrictEqual(inWorktree, {}, 'editing inside the worktree is the whole point of the policy');
   // #138's exemption must apply to the new shapes too, not just cp/mv/tee.
   const inPipelines = pre.run({
+    env: BASE_ENV,
     input: bashInput(`sed -i 's/x/y/' ${shellQuote(path.join(repo, '.claude-tweaks', 'pipelines', 'archive', 'r', 'decisions.md'))}`, wt),
     runDir: null, runState: null, cwd: wt,
   });
@@ -880,7 +917,7 @@ test('worktree-required: an unprovable target on a new shape fabricates nothing 
     'dd if=/dev/zero of="$OUT"',
     'ln -sf /tmp/src "$DEST"',
   ]) {
-    const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
     assert.deepStrictEqual(out, {}, `must not fabricate a target from: ${cmd}`);
   }
 });
@@ -888,21 +925,21 @@ test('worktree-required: an unprovable target on a new shape fabricates nothing 
 test('worktree-required: a same-command shell variable resolving inside the repo is now denied (#630)', () => {
   const repo = policedRepo();
   const cmd = `WT=${shellQuote(repo)}; sed -i 's/x/y/' "$WT/a.js"`;
-  const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
   assert.strictEqual(decisionOf(out), 'deny', 'a same-command variable resolving inside the policed repo must now be provable and denied');
 });
 
 test('worktree-required: a same-command shell variable resolving outside the repo stays allowed (#630)', () => {
   policedRepo();
   const cmd = 'SP=/private/tmp/elsewhere; sed -i \'\' -e \'s/x/y/\' "$SP/file.md"';
-  const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
   assert.deepStrictEqual(out, {}, 'a same-command variable resolving outside the repo must still be allowed — no regression for the originally-reported shape');
 });
 
 test('worktree-required: a single-quoted $NAME reference is never substituted, even when the variable resolves inside the repo — real bash does not expand it, so the gate correctly stays unresolvable/allow rather than fabricating a false-outside target (#630)', () => {
   const repo = policedRepo();
   const cmd = `WT=${shellQuote(repo)}; sed -i '' -e 's/x/y/' '$WT/a.js'`;
-  const out = pre.run({ input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, '/tmp'), runDir: null, runState: null, cwd: '/tmp' });
   assert.deepStrictEqual(out, {}, 'single-quoted $WT must never be treated as a variable reference — no target is fabricated either way');
 });
 
@@ -912,7 +949,7 @@ test('worktree-required: an unexpanded glob still resolves against the cwd and i
   // The literal `repo/*.js` never exists, but repoInfo walks up to the
   // nearest existing directory, so the repo still resolves correctly.
   const repo = policedRepo();
-  const out = pre.run({ input: bashInput("sed -i 's/x/y/' *.js", repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput("sed -i 's/x/y/' *.js", repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(out), 'deny', 'a glob rooted in the main checkout writes to the main checkout');
 });
 
@@ -943,23 +980,23 @@ test('worktree-required: a gitignored write target is exempt (Edit/Write and cp/
   const target = path.join(repo, 'deploy.env');
 
   assert.deepStrictEqual(
-    pre.run({ input: { tool_name: 'Write', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo }),
+    pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo }),
     {}, 'Write to a gitignored path must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo }),
+    pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo }),
     {}, 'Edit of a gitignored path must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ env: BASE_ENV, input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'cp writing a gitignored destination must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ env: BASE_ENV, input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'sed -i against a gitignored path must be exempt',
   );
   assert.deepStrictEqual(
-    pre.run({ input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
+    pre.run({ env: BASE_ENV, input: bashInput(`echo hi | tee ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo }),
     {}, 'tee writing a gitignored path must be exempt',
   );
 });
@@ -973,14 +1010,14 @@ test('worktree-required: an EXISTING untracked-but-NOT-gitignored write target i
   const repo = policedRepo();
   const target = path.join(repo, 'scratch.txt');
   fs.writeFileSync(target, 'pre-existing, never git-added, not ignored');
-  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`cp source.txt ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(out), 'deny', 'untracked status alone must never exempt a write — only a gitignore match does');
 });
 
 test('worktree-required: a NOT-YET-EXISTING file write is still denied', () => {
   const repo = policedRepo();
   const target = path.join(repo, 'brand', 'new-file.js');
-  const out = pre.run({ input: { tool_name: 'Write', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(out), 'deny', 'a not-yet-existing, non-ignored file must stay denied');
 });
 
@@ -991,9 +1028,9 @@ test('worktree-required: a tracked, non-ignored path is STILL denied exactly as 
   execFileSync('git', ['-C', repo, 'add', 'tracked.js']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 't', '-q']);
 
-  const editOut = pre.run({ input: { tool_name: 'Edit', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo });
+  const editOut = pre.run({ env: BASE_ENV, input: { tool_name: 'Edit', tool_input: { file_path: target } }, runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(editOut), 'deny');
-  const sedOut = pre.run({ input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
+  const sedOut = pre.run({ env: BASE_ENV, input: bashInput(`sed -i 's/x/y/' ${shellQuote(target)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(decisionOf(sedOut), 'deny');
 });
 
@@ -1005,7 +1042,7 @@ test('worktree-required: cp realfile.js .env — a tracked source alongside a gi
   execFileSync('git', ['-C', repo, 'add', 'realfile.js']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 't', '-q']);
   const dest = path.join(repo, '.env');
-  const out = pre.run({ input: bashInput(`cp ${shellQuote(source)} ${shellQuote(dest)}`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`cp ${shellQuote(source)} ${shellQuote(dest)}`, repo), runDir: null, runState: null, cwd: repo });
   assert.deepStrictEqual(out, {}, 'cp only ever tracks the destination — a tracked source must not defeat the gitignored destination\'s exemption');
 });
 
@@ -1014,7 +1051,7 @@ test('worktree-required: gitignored-target exemption is allowed inside a worktre
   execFileSync('git', ['-C', repo, 'add', '.claude-tweaks/policy.yml']);
   execFileSync('git', ['-C', repo, 'commit', '-m', 'policy', '-q']);
   const wt = linkedWorktreeOf(repo);
-  const out = pre.run({ input: bashInput(`cp source.txt ${shellQuote(path.join(wt, 'a.js'))}`, wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`cp source.txt ${shellQuote(path.join(wt, 'a.js'))}`, wt), runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(out, {}, 'inside a worktree, everything is already allowed regardless of this exemption');
 });
 
@@ -1022,25 +1059,25 @@ test('isUntrackedOrIgnored fails closed on anything it cannot prove, and is giti
   const repo = gitRepoWithCommit();
   fs.writeFileSync(path.join(repo, '.gitignore'), 'ignored.txt\n');
   const ignored = path.join(repo, 'ignored.txt');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ignored), true, 'the positive (gitignored) case must actually match');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ignored, { env: BASE_ENV }), true, 'the positive (gitignored) case must actually match');
 
   const existingUntrackedNotIgnored = path.join(repo, 'scratch.txt');
   fs.writeFileSync(existingUntrackedNotIgnored, 'x');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, existingUntrackedNotIgnored), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, existingUntrackedNotIgnored, { env: BASE_ENV }), false,
     'untracked alone (not gitignored) is never exempt — the reverted branch stays reverted');
 
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, 'ignored.txt'), false, 'relative path is unprovable');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, ''), false, 'empty path');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, null), false, 'null path');
-  assert.strictEqual(pre.isUntrackedOrIgnored(null, ignored), false, 'null repoRoot');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(repo, 'never', 'created.txt')), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, 'ignored.txt', { env: BASE_ENV }), false, 'relative path is unprovable');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, '', { env: BASE_ENV }), false, 'empty path');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, null, { env: BASE_ENV }), false, 'null path');
+  assert.strictEqual(pre.isUntrackedOrIgnored(null, ignored, { env: BASE_ENV }), false, 'null repoRoot');
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(repo, 'never', 'created.txt'), { env: BASE_ENV }), false,
     'a not-yet-existing, non-ignored path is never exempt');
   // A path resolving outside repoRoot is a real git failure (exit 128, with
   // stderr) for check-ignore — indeterminate, not a clean negative, so it
   // must fail closed rather than being read as "not ignored".
-  const outsideRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-outside-'));
+  const outsideRepo = scratchDir('ct-e1-outside-');
   fs.writeFileSync(path.join(outsideRepo, 'x.txt'), 'x');
-  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt')), false,
+  assert.strictEqual(pre.isUntrackedOrIgnored(repo, path.join(outsideRepo, 'x.txt'), { env: BASE_ENV }), false,
     'a path outside repoRoot is a git fatal error, not a clean negative — fails closed');
 });
 
@@ -1140,8 +1177,7 @@ test('hasMaterializeCommit: AC3 — an unresolvable integration branch falls bac
   // strictly non-regressive, and it forfeits nothing #1674 set out to fix:
   // the false positive #1674 targets needs a materialize commit merged INTO
   // an integration branch, which cannot exist when none does.
-  const main = gitRepoWithCommit(); // no policy.yml committed
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree(); // no policy.yml committed
   commitMaterializeFile(wt, MATERIALIZE_RUN_ID);
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), true,
@@ -1156,8 +1192,7 @@ test('hasMaterializeCommit: the unresolvable-integration fallback still RUNS the
   // caught it. This is the missing half: same unresolvable-integration repo,
   // but NO materialize commit anywhere. An unconditional arm returns true here;
   // a real pathspec check returns false.
-  const main = gitRepoWithCommit(); // no policy.yml, no origin -> integration unresolvable
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree(); // no policy.yml, no origin -> integration unresolvable
   const runDir = runDirForId(MATERIALIZE_RUN_ID); // nothing ever committed for it
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), false,
     'the fallback must still be a real pathspec query — arming unconditionally would deny every covered call in any no-origin repo');
@@ -1170,8 +1205,7 @@ test('hasMaterializeCommit: a resolvable-but-nonexistent integration-branch poli
   // guard, the blanket `if (failure) return false` collapsed that into "gate
   // not armed" — disarming IL-131 on a config typo. Found by both agents of
   // the review's lens-3c pair.
-  const main = gitRepoWithCommit();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree();
   // The policy file must live in the WORKTREE, not the main checkout:
   // hasMaterializeCommit is called with the worktree root, linkedWorktreeOf
   // places that outside the main checkout, and readIntegrationBranch walks up
@@ -1196,18 +1230,13 @@ test('hasMaterializeCommit: a resolvable-but-nonexistent integration-branch poli
 // pre-#1688 unbounded fallback armed the gate against history the worktree
 // never made.
 //
-// The branch is renamed explicitly to 'main' rather than trusting the host's
+// `gitRepoOnLocalMain` (tests/helpers/pre-tool-use.js) renames the branch
+// explicitly to 'main' rather than trusting the host's
 // `init.defaultBranch` (this machine's own default is 'master') -- the probe
 // itself tries both 'main' and 'master', but the test must be deterministic
 // regardless of which default a given machine or CI runner ships.
-function repoOnLocalMain() {
-  const dir = gitRepoWithCommit();
-  execFileSync('git', ['-C', dir, 'branch', '-M', 'main']);
-  return dir;
-}
-
 test('hasMaterializeCommit: #1688 AC1 — a no-remote repo\'s inherited materialize commit is NOT armed once a local main/master probe can bound the range', () => {
-  const main = repoOnLocalMain();
+  const main = gitRepoOnLocalMain();
   commitMaterializeFile(main, MATERIALIZE_RUN_ID); // lands on `main` itself -- inherited, not the worktree's own
   const wt = linkedWorktreeOf(main); // branches off main's HEAD, which already includes the materialize commit
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
@@ -1216,12 +1245,155 @@ test('hasMaterializeCommit: #1688 AC1 — a no-remote repo\'s inherited material
 });
 
 test('hasMaterializeCommit: #1688 AC2 regression guard — the local default-branch probe still arms the gate for the worktree\'s own unmerged commit', () => {
-  const main = repoOnLocalMain();
-  const wt = linkedWorktreeOf(main);
+  const { wt } = mainAndWorktree({ localMain: true });
   commitMaterializeFile(wt, MATERIALIZE_RUN_ID); // on the worktree's own branch, never merged into main
   const runDir = runDirForId(MATERIALIZE_RUN_ID);
   assert.strictEqual(pre.hasMaterializeCommit(wt, runDir), true,
     'the local default-branch probe must not disarm the gate for a worktree\'s own genuinely-unmerged materialize commit');
+});
+
+// --- failure postures, captured before #3974 changed the pathspec list (AC9) ---
+
+test('AC9.3 hasMaterializeCommit returns false when git cannot run', () => {
+  const runDir = runDirForId(MATERIALIZE_RUN_ID);
+  const missing = path.join(scratchDir('ct-e1-nogit-'), 'does-not-exist');
+  assert.strictEqual(pre.hasMaterializeCommit(missing, runDir), false, 'a cwd git cannot spawn in reads as not materialized');
+  const notARepo = fs.realpathSync(scratchDir('ct-e1-norepo-'));
+  assert.strictEqual(pre.hasMaterializeCommit(notARepo, runDir), false, 'git exiting 128 outside a repo reads as not materialized');
+});
+
+test('AC9.3 getMaterializedRecordNumbers returns [] on an unreadable run dir', () => {
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
+  const runDir = runDirForId(MATERIALIZE_RUN_ID);
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(path.join(root, 'does-not-exist'), runDir), []);
+  // The run dir path is a regular file: every readdir under it fails with ENOTDIR.
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  fs.mkdirSync(pipelines, { recursive: true });
+  fs.writeFileSync(path.join(pipelines, MATERIALIZE_RUN_ID), 'not a dir\n');
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(root, runDir), []);
+});
+
+test('getMaterializedRecordNumbers walks only real spec-* directories: a spec-* symlink is skipped', { skip: process.platform === 'win32' && 'directory symlinks need privileges on Windows' }, () => {
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
+  const base = path.join(root, '.claude-tweaks', 'pipelines', MATERIALIZE_RUN_ID);
+  fs.mkdirSync(path.join(base, 'spec-3', 'work'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'spec-3', 'work', '3-spec.md'), 'spec\n');
+  const elsewhere = scratchDir('ct-e1-symtarget-');
+  fs.mkdirSync(path.join(elsewhere, 'work'));
+  fs.writeFileSync(path.join(elsewhere, 'work', '9-spec.md'), 'spec\n');
+  fs.symlinkSync(elsewhere, path.join(base, 'spec-9'), 'dir');
+  assert.deepStrictEqual(pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID)), [3]);
+});
+
+// --- archived spec headers count as materialized (#3974) ---
+//
+// After wrap-up a run's header moves from `.claude-tweaks/pipelines/{id}/...` to
+// `.claude-tweaks/pipelines/archive/{id}/...` (same layout beneath). The pathspec
+// list grows to cover both; the `{integration}..HEAD` bound (#1674) does not
+// change, so an archived header inherited from the integration branch still
+// cannot arm the gate for another run (AC4(b)).
+
+const OTHER_RUN_ID = '2026-08-29T130000-spec-3974';
+const liveHeaderRel = (id, tail) => `.claude-tweaks/pipelines/${id}/${tail}`;
+const archivedHeaderRel = (id, tail) => `.claude-tweaks/pipelines/archive/${id}/${tail}`;
+
+// Writes and commits one header file at a repo-relative POSIX path.
+function commitHeaderAt(repo, rel, message = 'materialize') {
+  const full = path.join(repo, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+  execFileSync('git', ['-C', repo, 'add', '-f', rel]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', message, '-q']);
+}
+
+// `git mv` of a tracked header, then a commit: wrap-up's live -> archived move.
+function commitHeaderMove(repo, fromRel, toRel) {
+  fs.mkdirSync(path.dirname(path.join(repo, ...toRel.split('/'))), { recursive: true });
+  execFileSync('git', ['-C', repo, 'mv', fromRel, toRel]);
+  execFileSync('git', ['-C', repo, 'commit', '-m', 'archive run', '-q']);
+}
+
+test('AC1.1 hasMaterializeCommit: a commit touching only the archived flat header counts', () => {
+  const { wt } = mainAndWorktree({ localMain: true });
+  commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'a header committed only at the archived flat path must read as materialized');
+});
+
+test('AC2.1 hasMaterializeCommit: a commit touching only archive/{id}/spec-{N}/work/{N}-spec.md counts, for the parent and the per-spec run dir', () => {
+  const { wt } = mainAndWorktree({ localMain: true });
+  commitHeaderAt(wt, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-4/work/4-spec.md'));
+  const parent = runDirForId(MATERIALIZE_RUN_ID);
+  assert.strictEqual(pre.hasMaterializeCommit(wt, parent), true, 'the parent run dir reads the archived spec-* header');
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parent, 'spec-4')), true, 'the per-spec run dir reads its own archived header');
+  assert.strictEqual(pre.hasMaterializeCommit(wt, path.join(parent, 'spec-5')), false, 'a sibling spec\'s archived header does not arm spec-5');
+});
+
+test('AC3.1 hasMaterializeCommit: branch whose last commit git-mv\'d the header live -> archived', () => {
+  // The live materialize commit is inherited from main; the worktree's one own
+  // commit is the move, so it is the only commit in `{integration}..HEAD`.
+  // This fixture alone does not prove the archived pathspecs: a `git mv` commit
+  // deletes the live path, so it already matches through the live pathspec's
+  // delete side. The archived-only variants (AC1.1, AC2.1) carry that proof.
+  const main = gitRepoOnLocalMain();
+  commitHeaderAt(main, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  const wt = linkedWorktreeOf(main);
+  commitHeaderMove(wt, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'a branch whose last commit archives the header must still read as materialized');
+});
+
+test('AC4.1 (a) never-materialized run returns false', () => {
+  const { wt } = mainAndWorktree({ localMain: true });
+  commitHeaderAt(wt, 'src/unrelated.txt', 'unrelated work'); // a non-empty range that touches neither header path
+  assert.strictEqual(pre.hasMaterializeCommit(wt, runDirForId(MATERIALIZE_RUN_ID)), false,
+    'no commit at the live or the archived path: not materialized');
+});
+
+test('AC4.2 (b) run A\'s archived header reachable from the integration branch does not arm run B', () => {
+  const { main, wt: wtA } = mainAndWorktree({ localMain: true });
+  commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  execFileSync('git', ['-C', main, 'merge', '--no-ff', currentBranch(wtA), '-m', 'Merge run A', '-q']);
+  const wtB = linkedWorktreeOf(main); // cut from main after run A merged: both of A's commits are inherited
+  commitHeaderAt(wtB, 'src/b-work.txt', 'run B work'); // run B has its own, unrelated commits in range
+  assert.strictEqual(pre.hasMaterializeCommit(wtB, runDirForId(MATERIALIZE_RUN_ID)), false,
+    'run A\'s inherited live and archived header commits are outside run B\'s {integration}..HEAD range');
+  assert.strictEqual(pre.hasMaterializeCommit(wtB, runDirForId(OTHER_RUN_ID)), false,
+    'run B never materialized: run A\'s archived header must not arm it');
+});
+
+test('AC4.3 (c) run A\'s own branch with materialize + move commits returns true', () => {
+  const { wt: wtA } = mainAndWorktree({ localMain: true });
+  commitHeaderAt(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  commitHeaderMove(wtA, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'), archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/1-spec.md'));
+  assert.strictEqual(pre.hasMaterializeCommit(wtA, runDirForId(MATERIALIZE_RUN_ID)), true,
+    'run A\'s own unmerged materialize and move commits are inside its range');
+});
+
+// getMaterializedRecordNumbers reads the worktree filesystem, not git.
+function writeHeaderFile(root, rel) {
+  const full = path.join(root, ...rel.split('/'));
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, 'spec\n');
+}
+
+test('AC1.1 getMaterializedRecordNumbers reads archived-only headers (flat and spec-{N})', () => {
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-7/work/7-spec.md'));
+  const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
+  assert.deepStrictEqual([...nums].sort((a, b) => a - b), [5, 7]);
+});
+
+test('AC1.1 getMaterializedRecordNumbers merges a run\'s live and archived headers by record, counting a duplicate once', () => {
+  const root = fs.realpathSync(scratchDir('ct-e1-nums-'));
+  writeHeaderFile(root, liveHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'work/5-spec.md')); // stale or mid-move copy
+  writeHeaderFile(root, archivedHeaderRel(MATERIALIZE_RUN_ID, 'spec-6/work/6-spec.md'));
+  writeHeaderFile(root, archivedHeaderRel(OTHER_RUN_ID, 'work/9-spec.md')); // another run's archive is not read
+  const nums = pre.getMaterializedRecordNumbers(root, runDirForId(MATERIALIZE_RUN_ID));
+  assert.deepStrictEqual([...nums].sort((a, b) => a - b), [5, 6]);
 });
 
 test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary precondition check (#2472)', () => {
@@ -1233,6 +1405,97 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
   assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
 });
 
+// --- #4578: timeout + degrade parameters on resolveRunPinnedIntegrationModel ---
+
+test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detection (#4578 AC8.1, AC13.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    // The stub's PATH is on the live process.env; the timeout key is left out so detection's ladder falls to its default.
+    const env = { ...process.env };
+    delete env[GH_TIMEOUT_ENV];
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d), env });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 2);
+    // The recorded timeoutMs proves which bound reached detection (no wall-clock assertion).
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*degradeMemoTtlMs:\s*FORGE_DEGRADE_MEMO_TTL_MS,\s*onDegrade,\s*env:\s*ctx\.env,\s*homeDir:\s*ctx\.homeDir\s*\}\)/;
+
+test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
+  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
+    'git probe + all gh attempts must fit the 15 s hook budget');
+  // Scan LIVE code only: comments and literals are blanked, so a commented-out or quoted copy of the
+  // call shape cannot satisfy the match, and the verdict is taken on the same text the matcher reads.
+  const raw = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
+  const code = stripComments(raw, { literals: 'blank' });
+  const verdict = stripperVerdict(raw, code);
+  assert.strictEqual(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
+  assert.match(
+    code,
+    GATE_CALL_SHAPE,
+    'the gate must bound its forge probe with the hook constant and report degrades (Decision Q3, Q5)',
+  );
+});
+
+test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade, env: ctx.env, homeDir: ctx.homeDir });';
+  const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
+  assert.strictEqual(scan(live), true);
+  // The same text only in a line comment, a block comment, or a string: the live call is gone.
+  assert.strictEqual(scan(`// ${live}\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`/* ${live} */\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`x = '${live}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  // A changed live call shape (no timeoutMs) is not matched even with a comment holding the old one after it.
+  assert.strictEqual(scan(`x = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { onDegrade }); // ${live}`), false);
+  // The scan still sees the live call after a literal holding a comment opener.
+  assert.strictEqual(scan(`s = '/*'; ${live}`), true);
+  // A mis-parse is an offender, not a clean scan: a regex after ")" blanks the live call into a string.
+  const misparsed = `if (b) /'/.test(b); const c = 'x'; ${live}`;
+  assert.strictEqual(stripperVerdict(misparsed, stripComments(misparsed, { literals: 'blank' })), 'misparsed');
+});
+
+test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    const env = { ...process.env };
+    delete env[GH_TIMEOUT_ENV];
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d), env });
+    assert.strictEqual(result, 'local-merge');
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveRunPinnedIntegrationModel: a pinned model returns before detection — no gh spawn, onDegrade never called (#4578 Q5)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 0);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a
@@ -1241,7 +1504,7 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
 // are both null in every case below.
 test('#1967: bare `git stash` from a linked worktree emits the warning line', () => {
   const { wt } = mainAndWorktree();
-  const out = pre.run({ input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
   assert.ok(!(out.json && out.json.hookSpecificOutput), 'must warn, never deny');
   assert.match(out.json.systemMessage, /git stash is repository-wide/);
   assert.match(out.json.systemMessage, /SIBLING worktree/);
@@ -1249,25 +1512,25 @@ test('#1967: bare `git stash` from a linked worktree emits the warning line', ()
 
 test('#1967: `git stash pop` from a linked worktree emits the warning line', () => {
   const { wt } = mainAndWorktree();
-  const out = pre.run({ input: bashInput('git stash pop', wt), runDir: null, runState: null, cwd: wt });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git stash pop', wt), runDir: null, runState: null, cwd: wt });
   assert.match(out.json.systemMessage, /git stash is repository-wide/);
 });
 
 test('#1967: `git stash` from the main checkout (not a linked worktree) is silent', () => {
   const { main } = mainAndWorktree();
-  const out = pre.run({ input: bashInput('git stash', main), runDir: null, runState: null, cwd: main });
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git stash', main), runDir: null, runState: null, cwd: main });
   assert.deepStrictEqual(out, {});
 });
 
 test('#1967: read-only `git stash list`/`git stash show` from a linked worktree is silent', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash list', wt), runDir: null, runState: null, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash show', wt), runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git stash list', wt), runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git stash show', wt), runDir: null, runState: null, cwd: wt }), {});
 });
 
 test('#1967: an unrelated git command from a linked worktree is silent', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git status', wt), runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('git status', wt), runDir: null, runState: null, cwd: wt }), {});
 });
 
 // #2065: the guard widened to every explicit stack-mutating spelling, not
@@ -1276,9 +1539,9 @@ test('#1967: an unrelated git command from a linked worktree is silent', () => {
 // repository-wide stack the bare form does.
 test('#2065: `git stash push -m "wip"` and `git stash push -u` from a linked worktree emit the same warning bare `git stash` produces', () => {
   const { wt } = mainAndWorktree();
-  const bare = pre.run({ input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
-  const pushM = pre.run({ input: bashInput('git stash push -m "wip"', wt), runDir: null, runState: null, cwd: wt });
-  const pushU = pre.run({ input: bashInput('git stash push -u', wt), runDir: null, runState: null, cwd: wt });
+  const bare = pre.run({ env: BASE_ENV, input: bashInput('git stash', wt), runDir: null, runState: null, cwd: wt });
+  const pushM = pre.run({ env: BASE_ENV, input: bashInput('git stash push -m "wip"', wt), runDir: null, runState: null, cwd: wt });
+  const pushU = pre.run({ env: BASE_ENV, input: bashInput('git stash push -u', wt), runDir: null, runState: null, cwd: wt });
   assert.strictEqual(pushM.json.systemMessage, bare.json.systemMessage);
   assert.strictEqual(pushU.json.systemMessage, bare.json.systemMessage);
 });
@@ -1286,16 +1549,93 @@ test('#2065: `git stash push -m "wip"` and `git stash push -u` from a linked wor
 test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from a linked worktree also warn', () => {
   const { wt } = mainAndWorktree();
   for (const cmd of ['git stash -u', 'git stash -m "wip"', 'git stash save wip']) {
-    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
     assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
   }
 });
 
-test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+// #4559: `drop` and `clear` destroy stack entries — a sibling worktree's
+// in-flight WIP stash included — and `branch` drops the entry it applies,
+// while `store` and `import` write onto the stack; all of them warn like
+// push/pop. Only the subcommands that leave the stack alone stay silent.
+// These are command strings fed to the hook — nothing here runs git stash.
+const STASH_SHA = 'a'.repeat(40);
+test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, `branch`, `store`, `import`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
+  const cmds = [
+    'git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop',
+    'git stash branch fix-wip', `git stash store -m x ${STASH_SHA}`, `git stash import ${STASH_SHA}`,
+  ];
+  for (const cmd of cmds) {
+    const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+    assert.notStrictEqual(out.json.hookSpecificOutput?.permissionDecision, 'deny', `must warn, never deny: ${cmd}`);
+  }
 });
+
+test('#4559: the stash warning names the stash-guard recovery `git stash store` as the one intended exception', () => {
+  const { wt } = mainAndWorktree();
+  const out = pre.run({ env: BASE_ENV, input: bashInput(`git stash store -m "On main: autostash" ${STASH_SHA}`, wt), runDir: null, runState: null, cwd: wt });
+  assert.match(out.json.systemMessage, /Exception: putting back a stash entry that `stash-guard\.js` reported lost/);
+  assert.match(out.json.systemMessage, /git stash store -m "<subject>" <sha>/);
+});
+
+test('AC7.2: `git stash list`, `show` and `apply` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash list', 'git stash show', 'git stash apply']) {
+    assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt }), {}, `expected silence for: ${cmd}`);
+  }
+});
+
+test('#4559: `git stash drop` from the main checkout is silent', () => {
+  const { main } = mainAndWorktree();
+  const out = pre.run({ env: BASE_ENV, input: bashInput('git stash drop', main), runDir: null, runState: null, cwd: main });
+  assert.deepStrictEqual(out, {});
+});
+
+// #4548: killing a process by image or name matches every process of that name on the
+// machine, sibling sessions' dev servers included. The warning is run- and
+// location-independent, so every fixture runs in a plain temp dir (no git repo, no
+// policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
+const killDir = scratchDir('ct-4548-');
+const runKill = (cmd) => pre.run({ env: BASE_ENV, input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
+const assertKillWarning = (out) => {
+  assert.ok(out.json, 'expected a hook response');
+  assert.match(out.json.systemMessage, /by image or name/);
+  assert.match(out.json.systemMessage, /-sTCP:LISTEN/);
+  assert.ok(!(out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision), 'a warning must not decide permission');
+};
+const silentKill = (out) => !out.json || (!out.json.systemMessage && !out.json.hookSpecificOutput);
+
+for (const cmd of [
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f',
+  'Stop-Process -Name node', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
+  'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+  'Get-Process node | Stop-Process', 'TASKKILL /IM node.exe',
+  'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+  'pwsh -Command "Get-Process node | Stop-Process"', 'pwsh -c "Stop-Process -Name node"',
+  'cmd /c taskkill /IM node.exe', "sh -c 'pkill node'", 'bash -c "killall node"',
+]) {
+  test(`#4548: \`${cmd}\` warns about killing by image or name`, () => {
+    assertKillWarning(runKill(cmd));
+  });
+}
+
+test('#4548: a compound command with several name kills warns once', () => {
+  const out = runKill('npm run dev & sleep 1; pkill -f vite; killall node');
+  assertKillWarning(out);
+  assert.strictEqual(out.json.systemMessage.split('by image or name').length - 1, 1);
+});
+
+for (const cmd of [
+  'kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"',
+  'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill',
+]) {
+  test(`#4548: \`${cmd}\` is PID-scoped and stays silent`, () => {
+    const out = runKill(cmd);
+    assert.ok(silentKill(out), `expected no warning for: ${cmd}, got ${JSON.stringify(out)}`);
+  });
+}
 
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree
 // --dispatch) bound to a REAL linked worktree denies git writes there until
@@ -1316,7 +1656,7 @@ function dispatchedRun(wt, { marked = true, config = false, status = 'active', s
 }
 const dispatchInput = (cwd, command = 'git commit -m "Materialize #3225 spec"') => ({ ...bashInput(command, cwd), session_id: DISPATCH_SID });
 const dispatchCtx = (run, cwd, input, extra = {}) => ({
-  input, runDir: null, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd, ...extra,
+  env: BASE_ENV, input, runDir: null, runState: null, ownedRun: { dir: run, attribution: 'session' }, cwd, ...extra,
 });
 const isDeny = (out) => Boolean(out && out.json && out.json.hookSpecificOutput
   && out.json.hookSpecificOutput.permissionDecision === 'deny');
@@ -1456,7 +1796,7 @@ function consoleRun(autonomy, name = '2026-07-01T090000-spec-1', repo = gitRepo(
 }
 const repoOfRun = (dir) => path.resolve(dir, '..', '..', '..');
 const consoleCtx = (dir, questions, ownedRun = ownedRunAt(dir)) => ({
-  input: askInput(questions, repoOfRun(dir)), runDir: dir, runState: { status: 'active' }, ownedRun, cwd: repoOfRun(dir),
+  env: BASE_ENV, input: askInput(questions, repoOfRun(dir)), runDir: dir, runState: { status: 'active' }, ownedRun, cwd: repoOfRun(dir),
 });
 
 test('AC1.1: unattended owned run denies a Review Console question', () => {
@@ -1551,14 +1891,14 @@ test('#3712: ceiling comes from the injected reader, not the run config', () => 
 
 test('#3712: a non-git cwd fails open even with autonomy: unattended in the run config', () => {
   const dir = consoleRun('unattended');
-  const notGit = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-nogit-')));
+  const notGit = fs.realpathSync(scratchDir('ct-nogit-'));
   const ctx = consoleCtx(dir, CONSOLE_Q);
   ctx.cwd = notGit;
   ctx.input = askInput(CONSOLE_Q, notGit);
   assert.deepStrictEqual(pre.run(ctx), {});
   // The gate never reaches the ceiling there (ownership is unprovable outside a
   // repo), so pin the reader's own git-failure throw, which the gate turns into allow.
-  assert.throws(() => pre.readConsoleCeiling(dir, notGit));
+  assert.throws(() => pre.readConsoleCeiling(dir, notGit, { env: BASE_ENV }));
 });
 
 test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling', () => {
@@ -1568,11 +1908,35 @@ test('#3712: readConsoleCeiling matches console-resolve.js readPolicy() ceiling'
     const dir = consoleRun(autonomy);
     const repo = repoOfRun(dir);
     assert.strictEqual(
-      pre.readConsoleCeiling(dir, repo),
+      pre.readConsoleCeiling(dir, repo, { env: BASE_ENV }),
       readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling,
       `autonomy=${autonomy}`,
     );
   }
+});
+
+test('#4620 AC4.10: readConsoleCeiling matches readPolicy() under control mode', () => {
+  const { readPolicy } = require('../plugin/bin/console-resolve');
+  const execFile = (cmd, args, opts = {}) => execFileSync(cmd, args, { encoding: 'utf8', ...opts });
+  const policies = [
+    'control-mode: on\n',
+    'control-mode: on\nautonomy: supervised\n',
+    'control-mode: on\nautonomy: trusted\n',
+    'control-mode: off\n',
+    'control-mode: on\nautonomy: supervsed\n',
+  ];
+  for (const policy of policies) {
+    const dir = consoleRun(null);
+    const repo = repoOfRun(dir);
+    withPolicy(repo, policy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repo, { env: BASE_ENV }), readPolicy({ execFile, cwd: repo, runDir: dir }).ceiling, policy);
+  }
+  const first = consoleRun(null);
+  withPolicy(repoOfRun(first), policies[0]);
+  assert.strictEqual(pre.run(consoleCtx(first, CONSOLE_Q)).json.hookSpecificOutput.permissionDecision, 'deny');
+  const invalid = consoleRun(null);
+  withPolicy(repoOfRun(invalid), 'control-mode: on\nautonomy: supervsed\n');
+  assert.deepStrictEqual(pre.run(consoleCtx(invalid, CONSOLE_Q)), {}, 'an invalid autonomy blocks the implication, so the question is allowed');
 });
 
 test('#3712: a deny logs one gate-denial event for gate review-console-ask', () => {
@@ -1624,7 +1988,7 @@ test('#3712: a near-miss console header allows — the header match is exact', (
 test('#3712: a malformed autonomy value in config.yml resolves supervised and allows', () => {
   for (const autonomy of ['bogus', 'Unattended']) {
     const dir = consoleRun(autonomy);
-    assert.strictEqual(pre.readConsoleCeiling(dir, repoOfRun(dir)), 'supervised', autonomy);
+    assert.strictEqual(pre.readConsoleCeiling(dir, repoOfRun(dir), { env: BASE_ENV }), 'supervised', autonomy);
     assert.deepStrictEqual(pre.run(consoleCtx(dir, CONSOLE_Q)), {}, autonomy);
   }
 });
@@ -1639,26 +2003,26 @@ test('#3712: REVIEW_CONSOLE_HEADER is exported as the pinned string', () => {
 test('run() merges updatedInput on an allow path and never on a deny', () => {
   const { main, wt } = mainAndWorktree();
   const tool_input = { command: 'P=/x/y; node $P/z.js', description: 'd' };
-  const allow = pre.run({ input: { tool_name: 'Bash', tool_input, cwd: wt }, runDir: null, runState: null, cwd: wt });
+  const allow = pre.run({ env: BASE_ENV, input: { tool_name: 'Bash', tool_input, cwd: wt }, runDir: null, runState: null, cwd: wt });
   assert.deepStrictEqual(allow, {
     exit: 0,
     json: { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { command: 'P=/x/y; node /x/y/z.js', description: 'd' } } },
   });
 
-  const warned = pre.run({ input: bashInput('P=/x/y; node $P/z.js; git stash', wt), runDir: null, runState: null, cwd: wt });
+  const warned = pre.run({ env: BASE_ENV, input: bashInput('P=/x/y; node $P/z.js; git stash', wt), runDir: null, runState: null, cwd: wt });
   assert.match(warned.json.systemMessage, /git stash is repository-wide/);
   assert.deepStrictEqual(warned.json.hookSpecificOutput, { hookEventName: 'PreToolUse', updatedInput: { command: 'P=/x/y; node /x/y/z.js; git stash' } });
 
   // E1 deny: this run is assigned to wt, the commit targets main.
   const { run, state } = mkRun(wt);
   const denyCommand = `P=/x/y; node $P/z.js; git -C ${shellQuote(main)} commit -m x`;
-  const denied = pre.run({ input: bashInput(denyCommand, wt), runDir: run, runState: state, cwd: wt });
+  const denied = pre.run({ env: BASE_ENV, input: bashInput(denyCommand, wt), runDir: run, runState: state, cwd: wt });
   assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
   assert.ok(!('updatedInput' in denied.json.hookSpecificOutput), 'a deny never carries a rewrite');
 
   // Outside a linked worktree, and for a non-Bash tool, nothing is merged.
-  assert.deepStrictEqual(pre.run({ input: bashInput('P=/x/y; node $P/z.js', main), runDir: null, runState: null, cwd: main }), {});
-  assert.deepStrictEqual(pre.run({ input: { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'f'), command: 'P=/x; node $P' }, cwd: wt }, runDir: null, runState: null, cwd: wt }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: bashInput('P=/x/y; node $P/z.js', main), runDir: null, runState: null, cwd: main }), {});
+  assert.deepStrictEqual(pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(wt, 'f'), command: 'P=/x; node $P' }, cwd: wt }, runDir: null, runState: null, cwd: wt }), {});
 });
 
 // #3900 item 2 (won't-fix in plugin code — the refusal that prompted it came from
@@ -1670,7 +2034,7 @@ test('#3900 AC2.1: a log-decision call whose quoted --text names git show is not
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const cmd = 'node bin/log-decision.js --run x --status AUTO --text "evidence via git show HEAD:foo, then git commit -m x"';
-  const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
   assert.deepStrictEqual(out, {});
 });
 
@@ -1678,6 +2042,166 @@ test('#3900 AC2.1 control: a genuine git commit chained after the same prose is 
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const cmd = 'node bin/log-decision.js --run x --text "evidence via git show HEAD:foo"; git commit -m x';
-  const out = pre.run({ input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ env: BASE_ENV, input: bashInput(cmd, repo), runDir: null, runState: null, cwd: repo });
   assert.strictEqual(out.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #4492 F1: a submodule initialized inside a linked worktree must keep its own (absent) policy.
+// The worktree-always policy lives only in the main checkout (untracked); the submodule's .git
+// file points under <main>/.git/worktrees/<wt>/modules, which a loose marker match mistook for
+// a linked worktree of the superproject — so the gate denied a Write the base commit allowed.
+// A harness worktree sits under main, so findPolicyFile's ancestor walk reaches main's policy.
+test('#4492 F1: worktree-required allows a Write inside a submodule initialized in a linked worktree', () => {
+  const main = gitRepoWithCommit();
+  const subSrc = gitRepoWithCommit();
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude-tweaks/\n');
+  withPolicy(main, 'worktree-always: true\nintegration-branch: develop\n');
+  fixtureGit(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub']);
+  fixtureGit(['-C', main, 'add', '.gitignore', '.gitmodules', 'sub']);
+  fixtureGit(['-C', main, 'commit', '-q', '-m', 'add sub']);
+  const wt = harnessWorktreeOf(main);
+  fixtureGit(['-C', wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q']);
+  const sub = path.join(wt, 'sub');
+  const write = (file) => pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: file } }, runDir: null, runState: null, cwd: sub });
+  assert.deepStrictEqual(write(path.join(sub, 'file.txt')), {});
+  // Control: the main checkout itself is still gated by the same policy.
+  const denied = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
+  assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #4492 F1 + F3: the same submodule case from a SIBLING-placed linked worktree (outside main),
+// reached through findPolicyFile's mainPolicyRoot -> locatePolicyFile(sub).
+test('#4492 F1: worktree-required allows a Write inside a submodule of a sibling-placed linked worktree', () => {
+  const main = gitRepoWithCommit();
+  const subSrc = gitRepoWithCommit();
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude-tweaks/\n');
+  withPolicy(main, 'worktree-always: true\nintegration-branch: develop\n');
+  fixtureGit(['-C', main, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', subSrc, 'sub']);
+  fixtureGit(['-C', main, 'add', '.gitignore', '.gitmodules', 'sub']);
+  fixtureGit(['-C', main, 'commit', '-q', '-m', 'add sub']);
+  const wt = linkedWorktreeOf(main);
+  fixtureGit(['-C', wt, '-c', 'protocol.file.allow=always', 'submodule', 'update', '--init', '-q']);
+  const sub = path.join(wt, 'sub');
+  const allowed = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(sub, 'file.txt') } }, runDir: null, runState: null, cwd: sub });
+  assert.deepStrictEqual(allowed, {});
+  const denied = pre.run({ env: BASE_ENV, input: { tool_name: 'Write', tool_input: { file_path: path.join(main, 'file.txt') } }, runDir: null, runState: null, cwd: main });
+  assert.strictEqual(denied.json.hookSpecificOutput.permissionDecision, 'deny');
+});
+
+// #5846: the pre-tool-use fixture builders sit on templates (#5297, #5324) — a warm-up call may
+// build, a further call starts no git process — and the copies carry the right git state. They
+// live here because this file's own tests already build every one of these templates.
+const movedScratch = [];
+after(() => {
+  for (const d of movedScratch) fs.rmSync(d, { recursive: true, force: true });
+});
+function mk(prefix) {
+  const d = scratchDir(prefix);
+  movedScratch.push(d);
+  return d;
+}
+const preToolUseBuilders = {
+  'pre-tool-use gitRepo': [() => gitRepo(), (d) => [d]],
+  'pre-tool-use gitRepoWithCommit': [() => gitRepoWithCommit(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUseBuilders)) {
+  test(`${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+const preToolUsePairs = {
+  'pre-tool-use mainAndWorktree': [() => mainAndWorktree(), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use mainAndWorktree({ localMain })': [() => mainAndWorktree({ localMain: true }), (r) => [r.main, path.dirname(r.wt)]],
+  'pre-tool-use gitRepoOnLocalMain': [() => gitRepoOnLocalMain(), (d) => [d]],
+  'pre-tool-use unpinnedRepoWithOrigin': [() => unpinnedRepoWithOrigin(), (d) => [d]],
+};
+for (const [name, [make, dirsOf]] of Object.entries(preToolUsePairs)) {
+  test(`AC1.1 AC1.2: ${name}: a second call starts no git process`, () => {
+    warmCallStartsNoGit(make, { track: (r) => movedScratch.push(...dirsOf(r)) });
+  });
+}
+test('a copied mainAndWorktree pair resolves to its own main, and a second worktree can be added to it', () => {
+  const a = mainAndWorktree();
+  const b = mainAndWorktree();
+  movedScratch.push(a.main, path.dirname(a.wt), b.main, path.dirname(b.wt));
+  for (const p of [a, b]) {
+    assert.ok(path.basename(p.main).startsWith('ct-e1-'), p.main);
+    assert.ok(path.basename(path.dirname(p.wt)).startsWith('ct-e1-wtparent-'), p.wt);
+    const common = git(p.wt, ['rev-parse', '--git-common-dir']);
+    assert.strictEqual(fs.realpathSync(path.resolve(p.wt, common)), path.join(p.main, '.git'));
+    assert.strictEqual(fs.realpathSync(git(p.wt, ['rev-parse', '--show-toplevel'])), p.wt);
+  }
+  const listed = (p) => git(p.main, ['worktree', 'list', '--porcelain'])
+    .split('\n').filter((l) => l.startsWith('worktree ')).map((l) => fs.realpathSync(l.slice(9)));
+  assert.ok(listed(a).includes(a.wt), listed(a).join(', '));
+  assert.ok(!listed(a).includes(b.wt), listed(a).join(', '));
+  const extra = path.join(mk('ct-gt-wt2-'), 'wt');
+  git(a.main, ['worktree', 'add', '-q', extra, '-b', 'extra']);
+  assert.strictEqual(git(extra, ['rev-parse', 'HEAD']), git(a.main, ['rev-parse', 'HEAD']));
+});
+test('mainAndWorktree({ localMain: true }) and gitRepoOnLocalMain copies are on main', () => {
+  const pair = mainAndWorktree({ localMain: true });
+  const repo = gitRepoOnLocalMain();
+  movedScratch.push(pair.main, path.dirname(pair.wt), repo);
+  assert.strictEqual(git(pair.main, ['symbolic-ref', '--short', 'HEAD']), 'main');
+  assert.strictEqual(git(repo, ['symbolic-ref', '--short', 'HEAD']), 'main');
+});
+test('unpinnedRepoWithOrigin copies carry the GitHub-shaped origin and one commit', () => {
+  const repo = unpinnedRepoWithOrigin();
+  movedScratch.push(repo);
+  assert.strictEqual(git(repo, ['remote', 'get-url', 'origin']), 'https://github.com/o/n.git');
+  assert.strictEqual(git(repo, ['rev-list', '--count', 'HEAD']), '1');
+});
+
+// --- #6006: the factory layer reaches the two policy reads through the event's own env ---
+
+test('readConsoleCeiling reads the factory layer from the passed env, not the process env', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  assert.notStrictEqual(pre.readConsoleCeiling(run, repo, { env: base }), 'unattended');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'autonomy: unattended\n' } }), 'unattended');
+});
+
+// #6006 final review Minor 3: the factory file is located through the context's homeDir, as the other hook read
+// does (resolveRunPinnedIntegrationModel), never through env.HOME.
+test('readConsoleCeiling reads the factory file under opts.homeDir, not env.HOME; the Review Console gate passes ctx.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const base = { ...BASE_ENV, HOME: scratchDir('ct-fac-home-'), USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE;
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'autonomy: unattended\n');
+  assert.strictEqual(pre.readConsoleCeiling(run, repo, { env: base, homeDir: () => fileHome }), 'unattended');
+
+  const dir = consoleRun('supervised');
+  const ctx = consoleCtx(dir, CONSOLE_Q);
+  const homeDir = () => fileHome;
+  ctx.homeDir = homeDir;
+  const seen = [];
+  pre.run(ctx, { readConsoleCeiling: (runDir, cwd, opts) => { seen.push(opts); return 'supervised'; } });
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0].homeDir, homeDir);
+  assert.strictEqual(seen[0].env, ctx.env);
+});
+
+test('resolveRunPinnedIntegrationModel honours a factory integration-model pin from opts.env, and a factory file under opts.homeDir', () => {
+  const repo = gitRepo();
+  const run = path.join(repo, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
+  fs.mkdirSync(run, { recursive: true });
+  const home = scratchDir('ct-fac-home-');
+  const base = { ...BASE_ENV, HOME: home, USERPROFILE: '' };
+  delete base.CLAUDE_TWEAKS_FACTORY_POLICY;
+  delete base.CT_FACTORY_POLICY_FILE; // the runner's relocation would hide the file under opts.homeDir
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: pr-first\n' } }), 'pr-first');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: { ...base, CLAUDE_TWEAKS_FACTORY_POLICY: 'integration-model: local-merge\n' } }), 'local-merge');
+  const fileHome = scratchDir('ct-fac-filehome-');
+  fs.mkdirSync(path.join(fileHome, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(fileHome, '.claude-tweaks', 'factory-policy.yml'), 'integration-model: pr-first\n');
+  assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, { env: base, homeDir: () => fileHome }), 'pr-first');
 });

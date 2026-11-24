@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -46,7 +47,7 @@ test('mergeManagedRegion: replaces only the region, is idempotent, preserves CRL
 
 // AC11 + writeEnvFiles skip-when-unchanged gotcha
 test('writeEnvFiles: .env.local always, .env only with a Compose file, skips an unchanged write', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'env-file-'));
+  const dir = scratchDir('env-file-');
   const vars = [['PORT', '20000']];
 
   const r1 = writeEnvFiles(dir, vars);
@@ -73,7 +74,7 @@ test('leaseVars + serviceVars: CLAUDE_TWEAKS_LEASE first, then PORT and {NAME}_P
   assert.equal(LEASE_KEY, 'CLAUDE_TWEAKS_LEASE');
   const vars = [...leaseVars(43120), ...serviceVars(['api', 'web'], 43120)];
   assert.deepEqual(vars, [['CLAUDE_TWEAKS_LEASE', '43120'], ['PORT', '43120'], ['WEB_PORT', '43121']]);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-lease-'));
+  const dir = scratchDir('ports-lease-');
   writeEnvFiles(dir, vars);
   const text = fs.readFileSync(path.join(dir, '.env.local'), 'utf8');
   const region = readManagedRegion(text);

@@ -47,6 +47,26 @@ test("claim-targets.md's documented argv produces a line isClaimLogEntry accepts
   }
 });
 
+// #4588: `claim-targets.js --resume-pr` names the adopted PR on the claim line.
+// The widened shape must stay a canonical claim line for every reader of this module.
+test('claimLogText with a resumePr appends ", resume-pr: {url}" and the line stays a canonical claim entry (#4588)', () => {
+  const url = 'https://github.com/o/r/pull/7';
+  assert.strictEqual(claimLogText(5, 'git', url), `claimed #5 (bin/claim-targets.js, transport: git, resume-pr: ${url})`);
+  assert.strictEqual(claimLogText(5, 'git'), 'claimed #5 (bin/claim-targets.js, transport: git)', 'no third argument: the existing text, byte for byte');
+  for (const transport of ['git', 'contents-api', 'mcp']) {
+    const line = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(5, transport, url), reversibility: 'high' });
+    assert.strictEqual(isClaimLogEntry(line), true, line);
+  }
+  const line = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(5, 'git', url), reversibility: 'high' });
+  assert.strictEqual(classifyDecisions(`## /flow\n${line}\n`), 'claim-log-only');
+  assert.strictEqual(hasCanonicalClaimLogFor(line, 5), true);
+  assert.strictEqual(hasCanonicalClaimLogFor(line, 50), false, 'word boundary still holds');
+  for (const bad of ['not-a-url', 'http://github.com/o/r/pull/7', 'https://github.com/o/r/issues/7', 'https://github.com/o/r/pull/7/files', 'https://github.com/o/r/pull/x']) {
+    const wrong = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: `claimed #5 (bin/claim-targets.js, transport: git, resume-pr: ${bad})`, reversibility: 'high' });
+    assert.strictEqual(isClaimLogEntry(wrong), false, wrong);
+  }
+});
+
 test('isClaimLogEntry: single and batch forms, with or without a spec prefix; unparseable, foreign, truncated or tail-carrying lines are not claim lines (#2861)', () => {
   for (const yes of [
     '- AUTO 18:42:06 — Step 2.8: claimed #2861 (bin/claim-targets.js, transport: git). Reversibility: high.',
@@ -262,7 +282,7 @@ test('classifyDecisions: the widened class still fails closed (#3665 Review Focu
     'truncated canonical claim': REAL_SINGLE.slice(0, -30),
     'overlap skip, no claim': `## /flow\n${OVERLAP_SKIP}\n`,
     'degraded skip, no claim': `## /flow\n${DEGRADED_SKIP}\n`,
-    'dispatch-group line': `${REAL_SINGLE}- AUTO 18:50:00 — Dispatch group [2861]: first-call model resolved to claude-opus-5-5 (source: policy). Reversibility: n/a.\n`,
+    'dispatch-group line': `${REAL_SINGLE}- AUTO 18:50:00 — Dispatch group [2861]: first-call model resolved to claude-opus-5-5 at effort medium (source: policy). Reversibility: n/a.\n`,
     'contested claim': `${REAL_SINGLE}- AUTO 21:08:27 — Step 2.8: claim contested: #3004 held live by run 2026-10-16T190307-record-2734 (claimed 19:07:35, ttl 72h). Reversibility: n/a.\n`,
     'FAILED claim': `${REAL_SINGLE}- AUTO 08:00:00 — Step 2.8: claimed #3012 — FAILED (exit 4). Reversibility: n/a.\n`,
     'log-decision-located bookkeeping mention': `${REAL_SINGLE}- AUTO 18:43:35 — log-decision: Step 2.8 file-overlap warning check skipped as redundant. Reversibility: n/a.\n`,

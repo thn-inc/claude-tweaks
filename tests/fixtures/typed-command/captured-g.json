@@ -1,0 +1,39 @@
+[
+  {
+    "type": "user",
+    "promptId": "test-prompt-000g",
+    "sessionId": "test-session-0001",
+    "timestamp": "2026-11-16T02:12:00.868Z",
+    "turnOrigin": "scheduled",
+    "isSidechain": false,
+    "message": {
+      "role": "user",
+      "content": "<command-message>claude-tweaks:dispatch</command-message>\n<command-name>/claude-tweaks:dispatch</command-name>\n<command-args>#3</command-args>"
+    },
+    "scheduledTaskId": "test-task",
+    "scheduledFireId": "test-fire-0001",
+    "wakeupSource": "loop_wakeup",
+    "queueSkipAttachments": true,
+    "queuePriority": "later"
+  },
+  {
+    "type": "user",
+    "promptId": "test-prompt-000g",
+    "sessionId": "test-session-0001",
+    "timestamp": "2026-11-16T02:12:00.868Z",
+    "isMeta": true,
+    "isSidechain": false,
+    "message": {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "(skill expansion elided)"
+        }
+      ]
+    },
+    "wakeupSource": "loop_wakeup",
+    "queueSkipAttachments": true,
+    "queuePriority": "later"
+  }
+]

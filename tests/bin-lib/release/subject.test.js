@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { composeSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } = require('../../../plugin/bin/lib/release/subject.js');
+const { composeSubject, composeHousekeepingSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET } = require('../../../plugin/bin/lib/release/subject.js');
 
 test('type mapping: feature→feat, bug→fix, task→chore', () => {
   assert.equal(TYPE_PREFIX.feature, 'feat');
@@ -77,6 +77,28 @@ test('releaseNote: throws ComposeSubjectError naming the record number when empt
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42 }), /releaseNote must be a non-empty string[^]*#42/);
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: 123 }), /releaseNote must be a non-empty string[^]*#42/);
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42 }), (err) => err instanceof ComposeSubjectError);
+});
+
+test('releaseNote array: one Release-Note line per entry, in order, in one paragraph before the Fixes paragraph', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X.', '  Fixed Y.  '], fixes: [42, 43] });
+  assert.equal(body, 'Release-Note: Added X.\nRelease-Note: Fixed Y.\n\nFixes #42\nFixes #43');
+});
+
+test('releaseNote array: an empty array or a blank entry throws naming the record number', () => {
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: [] }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', '  '] }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', 7] }), /releaseNote must be a non-empty string[^]*#42/);
+});
+
+test('releaseNote array: a bundled multi-line note collapses to one line, so the paragraph stays one Release-Note line per record', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\n\n  and more.', 'Fixed Y.'], fixes: [42, 43] });
+  assert.equal(body, 'Release-Note: Added X and more.\nRelease-Note: Fixed Y.\n\nFixes #42\nFixes #43');
+});
+
+test('releaseNote: a single note stays verbatim, multi-line included, whether a string or a one-entry array', () => {
+  const expected = 'Release-Note: Added X\nand more.\n\nFixes #42';
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: 'Added X\nand more.' }).body, expected);
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\nand more.'] }).body, expected);
 });
 
 test('body: Release-Note paragraph sits after summary/tag and before Fixes (and before BREAKING CHANGE)', () => {
@@ -182,4 +204,43 @@ test('scope (#3028): type(scope): prefix counted inside the 72-char budget; blan
   const fortyScope = composeSubject({ type: 'feature', title: 'Add the thing that is long enough to need truncating here', number: 3028, scope: 'a'.repeat(40), releaseNote: 'N.' }).title;
   assert.ok(fortyScope.startsWith(`feat(${'a'.repeat(40)}): `), fortyScope);
   assert.ok(fortyScope.length <= SUBJECT_BUDGET, fortyScope);
+});
+
+test('composeHousekeepingSubject: chore subject from the PR title, body has no Release-Note and no Fixes/Refs line', () => {
+  const out = composeHousekeepingSubject({ title: 'Prune 111 completed execution plans', number: 5207 });
+  assert.equal(out.title, 'chore: Prune 111 completed execution plans (#5207)');
+  assert.equal(out.body, 'Prune 111 completed execution plans');
+  assert.doesNotMatch(out.body, /Release-Note:|^(Fixes|Refs) #/m);
+  const tagged = composeHousekeepingSubject({ title: 'Prune plans', number: 9, tag: 'housekeeping', scope: 'tidy' });
+  assert.equal(tagged.title, 'chore(tidy): Prune plans (#9)');
+  assert.equal(tagged.body, 'Prune plans\n\n[housekeeping]');
+});
+
+test('composeHousekeepingSubject: refs become Refs lines in a last block, never Fixes; none leaves the body unchanged', () => {
+  const out = composeHousekeepingSubject({ title: 'Add learned skill updates from wrap-up of #6112', number: 6200, refs: [6112] });
+  assert.equal(out.title, 'chore: Add learned skill updates from wrap-up of #6112 (#6200)');
+  assert.ok(out.body.endsWith('Refs #6112'), out.body);
+  assert.doesNotMatch(out.body, /Fixes/);
+  const two = composeHousekeepingSubject({ title: 'Add x', number: 9, tag: 't', refs: [3, 1] });
+  assert.equal(two.body, 'Add x\n\n[t]\n\nRefs #3\nRefs #1');
+  assert.equal(composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [] }).body, 'Add x');
+  assert.throws(() => composeHousekeepingSubject({ title: 'Add x', number: 9, refs: [0] }), (err) => err instanceof ComposeSubjectError && /refs entries must be positive integers, got 0/.test(err.message));
+});
+
+test('composeHousekeepingSubject: a Conventional-Commits-shaped title loses its prefix, an over-long one truncates within the budget', () => {
+  assert.equal(composeHousekeepingSubject({ title: 'chore(tidy)!: Prune plans', number: 9 }).title, 'chore: Prune plans (#9)');
+  const long = composeHousekeepingSubject({ title: 'Prune '.repeat(30).trim(), number: 5207 });
+  assert.ok(long.title.length <= SUBJECT_BUDGET, long.title);
+  assert.ok(long.title.endsWith('… (#5207)'), long.title);
+});
+
+test('composeHousekeepingSubject: only a Conventional-Commits type prefix is stripped; a prefix-only title is empty', () => {
+  assert.equal(composeHousekeepingSubject({ title: 'Note: keep this word', number: 9 }).title, 'chore: Note: keep this word (#9)');
+  assert.throws(() => composeHousekeepingSubject({ title: 'chore:', number: 9 }), (err) => err instanceof ComposeSubjectError);
+});
+
+test('composeHousekeepingSubject: throws ComposeSubjectError on a bad number, an empty title, or a bad scope', () => {
+  for (const bad of [{ title: 'T', number: 0 }, { title: '  ', number: 9 }, { title: 'T', number: 9, scope: 'a b' }]) {
+    assert.throws(() => composeHousekeepingSubject(bad), (err) => err instanceof ComposeSubjectError);
+  }
 });

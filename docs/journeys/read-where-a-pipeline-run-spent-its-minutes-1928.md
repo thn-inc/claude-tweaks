@@ -5,7 +5,15 @@ files:
   - plugin/bin/lib/flow/manifest.js
   - plugin/bin/lib/timing/derive.js
   - plugin/bin/phase-timing.js
+  - plugin/bin/lib/timing/run-timing.js
+  - plugin/bin/lib/timing/at-close.js
+  - plugin/bin/lib/timing/transcript.js
+  - plugin/bin/timing-at-close.js
+  - plugin/bin/hooks.js
+  - plugin/bin/lib/reconcile/archive-merged.js
   - plugin/bin/lib/hooks/subagent-stop.js
+  - plugin/bin/ci-gate-record.js
+  - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/flow/summary-template.md
   - plugin/skills/wrap-up/summary-template.md
   - plugin/skills/_shared/timing-render.md
@@ -31,7 +39,7 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --run "$PIPELINE_RUN_DIR" --cmd …` (the canonical snippet in `test/verification.md`)
 - **Action:** Run verification the way the skill already does; the `--run` flag is now part of the one-line canonical command.
 - **Should feel:** Nothing changes in the run's output; one more line lands in `events.jsonl` with `type: "verify"`, the mode, the suites that actually ran, the duration, and the pass flag.
-- **Should understand:** An unset `$PIPELINE_RUN_DIR` arrives as an empty value and writes nothing. A run dir that lives inside a worktree (a shadow copy) is refused on stderr, never written silently, and never fails the verification itself. A `--baseline` run's event also carries `baselineAdjudicated` (`pass`, `fail`, or `ineligible`), and `timing.json`'s verify entries keep it beside `pass` — which stays the raw outcome, so an adjudicated pass reads `pass: false` with `baselineAdjudicated: "pass"`.
+- **Should understand:** An unset `$PIPELINE_RUN_DIR` arrives as an empty value and writes nothing. A run dir that lives inside a worktree (a shadow copy) is refused on stderr, never written silently, and never fails the verification itself. A `--baseline` run's event also carries `baselineAdjudicated` (`pass`, `fail`, or `ineligible`), and `timing.json`'s verify entries keep it beside `pass` — which stays the raw outcome, so an adjudicated pass reads `pass: false` with `baselineAdjudicated: "pass"`. Under an `impact` declaration the event also carries `impact: {suite, fallback, superseded, selected, supersedingPaths}`, and `timing.json`'s verify entries keep it; a run with no `impact` declaration writes no `impact` field.
 - **Red flags:** `verify.js: --run … refused (not-anchored)` on stderr — the path is not under the main checkout's pipelines tree; fix the path, do not suppress the line.
 
 ### 2. Let `spec-status` keep the manifest's phase log
@@ -48,9 +56,23 @@ files:
 - **Should understand:** `Minutes` is the phase's span; a container (`build`, `call-1`, `call-2`) also shows `(own N)`, the minutes not already counted by a nested phase — `total` sums only those. A phase with no event reads `unattributed` rather than a guessed number; a typed `/claude-tweaks:<phase>` command opens that phase (the hook records it with `source: "user"`), while a typed non-phase command nests into the enclosing phase and never appears as a row. When *every* phase is `unattributed` (a standalone run that recorded no phase events), `--markdown` prints no table at all — one line instead, `no phase events; {n} tool round-trips, {in}/{out} tokens` (or `no phase events; no tool-use data available` without a transcript), plus a `Guard denials:` line only when a count is non-zero; `timing.json` is still written. Exit 2 only means the invocation itself was malformed (no `--run`, not a directory, an unreadable events file). `tests/timing-prose-conformance.test.js` pins the `### Timing` header and the `phase-timing.js` invocation in each of `flow/summary-template.md`, `wrap-up/summary-template.md`, and `flow/multispec-summary.md`, and pins the `| Phase | Minutes | Verify |` row on `_shared/timing-render.md` (`#3413 AC2`).
 - **Red flags:** An unfamiliar phase name in the table — an un-mapped `claude-tweaks:*` skill was invoked inside review or wrap-up and opened its own top-level span; add it to the nested parent map in `derive.js` if it belongs to the enclosing phase.
 
-### 4. Trust the contract-violation count again
+### 4. Find the file already written when the run closed
+- **URL:** `{run-dir}/timing.json` (or `pipelines/archive/{run-id}/timing.json`) after `hooks.js close-run`, `hooks.js teardown-run`, or the reconciler's archive of a run that was not closed yet
+- **Action:** Nothing to type. Every run that closes gets its `timing.json` in code, whether or not a summary step ever ran Step 3's command (#5555).
+- **Should feel:** A run that stopped early, closed without a wrap-up, or was dispatched still has its per-phase table to read. A file that already has token totals is left byte-identical.
+- **Should understand:** `close-run` and `teardown-run` write the whole file before they return, token totals included, within a 60-second bound. The archive writes the phase rows first, then a detached `timing-at-close.js` fills in the token totals. Tokens come from the run's own `{sessionId}.jsonl` under its own worktree slug (`worktreeAtClose` once the run is closed), or, for a non-dispatched run with none there, under the slug of the checkout that holds its run dir (where a worktree-always `/flow` session starts before it enters its worktree), and, for a dispatched run, from the depth-1 Task-call transcripts of its dispatching and resuming sessions whose prompt names exactly that run (its `dispatches` view then keeps only those calls' descendants); they are clipped to the run's lifetime and attributed by run id, so two runs of one session never share totals. When the transcript can't be established, the file keeps its phase rows with no `totals.tokens`. A failure never stops the close; it leaves one `SKIP` line in `decisions.md`.
+- **Red flags:** a closed run with no `timing.json` and no timing `SKIP` line. A `SKIP` reading `no {sessionId}.jsonl under the slug of {worktree} or of its run root {checkout}` on a non-dispatched run: the session's transcript is under neither slug (for example under another worktree's slug, which is never read). A dispatched run's `SKIP` also says no Task-call transcript of its session names the run (#5647).
+
+### 5. Trust the contract-violation count again
 - **URL:** `events.jsonl`, `type: "contract-violation"`
 - **Action:** Read the count after a run that dispatched subagents.
 - **Should feel:** Only real subagent replies are graded; an orchestrator's own narration turns no longer show up.
 - **Should understand:** The SubagentStop hook grades `agent_transcript_path` only, and only when it names a file *distinct* from the same firing's own `transcript_path`. Two shapes are a deliberate no-op rather than a graded turn: the field absent entirely (no fallback to the parent session's transcript), and the field present but identical to `transcript_path` — the dispatching session's own file, which the harness sometimes sends while a main session ends its turn waiting on an async dispatch. A genuine subagent stop always carries its own distinct transcript, so neither no-op can hide a real violation. A third skip: a reply whose last non-empty line starts `INTERIM_STATUS: ` is a nested dispatcher's interim progress turn (`_shared/subagent-output-contract.md`) and is never graded; an interim turn without that marker still counts as a violation, unless the dispatcher's own async `Agent` launches are still pending in its transcript (#3015, `_shared/subagent-output-contract.md`).
 - **Red flags:** Zero violations on a run where an agent clearly replied without a status line — either the harness stopped sending `agent_transcript_path`, or it is sending this session's own `transcript_path` under that name. Compare the two fields in the firing before concluding the check is simply off.
+
+### 6. See what CI cost at the merge gate
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {n} --head-sha {sha} --verdict green|red|timeout-park --gate-start-epoch {epoch} --run "$PIPELINE_RUN_DIR" --repo {owner}/{repo}` (called by `_shared/pr-first-merge.md` Step 2.5, never typed by hand), then Step 3's `phase-timing.js --markdown`.
+- **Action:** Nothing new to type. The merge-verification gate notes when it started, and once it decides (green before the merge, red, or still pending at its 15-minute bound) it records one `ci-gate` event in `events.jsonl`. Re-run Step 3's command after the merge to read it.
+- **Should feel:** One extra line under the timing table, `CI gate: green, 20.3 min wall, gate waited 5 min (PR #5240)`, that answers "how long did CI run for this PR, and how long did the run sit waiting on it" without opening GitHub.
+- **Should understand:** `wall` is the span from the earliest start to the latest finish of the head commit's completed workflow runs, read after the verdict; `(lower bound)` marks a gate that timed out with checks still pending, and `n/a` means no head run had completed, never zero. `timing.json` gains `totals.ciWallMinutes` and a `ciGate` list only when an event exists, so a run that never reached the gate keeps its old shape byte for byte. The gate records nothing under an explicit `merge-verification: off`, when it arms an auto-merge on pending checks, when the checks read fails, or in dispatch close-out. A summary rendered before the merge (the usual wrap-up order) has no `CI gate:` line yet; the event is still in `events.jsonl`. In a multi-spec run the event goes to the parent run directory. The writer never blocks a merge: a non-zero exit is logged as a `SKIP` line and the merge continues.
+- **Red flags:** `ci-gate not recorded` in `decisions.md` on every merge — exit 2 is a malformed call or a failed `gh run list`, exit 3 a run directory that is missing or not under the main checkout's pipelines tree. A PR that went through the gate twice (a red-path resume, a head that moved) shows one line, its latest pass; the earlier pass stays in `events.jsonl`.

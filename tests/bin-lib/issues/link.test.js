@@ -246,6 +246,14 @@ test('link-records CLI: --repo ../evil is rejected before any gh call', () => {
   assert.match(err.join(''), /invalid --repo value/);
 });
 
+// #4933: the origin-derived spec passes the host gate and then meets the same guard.
+test('link-records CLI: an origin whose owner is ".." is rejected after the host gate, before any gh call', () => {
+  const { deps, err } = cliDeps({ runner: () => { throw new Error('must not call gh'); }, remoteUrl: 'git@github.com:../r.git' });
+  const code = run(['--parent', '592', '--subs', '595'], deps);
+  assert.equal(code, 2);
+  assert.match(err.join(''), /invalid --repo value/);
+});
+
 test('resolveDatabaseIds: GraphQL errors[] surface in the missing-id message', () => {
   const runner = (args) => (isGraphQL(args) ? JSON.stringify({ data: { repository: null }, errors: [{ message: 'Could not resolve to a Repository' }] }) : '{}');
   assert.throws(
@@ -259,7 +267,7 @@ test('link-records CLI: a throwing remoteUrl (outside a git repo) is the friendl
   deps.remoteUrl = () => { throw new Error('fatal: not a git repository'); };
   const code = run(['--parent', '592', '--subs', '595'], deps);
   assert.equal(code, 2);
-  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo/);
+  assert.match(err.join(''), /could not resolve owner\/repo — pass --repo \[host\/\]owner\/name/);
 });
 
 test('errorText fallback: a runner throwing a non-Error still yields a non-empty failed[].error', () => {
@@ -328,6 +336,7 @@ test('#2240: link-records CLI threads a non-github.com --repo host through resol
     return '{}';
   };
   const { deps } = cliDeps({ runner, remoteUrl: 'https://ghe.example.com/acme/w.git' });
+  deps.gateDeps = { env: { GH_HOST: 'ghe.example.com' } }; // #4933: an unknown origin host is opted in by GH_HOST
   const code = run(['--parent', '592', '--subs', '595', '--blocked-by', '598:595'], deps);
   assert.equal(code, 0);
   const graphqlCall = calls.find(isGraphQL);

@@ -5,10 +5,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runPhaseExit, realDeps } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli');
+const phaseExit = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runPhaseExit, realDeps } = phaseExit;
+const { _resetGhHostCache } = require('../../../plugin/bin/lib/repo-resolve');
+const RESOLVE_POLICY_CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'resolve-policy.js');
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
+const { parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const { phaseExitRecorded } = require('../../../plugin/bin/lib/phase-exit/exit-record');
 
 const RUN_ID = '2026-10-25T000001-record-1';
 const BRANCH = 'worktree-dispatch-record-1';
@@ -106,6 +114,8 @@ const entriesOf = (runDir) => {
 };
 const stripTime = (l) => l.replace(/^- (\w[\w-]*) \d{2}:\d{2}:\d{2} — /, '- $1 — ');
 const pushCalls = (calls) => calls.git.filter((a) => a[2] === 'push');
+// The phase-exit record (#6143) every call on a run that is not closed writes first, time stripped.
+const EXIT_LINE = (phase = 'build') => `- AUTO — Phase exit: ${phase} phase exited at abc1234def. Reversibility: n/a.`;
 
 // ---- route ----
 
@@ -122,17 +132,17 @@ test('AC2.2: route — local-merge at build logs the SKIP line and calls no git 
   assert.equal(h.calls.checklist.length, 0);
   assert.equal(h.calls.mergeState.length, 0);
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-  assert.match(text, /^## \/build\n- SKIP \d{2}:\d{2}:\d{2} — Common Step 7 phase-exit push \(skipped\): /m);
-  assert.equal(entriesOf(runDir).length, 1);
+  assert.match(text, /^## \/build\n- AUTO \d{2}:\d{2}:\d{2} — Phase exit: build phase exited at abc1234def\. Reversibility: n\/a\.\n- SKIP \d{2}:\d{2}:\d{2} — Common Step 7 phase-exit push \(skipped\): /m);
+  assert.equal(entriesOf(runDir).length, 2);
 });
 
-test('AC2.2: route — local-merge at test is silent', () => {
+test('AC2.2: route — local-merge at test writes only the phase-exit record', () => {
   const { main, runDir, wt } = fixture();
   const h = makeDeps(main, wt, { model: 'local-merge' });
   const env = runPhaseExit(opts(runDir, wt, 'test'), h.deps);
   assert.equal(env.route, 'local-merge');
   assert.equal(env.push.state, 'skipped');
-  assert.deepEqual(entriesOf(runDir), []);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE('test')]);
   assert.equal(pushCalls(h.calls).length, 0);
   assert.equal(h.calls.gh.length, 0);
 });
@@ -148,8 +158,9 @@ test('AC2.2: route — current-branch (git-dir == common-dir) skips like local-m
   assert.equal(h.calls.gh.length, 0);
   assert.equal(h.calls.hooks.length, 0);
   assert.equal(h.calls.checklist.length, 0);
-  assert.equal(entriesOf(runDir).length, 1);
-  assert.match(entriesOf(runDir)[0], /Common Step 7 phase-exit push \(skipped\)/);
+  assert.equal(entriesOf(runDir).length, 2);
+  assert.equal(stripTime(entriesOf(runDir)[0]), EXIT_LINE());
+  assert.match(entriesOf(runDir)[1], /Common Step 7 phase-exit push \(skipped\)/);
 });
 
 test('route — local-merge still backfills a missing worktree stamp (Common Step 7 runs in worktree mode, not only pr-first)', () => {
@@ -160,6 +171,7 @@ test('route — local-merge still backfills a missing worktree stamp (Common Ste
   assert.deepEqual(h.calls.hooks, [['record-worktree', '--run', runDir, path.resolve(wt)]]);
   assert.equal(h.calls.gh.length, 0);
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE(),
     '- AUTO — Common Step 7 bookkeeping assertion: backfilled worktree registration before phase-exit push. Reversibility: high.',
     '- SKIP — Common Step 7 phase-exit push (skipped): condition: integration-model=local-merge or current-branch mode → fallback: no phase-exit push, one push at finish. Reversibility: n/a.',
   ]);
@@ -176,8 +188,9 @@ test('route — an unresolvable integration-model pushes nothing and logs one SK
     assert.equal(pushCalls(h.calls).length, 0);
     assert.equal(h.calls.checklist.length, 0);
     const entries = entriesOf(runDir);
-    assert.equal(entries.length, 1);
-    assert.match(entries[0], /^- SKIP .* — Phase-exit push: condition: integration-model unresolved/);
+    assert.equal(entries.length, 2);
+    assert.equal(stripTime(entries[0]), EXIT_LINE('review'));
+    assert.match(entries[1], /^- SKIP .* — Phase-exit push: condition: integration-model unresolved/);
   }
 });
 
@@ -201,7 +214,7 @@ test('AC2.2: branch guard — detached HEAD and the integration branch are refus
     assert.equal(env.branch, c.branch || null);
     assert.deepEqual(env.commit, { clean: true, dirty: [] }, c.label);
     const entries = entriesOf(runDir).map(stripTime);
-    assert.deepEqual(entries, [`- AUTO — Phase-exit push: refused to push ${c.label} at test exit — not a run branch. Reversibility: n/a.`], c.label);
+    assert.deepEqual(entries, [EXIT_LINE('test'), `- AUTO — Phase-exit push: refused to push ${c.label} at test exit — not a run branch. Reversibility: n/a.`], c.label);
     assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), c.label);
   }
 });
@@ -213,6 +226,7 @@ test('branch guard — a refused branch still runs the commit check, so a dirty 
   assert.equal(env.push.state, 'refused');
   assert.deepEqual(env.commit, { clean: false, dirty: ['a.js'] });
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE('review'),
     '- AUTO — Phase-exit push: refused to push main at review exit — not a run branch. Reversibility: n/a.',
     '- AUTO — Phase-exit push: 1 uncommitted path(s) at review exit not included in the push. Reversibility: n/a.',
   ]);
@@ -251,18 +265,26 @@ test('AC2.2: commit check — a dirty tree logs the uncommitted-paths line and s
   assert.equal(env.push.state, 'pushed');
   assert.deepEqual(pushCalls(h.calls), [['-C', wt, 'push', 'origin', BRANCH]]);
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE('review'),
     '- AUTO — Phase-exit push: 3 uncommitted path(s) at review exit not included in the push. Reversibility: n/a.',
   ]);
   assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /^## \/review$/m);
 });
 
-test('AC2.2: commit check — a throwing git status reports commit.error, logs nothing and still pushes', () => {
+test('commit check — a worktree-side rename ( R) counts once, its source path is not a separate dirty entry', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { porcelain: ' R new.js\0old.js\0 M a.js\0' });
+  const env = runPhaseExit(opts(runDir, wt, 'review'), h.deps);
+  assert.deepEqual(env.commit, { clean: false, dirty: ['new.js', 'a.js'] });
+});
+
+test('AC2.2: commit check — a throwing git status reports commit.error, logs nothing of its own and still pushes', () => {
   const { main, runDir, wt } = fixture();
   const h = makeDeps(main, wt, { porcelain: Object.assign(new Error('Command failed'), { stderr: 'fatal: index file corrupt\n' }) });
   const env = runPhaseExit(opts(runDir, wt), h.deps);
   assert.deepEqual(env.commit, { clean: null, dirty: [], error: 'fatal: index file corrupt' });
   assert.equal(env.push.state, 'pushed');
-  assert.deepEqual(entriesOf(runDir), []);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE()]);
 });
 
 test('commit check — a clean tree is commit.clean true with no entry', () => {
@@ -284,6 +306,7 @@ test('AC2.2: bookkeeping — missing worktree calls record-worktree and logs the
   assert.equal(env.bookkeeping.pr, 'present');
   assert.deepEqual(h.calls.hooks, [['record-worktree', '--run', runDir, path.resolve(wt)]]);
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE(),
     '- AUTO — Common Step 7 bookkeeping assertion: backfilled worktree registration before phase-exit push. Reversibility: high.',
   ]);
 });
@@ -293,7 +316,7 @@ test('bookkeeping — other phases log under their own step name and section', (
   const h = makeDeps(main, wt);
   runPhaseExit(opts(runDir, wt, 'polish'), h.deps);
   const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
-  assert.match(text, /^## \/flow\n- AUTO \d{2}:\d{2}:\d{2} — Phase-exit bookkeeping assertion: backfilled worktree registration before phase-exit push\. Reversibility: high\.$/m);
+  assert.match(text, /^## \/flow\n- AUTO \d{2}:\d{2}:\d{2} — Phase exit: polish phase exited at abc1234def\. Reversibility: n\/a\.\n- AUTO \d{2}:\d{2}:\d{2} — Phase-exit bookkeeping assertion: backfilled worktree registration before phase-exit push\. Reversibility: high\.$/m);
 });
 
 test('AC2.2: bookkeeping — missing pr with one open PR records it', () => {
@@ -306,12 +329,19 @@ test('AC2.2: bookkeeping — missing pr with one open PR records it', () => {
   assert.deepEqual(h.calls.gh, [['pr', 'list', '--head', BRANCH, '--state', 'open', '--json', 'number,url']]);
   assert.deepEqual(h.calls.hooks, [['record-pr', '--run', runDir, '42', PR_URL]]);
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE(),
     '- AUTO — Common Step 7 bookkeeping assertion: backfilled PR-early lifecycle before phase-exit push. Reversibility: high.',
   ]);
 });
 
-// The SKIP line a pr-first push with no recorded PR (and no gate release) writes.
-const NO_PR_SKIP = `- SKIP — Phase-exit push: condition: no recorded PR for ${BRANCH} and no PR-early run lifecycle FAILED line → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// The SKIP line a pr-first push with no recorded PR (and no release) writes for a
+// branch not proven to be a first publish.
+const NO_PR_SKIP = `- SKIP — Phase-exit push: condition: no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// The SKIP line for a first publish (no upstream of its own yet) with no Step 1 line.
+const NO_PR_FIRST_PUBLISH_SKIP = `- SKIP — Phase-exit push: condition: no PR-early run lifecycle Step 1 line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`;
+// decisions.md lines the PR-early run lifecycle logs: the FAILED degrade line and the Step 1 line.
+const FAILED_LINE = '- AUTO 10:00:00 — /build: PR-early run lifecycle: push of x FAILED (network); run proceeds local-only, no PR opened. Reversibility: n/a.\n';
+const STEP1_LINE = `- AUTO 10:00:00 — PR-early run lifecycle: no existing PR for ${BRANCH}; creating. Reversibility: n/a.\n`;
 
 test('AC2.2: bookkeeping — missing pr with no open PR reports missing, and the push is skipped ([IL-131])', () => {
   const { main, runDir, wt } = fixture({ worktree: '/wt' });
@@ -323,7 +353,7 @@ test('AC2.2: bookkeeping — missing pr with no open PR reports missing, and the
   assert.equal(pushCalls(h.calls).length, 0);
   assert.equal(h.calls.mergeState.length, 0);
   assert.equal(h.calls.checklist.length, 1);
-  assert.deepEqual(entriesOf(runDir).map(stripTime), [NO_PR_SKIP]);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE(), NO_PR_SKIP]);
 });
 
 test('[IL-131] PR precondition — a logged PR-early FAILED line, prExempt, or a first publish with its Step 1 line releases the push', () => {
@@ -369,6 +399,46 @@ test('[IL-131] PR precondition — a first publish without its Step 1 line, or a
   }
 });
 
+test('[IL-131] PR precondition — a throwing hasNoUpstreamYet reads as tracked: only the FAILED line releases, and the SKIP line uses the tracked wording', () => {
+  for (const c of [{ decisions: null, state: 'skipped' }, { decisions: STEP1_LINE, state: 'skipped' }, { decisions: FAILED_LINE, state: 'pushed' }]) {
+    const { main, runDir, wt } = fixture({ worktree: '/wt' });
+    if (c.decisions) fs.writeFileSync(path.join(runDir, 'decisions.md'), c.decisions);
+    const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => { throw new Error('boom'); } });
+    const env = runPhaseExit(opts(runDir, wt), h.deps);
+    assert.equal(env.push.state, c.state, JSON.stringify(c));
+    if (!c.decisions) assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE(), NO_PR_SKIP]);
+  }
+});
+
+test('[IL-131] PR precondition — a per-spec first publish whose FAILED and Step 1 lines sit on the parent run dir pushes', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt' });
+  const specDir = path.join(runDir, 'spec-4');
+  fs.mkdirSync(specDir);
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE + STEP1_LINE);
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(specDir, wt), h.deps);
+  assert.equal(env.push.state, 'pushed');
+});
+
+test('[IL-131] PR precondition — a first publish with only a FAILED line is skipped, and the SKIP line names the missing Step 1 line', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt' });
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), FAILED_LINE);
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.equal(pushCalls(h.calls).length, 0);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [stripTime(FAILED_LINE.trim()), EXIT_LINE(), NO_PR_FIRST_PUBLISH_SKIP]);
+});
+
+test('[IL-131] PR precondition — prExempt does not release a first publish with no Step 1 line', () => {
+  const { main, runDir, wt } = fixture({ worktree: '/wt', prExempt: true });
+  const h = makeDeps(main, wt, { prList: [], hasNoUpstreamYet: () => true });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.equal(pushCalls(h.calls).length, 0);
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE(), NO_PR_FIRST_PUBLISH_SKIP]);
+});
+
 test('bookkeeping — a prExempt run is pr n/a with no lookup', () => {
   const { main, runDir, wt } = fixture({ worktree: '/wt', prExempt: true });
   const h = makeDeps(main, wt);
@@ -393,7 +463,7 @@ test('bookkeeping — an ambiguous, unreadable or unrecorded PR lookup reports f
     const env = runPhaseExit(opts(runDir, wt), h.deps);
     assert.equal(env.bookkeeping.pr, 'failed');
     assert.match(env.bookkeeping.detail, c.detail);
-    assert.deepEqual(entriesOf(runDir).map(stripTime), [NO_PR_SKIP]);
+    assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE(), NO_PR_SKIP]);
     assert.equal(env.push.state, 'skipped');
   }
 });
@@ -410,7 +480,7 @@ test('AC2.2: bookkeeping — record-worktree failing output reports failed', () 
     const env = runPhaseExit(opts(runDir, wt), h.deps);
     assert.equal(env.bookkeeping.worktree, 'failed');
     assert.match(env.bookkeeping.detail, /record/);
-    assert.deepEqual(entriesOf(runDir), []);
+    assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE()]);
     assert.equal(env.push.state, 'pushed');
   }
 });
@@ -483,6 +553,95 @@ test('active run — a run-state with status active and no worktree still backfi
   assert.equal(commitEventsOf(runDir).length, 1);
 });
 
+// ---- phase exit record (#6143) ----
+
+const PHASE_EXIT_LINE = (phase = 'build', section = '/build') => ({
+  section, location: 'Phase exit', status: 'AUTO', action: `${phase} phase exited at abc1234def.`,
+});
+// Every appendDecision call, parsed, in order, interleaved with the git push calls.
+function recordingDeps(main, wt, opts = {}) {
+  const seq = [];
+  const h = makeDeps(main, wt, opts);
+  const git = h.deps.git;
+  h.deps.git = (args, o) => { if (args[2] === 'push') seq.push({ push: true }); return git(args, o); };
+  h.deps.appendDecision = (a) => {
+    const e = parseEntry(a.entry);
+    seq.push({ section: a.section, location: e.location, status: e.status, action: e.action.replace(/ Reversibility: [^.]*\.$/, '') });
+    if (opts.appendThrows && e.location === 'Phase exit') throw new Error('disk full');
+  };
+  return { ...h, seq };
+}
+
+test('phase exit record — every route appends exactly one AUTO Phase exit entry under the phase section, before any push line', () => {
+  const cases = [
+    { name: 'pr-first pushed', opts: {}, push: 'pushed' },
+    { name: 'pr-first failed push', opts: { push: Object.assign(new Error('x'), { stderr: 'fatal: nope' }) }, push: 'failed' },
+    { name: 'local-merge', opts: { model: 'local-merge' }, push: 'skipped' },
+    { name: 'current-branch', opts: { currentBranch: true }, push: 'skipped' },
+    { name: 'integration-model unresolved', opts: { model: '' }, push: 'skipped' },
+  ];
+  for (const c of cases) {
+    const { main, runDir, wt } = fixture();
+    const h = recordingDeps(main, wt, c.opts);
+    const env = runPhaseExit(opts(runDir, wt), h.deps);
+    assert.equal(env.push.state, c.push, c.name);
+    const exits = h.seq.filter((s) => s.location === 'Phase exit');
+    assert.deepEqual(exits, [PHASE_EXIT_LINE()], c.name);
+    assert.deepEqual(h.seq[0], PHASE_EXIT_LINE(), `${c.name}: the Phase exit entry comes first`);
+    assert.deepEqual(env.logFailures, [], c.name);
+  }
+});
+
+test('phase exit record — other phases use their PHASE_SECTIONS section (polish -> /flow)', () => {
+  for (const [phase, section] of [['test', '/test'], ['review', '/review'], ['polish', '/flow'], ['wrap-up', '/wrap-up']]) {
+    const { main, runDir, wt } = fixture();
+    const h = recordingDeps(main, wt);
+    runPhaseExit(opts(runDir, wt, phase), h.deps);
+    assert.deepEqual(h.seq.filter((s) => s.location === 'Phase exit'), [PHASE_EXIT_LINE(phase, section)], phase);
+  }
+});
+
+test('phase exit record — an unreadable HEAD writes unknown HEAD', () => {
+  const { main, runDir, wt } = fixture();
+  const h = recordingDeps(main, wt);
+  const git = h.deps.git;
+  h.deps.git = (args, o) => { if (args.slice(2).join(' ') === 'rev-parse HEAD') throw new Error('no HEAD'); return git(args, o); };
+  runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(h.seq[0].action, 'build phase exited at unknown HEAD.');
+});
+
+test('phase exit record — an appendDecision throw on it lands in logFailures and does not stop the push', () => {
+  const { main, runDir, wt } = fixture();
+  const h = recordingDeps(main, wt, { appendThrows: true });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'pushed');
+  assert.equal(pushCalls(h.calls).length, 1);
+  assert.deepEqual(env.logFailures, [{ kind: 'decision', status: 'AUTO', step: 'Phase exit', text: 'build phase exited at abc1234def', error: 'disk full' }]);
+});
+
+test('phase exit record — a closed run (status clean, or an archived dir) writes no Phase exit entry', () => {
+  for (const archive of [false, true]) {
+    const { main, runDir, wt } = closedFixture({ worktree: '/wt', pr: { number: 42, url: PR_URL } }, { archive });
+    const h = recordingDeps(main, wt);
+    runPhaseExit(opts(runDir, wt), h.deps);
+    assert.deepEqual(h.seq.filter((s) => s.location === 'Phase exit'), [], archive ? 'archived' : 'clean');
+  }
+  for (const route of [{ currentBranch: true }, { model: 'local-merge' }, { model: '' }]) {
+    const { main, runDir, wt } = closedFixture({ worktree: '/wt' }, { archive: false });
+    const h = recordingDeps(main, wt, route);
+    runPhaseExit(opts(runDir, wt), h.deps);
+    assert.deepEqual(h.seq.filter((s) => s.location === 'Phase exit'), [], JSON.stringify(route));
+  }
+});
+
+test('phase exit record — the written line is what exit-record.js reads as a recorded exit', () => {
+  const { main, runDir, wt } = fixture();
+  runPhaseExit(opts(runDir, wt, 'test'), makeDeps(main, wt).deps);
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.equal(phaseExitRecorded(text, 'test'), true);
+  assert.equal(phaseExitRecorded(text, 'build'), false);
+});
+
 // ---- push ----
 
 test('AC2.2: push failure logs the FAILED line, skips merge-state, still flips the checklist', () => {
@@ -498,6 +657,7 @@ test('AC2.2: push failure logs the FAILED line, skips merge-state, still flips t
   assert.ok(!fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8').includes('push'));
   assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'a failed push writes no push breadcrumb');
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE(),
     `- AUTO — Phase-exit push: push of ${BRANCH} to origin FAILED at build exit (fatal: unable to access remote); the next phase exit's push retries. Reversibility: n/a.`,
   ]);
 });
@@ -515,6 +675,7 @@ test('push timeout — the push runs under GIT_PUSH_TIMEOUT_MS, not the git boun
   assert.ok(seen.filter((s) => s.sub !== 'push').every((s) => s.o === undefined), 'every other git call keeps the default bound');
   assert.deepEqual(env.push, { state: 'failed', reason: `timed out after ${GIT_PUSH_TIMEOUT_MS} ms` });
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE(),
     `- AUTO — Phase-exit push: push of ${BRANCH} to origin FAILED at build exit (timed out after ${GIT_PUSH_TIMEOUT_MS} ms); the next phase exit's push retries. Reversibility: n/a.`,
   ]);
 });
@@ -547,6 +708,7 @@ test('worktree guard — a --worktree other than the active run\'s refuses the p
   assert.match(ts, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(rest, { type: 'wd-push-mismatch', expected, actual, command: `git -C ${wt} push origin ${BRANCH}` });
   assert.deepEqual(entriesOf(runDir).map(stripTime), [
+    EXIT_LINE('review'),
     `- AUTO — Phase-exit push: refused to push ${BRANCH} at review exit — --worktree ${actual} is not the run's worktree ${expected}. Reversibility: n/a.`,
   ]);
   // A failed event append is reported, and the refusal stands.
@@ -698,6 +860,176 @@ test('realDeps.git — output past execFileSync\'s 1 MiB default is returned, no
   assert.ok(out.length >= 2 * 1024 * 1024, `read ${out.length} bytes`);
 });
 
+// ---- the real resolvePolicy seam (#4578 plan review): a degraded integration-model read is unresolved ----
+
+// A real git repo under os.tmpdir() with an `origin` remote (so detection reaches `gh`), and a
+// run dir outside every checkout (resolve-policy.js --run accepts it).
+function forgeFixture(runConfig = null) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-forge-')));
+  created.push(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true });
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-run-'));
+  created.push(runDir);
+  if (runConfig !== null) fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
+  return { repo, runDir };
+}
+
+// The in-process core reads process.env at call time (callerDeps), so set the env per test (never at load).
+function withForgeEnv(fn) {
+  const vars = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000', GH_REPO: '', GH_HOST: '' };
+  const saved = {};
+  for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
+  try { return fn(); } finally {
+    for (const k of Object.keys(vars)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+}
+
+test('realDeps.resolvePolicy: a degraded integration-model read throws "forge detection degraded (timeout)" instead of returning local-merge (#4578 plan review)', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout\)/);
+    });
+    assert.equal(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a timeout then a failed retry throws with the timeout-then-exit reason', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout-then-exit\)/);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a clean detection returns the plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and a non-forge key still returns its plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: pr-first\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+      // integration-branch has no default: the --values-equivalent empty string
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), '');
+    });
+    assert.equal(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a run-pinned integration-branch returns its string value', () => {
+  const { repo, runDir } = forgeFixture('integration-branch: develop\n');
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), 'develop');
+});
+
+test('AC5 phase-exit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, {
+    resolvePolicy: (r, key) => {
+      if (key === 'integration-model') throw new Error('forge detection degraded (timeout)');
+      return '';
+    },
+  });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /integration-model unresolved \(forge detection degraded \(timeout\)\)/);
+  assert.equal(pushCalls(h.calls).length, 0);
+});
+
+test('AC3 phase-exit: a config.yml pinning local-merge resolves local-merge through the core, with no gh call', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: local-merge\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'local-merge');
+    });
+    assert.equal(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('AC3 phase-exit: a missing run dir reports the same detail line as the subprocess did', () => {
+  const { repo } = forgeFixture();
+  const missingBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-missing-'));
+  created.push(missingBase);
+  const missing = path.join(missingBase, 'never-created');
+  const want = `resolve-policy: --run dir does not exist or is not a directory: ${missing}`;
+  assert.throws(() => realDeps.resolvePolicy(missing, 'integration-model', repo), (e) => e.message === want);
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, { resolvePolicy: (r, key) => realDeps.resolvePolicy(missing, key, repo) });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.ok(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8').includes(`integration-model unresolved (${want})`));
+});
+
+test('AC3 phase-exit: a --run inside a foreign checkout throws the anchoring line the CLI prints', () => {
+  const { repo } = forgeFixture();
+  const inside = path.join(forgeFixture().repo, 'plain-run-dir');
+  fs.mkdirSync(inside);
+  const cli = runCliSync(RESOLVE_POLICY_CLI, ['--run', inside, 'integration-model'], { cwd: repo, env: { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() } });
+  assert.notEqual(cli.code, 0, 'the CLI must refuse the unanchored run dir');
+  const want = cli.stderr.replace(/\r?\n$/, '');
+  assert.match(want, /^resolve-policy: /);
+  assert.throws(() => realDeps.resolvePolicy(inside, 'integration-model', repo), (e) => e.message === want);
+});
+
+// Seam: process.stderr.write is spied around the real call (the forge probe's GHE note goes through repo-resolve's default writer).
+test("AC3 phase-exit: the forge probe's GHE origin note stays off this process's stderr", { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  execFileSync('git', ['-C', repo, 'remote', 'set-url', 'origin', 'https://acme.ghe.com/o/n.git'], { windowsHide: true });
+  const gh = fakeGh({ first: 'ok' });
+  const realWrite = process.stderr.write;
+  const writes = [];
+  _resetGhHostCache();
+  process.stderr.write = (chunk, ...rest) => { writes.push(String(chunk)); return true; };
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    process.stderr.write = realWrite;
+    gh.restore();
+    _resetGhHostCache();
+  }
+  assert.deepEqual(writes.filter((w) => w.includes('claude-tweaks:')), []);
+});
+
+test("AC7 phase-exit: a subdirectory worktree resolves the checkout's pinned integration-branch", () => {
+  const { repo, runDir } = forgeFixture();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-branch: develop\n');
+  const sub = path.join(repo, 'packages', 'app');
+  fs.mkdirSync(sub, { recursive: true });
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', sub), 'develop');
+});
+
+test('phase-exit.js no longer exports the retired child-process helpers', () => {
+  assert.equal(phaseExit.policyReadTimeoutMs, undefined);
+  assert.equal(phaseExit.policyEntryValue, undefined);
+});
+
 // ---- checklist ----
 
 test('AC2.2: checklist exit 4/5 is reported in the envelope with exit 0 overall', () => {
@@ -707,7 +1039,7 @@ test('AC2.2: checklist exit 4/5 is reported in the envelope with exit 0 overall'
     const env = runPhaseExit(opts(runDir, wt), h.deps);
     assert.equal(env.checklist.exit, code);
     assert.equal(env.push.state, 'pushed');
-    assert.deepEqual(entriesOf(runDir), []);
+    assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE()]);
   }
   // Through the CLI wrapper: exit 0 overall.
   const { main, runDir, wt } = fixture();
@@ -741,7 +1073,7 @@ test('AC2.2: merge-state envelope is carried through after a successful push', (
   assert.equal(env.push.state, 'pushed');
   assert.deepEqual(env.mergeState, { exit: 0, ...ms });
   assert.deepEqual(h.calls.mergeState, [['--run', runDir, '--phase', 'review']]);
-  assert.deepEqual(entriesOf(runDir), [], 'phase-exit never re-logs a sub-CLI line');
+  assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE('review')], 'phase-exit never re-logs a sub-CLI line');
 });
 
 test('AC2.2: merge state — a non-zero exit, no or garbled JSON, and a throw are reported as data, exit 0 overall', () => {
@@ -758,7 +1090,7 @@ test('AC2.2: merge state — a non-zero exit, no or garbled JSON, and a throw ar
     const env = runPhaseExit(opts(runDir, wt), h.deps);
     assert.deepEqual(env.mergeState, c.expected, JSON.stringify(c.mergeState));
     assert.equal(env.push.state, 'pushed');
-    assert.deepEqual(entriesOf(runDir), []);
+    assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE()]);
     assert.equal(run(['--run', runDir, '--phase', 'build', '--worktree', wt], makeDeps(main, wt, { mergeState: c.mergeState }).deps), 0);
   }
 });
@@ -782,17 +1114,18 @@ test('AC2.2: an append failure lands in logFailures and changes nothing else', (
   const { main: m2, runDir: r2, wt: w2 } = fixture({ pr: { number: 42, url: PR_URL } });
   const h = makeDeps(m2, w2, { porcelain: ' M a.js\0', appendDecision: () => { throw new Error('disk full'); } });
   const env = runPhaseExit(opts(r2, w2), h.deps);
-  assert.equal(env.logFailures.length, 2);
-  assert.match(env.logFailures[0].error, /disk full/);
-  assert.equal(env.logFailures[0].step, 'Phase-exit push');
-  assert.match(env.logFailures[0].text, /1 uncommitted path\(s\)/);
-  assert.equal(env.logFailures[1].step, 'Common Step 7 bookkeeping assertion');
-  assert.equal(env.logFailures[1].status, 'AUTO');
-  assert.match(env.logFailures[1].text, /backfilled worktree registration/);
+  assert.equal(env.logFailures.length, 3);
+  assert.deepEqual(env.logFailures[0], { kind: 'decision', status: 'AUTO', step: 'Phase exit', text: 'build phase exited at abc1234def', error: 'disk full' });
+  assert.match(env.logFailures[1].error, /disk full/);
+  assert.equal(env.logFailures[1].step, 'Phase-exit push');
+  assert.match(env.logFailures[1].text, /1 uncommitted path\(s\)/);
+  assert.equal(env.logFailures[2].step, 'Common Step 7 bookkeeping assertion');
+  assert.equal(env.logFailures[2].status, 'AUTO');
+  assert.match(env.logFailures[2].text, /backfilled worktree registration/);
   const strip = (e) => ({ ...e, logFailures: [], checklist: null, mergeState: null });
   assert.deepEqual(strip(env), strip(good));
   assert.equal(good.logFailures.length, 0);
-  assert.equal(h.err.join('').trim().split('\n').length, 2);
+  assert.equal(h.err.join('').trim().split('\n').length, 3);
 });
 
 // ---- AC3.1 parity ----
@@ -833,7 +1166,8 @@ test('AC3.1: phase-exit writes the same entries the prose sequence wrote', () =>
     const { main, runDir, wt } = fixture(c.state);
     const h = makeDeps(main, wt, c.deps);
     runPhaseExit(opts(runDir, wt), h.deps);
-    assert.deepEqual(entriesOf(runDir).map(stripTime), c.expected, c.name);
+    // The prose sequence's lines, after the phase-exit record #6143 added ahead of them.
+    assert.deepEqual(entriesOf(runDir).map(stripTime), [EXIT_LINE(), ...c.expected], c.name);
   }
 });
 
@@ -921,4 +1255,16 @@ test('CLI: an archived wrap-up run dir resolves', () => {
   const env = JSON.parse(h.out.join(''));
   assert.equal(env.push.state, 'pushed');
   assert.deepEqual(env.bookkeeping, { worktree: 'n/a', pr: 'n/a' });
+});
+
+// Real process: the script entry turns run()'s return into the child's exit status and puts usage on the right stream (#5384, AC6).
+test('script entry: --help exits 0 with the usage on stdout; a malformed call exits 2 with it on stderr', () => {
+  const entry = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'phase-exit.js');
+  const env = { PATH: process.env.PATH, HOME: os.homedir(), TMPDIR: os.tmpdir() };
+  const help = spawnCli(entry, ['--help'], { env });
+  assert.equal(help.code, 0);
+  assert.ok(help.stdout.startsWith('usage: phase-exit.js'));
+  const refused = spawnCli(entry, [], { env });
+  assert.equal(refused.code, 2);
+  assert.match(refused.stderr, /--run <run-dir> is required/);
 });

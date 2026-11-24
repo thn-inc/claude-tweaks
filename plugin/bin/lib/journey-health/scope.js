@@ -137,7 +137,8 @@ function currentDeletedFileSignature(root, journeyId) {
 }
 
 // ─── selectTarget ────────────────────────────────────────────────────────────
-// opts: { now?: number, tier?: 'light'|'deep', signals?: { [id]: number } }
+// opts: { now?: number, tier?: 'light'|'deep', signals?: { [id]: number }, env?: object }
+// (env: the child git's environment for the churn lookup; omitted = inherited)
 // Returns { kind: 'journey', id, path, filesFrontmatter, why: 'stale'|'hotspot', ... } or null.
 // Light and deep tiers use independent staleness thresholds and independent
 // cursor fields (lastLightAuditMs vs lastDeepAuditMs) — a journey force-picked
@@ -214,7 +215,7 @@ function selectTarget(root, cursors, opts = {}) {
         return churn > 0 ? churn : null;
       }
       const relJourneyPath = toPosix(path.relative(root, candidate.path));
-      const churn = domainChurn(root, [relJourneyPath, ...candidate.filesFrontmatter], sinceMs);
+      const churn = domainChurn(root, [relJourneyPath, ...candidate.filesFrontmatter], sinceMs, { env: opts.env });
       return churn > 0 ? churn : null;
     },
     buildHotspotResult: (candidate, score) => ({ ...candidate, why: 'hotspot', churnCount: score }),

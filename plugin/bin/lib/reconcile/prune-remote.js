@@ -34,7 +34,7 @@
 'use strict';
 
 const { execFileSyncTimed } = require('./timing');
-const { runGit, DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
+const { runGit, repoTargetOf, DEFAULT_TIMEOUT_MS } = require('../hooks/git-exec');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
 const { inScope, isCherryEquivalent } = require('./archive-branches');
 const { resolvePrState, resolvePrStatesBulk } = require('./pr-state');
@@ -79,7 +79,9 @@ function decideRemotePrune({ branch, cherryEquivalent, squashMerged = false, prS
   return { action: 'delete', reason: cherryEquivalent ? 'merged-pr-cherry-equivalent' : 'merged-pr-squash-merged' };
 }
 
-function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipFetch, refExists } = {}) {
+// `heldBranches`: branches of runs reconcile holds as hollow merges (post-merge.js's hollowRunRefs, #6143) —
+// skipped `hollow-merge` before the screen, so a held run's pushed branch is never deleted.
+function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipFetch, refExists, gateDeps, heldBranches = [] } = {}) {
   const root = cwd || process.cwd();
   const resolve = resolvePr || resolvePrState;
   const resolveBulk = resolvePrBulk || resolvePrStatesBulk;
@@ -109,20 +111,31 @@ function pruneRemote({ cwd, integration, dryRun, resolvePr, resolvePrBulk, skipF
 
   // Collect the in-scope branch set first — the screen is one bulk call.
   const inScopeBranches = [];
+  const held = new Set(heldBranches);
   for (const branch of refs.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
     if (branch === 'HEAD' || branch === integration) continue;
     if (!inScope(branch, worktrees)) continue;
+    if (held.has(branch)) { entries.push({ name: branch, kind: 'remote-branch', action: 'skip', reason: 'hollow-merge' }); continue; }
     inScopeBranches.push(branch);
   }
 
   // Screen (#1082): one chunked GraphQL call for the whole set, destructive
   // tie-break applied (#664 — any OPEN PR governs). ALL-OR-NOTHING: a failed
   // screen skips the whole check, same fail-closed shape as fetch-failed.
+  //
+  // #4794: the origin goes through the #4933 gate first. A refused origin (an SSH alias, an
+  // unknown host) fails the check `unknown-host` with the gate's text and screens nothing; no
+  // in-scope branch means no gh call, so no refusal either. The screen takes the bare owner/name
+  // slug (`target.slug`), never the host-qualified `--repo` form.
+  const target = inScopeBranches.length > 0 ? repoTargetOf(root, gateDeps) : null;
+  if (target && target.refusal) return { entries, failure: 'unknown-host', detail: target.refusal };
   const screen = inScopeBranches.length > 0
-    ? resolveBulk(root, inScopeBranches, { preferOpen: true })
+    ? resolveBulk(root, inScopeBranches, { preferOpen: true, ...(target ? { repoSlug: target.slug } : {}) })
     : new Map();
   if (screen === 'gh-absent') return { entries, failure: 'gh-absent' };
   if (screen === 'network-failure') return { entries, failure: 'pr-screen-failed' };
+  // The screen's own gate verdict, for a screen that read the origin itself: never a Map.
+  if (screen === 'unknown-host') return { entries, failure: 'unknown-host' };
 
   const toDelete = [];
   for (const branch of inScopeBranches) {

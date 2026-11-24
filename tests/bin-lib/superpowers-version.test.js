@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -23,7 +24,7 @@ const ROOT = path.join(__dirname, '..', '..');
 // {tmp}/inst/{name} an install artifact. realpath'd because macOS /var is a
 // symlink to /private/var and the resolver compares realpathed paths.
 function mkWorld() {
-  const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sp-version-test-')));
+  const tmp = fs.realpathSync(scratchDir('sp-version-test-'));
   const home = path.join(tmp, 'home');
   const config = path.join(tmp, 'config');
   const inst = path.join(tmp, 'inst');

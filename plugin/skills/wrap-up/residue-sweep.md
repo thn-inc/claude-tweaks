@@ -45,7 +45,7 @@ resolution the Review Console's auto-merge short-circuit already performs.
 Add `--no-suite` when the project's full test command already ran earlier in this same wrap-up
 (e.g. via `/claude-tweaks:test`) and re-running it would only cost time without new information —
 the CLI reports `unknown: skipped via --no-suite` for that probe rather than silently treating a
-skip as a pass. Add `--json` when reading the findings programmatically instead of parsing the
+skip as a pass. Under the declaration's `localRuns: "on-request"` (`test/ci-source.md`) the probe never runs the suite either: it reports `unknown: not run on this machine — …` naming the declared CI job, and this run's suite state comes from the pass stamp, as for a pack-fed residue. Add `--json` when reading the findings programmatically instead of parsing the
 CLI's own markdown table.
 
 ### Resolving `{base}`
@@ -57,7 +57,7 @@ the first the next time either is touched.
 ## Writing findings to the ledger
 
 For each finding the CLI returns, add a row to this run's ledger (`ledger/SKILL.md`'s Add Item
-operation): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `Status: open`. Apply the
+operation, written with `hooks.js ledger-row` per `_shared/ledger-format.md`'s Writer section): `Phase: wrap-up`, `Item`: `{kind} — {subject} — {evidence}`, `Status: open`. Apply the
 ledger's own semantic-duplicate check first (`ledger/SKILL.md`'s Add Item section) — a finding
 matching an existing item's phase and description is a duplicate, not a second row. If
 `pack.ledger`'s `value.files` is empty (no ledger this run owns yet — the standalone case this
@@ -74,7 +74,7 @@ gate.
 Under `integration-model: pr-first`, `pack.residue`'s `value.results` carries the forge probe's
 result with an `ownPr` field (`{number, headRefName}`, or `null` when unset or not open) — the
 same field the manual CLI's `--own-pr` above produces. When `ownPr` is non-null, add exactly one
-`Phase: wrap-up` ledger row for it: `Item`: `pr — PR #{ownPr.number} — this run's own pr-first PR;
+`Phase: wrap-up` ledger row for it (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section): `Item`: `pr — PR #{ownPr.number} — this run's own pr-first PR;
 disposition is Phase 4's merge decision`, `Status: observation` — never `Status: open`, and never
 routed to a backlog record. The PR is this run's own deliverable, open by design until Phase 4's
 Review Console decides merge/arm/park; that decision, not this preamble, is its disposition. A
@@ -132,8 +132,8 @@ for this caller by #435):**
   human looking at it") and a residue-sweep-originated commit carries the same low-judgment,
   purely-mechanical shape as a tidy Step-7 commit. Resolve it fresh (`resolve-policy.js`, JSON
   mode, capturing `source`) before `ExitWorktree`: `false` → no action; `true` → arm now via
-  `_shared/pr-first-merge.md` Step 3's initial compose + `gh pr merge --auto` fences (not its degrade chain —
-  failure leaves it unarmed, reported). Log the outcome to `decisions.md`
+  `_shared/pr-first-merge.md` Step 3's initial compose + `gh pr merge --auto` fences — the compose in its record-less `--housekeeping` form — running Step 3 branch 1's degrade as Step 3 routes it (under
+  `merge-verification: off`, the immediate merge: a success, logged `merged`); any other failure leaves it unarmed, reported. Log the outcome to `decisions.md`
   (`_shared/auto-decision-log.md`, lever-attributed `[lever: housekeeping-auto-merge={true|false}
   ({source})]`). **Sweep backstop**: `github-pr-scan.md`'s `repo-wide` item 9 recognizes
   `<!-- wrap-up-residue-pr -->` on the same footing as tidy's own `<!-- tidy-housekeeping-pr -->` —
@@ -162,15 +162,16 @@ locked worktree a live session holds → `blocked-external`; a clean pipeline-ru
 recorded worktree is one of those locks → `blocked-external`; an open PR outside this run's blast
 radius → `blocked-external`; a red suite this run cannot fix → `genuinely-larger`; anything else
 stays `open` for Phase 2's drill, where the human picks the value. A `remedy: record` item that
-reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test: an
-item that fails to clear the materiality floor, with a `Defer-reason:` other than `tangential`, has
-its Step 1 option relabeled `"Digest — below floor"` in place of `"Route to a record"` — so the
-human sees the actual destination before choosing it, never silently substituted after approval;
-choosing it appends a digest entry instead of a record, skipping the composition below for that
-item. This sweep's own end-of-run summary states the digest comment URL and the count routed this
-run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section. For an item
-whose reason the drill itself picks (the "anything else" case above), apply the
-test once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
+reaches Phase 2's per-item drill first applies `_shared/materiality-floor.md`'s floor test with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/deferral-route.js" --defer-reason {reason} --size {size} --priority {priority} --risk {risk} [--evidence '{evidence}'] [--run "$PIPELINE_RUN_DIR"] --agent-raised`:
+on `digest` its Step 1 option is relabeled the label `_shared/materiality-floor.md`'s digest-label table gives the printed `rule` instead of
+`"Route to a record"`, so the human sees the actual destination before choosing it,
+never silently substituted after approval; choosing it appends a digest entry, not a record,
+skipping the composition below. `file` keeps the option; `refused` or any other outcome offers
+neither, naming the command's output. This sweep's own end-of-run summary states the digest comment URL and the count
+routed this run, per `_shared/materiality-floor.md`'s "Digest URL and count surfacing" section.
+For an item whose reason the drill itself picks (the "anything else" case above), run the command
+once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`, the #621 mapping above supplying
 its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the same rules.
 
@@ -178,9 +179,7 @@ its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the sa
 (`ledgerNarrowing` at `trusted`+, `ledgerRouteRemainder` at `unattended`) removes an item whose
 blocker reason passes `clearsFloor` from this phase's remaining set entirely and auto-routes it to
 `Route to a record → Keep (backlog)` — it never reaches the Step 1 option above, so the materiality
-floor is not consulted on that path. `_shared/ledger-format.md` is deliberately not an adopter of
-the floor (#1262's own Current State names it a non-adopter); closing that gap is tracked on #1279
-alongside the digest's other coverage items.
+floor is not consulted on that path; only `_shared/ledger-format.md`'s control mode runs the command.
 
 ## The judgment class — named triggers
 

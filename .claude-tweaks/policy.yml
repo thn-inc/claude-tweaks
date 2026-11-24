@@ -8,7 +8,28 @@ fleet-daily-grant-cap: 3
 dispatch-batch-size: 9
 integration-model: pr-first
 housekeeping-auto-merge: true
+express-lane: true
+express-driver: on
+# implementer-tier (#5995): record runs a size:low record with one or two Key Files on Fast, every other record on Standard.
+# Revert signal: over the first 20 implementation tasks on Fast, a share needing a fix round higher than Standard's over
+# the same runs (tools/pipeline-cost-report.js's review-results-by-role-and-tier table) means set this back to lane.
+implementer-tier: record
 project-maturity: established
+# release-tip-moves (#6188): sibling dispatch sessions merge while a release is reviewed, so the default of 2 held v6.178.0 on 2026-11-23.
+# Revert signal: delete this row once #6187 (release from a fixed reviewed commit) lands.
+release-tip-moves: 6
 # release-hook: <command run after the local engine tags a release — local-merge only; under pr-first the release: published workflow is the hook — it needs a PAT, GITHUB_TOKEN-created releases do not trigger it>
 # release-train: false
 specify-decomposition-log: true
+declare-claude-tweaks: false
+superpowers-plans-retention: prune-after-wrapup
+deferral-digest-reasons: pre-existing-outside-diff, tangential
+filed-record-evidence: required
+run-filed-record-cap: 1
+model-effort: profile
+# The rows below follow #5940's evidence: a launched agent at medium effort. They revert to high on one signal — a first dispatch call that bypasses /claude-tweaks:flow, shown by the run's console or a transcript census. The installed 6.175.0 release ignores model-effort and reads the rows (probed 2026-11-21).
+model-profiles:
+  standard:
+    effort: medium
+  capable:
+    effort: medium

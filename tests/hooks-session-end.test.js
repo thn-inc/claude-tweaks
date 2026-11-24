@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const sessionEnd = require('../plugin/bin/lib/hooks/session-end');
+const { hookEnv, runHookCli } = require('./helpers/hook-event');
 
 const { TERMINAL_SESSION_END_REASONS } = sessionEnd;
 
@@ -40,7 +41,7 @@ const lastEvent = (dir) => {
 };
 
 function ctxFor(root, dir, reason, attribution = 'session') {
-  return { input: { reason, session_id: 'S1' }, cwd: root, ownedRun: { dir, attribution } };
+  return { input: { reason, session_id: 'S1' }, cwd: root, env: hookEnv(), ownedRun: { dir, attribution } };
 }
 
 test('the terminal reason set is exactly the harness exit reasons', () => {
@@ -128,4 +129,17 @@ test('archive refusal falls back to the interrupted stamp', () => {
   assert.equal(lastEvent(dir).type, 'session-end');
   const ends = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf8').trim().split('\n').filter((l) => l.includes('"session-end"'));
   assert.equal(ends.length, 1, 'the event is appended once');
+});
+
+// #5377: through the dispatcher, under the env tripwire — the archive, the close and their git
+// children read ctx.env, never the real process.env.
+test('AC9: the ad hoc close runs through the session-end event without reading process.env', async () => {
+  const root = project();
+  const dir = mkRunDir(root, ADHOC, { status: 'active', sessionId: 'S1', worktree: root });
+  const r = await runHookCli(['session-end'], {
+    input: JSON.stringify({ cwd: root, session_id: 'S1', reason: 'logout' }), cwd: root, env: hookEnv({ CLAUDE_CODE_SESSION_ID: 'S1' }),
+  });
+  assert.equal(r.code, 0);
+  assert.equal(fs.existsSync(dir), false, 'the live run dir is archived');
+  assert.equal(readJson(path.join(archivedPath(root, ADHOC), 'run-state.json')).closedBy, 'session-end');
 });

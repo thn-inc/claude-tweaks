@@ -1,18 +1,21 @@
 // bin/lib/release/subject.js — the ONE merge-subject/body composer every merge
-// site calls (#2251): pr-first `gh pr merge --squash -t/--body-file` and the four
-// local-merge `git merge --no-ff -m` sites (settle-and-merge.md,
-// auto-merge-short-circuit.md, local-merge-auto-finish.md, worktree-merge.md)
+// site calls (#2251): pr-first `gh pr merge --squash -t/--body-file` and the local-merge
+// `git merge --no-ff -F` fence in _shared/local-merge-sequence.md (run by
+// settle-and-merge.md, auto-merge-short-circuit.md, local-merge-auto-finish.md, worktree-merge.md)
 // all reach it through bin/compose-subject.js. Conventional Commits grammar
 // (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
-// _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
-// anywhere in the message), a required `Release-Note: {line}` paragraph
-// (single-line by construction — see the inline comment at its push site),
+// _shared/github-pr-scan-triage.md's auto-merged-this-week metric matches the tag
+// anywhere in the message), a required `Release-Note:` paragraph — one
+// `Release-Note: {line}` per bundled record, a bundled note collapsed to one
+// line and a single-record note verbatim (see the inline comment at its push site),
 // `Fixes #n` footer lines (`Refs #n` for a `keepOpen` number: it still counts
 // for everything else, but the merge never closes it, #4199), and a trailing
 // `BREAKING CHANGE: {note}` footer when `breaking` is set. release-please and
 // the local release engine both parse exactly this shape back out, which is why
-// there is one writer and no per-site variation. Pure function, zero deps.
+// there is one writer and no per-site variation. A record-less housekeeping form
+// (composeHousekeepingSubject, #5208) composes a `chore` subject from a housekeeping PR's own
+// title and carries no `Release-Note:` or `Fixes` lines. Pure function, zero deps.
 'use strict';
 
 const TYPE_PREFIX = { feature: 'feat', bug: 'fix', task: 'chore' };
@@ -52,7 +55,25 @@ function truncateHead(head, prefix, suffixLength) {
   return cut.replace(/[\s.,;:—-]+$/u, '') + ELLIPSIS;
 }
 
-// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote, fixes?, keepOpen?, tag?, breakingRecords? } -> { title, body }
+// The scope token check, the `{type}[(scope)][!]` prefix, the too-long-scope refusal, and the
+// truncated `{prefix}: {title}` head plus its ` (#{n})` suffix — shared by composeSubject and
+// composeHousekeepingSubject so the two never drift on the subject grammar.
+function subjectHead({ prefixBase, scope, breaking, number, cleanTitle }) {
+  const cleanScope = typeof scope === 'string' ? scope.trim() : '';
+  if (cleanScope && !/^[A-Za-z0-9._/-]+$/.test(cleanScope)) {
+    throw usage(`scope must be a single token of letters, digits, . _ / -, got ${JSON.stringify(scope)} for #${number}`);
+  }
+  const scoped = cleanScope ? `${prefixBase}(${cleanScope})` : prefixBase;
+  const prefix = breaking ? `${scoped}!` : scoped;
+  const suffix = ` (#${number})`;
+  const MIN_TITLE_LENGTH = 1;
+  if (prefix.length + ': '.length + MIN_TITLE_LENGTH + ELLIPSIS.length + suffix.length > SUBJECT_BUDGET) {
+    throw usage(`scope ${JSON.stringify(cleanScope)} is too long — "${prefix}: " leaves no room for the title within the ${SUBJECT_BUDGET}-char subject for #${number}`);
+  }
+  return { head: truncateHead(`${prefix}: ${cleanTitle}`, prefix, suffix.length), suffix };
+}
+
+// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote (string|string[]), fixes?, keepOpen?, tag?, breakingRecords? } -> { title, body }
 // `scope` is Conventional Commits' optional `type(scope):` noun (#3028) — for a
 // project whose own commit convention requires one; omitted or blank, the
 // subject is unscoped. One token only: `(`/`)`/whitespace would break the
@@ -72,21 +93,18 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
     throw usage(`breaking is true for ${who} but migrationNote is empty — the record needs a non-empty "## Breaking Change" section`);
   }
 
-  const cleanReleaseNote = typeof releaseNote === 'string' ? releaseNote.trim() : '';
-  if (!cleanReleaseNote) throw usage(`releaseNote must be a non-empty string for #${number}`);
+  // releaseNote is one note (string) or one note per bundled record (array, lowest number first, #4634).
+  let noteList = [];
+  if (typeof releaseNote === 'string') noteList = [releaseNote];
+  else if (Array.isArray(releaseNote)) noteList = releaseNote;
+  const trimmedNotes = noteList.map((n) => (typeof n === 'string' ? n.trim() : ''));
+  if (trimmedNotes.length === 0 || trimmedNotes.some((n) => !n)) throw usage(`releaseNote must be a non-empty string for #${number}`);
+  // A single note is written verbatim (multi-line included), so a single-record merge stays byte-identical to
+  // every earlier one (#4634 AC 2); a bundle's notes each collapse to one line so no continuation or blank line
+  // can split the one-line-per-record paragraph.
+  const releaseNotes = trimmedNotes.length > 1 ? trimmedNotes.map((n) => n.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).join(' ')) : trimmedNotes;
 
-  const cleanScope = typeof scope === 'string' ? scope.trim() : '';
-  if (cleanScope && !/^[A-Za-z0-9._/-]+$/.test(cleanScope)) {
-    throw usage(`scope must be a single token of letters, digits, . _ / -, got ${JSON.stringify(scope)} for #${number}`);
-  }
-  const scoped = cleanScope ? `${prefixBase}(${cleanScope})` : prefixBase;
-  const prefix = breaking ? `${scoped}!` : scoped;
-  const suffix = ` (#${number})`;
-  const MIN_TITLE_LENGTH = 1;
-  if (prefix.length + ': '.length + MIN_TITLE_LENGTH + ELLIPSIS.length + suffix.length > SUBJECT_BUDGET) {
-    throw usage(`scope ${JSON.stringify(cleanScope)} is too long — "${prefix}: " leaves no room for the title within the ${SUBJECT_BUDGET}-char subject for #${number}`);
-  }
-  const head = truncateHead(`${prefix}: ${cleanTitle}`, prefix, suffix.length);
+  const { head, suffix } = subjectHead({ prefixBase, scope, breaking, number, cleanTitle });
 
   const fixList = Array.isArray(fixes) && fixes.length ? fixes : [number];
   for (const n of fixList) {
@@ -100,16 +118,37 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   const cleanSummary = typeof summary === 'string' ? summary.trim() : '';
   if (cleanSummary) paragraphs.push(cleanSummary);
   if (typeof tag === 'string' && tag.trim()) paragraphs.push(`[${tag.trim()}]`);
-  // Release-Note is a single-line trailer by construction, same as BREAKING CHANGE: below — the
-  // read-side Release-Note: footer regex (bin/lib/release-notes.js, a sibling unit) only ever
-  // captures the first line, regardless of how many lines cleanReleaseNote actually has. This
-  // function performs no truncation itself: it writes cleanReleaseNote verbatim (multi-line
-  // included), exactly like migrationNote/BREAKING CHANGE: already does.
-  paragraphs.push(`Release-Note: ${cleanReleaseNote}`);
+  // One `Release-Note:` line per bundled record (#4634), all in this one paragraph; the read side
+  // (bin/lib/release-notes.js's extractReleaseNotes) reads one note per line. A bundle's notes were
+  // collapsed to one line each above; a single-record note is written verbatim (multi-line
+  // included), exactly like migrationNote/BREAKING CHANGE: already does, so the read side only ever
+  // captures its first line.
+  paragraphs.push(releaseNotes.map((n) => `Release-Note: ${n}`).join('\n'));
   paragraphs.push(fixList.map((n) => `${keep.has(n) ? 'Refs' : 'Fixes'} #${n}`).join('\n'));
   if (breaking) paragraphs.push(`BREAKING CHANGE: ${note}`);
 
   return { title: head + suffix, body: paragraphs.join('\n\n') };
 }
 
-module.exports = { composeSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET };
+// { title, number, scope?, tag? } -> { title, body } — the record-less housekeeping form (#5208): a
+// `chore` subject from a housekeeping PR's own title (one leading Conventional-Commits prefix
+// stripped), a body of that title plus an optional `[{tag}]` paragraph, and no `Release-Note:` or
+// `Fixes` lines — the PR links no record. Optional `refs` (positive integers) each become a
+// `Refs #n` line, one block as the body's last paragraph (the learned-skills PR names the records
+// whose wrap-up produced it without closing them).
+function composeHousekeepingSubject({ title, number, scope, tag, refs } = {}) {
+  if (!Number.isInteger(number) || number <= 0) throw usage(`number must be a positive integer, got ${JSON.stringify(number)}`);
+  const cleanTitle = typeof title === 'string' ? title.replace(/^(?:feat|fix|chore|docs|refactor|test|build|ci|perf|style|revert)(?:\([^)]*\))?!?:(?:\s+|$)/i, '').trim() : '';
+  if (!cleanTitle) throw usage(`title must be a non-empty string for #${number}`);
+  const { head, suffix } = subjectHead({ prefixBase: 'chore', scope, breaking: false, number, cleanTitle });
+  const paragraphs = [cleanTitle];
+  if (typeof tag === 'string' && tag.trim()) paragraphs.push(`[${tag.trim()}]`);
+  const refList = Array.isArray(refs) ? refs : [];
+  for (const n of refList) {
+    if (!Number.isInteger(n) || n <= 0) throw usage(`refs entries must be positive integers, got ${JSON.stringify(n)}`);
+  }
+  if (refList.length) paragraphs.push(refList.map((n) => `Refs #${n}`).join('\n'));
+  return { title: head + suffix, body: paragraphs.join('\n\n') };
+}
+
+module.exports = { composeSubject, composeHousekeepingSubject, ComposeSubjectError, TYPE_PREFIX, SUBJECT_BUDGET };

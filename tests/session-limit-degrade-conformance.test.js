@@ -8,7 +8,9 @@ const { readText } = require('./helpers/read-skill');
 // do when one half of a pair dies to a session/usage limit mid-flight. This pins the
 // two-file fix: a degrade-path paragraph in step3-lens-dispatch.md, and a terminal-vs-
 // transient classification in the Failed-agent retrieval section — moved from
-// subagent-output-contract.md to subagent-dispatch-core.md at #2019.
+// subagent-output-contract.md to subagent-dispatch-core.md at #2019. Since #4826 the degrade
+// procedure itself lives in step3-tier-variants.md; step3-lens-dispatch.md keeps the
+// session-limit pointer beside the Failed-agent retrieval citation.
 
 const ROOT = path.join(__dirname, '..');
 // Fixed ancestor SHA — the commit this branch forked from, before either file carried
@@ -20,7 +22,10 @@ const BASE_SHA = 'aa813ba825b20e11df35413bbd7ebd3e43c5af9c';
 const DISPATCH_PATH = 'plugin/skills/review/step3-lens-dispatch.md';
 const CONTRACT_PATH = 'plugin/skills/_shared/subagent-dispatch-core.md';
 
+const TIER_VARIANTS_PATH = 'plugin/skills/review/step3-tier-variants.md';
+
 const dispatchProse = readText(path.join(ROOT, DISPATCH_PATH));
+const tierVariantsProse = readText(path.join(ROOT, TIER_VARIANTS_PATH));
 const contractProse = readText(path.join(ROOT, CONTRACT_PATH));
 
 // The pinned literal, checked case-insensitively at both revisions below.
@@ -68,7 +73,12 @@ test('step3-lens-dispatch.md names the session-limit degrade path (#1449 AC1)', 
   );
   assert.match(
     dispatchProse,
-    /retry (?:that one agent |it )?once/i,
+    /session limit[^\n]*read `step3-tier-variants\.md`'s partner-died paragraph/i,
+    'the session-limit pointer must route the reader to step3-tier-variants.md\'s degrade paragraph.',
+  );
+  assert.match(
+    tierVariantsProse,
+    /session limit[^\n]*retry (?:that one agent |it )?once/i,
     'the degrade paragraph must state the retry-once step before falling back to a ' +
       'single-read degrade.',
   );

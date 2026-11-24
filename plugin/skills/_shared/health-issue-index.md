@@ -1,11 +1,14 @@
 # Health Sweep — Issue Index for Dedup
 
-Single source of truth for how the four health sweeps (`/claude-tweaks:code-health`,
+Single source of truth for how the five health sweeps (`/claude-tweaks:code-health`,
 `/claude-tweaks:harness-health`, `/claude-tweaks:journey-health`,
-`/claude-tweaks:docs-health`) build the `by:{skill}` issue index their
+`/claude-tweaks:docs-health`, `/claude-tweaks:ci-health`) build the `by:{skill}` issue index their
 `validate-findings` step dedups against. Each skill's own `gh issue list` command and
 fingerprint-parsing instructions stay in that skill's GATHER OPEN ISSUES step; this file
-owns transport selection and what each possible outcome means.
+owns transport selection and what each possible outcome means. `ci-health` keeps no durable
+state, so the degraded row and the `declined` fallback below are not its: with no readable
+index it files nothing (its own GATHER OPEN ISSUES step), and the "four skills" below are the
+other four.
 
 `{SKILL}` below is the calling skill's own name (`harness-health`, `docs-health`, …) and
 `{ISSUES_FILE}` its own parsed-index path.
@@ -21,6 +24,15 @@ Project the results into the identical `{ number, state, labels, fingerprint }` 
 write them to the same `{ISSUES_FILE}` path, so the `validate-findings` call downstream is
 byte-identical on both transports. Never `search_issues` — it rides an eventually-consistent
 index and has caused real duplicate-filing incidents (see that file).
+
+Neither `state` nor `labels` needs cleaning before the file is written, on either transport.
+`state` may be in either case (`gh` returns `OPEN`/`CLOSED`), and each `labels` element may be
+a label name or `gh`'s label object: `loadIssueIndex` (`bin/lib/health-core/issue-index.js`)
+lowercases `state` and reduces `labels` to label names. A label element with no string `name` is
+dropped, and the load reports the total once on stderr (`ignored {n} label entries with no name`).
+An entry whose `state` is missing or not a string is kept with an empty state, which every sweep
+treats as not closed, and the load reports the count once on stderr
+(`{n} issue entries with no state, treated as not closed`).
 
 A missing `gh` is a reason to **change transport, never a reason to skip this step**. The
 detection is a capability probe, not an environment classification: it holds regardless of
@@ -49,7 +61,7 @@ unconditionally on every transport — the write path is unsanitized either way,
 costs nothing. `extractFingerprint` tries the HTML-comment marker first (both the current and
 legacy forms), then falls back to the plain-text companion — the one form an MCP-stripped body
 still carries. Every consumer that calls `extractFingerprint` on a fetched body (this file's own
-`gh`-absent projection step, `pullReconIssues` in `bin/lib/code-health/pull-issues.js`, and each
+`gh`-absent projection step and each
 health sweep's own GATHER OPEN ISSUES instructions) gets the fix automatically — there is no
 separate MCP-specific parsing path to maintain.
 

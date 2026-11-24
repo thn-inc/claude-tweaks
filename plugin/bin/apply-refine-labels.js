@@ -4,7 +4,7 @@
 // dispatched call, replacing backlog refine's one-paste-line-per-record
 // blocks (#844). Follows bin/materialize.js's run(argv, deps) + injectable-
 // runner + --run anchoring pattern (gh-api-module-pattern skill).
-//   node bin/apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]
+//   node bin/apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]
 // actions.json: a JSON array of
 //   { issue: number, addLabels?: string[], removeLabels?: string[], commentFile?: string }
 // — each action needs at least one of addLabels/removeLabels/commentFile.
@@ -19,7 +19,8 @@
 // (#790/[IL-127]), refused loudly otherwise, before any `gh` call.
 // Exit 0 with a {ok, failed} JSON summary on stdout — one failed action never
 // aborts the batch; 1 when the actions file can't be read or is malformed;
-// 2 on a bad invocation, an unanchored --run, or a missing `gh`.
+// 2 on a bad invocation, an unanchored --run, a missing `gh`, or an origin
+// host with no GitHub signal (refused before any gh call, #4933).
 'use strict';
 
 const fs = require('fs');
@@ -28,10 +29,13 @@ const { execFileSync } = require('child_process');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName, eventKey } = require('./lib/station-events/emit');
+const { transitionsForLabel, ACTOR, KIND, STATION } = require('./lib/station-events/stations');
+const { makeHoldSink } = require('./lib/station-events/blockers');
 
-const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo [host/]owner/name] [--help]\n';
 
 function parseArgs(argv) {
   const opts = { file: null, run: null, runEmpty: false, repo: null, help: false };
@@ -107,8 +111,78 @@ function errMessage(err) {
   return [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).join(' ') || String(err);
 }
 
+// #5902: one station event per label-protocol transition of an applied edit.
+// Optional dep (absent = no emission); each call in its own try so a
+// throwing emitter never changes the batch. With a run dir the discriminator
+// is clock-free, so a replayed batch within a run dedupes; without one it ends
+// with the invocation's start time, so a later grant of the same label is a
+// distinct fact. A repo that does not reduce to owner/name emits nothing.
+function emitLabelTransitions(deps, { issue, addLabels, removeLabels, repoName, runDir, startedAt }) {
+  if (typeof deps.stationEvent !== 'function' || !repoName) return;
+  const runId = runDir ? path.basename(runDir) : null;
+  const suffix = runId || startedAt || '';
+  const edits = [
+    ...(addLabels || []).map((label) => ({ label, direction: 'added' })),
+    ...(removeLabels || []).map((label) => ({ label, direction: 'removed' })),
+  ];
+  // One action records a transition once: `ready` added and `needs:definition` removed both
+  // exit intake, and two identical `exited intake passed` events would be one fact written twice.
+  const recorded = new Set();
+  for (const { label, direction } of edits) {
+    for (const t of transitionsForLabel(label, direction)) {
+      const fact = `${t.kind}|${t.station}|${t.outcome || ''}`;
+      if (recorded.has(fact)) continue;
+      recorded.add(fact);
+      // The authorize exit is the person's grant; it also writes a `decided` line that points at it.
+      const authorizes = t.kind === KIND.EXITED && t.station === STATION.AUTHORIZE;
+      const event = {
+        ...t,
+        recordNumber: issue,
+        repoName,
+        lane: 'unknown',
+        runId,
+        sessionId: deps.sessionId || null,
+        payload: { ...t.payload, label, direction },
+        discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
+      };
+      let exitResult;
+      try {
+        exitResult = deps.stationEvent(event);
+      } catch { continue; /* emission is best-effort — never fails the batch */ }
+      // A dropped exit line (`written: false`) leaves nothing for `outcomeRef` to point at.
+      if (!authorizes || (exitResult && exitResult.written === false)) continue;
+      try {
+        deps.stationEvent({
+          kind: KIND.DECIDED,
+          station: STATION.AUTHORIZE,
+          recordNumber: issue,
+          repoName,
+          lane: 'unknown',
+          runId,
+          sessionId: deps.sessionId || null,
+          payload: { decision: 'authorize', actor: ACTOR.PERSON, via: 'skill', outcomeRef: eventKey(event) },
+          discriminator: event.discriminator,
+        });
+      } catch { /* emission is best-effort — never fails the batch */ }
+    }
+    // A hold label edited here is filed at `authorize` — refine is where a person sets or lifts the hold.
+    // No blocking record, so no `ref`.
+    makeHoldSink({ stationEvent: deps.stationEvent })({
+      label,
+      added: direction === 'added',
+      recordNumber: issue,
+      repoName,
+      station: STATION.AUTHORIZE,
+      lane: 'unknown',
+      runId,
+      sessionId: deps.sessionId || null,
+      discriminator: `refine:${issue}:${direction}:${label}:${suffix}`,
+    });
+  }
+}
+
 const realDeps = {
-  gh: (args) => execFileSync('gh', args, { encoding: 'utf8', windowsHide: true }),
+  gh: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true })),
   ghAvailable,
   remoteUrl,
   readFile: (f) => fs.readFileSync(f, 'utf8'),
@@ -117,8 +191,11 @@ const realDeps = {
   isAnchored: (resolvedPath, mainRoot) => wtDetect.isAnchoredUnderRoot(resolvedPath, mainRoot),
   now: () => Date.now(),
   appendEntry,
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  // #5902: the station-event emitter; a test that calls run() with its own deps omits it (no emission).
+  stationEvent: (e) => appendStationEvent(e),
 };
 
 // argv -> exit code. All I/O through deps so tests never touch gh, git, or the filesystem.
@@ -171,9 +248,20 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
-  if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`apply-refine-labels.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
+  if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
   const repoFlag = repoSlug(repoSpec);
+  // #5902: computed once per invocation for the station-event emission; the
+  // injected deps.now() is the only clock, and a bad value never fails the batch.
+  const repoName = toRepoName(repoFlag);
+  let startedAt = null;
+  try { startedAt = new Date(deps.now()).toISOString(); } catch { startedAt = null; }
 
   const ok = [];
   const failed = [];
@@ -197,6 +285,9 @@ function run(argv, deps = realDeps) {
         for (const l of action.addLabels || []) editArgs.push('--add-label', l);
         for (const l of action.removeLabels || []) editArgs.push('--remove-label', l);
         deps.gh(editArgs);
+        emitLabelTransitions(deps, {
+          issue: action.issue, addLabels: action.addLabels, removeLabels: action.removeLabels, repoName, runDir, startedAt,
+        });
         logAuto(deps, runDir, `#${action.issue}: applied ${labelSummary}`);
       } catch (err) {
         editFailed = true;
@@ -230,6 +321,9 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, validateAction };
+module.exports = { run, parseArgs, validateAction, realDeps };
 
-if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
+// #5902: the real emitter rides in realDeps, so only a run that defaults to them emits.
+if (require.main === module) {
+  process.exitCode = run(process.argv.slice(2));
+}

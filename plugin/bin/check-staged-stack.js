@@ -11,7 +11,7 @@
 // directory, --rederive-out resolving inside staged/, --patch not among staged/'s walked .patch
 // entries — a dotfile, say), or --patch does not apply at its position nor alone — the JSON still
 // prints on that last path; 3 the run dir (the parent of staged/) is missing or not anchored under
-// the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md's Anchoring section,
+// the main checkout (a worktree-local shadow, or a directory outside pipelines/ — _shared/pipeline-run-dir.md's Anchoring section,
 // [IL-127]); 4 the check could not run — any throw from checkStack (scratch or git failure, or an
 // invariant guard), error on stderr.
 // --rederive-out (#3290): when --patch conflicts with an earlier patch, its per-file 3-way re-derive
@@ -99,7 +99,7 @@ function run(argv, deps = realDeps) {
   }
   if (!anchored.ok) {
     if (anchored.reason === 'missing') deps.stderr(`check-staged-stack.js: run dir does not exist: ${runDir}\n`);
-    else deps.stderr(`check-staged-stack.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
+    else deps.stderr(`check-staged-stack.js: run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
     return 3;
   }
 

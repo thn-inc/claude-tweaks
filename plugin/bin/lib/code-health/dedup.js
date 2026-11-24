@@ -12,7 +12,7 @@ const RISK_RANK = { high: 0, medium: 1, low: 2 };
 //
 // issueIndex: precomputed map { "<fingerprint>": { number, state, labels } }
 //   built from gh issue list output (the skill builds it; engine never calls network).
-//   state ∈ 'open' | 'closed'
+//   state: lowercase from the loader; compared case-insensitively for a hand-built index
 //
 // Decision logic (contract §dedup.js):
 //   open issue match         -> skip      (no flood)
@@ -58,7 +58,7 @@ function decide(finding, issueIndex, cache, opts) {
     // durable/persisted by construction, so they deliberately carry no reason
     // — re-persisting them would be a no-op write.
     if ((match.labels || []).includes('wontfix')) return { action: 'suppress', issue: match.number, reason: 'wontfix-label' };
-    if (match.state === 'closed') {
+    if (String(match.state).toLowerCase() === 'closed') {
       return {
         action: 'reopen',
         issue: match.number,

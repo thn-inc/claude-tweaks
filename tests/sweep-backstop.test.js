@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
@@ -68,8 +69,9 @@ function isolateItem9(script, { candidatesPath, inputPath }, sep = path.sep) {
 function assertAllSyntaxValid(scripts, label) {
   assert.ok(scripts.length > 0, `expected at least one node -e script in ${label}`);
   for (const [i, script] of scripts.entries()) {
-    const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-syntax-')), `script-${i}.js`);
-    fs.writeFileSync(tmp, script);
+    const tmp = path.join(scratchDir('ct-sweep-syntax-'), `script-${i}.js`);
+    // A scan fence carries the `{resolved-limit}` placeholder an agent substitutes literally (#4820); `node --check` needs a number.
+    fs.writeFileSync(tmp, script.replaceAll('{resolved-limit}', '1000'));
     assert.doesNotThrow(
       () => execFileSync('node', ['--check', tmp], { stdio: 'pipe' }),
       `${label} script #${i} has a syntax error:\n${script}`,
@@ -79,6 +81,12 @@ function assertAllSyntaxValid(scripts, label) {
 
 const ITEM9 = extractItemSection(SCAN, '9. **Unarmed ready PR**', '10. **Unsettled run**');
 const ITEM10 = extractItemSection(SCAN, '10. **Unsettled run**', '\nFindings and recommendations');
+// #4804: ITEM10 above runs on through item 11 (its node -e syntax check covers both); the pins on item 10's own text read this narrower slice.
+const ITEM10_OWN = extractItemSection(SCAN, '10. **Unsettled run**', '11. **Stale pending-review PR**');
+// #4804: item 10's resume procedure moved to a sibling file; the tidy Step 4.8 dispatcher inlines it.
+const RESUME = read('plugin', 'skills', '_shared', 'github-pr-scan-unsettled-resume.md');
+const TIDY_SCAN_PROCEDURES = read('plugin', 'skills', 'tidy', 'scan-procedures.md');
+const STEP48_REPO_WIDE = TIDY_SCAN_PROCEDURES.split('\n').find((l) => l.startsWith('Scan per `_shared/github-pr-scan.md`, **`repo-wide`** scope'));
 
 test('item 9 (unarmed ready PR): every embedded node -e script is syntactically valid', () => {
   assertAllSyntaxValid(extractNodeScripts(ITEM9), 'item 9');
@@ -103,7 +111,7 @@ test("item 9's green-check filter treats SKIPPED as non-blocking, not a failure 
     'expected the first item-9 script to be the candidate filter (writes $PR_SCAN_UNARMED_CANDIDATES)',
   );
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-filter-'));
+  const tmpDir = scratchDir('ct-item9-filter-');
   const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
   const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
 
@@ -186,7 +194,7 @@ test('item 9 also recognizes wrap-up-residue-pr as a mechanical-housekeeping mar
 
 test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekeeping candidate (finding regression)", () => {
   const filterScript = extractNodeScripts(ITEM9)[0];
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-item9-residue-'));
+  const tmpDir = scratchDir('ct-item9-residue-');
   const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
   const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
   const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
@@ -208,6 +216,99 @@ test("item 9's filter script treats a wrap-up-residue-pr-marked PR as a housekee
 
   const candidateNumbers = JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
   assert.ok(candidateNumbers.includes(2001), 'a PR carrying only the wrap-up-residue-pr marker must be a candidate');
+});
+
+test("item 9's classifier grants a wrap-up-skills-pr PR through the key alone, never housekeeping or a record grant", () => {
+  const classifier = extractNodeScripts(ITEM9).find((s) => /labelsByIssue/.test(s));
+  assert.ok(classifier, 'expected the item-9 classifier script');
+  // The classifier is its own bash fence (a fresh shell): it must re-read the key itself, not inherit the filter fence's variable.
+  const classifierFence = ITEM9.split('```bash').map((f) => f.split('```')[0]).find((f) => f.includes('labelsByIssue'));
+  assert.match(classifierFence, /LEARNED_SKILLS_GRANT=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values learned-skills-auto-merge\)/);
+  const tmpDir = scratchDir('ct-item9-skills-cls-');
+  try {
+    const candidatesPath = path.join(tmpDir, 'candidates.json');
+    const linksPath = path.join(tmpDir, 'links.jsonl');
+    const script = classifier
+      .split('$PR_SCAN_UNARMED_CANDIDATES').join(toPosix(candidatesPath, path.sep))
+      .split('$PR_SCAN_UNARMED_LINKS').join(toPosix(linksPath, path.sep));
+    fs.writeFileSync(candidatesPath, JSON.stringify([{
+      number: 3002,
+      title: 'wrap-up learned skills',
+      body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
+      closingIssuesReferences: [{ number: 5290 }],
+    }]));
+    fs.writeFileSync(linksPath, JSON.stringify({ number: 5290, labels: ['auto:build', 'auto:merge'] }) + '\n');
+    const scriptPath = path.join(tmpDir, 'classifier.js');
+    fs.writeFileSync(scriptPath, script);
+    const run = (learned) => execFileSync('node', [scriptPath], {
+      env: { ...process.env, HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: learned, ALLOW_AUTO_MERGE: 'true' },
+      encoding: 'utf8',
+    });
+
+    const off = run('false');
+    assert.match(off, /learned-skills-auto-merge off — a human merges or closes it/);
+    assert.doesNotMatch(off, /green and granted|arm per|drain per|auto:build and auto:merge/);
+    const on = run('true');
+    assert.match(on, /learned-skills-auto-merge on — drain per tidy\/actions-github-issues\.md/);
+    assert.doesNotMatch(on, /arm per/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("item 9's filter offers a wrap-up-skills-pr PR only through learned-skills-auto-merge", () => {
+  assert.match(ITEM9, /<!-- wrap-up-skills-pr -->[^\n]*candidate only when `learned-skills-auto-merge` resolves `true`/);
+  assert.match(ITEM9, /resolve-policy\.js" --values learned-skills-auto-merge/);
+  assert.match(SCAN, /\| Unarmed learned-skills PR, granted \(item 9\) \| Drain via `\/claude-tweaks:tidy`/);
+  assert.match(SCAN, /Unarmed learned-skills PR, granted \(item 9\).*\| medium \|/);
+  const filterScript = extractNodeScripts(ITEM9)[0];
+  const tmpDir = scratchDir('ct-item9-skills-');
+  try {
+    const inputPath = path.join(tmpDir, 'pr-scan-unarmed.json');
+    const candidatesPath = path.join(tmpDir, 'pr-scan-unarmed-candidates.json');
+    const isolatedScript = isolateItem9(filterScript, { candidatesPath, inputPath });
+
+    const oldEnough = new Date(Date.now() - 25 * 3600000).toISOString();
+    const base = {
+      isDraft: false,
+      autoMergeRequest: null,
+      updatedAt: oldEnough,
+      statusCheckRollup: [{ conclusion: 'SUCCESS' }],
+    };
+    fs.writeFileSync(inputPath, JSON.stringify([
+      { ...base, number: 3001, title: 'wrap-up learned skills', body: '<!-- wrap-up-skills-pr -->\n<!-- wrap-up-residue-pr -->' },
+      {
+        ...base,
+        number: 3002,
+        title: 'wrap-up learned skills (run-marked, granted)',
+        body: '<!-- wrap-up-skills-pr -->\n<!-- claude-tweaks-run: 2026-11-13T005701-spec-5290 -->',
+        closingIssuesReferences: [{ number: 5290 }],
+      },
+      { ...base, isDraft: true, number: 3003, title: 'wrap-up learned skills (draft)', body: '<!-- wrap-up-skills-pr -->' },
+    ]));
+
+    const scriptPath = path.join(tmpDir, 'item9-skills-filter.js');
+    fs.writeFileSync(scriptPath, isolatedScript);
+    const run = (grant) => {
+      execFileSync('node', [scriptPath], {
+        env: { ...process.env, UNARMED_AGE: '24', HOUSEKEEPING_GRANT: 'true', LEARNED_SKILLS_GRANT: grant },
+        stdio: 'pipe',
+      });
+      return JSON.parse(fs.readFileSync(candidatesPath, 'utf8')).map((c) => c.number);
+    };
+
+    const granted = run('true');
+    assert.ok(granted.includes(3001), 'learned-skills-auto-merge=true must offer a skills PR');
+    assert.ok(granted.includes(3002), 'learned-skills-auto-merge=true must offer a run-marked skills PR');
+    assert.ok(!granted.includes(3003), 'a draft skills PR is never a candidate');
+    for (const grant of ['false', '', 'TRUE']) {
+      const got = run(grant);
+      assert.ok(!got.includes(3001), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3001 (housekeeping lever irrelevant)`);
+      assert.ok(!got.includes(3002), `LEARNED_SKILLS_GRANT=${JSON.stringify(grant)} must not offer 3002`);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test('item 9 re-verifies unresolved threads per candidate, never against the full open-PR list', () => {
@@ -236,9 +337,257 @@ test('item 10: no PR at all qualifies unconditionally; a PR qualifies only when 
   assert.match(ITEM10, /no more recent than the claim's `claimedAt`/);
 });
 
-test('item 10 resume command is read verbatim from the PR body when a PR exists, reconstructed only when none exists', () => {
-  assert.match(ITEM10, /read and report it verbatim rather than reconstructing it/);
-  assert.match(ITEM10, /the reconstructed command above starts from `reconcile`/);
+test('the resume file reads the resume command from the PR body when a PR exists, reconstructed only when none exists', () => {
+  assert.match(RESUME, /read through `bin\/pr-resume-line\.js` rather than reconstructing it/);
+  assert.match(RESUME, /the reconstructed command in item 10's `\[unsettled\]` print lines \(its `no PR found … resume: node … reconcile` line\) starts from `reconcile`/);
+});
+
+// #4804 review: the resume file cites item 10's print line by shape; pin that item 10 still prints it.
+test('item 10 still prints the reconstructed `no PR found … resume: node … reconcile` line the resume file cites (#4804)', () => {
+  assert.match(ITEM10_OWN, /no PR found '[^\n]*resume: node [^\n]*hooks\.js[^\n]*reconcile/);
+});
+
+test('the resume file routes the PR body Resume line through pr-resume-line.js, not a restated template', () => {
+  assert.ok(RESUME.includes('pr-resume-line.js'), 'the resume file must name pr-resume-line.js');
+  assert.ok(!ITEM10.includes('/claude-tweaks:flow "{target}" {next-step}'), 'item 10 must not restate the composed Resume-line template');
+  assert.ok(!RESUME.includes('/claude-tweaks:flow "{target}" {next-step}'), 'the resume file must not restate the composed Resume-line template');
+  // the claim blob is untrusted: its runId is shape-checked before it reaches a shell command, and never re-stated here
+  assert.match(RESUME, /validate `\{run-id\}` against the canonical run-id shape before it enters the command/);
+  assert.match(RESUME, /Report the `resume` line it prints only when the verdict is `resume`/);
+});
+
+test('item 10 points [unsettled] resume commands at the sibling resume file, with or without a PR (#4804)', () => {
+  assert.ok(ITEM10_OWN.includes('github-pr-scan-unsettled-resume.md'), 'item 10 must name github-pr-scan-unsettled-resume.md');
+  assert.match(ITEM10_OWN, /before reporting its resume command, whether or not a PR exists/);
+});
+
+test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan agent's prompt carries the moved procedure (#4804)", () => {
+  assert.ok(STEP48_REPO_WIDE, "scan-procedures.md's Step 4.8 repo-wide paragraph must be found");
+  const enumeration = STEP48_REPO_WIDE.match(/The dispatcher inlines [^\n]*?into this agent's prompt/);
+  assert.ok(enumeration, "the Step 4.8 dispatcher's inlining enumeration must be found");
+  assert.ok(enumeration[0].includes('`github-pr-scan-unsettled-resume.md`'), 'the inlining enumeration must name github-pr-scan-unsettled-resume.md');
+});
+
+// #4804 review (M1): the moved procedure must not drift back into item 10. Whitespace is collapsed
+// before each check, so a line-wrapped copy of a literal still matches and goes red. The RESUME
+// control proves each literal is spelled that way in the file it moved to, so the absence check
+// cannot pass vacuously on a misspelled literal.
+const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
+test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4804)', () => {
+  const resumeText = collapseWhitespace(RESUME);
+  const item10Text = collapseWhitespace(ITEM10_OWN);
+  for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape', 'Never take `{run-id}` from the PR body\'s own marker', 'Report the `resume` line it prints only when the verdict is `resume`']) {
+    assert.ok(resumeText.includes(literal), `control: "${literal}" must be in the resume file`);
+    assert.ok(!item10Text.includes(literal), `item 10 must not carry the moved literal "${literal}"`);
+  }
+});
+
+// #4804: this run-id rule moved with item 10's resume procedure into the resume file.
+test("the resume file takes {run-id} from the claim blob runId, never from the PR body's own marker", () => {
+  assert.match(RESUME, /`\{run-id\}` being the `runId` of the record's claim blob/);
+  assert.match(RESUME, /Never take `\{run-id\}` from the PR body's own marker here/);
+});
+
+// #4818: item 10's evaluation script, run against fixture files. The three
+// $PR_SCAN_UNSETTLED_* placeholders become temp paths (the isolateItem9 pattern),
+// UNSETTLED_AGE=24 is set, and the PR list is empty so no `gh pr view` runs.
+function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]', extraEnv = {} }) {
+  const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
+  assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
+  const dir = scratchDir('ct-sweep-item10-');
+  try {
+    const claimsPath = path.join(dir, 'claims.jsonl');
+    const labelledPath = path.join(dir, 'labelled.json');
+    const prsPath = path.join(dir, 'prs.json');
+    fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
+    fs.writeFileSync(labelledPath, labelledText ?? JSON.stringify(labelled));
+    fs.writeFileSync(prsPath, prsText);
+    const script = scripts[0]
+      .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
+      .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
+      .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath))
+      // The `{resolved-limit}` placeholder an agent substitutes literally (#4820), above every fixture's row count.
+      .split('{resolved-limit}').join('1000');
+    const file = path.join(dir, 'item10-eval.js');
+    fs.writeFileSync(file, script);
+    return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+// read-claims.js's terminator: present on every completed read, absent on a failed or cut-off one.
+const COMPLETE = (count) => ({ number: null, state: 'complete', count });
+
+test('item 10 reads claims in one git batch through bin/read-claims.js, never a per-blob contents call (#4818)', () => {
+  assert.ok(!ITEM10.includes('contents/claims/'), 'item 10 must not read a claim blob per call');
+  assert.ok(ITEM10.includes('bin/read-claims.js'), 'item 10 must name bin/read-claims.js');
+});
+
+test('item 10 characterization: a live claim 25h old with no PR still reports no PR found', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    labelled: [],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: a could-not-read registry row reports the registry and judges no label-only candidate (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: null, state: 'could-not-read', reason: 'transport-failure' }],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a could-not-read blob reports the blob, and its labelled issue is not label drift (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'could-not-read', reason: 'transport-failure' }, COMPLETE(1)],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: claim blob could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /#12: no PR found/);
+});
+
+test('item 10: an EMPTY claims file is an unread registry, never silence (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(no completion row\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: an empty registry (terminator count 0) is a real answer, so a label-only candidate is judged', () => {
+  const out = runItem10Evaluation({
+    claimRows: [COMPLETE(0)],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.doesNotMatch(out, /could not be read/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: an unreadable bot:in-progress list judges no label-only candidate, but still judges the claims (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, { number: 13, state: 'live', claimedAt: HOURS_AGO(1) }, COMPLETE(2)],
+    labelledText: '',
+  });
+  assert.match(out, /\[unsettled\] bot:in-progress list could not be read — label-only candidates not judged/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  // #13 is a fresh claim (1h old, under the 24h threshold): the age gate must skip it.
+  assert.doesNotMatch(out, /#13/);
+});
+
+test('item 10: an unreadable PR list judges no candidate, so a stale claim is not reported as no PR found (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+    prsText: '',
+  });
+  assert.match(out, /\[unsettled\] PR list could not be read — no candidate judged/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a stale claim past the threshold with no PR is judged like a live one (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 15, state: 'stale', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+  });
+  assert.match(out, /\[unsettled\] #15: no PR found/);
+});
+
+// #4818: the PR-progress comparison runs only through `gh pr view`. A fake `gh` shim first on
+// PATH prints one fixed commit date per case, so the real gh is never called. Skipped on
+// win32: a `#!/bin/sh` shim does not run there.
+function runItem10WithFakeGh(committedDate) {
+  const binDir = scratchDir('ct-sweep-fakegh-');
+  try {
+    const gh = path.join(binDir, 'gh');
+    const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
+    fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
+    fs.chmodSync(gh, 0o755); // root-safe: makes the shim executable, not a denial simulation
+    return runItem10Evaluation({
+      claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+      prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
+      extraEnv: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+  } finally {
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+}
+
+test('item 10: PR progress newer than claimedAt means the claim is not unsettled (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(1));
+  assert.doesNotMatch(out, /#12/);
+});
+
+test('item 10: PR progress older than claimedAt reports the PR as silent (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(30));
+  assert.match(out, /\[unsettled\] #12: PR #40 silent 25h after claim/);
+});
+
+test('item 10: without git access the registry read is reported unreadable, with no MCP fallback promised (#4818)', () => {
+  assert.match(SCAN, /without git access to `claims-registry` it prints a registry `could-not-read` row and item 10 reports the registry unreadable, never empty/);
+  assert.ok(!SCAN.includes('List all claims'), 'no unrouted fallback to issue-claims.md "List all claims" — that section writes none of the rows item 10 reads');
+});
+
+// The producer/consumer seam: run bin/read-claims.js's real run() against a faked git, and hand the
+// rows it actually prints to the evaluation script, so a row-vocabulary drift on either side goes red.
+function printedByReadClaims({ fetchFails = false, missingBlob = false } = {}) {
+  const { run } = require('../plugin/bin/read-claims');
+  const live = JSON.stringify({ issueNumber: 12, claimedAt: HOURS_AGO(25), runId: 'r12' });
+  const lsTree = ['12', '13'].map((n) => `100644 blob sha${n}\tclaims/issue-${n}.json\0`).join('');
+  const git = (args, opts = {}) => {
+    if (args[0] === 'fetch' && fetchFails) throw Object.assign(new Error('Command failed: git fetch'), { stderr: 'fatal: 403\n' });
+    if (args[0] === 'ls-tree') return lsTree;
+    if (args[0] === 'rev-parse') return 'tip\n';
+    if (args[0] === 'cat-file') {
+      const shas = Buffer.from(opts.input).toString('utf8').split('\n').filter(Boolean);
+      return Buffer.concat(shas.map((sha) => (sha === 'sha13' && missingBlob
+        ? Buffer.from(`${sha} missing\n`)
+        : Buffer.from(`${sha} blob ${Buffer.byteLength(live)}\n${live}\n`))));
+    }
+    return '';
+  };
+  const lines = [];
+  run([], { runner: git, now: () => Date.now(), stdout: (s) => lines.push(s), stderr: () => {} });
+  return lines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a refused fetch reports the registry unreadable (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ fetchFails: true }), labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }] });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a missing blob is named, its sibling still judged (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ missingBlob: true }) });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+});
+
+test('item 10: a readable live claim is still judged when another blob could not be read (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [
+      { number: 12, state: 'live', claimedAt: HOURS_AGO(25) },
+      { number: 13, state: 'could-not-read', reason: 'transport-failure' },
+      COMPLETE(2),
+    ],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+  assert.match(out, /\[unsettled\] #14: no PR found/);
+  assert.doesNotMatch(out, /claims-registry could not be read/);
+});
+
+test('item 10: the evaluation fence resolves unsettled-age-hours itself, since a fresh bash invocation inherits no variable (#4818)', () => {
+  assert.match(
+    ITEM10,
+    /UNSETTLED_AGE=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values unsettled-age-hours\) node -e "/,
+    'an unset UNSETTLED_AGE makes AGE_HOURS NaN, which skips no candidate by age',
+  );
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {
@@ -266,8 +615,8 @@ test('existing severity rows are unchanged (delta review — AC4)', () => {
     '| Stale open PR (>4 weeks) | medium |',
     '| Open PR superseded (related work already merged) | medium |',
     '| Merged/closed PR with local branch/worktree remnants | medium |',
-    '| Code-health/harness-health/journey-health/docs-health issue stale/superseded | medium |',
-    '| Code-health/harness-health/journey-health/docs-health issue still valid, awaiting `/claude-tweaks:backlog refine` | low |',
+    '| Code-health/harness-health/journey-health/docs-health/ci-health issue stale/superseded | medium |',
+    '| Code-health/harness-health/journey-health/docs-health/ci-health issue still valid, awaiting `/claude-tweaks:backlog refine` | low |',
     '| Open PR awaiting review (not draft, not yet `Stale`, 0 unresolved threads, CI clean) | info |',
     '| Closed record with no acceptance disposition (`acceptance-gap` scope) | info |',
     '| Decomposition parent complete with no acceptance disposition (`parent-gate` scope) | info |',
@@ -322,6 +671,59 @@ test('step-6-auto.md: the record-linked flavor of Arm ready PR always stages, at
   const row = STEP6.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
   assert.ok(row, 'record-linked Arm ready PR row not found');
   assert.match(row[0], /\| Stage \| Stage \| Stage/);
+});
+
+test('step-6-auto.md: the Drain learned-skills PR row auto-applies at the arm row\'s tiers only under learned-skills-auto-merge, and names its carve-out', () => {
+  const row = STEP6.match(/\| \*\*Drain learned-skills PR\*\*[^\n]*\n/);
+  assert.ok(row, 'Drain learned-skills PR row not found');
+  assert.match(row[0], /\| Stage \| Auto-apply — only under `learned-skills-auto-merge`[^|]*\| Auto-apply — same gate as `moderate`/);
+  assert.match(row[0], /resolves `false`, the row Stages at every tier/);
+  assert.match(row[0], /never satisfied by `housekeeping-auto-merge`/);
+  assert.match(row[0], /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(row[0], /`learned-skills-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+});
+
+test('step-6-auto.md: the Arm ready PR rows are fenced to non-marker PRs; the housekeeping row names its carve-out in the same form', () => {
+  const housekeeping = STEP6.match(/\| \*\*Arm ready PR\*\* \(a green, gate-passed, `\[pr-unarmed\]` PR granted via `housekeeping-auto-merge`[^\n]*\n/);
+  const linked = STEP6.match(/\| \*\*Arm ready PR\*\* \(item 9's other granted flavor[^\n]*\n/);
+  assert.ok(housekeeping && linked, 'both Arm ready PR rows must exist');
+  assert.match(housekeeping[0], /`housekeeping-auto-merge` is this row's carve-out from the `outward GitHub write, never auto per reversibility floor` rule: the policy key is the human's standing grant/);
+  assert.match(housekeeping[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+  assert.match(linked[0], /never a `<!-- wrap-up-skills-pr -->` PR/);
+});
+
+test('actions-github-issues.md: Drain learned-skills PRs runs the drain verb and trusts its own re-checks', () => {
+  assert.match(ACTIONS_GH, /## Drain learned-skills PRs/);
+  assert.match(ACTIONS_GH, /learned-skills-pr\.js" drain --run "\{run-dir\}" --integration-branch \{integration-branch\}/);
+  assert.match(ACTIONS_GH, /re-checks green and gate-passed itself/);
+  const start = ACTIONS_GH.indexOf('## Drain learned-skills PRs');
+  const end = ACTIONS_GH.indexOf('## Sync to GitHub');
+  assert.ok(start >= 0 && end > start, 'Drain section must precede ## Sync to GitHub');
+  const section = ACTIONS_GH.slice(start, end);
+  assert.doesNotMatch(section, /gh pr merge/);
+});
+
+test('actions-github-issues.md: Drain covers exit 2, logs a degrade SKIP, and maps outcomes to report sections', () => {
+  const section = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Drain learned-skills PRs'), ACTIONS_GH.indexOf('## Sync to GitHub'));
+  assert.match(section, /Exit 2 is a malformed call[^]*re-run once/);
+  assert.match(section, /Learned-skills drain \(degraded\)[^]*log-decision\.js --status SKIP --text-file/);
+  assert.match(section, /killed[^]*no JSON line/);
+  assert.match(section, /Without `gh` the call returns\s+empty lists/);
+  assert.match(section, /a second exit 2 is the degrade case below \(the SKIP line\), merging nothing/);
+  assert.match(section, /killed, or no JSON line: the outcome is unknown[^]*never as nothing merged/);
+  assert.match(section, /drain exited \{1\|2\}/);
+  assert.match(STEP6, /once, over every open learned-skills PR —/);
+  assert.match(section, /`merged`\s+and `armed` go to \*\*Applied automatically\*\*; `conflicting` and every `leftOpen` reason[^]*go to \*\*Yours\*\*[^]*gh pr view \{n\} --web/);
+});
+
+test('actions-github-issues.md: Arm ready PR re-verify holds on bot:blocked/bot:parked and never arms a learned-skills marker PR', () => {
+  const arm = ACTIONS_GH.slice(ACTIONS_GH.indexOf('## Arm ready PR'), ACTIONS_GH.indexOf('## Drain learned-skills PRs'));
+  assert.match(arm, /that no linked record carries `bot:blocked` or\s+`bot:parked`[^]*defaulted to `\[\]`, still blocks the arm/);
+  assert.match(arm, /carrying the `<!-- wrap-up-skills-pr -->` marker is never armed here/);
+});
+
+test('step-6-auto.md: the preamble lets the policy-key carve-outs auto-apply at their own rows\' tiers', () => {
+  assert.match(STEP6, /`learned-skills-auto-merge`\), which auto-apply at their own rows' tiers; every other such write's disposition rides on reconcile/);
 });
 
 test('step-6-auto.md: ungranted unarmed PRs and unsettled runs never auto-apply at any tier', () => {

@@ -3,18 +3,20 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
+const { initRepo, writeIdentity } = require('../../helpers/git-fixtures');
+const { STUB_SKIP, installStub } = require('../../helpers/path-stub');
 
 const HOOKS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
 
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }); }
 
 test('reconcile-background: writes a status file with completedAt + summary, exits 0 even with no gh/remote', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-'));
+  const dir = scratchDir('ct-recon-bg-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -37,10 +39,9 @@ test('reconcile-background: writes a status file with completedAt + summary, exi
 // anything, `completedAt` (a `Date.now()` millisecond value) would almost
 // certainly differ, so byte-identity is a reliable proxy for "did not run".
 test('reconcile-background: a second call within the freshness window is a no-op — it does not re-run reconcile() or touch the status file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-nop-'));
+  const dir = scratchDir('ct-recon-bg-nop-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -66,10 +67,9 @@ test('reconcile-background: a second call within the freshness window is a no-op
 // call) must make the CLI skip entirely: no status-file touch, lock left
 // untouched (not released by the loser).
 test('reconcile-background: a lock already held by a live process is never taken over — no status-file write, lock left in place', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-locked-'));
+  const dir = scratchDir('ct-recon-bg-locked-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -92,10 +92,9 @@ test('reconcile-background: a lock already held by a live process is never taken
 // pass must complete and clean up its own lock afterward — no orphaned
 // .lock file left behind on the success path.
 test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pass leaves no lock file behind', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-stale-lock-'));
+  const dir = scratchDir('ct-recon-bg-stale-lock-');
   git(['init', '-q', '--initial-branch=main'], dir);
-  git(['config', 'user.email', 't@e.com'], dir);
-  git(['config', 'user.name', 'T'], dir);
+  writeIdentity(dir, { name: 'T', email: 't@e.com' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'x');
   git(['add', 'a.txt'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -114,7 +113,7 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
   assert.equal(fs.existsSync(lockFile), false, 'the lock must be released once the pass completes');
 });
 
-// #1687: mirrors tests/bin-lib/reconcile/archive-merged.test.js's own
+// #1687: mirrors tests/bin-lib/reconcile/archive-merged-helpers.js's own
 // fixtureAbandonedShippedRun (an abandoned, stale, shipped 'interrupted' run
 // whose worktree was torn down) — but this test drives the real
 // `reconcile-background` CLI subcommand, not archiveMerged() in-process. The
@@ -123,23 +122,21 @@ test('reconcile-background: a stale (dead-pid) lock is reclaimed; a completed pa
 // this subcommand -> reconcile({sessionId}) -> archiveMerged's ownership
 // gate), not merely a unit test that passes sessionId as a function argument.
 function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-owner-')));
-  git(['init', '-q', '-b', 'main'], root);
-  git(['config', 'user.email', 't@e.com'], root);
-  git(['config', 'user.name', 'T'], root);
+  const root = fs.realpathSync(scratchDir('ct-recon-bg-owner-'));
+  initRepo(root, { name: 'T', email: 't@e.com', branch: 'main' });
   fs.writeFileSync(path.join(root, 'a.txt'), 'a\n');
   git(['add', 'a.txt'], root);
   git(['commit', '-q', '-m', 'init'], root);
   fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
   // `integration-model: pr-first` is load-bearing here beyond what
-  // archive-merged.test.js's own fixture needs: that file calls
+  // archive-merged-helpers.js's own fixture needs: its callers call
   // archiveMerged() directly, bypassing reconcile()'s own
   // resolveIntegrationModel gate entirely, but this test drives the real
   // reconcile-background CLI, which skips every check (including 'archive')
   // under the default local-merge model.
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-branch: main\nintegration-model: pr-first\n');
 
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-owner-wt-'));
+  const wt = scratchDir('ct-recon-bg-owner-wt-');
   git(['worktree', 'add', '-q', wt, '-b', 'feat-branch'], root);
   fs.writeFileSync(path.join(wt, 'feature.txt'), 'feature\n');
   execFileSync('git', ['add', 'feature.txt'], { cwd: wt, encoding: 'utf8' });
@@ -157,7 +154,7 @@ function fixtureAbandonedShippedRun({ runId, ownerSessionId } = {}) {
   if (ownerSessionId) runState.sessionId = ownerSessionId;
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(runState));
   // Far outside the 24h staleness window — satisfies both checkRunIntegrity's
-  // shipped-unclosed evidence bar and lastOwnEventMs' recency check.
+  // shipped-unclosed evidence bar and ownEventRecency's recency check.
   const seedEvent = '{"skill":"claude-tweaks:build","ts":"2020-01-01T09:05:00.000Z","type":"skill_invoked"}';
   fs.writeFileSync(path.join(runDir, 'events.jsonl'), `${seedEvent}\n`);
 
@@ -183,11 +180,19 @@ test('reconcile-background: an abandoned interrupted run owned by CLAUDE_TWEAKS_
 // absent, as it was before this fix), behavior is unchanged — the other two
 // gates (24h staleness + shipped-unclosed evidence) still govern alone and
 // this same shape of run is still archived.
-test('reconcile-background: the same abandoned interrupted run IS archived when CLAUDE_TWEAKS_SESSION_ID is unset (control — unchanged fallback behavior, #1687 AC2)', () => {
+test('reconcile-background: the same abandoned interrupted run IS archived when CLAUDE_TWEAKS_SESSION_ID is unset (control — unchanged fallback behavior, #1687 AC2)', (t) => {
   const runId = '2026-08-01T090000-record-1687-noown';
   const { root, runDir } = fixtureAbandonedShippedRun({ runId, ownerSessionId: 'sess-1687-someone-else' });
 
-  const env = { ...process.env };
+  // #5555: the archive starts a detached token pass; point its transcript lookup at an empty fixture dir.
+  const cfgDir = scratchDir('ct-recon-bg-cfg-');
+  t.after(() => fs.rmSync(cfgDir, { recursive: true, force: true }));
+  // #6162: reconcile skips its archive check when its GitHub-health preflight (`gh api rate_limit`) fails, and the
+  // driver's test step runs with no gh credentials. A `gh` stand-in answers that one call and fails every other, as
+  // the real gh does in this remote-less fixture, so the archive rests on git evidence alone. On win32 a script stub
+  // is never spawned (path-stub.js), so the real gh still answers there.
+  if (!STUB_SKIP) t.after(installStub('gh', '#!/bin/sh\nif [ "$1" = "api" ] && [ "$2" = "rate_limit" ]; then echo 5000; exit 0; fi\nexit 1\n'));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
   delete env.CLAUDE_TWEAKS_SESSION_ID;
   execFileSync('node', [HOOKS, 'reconcile-background'], { cwd: root, encoding: 'utf8', env });
 
@@ -199,11 +204,11 @@ test('reconcile-background: the same abandoned interrupted run IS archived when 
 
 // The status file's `summary` is built from reconcile()'s result. Drives the
 // real `reconcile-background` branch of main() in-process with reconcile()
-// stubbed (the same module-object stub tests/reconcile.test.js's AC3.1 uses),
+// stubbed (the same module-object stub tests/reconcile-dispatch.test.js's AC3.1 uses),
 // so no git remote or `gh` is involved. process.cwd() is what that branch
 // reads, so the test switches into the fixture repo and back.
 async function backgroundSummaryFor(result) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-summary-'));
+  const dir = scratchDir('ct-recon-bg-summary-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');
@@ -229,6 +234,8 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
     runs: [{ action: 'archived' }],
     branches: [{ kind: 'branch', action: 'delete' }, { kind: 'branch', action: 'tag-and-delete' }, { kind: 'tag', action: 'delete' }],
     remoteBranches: [{ action: 'delete' }, { action: 'delete' }, { action: 'skip' }],
+    // Two would-delete, one delete: a count that read would-delete instead of delete would say 2, not 1.
+    planRefs: [{ action: 'delete' }, { action: 'skip' }, { action: 'skip', reason: 'delete-failed' }, { action: 'skip', reason: 'record-open' }, { action: 'would-delete' }, { action: 'would-delete' }],
     worktrees: [{ action: 'reaped' }, { action: 'skipped', path: '/w/a', reason: 'pr-open' }, { action: 'skipped', path: '/w/b', reason: 'in use by a live session' }],
     skipped: [{ check: 'release', reason: 'x' }],
   });
@@ -236,9 +243,185 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.equal(summary.archived, 1);
   assert.equal(summary.archivedBranches, 2);
   assert.equal(summary.prunedRemote, 2);
+  assert.equal(summary.planRefsDeleted, 1);
+  assert.equal(summary.planRefsDeleteFailed, 1);
   assert.equal(summary.reaped, 1);
   assert.deepEqual(summary.notableWorktrees, [{ path: '/w/a', reason: 'pr-open' }]);
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
+});
+
+test('reconcile-background summary: carries held hollow merges (#6143), empty when none', async () => {
+  const held = await backgroundSummaryFor({
+    hollowMerges: [
+      { runDir: '/r/a', runId: 'run-a', pr: 7, action: 'held', reason: 'hollow-merge', phase: 'build', records: [1], commented: [1] },
+      { runDir: '/r/b', runId: 'run-b', pr: null, action: 'held', reason: 'hollow-check-failed', detail: 'x' },
+    ],
+  });
+  assert.deepEqual(held.hollowMerges, [
+    { runId: 'run-a', pr: 7, reason: 'hollow-merge', phase: 'build' },
+    { runId: 'run-b', pr: null, reason: 'hollow-check-failed' },
+  ]);
+  assert.deepEqual((await backgroundSummaryFor({})).hollowMerges, []);
+});
+
+test("reconcile-background summary: the banner drops reap-merged's 'held' and 'in-use' skips but keeps held-unverifiable (#4960)", async () => {
+  const summary = await backgroundSummaryFor({
+    worktrees: [
+      { action: 'skipped', path: '/w/held', reason: 'held' },
+      { action: 'skipped', path: '/w/in-use', reason: 'in-use' },
+      { action: 'skipped', path: '/w/stuck', reason: 'held-unverifiable' },
+    ],
+  });
+  assert.deepEqual(summary.notableWorktrees, [{ path: '/w/stuck', reason: 'held-unverifiable' }]);
+});
+
+test('reconcile-background summary: counts post-merge runs and the parents they closed, a marker-write-failed entry\'s parents included (#4599)', async () => {
+  const summary = await backgroundSummaryFor({
+    postMerge: [
+      { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 2 },
+      { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'reopened', parentsClosed: 0 },
+      { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
+      { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
+      { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/g', pr: 7, action: 'skipped', reason: 'error', detail: 'boom' },
+    ],
+  });
+  assert.equal(summary.postMergeRan, 2, 'a Step 4.0 failure is not a run that ran');
+  assert.equal(summary.postMergeFailed, 3, 'a thrown check counts as failed too');
+  assert.equal(summary.postMergeParentsClosed, 2, 'only the runs that wrote their marker');
+  // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted, apart from the 2.
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 5);
+  for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
+    const none = await backgroundSummaryFor(result);
+    assert.equal(none.postMergeRan, 0);
+    assert.equal(none.postMergeFailed, 0);
+    assert.deepEqual(none.postMergeFailedRecords, []);
+    assert.equal(none.postMergeParentsClosed, 0);
+    assert.equal(none.postMergeUnmarkedParentsClosed, 0);
+    assert.deepEqual(none.postMergeParentsLeftOpen, []);
+    assert.deepEqual(none.postMergeStepSkips, []);
+  }
+});
+
+test('AC1.1 + Q5: the summary lists each parent Step 4.0b left open and each step skip, a marker-write-failed entry\'s included, whatever the verdict (#4798)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1, parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }, { issue: 103, reason: 'internal-error' }] },
+    { runDir: '/r/b', pr: 12, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }] },
+    { runDir: '/r/c', pr: 13, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, stepSkips: [{ reason: 'internal-error' }] },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0, parentFailures: [{ parent: 200, reason: 'gh-failed' }], stepSkips: [{ reason: 'invalid-risk-floor' }] },
+    { runDir: '/r/e', pr: 15, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 2, parentFailures: [{ parent: 300, reason: 'gh-failed' }], stepSkips: [{ reason: 'unreadable-policy' }] },
+  ] });
+  assert.equal(summary.postMergeFailed, 3, 'the error entry counts; the marker-write-failed one stays out of it');
+  assert.equal(summary.postMergeRan, 1, 'a step skip alone never leaves a parent open');
+  assert.deepEqual(summary.postMergeParentsLeftOpen, [{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 14, parent: 200, reason: 'gh-failed' }, { pr: 15, parent: 300, reason: 'gh-failed' }]);
+  assert.deepEqual(summary.postMergeStepSkips, [{ pr: 12, reason: 'unreadable-policy' }, { pr: 13, reason: 'internal-error' }, { pr: 14, reason: 'invalid-risk-floor' }, { pr: 15, reason: 'unreadable-policy' }]);
+});
+
+test('Ruling 1: an error entry\'s parentsClosed counts with the unmarked closes, not the marked ones (#4798)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
+    { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'error', detail: 'boom', parentsClosed: 2 },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'error', detail: 'thrown before Step 4.0b' },
+  ] });
+  assert.equal(summary.postMergeParentsClosed, 1);
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 5, 'marker-write-failed (3) + error (2); an error entry with no parentsClosed adds 0');
+});
+
+test('round 5: a taken-over holder\'s GitHub changes reach the summary on their own, in no other count (#4797)', async () => {
+  const { CLAIM_LOST_DETAIL } = require('../../../plugin/bin/lib/reconcile/post-merge');
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 },
+    { runDir: '/r/b', pr: 12, action: 'skipped', reason: 'in-flight', detail: CLAIM_LOST_DETAIL, parentsClosed: 2, recordsReopened: [7] },
+    { runDir: '/r/c', pr: 13, action: 'skipped', reason: 'in-flight' },
+    { runDir: '/r/d', pr: 14, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 3 },
+  ] });
+  assert.deepEqual(summary.postMergeSuperseded, [{ pr: 12, parentsClosed: 2, recordsReopened: [7] }]);
+  assert.equal(summary.postMergeParentsClosed, 1);
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 3);
+  assert.equal(summary.postMergeFailed, 0, 'a taken-over holder is not a failed run');
+  assert.deepEqual((await backgroundSummaryFor({})).postMergeSuperseded, []);
+});
+
+test('AC1.1 AC1.2 AC1.3: a close-failed ran entry counts as failed and names its records (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, [101]);
+});
+
+test('AC2.1 AC2.2: a clean word with parentFailures counts as failed (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, parentFailures: [{ parent: 9, reason: 'gh-failed' }] },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, []);
+});
+
+test('AC3.1: transient-failure and marker-write-failed stay out of both counts (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'skipped', reason: 'transient-failure' },
+    { runDir: '/r/b', pr: 2, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 1 },
+  ] });
+  assert.equal(summary.postMergeFailed, 0);
+  assert.equal(summary.postMergeRan, 0);
+});
+
+test('a failed run with no record list still counts as failed and names nothing (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.deepEqual(summary.postMergeFailedRecords, []);
+});
+
+test('a closing-links word added later reads as failed, not clean (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'a-word-added-later', parentsClosed: 0 },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+});
+
+test('a record two failed runs name is listed once, sorted (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/c', pr: 3, action: 'ran', closingLinks: 'reopen-failed', parentsClosed: 0, records: { failed: [7], closeFailed: [], pendingClose: [3], unchecked: [] } },
+    { runDir: '/r/d', pr: 4, action: 'ran', closingLinks: 'close-pending', parentsClosed: 0, records: { failed: [], closeFailed: [], pendingClose: [3], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 2);
+  assert.deepEqual(summary.postMergeFailedRecords, [3, 7]);
+});
+
+test('a base-unchecked run names its unchecked records (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'base-unchecked', parentsClosed: 0, step40Failed: true, records: { failed: [], closeFailed: [], pendingClose: [], unchecked: [5, 6] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.deepEqual(summary.postMergeFailedRecords, [5, 6]);
+});
+
+test('a failed run still reports the parents its Step 4.0b closed (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 2, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeRan, 0);
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeParentsClosed, 2);
+});
+
+test('a failed run whose decisions.md append failed flags the missing log; a clean logFailed run does not (#4897)', async () => {
+  const failed = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, logFailed: true, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(failed.postMergeFailedLogMissing, true);
+  const logged = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(logged.postMergeFailedLogMissing, false);
 });
 
 test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
@@ -301,6 +484,18 @@ test('FAST_CHECKS (session-start.js) + BACKGROUND_CHECKS (bin/hooks.js) partitio
   );
 });
 
+// #4599: post-merge writes GitHub comments and a decisions.md marker, so it is a background (write)
+// check, never an inline SessionStart one. It is deliberately not CLI-deferred: it must run in the
+// same pass as archive, ahead of it, so the unscoped CLI keeps it inline beside archive.
+test('post-merge is a BACKGROUND_CHECKS member, not a FAST_CHECKS or CLI_DEFERRED_CHECKS one, and sits before archive (#4599)', () => {
+  const { FAST_CHECKS } = require('../../../plugin/bin/lib/hooks/session-start');
+  const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS } = require('../../../plugin/bin/hooks');
+  assert.ok(BACKGROUND_CHECKS.includes('post-merge'));
+  assert.ok(!FAST_CHECKS.includes('post-merge'));
+  assert.ok(!CLI_DEFERRED_CHECKS.includes('post-merge'));
+  assert.ok(BACKGROUND_CHECKS.indexOf('post-merge') < BACKGROUND_CHECKS.indexOf('archive'), 'post-merge precedes archive in the background list too');
+});
+
 // #4032: the unscoped `reconcile` CLI hands CLI_DEFERRED_CHECKS to the
 // background pass. A name there that BACKGROUND_CHECKS lacks would be excluded
 // from the inline set AND never run in the background — dropped entirely.
@@ -316,7 +511,7 @@ test('CLI_DEFERRED_CHECKS (bin/hooks.js) is a non-empty, duplicate-free subset o
 // #4032: the background pass runs under its own ceiling — the 18 s hot-path
 // default starved remote-prune/ledger-residue/reap on every pass.
 test('reconcile-background passes the background budget', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-budget-'));
+  const dir = scratchDir('ct-recon-bg-budget-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');
@@ -342,7 +537,7 @@ test('reconcile-background passes the background budget', async () => {
 // must leave its reason in the status file — the detached process has no other
 // channel, and SessionStart surfaces it from there.
 test('reconcile-background: a pass that throws records failed + its message in the status file', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-bg-throws-'));
+  const dir = scratchDir('ct-recon-bg-throws-');
   git(['init', '-q', '--initial-branch=main'], dir);
   const { main } = require('../../../plugin/bin/hooks');
   const reconcileMod = require('../../../plugin/bin/lib/reconcile');

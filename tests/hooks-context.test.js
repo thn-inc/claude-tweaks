@@ -3,13 +3,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const ctx = require('../plugin/bin/lib/hooks/context');
 
 function tmpProject() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hooks-'));
+  const dir = scratchDir('ct-hooks-');
   fs.mkdirSync(path.join(dir, '.claude-tweaks', 'pipelines'), { recursive: true });
   return dir;
 }
@@ -44,7 +45,7 @@ test('resolveRunDir picks newest non-terminal, skips clean runs', () => {
 });
 
 test('resolveRunDir returns null with no pipelines dir', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   assert.strictEqual(ctx.resolveRunDir(bare, {}), null);
 });
 
@@ -98,7 +99,7 @@ test('findNonCanonicalRunDirs ignores canonical run-dirs, archive/, and unrelate
 });
 
 test('findNonCanonicalRunDirs returns [] when the pipelines dir does not exist', () => {
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bare-'));
+  const bare = scratchDir('ct-bare-');
   assert.deepStrictEqual(ctx.findNonCanonicalRunDirs(bare), []);
 });
 
@@ -282,7 +283,7 @@ test('#1175 findRunsByWorktreePath excludes excludeDir even when passed through 
   const project = fs.realpathSync(tmpProject());
   const primary = mkRun(project, '2026-07-01T090000-spec-500', { status: 'active', worktree: '/tmp/wt-a' });
   const adhoc = mkRun(project, '2026-07-02T060000-adhoc-standalone', { status: 'active', worktree: '/tmp/wt-a' });
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-hooks-symlink-'));
+  const parent = scratchDir('ct-hooks-symlink-');
   const alias = path.join(parent, 'alias');
   fs.symlinkSync(project, alias, 'dir');
   const excludeDirViaSymlink = path.join(alias, '.claude-tweaks', 'pipelines', path.basename(primary));
@@ -616,8 +617,8 @@ test('refreshOwnerBlock never throws', () => {
   const fx = refreshFixture();
   const deps = { ...refreshDeps(), resolveOwnerPid: () => { throw new Error('probe'); } };
   assert.strictEqual(refresh(fx, { now: RT0 + 61_000, deps }), null);
-  assert.strictEqual(ctx.refreshOwnerBlock(undefined), null);
-  assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }), null);
+  assert.strictEqual(ctx.refreshOwnerBlock(undefined, { env: {} }), null);
+  assert.strictEqual(ctx.refreshOwnerBlock({ input: null, ownedRun: null }, { env: {} }), null);
 });
 
 // #4153: one judge — refreshOwnerBlock's takeover decision reads the same owner-pid
@@ -929,9 +930,11 @@ test('readRunStateWithParent: missing, malformed, and non-object files never thr
 test('readRunStateWithParent: reads through the injected reader, and a throwing reader degrades to null', () => {
   const seen = [];
   const read = (dir) => { seen.push(dir); return path.basename(dir) === 'spec-7' ? { status: 'active' } : { pr: { number: 5 } }; };
-  const r = ctx.readRunStateWithParent(path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), { read });
+  const parent = path.join('/runs/2026-07-01T090000-spec-7-8');
+  const child = path.join(parent, 'spec-7');
+  const r = ctx.readRunStateWithParent(child, { read });
   assert.deepStrictEqual(r.state, { status: 'active', pr: { number: 5 } });
-  assert.deepStrictEqual(seen, [path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), '/runs/2026-07-01T090000-spec-7-8']);
+  assert.deepStrictEqual(seen, [child, parent]);
   const thrown = ctx.readRunStateWithParent('/runs/x/spec-7', { read: () => { throw new Error('boom'); } });
   assert.deepStrictEqual(thrown, { state: null, parentRunDir: '/runs/x', filled: [] });
 });
@@ -943,4 +946,64 @@ test('readRunStateWithParent: a truthy but malformed parent stamp is passed thro
   assert.deepStrictEqual(r.filled, ['worktree', 'pr']);
   const empty = mkSpecChild({ worktree: '', pr: null }, { status: 'active' });
   assert.deepStrictEqual(ctx.readRunStateWithParent(empty.child), { state: { status: 'active' }, parentRunDir: empty.parent, filled: [] });
+});
+
+// #3975: tracked-shell dirs — a live run dir holding only git-tracked work/
+// (or spec-N/work/) whose archive twin is already clean.
+function mkShell(project, id, { spec, twin = { status: 'clean' } } = {}) {
+  const live = mkRun(project, id);
+  const work = spec ? path.join(live, spec, 'work') : path.join(live, 'work');
+  fs.mkdirSync(work, { recursive: true });
+  fs.writeFileSync(path.join(work, '1-spec.md'), 'x');
+  if (twin) mkRun(project, path.join('archive', id), twin);
+  return live;
+}
+
+test('AC1.1: includeTrackedShells yields a work-only dir whose archive twin is clean', () => {
+  const project = tmpProject();
+  const live = mkShell(project, '2026-07-01T090000-spec-1');
+  assert.deepStrictEqual(ctx.listRunDirs(project, { includeTrackedShells: true }), [live]);
+});
+
+test('AC1.2: includeTrackedShells yields a spec-N/work-only multi-spec shell', () => {
+  const project = tmpProject();
+  const live = mkShell(project, '2026-07-01T090000-spec-7', { spec: 'spec-7' });
+  assert.deepStrictEqual(ctx.listRunDirs(project, { includeTrackedShells: true }), [live]);
+});
+
+test('AC10.1: default call still skips the clean-twin shell', () => {
+  const project = tmpProject();
+  const open = mkRun(project, '2026-07-01T090000-spec-older', { status: 'active' });
+  const shell = mkShell(project, '2026-07-02T090000-spec-1'); // sorts newest
+  assert.deepStrictEqual(ctx.listRunDirs(project), [open]);
+  assert.strictEqual(ctx.resolveRunDir(project, {}), open);
+  assert.notStrictEqual(ctx.resolveRunDir(project, {}), shell);
+});
+
+test('AC10.x: fresh archiving claim still skipped with includeTrackedShells', () => {
+  const project = tmpProject();
+  mkShell(project, '2026-07-01T090000-spec-1', { twin: { status: 'archiving', updatedAt: new Date().toISOString() } });
+  assert.deepStrictEqual(ctx.listRunDirs(project, { includeTrackedShells: true }), []);
+});
+
+test('includeTrackedShells does not resurrect a clean-twin dir that holds a gitignored entry', () => {
+  const project = tmpProject();
+  const live = mkShell(project, '2026-07-01T090000-spec-1');
+  fs.writeFileSync(path.join(live, 'decisions.md'), 'x');
+  assert.deepStrictEqual(ctx.listRunDirs(project, { includeTrackedShells: true }), []);
+});
+
+test('isTrackedShellDir: shape predicate', () => {
+  const project = tmpProject();
+  const empty = mkRun(project, 'empty');
+  assert.strictEqual(ctx.isTrackedShellDir(empty), false);
+  assert.strictEqual(ctx.isTrackedShellDir(path.join(project, 'missing')), false);
+  const bad = mkShell(project, '2026-07-01T090000-spec-2', { spec: 'spec-2', twin: null });
+  fs.writeFileSync(path.join(bad, 'spec-2', 'config.yml'), 'x');
+  assert.strictEqual(ctx.isTrackedShellDir(bad), false);
+  const emptySpec = mkRun(project, '2026-07-01T090000-spec-3');
+  fs.mkdirSync(path.join(emptySpec, 'spec-3'));
+  assert.strictEqual(ctx.isTrackedShellDir(emptySpec), false);
+  assert.strictEqual(ctx.isTrackedShellDir(mkShell(project, '2026-07-01T090000-spec-4', { twin: null })), true);
+  assert.strictEqual(ctx.isTrackedShellDir(mkShell(project, '2026-07-01T090000-spec-5', { spec: 'spec-5', twin: null })), true);
 });

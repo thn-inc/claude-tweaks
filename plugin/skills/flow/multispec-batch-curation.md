@@ -25,7 +25,7 @@ The shared open-items ledger is still on disk when this pass runs: `wrap-up/clea
 
 Run once, against the union of every completed spec's changed files:
 
-1. **Scope** — `git diff --name-only` from `$(git merge-base --end-of-options HEAD "origin/{integration-branch}")` to the current worktree `HEAD`, `{integration-branch}` per `skills/_shared/integration-branch.md`'s ladder (covers every completed spec's commits on the shared branch — see `multi-spec.md`'s "Shared worktree" section for why one branch accumulates every spec). The merge-base equals `manifest.yml`'s `baseSha` when no boundary freshness merge (`multispec-freshness.md`) landed, and correctly excludes merged-in upstream commits when one did.
+1. **Scope** — `git diff --name-only` from `$(git merge-base --end-of-options HEAD "origin/{integration-branch}")` to the current worktree `HEAD`, `{integration-branch}` per `skills/_shared/integration-branch.md`'s ladder (covers every completed spec's commits on the shared branch — see `multi-spec.md`'s "Shared worktree" section for why one branch accumulates every spec). The merge-base is the batch's starting commit when no boundary freshness merge (`multispec-freshness.md`) landed, and correctly excludes merged-in upstream commits when one did.
 2. **Ledger phase** — `wrap-up` (same phase tag the per-spec call would have used).
 3. **Seed context** — the aggregated Key Learnings sections from every completed spec's `/claude-tweaks:review` summary, concatenated in spec execution order.
 4. **`--source wrap-up`** — same as the per-spec call.

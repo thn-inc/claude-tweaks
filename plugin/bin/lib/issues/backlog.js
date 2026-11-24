@@ -18,9 +18,11 @@
 const { execSync } = require('child_process');
 const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 const { splitLogZ } = require('../git-z');
-const { PRIORITIES, TIERS, parseRecordFacets } = require('./record');
+const { PRIORITIES, TIERS, parseRecordFacets, parseDependencies, foreignBlockerBlocks, foreignBlockerRef, withoutUnreadableSuffix } = require('./record');
+const { parseCrossRepoRef, crossRepoKey } = require('./cross-repo-refs');
 const { blockersOf } = require('./ranking');
 const { evaluateGrantGate } = require('./grant-gate');
+const { describeMixedReasons } = require('./trust.js');
 const { isBotParked } = require('./record-buckets');
 
 // Urgency order shared by both bands (high first). Values are validated
@@ -163,6 +165,42 @@ function readyGrantedSubset(records) {
   return records.filter((r) => r.facets.stage === 'ready' && (r.facets.grants.build || r.facets.grants.merge));
 }
 
+// records[] -> the records whose body-declared foreign blockers may be looked up: every record
+// but an `unsynced` local one. Their ids are local-record numbers, a different namespace from
+// the GitHub numbers in the merged set (#512 promise F1), and `bodyForeignBlockers` keys its
+// Map by `r.number ?? r.id`, so an unsynced id 12 would otherwise collide with GitHub #12 and
+// one record's refs would be attached to the other. Every caller filters through here.
+function foreignLookupSet(records) {
+  return records.filter((r) => !(r.facets && r.facets.unsynced === true));
+}
+
+// (records[], Map<r.number ?? r.id, {number, repository, state}[]>) -> records[]. Adds each
+// body-declared foreign blocker that still blocks (open or unreadable, never CLOSED) to the
+// tier `blockersOf` reads for that record, so `funnelBuckets` files the record under
+// `granted` as `/claude-tweaks:dispatch` refuses it (#4793 Plan Review Clarifications).
+// A top-level `blockedBy` array, else a `facets.blockedBy` array, receives the refs not
+// already in it (deduplicated by crossRepoKey, case-insensitive; a native ref's
+// ' (state unreadable)' suffix is ignored for the key). A record with neither tier gets
+// `blockedBy: [...parseDependencies(body), ...refs]`, so `blockersOf`'s body-text
+// fallback result survives. An `unsynced` record, and a record absent from the map, is
+// returned as is. Returns a new array of shallow copies; never mutates its input.
+function attachBodyForeignBlockers(records, foreignByRecord) {
+  return records.map((r) => {
+    const entries = foreignByRecord.get(r.number ?? r.id);
+    if (!entries || entries.length === 0 || (r.facets && r.facets.unsynced === true)) return r;
+    const refs = entries.filter(foreignBlockerBlocks);
+    const tier = Array.isArray(r.blockedBy) ? r.blockedBy : r.facets && Array.isArray(r.facets.blockedBy) ? r.facets.blockedBy : null;
+    if (!tier) return { ...r, blockedBy: [...parseDependencies(r.body || ''), ...refs.map(foreignBlockerRef)] };
+    const known = new Set(
+      tier.map((b) => (typeof b === 'string' ? parseCrossRepoRef(withoutUnreadableSuffix(b)) : null)).filter(Boolean).map(crossRepoKey),
+    );
+    const added = refs.filter((e) => !known.has(crossRepoKey(e))).map(foreignBlockerRef);
+    if (added.length === 0) return r;
+    const merged = [...tier, ...added];
+    return Array.isArray(r.blockedBy) ? { ...r, blockedBy: merged } : { ...r, facets: { ...r.facets, blockedBy: merged } };
+  });
+}
+
 // records[] -> { captured, prioritized, specified, granted, dispatchable,
 // inFlight, botParked, parked, notPlanned, parents, needsYou }. The ten stage
 // keys (captured..parents) are mutually exclusive buckets over the post-merge
@@ -184,7 +222,11 @@ function readyGrantedSubset(records) {
 // body-text `parseDependencies` fallback), shared with rankNextToBuild so
 // both consumers agree on the same blocker for the same record (refs #514).
 // Only ids within the open input set count as blockers, since an out-of-set
-// blocker cannot be acted on from this report. `prioritized` keys on
+// blocker cannot be acted on from this report. A string entry is a blocker
+// linked from another repository (`owner/name#N`, #4793), attached only while
+// it is open or its state is unreadable — exactly the blockers
+// `/claude-tweaks:dispatch` refuses on (Decisions Q6) — so it counts although
+// it is never an id in this set. `prioritized` keys on
 // f.priority ALONE — priority is refine's triage verdict, and the stage is
 // named for it. A record carrying only risk/size with no priority and no
 // `ready` stage is an anomaly (specify stamps risk/size and `ready` in one
@@ -204,13 +246,13 @@ function funnelBuckets(records) {
     // Blocker precedence, INCLUDING the unsynced-namespace short-circuit, is
     // owned by ranking.js's blockersOf — one decision, shared with
     // rankNextToBuild (refs #514).
-    const inSetBlockers = blockersOf(r).filter((id) => openIds.has(id));
+    const blockers = blockersOf(r).filter((id) => typeof id === 'string' || openIds.has(id));
     if (f.bot.inProgress) buckets.inFlight.push(r);
     else if (isBotParked(r)) buckets.botParked.push(r);
     else if (f.stage === 'parked') buckets.parked.push(r);
     else if (f.notPlanned) buckets.notPlanned.push(r);
     else if (f.isParentIssue) buckets.parents.push(r);
-    else if (f.stage === 'ready' && granted && inSetBlockers.length > 0) buckets.granted.push(r);
+    else if (f.stage === 'ready' && granted && blockers.length > 0) buckets.granted.push(r);
     else if (f.stage === 'ready' && granted) buckets.dispatchable.push(r);
     else if (f.stage === 'ready') buckets.specified.push(r);
     else if (f.priority) buckets.prioritized.push(r);
@@ -268,7 +310,7 @@ function funnelBuckets(records) {
 // counts and the grant chain's own candidate-set size for the same backlog
 // state. Excluded records are counted via `excludedOrigin` rather than
 // folded into `refused`, so a reader can reconcile the funnel header's
-// `specified N` total against `eligible.length + refused-total +
+// `specified N` total against `eligible.length + refusedTotal +
 // excludedOrigin`. Outside that policy shape, every record — human- and
 // agent-filed alike — is refused under `ceiling` or
 // `grant-origination-opt-in` before gates 2/3 ever run, so the
@@ -286,12 +328,14 @@ function funnelBuckets(records) {
 // ({ ceiling, grantOriginationEnabled } suffices for phase 1);
 // trustRowsArray is trustRows() output (bin/lib/issues/trust.js), keyed into
 // the Map shape the gate expects. Returns { eligible: [ids], refused:
-// { [failedKey]: [ids] }, excludedOrigin: count }, ids in input order.
+// { [failedKey]: [ids] }, excludedOrigin: count, trustRefusedClasses:
+// [classKey] (unique, first-seen, from trust denies) }, ids in input order.
 function machineGrantOutlook(records, policy, trustRowsArray) {
   const rows = Array.isArray(trustRowsArray) ? trustRowsArray : [];
   const trustVerdicts = new Map(rows.map((row) => [row.key, row]));
   const eligible = [];
   const refused = {};
+  const trustRefusedClasses = [];
   let excludedOrigin = 0;
   const applyOriginPrefilter =
     policy && policy.ceiling === 'unattended' && policy.grantOriginationEnabled === true;
@@ -311,9 +355,46 @@ function machineGrantOutlook(records, policy, trustRowsArray) {
       eligible.push(id);
     } else {
       (refused[result.failedKey] = refused[result.failedKey] || []).push(id);
+      if (result.failedKey === 'trust') {
+        const classKey = result.snapshot.classKey;
+        if (!trustRefusedClasses.includes(classKey)) trustRefusedClasses.push(classKey);
+      }
     }
   }
-  return { eligible, refused, excludedOrigin };
+  return { eligible, refused, excludedOrigin, trustRefusedClasses };
+}
+
+// machineGrantOutlook's `refused` map ({ failedKey: ids[] }) -> the one home for
+// the refused-key aggregation: [[key, n], ...] sorted descending by count (ties:
+// key ascending) plus the summed total. Shared by allRefusedOutlookLine and the
+// machine-grant-outlook.md fence's live-line JSON.
+function refusedKeyCounts(refused) {
+  const counts = Object.entries(refused || {}).map(([key, ids]) => [key, ids.length]);
+  counts.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return { counts, total: counts.reduce((sum, [, n]) => sum + n, 0) };
+}
+
+// machineGrantOutlook's output + trustRowsArray -> the one-line "why no machine
+// grants" note, or null when any candidate is eligible or nothing was refused.
+// Keys by descending count (ties: key ascending); trust-refused classes append
+// with the reason each failed (describeMixedReasons), so the line explains itself.
+function allRefusedOutlookLine(outlook, trustRowsArray) {
+  const { eligible, refused, trustRefusedClasses } = outlook;
+  const { counts, total } = refusedKeyCounts(refused);
+  if ((eligible || []).length > 0 || counts.length === 0) return null;
+  let line = `# machine grants: none possible — all ${total} candidates refused (${counts.map(([k, n]) => `${k}: ${n}`).join(', ')})`;
+  if (Array.isArray(trustRefusedClasses) && trustRefusedClasses.length > 0) {
+    const rows = new Map((Array.isArray(trustRowsArray) ? trustRowsArray : []).map((row) => [row.key, row]));
+    const parts = trustRefusedClasses.map((classKey) => {
+      const row = rows.get(classKey);
+      if (!row) return `${classKey} no-cell`;
+      if (row.verdict !== 'mixed') return `${classKey} ${row.verdict}`;
+      const reasons = describeMixedReasons(row);
+      return `${classKey} ${reasons ? `mixed (${reasons})` : 'mixed'}`;
+    });
+    line += ` — trust: ${parts.join('; ')}`;
+  }
+  return line;
 }
 
 // ({ allRows, readyRows, priorityBudget, grantBudget }) -> the refine sweep's
@@ -359,6 +440,10 @@ module.exports = {
   deriveCreatedAtFromGit,
   funnelBuckets,
   machineGrantOutlook,
+  allRefusedOutlookLine,
+  refusedKeyCounts,
   readyGrantedSubset,
+  attachBodyForeignBlockers,
+  foreignLookupSet,
   refineWorklist,
 };

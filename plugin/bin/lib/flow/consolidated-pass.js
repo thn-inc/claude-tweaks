@@ -51,12 +51,12 @@ function parentLiveDetail(runDir, runState, opts, deps) {
   if (!runState) return null;
   if (opts.sessionId && runState.sessionId === opts.sessionId) return null;
   if (runState.status === 'interrupted') {
-    const fresh = (deps.checkResumeFreshness || checkResumeFreshness)(runDir, { sessionId: opts.sessionId });
+    const fresh = (deps.checkResumeFreshness || checkResumeFreshness)(runDir, opts.env ? { sessionId: opts.sessionId, env: opts.env } : { sessionId: opts.sessionId });
     return fresh && fresh.safe === false ? `interrupted run ${fresh.verdict}: ${fresh.reason}` : null;
   }
   const worktree = typeof runState.worktree === 'string' && runState.worktree ? runState.worktree : null;
   if (!worktree || lstatType(worktree).type === 'missing') return null;
-  const result = runLiveness(runDir, { probes: deps.probes || {} });
+  const result = runLiveness(runDir, opts.env ? { probes: deps.probes || {}, env: opts.env } : { probes: deps.probes || {} });
   const { lock, commit } = resumeEntries(result);
   if (lock.result === 'positive') return 'worktree lock in-use';
   if (commit.result === 'positive') return 'worktree recently committed to';
@@ -68,6 +68,7 @@ function parentLiveDetail(runDir, runState, opts, deps) {
 }
 
 // opts.cache      — passed through to checkBranchLanded.
+// opts.env        — optional (#5377): the environment checkBranchLanded's git children run in.
 // opts.online     — true only from the review-console skill: lets a squash-
 //                   merged PR prove "landed" that offline merge evidence reads
 //                   as unmerged. SessionStart never sets it.
@@ -142,7 +143,7 @@ function checkPassReentry(runDir, opts = {}) {
 
   let landed = null;
   try {
-    const result = landedCheck(runDir, { cache: opts.cache });
+    const result = landedCheck(runDir, opts.env ? { cache: opts.cache, env: opts.env } : { cache: opts.cache });
     landed = result ? result.landed : null;
   } catch { landed = null; }
 

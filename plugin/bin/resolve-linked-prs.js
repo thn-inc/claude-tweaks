@@ -10,20 +10,22 @@
 // bound variables — for the open-linked-PR exclusion check (#1224). Zero
 // runtime npm deps.
 //
-// Usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [--help]
+// Usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]
 // A comma-joined list (no spaces, mirroring resolve-blockers.js's own
 // convention) batches every number into the ONE aliased GraphQL call
 // fetchLinkedPRs makes for an N-record set — this CLI never issues more
 // than one gh call regardless of how many numbers are passed.
 // Output: one JSON line, an object keyed by each requested number (as a
-// string, JSON's own key convention) to its {"openPR": number|null} — the
-// same per-record shape fetchLinkedPRs' Map values already carry, not a new
-// shape invented here. A single-number invocation still returns a one-key
+// string, JSON's own key convention) to its {"openPR": number|null,
+// "mentions": [...], "hasClosingPRReference": boolean, "lastShapedAt":
+// string|null} — fetchLinkedPRs' per-record Map value minus `issueState`, not
+// a new shape invented here. A single-number invocation still returns a one-key
 // object — no special-cased flat shape — so every caller reads results the
 // same way regardless of how many numbers it asked for. Exit 0 on success;
 // 1 on a malformed invocation (missing/non-positive-integer number in the
 // list, unknown flag); 2 when `gh` is absent or owner/repo cannot be
-// resolved (no --repo and no readable origin remote); 3 when the GraphQL
+// resolved (no --repo and no readable origin remote, or an origin host with no
+// GitHub signal — refused before any gh call, #4933); 3 when the GraphQL
 // call itself throws (network/API failure, or fetchLinkedPRs' own
 // partial-result guard). Repo root comes from `git remote get-url origin`
 // at the process cwd — never from CLAUDE_PLUGIN_ROOT (unset in Bash tool
@@ -34,16 +36,11 @@
 const { fetchLinkedPRs } = require('./lib/issues/linked-prs');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 
-const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [--help]\n';
+const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-linked-prs.js',
   usage: USAGE,
-  // 30s bound: ONE GraphQL call for the whole aliased batch, whatever its
-  // size — same precedent as resolve-blockers.js's own runner bound, since
-  // this comma-list can span the same full ~200-record queues
-  // queue-pull-script.md builds from `--limit 200`.
-  runnerTimeoutMs: 30000,
   fetch: ({
     numbers, owner, repo, host, runner,
   }) => fetchLinkedPRs({
@@ -51,14 +48,17 @@ const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   }),
   // #2934: fetchLinkedPRs' Map entries also carry `issueState` now (consumed
   // directly by wrap-up/engine-verify.js's carrier-commit fallback) --
-  // excluded here so this CLI's own public output shape stays exactly what
-  // it was (openPR/mentions/hasClosingPRReference), never silently growing
-  // a field this contract doesn't document.
+  // excluded here: this CLI prints `openPR`, `mentions`, `hasClosingPRReference`
+  // and `lastShapedAt` (#5722: the latest `ready`/`auto:build` label time, ISO
+  // string or null, which the dispatch queue pull reads from
+  // dispatch-linked-prs.json to downgrade a shipped mention the record was
+  // shaped or granted after) and never silently grows a field this contract
+  // doesn't document.
   mapResult: (n, byNumber) => {
     const entry = byNumber.get(n);
     if (!entry) return entry;
-    const { openPR, mentions, hasClosingPRReference } = entry;
-    return { openPR, mentions, hasClosingPRReference };
+    const { openPR, mentions, hasClosingPRReference, lastShapedAt } = entry;
+    return { openPR, mentions, hasClosingPRReference, lastShapedAt };
   },
 });
 

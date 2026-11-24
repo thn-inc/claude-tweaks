@@ -54,6 +54,9 @@ function hasUnarchivedWork(runDir) {
 // session) defeated for a sibling closing a DIFFERENT sibling's bound run.
 // `callerIdentity = { sessionId, cwd }` replaces the bare `sessionId`
 // option; hooks.js's callers thread `process.cwd()` through as `cwd`.
+// `env` (optional, #3977) is the environment the ownership check's git child and
+// the run-state lock read — a hook event's ctx.env (session-end.js); absent, the
+// inherited one, as before.
 // #2553: `treatCleanAsAlreadyClosed` (default true) distinguishes the two
 // genuinely different shapes that share this one function. For `hooks.js`'s
 // `close-run` verb and `teardown-run.js`'s own Step 1 — the "ExitWorktree/
@@ -71,7 +74,7 @@ function hasUnarchivedWork(runDir) {
 // run exactly as before; that caller passes `treatCleanAsAlreadyClosed:
 // false` to opt out.
 function closeRunState(runDir, {
-  explicit = false, callerIdentity = null, checkLiveWorktree = true, treatCleanAsAlreadyClosed = true, closedBy = null,
+  explicit = false, callerIdentity = null, checkLiveWorktree = true, treatCleanAsAlreadyClosed = true, closedBy = null, env,
 } = {}) {
   // #3198: a run dir can be removed (archived) by a concurrent, unlocked
   // reconcile pass between whatever resolved `runDir` for this call and
@@ -81,7 +84,7 @@ function closeRunState(runDir, {
     return { status: 'missing' };
   }
   const prev = ctxLib.readRunState(runDir);
-  const verdict = ctxLib.classifyOwnership(callerIdentity || {}, prev);
+  const verdict = ctxLib.classifyOwnership(callerIdentity || {}, prev, { env });
   const foreignOwner = verdict === 'foreign';
   if (foreignOwner && !explicit) {
     // The implicit fallback ("newest non-terminal run") landed on a run
@@ -144,12 +147,11 @@ function closeRunState(runDir, {
   // #3023: nulling `worktree` keeps the prior path as `worktreeAtClose` (a
   // repeat close keeps the first one) so wrap-up verify can still check disk.
   const patch = { status: 'clean', worktree: null };
-  const usable = (v) => (typeof v === 'string' && v ? v : null);
-  const priorWorktree = prev && (usable(prev.worktree) || usable(prev.worktreeAtClose));
+  const priorWorktree = ctxLib.priorWorktree(prev);
   if (priorWorktree) patch.worktreeAtClose = priorWorktree;
   // #3977: who closed it, when a caller other than close-run/wrap-up does (session-end.js).
   if (typeof closedBy === 'string' && closedBy) patch.closedBy = closedBy;
-  const writeOk = !!ctxLib.writeRunState(runDir, patch);
+  const writeOk = !!ctxLib.writeRunState(runDir, patch, { env });
   return { status: 'closed', foreignOwner, wrapupSeen, writeOk, notYetArchived };
 }
 

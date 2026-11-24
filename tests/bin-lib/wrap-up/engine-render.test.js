@@ -409,6 +409,87 @@ test('renderConsoleSections throws when a finding summary smuggles forbidden voc
   assert.throws(() => renderConsoleSections(state, { startAt: 1 }), /forbidden vocabulary/);
 });
 
+// ---- learned-skills PR (finding.pr) ----------------------------------------
+
+const LS_PR = 'https://github.com/o/r/pull/77';
+
+function skillsState(findings, detail = 'Read 2') {
+  const results = makeConsoleResults();
+  results.skills = { rowId: 'skills', target: 'Skills', result: 'findings', detail, findings };
+  return { version: 1, worklist: makeWorklist(), results };
+}
+
+const appliedFinding = (extra = {}) => ({
+  kind: 'additive', summary: 'Add row', targetPath: '.claude/skills/a/SKILL.md',
+  action: 'applied', stagePath: null, commit: 'abc1234', ...extra,
+});
+
+// Characterization (pre-change behavior): pr absent / empty / non-string
+// leaves disposition and Detail cell untouched.
+for (const [label, extra] of [['absent', {}], ['empty string', { pr: '' }], ['null', { pr: null }], ['non-string', { pr: 77 }]]) {
+  test(`pr ${label}: disposition stays applied (abc1234) and Detail cell is unchanged`, () => {
+    const state = skillsState([appliedFinding(extra)]);
+    const { markdown } = renderConsoleSections(state, { startAt: 1 });
+    assert.match(markdown, /\| applied \(abc1234\) \|/);
+    assert.doesNotMatch(markdown, /learned-skills PR/);
+    const trace = renderTrace(state);
+    assert.match(trace, /\| Skills \| 1 applied \| Read 2 \|/);
+    assert.doesNotMatch(trace, /learned-skills PR/);
+  });
+}
+
+test('characterization: staged disposition and empty detail are unchanged, pr or not', () => {
+  const staged = { kind: 'new', summary: 'S', targetPath: 'p', action: 'staged', stagePath: 'staged/s.md', commit: null };
+  const state = skillsState([staged], '');
+  assert.match(renderConsoleSections(state, {}).markdown, /\| staged \(staged\/s\.md\) \|/);
+  assert.match(renderTrace(state), /\| Skills \| 1 staged \|  \|/);
+});
+
+test('a finding carrying pr renders applied (commit, learned-skills PR url)', () => {
+  const state = skillsState([appliedFinding({ pr: LS_PR })]);
+  const { markdown } = renderConsoleSections(state, { startAt: 1 });
+  assert.match(markdown, /applied \(abc1234, learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77\)/);
+});
+
+test('renderTrace appends the learned-skills PR to the Detail cell', () => {
+  const state = skillsState([appliedFinding({ pr: LS_PR })]);
+  assert.match(renderTrace(state), /\| Read 2 · learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77 \|/);
+});
+
+test('two findings sharing one pr print it once in the Detail cell', () => {
+  const state = skillsState([appliedFinding({ pr: LS_PR }), appliedFinding({ pr: LS_PR, commit: 'def5678' })]);
+  const trace = renderTrace(state);
+  assert.strictEqual((trace.match(/learned-skills PR/g) || []).length, 1);
+});
+
+test('two distinct prs each print once in the Detail cell', () => {
+  const other = 'https://github.com/o/r/pull/78';
+  const state = skillsState([appliedFinding({ pr: LS_PR }), appliedFinding({ pr: other })]);
+  const trace = renderTrace(state);
+  assert.match(trace, new RegExp(`Read 2 · learned-skills PR ${LS_PR} · learned-skills PR ${other} \\|`));
+});
+
+test('a staged finding carrying pr does not put the PR in the Detail cell', () => {
+  const staged = { kind: 'new', summary: 'S', targetPath: 'p', action: 'staged', stagePath: 'staged/s.md', commit: null, pr: LS_PR };
+  const trace = renderTrace(skillsState([staged]));
+  assert.match(trace, /\| Skills \| 1 staged \| Read 2 \|/);
+  assert.doesNotMatch(trace, /learned-skills PR/);
+});
+
+test('with one applied and one staged finding each carrying a different pr, only the applied pr is named', () => {
+  const stagedPr = 'https://github.com/o/r/pull/99';
+  const staged = { kind: 'new', summary: 'S', targetPath: 'p', action: 'staged', stagePath: 'staged/s.md', commit: null, pr: stagedPr };
+  const trace = renderTrace(skillsState([appliedFinding({ pr: LS_PR }), staged]));
+  assert.match(trace, new RegExp(`Read 2 · learned-skills PR ${LS_PR} \\|`));
+  assert.doesNotMatch(trace, /pull\/99/);
+});
+
+test('an empty detail with a pr renders just the PR segment, no leading separator', () => {
+  const state = skillsState([appliedFinding({ pr: LS_PR })], '');
+  assert.match(renderTrace(state), /\| learned-skills PR https:\/\/github\.com\/o\/r\/pull\/77 \|/);
+  assert.doesNotMatch(renderTrace(state), /\|  · /);
+});
+
 // ---- renderConsoleSectionsMulti -------------------------------------------
 
 const { renderConsoleSectionsMulti } = require('../../../plugin/bin/lib/wrap-up/engine-render');
@@ -567,4 +648,49 @@ test('PROCEDURE_HEADS names exactly the four files split by #2546, no more, no f
     Object.keys(PROCEDURE_HEADS).sort(),
     ['cleanup-procedures-execution', 'curation-engine', 'pr-first-merge', 'review-console'].sort(),
   );
+});
+
+// ---- learned-skills drain outcome (drain.json) on the own PR ----------------
+
+const drainState = () => skillsState([appliedFinding({ pr: LS_PR })]);
+
+for (const [label, drain, suffix] of [
+  ['merged', { pr: 77, outcome: 'merged' }, ' — merged'],
+  ['left open: pending', { pr: 77, outcome: 'left-open', reason: 'pending' }, ' — left open: pending'],
+  ['conflicting', { pr: 77, outcome: 'conflicting' }, ' — conflicting'],
+  ['armed for an armed --own-pr', { pr: 77, outcome: 'armed' }, ' — armed'],
+]) {
+  test(`AC (deliverable 4): the Skills row shows ${label}`, () => {
+    const state = drainState();
+    assert.match(renderTrace(state, { drain }), new RegExp(`\\| Read 2 · learned-skills PR ${LS_PR}${suffix} \\|`));
+    const { markdown } = renderConsoleSections(state, { startAt: 1, drain });
+    assert.ok(markdown.includes(`applied (abc1234, learned-skills PR ${LS_PR}${suffix})`), markdown);
+  });
+}
+
+test('a drain for another PR number changes nothing', () => {
+  const state = drainState();
+  const drain = { pr: 78, outcome: 'merged' };
+  assert.strictEqual(renderTrace(state, { drain }), renderTrace(state));
+  assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown);
+  // a PR number that is only a suffix of the URL's number must not match
+  assert.strictEqual(renderTrace(state, { drain: { pr: 7, outcome: 'merged' } }), renderTrace(state));
+});
+
+test('a drain.pr of 0 or with leading zeros never matches a PR URL', () => {
+  for (const [url, pr] of [['https://github.com/o/r/pull/0', 0], ['https://github.com/o/r/pull/077', '077'], ['https://github.com/o/r/pull/00', '00']]) {
+    const state = skillsState([appliedFinding({ pr: url })]);
+    const drain = { pr, outcome: 'merged' };
+    assert.strictEqual(renderTrace(state, { drain }), renderTrace(state), url);
+    assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown, url);
+  }
+});
+
+test('no drain, an unknown outcome, or a non-object drain is byte-identical to today', () => {
+  const state = drainState();
+  for (const drain of [undefined, null, 'merged', { pr: 77 }, { pr: 77, outcome: 'weird' }]) {
+    assert.strictEqual(renderTrace(state, { drain }), renderTrace(state));
+    assert.strictEqual(renderConsoleSections(state, { drain }).markdown, renderConsoleSections(state).markdown);
+  }
+  assert.doesNotMatch(renderTrace(state), / — /);
 });

@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { runGit, isIndeterminate } = require('./git-exec');
+const { lookupRepoInfo, rememberRepoInfo } = require('./repo-info-cache');
 
 // Returns null (not the original, unresolved path) on failure. This
 // project's fail-open invariant ("a recorded worktree whose path no longer
@@ -45,6 +46,8 @@ function nearestExistingDir(p) {
 // .git/worktrees/ — notably a submodule's .git/modules/<name>, where the
 // superproject root is NOT the right anchor). Callers fall back to their
 // existing cwd-relative behavior on null rather than guessing.
+// bin/hooks.sh's main_root mirrors this walk for sessions with no node
+// (#5392): change both, plus the hooks.sh root-parity rows (R1-R13).
 const WORKTREE_ADMIN_MARKER = `${path.sep}.git${path.sep}worktrees${path.sep}`;
 
 function mainCheckoutRoot(p) {
@@ -82,6 +85,26 @@ function mainCheckoutRoot(p) {
   return null;
 }
 
+// #5294: repoInfo's remember step. A throw costs only the cache.
+function remember(dir, signature, result, env) {
+  try {
+    rememberRepoInfo(dir, env, signature, result);
+  } catch (_) {
+    // the answer returned is git's own
+  }
+}
+
+// #5294: git's own "not a repo" answer — exit 128 with that text. Every other
+// git-error (a git killed by a signal, whose exitCode is null; an EACCES/EPERM
+// spawn error; any other non-zero exit) still returns a definitive negative for
+// THIS call (#134's classification is unchanged) but is not remembered, so a
+// transient failure cannot become a lasting "not a repo" for later calls and
+// processes. A localized git message is a miss, never a wrong answer.
+const NOT_A_REPO = /not a git repository/i;
+function isNotARepoAnswer(exitCode, stderr) {
+  return exitCode === 128 && NOT_A_REPO.test(stderr || '');
+}
+
 // Single git subprocess spawn querying toplevel + git-dir + git-common-dir +
 // superproject in one invocation instead of four separate spawns — every
 // caller of this module needs both the repo root and the linked-worktree
@@ -108,20 +131,45 @@ function mainCheckoutRoot(p) {
 //                           unanswered; it carries NO information either way
 // opts is forwarded verbatim to runGit — tests use { timeoutMs } to force the
 // indeterminate branch deterministically. Production callers omit it.
-function repoInfo(p, opts = {}) {
+//
+// #5294: a call with no opts keys is answered from repo-info-cache.js's memo
+// while the directory's filesystem signature is unchanged; a call passing any
+// opts key bypasses the memo entirely. Only definitive answers are remembered,
+// and a negative only when git itself said "not a git repository"
+// (isNotARepoAnswer above), and either kind only when it agrees with the
+// signature (rememberRepoInfo). A cache fault costs only the cache: a lookup that
+// throws is a miss, a remember that throws is ignored (the
+// never-break-a-session invariant).
+//
+// `env` (third parameter, not a runGit opt: an opts key would bypass the memo) is the
+// environment the memo's store, bypass and uid knobs are read from. Callers outside the
+// hook events keep the inherited default; every event passes its context's.
+function repoInfo(p, opts = {}, { env = process.env } = {}) {
   const dir = nearestExistingDir(p);
   // A path with no existing ancestor is a definitive negative, not a failure to
   // look: there is nothing on disk to be a repo.
   if (!dir) return { repoRoot: null, isLinkedWorktree: false, indeterminate: false };
-  const { stdout: out, failure } = runGit(
+  let signature = null;
+  if (Object.keys(opts).length === 0) {
+    try {
+      const hit = lookupRepoInfo(dir, env);
+      if (hit.answer) return hit.answer;
+      signature = hit.signature;
+    } catch (_) {
+      // a miss, and nothing will be remembered (signature stays null)
+    }
+  }
+  const { stdout: out, failure, exitCode, stderr } = runGit(
     ['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir', '--show-superproject-working-tree'],
     dir,
-    opts,
+    { env, ...opts }, // the child runs under the same env the memo and store were keyed on; an explicit opts.env wins
   );
   if (failure) {
     // git-error == git ran and said "not a git repository": a real answer.
     // timeout/spawn/no-git == we never got one.
-    return { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    const result = { repoRoot: null, isLinkedWorktree: false, indeterminate: isIndeterminate(failure) };
+    if (!result.indeterminate && isNotARepoAnswer(exitCode, stderr)) remember(dir, signature, result, env);
+    return result;
   }
   const [top, gitDir, gitCommon, superproject] = out.split('\n');
   // Exit 0 but missing lines: git answered something we cannot parse. Treat as
@@ -137,20 +185,51 @@ function repoInfo(p, opts = {}) {
   // realpath on its answer failed (the directory went away between the two
   // calls). Also a failure to determine, not a negative.
   if (!repoRoot) return { repoRoot: null, isLinkedWorktree: false, indeterminate: true };
-  return { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  const result = { repoRoot, isLinkedWorktree: isLinked, indeterminate: false };
+  remember(dir, signature, result, env);
+  return result;
 }
 
 // fs-only walk-up looking for a .claude-tweaks/policy.yml, so callers can
 // check "is there even a policy file to care about" WITHOUT forking git.
 // Returns the directory containing the policy file, or null if none is
 // found anywhere up the ancestor chain.
+//
+// #4492: when the walk finds nothing, a linked worktree whose project keeps
+// policy.yml out of git (placed anywhere, e.g. a sibling of the main checkout)
+// still has the MAIN checkout's file to read — policy-file.js's locator is the
+// one rule for that, so this fast-reject cannot disagree with the readers it
+// guards. The walk's result is unchanged whenever it finds a file.
 function findPolicyFile(p) {
   let dir = nearestExistingDir(p);
   while (dir) {
     if (fs.existsSync(path.join(dir, '.claude-tweaks', 'policy.yml'))) return dir;
     const parent = path.dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) break;
     dir = parent;
+  }
+  return mainPolicyRoot(p);
+}
+
+// The main checkout root when the nearest checkout enclosing `p` is a linked
+// worktree that reads the main checkout's policy.yml, else null. Never throws.
+// Lazy require: policy-file.js lazily requires this module, so no top-level cycle.
+function mainPolicyRoot(p) {
+  try {
+    let dir = nearestExistingDir(p);
+    while (dir) {
+      if (fs.lstatSync(path.join(dir, '.git'), { throwIfNoEntry: false })) {
+        const loc = require('../policy-file').locatePolicyFile(dir);
+        // POLICY_REL_PATH is two segments (.claude-tweaks/policy.yml), so two
+        // dirnames take the located file back to the main checkout's root.
+        return loc.source === 'main-checkout' ? path.dirname(path.dirname(loc.path)) : null;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return null;
+      dir = parent;
+    }
+  } catch {
+    /* fast-reject only: unknown means no fallback */
   }
   return null;
 }

@@ -11,13 +11,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { claimFreeDest } = require('../../../plugin/bin/lib/hooks/sweep-shadow');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-shadow-claim-'));
+  return scratchDir('ct-sweep-shadow-claim-');
 }
 
 test('claimFreeDest: single caller claims the preferred path', () => {

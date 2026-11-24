@@ -1,0 +1,139 @@
+---
+name: regex-scan-linearity
+description: Use when writing or changing a regex or hand-written scan in plugin/bin/ or a maintainer tool under tools/ that runs over text of unbounded length — a decision-log line, a commit message, a repo source file, a Bash command, an archived prompt or reply — or a grammar shared between a writer and a reader. Covers probing the adversarial inputs before review, the three super-linear shapes this repo has hit and their fixes, and pinning linearity in perf/ rather than tests/. Keywords - regex, linear, quadratic, backtracking, ReDoS, lookbehind, tempered token, perf/, linearity budget, npm run test:perf, wall-clock-budget-conformance.
+---
+
+# Regex scan linearity
+
+## Overview
+
+Four records wrote a super-linear scan and found it only after the first implementation, in review or a fix round: #2622 (`scanScaleReadiness`, 17 s on a `////` banner), #3412 (`plugin/bin/lib/reconcile/release-merged.js`'s closing-keyword match, about 16 s on 40k newlines), #4149 (the write gate's shell scan, 12 s at 120 KB) and #4581 (`aggregateReproductionProblem`, 158 s on a 200k-character token, plus 82 s and 12 s after merging #4632's grammar). Each ran on input nobody bounds, so a pathological value stalls a session, a review or a release. Probe before review, not after.
+
+## Key Patterns
+
+### Probe with an input built from the regex's own alphabet
+
+Feed the function a long run of characters its pattern accepts, without the terminator that ends a match, and time it. The inputs that exposed the four records:
+
+- a long token of the matched class with no terminator: `'a'.repeat(200000)` against `FINDING_PATH` (no `.ext`)
+- many repetitions of a separator a lazy group can stop at: `'a b:1 / '.repeat(25000)`
+- a long newline run under `/m`: `'\n'.repeat(40000)`
+- a long run of spaces inside one line, with a non-space after it: `` `a${' '.repeat(200000)}b` ``. The newline run above does not exercise this
+- a long repeated group: `'a.'.repeat(20000)`, `'/'.repeat(200)`
+
+Seconds at these sizes is the bug; the fixed #4581 detector takes single-digit milliseconds on the 200k-character token. `perf/aggregate-reproduction-linearity.test.js` holds the #4581 cases.
+
+### The three shapes and their fixes
+
+1. **An unanchored global regex restarting inside every long token.** `PATH_RE` in `plugin/bin/lib/log-decision/aggregate-reproduction.js` retried `FINDING_PATH` at each position of a dot-free token. Fix: a left-boundary lookbehind of the class, `(?<![A-Za-z0-9_./@+~%$\[\]()-])${FINDING_PATH}`, so a match starts only where a path can start. When only presence matters, test a fixed suffix instead of the whole pattern: `readsLocation` in `plugin/bin/lib/console/finding-path.js` tests `${FINDING_PATH_UNIT}\.[A-Za-z0-9]+:\d+`, which matches whenever the full pattern would.
+2. **A lazy or unbounded group rescanning to the end once per split.** #4632's coincidence locations `.+?:\d+` rescanned the rest of the line once per ` / `. Fix: a tempered token that cannot cross a boundary, `(?:(?!:\d).)+:\d+` (`COINCIDENCE_LOCATION` in `plugin/bin/lib/console/finding-path.js`). #2622's `(?:seg\.)+` took a `{1,8}` cap instead.
+3. **A `\s` that crosses newlines under `/m`.** `^\s*` restarts at every line and runs across blank-line runs. Fix: `[ \t]` (#3412).
+
+Shape 1 also hides at the edge of a regex, on a whitespace or newline run rather than a token. #4611's `packet-gather.js` and `packet-render.js` had `\s*$`, `\s+#`, an unanchored leading `\s*` and `\s*[\r\n]+\s*`, and `packet-post.js` had `[\r\n]+$`. Each restarts at every character of the run and fails at its end (6 to 26 s at 100k to 200k characters). Shape 3's `[ \t]` does not help here: `[ \t]*$` times the same as `\s*$` on `a`, 60k spaces, `b`. Take the run out of the regex and handle it in code: match the run and then test it (`collapseLines` in `packet-render.js`), trim after matching (`parseHeading` in `packet-gather.js`), scan with `indexOf` (`stripYamlComment`), or walk back by hand (`stripClause`, `upsertLocalPacket`).
+
+A scan that re-reads the input once per match is the same cost without a regex: #3903's brace tracker recounted from the start of the file for every match. Keep one persistent scan position.
+
+#4612's `plugin/bin/lib/walkthrough/redact.js` met two more forms while it was written, each probed with its fix reverted (`perf/recording-redact-linearity.test.js`):
+
+- **A quoted value taking a backslash run with `\\+`.** Over 30 s on `token="` followed by 200k backslashes and no closing quote: a run of the escape character has many ways to split, and an unterminated value tries them all. Fix: unroll the loop so one run has one way to match, `"[^"\\]*(?:\\[\s\S][^"\\]*)*"` (`quoted` in `redact.js`).
+- **Reading the value before checking the name.** A `name=value` scan that read the value first rescanned the rest of the text once per `a=` in `a=a=a=`, about 4 s at 50k repeats. Fix: split it. `assignmentRule` matches the key alone (`ASSIGNMENT_KEY_RE`), checks the name, and only then runs a sticky value regex (`ASSIGNMENT_VALUE_RE`, flag `y`) from the key's end.
+
+#5219's `reduceDetail` in `plugin/bin/lib/driver/settle.js` met shape 2 while keeping trailing sentence punctuation out of a path match. `\S*?(?=[),;.]*(?:\s|$))` re-ran its lookahead over the rest of the run at every lazy step: 7.3 s at 32k and 29 s at 64k characters on `'/a' + '.'.repeat(n) + 'x'`. Fix: match greedily with `\S*` and split the trailing run off by hand in the replacer (`sentenceTail`). `perf/driver-settle-reduce-detail-linearity.test.js` holds this case and nine other adversarial shapes.
+
+#5269's `neutralize` in `plugin/bin/lib/driver/events.js` met four more, each pinned with its pre-fix time in `perf/driver-neutralize-linearity.test.js`:
+
+- **A fixed-point removal loop that peels one layer per pass.** Removing a reference can splice its neighbours into a new one (`h#7ttps://…` becomes a URL), so the removal passes repeat until the text stops changing. Any rule that refuses a match until the previous removal has run makes that loop quadratic. A `(?<![A-Za-z0-9])` boundary on `URL_REF` refused each back-to-back URL because it followed the previous URL's digit, so one URL went per pass (`'https://g/o/r/issues/5'.repeat(9000)`, about 10.5 s). Fix: admit the boundary the renderer admits; GitHub's autolinker rewinds over letters only, so `(?<![A-Za-z])`. Plain deletion peeled one nesting layer of spliced URLs per pass (k=9000, about 12.2 s); in-loop removals now leave one space, which no pattern spans. A keyword whose removal depends on the keyword after it peels the same way: one keyword per pass (`'fix '.repeat(25000)` before `www.g/o/r/issues/5`, about 153 s). Fix: decide the chain right to left in one pass over the collected matches.
+- **A per-match decision that scans to the end of a token.** The keyword rule reads the whitespace-delimited token after each keyword. A lookahead embedding `URL_REF`'s greedy tail rescanned a long non-space run from every keyword (`'a.fix:https://g/o/r/issues/1/'.repeat(8000)`, about 1.0 s), and a fresh whitespace search per keyword costs the same. Fix: collect the markers once, and move the marker pointer and the token end forward only (`removeKeywordsBeforeReferences`).
+- **A left-boundary lookbehind that refuses matches a global replace relied on.** `QUALIFIED_REF` took shape 1's fix, `(?<![A-Za-z0-9_.-])` (200k `h` took about 91 s before it), but that alone refuses the second of two back-to-back references: in `a/b#1x/y#2` the replace resumes inside an identifier run. It takes a second start case right after `#\d+`, guarded by a cheap `(?!\d)` so the variable-length `(?<=#\d+)` does not scan back at every digit (`'1'.repeat(200000)` took about 158 s with the guard removed).
+- **Two optional runs around an optional character.** `\s*:?\s*` splits a whitespace run two ways at every length (100k spaces, about 52 s). Fix: `(?:\s*:)?\s*`.
+
+#5352 brought back the `www.` and bare `github.com` alternatives in that same `URL_REF` and added the host-free `PATH_REF`, and met four more (times measured under load, in the same perf file):
+
+- **A domain run that crosses a later valid start.** `www\.[^\s/]+` scans the whole of `'_www.'.repeat(40000)` from every `www.` the boundary admits (about 74 s; `'1www.'` 71 s, `'_www.a'` 37 s). Fix: a domain character that could open the next start must not be followed by one, `(?:[A-Za-z.-]|[\d_](?!www\.))+`, so each domain stops where the next match would begin.
+- **A boundary that refuses back-to-back references.** The #5269 peeling, again: without a digit in the `www.`/bare-host boundary each reference waits for the previous removal (`'www.g/o/r/issues/5'.repeat(11000)` about 16 s). Without a digit in `PATH_REF`'s boundary the answer breaks instead of the time: 96,000 characters of `'o/r/issues/5'.repeat(16000)` are left behind. Admit a digit wherever a reference can end in one.
+- **Unbounded segments retried from every start.** `[A-Za-z0-9-]+\/[^/]+` rescans a long `a-a-` or digit run from each position (`'a-'.repeat(100000)` about 17.5 s, `'1'.repeat(200000)` about 32 s). Fix: bound each segment by the renderer's own limit, owner `{0,38}` after its first character and repo `{1,100}` (GitHub's limits), so every start scans a fixed span.
+- **A later pass that opens a boundary for an earlier one.** `PATH_REF` runs once, after the fixed-point loop, so it cannot eat a rebuilt URL's path. The space it leaves can still open a `\b` before a glued `GH-N`, so one more `GH_REF` pass follows it. When a pass runs outside the loop, check what its replacement text exposes to the patterns that ran before it.
+
+#5588's chained-status detectors (`chainedStatus`, `latestSeparator` and `gitCGlob` in `tools/guard-refusals/shapes.js`) replaced a backtracking regex with a per-line scan and met the hand-scan form of shape 2 (`git x; ` x 2000, about 32 s on the regex; `perf/guard-refusals-chained-status-linearity.test.js`):
+
+- **A `lastIndexOf` or `indexOf` that is not bounded to the line.** Searching back from a line's end with no lower bound walks to the start of the text, so it is quadratic on multi-line input (24c205dc5, `latestSeparator`'s `$?` search). `lastIndexOf`'s second argument is an upper bound on the match start, not a lower bound, so slice the line first (`text.slice(start, end).lastIndexOf(status)`).
+- **A perf file with only a one-long-line case.** The per-task cases all ran one long line, which the unbounded search handles in one pass, so only the whole-branch review's multi-line input exposed it. Put a many-lines case (`'git x\n'.repeat(40000)`) beside the one-long-line case.
+
+#5556's pair-line patterns (`plugin/bin/lib/timing/pair-lines.js`) met shape 2 with several unanchored `.+` groups in one strict pattern: the absence-refuted pattern took 11741 ms on a 22 KB line that repeats its own delimiter (` Evidence: ` and its kin), because each group can take the delimiter and the rest retries. Fix: split the line at its first delimiter and match each half with negated classes, so every character has one reading (1.6 ms at the same size). Pin a repeated-delimiter probe in the pattern's own test with a time bound.
+#5996's brace-list matcher for a record's `Key Files` (`plugin/bin/lib/model-profiles/implementer-tier.js`, `perf/implementer-tier-linearity.test.js`) met a shape the three above do not name:
+
+- **Two negated classes around a literal separator.** `\{[^}]*,[^}]*\}` is polynomial on an unclosed `{` followed by many commas, because the first class can also consume the `,` the pattern then looks for. Exclude the separator and both braces from the first class (`\{[^{},]*,[^{}]*\}`), so each `,` has one place to match, and probe it with `'{' + ','.repeat(n)`.
+
+#5992's archive readers in the maintainer tool `tools/review-replay/` (`perf/review-replay-branch-linearity.test.js`) met shape 1 and shape 2 three times outside `plugin/bin/`, on archived prompts and replies no caller bounds:
+
+- **A lazy capture with a terminator lookahead.** `originRefsOf` in `reviews-rewrite.js` rescanned the rest of a ref run from every `origin/` in it (12.7 s on `'origin/'.repeat(30000) + '!'`). Fix: take the greedy run of ref characters, cut it at its first `..` by hand, and test the one character after the run for a terminator, so every `origin/` inside a run shares one verdict.
+- **A global location regex retried from every position of a long token.** `parseReviewItems`' `/([\w./@-]+\.[\w]+):(\d+)/` took about 3.4 s on a 60000-character token and 8.6 s on `'a.'.repeat(30000)`. Fix: `locationMatches` in `tools/pipeline-cost-report/reviews.js`, one pass per run of the class.
+- **A bounded class rescanned to the same stop from every marker.** `pointerPathOf`'s `\(it is your prompt\b[^)\n]*\):` read to the same `)` or newline from each unclosed marker (about 2.9 s at 16000 markers). Fix: read each stop once.
+
+### A cap after the call does not bound the call
+
+A length cap applied to a regex's output (a slice, a truncate, a max-chars) does not bound the regex. #5222's `normalizeEventText` cut reviewer text to `EVENT_TEXT_MAX_CHARS` only after calling `normalizeTitle`, whose `/(?:\s*\.)+\s*$/` is shape 1: 80,000 dots took about 25 s. The commit step ran the same helper on the implementer's unbounded title. The bug got through build and two rounds of review, and only the high-tier reproduction lens caught it.
+- Cut the input before the call.
+- When the regex lives in a shared helper, make the helper linear at its source (`dropTrailingDots` in `plugin/bin/lib/driver/events.js`, a hand scan). Pin it with a differential test against the old expression over every short string, plus a `perf/` budget file.
+- Grep every caller of the helper: another caller may pass it unbounded text.
+
+### A line under `m` is JS's line, not git's
+
+This one is a wrong answer, not a slow one. A commit body's line ends at LF, but JS `^` and `$` under `m` also break on U+2028 and U+2029, so `Release-Note: A Fixes #99` read as a `Fixes #99` footer and booked #99 (#4634, a review probe, one fix wave). Split on `'\n'` and match each line without `m`, as `parseCommit` in `plugin/bin/lib/release-local/commits.js` and `extractReleaseNotes` in `plugin/bin/lib/release-notes.js` do. Three details come with the split:
+
+- `.` stops at U+2028 and U+2029 too, so `/^N: (.*)$/` fails on a line holding one and the line silently drops. Capture with `[^\n]*`.
+- `split('\n')` leaves a CRLF body's `\r` on the line. Tolerate it in the pattern (`[ \t]*\r?$`) or strip it first (`parseFixesSpan` in `plugin/bin/lib/flow/closing-links.js`).
+- `\s` matches both separators and LF, so `\s*$` under `m` can run past the end of the line.
+
+Probe a footer reader with the separator in front of the footer: `` `a Fixes #99\n\nFixes #10` `` must return `[10]`. `fixesRecords` in `plugin/bin/lib/express/sampling.js` and `parseFixesMembers` in `plugin/bin/lib/reconcile/console-execute.js` read PR bodies with `/gm` and return `[99, 10]`.
+
+## Decision Framework
+
+| The scan | Do |
+|---|---|
+| Runs on text no caller bounds | Probe it, pin it in `perf/` |
+| Shares a grammar with another module (`finding-path.js`) | Re-run the other side's probe and its `perf/` file on any change to the shared pattern |
+| Can be capped (nesting depth, repetitions) | Cap it, and pin the cap timing-free in `tests/` |
+
+## Project Conventions
+
+- Wall-clock budgets live in `perf/{name}-linearity.test.js`, run by `npm run test:perf`, never by `npm test`. `tests/wall-clock-budget-conformance.test.js` fails any `performance.now()` comparison under `tests/` (#3412, #3491). A `ms < 750` assertion in `tests/` failed `npm test` under load (`shell-scanner-bash-differential`), and #4581's timing tests failed the conformance scan until commit b2f7aa3b2 moved them.
+- The file header names the record, says it is deliberately not part of `npm test`, gives `Run with: npm run test:perf`, and lists each shape found with its pre-fix time.
+- Assert the verdict as well as the time, as the #3412 and #4581 files do, so a fix that changes the answer is caught.
+- Assert a long output with `assert.ok(value === expected, ...)` and a length-only message: a failing `deepEqual` prints all 200k characters (`perf/packet-gather-linearity.test.js`).
+- Each case goes red when its fix is reverted. Prove it once by reverting.
+- A grammar shared by a writer and a reader is one source (`plugin/bin/lib/console/finding-path.js`). Its comment states what keeps the scan linear (`COINCIDENCE_LOCATION`: a location never spans a second finding).
+
+## Common Operations
+
+Time one input against the worktree's module:
+
+```bash
+node -e "const {aggregateReproductionProblem:f}=require('./plugin/bin/lib/log-decision/aggregate-reproduction');const t=performance.now();f({status:'STAGED',text:'Reproduction: lens \"3a\" finding a.js:1 '+'a'.repeat(200000)});console.log(Math.round(performance.now()-t),'ms')"
+```
+
+Run the perf suite: `npm run test:perf`.
+
+## Anti-Patterns
+
+| Pattern | Why It Fails in This Project |
+|---|---|
+| A `ms <` assertion in `tests/` | `tests/wall-clock-budget-conformance.test.js` fails it, and it flakes under sibling-suite load |
+| Probing only real-archive lines | #4581's real `decisions.md` oracle (1414 lines) never exposed the 158 s case; a 200k-character token did |
+| Re-running only the changed side after a shared-grammar change | #4632's reader-side loosening, merged as-is, would have made the writer's scan quadratic (82 s, 12 s); only re-running the writer's probe caught it |
+| A timing case with no verdict assertion | A fix that returns early on the long input passes the clock and changes the answer |
+| A `perf/` case that drives a capped scan through a cheap stub of the callback the cap protects | The stub costs almost nothing per call, so the case stays inside its budget with the cap removed and pins nothing. #5991's `perf/review-replay-rewrite-linearity.test.js` fed `unrewrittenPaths` a Map-backed `exists` at 8000 markers; with a real `statSync` predicate the uncapped scan took 1878 ms at 16000 markers and ran out of heap at 32000. Pin the cap timing-free in `tests/` with a spy that records each argument's length ("the exists predicate is never handed a checkout prefix longer than the path cap" in `tests/review-replay/reviews-rewrite.test.js`), and watch it go red with the cap removed |
+
+## Reference
+
+- `perf/aggregate-reproduction-linearity.test.js`, `perf/closing-keyword-linearity.test.js`, `perf/heredoc-scan-linearity.test.js`, `perf/scale-readiness-linearity.test.js`
+- `perf/packet-gather-linearity.test.js`, `perf/packet-render-linearity.test.js`, `perf/packet-links-post-linearity.test.js`
+- `perf/recording-redact-linearity.test.js`
+- `perf/driver-settle-reduce-detail-linearity.test.js`
+- `perf/driver-neutralize-linearity.test.js`
+- `perf/driver-normalize-title-linearity.test.js`, `perf/driver-review-event-text-linearity.test.js`
+- `perf/cross-repo-dependency-linearity.test.js`, `perf/ledger-row-linearity.test.js`, `perf/process-kill-linearity.test.js`
+- `perf/workflow-shape-linearity.test.js`
+- `perf/review-replay-branch-linearity.test.js`, `perf/review-replay-rewrite-linearity.test.js` (`tools/review-replay/`)
+- `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
+- Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)

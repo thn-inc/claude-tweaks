@@ -1,0 +1,10 @@
+[
+  { "id": "mkdir-chain-playwright", "issue": [4990, 4931], "pattern": "mkdir\\s+-p\\b[^\\n]*&&[^\\n]*playwright-cli" },
+  { "id": "cd-worktree-prefix", "issue": [4990, 4931], "pattern": "^\\s*cd\\s+\"?/[^\"&;]*\"?\\s*&&" },
+  { "id": "heredoc-python-node", "issue": 4990, "pattern": "(?:python3?|node)\\s+-\\s*<<" },
+  { "id": "shell-function-wrapper", "issue": [4990, 4931], "pattern": "\\b\\w+\\s*\\(\\)\\s*\\{" },
+  { "id": "playwright-var-filename", "issue": 4931, "pattern": "playwright-cli[^\\n]*--filename[= ]\"?\\$" },
+  { "id": "playwright-pwd-filename", "issue": 4931, "pattern": "playwright-cli[^\\n]*--filename[= ]\"?[^\\s\"]*\\$PWD" },
+  { "id": "playwright-for-loop", "issue": 4931, "pattern": "\\bfor\\s+\\w+\\s+in\\b[^\\n]*;\\s*do\\b[^\\n]*playwright-cli" },
+  { "id": "playwright-pipe-head", "issue": 4931, "pattern": "playwright-cli[^\\n|]*\\|\\s*head\\b" }
+]

@@ -1,0 +1,1 @@
+[{"tag":"digest","record":null,"title":"Settle 22 below-floor digest findings in tests","action":"Propose digest cluster: file 1 record absorbing 22 entries","command":"file record \"tests\" cluster, mark 22 lines → #{n}"}]

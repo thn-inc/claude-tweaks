@@ -14,7 +14,7 @@
 
 const { findingItems, runIdOf, cell, renderDroppedBlock } = require('./resolve');
 const { planFilings } = require('./finding-filing');
-const { FILED_LINE_RE, filedRecords } = require('./residue');
+const { FILED_LINE_RE, filedRecords, digestedFindings } = require('./residue');
 
 // One row per Low-confidence / Contested item, in findingItems' order. A can't-tell item carries a
 // fingerprint (the one planFilings keys its filing on); a legacy row (a staged finding file or a
@@ -22,23 +22,28 @@ const { FILED_LINE_RE, filedRecords } = require('./residue');
 function cantTellOutcomes({ runDir, deps }) {
   const { items, findings, decisions, dropped } = findingItems({ runDir, deps });
   const filed = filedRecords(decisions);
+  const digested = digestedFindings(decisions);
   const runId = runIdOf(runDir);
   const rows = items.map((item) => {
+    // The fingerprint does not depend on the filing shape, so no `unattended` here.
     const fingerprint = item.tiebreak
       ? planFilings({ items: [{ ...item, resolution: 'filed' }], findings, runId })[0].fingerprint
       : null;
     const filedAs = fingerprint ? (filed.get(fingerprint) ?? null) : null;
-    return { id: item.id, section: item.section, tiebreak: item.tiebreak || null, fingerprint, filedAs };
+    return {
+      id: item.id, section: item.section, tiebreak: item.tiebreak || null, fingerprint, filedAs, digested: fingerprint ? digested.has(fingerprint) : false,
+    };
   });
   return { rows, dropped };
 }
 
-// The can't-tell findings with no filed evidence: one per distinct fingerprint, first item wins.
+// The can't-tell findings with no filed or digested evidence (#4679: a drop-recommended item's evidence is its
+// digested line): one per distinct fingerprint, first item wins.
 function unfiledCantTell({ runDir, deps }) {
   const seen = new Set();
   const out = [];
   for (const row of cantTellOutcomes({ runDir, deps }).rows) {
-    if (!row.fingerprint || row.filedAs !== null || seen.has(row.fingerprint)) continue;
+    if (!row.fingerprint || row.filedAs !== null || row.digested || seen.has(row.fingerprint)) continue;
     seen.add(row.fingerprint);
     out.push({ item: row.id, fingerprint: row.fingerprint });
   }
@@ -49,12 +54,17 @@ function orDash(value) {
   return value === null || value === undefined || value === '' ? '—' : value;
 }
 
+function filedAsCell(row) {
+  if (row.filedAs !== null) return `#${row.filedAs}`;
+  return row.digested ? 'digest' : '—';
+}
+
 function renderSection(section, rows) {
   const lines = [`#### ${section}`, '', '| Item | Path:Line | Severity | Lens | Recommendation | Filed as |', '|---|---|---|---|---|---|'];
   for (const r of rows) {
     const t = r.tiebreak;
     const where = t ? `${t.path}:${t.line}` : null;
-    lines.push(`| ${cell(r.id)} | ${cell(orDash(where))} | ${cell(orDash(t && t.severity))} | ${cell(orDash(t && t.lens))} | ${cell(orDash(t && t.recommendation))} | ${r.filedAs === null ? '—' : `#${r.filedAs}`} |`);
+    lines.push(`| ${cell(r.id)} | ${cell(orDash(where))} | ${cell(orDash(t && t.severity))} | ${cell(orDash(t && t.lens))} | ${cell(orDash(t && t.recommendation))} | ${filedAsCell(r)} |`);
   }
   return lines;
 }

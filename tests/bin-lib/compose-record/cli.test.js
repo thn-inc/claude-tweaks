@@ -2,12 +2,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/compose-record');
 
 function tmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'compose-record-'));
+  return scratchDir('compose-record-');
 }
 
 function deps(out) {

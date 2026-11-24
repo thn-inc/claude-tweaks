@@ -81,17 +81,19 @@ round-trip on a record that structurally cannot be born-ready is wasted work, no
 bug. File plain (no chain) and proceed straight to Backend Selection's filing step.
 
 Resolve it as a **single decision, before filing**, and only under `work-backend: github-issues`
-(the trust table reads `demo:*` labels, which do not exist on the `local-files` driver). Resolve
-both policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days`
+(the trust table reads acceptance labels, which do not exist on the `local-files` driver). Resolve
+all four policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`
 (one value per line, in request order) — and substitute the first line's literal value for
 `{resolved-ceiling}`. When it resolves to `supervised`, skip
 this block entirely rather than fetching anything.
 
-Substitute the second line's literal value (the resolved `trust-revert-window-days`) for
-`{resolved-window}` below. If the `gh` call, the `git log`
+Substitute the second, third and fourth lines' literal values (the resolved
+`trust-revert-window-days`, `trust-evaluation-window-days` and `trust-follow-up-rate-max-percent`)
+for `{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` below. If the
+`gh` call, the `git log`
 call, or the node block fails for any reason, skip the chain — the record stays a plain capture:
-this path fails toward the default, never toward the grant (unchanged from before this sub-issue). `{resolved-window}` reaches the
-script as a `process.argv` arg after `--`, never spliced into the JS source — a value containing a
+this path fails toward the default, never toward the grant (unchanged from before this sub-issue). The three values reach the
+script as `process.argv` args after `--`, never spliced into the JS source — a value containing a
 quote character would otherwise break out of the string literal, the same reason
 `code-health/focus-mode.md`'s F1 block passes its own values that way.
 
@@ -146,11 +148,11 @@ CAPTURE_TRUST_COMMIT_LOG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.
 node -e "
   const fs = require('fs');
   const root = '${CLAUDE_PLUGIN_ROOT}';
-  const { trustRows, parseGitLog } = require(root + '/bin/lib/issues/trust.js');
+  const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require(root + '/bin/lib/issues/trust.js');
   const { resolveCeiling, permittedGrants } = require(root + '/bin/lib/issues/autonomy.js');
   const issues = require('$CAPTURE_TRUST_RECORDS').map((i) => ({ ...i, labels: i.labels.map((l) => l.name) }));
   const gitLog = parseGitLog(fs.readFileSync('$CAPTURE_TRUST_COMMIT_LOG', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   // This skill's own class. A fresh capture carries by:capture and no risk
   // score, and riskBand() bands an unscored record 'elevated' — so that is the
   // cell the record about to be filed will land in, and the only one that may
@@ -161,7 +163,7 @@ node -e "
   const permitted = permittedGrants({ ceiling, row });
   const g = permitted.grants.bornReady;
   console.log(JSON.stringify({ bornReady: g.granted, reason: g.reason, verdict: row ? row.verdict : 'no-cell' }));
-" -- "{resolved-window}"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}"
 ```
 
 Never add `ready` to the label set below — a capture files plain at every ceiling. When
@@ -410,16 +412,13 @@ The guess rides in the existing "Added: '{title}' (Type: {t})" presentation (see
 
 ### Judging Definition
 
-When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it
-as `$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale
-clause (the human already decided). Otherwise, judge from the idea's content in this same turn:
-does it name a genuine open choice with no tradeoff made yet — two or more viable directions,
-no stated preference — or does it read as a single clear ask? This is a content call, not a
-structural heuristic: resist scoring it by length or keyword match, the same way `solution:unjustified`'s
-judgment is a content call rather than a mechanical check. `$NEEDS_DEFINITION` is `true` only when
-the idea genuinely names an undecided choice; default `false` (clear) otherwise. When `true`, form
-a one-line rationale naming the open choice — this becomes `$DEFINITION_RATIONALE`, surfaced in
-the presentation line below and, later, bootstrapped/labeled per Backend Selection above.
+When `--needs-definition` or `--no-needs-definition` is supplied, skip this entirely and use it as
+`$NEEDS_DEFINITION` — no judgment, and the presentation line below renders with no rationale clause
+(the human already decided). Otherwise, read `_shared/needs-definition-judgment.md` and judge the
+idea's content by it in this same turn: `needed` sets `$NEEDS_DEFINITION` to `true`, `clear` to
+`false`. When `true`, form a one-line rationale naming the open choice — this becomes
+`$DEFINITION_RATIONALE`, surfaced in the presentation line below and, later, bootstrapped/labeled
+per Backend Selection above.
 
 The judgment rides in the same "Added: '{title}' (Type: {t}, Definition: {needed|clear})"
 presentation the Type guess uses (see Immediate Routing below) — no new question is added.
@@ -445,7 +444,7 @@ When invoked by a parent skill, omit this block — the parent owns the handoff.
 
 ## Component-Skill Contract
 
-This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:demo` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
+This skill is a **component skill** — directly invoked by `/claude-tweaks:build` (Common Step 4, design-mode follow-up capture) and by `/claude-tweaks:reflect` (both `full` and `hindsight` modes' Capture disposition, routing an insight/finding that's too complex or uncertain to act on without brainstorming — a distinct path from reflect's Defer disposition, which files directly and is not a capture parent). `/claude-tweaks:visual-review`, `/claude-tweaks:wrap-up`, and `/claude-tweaks:accept` file a new backlog record directly without going through this skill, so they are NOT capture parents — they only recommend `/capture` in Next Actions for the user's next session.
 
 Parent invocation of `/capture` is signaled by `$PIPELINE_RUN_DIR` being set in the environment. Direct invocation may pass `--source <parent-skill>` (e.g. `--source build`, `--source intake`) as an explicit fallback when ambiguity exists (rare; `$PIPELINE_RUN_DIR` is the primary signal) — prose-trusted. This fallback matters here specifically: a standalone (non-`/flow`) design-mode `/build` invocation never resolves a run dir of its own (per `_shared/run-dir-resolution.md`'s resolution order, the record-mode materialization exception and the standalone-auto allowlist both exclude design-mode `/build` — confirmed by `build/SKILL.md`'s own "Auto mode (including a standalone `auto` invocation with no pipeline run dir)" language). Standalone `/reflect` likewise has no run dir of its own to forward. When invoked from within a parent's workflow (via either signal), omit the `## Next Actions` block — the parent owns the handoff. When invoked directly by a user (neither signal present), render Next Actions as shown above.
 

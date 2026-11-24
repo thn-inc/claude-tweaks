@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
+const { FIXTURE_TIMEOUT_MS, writeIdentity } = require('./helpers/git-fixtures');
 const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 const { gitEnv } = require('../plugin/bin/lib/staged-patch/stack-check');
 
@@ -186,8 +186,7 @@ function gitFixture(t) {
     return r;
   };
   runOk('init', '-q');
-  runOk('config', 'user.email', 'probe@example.invalid');
-  runOk('config', 'user.name', 'probe');
+  writeIdentity(dir, { name: 'probe', email: 'probe@example.invalid' });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'line1\nline2\nline3\n');
   runOk('add', 'a.txt');
   runOk('commit', '-q', '-m', 'base');

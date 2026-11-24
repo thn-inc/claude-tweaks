@@ -4,6 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -46,7 +47,7 @@ function runBlock(driver, records) {
   const sessionId = `rn-shape-${process.pid}-${Date.now()}-${driver}`;
   const facetedPath = sessionTmpPath(sessionId, 'tidy-records-faceted.json');
   fs.writeFileSync(facetedPath, JSON.stringify(records));
-  const outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rn-shape-')), 'cands.json');
+  const outFile = path.join(scratchDir('rn-shape-'), 'cands.json');
   const script = shapeBlock()
     .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT)
     .split('{work-backend}').join(driver)

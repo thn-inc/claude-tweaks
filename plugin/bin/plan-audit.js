@@ -3,17 +3,21 @@
 // plus a size-headroom check, replacing the hand-run prose procedure that used to
 // live entirely in plugin/skills/build/plan-audit.md, and the warn-only Checks
 // E (#3099, AC clause coverage) and F (#3602, spec-named path coverage) — both
-// run only with `--spec`. Exit 0 iff every gating check is ok (a `nearCeiling`
-// headroom flag, or any Check E or Check F entry, alone does not fail).
+// run only with `--spec` — and the gating Check G (#4618, a kept risk flag needs
+// a `Proof(<slug>)` plan line), which also runs only with `--spec`. Exit 0 iff
+// every gating check is ok (a `nearCeiling` headroom flag, or any Check E or
+// Check F entry, alone does not fail).
 // `--count-tasks` (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks. `--task-markers`
 // (#3378) is the same kind of read-only verb, printing each task's per-task
-// Role/Review-risk markers for dispatch.md's tier forwarding.
+// Role/Review-risk markers for dispatch.md's tier forwarding. `--risk-proofs`
+// (#4618) is a read-only verb running Check G alone with the full audit's
+// policy read, for Common Step 1.5's skip path. `--surface-diff <before-plan>` (#6059) is a
+// read-only verb reporting whether an amend changed the plan's file list or AC coverage.
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
 
 const { parseArgs, UsageError, USAGE } = require('./lib/plan-audit/args');
 const {
@@ -21,13 +25,16 @@ const {
   extractTaskMarkers,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, checkPremiseRefs, checkTaskMarkers,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, checkPremiseRefs, checkTaskMarkers, surfaceDiff,
 } = require('./lib/plan-audit/checks');
+const { makeExec, resolveAgainst } = require('./lib/health-core/io');
+const { readRiskPolicy } = require('./lib/policy');
+const { parseRiskFlags } = require('./lib/issues/record-risk-flags');
 
-function resolveRepoRoot(explicit, cwd) {
-  if (explicit) return path.resolve(explicit);
+function resolveRepoRoot(explicit, cwd, { env, stderr }) {
+  if (explicit) return path.resolve(cwd, explicit);
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8', windowsHide: true }).trim();
+    return makeExec({ env, stderr })('git', ['rev-parse', '--show-toplevel'], { cwd }).trim();
   } catch {
     return cwd;
   }
@@ -66,41 +73,50 @@ function summaryLine(report) {
     if (report.checkF.unparsed.length) parts.push(`Check F: ${report.checkF.unparsed.length} unparsed spec block(s)`);
     if (report.checkF.orphanWaivers.length) parts.push(`Check F: ${report.checkF.orphanWaivers.length} orphan path waiver(s)`);
   }
+  // #4618: gating — and `could-not-parse` is its own part, never folded into "missing".
+  if (!report.checkG.skipped) {
+    if (report.checkG.missing.length) {
+      parts.push(`Check G: missing proof for ${report.checkG.missing.map((m) => m.slug).join(', ')} in ${report.checkG.missing[0].plan}`);
+    }
+    if (report.checkG.couldNotParse.length) {
+      const sources = [...new Set(report.checkG.couldNotParse.map((c) => c.source))].join(', ');
+      parts.push(`Check G: could-not-parse ${report.checkG.couldNotParse.length} (${sources})`);
+    }
+  }
   if (parts.length === 0) return 'plan-audit: clean — no findings.';
   return `plan-audit: ${parts.join('; ')}.`;
 }
 
-function main() {
+function run(argv, deps) {
   let parsed;
   try {
-    parsed = parseArgs(process.argv.slice(2));
+    parsed = parseArgs(argv);
   } catch (err) {
     if (err instanceof UsageError) {
-      process.stderr.write(`${err.message}\n${USAGE}\n`);
-      process.exitCode = 2;
-      return;
+      deps.stderr(`${err.message}\n${USAGE}\n`);
+      return 2;
     }
     throw err;
   }
 
   let text;
+  const planResolved = resolveAgainst(deps.cwd(), parsed.planFile);
   try {
-    text = fs.readFileSync(parsed.planFile, 'utf8');
+    text = fs.readFileSync(planResolved, 'utf8');
   } catch (err) {
-    process.stderr.write(`plan-audit.js: cannot read plan file ${parsed.planFile}: ${err.message}\n`);
-    process.exitCode = 2;
-    return;
+    // The message embeds the path handed to fs; print the spelling the user gave.
+    deps.stderr(`plan-audit.js: cannot read plan file ${parsed.planFile}: ${err.message.split(planResolved).join(parsed.planFile)}\n`);
+    return 2;
   }
 
   if (parsed.countTasks) {
     const { tasks, batched } = countTasks(text);
     if (tasks === 0) {
-      process.stderr.write(`plan-audit.js: ${parsed.planFile} has no parseable tasks (no "### Task N:" heading)\n`);
-      process.exitCode = 2;
-      return;
+      deps.stderr(`plan-audit.js: ${parsed.planFile} has no parseable tasks (no "### Task N:" heading)\n`);
+      return 2;
     }
-    process.stdout.write(`{"tasks": ${tasks}, "batched": ${batched}}\n`);
-    return;
+    deps.stdout(`{"tasks": ${tasks}, "batched": ${batched}}\n`);
+    return 0;
   }
 
   // #3378: --task-markers reads this plan's per-task Role/Review-risk
@@ -108,47 +124,88 @@ function main() {
   // read-only verb in the same family as --count-tasks, never running the
   // gating checks above. An unknown marker value is reported inline as a
   // `findings` entry (checkTaskMarkers, warn-only like Check E) rather than
-  // failing the exit code — never a build-blocking defect on its own.
+  // failing the exit code — never a build-blocking defect on its own. Each
+  // finding is also warned on stderr, one line each, exit code unchanged.
   if (parsed.taskMarkers) {
     const { markers, tasks } = extractTaskMarkers(text);
     if (tasks.length === 0) {
-      process.stderr.write(`plan-audit.js: ${parsed.planFile} has no parseable tasks (no "### Task N:" heading)\n`);
-      process.exitCode = 2;
-      return;
+      deps.stderr(`plan-audit.js: ${parsed.planFile} has no parseable tasks (no "### Task N:" heading)\n`);
+      return 2;
     }
     const { findings } = checkTaskMarkers(text);
+    for (const f of findings) {
+      deps.stderr(`plan-audit.js: warning: task ${f.taskIndex} "${f.title}" — unrecognized ${f.field} value "${f.value}"; that field reads as unmarked\n`);
+    }
     const output = {
       markers,
       tasks: tasks.map((t) => ({ index: t.index, title: t.title, role: t.role, risk: t.risk })),
     };
     if (findings.length) output.findings = findings;
-    process.stdout.write(`${JSON.stringify(output)}\n`);
-    return;
+    deps.stdout(`${JSON.stringify(output)}\n`);
+    return 0;
   }
 
-  // #2000: --bytes runs Check D alone (the one check Common Step 1.5's skip
-  // gate doesn't cover) — no repo-root resolution or parsing needed.
+  // #2000: --bytes runs Check D alone (one of the two checks Common Step 1.5's
+  // skip gate doesn't cover; --risk-proofs below is the other) — no repo-root
+  // resolution or parsing needed.
   if (parsed.bytes) {
     const checkDResult = checkD(text);
-    process.stdout.write(`${JSON.stringify({ checkD: checkDResult })}\n`);
-    process.exitCode = checkDResult.ok ? 0 : 1;
-    return;
+    deps.stdout(`${JSON.stringify({ checkD: checkDResult })}\n`);
+    return checkDResult.ok ? 0 : 1;
   }
 
   // #3099: an unreadable --spec is the same exit-2 file-read error as an
   // unreadable plan — never a silent fall back to `skipped: 'no-spec'`.
   let specText = null;
   if (parsed.spec !== null) {
+    const specResolved = resolveAgainst(deps.cwd(), parsed.spec);
     try {
-      specText = fs.readFileSync(parsed.spec, 'utf8');
+      specText = fs.readFileSync(specResolved, 'utf8');
     } catch (err) {
-      process.stderr.write(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message}\n`);
-      process.exitCode = 2;
-      return;
+      deps.stderr(`plan-audit.js: cannot read spec file ${parsed.spec}: ${err.message.split(specResolved).join(parsed.spec)}\n`);
+      return 2;
     }
   }
 
-  const repoRoot = resolveRepoRoot(parsed.repoRoot, process.cwd());
+  // #6059: --surface-diff needs neither a repo root nor the policy. An unreadable before-plan is
+  // the same exit-2 file-read error as an unreadable plan.
+  if (parsed.surfaceDiff !== null) {
+    const beforeResolved = resolveAgainst(deps.cwd(), parsed.surfaceDiff);
+    let beforeText;
+    try {
+      beforeText = fs.readFileSync(beforeResolved, 'utf8');
+    } catch (err) {
+      deps.stderr(`plan-audit.js: cannot read before-plan file ${parsed.surfaceDiff}: ${err.message.split(beforeResolved).join(parsed.surfaceDiff)}\n`);
+      return 2;
+    }
+    deps.stdout(`${JSON.stringify({ surfaceDiff: surfaceDiff(specText, beforeText, text) })}\n`);
+    return 0;
+  }
+
+  const repoRoot = resolveRepoRoot(parsed.repoRoot, deps.cwd(), deps);
+  // #4618: Check G needs the policy's `risk-categories` (read only with control mode
+  // on) to know a policy slug on the spec's flag line. Read only when the spec carries a
+  // flag line (no spec, or no line, is a Check G skip that needs no extras, so Checks A-F
+  // never depend on the policy), and a policy that cannot be read exits 2 — never
+  // "no extra categories", which would read a policy slug as unknown.
+  let extraCategories = [];
+  if (specText !== null && parseRiskFlags(specText).status !== 'unclassified') {
+    try {
+      ({ extraCategories } = readRiskPolicy(repoRoot));
+    } catch (err) {
+      deps.stderr(`plan-audit.js: cannot read policy for --spec: ${err.message}\n`);
+      return 2;
+    }
+  }
+  // #4618: --risk-proofs runs Check G alone, on the policy read above, so it can never
+  // disagree with the full audit's `checkG`. It exists for the skip path (Common Step 1.5),
+  // where a trivial plan or a fast-lane record skips the full audit but a kept flag still
+  // needs its proof.
+  if (parsed.riskProofs) {
+    const checkGResult = checkG(specText, text, { extraCategories, planPath: parsed.planFile });
+    deps.stdout(`${JSON.stringify({ checkG: checkGResult })}\n`);
+    return checkGResult.ok ? 0 : 1;
+  }
   // #2000: Check D runs on the raw text before the parser — a byte scan on
   // text already in memory costs nothing.
   const checkDResult = checkD(text);
@@ -160,28 +217,38 @@ function main() {
   // #3099: the audited plan file necessarily contains its own Scope
   // keywords line — add it to the planned set so Check B never reports
   // the plan on itself; a real unplanned file is unaffected.
-  const plannedPaths = [...entries.map((e) => e.path), path.relative(repoRoot, path.resolve(parsed.planFile))];
+  const plannedPaths = [...entries.map((e) => e.path), path.relative(repoRoot, path.resolve(deps.cwd(), parsed.planFile))];
 
   const report = {
     checkA: checkA(entries, repoRoot),
     checkB: checkB(scopeKeywords, plannedPaths, repoRoot),
-    checkC: checkC(verificationChecks, repoRoot, {}, unparseableStep2s),
+    checkC: checkC(verificationChecks, repoRoot, { env: deps.env }, unparseableStep2s),
     checkD: checkDResult,
     headroom: headroomCheck(entries, repoRoot),
     premiseRefs: checkPremiseRefs(premiseRefs, repoRoot),
     checkE: specText === null ? { ok: true, skipped: 'no-spec' } : checkE(specText, text),
     checkF: specText === null ? { ok: true, skipped: 'no-spec' } : checkF(specText, text),
+    checkG: specText === null ? { ok: true, skipped: 'no-spec' } : checkG(specText, text, { extraCategories, planPath: parsed.planFile }),
   };
 
   // Compact JSON on its own first line (never pretty-printed — a caller
   // parsing stdout takes JSON.parse(stdout.split('\n')[0])), then the
   // human summary line.
-  process.stdout.write(`${JSON.stringify(report)}\n`);
-  process.stdout.write(`${summaryLine(report)}\n`);
+  deps.stdout(`${JSON.stringify(report)}\n`);
+  deps.stdout(`${summaryLine(report)}\n`);
 
   const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.checkD.ok && report.headroom.ok
-    && report.premiseRefs.ok;
-  process.exitCode = pass ? 0 : 1;
+    && report.premiseRefs.ok && report.checkG.ok;
+  return pass ? 0 : 1;
 }
 
-main();
+const realDeps = {
+  stdout: (t) => process.stdout.write(t),
+  stderr: (t) => process.stderr.write(t),
+  cwd: () => process.cwd(),
+  env: process.env,
+};
+
+module.exports = { run, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

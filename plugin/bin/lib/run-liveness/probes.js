@@ -20,11 +20,15 @@ const { pidStartTime } = require('./process-probe');
 // state could not be listed, or when the worktree is not among the ones git lists for
 // its main checkout (the caller already established the directory exists, so an
 // unlisted one is a path git did not match, not a worktree known to be unlocked).
+// #5377: `env` (optional, the second parameter of lockInUse and the last of isUnbornHead and lastCommitMs) is the
+// environment their git children run in; absent, the call builds the same runGit options as before (no `env` key).
+const gitOpts = (env) => (env ? { env } : undefined);
+
 // `listStdout(root)` (#3977), when given, supplies the `git worktree list
 // --porcelain` text instead of a fresh spawn — a caller judging many runs in one
 // pass shares one listing (SessionStart's run-integrity cache); `null` from it is
 // "could not list".
-function lockInUse(worktree, { listStdout } = {}) {
+function lockInUse(worktree, env, { listStdout } = {}) {
   const root = mainCheckoutRoot(worktree);
   if (!root) throw new Error(`could not resolve the main checkout of ${worktree}`);
   let stdout;
@@ -32,7 +36,7 @@ function lockInUse(worktree, { listStdout } = {}) {
     stdout = listStdout(root);
     if (typeof stdout !== 'string') throw new Error(`could not list worktrees from ${root}`);
   } else {
-    const listed = runGit(['worktree', 'list', '--porcelain'], root);
+    const listed = runGit(['worktree', 'list', '--porcelain'], root, gitOpts(env));
     if (listed.failure) throw new Error(`could not list worktrees from ${root}: git ${listed.failure}`);
     stdout = listed.stdout;
   }
@@ -44,14 +48,28 @@ function lockInUse(worktree, { listStdout } = {}) {
   throw new Error(`worktree lock state is ${verdict} for ${worktree}`);
 }
 
+// The newest-own-event rule shared by ownEventRecency and ownEventAt, over lines
+// already read (see ownEventRecency's comment for what "own" excludes).
+function newestOwnMs(lines) {
+  let newest = null;
+  for (const ev of lines) {
+    if (!ev || ev.attribution === 'fallback') continue;
+    const t = Date.parse(ev.ts);
+    if (Number.isNaN(t)) continue;
+    if (newest === null || t > newest) newest = t;
+  }
+  return newest;
+}
+
 // #1737: one read of events.jsonl (via context.js's shared readEventLines)
-// answering both questions archive-merged.js's `isAbandonedInterrupted` used to
+// answering both questions the `abandoned-interrupted` classification used to
 // ask via two separate reads. `readable` is distinct from `lastOwnMs`'s own
 // `null`, which conflates two different things: "the log is readable but has no
 // qualifying (non-fallback, parseable-ts) event" and "the log couldn't be read
 // in the first place." Only callers that must tell those apart read `readable`
-// (archive-merged.js's isAbandonedInterrupted path and `ownEventAt` below; #1673
-// F9 review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
+// (the `abandoned-interrupted` classification's path; `ownEventAt` below tells
+// absent from empty through `readEventLines`'s own `null` vs `[]`; #1673 F9
+// review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
 // proof of staleness.
 //
 // `lastOwnMs` is the newest event this run can actually claim as its own, in
@@ -74,14 +92,7 @@ function lockInUse(worktree, { listStdout } = {}) {
 function ownEventRecency(runDir) {
   const lines = readEventLines(runDir);
   if (lines === null) return { readable: false, lastOwnMs: null };
-  let newest = null;
-  for (const ev of lines) {
-    if (!ev || ev.attribution === 'fallback') continue;
-    const t = Date.parse(ev.ts);
-    if (Number.isNaN(t)) continue;
-    if (newest === null || t > newest) newest = t;
-  }
-  return { readable: true, lastOwnMs: newest };
+  return { readable: true, lastOwnMs: newestOwnMs(lines) };
 }
 
 // { lastOwnMs, lastSessionEndMs } over the run's events.jsonl. Both ignore
@@ -93,17 +104,17 @@ function ownEventRecency(runDir) {
 // resolving this run with non-fallback attribution can append one; lastOwnMs is
 // unchanged.
 function ownEventAt(runDir, ownerSessionId) {
-  const { readable, lastOwnMs } = ownEventRecency(runDir);
-  if (!readable) throw new Error(`could not read events.jsonl in ${runDir}`);
+  const lines = readEventLines(runDir);
+  if (lines === null) throw new Error(`could not read events.jsonl in ${runDir}`);
   let lastSessionEndMs = null;
-  for (const ev of readEventLines(runDir) || []) {
+  for (const ev of lines) {
     if (!ev || ev.type !== 'session-end' || ev.attribution === 'fallback') continue;
     if (ownerSessionId !== undefined && ev.sessionId !== ownerSessionId) continue;
     const t = Date.parse(ev.ts);
     if (Number.isNaN(t)) continue;
     if (lastSessionEndMs === null || t > lastSessionEndMs) lastSessionEndMs = t;
   }
-  return { lastOwnMs, lastSessionEndMs };
+  return { lastOwnMs: newestOwnMs(lines), lastSessionEndMs };
 }
 
 // Positively identifies an unborn HEAD (a repo or orphan branch with no commit
@@ -114,13 +125,13 @@ function ownEventAt(runDir, ownerSessionId) {
 // ref has no reflog (a deleted ref file with history keeps its logs/ entry).
 // Locale-independent: exit codes and files only, no git message matching. Every
 // other outcome, including any probe failing, is "not provably unborn".
-function isUnbornHead(worktree) {
-  const sym = runGit(['symbolic-ref', '-q', 'HEAD'], worktree);
+function isUnbornHead(worktree, env) {
+  const sym = runGit(['symbolic-ref', '-q', 'HEAD'], worktree, gitOpts(env));
   if (sym.failure || !sym.stdout) return false;
   const ref = sym.stdout;
-  const shown = runGit(['show-ref', '--verify', '-q', ref], worktree);
+  const shown = runGit(['show-ref', '--verify', '-q', ref], worktree, gitOpts(env));
   if (shown.failure !== FAILURE.GIT_ERROR || shown.exitCode !== 1) return false;
-  const logPath = runGit(['rev-parse', '--git-path', `logs/${ref}`], worktree);
+  const logPath = runGit(['rev-parse', '--git-path', `logs/${ref}`], worktree, gitOpts(env));
   if (logPath.failure || !logPath.stdout) return false;
   try {
     return fs.statSync(path.resolve(worktree, logPath.stdout)).size === 0;
@@ -133,10 +144,10 @@ function isUnbornHead(worktree) {
 // verdict module (#3973): null when the repo has no commit yet, THROWS when the
 // answer could not be obtained (not a repo, timeout, unparseable value) so the
 // caller can tell "no evidence" from "could not ask".
-function lastCommitMs(worktree) {
-  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree);
+function lastCommitMs(worktree, env) {
+  const { stdout, failure } = runGit(['log', '-1', '--format=%ct'], worktree, gitOpts(env));
   if (failure) {
-    if (failure === FAILURE.GIT_ERROR && isUnbornHead(worktree)) return null;
+    if (failure === FAILURE.GIT_ERROR && isUnbornHead(worktree, env)) return null;
     throw new Error(`could not read the last commit time of ${worktree}: git ${failure}`);
   }
   if (!stdout) return null;
@@ -154,4 +165,15 @@ const DEFAULT_PROBES = {
   ownEventAt,
 };
 
-module.exports = { DEFAULT_PROBES, ownEventRecency, lastCommitMs };
+// The default probes with the git and ps children bound to `env` (#5377); DEFAULT_PROBES itself when none is given.
+function probesFor(env) {
+  if (!env) return DEFAULT_PROBES;
+  return {
+    ...DEFAULT_PROBES,
+    pidStartTime: (pid) => pidStartTime(pid, { env }),
+    lockInUse: (worktree) => lockInUse(worktree, env),
+    lastCommitAt: (worktree) => lastCommitMs(worktree, env),
+  };
+}
+
+module.exports = { DEFAULT_PROBES, probesFor, ownEventRecency, lastCommitMs };

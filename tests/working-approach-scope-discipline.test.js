@@ -9,8 +9,7 @@
 //      byte-conformant to that block under the same checker Update Mode runs
 //      against adopting projects. Scoped to Working Approach only: the
 //      `claude-tweaks Pipeline` section already differs from the template by
-//      design (this repo carries its own Integration-model paragraph), and
-//      the evals fixtures are frozen generator output, deliberately not synced.
+//      design (this repo carries its own Integration-model paragraph).
 //   3. /build's implementer injection, which quotes the same sentences into
 //      implementer execution — pinned to the SAME literals as the template so
 //      the two wordings cannot drift apart (docs/skill-graph.md, init → /build).

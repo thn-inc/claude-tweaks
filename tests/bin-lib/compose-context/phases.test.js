@@ -9,8 +9,8 @@ const { readText } = require('../../helpers/read-skill');
 
 const PLUGIN = path.join(__dirname, '..', '..', '..', 'plugin');
 
-test('PHASES registers exactly the three dispatch phases (#4027)', () => {
-  assert.deepEqual(Object.keys(PHASES).sort(), ['first-call', 'review-lens', 'second-call']);
+test('PHASES registers exactly the five dispatch phases (#4027, #4359)', () => {
+  assert.deepEqual(Object.keys(PHASES).sort(), ['first-call', 'review-lens', 'review-lens-child', 'sdd-child', 'second-call']);
   assert.ok(Object.isFrozen(PHASES), 'the registry is frozen');
 });
 
@@ -57,7 +57,7 @@ test('composePhase throws a TypeError naming the known phases for an unknown one
   const { composePhase } = require('../../../plugin/bin/lib/compose-context');
   assert.throws(
     () => composePhase({ runDir: '/nowhere', phase: 'nope', pluginRoot: PLUGIN, repoRoot: '/nowhere' }),
-    (err) => err instanceof TypeError && /unknown phase nope \(known: first-call, second-call, review-lens\)/.test(err.message),
+    (err) => err instanceof TypeError && /unknown phase nope \(known: first-call, second-call, review-lens, review-lens-child, sdd-child\)/.test(err.message),
   );
 });
 

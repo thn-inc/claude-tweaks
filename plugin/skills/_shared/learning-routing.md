@@ -3,7 +3,7 @@
 Canonical home for the decision "where does this learning go?". Read by
 `/claude-tweaks:reflect` (all three modes), `/claude-tweaks:wrap-up` (its CLAUDE.md & rules,
 Skills, Memory, and Upstream feedback curation rows), `/claude-tweaks:review` (lens 3a), `/claude-tweaks:build`
-(Common Step 4.5), and the four health-sweep skills. Consumers cite this file;
+(Common Step 4.5), and the five health-sweep skills. Consumers cite this file;
 they do not restate its tables.
 
 ## Destinations

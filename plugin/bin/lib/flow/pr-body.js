@@ -11,6 +11,7 @@
 const { escapeRegExp } = require('../shared-primitives');
 const { neutralizeClosingPhrases } = require('./closing-links');
 const { expressMarker } = require('../express/sampling');
+const { fencedLineMask } = require('../markdown-blocks');
 
 // The five canonical phase rows every PR-early body starts with, unchecked
 // and in this order — never narrowed to a run's step list (#2877): a skipped
@@ -52,6 +53,47 @@ function composeFixesSpan(fixesLines) {
 
 function composeResumeLine({ runDir, target, nextStep }) {
   return `\`PIPELINE_RUN_DIR="${runDir || '{run-dir}'}" /claude-tweaks:flow "${target}" ${nextStep}\``;
+}
+
+// composeResumeLine's parser twin, pinned by the round-trip test. Its untrusted
+// input is a PR body whose Resume line /tidy renders as a paste command, so
+// only the exact emitted shape passes (#4596). The dir and target classes are
+// allowlists, not exclusions, because the line is rendered as a paste command:
+// bash `!` history expansion runs inside double quotes, and a control byte
+// reaches the terminal as an escape sequence.
+const RESUME_LINE_RE = /^`PIPELINE_RUN_DIR="([A-Za-z0-9._~\/:@+, -]+)" \/claude-tweaks:flow "([A-Za-z0-9#,._ -]+)" ([a-z][a-z,-]*)`$/;
+
+// (line, runId) -> { runDir, target, steps } | null. The dir must also end in
+// `/{runId}` — a Resume line for another run is never this run's — and holds
+// no `..` segment, which the dir class admits but a run dir never carries.
+function parseResumeLine(line, runId) {
+  // A non-string id would coerce into the suffix ('/undefined', '/null'); an
+  // empty one would let any dir ending in `/` pass.
+  if (typeof runId !== 'string' || runId === '') return null;
+  const m = RESUME_LINE_RE.exec(line);
+  if (!m || !m[1].endsWith('/' + runId) || m[1].split('/').includes('..')) return null;
+  return { runDir: m[1], target: m[2], steps: m[3] };
+}
+
+// body -> the first non-blank line after the last `### Resume` heading, its
+// trailing whitespace (a CRLF body's `\r`) removed; null without a heading or
+// a line under it. The last heading, not the first: composePrEarlyBody writes
+// Resume after the Spec summary, so a summary quoting the heading can't shadow it.
+function resumeLineUnder(body) {
+  const lines = String(body || '').split('\n');
+  const at = lines.findLastIndex((l) => l.trim() === '### Resume');
+  if (at === -1) return null;
+  const line = lines.slice(at + 1).find((l) => l.trim() !== '');
+  return line === undefined ? null : line.trimEnd();
+}
+
+// (body, runId) -> { resume, runDir, target, steps } | { resolve: 'no-resume-line' | 'resume-line-shape' };
+// the one Resume verdict, read by bin/stale-claim-pr.js --resume and bin/pr-resume-line.js (#4659).
+function resumeVerdict(body, runId) {
+  const line = resumeLineUnder(body);
+  if (line === null) return { resolve: 'no-resume-line' };
+  const parsed = parseResumeLine(line, runId);
+  return parsed ? { resume: line, ...parsed } : { resolve: 'resume-line-shape' };
 }
 
 // { runId, specSummary, target, nextStep, fixesLines, runDir? } ->
@@ -110,8 +152,9 @@ function composeExpressBody({ runId, specSummary, fixesLines }) {
 // needs to know which form a given read actually returned (gh-present vs.
 // gh-absent/MCP, _shared/pr-early-run-lifecycle.md's Root cause section),
 // only whether the pair survived onto whatever body this call was handed.
+const HTML_RUN_MARKER_RE = /<!--\s*claude-tweaks-run:\s*\S+\s*-->/;
 function hasRunMarker(body) {
-  return /<!--\s*claude-tweaks-run:\s*\S+\s*-->/.test(body) || /^claude-tweaks-run:\s*\S+/m.test(body);
+  return HTML_RUN_MARKER_RE.test(body) || /^claude-tweaks-run:\s*\S+/m.test(body);
 }
 function hasPhasesPair(body) {
   const html = body.includes('<!-- phases-start -->') && body.includes('<!-- phases-end -->');
@@ -154,14 +197,50 @@ const PHASES_END_TOKENS = ['<!-- phases-end -->', '[claude-tweaks-phases-end]'];
 const FIXES_START_TOKENS = ['<!-- fixes-start -->', '[claude-tweaks-fixes-start]'];
 const FIXES_END_TOKENS = ['<!-- fixes-end -->', '[claude-tweaks-fixes-end]'];
 
+// The `restored` names for a whole piece appended because neither marker form
+// survived. bin/pr-checklist.js reads this list to word its log line ("carried
+// none" only when all three came back), so a rename here reaches it.
+const WHOLE_PIECE_RESTORES = ['run marker', 'phases block', 'fixes block'];
+const [RESTORED_RUN_MARKER, RESTORED_PHASES_BLOCK, RESTORED_FIXES_BLOCK] = WHOLE_PIECE_RESTORES;
+
+// A run id restored into an HTML comment comes from the PR body, which is
+// untrusted: only the characters a minted run id uses, so no `>` or `!` can
+// close the comment early and no `<` can open another.
+const SAFE_RUN_ID_RE = /^[A-Za-z0-9._+-]+$/;
+
+// Puts `htmlToken` back next to its plain companion on `side` ('above' |
+// 'below') of `lines` (mutated); true when it wrote. A blank neighbour (the
+// newline a stripped comment leaves behind) is filled; otherwise a new line is
+// spliced in, so no existing text is touched. The final element is never
+// filled even when blank: it is the empty string a trailing newline leaves
+// after split('\n'), and filling it would drop the body's terminating newline.
+// A CRLF body keeps its endings. `after` (an index) limits the plain companion
+// to a line past it, so an end token is placed against the first plain end
+// following its start.
+function restoreHtmlForm(lines, htmlToken, plainToken, side, after = -1) {
+  if (lines.some((l) => l.includes(htmlToken))) return false;
+  const at = lines.findIndex((l, i) => i > after && l.trim() === plainToken);
+  if (at === -1) return false;
+  const neighbourAt = side === 'above' ? at - 1 : at + 1;
+  const neighbour = lines[neighbourAt];
+  if (neighbour !== undefined && neighbour.trim() === '' && neighbourAt !== lines.length - 1) {
+    lines[neighbourAt] = htmlToken + (neighbour.endsWith('\r') ? '\r' : '');
+  } else {
+    lines.splice(side === 'above' ? at : at + 1, 0, htmlToken + (lines[at].endsWith('\r') ? '\r' : ''));
+  }
+  return true;
+}
+
 // { body, runId, fixesLines } -> { body, restored }
 // Restores whichever of the run marker / phases pair / fixes pair are
 // missing from `body`, keeping every byte of its existing content
 // (freeform prose included) — never a find-and-replace against content
 // that already looks like one of these spans, only an append/prepend of
-// what's absent. `restored` names what was added, in restoration order,
-// for the caller's own AUTO log line (empty when the body already carried
-// everything — a no-op repair, safe to call unconditionally).
+// what's absent. A gh-absent MCP read strips every HTML-comment marker and
+// leaves the plain companions, so a last pass puts the HTML form back next to
+// a surviving plain one (#5358). `restored` names what was added, in
+// restoration order, for the caller's own AUTO log line (empty when the body
+// already carried everything — a no-op repair, safe to call unconditionally).
 function repairPrBody({ body, runId, fixesLines }) {
   if (!runId) throw new Error('repairPrBody: runId is required');
   let result = typeof body === 'string' ? body : '';
@@ -169,20 +248,48 @@ function repairPrBody({ body, runId, fixesLines }) {
 
   if (!hasRunMarker(result)) {
     result = `${runMarkerHtml(runId)}\n${runMarkerPlain(runId)}\n\n${result}`;
-    restored.push('run marker');
+    restored.push(RESTORED_RUN_MARKER);
   }
   result = stripOrphanedHalf(result, PHASES_START_TOKENS, PHASES_END_TOKENS);
   if (!hasPhasesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}### Phases\n\n${composePhasesBlock()}\n`;
-    restored.push('phases block');
+    restored.push(RESTORED_PHASES_BLOCK);
   }
   result = stripOrphanedHalf(result, FIXES_START_TOKENS, FIXES_END_TOKENS);
   if (!hasFixesPair(result)) {
     const sep = result.endsWith('\n') ? '\n' : '\n\n';
     result = `${result}${sep}${composeFixesSpan(fixesLines)}\n`;
-    restored.push('fixes block');
+    restored.push(RESTORED_FIXES_BLOCK);
   }
+
+  // The run marker's HTML form takes the plain line's own id, never `runId`:
+  // a body naming another run keeps naming it, so firstLineRunId's mismatch
+  // refusal still fires. Its presence check is hasRunMarker's whole-body
+  // HTML_RUN_MARKER_RE, so an HTML marker with other spacing counts as present
+  // (restoreHtmlForm's exact-token check would miss it and add a second one).
+  const lines = result.split('\n');
+  const plainRunPattern = /^claude-tweaks-run:\s*(\S+)$/;
+  const plainRunAt = lines.findIndex((l) => plainRunPattern.test(l.trim()));
+  const plainRun = plainRunAt === -1 ? null : plainRunPattern.exec(lines[plainRunAt].trim());
+  if (plainRun && SAFE_RUN_ID_RE.test(plainRun[1]) && !HTML_RUN_MARKER_RE.test(result)
+    && restoreHtmlForm(lines, runMarkerHtml(plainRun[1]), lines[plainRunAt].trim(), 'above')) {
+    restored.push('run marker HTML form');
+  }
+  // A span's real start is its last plain start token: the Spec summary, where
+  // a record quoting these markers puts them, sits above Phases and Fixes, and a
+  // repair appends any missing block at the end. Its end is the first plain end
+  // after that start.
+  const restoreSpan = (start, end) => {
+    const lastStart = () => lines.findLastIndex((l) => l.trim() === start[1]);
+    const startRestored = restoreHtmlForm(lines, start[0], start[1], 'above', lastStart() - 1);
+    return [startRestored, restoreHtmlForm(lines, end[0], end[1], 'below', lastStart())];
+  };
+  const phases = restoreSpan(PHASES_START_TOKENS, PHASES_END_TOKENS);
+  if (phases.some(Boolean)) restored.push('phases HTML markers');
+  const fixes = restoreSpan(FIXES_START_TOKENS, FIXES_END_TOKENS);
+  if (fixes.some(Boolean)) restored.push('fixes HTML markers');
+  result = lines.join('\n');
 
   return { body: result, restored };
 }
@@ -235,11 +342,12 @@ function parsePremiseReversals(text) {
 // up to the next level 1-3 heading. Headings survive both a gh read and a
 // gh-absent MCP read (only `<!-- ... -->` spans are stripped).
 function locateSpecSummary(lines) {
-  const start = lines.findIndex((l) => l.trim() === '### Spec summary');
+  const fenced = fencedLineMask(lines, { unclosedAsText: true });
+  const start = lines.findIndex((l, i) => !fenced[i] && l.trim() === '### Spec summary');
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^#{1,3}\s/.test(lines[i])) { end = i; break; }
+    if (!fenced[i] && /^#{1,3}\s/.test(lines[i])) { end = i; break; }
   }
   return { start, end };
 }
@@ -295,10 +403,15 @@ module.exports = {
   composePhasesBlock,
   composeFixesSpan,
   composeResumeLine,
+  RESUME_LINE_RE,
+  parseResumeLine,
+  resumeLineUnder,
+  resumeVerdict,
   hasRunMarker,
   hasPhasesPair,
   hasFixesPair,
   repairPrBody,
+  WHOLE_PIECE_RESTORES,
   PREMISE_REVERSED_MARKER,
   REVISION_PREFIX,
   parsePremiseReversals,

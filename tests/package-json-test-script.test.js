@@ -182,7 +182,7 @@ test('run-tests.js\'s main block turns a buildTestArgs throw into exit 1 and one
   // regression past it prints a marker instead of launching the suite. Error path only, by design.
   const { spawnSync } = require('child_process');
   const preload = path.join(ROOT, 'tests', 'fixtures', 'run-tests', 'win32-node20-preload.js');
-  const r = spawnSync(process.execPath, ['-r', preload, path.join('tools', 'run-tests.js')], { cwd: ROOT, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['-r', preload, path.join('tools', 'run-tests.js'), '--full'], { cwd: ROOT, encoding: 'utf8' });
   assert.strictEqual(r.status, 1, r.stderr);
   const lines = r.stderr.split('\n').filter((l) => l !== '');
   assert.strictEqual(lines.length, 1, r.stderr);

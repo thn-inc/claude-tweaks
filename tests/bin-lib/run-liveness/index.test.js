@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
@@ -17,7 +18,7 @@ const HOUR = 3_600_000;
 const NOW = Date.UTC(2026, 9, 24, 12, 0, 0);
 
 function tmp(prefix) {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return fs.realpathSync(scratchDir(prefix));
 }
 function runIdAt(ms, slug = 'record-1') {
   return `${new Date(ms).toISOString().slice(0, 19).replace(/:/g, '')}-${slug}`;

@@ -79,7 +79,7 @@ test('the refusal line resolves the console to leave-open (run through resolveAl
     readFile: (p) => fs.readFileSync(p, 'utf8'),
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     gitApplyCheck: () => ({ ok: true }),
-    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
+    readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-10-16T12:00:00Z'),
   };
   const mergeFor = (decisions) => {
@@ -123,7 +123,8 @@ test('local-merge: the backstop precedes the merge, and the dispatch-call relay'
     'dispatch-call local-merge relay ordering',
   );
   const backstop = FLAT.indexOf('**Verdict backstop — re-read before any merge (#2941).**');
-  const merge = FLAT.indexOf('git merge --no-ff {branch} -F "{subject-dir}/message.txt"');
+  // #4073: the merge fence moved into _shared/local-merge-sequence.md; this file's merge call is now the sequence invocation.
+  const merge = FLAT.indexOf("Run the sequence's Steps 1-4 in order");
   const prFirst = FLAT.indexOf("run `_shared/pr-first-merge.md`'s procedure now");
   assert.ok(backstop > -1 && backstop < merge && backstop < prFirst, 'backstop paragraph must precede both merge calls');
 });

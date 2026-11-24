@@ -11,6 +11,8 @@ const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const path = require('path');
 const { run } = require('../plugin/bin/node-eval-file.js');
+const { isolateTmpdir } = require('./helpers/tmp-dir');
+isolateTmpdir('ct-iso-node-eval-file-');
 
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'node-eval-file.js');
 

@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/render-tidy-report');
 const { lintReport } = require('../../../plugin/bin/lib/tidy-report-lint/rules');
 
 function tmpRunDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'rtr-cli-'));
+  return scratchDir('rtr-cli-');
 }
 
 function writeSidecar(runDir, name, items) {

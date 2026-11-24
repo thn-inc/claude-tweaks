@@ -68,7 +68,7 @@ const consoleDeps = () => ({
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
   gitApplyCheck: () => ({ ok: true }),
-  readGrants: (numbers) => Object.fromEntries(numbers.map((x) => [x, { labels: ['auto:merge'], pendingSince: null }])),
+  readGrants: (numbers) => Object.fromEntries(numbers.map((x) => [x, { labels: ['auto:build', 'auto:merge'], pendingSince: null }])),
   now: () => NOW,
 });
 

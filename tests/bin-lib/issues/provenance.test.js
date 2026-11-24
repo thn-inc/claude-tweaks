@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { resolveProvenance, PRODUCERS } = require('../../../plugin/bin/lib/issues/provenance.js');
+const { resolveProvenance, issueAuthorTrust, PRODUCERS } = require('../../../plugin/bin/lib/issues/provenance.js');
 const { ORIGINS } = require('../../../plugin/bin/lib/issues/record.js');
 
 test('PRODUCERS is record.js ORIGINS, not a second copy', () => {
@@ -331,4 +331,103 @@ test('unclosed opening bracket stays high-depth, so long tails overflow to kind 
   assert.equal(b.kind, 'unstructured');
   // They both have the same honest label, not a false shared named class.
   assert.deepEqual(a, b);
+});
+
+test('AC1.1: an untrusted author\'s Origin line joins no side-effect class', () => {
+  assert.deepEqual(
+    resolveProvenance({ labels: [], body: 'Origin: demo changes-requested from #7', authorTrust: 'untrusted' }),
+    { kind: 'human', source: 'human' }
+  );
+});
+
+test('AC2.1: a trusted author\'s Origin line still resolves its class', () => {
+  assert.deepEqual(
+    resolveProvenance({ labels: [], body: 'Origin: demo changes-requested from #7', authorTrust: 'trusted' }),
+    { kind: 'side-effect', source: 'demo changes-requested' }
+  );
+});
+
+test('AC2.1: an unknown author\'s Origin line still resolves its class (fail open)', () => {
+  assert.deepEqual(
+    resolveProvenance({ labels: [], body: 'Origin: demo changes-requested from #7', authorTrust: 'unknown' }),
+    { kind: 'side-effect', source: 'demo changes-requested' }
+  );
+});
+
+test('AC3.1: an omitted authorTrust leaves the Origin line resolving its class', () => {
+  assert.deepEqual(
+    resolveProvenance({ labels: [], body: 'Origin: demo changes-requested from #7' }),
+    { kind: 'side-effect', source: 'demo changes-requested' }
+  );
+});
+
+test('a producer label still wins for an untrusted author', () => {
+  assert.deepEqual(
+    resolveProvenance({ labels: ['by:capture'], body: 'Origin: demo changes-requested from #7', authorTrust: 'untrusted' }),
+    { kind: 'producer', source: 'capture' }
+  );
+});
+
+test('an untrusted malformed Origin line resolves human, not unstructured', () => {
+  for (const body of ['Origin: .', 'Origin: ' + 'x'.repeat(80)]) {
+    assert.deepEqual(
+      resolveProvenance({ labels: [], body, authorTrust: 'untrusted' }),
+      { kind: 'human', source: 'human' }
+    );
+  }
+});
+
+test('issueAuthorTrust classifies a record by its author', () => {
+  const rows = [
+    [{ authorAssociation: 'OWNER' }, 'trusted'],
+    [{ authorAssociation: 'MEMBER' }, 'trusted'],
+    [{ authorAssociation: 'COLLABORATOR' }, 'trusted'],
+    [{ authorAssociation: 'NONE' }, 'untrusted'],
+    [{ authorAssociation: 'CONTRIBUTOR' }, 'untrusted'],
+    [{ authorAssociation: 'member' }, 'untrusted'],
+    [{ author_association: 'MEMBER' }, 'trusted'],
+    [{ author_association: 'NONE' }, 'untrusted'],
+    [{ authorAssociation: 'CONTRIBUTOR', author: { is_bot: true } }, 'trusted'],
+    [{ author_association: 'NONE', user: { type: 'Bot' } }, 'trusted'],
+    [{ author: { is_bot: true } }, 'trusted'],
+    [{ user: { type: 'Bot' } }, 'trusted'],
+    [{}, 'unknown'],
+    [{ author: { is_bot: false } }, 'unknown'],
+    [null, 'unknown'],
+    [{ authorAssociation: '' }, 'unknown'],
+  ];
+  for (const [record, expected] of rows) {
+    assert.equal(issueAuthorTrust(record), expected, JSON.stringify(record));
+  }
+});
+
+test('AC1.1: an Origin line under an ## Absorbed: section is not the record\'s own (#4502)', () => {
+  const body = ['## Current State', 'x', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'human', source: 'human' });
+});
+test('AC2.1: a body whose only Origin line is fenced resolves human (backtick and tilde)', () => {
+  for (const f of ['```', '~~~']) {
+    assert.deepStrictEqual(resolveProvenance({ labels: [], body: ['## Current State', f, 'Origin: ledger resolve gate', f].join('\n') }), { kind: 'human', source: 'human' }, f);
+  }
+});
+test('AC3.1: an Origin line under ## Original request still resolves its class', () => {
+  const body = ['## Current State', 'x', '## Original request', 'Origin: ledger resolve gate (#4368 review)'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'ledger resolve gate (#4368 review)' });
+});
+test('AC4.1: an own top line beats an absorbed one', () => {
+  const body = ['Origin: wrap-up leftover from #3', '## Absorbed: 2026-10-30 — x', 'Origin: demo changes-requested from #7'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'wrap-up leftover' });
+});
+test('AC5.1: a line after the absorbed section\'s next ## heading counts again', () => {
+  const body = ['## Absorbed: 2026-10-30 — x', 'Origin: demo scope-fork', '## Original request', 'Origin: ledger resolve gate'].join('\n');
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body }), { kind: 'side-effect', source: 'ledger resolve gate' });
+});
+test('AC6.1: a bare Origin: line still yields unstructured:empty-origin', () => {
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: 'Origin:\n\n## Current State' }), { kind: 'unstructured', source: 'empty-origin' });
+});
+test('AC7.1: CRLF bodies resolve the same as LF', () => {
+  const lines = ['## Absorbed: 2026-10-30 — x', 'Origin: demo scope-fork', '## Original request', 'Origin: ledger resolve gate'];
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: lines.join('\r\n') }), resolveProvenance({ labels: [], body: lines.join('\n') }));
+  const fencedOnly = ['```', 'Origin: ledger resolve gate', '```'];
+  assert.deepStrictEqual(resolveProvenance({ labels: [], body: fencedOnly.join('\r\n') }), { kind: 'human', source: 'human' });
 });

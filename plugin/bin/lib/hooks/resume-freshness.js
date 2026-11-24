@@ -28,10 +28,10 @@
 // section: "A normal turn end is not a session end, so the hooks layer's
 // interruption stamp... never runs, and run-state.json stays status: active".
 'use strict';
-const fs = require('fs');
 const ctxLib = require('./context');
+const { lstatType } = require('../path-guard');
 const { runLiveness, blocksResume, resumeEntries } = require('../run-liveness');
-const { DEFAULT_PROBES } = require('../run-liveness/probes');
+const { probesFor } = require('../run-liveness/probes');
 const { LIVE_WINDOW_MS } = require('../run-liveness/constants');
 
 // "On the order of minutes" (the spec's own phrasing): long enough that a
@@ -46,7 +46,8 @@ const RESUME_FRESHNESS_THRESHOLD_MS = LIVE_WINDOW_MS; // 10 minutes
 // runDir: the pipeline run directory whose run-state.json to read.
 // opts: { sessionId, now, probes } — all optional; sessionId should be the
 // caller's own CLAUDE_CODE_SESSION_ID, now defaults below, and probes is merged
-// over run-liveness's DEFAULT_PROBES by runLiveness (a test seam).
+// over run-liveness's DEFAULT_PROBES by runLiveness (a test seam). `env` (optional, #5377) is the
+// environment the default probes' git and ps children run in; absent, the inherited one.
 function checkResumeFreshness(runDir, opts = {}) {
   const sessionId = opts.sessionId || null;
   const now = typeof opts.now === 'number' ? opts.now : Date.now();
@@ -70,7 +71,12 @@ function checkResumeFreshness(runDir, opts = {}) {
 
   const worktree = typeof state.worktree === 'string' ? state.worktree : null;
   if (!worktree) return { safe: true, verdict: 'no-worktree' };
-  if (!fs.existsSync(worktree)) return { safe: true, verdict: 'worktree-gone' };
+  // `missing` here is path-guard's ENOENT/ENOTDIR only — do not simplify back to
+  // `fs.existsSync`, which also returns false on EACCES/ELOOP/EIO and would read an
+  // unreadable worktree path as `worktree-gone`, resuming an interrupted run over a
+  // possibly live one (#4435). An unreadable path falls through to `runLiveness`,
+  // whose `error` entry blocks as `indeterminate`.
+  if (lstatType(worktree).type === 'missing') return { safe: true, verdict: 'worktree-gone' };
 
   // The worktree lock and last-commit answers come from run-liveness's
   // `worktree-lock` and `last-commit` evidence, read through `blocksResume`
@@ -81,9 +87,9 @@ function checkResumeFreshness(runDir, opts = {}) {
   // commit time is captured through the probe wrapper because the evidence
   // entry carries only a verdict, and `recent-commit` reports `ageMs`.
   let commitAt = null;
-  const lastCommitAt = (opts.probes && opts.probes.lastCommitAt) || DEFAULT_PROBES.lastCommitAt;
+  const lastCommitAt = (opts.probes && opts.probes.lastCommitAt) || probesFor(opts.env).lastCommitAt;
   const probes = { ...(opts.probes || {}), lastCommitAt: (wt) => (commitAt = lastCommitAt(wt)) };
-  const result = runLiveness(runDir, { now, probes });
+  const result = runLiveness(runDir, opts.env ? { now, probes, env: opts.env } : { now, probes });
   const { lock, commit } = resumeEntries(result);
   if (lock.result === 'positive') return { safe: false, verdict: 'locked', reason: 'worktree lock held by a live process' };
   if (commit.result === 'positive') {

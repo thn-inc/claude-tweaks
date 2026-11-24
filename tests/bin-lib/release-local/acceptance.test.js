@@ -5,21 +5,25 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { gitRepo, fixtureGit } = require('../../helpers/git-fixtures.js');
+const { runCliSync, spawnCli } = require('../../helpers/run-cli.js');
 
 const CLI = path.join(__dirname, '../../../plugin/bin/release-local.js');
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
 
-function runCli(root, args = []) {
-  try {
-    const stdout = execFileSync('node', [CLI, '--root', root, ...args], { encoding: 'utf8', env: ENV, stdio: ['ignore', 'pipe', 'pipe'] });
-    return { code: 0, stdout, stderr: '' };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
-  }
+const GIT_IDENT = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@x', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@x' };
+// The whole environment an in-process call sees: no ambient GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE.
+const ENV_PLAIN = {
+  PATH: process.env.PATH, HOME: process.env.HOME,
+  ...(process.platform === 'win32' ? { SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE } : {}),
+  ...GIT_IDENT,
+};
+
+function runCli(root, args = [], opts = {}) {
+  return runCliSync(CLI, ['--root', root, ...args], { env: ENV_PLAIN, ...opts });
 }
 
 function commit(root, subject, files = {}) {
@@ -43,7 +47,7 @@ function bootstrapped(version) {
 // A bare repo wired up as `origin`, with `main` deliberately never pushed — the
 // shape a project has on its very first release into a fresh remote (#2254 F6).
 function bareOrigin(root) {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-origin-')));
+  const dir = fs.realpathSync(scratchDir('ct-origin-'));
   fixtureGit(['init', '--bare', '-q', dir]);
   fixtureGit(['-C', root, 'remote', 'add', 'origin', dir]);
   return dir;
@@ -148,7 +152,8 @@ test('AC 7: no prior v* tag → the full first-parent history, base from the see
 
 test('origin exists but main was never pushed: the first release pushes branch + tag and runs the release-hook', () => {
   const root = withOriginAndHook();
-  const r = runCli(root);
+  // real process: proves the script entry, the exit code and the real release-hook shell
+  const r = spawnCli(CLI, ['--root', root], { env: { ...process.env, ...GIT_IDENT } });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.match(r.stdout, /origin: main is not on origin yet — first push/);
   assert.match(r.stdout, /hook: touch hook-ran\.txt/);
@@ -160,9 +165,9 @@ test('origin exists but main was never pushed: the first release pushes branch +
 
 test('a second release on the same repo advances both refs on the remote (the ancestry-checked path)', () => {
   const root = withOriginAndHook();
-  assert.strictEqual(runCli(root).code, 0);
+  assert.strictEqual(runCli(root, [], { allowRealRunner: true }).code, 0);
   commit(root, 'fix: two');
-  const r = runCli(root);
+  const r = runCli(root, [], { allowRealRunner: true });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(!r.stdout.includes('is not on origin yet'), r.stdout);
   const head = fixtureGit(['-C', root, 'rev-parse', 'HEAD']).toString().trim();
@@ -183,4 +188,136 @@ test('a first-parent merge keeps branch commits out of the plan (design stance 3
   assert.match(r.stdout, /v1\.2\.1 \(patch\)/);
   assert.ok(!r.stdout.includes('branch-only breaking'));
   assert.ok(!r.stdout.includes('unconventional'));
+});
+
+test('--root naming a file is refused with exit 2', (t) => {
+  const fileDir = scratchDir('ct-rootfile-');
+  t.after(() => fs.rmSync(fileDir, { recursive: true, force: true }));
+  const file = path.join(fileDir, 'f.txt');
+  fs.writeFileSync(file, 'x');
+  // real process: proves the refusal's exit code and stderr through the script entry
+  const r = spawnCli(CLI, ['--root', file]);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /root is not a directory/);
+});
+
+test('AC6.1: the release commit takes its identity from the injected env', () => {
+  const root = tagged('1.2.0');
+  commit(root, 'fix: one');
+  const r = runCli(root, [], { env: { ...ENV_PLAIN, GIT_AUTHOR_NAME: 'injected-author' } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%an']).toString().trim(), 'injected-author');
+});
+
+test('runHook output reaches deps.stdout, not the inherited stdio', () => {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "echo hook-said"\n');
+  commit(root, 'feat: one');
+  const r = runCli(root, [], { allowRealRunner: true });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /hook-said/);
+});
+
+function hookRepo() {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "echo hook-said"\n');
+  commit(root, 'feat: one');
+  return root;
+}
+
+test('the release-hook gets inherited stdio when the CLI io is the real process io, a capture when io is injected', () => {
+  const { run, realDeps } = require(CLI);
+  const seen = [];
+  const runHook = (cmd, o) => { seen.push(o.inherit); return { status: 0, stdout: '', stderr: '' }; };
+
+  // Real io: the plan lines would hit the process streams, so swallow them for this synchronous call.
+  const realOut = process.stdout.write;
+  process.stdout.write = () => true;
+  let code;
+  try {
+    code = run(['--root', hookRepo()], { ...realDeps, env: ENV_PLAIN, runHook });
+  } finally {
+    process.stdout.write = realOut;
+  }
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(seen, [true]);
+
+  const r = runCli(hookRepo(), [], { deps: { runHook } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(seen, [true, false]);
+});
+
+test('a hook printing more than 1 MiB still reports its real exit status', () => {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'release-hook: "node big.js"\n');
+  commit(root, 'feat: one', { 'big.js': "process.stdout.write('x'.repeat(2 * 1024 * 1024));\n" });
+  const r = runCli(root, [], { allowRealRunner: true });
+  assert.strictEqual(r.code, 0, r.stderr);
+});
+
+// changelog-max-releases (#5563) against a real repository: the trim is its own commit after
+// the tag, so the tag (and the footer's commit) still hold the full file.
+const sectionsOf = (text) => [...text.matchAll(/^## \[?(\d+\.\d+\.\d+)/gm)].map((m) => m[1]);
+function withFourSections(policy) {
+  const root = tagged('1.2.0');
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  const four = ['1.2.0', '1.1.0', '1.0.0', '0.9.0'].map((v) => `## [${v}](https://example.test/c/v${v}) (2026-01-01)\n\n\n### Features\n\n* f${v}\n`).join('\n');
+  commit(root, 'docs: seed', { 'CHANGELOG.md': `# Changelog\n\n${four}`, '.claude-tweaks/policy.yml': policy });
+  commit(root, 'fix: one');
+  return root;
+}
+const show = (root, spec) => fixtureGit(['-C', root, 'show', spec]).toString();
+const rev = (root, ref) => fixtureGit(['-C', root, 'rev-parse', ref]).toString().trim();
+
+test('AC3.2 / AC9 (local, real git): key 2 → HEAD is the trim commit over the release commit; the tag and the footer commit hold the untrimmed file', () => {
+  const root = withFourSections('changelog-max-releases: 2\n');
+  const r = runCli(root);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  assert.match(r.stdout, /released v1\.2\.1/);
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s']).toString().trim(), 'chore: trim CHANGELOG.md to the newest 2 releases');
+  assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s', 'HEAD~1']).toString().trim(), 'chore(release): v1.2.1');
+  assert.strictEqual(rev(root, 'v1.2.1^{commit}'), rev(root, 'HEAD~1'), 'the tag stays on the release commit');
+  const head = fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  assert.deepStrictEqual(sectionsOf(head), ['1.2.1', '1.2.0']);
+  assert.match(head, new RegExp(`\\n## Older releases\\n\\nFull file up to v1\\.2\\.1: commit ${rev(root, 'HEAD~1')}\\n`));
+  assert.doesNotMatch(head, /\]\(https:\/\/github\.com/, 'no origin: the footer carries a sha and no link');
+  assert.deepStrictEqual(sectionsOf(show(root, 'v1.2.1:CHANGELOG.md')), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  assert.deepStrictEqual(sectionsOf(show(root, `${rev(root, 'HEAD~1')}:CHANGELOG.md`)), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  assert.ok(!show(root, 'v1.2.1:CHANGELOG.md').includes('## Older releases'));
+  assert.strictEqual(fixtureGit(['-C', root, 'status', '--porcelain']).toString(), '');
+});
+
+test('AC3.2 (local, real git): with an origin the trim commit is pushed with the branch and the tag still names the release commit', () => {
+  const root = withFourSections('changelog-max-releases: 2\n');
+  const origin = bareOrigin(root);
+  const r = runCli(root);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stderr, '');
+  const headSha = rev(root, 'HEAD');
+  assert.strictEqual(fixtureGit(['-C', origin, 'rev-parse', 'refs/heads/main']).toString().trim(), headSha);
+  assert.strictEqual(fixtureGit(['-C', origin, 'rev-parse', 'refs/tags/v1.2.1^{commit}']).toString().trim(), rev(root, 'HEAD~1'));
+});
+
+test('AC2.1 (local, real git): the key at 0 or absent leaves one release commit and an untrimmed file', () => {
+  for (const policy of ['changelog-max-releases: 0\n', 'integration-branch: main\n']) {
+    const root = withFourSections(policy);
+    const r = runCli(root);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(fixtureGit(['-C', root, 'log', '-1', '--format=%s']).toString().trim(), 'chore(release): v1.2.1');
+    assert.deepStrictEqual(sectionsOf(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')), ['1.2.1', '1.2.0', '1.1.0', '1.0.0', '0.9.0']);
+  }
+});
+
+test('a relative --root resolves against the injected cwd, not the process cwd', () => {
+  const root = tagged('1.2.0');
+  commit(root, 'fix: one');
+  const parent = path.dirname(root);
+  assert.notEqual(parent, process.cwd());
+  const r = runCliSync(CLI, ['--root', path.basename(root), '--dry-run'], { env: ENV_PLAIN, cwd: parent });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /v1\.2\.1 \(patch\)/);
 });

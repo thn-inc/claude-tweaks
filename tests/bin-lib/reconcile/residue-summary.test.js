@@ -2,13 +2,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { formatReconcileSummary, archivedCountFromRunsResult, humanAge, mirrorFfPart } = require('../../../plugin/bin/lib/reconcile/residue-summary');
 const { recordResidueFailure, recordResidueError } = require('../../../plugin/bin/lib/reconcile/cache');
 
 function tmpRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ct-residue-summary-'));
+  return scratchDir('ct-residue-summary-');
 }
 
 test('archivedCountFromRunsResult: counts only action:archived entries; tolerates a missing/non-array runs', () => {

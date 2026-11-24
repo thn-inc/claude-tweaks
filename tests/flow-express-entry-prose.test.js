@@ -10,6 +10,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const FLOW = path.join(__dirname, '..', 'plugin', 'skills', 'flow');
 const SKILL = path.join(FLOW, 'SKILL.md');
@@ -26,17 +27,8 @@ function between(text, start, end) {
 const STEP3 = '### Step 3: Pipeline Config Manifesto';
 const step2 = (text) => between(text, '### Step 2: Pre-flight Checks', STEP3);
 
-const missingFactsOf = (facts) => (text) => facts.filter(([re]) => !re.test(text)).map(([, name]) => name);
-
 // Strip one fact's match from the live region; the predicate must report exactly that fact.
-function assertEachFactGoesRed(text, facts) {
-  const missing = missingFactsOf(facts);
-  for (const [re, name] of facts) {
-    const doctored = text.replace(re, '');
-    assert.notEqual(doctored, text, `anchor for "${name}" not found — the proof cannot discriminate`);
-    assert.deepEqual(missing(doctored), [name], `removing only "${name}" must turn exactly that fact red`);
-  }
-}
+const assertEachFactGoesRed = (text, facts) => assertEachPatternGoesRed(text, facts, missingFactsOf(facts));
 
 const STEP2_FACTS = [
   [/^- 2\.9 — Express route\./m, '2.9 bullet'],

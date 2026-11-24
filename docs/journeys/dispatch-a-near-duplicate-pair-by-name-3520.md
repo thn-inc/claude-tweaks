@@ -1,8 +1,10 @@
 ---
 files:
   - plugin/bin/lib/issues/near-duplicate.js
+  - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/lib/dispatch/near-dup-pairs.js
-  - plugin/skills/dispatch/queue-pull-script.md
+  - plugin/bin/lib/dispatch/queue-pull.js
   - plugin/skills/dispatch/near-duplicate-pairs.md
   - plugin/skills/dispatch/drain-pr-overlap.md
   - plugin/skills/dispatch/reporting.md
@@ -19,11 +21,11 @@ files:
 ## Steps
 
 ### 1. Pull the queue and record strong pairs
-- **URL:** `plugin/skills/dispatch/queue-pull-script.md` (the `#1944` cross-group near-duplicate pass); `plugin/bin/lib/dispatch/near-dup-pairs.js` `nearDuplicatePairsAcrossGroups`
-- **Action:** The queue pull compares every pair of records in different groups. Each pair that fires any signal prints `AUTO — dispatch: near-duplicate candidates across groups: #A / #B ({signals})` to stderr. Strong pairs are written to this firing's session-scoped `dispatch-near-dup-pairs.json` as `{records: [A, B], signals, sharedAnchors}`. A strong pair has at least 2 shared `## Current State` anchors, or a score of at least 2 (`isStrongNearDuplicate`). The file is rewritten on every pull, so an earlier pull's pairs never carry over.
+- **URL:** `plugin/bin/lib/dispatch/queue-pull.js` (the `near-dup-pairs` pass, the `#1944` cross-group near-duplicate warning, run by Step 2's `bin/queue-pull.js` call); `plugin/bin/lib/dispatch/near-dup-pairs.js` `nearDuplicatePairsAcrossGroups`
+- **Action:** The queue pull compares every pair of records in different groups. Each pair that fires any signal prints `AUTO — dispatch: near-duplicate candidates across groups: #A / #B ({signals})` to stderr. Strong pairs are written to this firing's session-scoped `dispatch-near-dup-pairs.json` as `{records: [A, B], signals, sharedAnchors}`. A strong pair has at least 2 shared `## Current State` anchors, or a score of at least 2 (`isStrongNearDuplicate`). The pull removes the file at its start and the pass rewrites it, so an earlier pull's pairs never carry over: a pass that throws leaves no file, and the predicted-conflict step reads an absent file as no pairs (#5409).
 - **Should feel:** Quiet. A weak pair, sharing one anchor, warns and nothing more.
-- **Should understand:** #3417 and #3419 share three anchors (`docs/donts.md`, `fs.realpathSync`, `fs.realpathSync.native`), so they form a strong pair. #3417 and #3012 share one, so they only warn.
-- **Red flags:** A one-anchor pair written to the pairs file. A strong pair missing from it. A pairs file still holding a previous pull's pairs.
+- **Should understand:** #3417 and #3419 share three anchors (`docs/donts.md`, `fs.realpathSync`, `fs.realpathSync.native`), so they form a strong pair. #3417 and #3012 share one, so they only warn. A heading-shaped line inside a fenced block in Current State (a shell `# comment`, a quoted `## …`) does not end the anchor scan, and a CRLF body is read the same as an LF one (#4369).
+- **Red flags:** A one-anchor pair written to the pairs file. Anchors after a fenced `# comment` in Current State missing from `sharedAnchors`. A strong pair missing from it. A pairs file still holding a previous pull's pairs.
 
 ### 2. Read the predicted-conflict line before dispatch
 - **URL:** `plugin/skills/dispatch/near-duplicate-pairs.md`; `plugin/skills/dispatch/SKILL.md` (the `#N[,#M` bullet)
@@ -49,3 +51,6 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3520 (2026-10-19). On 2026-10-17 the explicit-list firing `#3417,#3419,#3012` dispatched all three. PR #3450 merged first, and PR #3485 turned `DIRTY` on three files both records had edited, costing about 20 minutes to reconcile.
 - Related specs: #1944 (near-duplicate finder), #3278 (neighbour-in-flight guard), #1985 (drain-PR overlap), #2299 (console hold carve-out)
+- Updated during #4369's build (run 2026-10-28T192900-record-4369): `extractCurrentStateAnchors` skips fenced heading lines and normalizes CRLF.
+- Updated during #5230 (the dispatch queue-pull cutover): step 1's pass runs in `bin/queue-pull.js`'s module, not the embedded script, which stays only as a mirror until its removal.
+- Updated during #5409: the pull removes `dispatch-near-dup-pairs.json` at its start, so a near-dup-pairs pass that throws on a re-pull leaves no file rather than the earlier pull's pairs.

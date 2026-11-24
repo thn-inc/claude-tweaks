@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { evaluateBudgets, formatBudgetLine, budgetProposal, repoRootOf, readCeremonyProfile, checkBudgets, budgetFingerprint } = require('../../../plugin/bin/lib/timing/budget');
@@ -76,19 +77,19 @@ test('#4029: budgetProposal without turn-class data says so, and refuses a run w
 });
 
 test('#4029: repoRootOf takes the parent of the last .claude-tweaks segment, for a live and an archived run dir', () => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-')));
+  const root = fs.realpathSync(scratchDir('ct-budget-'));
   const live = path.join(root, '.claude-tweaks', 'pipelines', 'r1');
   const archived = path.join(root, '.claude-tweaks', 'pipelines', 'archive', 'r2');
   fs.mkdirSync(live, { recursive: true });
   fs.mkdirSync(archived, { recursive: true });
   assert.equal(repoRootOf(live), root);
   assert.equal(repoRootOf(archived), root);
-  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-bare-'));
+  const bare = scratchDir('ct-budget-bare-');
   assert.equal(repoRootOf(bare), null);
 });
 
 test('#4029: readCeremonyProfile reads config.yml and falls back to standard when absent, unknown or unreadable', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-cfg-'));
+  const dir = scratchDir('ct-budget-cfg-');
   assert.deepEqual(readCeremonyProfile(dir), { profile: 'standard', source: 'fallback' });
   fs.writeFileSync(path.join(dir, 'config.yml'), 'mode: auto\nceremony-profile: fast-lane  # chosen\n');
   assert.deepEqual(readCeremonyProfile(dir), { profile: 'fast-lane', source: 'config' });
@@ -114,7 +115,7 @@ test('#4029 M7: Current State names the unattributed round-trip share, so a read
 // deps.cwd = the checkout so the staging and decision-log anchors resolve to it, and deps.gh
 // is a fake runner (tests never touch real gh).
 function checkout({ policy = 'fast-lane-run-round-trip-ceiling: 5\n' } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-chk-')));
+  const root = fs.realpathSync(scratchDir('ct-budget-chk-'));
   fs.mkdirSync(path.join(root, '.git'));
   fs.mkdirSync(path.join(root, '.claude-tweaks', 'pipelines'), { recursive: true });
   fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policy);
@@ -170,7 +171,7 @@ test('#4029 I2(c): unmeasured metrics write one degraded SKIP line naming them; 
 });
 
 test('#4029 I2(b): no .claude-tweaks ancestor keeps budget.skipped plus the stderr line and writes no decisions.md', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-budget-noanc-'));
+  const dir = scratchDir('ct-budget-noanc-');
   const r = checkBudgets({ runDir: dir, totals: TOTALS, deps: { gh: () => { throw new Error('unexpected gh call'); } } });
   assert.deepEqual(r.budget, { skipped: 'no .claude-tweaks ancestor' });
   assert.deepEqual(r.stderr, ['budget: skipped — no .claude-tweaks ancestor']);

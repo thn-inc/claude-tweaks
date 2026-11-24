@@ -370,3 +370,61 @@ test('flipLedgerRow refuses a table with duplicate row numbers instead of droppi
   assert.throws(() => flipLedgerRow(DUPLICATE, { item: 2, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
   assert.throws(() => flipLedgerRow(DUPLICATE, { item: 1, status: 'fixed', resolution: 'x' }), /duplicate row number\(s\) #1/);
 });
+
+// #5379: resolveLedgerPath's ownership git takes the injected `env`. A holds the ledger on disk; only
+// B's history adds it after B's base, so it is owned only when the git child runs under B's `GIT_DIR`.
+test('resolveLedgerPath: ownership git gets env (#5379)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'ledger-env-a-' });
+  const b = committedRepo({ prefix: 'ledger-env-b-' });
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-env-run-'));
+  try {
+    const bBase = b.head;
+    for (const repo of [a, b]) {
+      fs.mkdirSync(path.join(repo.dir, 'docs', 'plans'), { recursive: true });
+      fs.writeFileSync(path.join(repo.dir, 'docs', 'plans', 'x-ledger.md'), '# ledger\n');
+    }
+    // B tracks the ledger (added after its base); A keeps it untracked on disk.
+    b.git('add', '.');
+    b.git('commit', '-q', '-m', 'b adds the ledger');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    const deps = { resolveBase: () => bBase };
+    assert.deepStrictEqual(
+      resolveLedgerPath({ runDir, worktree: a.dir, env, deps }),
+      { ok: true, path: path.join(a.dir, 'docs', 'plans', 'x-ledger.md') },
+    );
+    assert.strictEqual(resolveLedgerPath({ runDir, worktree: a.dir, deps }).reason, 'unattributable', 'no env: A lacks the base, so ownership fails closed');
+  } finally {
+    for (const d of [a.dir, b.dir, runDir]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+// #5379: the default resolveBase (resolveWorktreeBase) takes the injected `env` too. Only B has a `main`
+// branch (A is on `trunk`), so the merge base resolves, and the ledger is owned, only under B's `GIT_DIR`.
+test('resolveLedgerPath: default resolveBase gets env (#5379)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { cleanGitEnv, committedRepo } = require('../../helpers/git-fixtures');
+  const a = committedRepo({ prefix: 'ledger-base-a-', branch: 'trunk' });
+  const b = committedRepo({ prefix: 'ledger-base-b-', branch: 'main' });
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-base-run-'));
+  try {
+    for (const repo of [a, b]) {
+      fs.mkdirSync(path.join(repo.dir, 'docs', 'plans'), { recursive: true });
+      fs.writeFileSync(path.join(repo.dir, 'docs', 'plans', 'x-ledger.md'), '# ledger\n');
+    }
+    b.git('checkout', '-q', '-b', 'feature');
+    b.git('add', '.');
+    b.git('commit', '-q', '-m', 'b adds the ledger');
+    const env = { ...cleanGitEnv(), GIT_DIR: path.join(b.dir, '.git') };
+    assert.deepStrictEqual(
+      resolveLedgerPath({ runDir, worktree: a.dir, env }),
+      { ok: true, path: path.join(a.dir, 'docs', 'plans', 'x-ledger.md') },
+    );
+    assert.strictEqual(resolveLedgerPath({ runDir, worktree: a.dir }).reason, 'unattributable', 'no env: A has no main, so no base');
+  } finally {
+    for (const d of [a.dir, b.dir, runDir]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});

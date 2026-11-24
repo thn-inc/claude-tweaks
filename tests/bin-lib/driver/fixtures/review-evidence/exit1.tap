@@ -1,0 +1,22 @@
+TAP version 13
+# Subtest: exit1.test.js
+not ok 1 - exit1.test.js
+  ---
+  duration_ms: 27.122583
+  type: 'test'
+  location: '<DIR>/exit1.test.js:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 31.181291

@@ -53,7 +53,7 @@ files:
 
 ### 4. Marking a flag that is already in the hint
 - **URL:** the `#3504 inverse` failure in `tests/argument-hint-input.test.js`.
-- **Action:** Remove the marked flag's bracket group from the hint. Then remove it from every row of the Argument-hint mirror surfaces table: the `$ARGUMENTS` restatement, and the reference card's Takes cell. Re-run `node --test tests/argument-hint-input.test.js tests/argument-hint-mirrors.test.js`.
+- **Action:** Remove the marked flag's bracket group from the hint. Then remove it from every row of the Argument-hint mirror surfaces table: the `$ARGUMENTS` restatement, and the reference card's Takes cell. Re-run `node tools/run-tests.js tests/argument-hint-input.test.js tests/argument-hint-mirrors.test.js`.
 - **Should feel:** Like finishing the job the marker started. The failure names the skill and the flag, and the mirrors test points at any restatement that still differs.
 - **Should understand:**
   - The message reads `skills/{skill}/SKILL.md: ## Input marks flags that still appear in argument-hint — remove them from the hint and its mirrors: {flags}`.

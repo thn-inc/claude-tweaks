@@ -71,11 +71,11 @@ function cachedOrphans(mainRoot, readReconcileCache) {
 // The lock probe reads the one worktree listing the run-integrity `cache` holds,
 // so a SessionStart with several orphans still lists worktrees once (#381).
 // Lazy: archive-merged.js is a large module SessionStart only needs when a cached orphan exists.
-function livenessFor(cache) {
+function livenessFor(cache, env) {
   const { lockInUse } = require('../run-liveness/probes').DEFAULT_PROBES;
   const { defaultRunVerdict } = require('../reconcile/archive-merged');
-  const listStdout = (root) => runIntegrity.worktreeListStdout(root, cache);
-  return (dir) => defaultRunVerdict(dir, Date.now(), { lockInUse: (wt) => lockInUse(wt, { listStdout }) });
+  const listStdout = (root) => runIntegrity.worktreeListStdout(root, cache, env);
+  return (dir) => defaultRunVerdict(dir, Date.now(), { lockInUse: (wt) => lockInUse(wt, env, { listStdout }) }, env);
 }
 
 // The run's record ids for its resume command, sigil per work-backend; [] when
@@ -102,15 +102,18 @@ function resumeIds(dir, sigil) {
 // "residue". `-adhoc-standalone` dirs are skipped (#2783): they hold only
 // friction events, and EnterWorktree mints one per session — newest first, they
 // would fill MAX_REPORTED ahead of a genuinely orphaned run. `liveness` and
-// `readReconcileCache` are test seams.
+// `readReconcileCache` are test seams. `env` (optional, #5377) is the
+// environment the integrity and liveness checks' git children run in; absent,
+// the inherited one.
 function collectStaleRuns(cwd, {
-  cache, exclude, pluginRoot, liveness, readReconcileCache,
+  cache, exclude, pluginRoot, env, liveness, readReconcileCache,
 } = {}) {
+  const envOpt = env ? { env } : {};
   const root = pluginRoot || '${CLAUDE_PLUGIN_ROOT}';
   const mainRoot = wtDetect.mainCheckoutRoot(cwd) || cwd;
   const orphans = cachedOrphans(mainRoot, readReconcileCache);
   if (!orphans.size) return [];
-  const judge = liveness || livenessFor(cache);
+  const judge = liveness || livenessFor(cache, env);
   const stale = [];
   for (const entry of ctxLib.iterRunDirsWithState(cwd)) {
     if (sameDir(entry.dir, exclude)) continue;
@@ -129,7 +132,7 @@ function collectStaleRuns(cwd, {
     const prSuffix = state && state.pr && state.pr.url ? ` — PR ${state.pr.url}` : '';
     const base = `- ${path.basename(dir)} (status: ${(state && state.status) || 'unknown'})${prSuffix}`;
     try {
-      const verdict = runIntegrity.checkRunIntegrity(dir, { cache });
+      const verdict = runIntegrity.checkRunIntegrity(dir, { cache, ...envOpt });
       if (verdict.state === 'shipped-unclosed') {
         const how = verdict.evidence.merged === 'cherry' ? 'squash/rebase-equivalent' : 'merged';
         return {
@@ -152,7 +155,7 @@ function collectStaleRuns(cwd, {
     // The record-reference grammar drops the sigil under `local-files`
     // (_shared/record-batch-input.md), and an unreadable or unknown backend keeps `#`.
     try {
-      const pass = passReentry.checkPassReentry(dir, { cache });
+      const pass = passReentry.checkPassReentry(dir, { cache, ...envOpt });
       // Manifest ids are other sessions' file content headed for a command line:
       // a non-integer id suppresses the suffix. The full dir is named so the
       // pasted command never falls back to the most-recent-slug heuristic.

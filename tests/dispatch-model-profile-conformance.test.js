@@ -97,16 +97,31 @@ test('Context pack instructs the dispatching session to log the resolved first-c
   const slice = contextPack.slice(start, end === -1 ? undefined : end);
   assert.ok(
     slice.includes(
-      '`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} (source: {source}). Reversibility: n/a.`',
+      '`- AUTO {time} — Dispatch group {group}: first-call model resolved to {model} at effort {launchEffort} (source: {source}). Reversibility: n/a.`',
     ),
     'missing the per-group first-call model log line produced by log-decision.js',
   );
+  assert.match(slice, /`null` `launchEffort` is written as `inherit`/);
   assert.match(slice, /_shared\/auto-decision-log\.md/);
   // Logged only after the first call returns: a pre-dispatch line in the minted dir's
   // decisions.md would make /flow Step 3 classify it as case 3, not case 2
   // (bin/lib/flow/preflight.js + bin/lib/log-decision/claim-log.js's classifyDecisions).
   assert.match(slice, /after the first call returns/);
   assert.match(slice, /--reversibility n\/a/);
+});
+
+// The sentence right after each call's fenced template tells the dispatcher to set the Agent
+// tool's `effort` parameter from the envelope's profile.launchEffort (#5941).
+test('each Task call tells the dispatcher to set the effort parameter from launchEffort', () => {
+  const { first, second } = sections(read());
+  for (const section of [first, second]) {
+    const block = fencedBlock(section);
+    const after = section.slice(section.indexOf(block) + block.length).replace(/^```\n+/, '');
+    const sentence = after.slice(0, after.indexOf('\n\n'));
+    assert.match(sentence, /`profile\.launchEffort`/);
+    assert.match(sentence, /`effort` parameter/);
+    assert.match(sentence, /when it is not `null`, and leave it unset when it is\.$/);
+  }
 });
 
 module.exports = { sections, fencedBlock, profileOf };

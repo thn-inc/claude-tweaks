@@ -19,6 +19,7 @@ const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { scanUnresolvedConsoles } = require('../../../plugin/bin/lib/hooks/session-residue');
 const { runIdOf } = require('../../../plugin/bin/lib/console/resolve');
+const { planBatch } = require('../../../plugin/bin/lib/console/backfill-dispose');
 const { readText } = require('../../helpers/read-skill');
 
 const MAIN_SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -468,6 +469,71 @@ test('R14a: a line with no path stays locationless', () => {
   assert.strictEqual(item.finding, undefined);
 });
 
+// FINDING_PATH: a path with `[`, `]`, `@` or `(` is reported whole (AC1). Its item id keeps the legacy
+// location key (AC2), so an item persisted before the path class widened still matches its re-split.
+const BRACKET = '- STAGED 10:00:00 — Reproduction: lens "3a" finding app/[id]/page.tsx:9 not reproduced (single agent): the page reads its params before the auth guard runs. Staged to Review Console as low-confidence. Reversibility: high.';
+const SCOPED = '- STAGED 10:00:00 — Reproduction: lens "3b" finding packages/@scope/x.ts:4 not reproduced (single agent): the export map drops the scoped entry point entirely. Staged to Review Console as low-confidence. Reversibility: high.';
+const BRACKET_ID = 'bf:92e55a23cd85de94';
+const SCOPED_ID = 'bf:8ea985962726eda2';
+
+test('AC1: a bracketed or scoped path is reported whole, at its line', () => {
+  assert.deepStrictEqual(splitDecisionLine(BRACKET).findings.map((f) => [f.path, f.line]), [['app/[id]/page.tsx', 9]]);
+  assert.deepStrictEqual(splitDecisionLine(SCOPED).findings.map((f) => [f.path, f.line]), [['packages/@scope/x.ts', 4]]);
+  const [item] = itemsForLine(BRACKET);
+  assert.deepStrictEqual([item.finding.path, item.finding.line], ['app/[id]/page.tsx', 9]);
+});
+
+test('AC2: the bracketed and scoped lines keep the item ids they had before the path class widened', () => {
+  assert.deepStrictEqual(itemsForLine(BRACKET).map((i) => i.itemId), [BRACKET_ID]);
+  assert.deepStrictEqual(itemsForLine(SCOPED).map((i) => i.itemId), [SCOPED_ID]);
+});
+
+test('AC2: a stored legacy sibling keyed by its legacy id re-splits to the widened finding, not split-drift', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const [item] = consoleWorkItems({
+    consoleDir: `/x/${RUN}`, consoleJson: { items: [{ ...KEEP(BRACKET_ID), backfillSource: BRACKET }] }, decisions: '', readStaged: () => null, runId: RUN,
+  });
+  assert.deepStrictEqual([item.itemId, item.kind, item.finding.path, item.noClaimReason], [BRACKET_ID, 'finding', 'app/[id]/page.tsx', undefined]);
+});
+
+test('AC2: a record an interrupted pass filed under the legacy path is reused, not filed a second time', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const [today] = consoleWorkItems({
+    consoleDir: `/x/${RUN}`, consoleJson: { items: [KEEP(newId(BRACKET))] }, decisions: `# D\n\n${BRACKET}\n`, readStaged: () => null, runId: RUN,
+  });
+  const earlier = { ...today, finding: { ...today.finding, path: '/page.tsx' } };
+  const verdict = { outcome: 'confirmed', severity: 'medium', evidence: { path: 'app/[id]/page.tsx', line: 9, quote: 'export default async function Page' }, reason: 'confirmed by tiebreak', recommendation: null };
+  const workList = (items) => ({ mainSha: MAIN_SHA, runs: [{ runDir: '/x/pipelines/archive/run-0', items }] });
+  const filed = planBatch({ workList: workList([earlier]), verdicts: { [earlier.itemId]: verdict }, existingIssues: [], digestComments: [] }).file[0];
+  assert.strictEqual(filed.itemId, BRACKET_ID);
+  const existingIssues = [{ number: 4631, title: filed.title, body: filed.text.split('\n\n').slice(1).join('\n\n') }];
+  for (const verdicts of [{ [today.itemId]: verdict }, {}]) {
+    const out = planBatch({ workList: workList([today]), verdicts, existingIssues, digestComments: [] });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.reuse, [{ itemId: BRACKET_ID, number: 4631 }]);
+  }
+});
+
+test('AC2: a path the legacy class never matched keys its id by the widened path', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  // No legacy match ends at `app/[id].tsx:3`, so the id key is the widened path with its own occurrence.
+  const FALLBACK = '- STAGED 10:00:00 — Reproduction: lens "3a" finding app/[id].tsx:3 not reproduced (single agent): the route reads its params before the guard runs. Staged to Review Console as low-confidence. Reversibility: high.';
+  const [item] = itemsForLine(FALLBACK);
+  assert.deepStrictEqual([item.kind, item.finding.path, item.finding.line], ['finding', 'app/[id].tsx', 3]);
+  assert.strictEqual(item.itemId, backfillItemId({ runId: RUN, sourceKey: FALLBACK, findingKey: '3a|app/[id].tsx:3@0' }));
+});
+
+test('AC2: two widened paths sharing a legacy tail keep their legacy occurrence keys and stay two items', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const TWO = '- STAGED 10:00:00 — Reproduction: lens "3a" findings app/[id]/page.tsx:9 the page reads params early / blog/[id]/page.tsx:9 the blog page skips the guard. Staged to Review Console as low-confidence. Reversibility: high.';
+  const items = itemsForLine(TWO);
+  assert.deepStrictEqual(items.map((i) => [i.kind, i.finding.path, i.finding.line]), [['finding', 'app/[id]/page.tsx', 9], ['finding', 'blog/[id]/page.tsx', 9]]);
+  assert.deepStrictEqual(items.map((i) => i.itemId), [
+    backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@0' }), backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@1' }),
+  ]);
+  assert.notStrictEqual(items[0].itemId, items[1].itemId);
+});
+
 // R17: a claim is never the producer's own note. Verbatim real lines from the acceptance run's
 // decisions.md files (the ones the earlier cleaning left boilerplate, ledger-row refs or location
 // fragments in).
@@ -532,7 +598,7 @@ test('R17: a claim never starts with a bare line ref, a separator or `and`', () 
     for (const f of splitDecisionLine(line).findings) assert.ok(f.claim === '' || /^[A-Za-z(]/.test(f.claim), f.claim);
   }
   assert.ok(splitDecisionLine(R17_SLASH).findings[0].claim.startsWith('unrelated prose trims'));
-  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('share a location but not substance'));
+  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('closingIssuesReferences matched'));
   assert.ok(splitDecisionLine(R17_LIST).findings[0].claim.startsWith('citer list hard-coded'));
   assert.ok(splitDecisionLine(R17_AND).findings[0].claim.startsWith('findPrsForBranch'));
 });
@@ -637,7 +703,7 @@ test('minor 9: a bare number after prose punctuation is claim text, not a locati
   assert.strictEqual(splitDecisionLine(r3Line('not reproduced: -1 is returned when the guard finds no match')).findings[0].claim, '-1 is returned when the guard finds no match');
   assert.strictEqual(splitDecisionLine(r3Line('not reproduced. :3 is an index into the stale table')).findings[0].claim, ':3 is an index into the stale table');
   // Refs after a list separator are still a location list's tail.
-  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('share a location but not substance'));
+  assert.ok(splitDecisionLine(R17_SLASH_COLON).findings[0].claim.startsWith('closingIssuesReferences matched'));
 });
 
 test('minor 10: removing a ledger-row ref never leaves a fragment inside a parenthetical', () => {
@@ -730,4 +796,27 @@ test('summarize counts kinds', () => {
   assert.deepStrictEqual(summarize(buildWorkList({ pipelinesRoot: pipelines, mainSha: MAIN_SHA })), {
     runs: 1, consoles: 1, items: 4, byKind: { finding: 1, 'no-claim': 1, 'staged-kind': 2 }, findingsMaxFiled: 1,
   });
+});
+
+// #4198: the second backfill pass's three bad claims.
+const R4198_COORD = '- STAGED 09:12:04 — log-decision: Reproduction: lens "3f" findings plugin/skills/dispatch/close-out.md:63 / plugin/skills/dispatch/close-out.md:61 share a location but not substance; both staged.';
+const R4198_COORD_MIXED = '- STAGED 09:12:04 — log-decision: Reproduction: lens "3f" finding plugin/skills/dispatch/close-out.md:40 (the close-out step reads the ledger before the PR is marked ready). Reproduction: lens "3f" findings plugin/skills/dispatch/close-out.md:63 / plugin/skills/dispatch/close-out.md:61 share a location but not substance; both staged.';
+const R4198_LIVENESS = '- STAGED 14:03:51 — log-decision: Reproduction: lens "3a" finding plugin/bin/lib/run-liveness/index.js:70 not reproduced (a future-dated heartbeatAt reads fresh; fails safe toward live, makes a run unreapable until the clock passes it). Lens 3a findings plugin/bin/lib/run-liveness/resume-freshness.js:41 (lastCommitMs duplicates the inline read; the two can drift apart) and tests/bin-lib/run-liveness/stamp-site.test.js:88 (stamp-site tests assert only that a stamp is written; no case shows a stale stamp would fail) and plugin/bin/lib/run-liveness/index.js:112 not reproduced (the reaper reads and writes the run-state without a lock). Staged to Review Console as low-confidence. Reversibility: high.';
+
+test('#4198: a coordination note (`A / B share a location but not substance; both staged`) is never a claim', () => {
+  assert.deepStrictEqual(splitDecisionLine(R4198_COORD), { findings: [], noClaim: 'claim-empty' });
+  const { findings } = splitDecisionLine(R4198_COORD_MIXED);
+  assert.deepStrictEqual(findings.map((f) => [f.line, f.claim]), [
+    [40, 'the close-out step reads the ledger before the PR is marked ready'], [63, ''], [61, ''],
+  ]);
+});
+
+test('#4198: a claim never ends in a joining `and` or the next sentence\'s `Lens 3x findings` lead-in', () => {
+  assert.deepStrictEqual(splitDecisionLine(R4198_LIVENESS).findings.map((f) => f.claim), [
+    'a future-dated heartbeatAt reads fresh; fails safe toward live, makes a run unreapable until the clock passes it',
+    'lastCommitMs duplicates the inline read; the two can drift apart',
+    'stamp-site tests assert only that a stamp is written; no case shows a stale stamp would fail',
+    // A connective inside a kept claim stays.
+    'the reaper reads and writes the run-state without a lock',
+  ]);
 });

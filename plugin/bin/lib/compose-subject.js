@@ -8,18 +8,26 @@
 // Overview's first sentence, falling back to ## Current State's first
 // sentence for shaping-mode/specShapedBody records, which carry no ##
 // Overview; migrationNote = the ## Breaking Change section; releaseNote =
-// the subject record's own ## Release Note section, never aggregated across
-// a bundle — every record in the bundle must still carry a non-empty
-// section, but only the subject's text is rendered), and prints
+// every record's own ## Release Note section, one per record, lowest number
+// first (#4634 — formerly only the lowest-numbered record's note reached the
+// commit; every record in the bundle must carry a non-empty section), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
-// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]
+// Usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--housekeeping] [--help]
 // Numbers may be comma-joined and/or space-separated; the subject record is
 // the lowest number, and the body carries one `Fixes #n` line per number.
 // `--keep-open` (#4199) names numbers from that list the merge must not
 // close: each still counts for the subject, Type aggregation and Release
 // Note, but its body line is `Refs #n`. Without it the output is unchanged.
+// `--housekeeping --pr <n>` (#5208) is the record-less form for tidy's and wrap-up residue-sweep's
+// housekeeping PRs, which link no record: it reads the PR with `gh pr view`, composes a `chore:`
+// subject from its title (closing phrases neutralized) with no Release-Note or Fixes line, and
+// takes no <n>, --keep-open or --range. A learned-skills PR (`<!-- wrap-up-skills-pr -->`) is accepted
+// too and additionally carries one `Refs #n` body line per `refs #n` in its body. A PR body carrying
+// none of `<!-- tidy-housekeeping-pr -->`, `<!-- wrap-up-residue-pr -->` or
+// `<!-- wrap-up-skills-pr -->`, or a PR with a non-empty `closingIssuesReferences` (it links a
+// record), is refused (exit 1); a failed or unparseable read exits 3.
 // Output: JSON {"title","body"} by default; `--out-dir <dir>` instead writes
 // <dir>/title.txt, <dir>/body.md and <dir>/message.txt (= title, blank line,
 // body; no trailing newline on any of them), creating <dir> recursively, and
@@ -32,10 +40,13 @@
 // malformed invocation (including --range with --pr, commit-scope-paths set
 // with neither, or a --keep-open number missing from the positional list) OR a
 // policy misconfiguration (a malformed commit-scope-paths entry, a
-// commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
-// ## Breaking Change section — the composer's own usage error, message on
-// stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
-// origin remote); 3 an external read failed — a `gh issue view` call, the
+// commit-scope token composeSubject rejects) OR a record that cannot be composed
+// (no resolvable Type, `breaking` label with no ## Breaking Change section — the
+// composer's own usage error, message on stderr; a Release Note or Breaking Change
+// section hidden behind an unclosed code fence is named as `unclosed-fence at line
+// N` rather than as missing, #4350); 2 `gh` absent or owner/repo unresolvable (no
+// --repo and no readable origin remote, or an origin host with no GitHub signal —
+// refused before any gh call, #4933); 3 an external read failed — a `gh issue view` call, the
 // `git diff --name-only -z` behind --range, or the `gh pr diff --name-only`
 // behind --pr, or an `--out-dir` write failed.
 // --range is read with -z and --end-of-options so a C-quoted (non-ASCII) path
@@ -47,30 +58,52 @@
 // malformed invocation and an uncomposable record share one code. A fourth
 // code would only be worth adding if some caller could act differently on
 // "bad CLI invocation" vs. "shaping defect in the record"; today every merge
-// site (pr-first-merge.md's two squash sites, and the four local-merge sites
-// in merge-subject-composer-conformance.test.js's LOCAL_SITES) treats any
+// site (pr-first-merge.md's two squash sites, and the one local-merge fence in
+// _shared/local-merge-sequence.md — merge-subject-composer-conformance.test.js's
+// LOCAL_SEQUENCE — that four callers run) treats any
 // non-zero compose-subject.js exit identically (the composer exiting non-zero stops the fence before any merge), so a fourth
 // code would carry no distinguishable behavior at the only call sites that
-// exist — six merge-site fences would need editing for a distinction nothing
+// exist — three merge-site fences would need editing for a distinction nothing
 // reads. Revisit if a caller ever needs to route "uncomposable" (park the
 // record) differently from "bad invocation" (a caller bug).
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { composeSubject, ComposeSubjectError } = require('./release/subject');
+const { composeSubject, composeHousekeepingSubject, ComposeSubjectError } = require('./release/subject');
+const { neutralizeClosingPhrases } = require('./flow/closing-links');
+const { hiddenByUnclosedFence } = require('./markdown-blocks');
+const { UNCLOSED_FENCE_PREFIX } = require('./issues/materialize-format');
 const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost, gateOriginRepo, injectedGhDeps, pickInjected, withDescriptors,
 } = require('./repo-resolve');
+const { resolveAgainst, cwdOrUndefined } = require('./health-core/io');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
 const { parseScopePaths, resolveCommitScope, CommitScopeError } = require('./commit-scope');
 
-const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--help]\n';
+// Every distinct `refs #n` in a learned-skills PR body, first-seen order.
+function learnedSkillsRefs(body) {
+  const seen = [];
+  for (const m of String(body).matchAll(/\brefs #(\d+)\b/gi)) {
+    const n = Number(m[1]);
+    if (Number.isSafeInteger(n) && n > 0 && !seen.includes(n)) seen.push(n);
+  }
+  return seen;
+}
+
+const USAGE = 'usage: compose-subject.js <n>[,<m>...] [<k>...] [--repo [host/]owner/name] [--tag <tag>] [--scope <scope>] [--range <base>...<head>] [--pr <n>] [--keep-open <n>[,<m>...]] [--out-dir <dir>] [--housekeeping] [--help]\n';
+
+// A housekeeping PR's own marker — the record-less form refuses a PR without one (#5208). Same
+// pair _shared/github-pr-scan.md's HOUSEKEEPING_MARKER matches.
+const HOUSEKEEPING_MARKER = /<!-- (?:tidy-housekeeping-pr|wrap-up-residue-pr) -->/;
+// The learned-skills PR's marker — kept apart from HOUSEKEEPING_MARKER, which is tied to that pair.
+const LEARNED_SKILLS_MARKER = /<!-- wrap-up-skills-pr -->/;
 // Decision (#2319): kept at the single-call convention, not widened. Each
 // `gh issue view` call below fetches exactly one record — unlike
 // fetch-sub-issues.js's 30000ms bound, which covers a single batched
@@ -94,10 +127,11 @@ function errMessage(err) {
 }
 
 function parseArgs(argv) {
-  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, keepOpen: [], outDir: null, help: false };
+  const opts = { numbers: [], repo: null, tag: null, scope: null, range: null, pr: null, keepOpen: [], outDir: null, housekeeping: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { opts.help = true; return opts; }
+    if (a === '--housekeeping') { opts.housekeeping = true; continue; }
     if (a === '--keep-open') {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) return { error: `missing value for ${a}` };
@@ -125,6 +159,13 @@ function parseArgs(argv) {
       opts.numbers.push(n);
     }
   }
+  if (opts.housekeeping) {
+    if (opts.numbers.length) return { error: '--housekeeping takes no <n> argument' };
+    if (opts.keepOpen.length) return { error: '--housekeeping takes no --keep-open' };
+    if (opts.pr === null) return { error: '--housekeeping requires --pr' };
+    if (opts.range !== null) return { error: '--range and --pr are mutually exclusive' };
+    return opts;
+  }
   if (opts.numbers.length === 0) return { error: 'missing <n> argument' };
   if (opts.range !== null && opts.pr !== null) return { error: '--range and --pr are mutually exclusive' };
   opts.numbers = [...new Set(opts.numbers)].sort((a, b) => a - b);
@@ -145,8 +186,31 @@ function shellQuote(s) {
 // default used by decomposition-crossref.js and grouping.js) — bound once so
 // every call site here (and this module's own re-export) gets it without
 // restating the options.
+const SECTION_OPTIONS = { levelPattern: '2', stopPattern: '2', trim: true };
 function extractSection(body, heading) {
-  return extractSectionShared(body, heading, { levelPattern: '2', stopPattern: '2', trim: true });
+  return extractSectionShared(body, heading, SECTION_OPTIONS);
+}
+
+// 1-based line of the unclosed code fence hiding `heading`, or null when the
+// section is found, present-but-empty, or genuinely absent (#4350).
+function hiddenLine(body, heading) {
+  return hiddenByUnclosedFence(body, heading, SECTION_OPTIONS);
+}
+
+// Splits `failing` records into the ones whose `heading` section an unclosed
+// fence hides — each as "#N (unclosed-fence at line L)" — and the rest.
+function splitHidden(failing, heading) {
+  const hidden = [];
+  const rest = [];
+  for (const r of failing) {
+    const line = hiddenLine(r.body, heading);
+    if (line === null) {
+      rest.push(r);
+    } else {
+      hidden.push(`#${r.number} (${UNCLOSED_FENCE_PREFIX}${line})`);
+    }
+  }
+  return { hidden, rest };
 }
 
 // The release note is the ## Release Note section cut at its trailing italic
@@ -246,23 +310,34 @@ function aggregateType(records) {
   return null;
 }
 
+// A child process's working directory and environment, each only when injected (#5386): absent, the
+// spawn inherits the process's own, as it did before `run` took them from deps.
+const childOptions = ({ cwd, env } = {}) => ({ ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) });
+
 const realDeps = {
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
+  // which threads no --hostname for github.com. `{ cwd, env, stderr, homeDir }` (#5386) is the
+  // injected process context for the origin read and the hosts.yml lookup; absent, the process's own.
+  pinGhHost: (repoSpec, { cwd, env, stderr, homeDir } = {}) => pinExplicitRepoHost(repoSpec, { cwd, env, stderr, homeDir }),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  runner: (args, injected) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }, injectedGhDeps(pickInjected(injected)))),
   fetchIssueType: fetchIssueTypeGraphQL,
-  readCommitScope: () => readCommitScope(process.cwd()),
-  readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),
-  gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true }),
+  readCommitScope: (cwd = process.cwd()) => readCommitScope(cwd),
+  readCommitScopePaths: (cwd = process.cwd()) => readListKey(cwd, 'commit-scope-paths'),
+  gitRunner: (args, injected) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true, ...childOptions(injected) }),
   mkdirp: (d) => fs.mkdirSync(d, { recursive: true }),
   writeFile: (p, s) => fs.writeFileSync(p, s, 'utf8'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
 };
 
 // argv -> exit code.
@@ -270,13 +345,54 @@ function run(argv, deps = realDeps) {
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(opts.error + '\n' + USAGE); return 1; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
-  if (!deps.ghAvailable()) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
+  // The working directory, environment, home directory and stderr every seam below runs in (#5386):
+  // spawns read cwd and env; the gh host and hosts.yml lookups read env, homeDir and stderr too.
+  // A cwd() that throws (a deleted working directory) degrades to undefined: each seam then falls
+  // back to the process's own cwd, as before #5386, so `--repo o/r --scope x` still composes there.
+  const cwd = cwdOrUndefined(deps);
+  const injected = { cwd, ...pickInjected(deps) };
+  if (!deps.ghAvailable(injected)) { deps.stderr('compose-subject.js: `gh` is required\n'); return 2; }
 
   let remote = null;
-  if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
-  if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (!opts.repo) { try { remote = deps.remoteUrl(injected); } catch { remote = null; } }
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    // withDescriptors, not a spread: a spread would call injectedGhDeps' lazy homedir getter eagerly.
+    const gated = gateOriginRepo(remote, withDescriptors(injectedGhDeps(pickInjected(deps)), deps.gateDeps));
+    if (gated.refusal) { deps.stderr(`compose-subject.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
+  if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec, injected);
   const slug = repoSlug(repoSpec);
+
+  // Record-less form (#5208): the PR itself is the only source — parseArgs left `numbers` empty,
+  // so the record loop below does not run and the record checks see an empty list and pass.
+  let housekeepingPr = null;
+  if (opts.housekeeping) {
+    let rawPr;
+    try {
+      rawPr = deps.runner(['pr', 'view', String(opts.pr), '--repo', slug, '--json', 'number,title,body,closingIssuesReferences'], injected);
+    } catch (err) {
+      deps.stderr(`compose-subject.js: gh pr view ${opts.pr} failed: ${errMessage(err)}\n`);
+      return 3;
+    }
+    try { housekeepingPr = JSON.parse(rawPr); } catch {
+      deps.stderr(`compose-subject.js: gh pr view ${opts.pr} returned unparseable JSON\n`);
+      return 3;
+    }
+    if (!housekeepingPr || typeof housekeepingPr !== 'object' || !(HOUSEKEEPING_MARKER.test(housekeepingPr.body || '') || LEARNED_SKILLS_MARKER.test(housekeepingPr.body || ''))) {
+      deps.stderr(`compose-subject.js: PR #${opts.pr} carries no housekeeping marker (<!-- tidy-housekeeping-pr -->, <!-- wrap-up-residue-pr --> or <!-- wrap-up-skills-pr -->) — the record-less form is for housekeeping PRs only\n`);
+      return 1;
+    }
+    // A record-linked PR that merely quotes the marker must not take the record-less path — it
+    // would merge without its Fixes lines, past the park and acceptance gates.
+    if (Array.isArray(housekeepingPr.closingIssuesReferences) && housekeepingPr.closingIssuesReferences.length > 0) {
+      deps.stderr(`compose-subject.js: PR #${opts.pr} links a record (closingIssuesReferences non-empty) — a housekeeping PR links no record, so the record-less form refuses it\n`);
+      return 1;
+    }
+  }
 
   const records = [];
   for (const n of opts.numbers) {
@@ -284,7 +400,7 @@ function run(argv, deps = realDeps) {
     let raw;
     let issueTypeFieldRejected = false;
     try {
-      raw = deps.runner(viewArgs('number,title,body,labels,issueType'));
+      raw = deps.runner(viewArgs('number,title,body,labels,issueType'), injected);
     } catch (err) {
       if (!isUnknownIssueTypeField(err)) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err)}\n`);
@@ -295,7 +411,7 @@ function run(argv, deps = realDeps) {
       // auth/not-found/network failure on THIS retry is still fatal.
       issueTypeFieldRejected = true;
       try {
-        raw = deps.runner(viewArgs('number,title,body,labels'));
+        raw = deps.runner(viewArgs('number,title,body,labels'), injected);
       } catch (err2) {
         deps.stderr(`compose-subject.js: gh issue view ${n} failed: ${errMessage(err2)}\n`);
         return 3;
@@ -315,7 +431,7 @@ function run(argv, deps = realDeps) {
     // `typeOf` falls straight through to its own `type:*` label lookup.
     if (issueTypeFieldRejected) {
       const labelType = typeOf(record);
-      record.issueType = labelType ? null : deps.fetchIssueType(deps.runner, repoSpec, n);
+      record.issueType = labelType ? null : deps.fetchIssueType((args) => deps.runner(args, injected), repoSpec, n);
     }
     records.push(record);
   }
@@ -324,22 +440,26 @@ function run(argv, deps = realDeps) {
   const breakingRecords = records.filter((r) => parseRecordFacets(r.labels).breaking);
   const missing = breakingRecords.filter((r) => !extractSection(r.body, 'Breaking Change'));
   if (missing.length) {
-    deps.stderr(`compose-subject.js: breaking is set on #${missing.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
+    const { hidden, rest } = splitHidden(missing, 'Breaking Change');
+    if (rest.length) deps.stderr(`compose-subject.js: breaking is set on #${rest.map((r) => r.number).join(', #')} but the record carries no non-empty "## Breaking Change" section\n`);
+    if (hidden.length) deps.stderr(`compose-subject.js: breaking is set on ${hidden.join(', ')} but an unclosed code fence hides the "## Breaking Change" section — close the fence\n`);
     return 1;
   }
   const releaseNoteMissing = records.filter((r) => !releaseNoteOf(r.body));
   if (releaseNoteMissing.length) {
-    deps.stderr(`compose-subject.js: record(s) #${releaseNoteMissing.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
+    const { hidden, rest } = splitHidden(releaseNoteMissing, 'Release Note');
+    if (rest.length) deps.stderr(`compose-subject.js: record(s) #${rest.map((r) => r.number).join(', #')} carry no non-empty "## Release Note" section\n`);
+    if (hidden.length) deps.stderr(`compose-subject.js: record(s) ${hidden.join(', ')} hide their "## Release Note" section behind an unclosed code fence — close the fence\n`);
     return 1;
   }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
-  const releaseNote = releaseNoteOf(subjectRecord.body);
+  const releaseNotes = records.map((r) => releaseNoteOf(r.body));
 
   let scope = opts.scope;
   if (scope === null) {
-    const constant = deps.readCommitScope();
+    const constant = deps.readCommitScope(cwd);
     let pairs;
-    try { pairs = parseScopePaths(deps.readCommitScopePaths()); } catch (err) {
+    try { pairs = parseScopePaths(deps.readCommitScopePaths(cwd)); } catch (err) {
       if (!(err instanceof CommitScopeError)) throw err;
       deps.stderr(`compose-subject.js: ${errMessage(err)}\n`);
       return 1;
@@ -353,8 +473,8 @@ function run(argv, deps = realDeps) {
       const command = opts.range ? `git diff --name-only ${opts.range}` : `gh pr diff ${opts.pr} --name-only`;
       try {
         changedPaths = opts.range
-          ? deps.gitRunner(['diff', '--name-only', '-z', '--end-of-options', opts.range]).split('\0').filter(Boolean)
-          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only']).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+          ? deps.gitRunner(['diff', '--name-only', '-z', '--end-of-options', opts.range], injected).split('\0').filter(Boolean)
+          : deps.runner(['pr', 'diff', String(opts.pr), '--repo', slug, '--name-only'], injected).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
       } catch (err) {
         deps.stderr(`compose-subject.js: ${command} failed: ${errMessage(err)}\n`);
         return 3;
@@ -369,7 +489,13 @@ function run(argv, deps = realDeps) {
 
   let composed;
   try {
-    composed = composeSubject({
+    composed = opts.housekeeping ? composeHousekeepingSubject({
+      title: neutralizeClosingPhrases(String(housekeepingPr.title ?? '')).text,
+      number: Number(opts.pr),
+      scope,
+      tag: opts.tag,
+      refs: LEARNED_SKILLS_MARKER.test(housekeepingPr.body || '') ? learnedSkillsRefs(housekeepingPr.body) : undefined,
+    }) : composeSubject({
       type: aggregateType(records),
       title: subjectRecord.title,
       number: subjectRecord.number,
@@ -377,7 +503,7 @@ function run(argv, deps = realDeps) {
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
-      releaseNote,
+      releaseNote: releaseNotes,
       fixes: opts.numbers,
       keepOpen: opts.keepOpen,
       tag: opts.tag,
@@ -390,17 +516,19 @@ function run(argv, deps = realDeps) {
   }
 
   if (opts.outDir !== null) {
-    const files = [
-      [path.join(opts.outDir, 'title.txt'), composed.title],
-      [path.join(opts.outDir, 'body.md'), composed.body],
-      [path.join(opts.outDir, 'message.txt'), `${composed.title}\n\n${composed.body}`],
-    ];
-    let current = opts.outDir;
+    // A relative --out-dir is resolved against the injected cwd (#5386); fs sees the resolved
+    // path, so an error message naming it is swapped back to the spelling the caller typed.
+    // With no cwd, fs gets the path as typed, as before #5386.
+    const outDir = cwd === undefined ? opts.outDir : resolveAgainst(cwd, opts.outDir);
+    const names = ['title.txt', 'body.md', 'message.txt'];
+    const texts = [composed.title, composed.body, `${composed.title}\n\n${composed.body}`];
+    const files = names.map((name, i) => ({ resolved: path.join(outDir, name), typed: path.join(opts.outDir, name), text: texts[i] }));
+    let current = { resolved: outDir, typed: opts.outDir };
     try {
-      deps.mkdirp(opts.outDir);
-      for (const [file, text] of files) { current = file; deps.writeFile(file, text); }
+      deps.mkdirp(outDir);
+      for (const file of files) { current = file; deps.writeFile(file.resolved, file.text); }
     } catch (err) {
-      deps.stderr(`compose-subject.js: could not write ${current}: ${errMessage(err)}\n`);
+      deps.stderr(`compose-subject.js: could not write ${current.typed}: ${errMessage(err).split(current.resolved).join(current.typed)}\n`);
       return 3;
     }
     deps.stdout(shellQuote(composed.title) + '\n');

@@ -14,11 +14,10 @@
 // path plus a newline, for a per-variable `VAR="$(node … --value file)"`
 // substitution — the eval-free multi-path form, since the worktree guard refuses
 // `eval` (`_shared/scratch-worktree.md` §7, #4028). The two forms do not mix.
-// Reads process.env.CLAUDE_CODE_SESSION_ID directly; no other env deps.
+// Reads CLAUDE_CODE_SESSION_ID and the temp directory (TMPDIR/TMP/TEMP) from `deps.env`; no other env deps.
 'use strict';
-const os = require('os');
 const path = require('path');
-const { sessionTmpPath } = require('./lib/session-tmp');
+const { sessionTmpPath, envTmpdir } = require('./lib/session-tmp');
 
 // Print-only: on win32 emit forward slashes (`C:/Users/…`). The value is interpolated by skill
 // snippets into JS string literals inside `node -e "…"`, where `C:\Users\…` would be read as
@@ -33,45 +32,51 @@ function formatPrintedPath(resolved, { platform = process.platform, sep = path.s
 
 const USAGE = 'Usage: session-tmp-resolve.js VAR=filename [VAR=filename ...] | --value filename';
 
-function resolvePrinted(filename) {
-  const resolved = sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, filename) || path.join(os.tmpdir(), filename);
+function resolvePrinted(filename, { env = process.env } = {}) {
+  const tmpdir = envTmpdir(env);
+  const resolved = sessionTmpPath(env.CLAUDE_CODE_SESSION_ID, filename, { tmpdir }) || path.join(tmpdir, filename);
   return formatPrintedPath(resolved);
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  if (args.length === 0) {
-    console.error(USAGE);
-    process.exitCode = 1;
-    return;
+function run(argv, deps = {}) {
+  const d = { ...realDeps, ...deps };
+  const out = (line) => d.stdout(line + '\n');
+  const err = (line) => d.stderr(line + '\n');
+  const env = d.env;
+  if (argv.length === 0) {
+    err(USAGE);
+    return 1;
   }
 
-  if (args.includes('--value')) {
+  if (argv.includes('--value')) {
     // Exactly `--value <filename>`: no missing operand, no VAR= pairs mixed in.
-    if (args.length !== 2 || args[0] !== '--value' || args[1].includes('=') || args[1] === '') {
-      console.error(USAGE);
-      process.exitCode = 1;
-      return;
+    if (argv.length !== 2 || argv[0] !== '--value' || argv[1].includes('=') || argv[1] === '') {
+      err(USAGE);
+      return 1;
     }
-    console.log(resolvePrinted(args[1]));
-    return;
+    out(resolvePrinted(argv[1], { env }));
+    return 0;
   }
 
-  for (const arg of args) {
+  for (const arg of argv) {
     const eq = arg.indexOf('=');
     if (eq <= 0) {
-      console.error(`Invalid argument (expected VAR=filename): ${arg}`);
-      process.exitCode = 1;
-      return;
+      err(`Invalid argument (expected VAR=filename): ${arg}`);
+      return 1;
     }
     const varName = arg.slice(0, eq);
     const filename = arg.slice(eq + 1);
-    console.log(`${varName}=${JSON.stringify(resolvePrinted(filename))}`);
+    out(`${varName}=${JSON.stringify(resolvePrinted(filename, { env }))}`);
   }
+  return 0;
 }
 
-if (require.main === module) {
-  main();
-}
+const realDeps = {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  get env() { return process.env; },
+};
 
-module.exports = { formatPrintedPath };
+module.exports = { run, realDeps, formatPrintedPath, resolvePrinted };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

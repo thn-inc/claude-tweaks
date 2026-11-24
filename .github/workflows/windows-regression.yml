@@ -43,7 +43,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 300
     permissions:
       contents: read
     outputs:
@@ -67,11 +67,11 @@ jobs:
       # hit the Windows MAX_PATH limit.
       - name: Enable long paths
         run: git config --global core.longpaths true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the base commit must exist for the baseline run.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # run-tests.js passes root globs on win32 (the file list overflows the command line), which needs Node >= 22
           node-version: 22
@@ -120,24 +120,33 @@ jobs:
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
         # Timeout budget: verify reuses --cmd-timeout for every per-file baseline /
-        # isolated / retry run, not just the suite. Measured suite ~8.5 min on
-        # windows-latest (run 39036270004); per-file runs go 4 at a time, so up to 4
-        # hung files cost suite + 3 sequential 20-min phases ~ 70 min, inside the
-        # 90-min job limit — verify still writes its report and the filer still runs.
+        # isolated / retry run, not just the suite. Measured suite on windows-latest
+        # on 2026-11-16: 12 to 16 min when it finished (runs 43816922522,
+        # 43818178136) and over 20 min in 24 of 200 runs, where the earlier 20-min
+        # bound killed it with about 92% of its tests reported (run 43815945229), so
+        # no baseline comparison ran (#5490). The bound is 40 min. This repo's
+        # declaration sets no `concurrency.reruns`, so per-file runs go one at a time
+        # and each hung file costs up to 40 min in each of the base, isolated and
+        # retry phases: two hung files cost suite (at most 40 min) + 2 x 3 x 40 min
+        # = 280 min, inside the 300-min job limit — verify still writes its report
+        # and the filer still runs. #5189 revisits the limit once this repo's
+        # declaration declares `reruns`.
         # --no-baseline-fixed skips the extra full `npm test` at base that
-        # computes the report-only `fixed` list: nothing here reads it, and the
-        # budget above has no room for another ~8.5 min suite run.
+        # computes the report-only `fixed` list: nothing here reads it, so that
+        # extra suite run would only spend the budget above.
+        # --local: this repo's declaration sets localRuns "on-request", so an unscoped run naming the CI-declared tests suite needs it, or verify.js exits 2 before any check (#5370).
         run: >-
           node plugin/bin/verify.js
-          --cmd tests="npm test"
-          --cmd-timeout tests=1200000
+          --cmd tests="npm test -- --full"
+          --local
+          --cmd-timeout tests=2400000
           --baseline "$BASE"
           --baseline-cmd tests="node --test {file}"
           --no-baseline-fixed
           --json "$RUNNER_TEMP/verify-report.json"
           --log-dir "$RUNNER_TEMP/verify-logs"
           --no-stamp
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verify-report
@@ -161,14 +170,14 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       BASE_SHA: ${{ needs.windows.outputs.base }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           # The filer needs no node --test globs, so it stays on the repo's CI Node.
           node-version: 20
       # A missing artifact (the windows job died before uploading) must still reach
       # the filer, which then exits 1 on the unreadable report.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: verify-report

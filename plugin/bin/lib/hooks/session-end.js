@@ -1,8 +1,9 @@
-// bin/lib/hooks/session-end.js — A2: mark the active run interrupted at session
-// end; archive the session's own ad hoc run instead (#3977).
+// bin/lib/hooks/session-end.js — A2: mark the active run interrupted at session end + release the session's worktree holds (log tier, #4960);
+// archive the session's own ad hoc run instead of stamping it (#3977).
 'use strict';
 const path = require('path');
 const ctxLib = require('./context');
+const holdLib = require('./worktree-hold');
 
 // #3977: the SessionEnd `reason` values after which this session cannot continue.
 // Taken from the harness's own hook-input enum (Claude Code 2.1.311:
@@ -35,10 +36,10 @@ function closeOwnAdHocRun(ctx, owned, deps) {
   ctxLib.appendEvent(owned.dir, 'session-end', { reason: ctx.input.reason, sessionId: ctx.input.session_id }, owned.attribution);
   const root = path.resolve(owned.dir, '..', '..', '..');
   let archived = null;
-  try { archived = deps.archiveRunDir(root, owned.dir); } catch { archived = null; }
+  try { archived = deps.archiveRunDir(root, owned.dir, { env: ctx.env }); } catch { archived = null; }
   if (!archived || !archived.ok) {
     // The event is already appended; fall back to today's stamp on the live dir.
-    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' });
+    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' }, { env: ctx.env });
     return true;
   }
   const archiveDir = path.join(root, '.claude-tweaks', 'pipelines', 'archive', path.basename(owned.dir));
@@ -48,12 +49,21 @@ function closeOwnAdHocRun(ctx, owned, deps) {
       callerIdentity: { sessionId: ctx.input.session_id, cwd: ctx.cwd },
       treatCleanAsAlreadyClosed: false,
       closedBy: 'session-end',
+      env: ctx.env,
     });
   } catch { /* the move landed; archiveRunDir already wrote status clean there */ }
   return true;
 }
 
 function run(ctx, deps) {
+  ctxLib.requireEnv(ctx);
+  // #4960: drop this session's worktree holds first — a session with no run dir still held a worktree.
+  // Not on `/clear`: SessionEnd(reason: clear) is followed by a SessionStart in the same process, which
+  // stamps only the current cwd — releasing here would drop the launch worktree's hold. The process
+  // lives on and pid liveness frees the holds at exit; over-holding is the safe direction.
+  try {
+    if (!(ctx.input && ctx.input.reason === 'clear')) holdLib.releaseSessionHolds({ cwd: ctx.cwd, sessionId: ctx.input.session_id, env: ctx.env });
+  } catch { /* log tier: never break a session */ }
   // Scoped to a run this session may write to, NOT ctx.runDir (#62). When every
   // non-terminal run belongs to another session there is nothing here to record.
   const owned = ctx.ownedRun || {};
@@ -65,7 +75,7 @@ function run(ctx, deps) {
   // belongs to this run — the same treatment as a bystander (#3845).
   // Deliberately before the attribution check: another process ending is not
   // this run's event, even on a `fallback` guess.
-  if (ctxLib.isNestedSession(state, process.env)) return {};
+  if (ctxLib.isNestedSession(state, ctx.env)) return {};
   const status = state?.status;
   const reason = ctx.input && ctx.input.reason;
   // #3977: the session's own ad hoc run, ending for good, is archived rather
@@ -91,7 +101,7 @@ function run(ctx, deps) {
   // interrupted run whose ownership was never recorded. The cost of stamping
   // wrongly is a permanent false one that finishing the work does not clear.
   if (status !== 'clean' && owned.attribution !== 'fallback') {
-    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' });
+    ctxLib.writeRunState(owned.dir, { status: 'interrupted', lastEvent: 'session-end' }, { env: ctx.env });
   }
   ctxLib.appendEvent(
     owned.dir,

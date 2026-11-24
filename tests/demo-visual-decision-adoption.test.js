@@ -6,11 +6,14 @@ const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
-const DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
+const DEMO_SKILL_PATH = 'plugin/skills/accept/SKILL.md';
+// #4613 moved the skill from plugin/skills/demo/ to plugin/skills/accept/; at PRE_CHANGE_SHA
+// it lived at this path, so the go-red probes below read it from here.
+const PRE_CHANGE_DEMO_SKILL_PATH = 'plugin/skills/demo/SKILL.md';
 // #2697 moved the browser-verdict body out of SKILL.md into this sub-file (SKILL.md keeps
-// a routing pointer). The go-red probes below still target DEMO_SKILL_PATH: that is the
+// a routing pointer). The go-red probes below still target PRE_CHANGE_DEMO_SKILL_PATH: that is the
 // file each literal was absent from at PRE_CHANGE_SHA, which is what proves discrimination.
-const BROWSER_VERDICT_PATH = 'plugin/skills/demo/browser-verdict.md';
+const BROWSER_VERDICT_PATH = 'plugin/skills/accept/browser-verdict.md';
 const BROWSER_REVIEW_PATH = 'plugin/skills/visual-review/browser-review.md';
 const CONTRACT_PATH = 'plugin/skills/_shared/visual-decision.md';
 const PLUGIN_STRUCTURE_PATH = 'docs/plugin-structure.md';
@@ -66,16 +69,16 @@ function countAtPreChangeOrSkip(t, relPath, literal) {
 
 const EVENT_SHAPES = ['pick', 'reroll', 'steer', 'tweak', 'exit'];
 
-test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and never restate the event JSON shapes', (t) => {
+test('#1208 AC1/AC3: accept/SKILL.md and browser-verdict.md cite the contract and never restate the event JSON shapes', (t) => {
   assert.match(demoSkill, /_shared\/visual-decision\.md/);
   for (const shape of EVENT_SHAPES) {
     assert.equal(
       demoSkill.includes(`"type":"${shape}"`),
       false,
-      `demo/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/SKILL.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
-  const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, '_shared/visual-decision.md');
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, '_shared/visual-decision.md');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count,
@@ -84,7 +87,7 @@ test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and 
   );
   assert.ok(
     demoSkill.split('_shared/visual-decision.md').length - 1 >= 1,
-    'demo/SKILL.md must cite the contract at least once now',
+    'accept/SKILL.md must cite the contract at least once now',
   );
 
   assert.match(browserVerdict, /_shared\/visual-decision\.md/);
@@ -92,16 +95,16 @@ test('#1208 AC1/AC3: demo/SKILL.md and browser-verdict.md cite the contract and 
     assert.equal(
       browserVerdict.includes(`"type":"${shape}"`),
       false,
-      `demo/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
+      `accept/browser-verdict.md restates the "${shape}" event shape literal — it must only cite the contract`,
     );
   }
   assert.ok(
     browserVerdict.split('_shared/visual-decision.md').length - 1 >= 1,
-    'demo/browser-verdict.md must cite the contract at least once',
+    'accept/browser-verdict.md must cite the contract at least once',
   );
 });
 
-test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
+test('#1208 AC1: accept/browser-verdict.md documents pick-replaces / exit-narrows / reroll-steer-tweak-fall-back-full mapping', (t) => {
   const verdictIdx = browserVerdict.indexOf('**Browser verdict (optional');
   assert.ok(verdictIdx > -1, 'browser-verdict.md section not found');
   const verdictSection = browserVerdict.slice(verdictIdx);
@@ -112,7 +115,7 @@ test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows 
   assert.match(verdictSection, /Tweak.*never a verdict/s);
   assert.match(verdictSection, /Empty or absent events file.*documented fallback/s);
 
-  const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, 'Browser verdict (optional');
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, 'Browser verdict (optional');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count,
@@ -121,23 +124,23 @@ test('#1208 AC1: demo/browser-verdict.md documents pick-replaces / exit-narrows 
   );
 });
 
-test('#1208 AC1: demo/browser-verdict.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
+test('#1208 AC1: accept/browser-verdict.md gates the browser round on rendered-page/app-route only, and on browser-tool availability', () => {
   assert.match(browserVerdict, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
   assert.match(browserVerdict, /Available whenever browser tools resolve/);
   assert.match(demoSkill, /`rendered-page`\/`app-route` only.*applies only to the URL surfaces/s);
 });
 
-test('#1208 AC1: demo/browser-verdict.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
+test('#1208 AC1: accept/browser-verdict.md documents lifecycle stop on every exit path, matching explore.md\'s rule shape', () => {
   assert.match(browserVerdict, /Stop the server \(`visual-decide\.js stop --state <demo-dir>\/\.vd-state`\)/);
   assert.match(browserVerdict, /on every exit path — pick, exit, or any error that aborts the round/);
   assert.match(browserVerdict, /never rely on the idle timeout/);
 });
 
-test('CRITICAL gotcha: demo/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
+test('CRITICAL gotcha: accept/SKILL.md and browser-verdict.md explicitly state no auto-mode path can reach the browser-verdict step', (t) => {
   assert.match(demoSkill, /No auto-mode path reaches this/);
   assert.match(browserVerdict, /No auto-mode path reaches this/);
-  assert.match(browserVerdict, /never invoked from within an `auto`-mode pipeline/);
-  const preChange = countAtPreChangeOrSkip(t, DEMO_SKILL_PATH, 'No auto-mode path reaches this');
+  assert.match(browserVerdict, /automatic entry\s+\(`automatic-entry\.md`, `SKILL\.md`'s `## Component-Skill Contract`\), which never reads this file/);
+  const preChange = countAtPreChangeOrSkip(t, PRE_CHANGE_DEMO_SKILL_PATH, 'No auto-mode path reaches this');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count,
@@ -151,8 +154,8 @@ test('#1208 AC4: _shared/visual-decision.md Consumers table gains a demo row, ex
   assert.ok(consumersIdx > -1);
   const consumersSection = contract.slice(consumersIdx);
   assert.match(consumersSection, /`plugin\/skills\/design-wrapper\/modes\/explore\.md`/);
-  assert.match(consumersSection, /`plugin\/skills\/demo\/SKILL\.md`/);
-  const preChange = countAtPreChangeOrSkip(t, CONTRACT_PATH, '`plugin/skills/demo/SKILL.md`');
+  assert.match(consumersSection, /`plugin\/skills\/accept\/SKILL\.md`/);
+  const preChange = countAtPreChangeOrSkip(t, CONTRACT_PATH, '`plugin/skills/accept/SKILL.md`');
   if (!preChange.ok) return;
   assert.strictEqual(
     preChange.count,
@@ -201,11 +204,11 @@ test('#1208 deliverable 2: visual-review is NOT added to the Consumers table (do
 test('docs cross-references: plugin-structure.md no longer claims explore.md is the sole consumer', () => {
   assert.equal(pluginStructure.includes('sole consumer is `design-wrapper/modes/explore.md`'), false);
   assert.match(pluginStructure, /consumers are `design-wrapper\/modes\/explore\.md`/);
-  assert.match(pluginStructure, /`\/claude-tweaks:demo`'s Verdict step/);
+  assert.match(pluginStructure, /`\/claude-tweaks:accept`'s Verdict step/);
 });
 
 test('docs cross-references: skill-graph.md ## demo table gains a _shared/visual-decision.md row', (t) => {
-  const demoIdx = skillGraph.indexOf('## demo\n');
+  const demoIdx = skillGraph.indexOf('## accept\n');
   const nextSectionIdx = skillGraph.indexOf('\n## ', demoIdx + 1);
   const demoSection = skillGraph.slice(demoIdx, nextSectionIdx > -1 ? nextSectionIdx : undefined);
   assert.match(demoSection, /`_shared\/visual-decision\.md`/);

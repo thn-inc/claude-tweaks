@@ -15,7 +15,12 @@
 // own matcher also split compound commands and stripped `NAME=value`
 // prefixes), takes path basenames (`/usr/bin/git`, `git.exe`), and resolves
 // anything it cannot read to "run". It deliberately does not parse quoting —
-// `echo "git"` running the full handler is an accepted false positive.
+// `echo "git"` running the full handler is an accepted false positive. The process-kill
+// family (`pkill`, `taskkill`, `Stop-Process`, …) alone matches case-insensitively, because
+// `taskkill` and PowerShell cmdlets are case-insensitive on Windows; the other families do
+// not (#4548). One pre-tool-use-only rule is not a guarded program word: a call whose words hold `gh`,
+// `pr` and `merge` or `ready` (GH_PR_LIFECYCLE, #6143; `gh` case-folded, as a case-insensitive filesystem runs `GH`) runs the full handler, while any other `gh`
+// call keeps the skip path.
 //
 // It reads every word and every assignment value, so `G=git; $G push` is
 // reached, and any command holding both an assignment and a `$NAME` reference
@@ -25,16 +30,17 @@
 // push`) is not reached, and the handler cannot resolve it either.
 //
 // Dependency-light by contract: fs, git-command.js (which requires only path)
-// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path
-// and ../path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
+// and harness-refusal.js (which requires nothing), plus guard-rewrite.js (path,
+// ../path-guard and ../shared-primitives, whose top level requires only path and
+// ./path-guard), loaded only on a pre-tool-use skip. Adding a heavier require here
 // moves cost onto EVERY Bash call. The same holds for user-prompt-submit: it fires
 // on every human prompt and Claude Code waits for it, so it is governed here too,
 // by a raw substring test on `claude-tweaks:` with no JSON parse.
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { GUARDED_PROGRAM_WORDS, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
-const { REFUSAL_SIGNATURE } = require('./harness-refusal');
+const { GUARDED_PROGRAM_WORDS, GH_PR_LIFECYCLE, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
+const { REFUSAL_SIGNATURES } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -44,6 +50,11 @@ const POST_TOOL_USE_WORDS = GUARDED_PROGRAM_WORDS.git;
 const WORDS_BY_EVENT = Object.freeze({
   'pre-tool-use': PRE_TOOL_USE_WORDS,
   'post-tool-use': POST_TOOL_USE_WORDS,
+});
+
+// #4548: the words matched case-insensitively, pre-tool-use only (the process-kill family).
+const CASE_INSENSITIVE_WORDS_BY_EVENT = Object.freeze({
+  'pre-tool-use': new Set(GUARDED_PROGRAM_WORDS.processKill),
 });
 
 // `=` is a separator so every assignment VALUE is a piece of its own:
@@ -116,9 +127,14 @@ function wordsFor(event) {
   return Object.prototype.hasOwnProperty.call(WORDS_BY_EVENT, event) ? WORDS_BY_EVENT[event] : null;
 }
 
+function caseInsensitiveWordsFor(event) {
+  return Object.prototype.hasOwnProperty.call(CASE_INSENSITIVE_WORDS_BY_EVENT, event) ? CASE_INSENSITIVE_WORDS_BY_EVENT[event] : null;
+}
+
 function shouldRunFull(event, input) {
   const covered = wordsFor(event);
   if (!covered) return true;
+  const folded = caseInsensitiveWordsFor(event);
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
   const typed = input.tool_input && input.tool_input.command;
   if (typeof typed !== 'string') return true;
@@ -141,19 +157,25 @@ function shouldRunFull(event, input) {
   if (event === 'pre-tool-use' && hasFileRedirection(command)) return true;
   return readings.some((c) => {
     const present = commandWords(c);
-    return covered.some((word) => present.has(word));
+    // #6143: pre-tool-use only, `gh pr ready|merge` (the in-flight-run merge gate). All three words must
+    // appear, so other gh calls keep the skip path; a superset of ghPrLifecycleCalls.
+    if (event === 'pre-tool-use' && [...present].some((word) => word.toLowerCase() === GH_PR_LIFECYCLE.program) && present.has(GH_PR_LIFECYCLE.group)
+      && GH_PR_LIFECYCLE.verbs.some((verb) => present.has(verb))) return true;
+    return covered.some((word) => present.has(word)) || (folded !== null && [...present].some((word) => folded.has(word.toLowerCase())));
   });
 }
 
 // #2783: post-tool-use-failure fires on EVERY failed Bash call, yet its handler
 // only acts on the harness worktree-isolation refusal, whose text always carries
-// this phrase (harness-refusal.js's REFUSAL_SIGNATURE, the tail of
-// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE). Matched
-// on the raw payload OR the parsed `error`, so a JSON-escaped spelling still runs.
+// one of these phrases (harness-refusal.js's REFUSAL_SIGNATURES, the tails of
+// post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE; #3819 added the
+// worktree-gone one). Matched on the raw payload OR the parsed `error`, so a
+// JSON-escaped spelling still runs.
 // Unparseable input skips: the handler does nothing with it either.
 function failureCarriesRefusal(raw, input) {
-  if (raw.includes(REFUSAL_SIGNATURE)) return true;
-  return Boolean(input && typeof input.error === 'string' && input.error.includes(REFUSAL_SIGNATURE));
+  const carriesSignature = (text) => REFUSAL_SIGNATURES.some((signature) => text.includes(signature));
+  if (carriesSignature(raw)) return true;
+  return Boolean(input && typeof input.error === 'string' && carriesSignature(input.error));
 }
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since

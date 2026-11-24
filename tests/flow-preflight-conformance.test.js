@@ -38,6 +38,7 @@ test('the adoption section branches on the CLI\'s non-zero exits — 3 is case 4
   // `is not anchored to the main checkout` alone would be satisfied by case 4's
   // note literal, which predates this paragraph.
   assert.match(section, /`missing` → `does not exist`/);
+  assert.match(section, /`not-a-run-dir` → `is not a pipeline run directory`/);
   assert.match(section, /the reason the CLI's own stderr names/);
   assert.match(section, /passes no `--json`/);
   // Case 4's own bullet no longer claims the pack reports the reason — it never

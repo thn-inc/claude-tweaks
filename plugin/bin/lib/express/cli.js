@@ -1,6 +1,6 @@
 // bin/lib/express/cli.js — the express lane's (#4025) deterministic spine:
 // bin/express-lane.js is a thin entry over run(argv, deps). Prose statement of
-// record is skills/_shared/express-lane.md. Five verbs:
+// record is skills/_shared/express-lane.md. Six verbs:
 //   gate      eligibility verdicts (evaluateRecordEligibility) for one live-fetched
 //             record (--issue, always the fresh labels) or an agent-fetched array
 //             (--records-json, the gh-absent MCP path: zero gh calls, no gh probe);
@@ -9,7 +9,10 @@
 //             both against the worktree run-state.json records (never the process
 //             cwd); logs a proceed line (naming the HEAD sha the stamp verified, which
 //             the envelope's `head` carries for the push) or an escalation line under
-//             ## /express-lane.
+//             ## /express-lane. `--max-lines` (the driver's flag) replaces
+//             `auto-merge-max-lines` as the line bound. The protected-path list is the
+//             `protected-paths` policy key read from the main checkout (never the worktree);
+//             gate reads it the same way.
 //   escalate  writes the escalation line; the detail comes from a file, never argv.
 //   verify    the express path's bookend artifacts (claim log, an unsuperseded check
 //             line, PR), read from the archived run dir once a merged run's reconcile
@@ -20,6 +23,10 @@
 //   samples   merged express PRs owing a post-merge review, reviewed ones dropped:
 //             global ordinals over every express merge, comments fetched only inside
 //             a lookback, at most a fixed number of reviews per firing.
+//   plan-lane which plan-less lane (driver, express, micro-plan) a record's bounds admit —
+//             driver/plan-lane.js's needsNoPlan verdict for one record (--issue, live, or
+//             --record-json, the gh-absent MCP path), one JSON line, exit 0 whatever the lane;
+//             advisory, for /specify and humans (#6053).
 // Escalation is only possible before the push: escalate, and check's escalation
 // branches, refuse (exit 1, nothing written) once run-state.json carries `pr`.
 // Exit codes (Combined-2 base plus the sanctioned writers' 3): 0 success — gate and
@@ -28,7 +35,7 @@
 // an upstream failure (gate --issue's fetch, samples' fetches or a search still at its
 // 1000-result cap within one second, a policy read); 2 malformed invocation (an unreadable or
 // mis-shaped --records-json / --record-json / --detail-file included) or `gh` absent
-// where it is needed; 3 the --run dir is missing or not anchored under the main checkout
+// where it is needed; 3 the --run dir is missing or not anchored under the main checkout's .claude-tweaks/pipelines
 // (log-decision/append.js's resolveTarget, [IL-127]), or (escalate only) decisions.md is
 // unwritable. check self-logs its entry and reports a failed append as `logged: false`
 // in its envelope plus a stderr line, never through the exit code.
@@ -39,26 +46,32 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { evaluateRecordEligibility, evaluateDiffBounds, expressMergeVerification } = require('./eligibility');
 const { selectReviewSamples, isReviewed, fixesRecords, isExpressPr, EXPRESS_MARKER_KEY } = require('./sampling');
-const { extractKeyFiles } = require('../issues/grouping');
+const { extractKeyFiles, extractKeyFileEntries } = require('../issues/grouping');
 const { gatherDiffFiles, resolveBlastRadiusConfig } = require('../blast-radius-cli');
 const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check');
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
-const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
-const { ghAvailable } = require('../repo-resolve');
+const { expressGateOptions, protectedPathGlobsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
+const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
+// A changed path is raw git bytes (a newline is legal) bound for a decisions.md line; the driver's
+// copy of the proceed note neutralizes it the same way (steps.js checkStep).
+const { neutralize } = require('../driver/events');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
 
 const USAGE = [
   'usage: express-lane.js gate (--issue <n> | --records-json <file>) [--run <dir>] [--repo owner/name]',
-  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name]',
+  '       express-lane.js check --run <dir> --issue <n> (--integration-branch <b> | --base <ref>) [--record-json <file>] [--repo owner/name] [--max-lines <n>] [--protected-paths reviewer]',
   '       express-lane.js escalate --run <dir> --issue <n> --reason <failing-test|out-of-bounds|gate-denial|express-error> --detail-file <file>',
   '       express-lane.js verify --run <dir> --issue <n>',
   '       express-lane.js samples [--every <n>] [--repo owner/name]',
+  '       express-lane.js plan-lane (--issue <n> | --record-json <file>) [--repo owner/name]',
+  "       --max-lines: the pipeline driver's implementation-line bound (bin/drive.js); absent, check applies auto-merge-max-lines",
+  "       --protected-paths reviewer: the pipeline driver's flag (bin/drive.js); merge-time protected paths are reported in bounds.protectedPaths, not refused",
   'exit: 0 success (gate/check: verdict JSON on stdout whatever it is); 1 verify found an artifact missing, an escalation was refused',
   '      because run-state.json already records the PR, or an upstream fetch failed (samples: also a search at its 1000-result cap within one second);',
-  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout, or (escalate) decisions.md unwritable;',
+  '      2 malformed invocation or `gh` absent; 3 --run missing or not anchored under the main checkout\'s .claude-tweaks/pipelines, or (escalate) decisions.md unwritable;',
   '      check reports its own failed decisions.md append as `logged: false` in the JSON, exit 0',
   '',
 ].join('\n');
@@ -93,10 +106,11 @@ const NO_HEAD = 'the runner stamp names no HEAD sha';
 const REPO_RE = /^[A-Za-z0-9_.][A-Za-z0-9_.-]*\/[A-Za-z0-9_.][A-Za-z0-9_.-]*$/;
 const VERB_FLAGS = {
   gate: ['--issue', '--records-json', '--run', '--repo'],
-  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo'],
+  check: ['--run', '--issue', '--integration-branch', '--base', '--record-json', '--repo', '--max-lines', '--protected-paths'],
   escalate: ['--run', '--issue', '--reason', '--detail-file'],
   verify: ['--run', '--issue'],
   samples: ['--every', '--repo'],
+  'plan-lane': ['--issue', '--record-json', '--repo'],
 };
 
 class UsageError extends Error {}
@@ -122,6 +136,8 @@ function parseArgs(argv) {
   }
   if (flags['--issue'] !== undefined) flags['--issue'] = positiveInt('--issue', flags['--issue']);
   if (flags['--every'] !== undefined) flags['--every'] = positiveInt('--every', flags['--every']);
+  if (flags['--max-lines'] !== undefined) flags['--max-lines'] = positiveInt('--max-lines', flags['--max-lines']);
+  if (flags['--protected-paths'] !== undefined && flags['--protected-paths'] !== 'reviewer') throw new UsageError(`--protected-paths must be reviewer, got "${flags['--protected-paths']}"`);
   if (flags['--repo'] !== undefined && !REPO_RE.test(flags['--repo'])) throw new UsageError(`--repo must be owner/name, got "${flags['--repo']}"`);
   if (flags['--reason'] !== undefined && !ESCALATION_REASONS.includes(flags['--reason'])) {
     throw new UsageError(`--reason must be one of ${ESCALATION_REASONS.join('|')}`);
@@ -134,6 +150,14 @@ function parseArgs(argv) {
     need('--run', '--issue');
     if ((flags['--integration-branch'] === undefined) === (flags['--base'] === undefined)) {
       throw new UsageError('check takes exactly one of --integration-branch or --base');
+    }
+  }
+  if (verb === 'plan-lane') {
+    if ((flags['--issue'] === undefined) === (flags['--record-json'] === undefined)) {
+      throw new UsageError('plan-lane takes exactly one of --issue or --record-json');
+    }
+    if (flags['--repo'] !== undefined && flags['--issue'] === undefined) {
+      throw new UsageError('plan-lane takes --repo only with --issue');
     }
   }
   if (verb === 'escalate') need('--run', '--issue', '--reason', '--detail-file');
@@ -203,7 +227,7 @@ function anchoredDecisions(deps, runDir) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch (err) { throw new AnchorError(String(err && err.message)); }
   if (target.ok) return target.file;
   if (target.reason === 'missing') throw new AnchorError(`run dir does not exist: ${runDir}`);
-  throw new AnchorError(`run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
+  throw new AnchorError(`run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow, or a directory outside pipelines/): ${runDir} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section`);
 }
 
 function readDecisions(deps, file) {
@@ -275,15 +299,20 @@ function runGate(deps, flags) {
   let policy;
   let decisionsText = '';
   try {
-    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths'], { runDir: flags['--run'] || null });
+    policy = deps.resolvePolicy(['express-lane', 'integration-model', 'merge-sensitive-paths', 'protected-paths'], { runDir: flags['--run'] || null });
     if (decisionsFile) decisionsText = readDecisions(deps, decisionsFile);
   } catch (err) {
     deps.stderr(`express-lane.js: could not read policy or decisions.md: ${err && err.message}\n`);
     return 1;
   }
-  const enabled = policy['express-lane'].value === true;
-  const opts = { enabled, integrationModel: policy['integration-model'].value, sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']) };
+  const opts = expressGateOptions(policy);
+  const { enabled } = opts;
   const verdicts = issues.map((issue) => evaluateRecordEligibility(issue, { ...opts, escalated: decisionsFile !== null && hasEscalation(decisionsText, issue.number) }));
+  // A gate the whole `--run` passes puts the run on the express route (#5903). Best-effort: a failed
+  // fill changes nothing below.
+  if (decisionsFile && verdicts.every((v) => v.eligible === true)) {
+    try { require('../run-manifest/write').fillRunManifest(path.dirname(decisionsFile), { lane: 'express' }, { stderr: deps.stderr }); } catch { /* never changes the gate's outcome */ }
+  }
   deps.stdout(`${JSON.stringify({ enabled, verdicts })}\n`);
   return 0;
 }
@@ -329,8 +358,11 @@ function runCheck(deps, flags) {
     const { files } = gatherDiffFiles({ base: flags['--base'], integrationBranch: flags['--integration-branch'] }, { git });
     const config = deps.blastRadiusConfig({ git, readFile: deps.readFile, runDir });
     // The same two policy keys the normal auto-merge path weighs (`merge-sensitive-paths`,
-    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard.
-    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, maxLines: config.autoMergeMaxLines });
+    // `auto-merge-max-lines`): the lane's bounds are those limits, made hard. The driver's --max-lines
+    // replaces the line limit.
+    const maxLines = flags['--max-lines'] !== undefined ? flags['--max-lines'] : config.autoMergeMaxLines;
+    const protectedPathGlobs = protectedPathGlobsOf(deps.resolvePolicy(['protected-paths'], { runDir })['protected-paths']);
+    bounds = evaluateDiffBounds(files, { keyFiles: extractKeyFiles(record), sensitivePaths: config.mergeSensitivePaths, protectedPathGlobs, maxLines, reportProtectedPaths: flags['--protected-paths'] === 'reviewer' });
     if (bounds.withinBounds) mergeVerification = expressMergeVerification(deps.resolvePolicy(['merge-verification'], { runDir })['merge-verification'].value);
   } catch (err) {
     return escalate(deps, runDir, n, 'express-error', String(err && err.message), state);
@@ -338,11 +370,15 @@ function runCheck(deps, flags) {
   if (!bounds.withinBounds) return escalate(deps, runDir, n, 'out-of-bounds', bounds.violations.join('; '), state);
 
   const k = bounds.changedFiles.length;
-  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds; runner stamp verifies HEAD ${head}.`);
+  const protectedNote = Array.isArray(bounds.protectedPaths) && bounds.protectedPaths.length > 0
+    ? `; protected path(s) left for the reviewer and a human merge: ${bounds.protectedPaths.map((p) => neutralize(String(p))).join(', ')}` : '';
+  const logged = append(deps, runDir, CHECK_STEP, `#${n} proceed — ${k} changed file(s), ${bounds.implLines} implementation line(s) within bounds${protectedNote}; runner stamp verifies HEAD ${head}.`);
   // integration-model=pr-first is the run pin (_shared/integration-model.md's Run-scoped
   // stability): eligibility required pr-first, and the merge steps that follow must not
   // re-detect it, where a transient `gh` failure would flip the run to local-merge.
-  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification}`;
+  // spec={n} is the run's record pin (set-config.js's RUN_PINS): wrap-up's run binding
+  // and the pack's record resolution read `spec:` from this config.yml.
+  const configSet = `mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=${mergeVerification},spec=${n}`;
   return emit(deps, { action: 'proceed', head, mergeVerification, configSet, bounds }, logged);
 }
 
@@ -456,7 +492,36 @@ function runSamples(deps, flags) {
   }
 }
 
-const HANDLERS = { gate: runGate, check: runCheck, escalate: runEscalate, verify: runVerify, samples: runSamples };
+// The plan-lane verdict (#6053) for one record: advisory, exit 0 whatever the lane.
+function runPlanLane(deps, flags) {
+  // Required here, not at the top: plan-lane.js loads the driver's review/worker/launch graph, which
+  // the other verbs never need, and driver/settle.js loads this file (express/queue.js's lazy-require rule).
+  const { needsNoPlan, POLICY_KEYS: PLAN_LANE_POLICY_KEYS } = require('../driver/plan-lane');
+  let rec;
+  if (flags['--record-json'] !== undefined) {
+    rec = readJsonFile(deps, '--record-json', flags['--record-json']);
+    if (!validRecord(rec)) throw new UsageError('--record-json must hold a {number, body, labels} record');
+  } else if (!ghPresent(deps)) {
+    deps.stderr('express-lane.js: `gh` is required for plan-lane --issue — fetch through MCP and pass --record-json instead\n');
+    return 2;
+  } else {
+    try { rec = fetchIssue(deps, flags, flags['--issue']); } catch (err) {
+      deps.stderr(`express-lane.js: could not fetch #${flags['--issue']}: ${err && err.message}\n`);
+      return 1;
+    }
+  }
+  let policy;
+  try { policy = deps.resolvePolicy([...PLAN_LANE_POLICY_KEYS], { runDir: null }); } catch (err) {
+    deps.stderr(`express-lane.js: could not read policy: ${err && err.message}\n`);
+    return 1;
+  }
+  const keyFiles = typeof rec.body === 'string' ? extractKeyFileEntries(rec.body) : null;
+  const { lane, reason } = needsNoPlan({ labels: rec.labels, keyFiles, body: rec.body, policy });
+  deps.stdout(`${JSON.stringify({ number: rec.number, lane, reason })}\n`);
+  return 0;
+}
+
+const HANDLERS = { gate: runGate, check: runCheck, escalate: runEscalate, verify: runVerify, samples: runSamples, 'plan-lane': runPlanLane };
 
 function run(argv, deps = realDeps) {
   if (argv.includes('--help') || argv.includes('-h')) { deps.stdout(USAGE); return 0; }
@@ -472,7 +537,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  gh: (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
+  gh: (args, opts = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true })),
   ghAvailable: () => ghAvailable(),
   git: defaultGit,
   readFile: defaultReadFile,

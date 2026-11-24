@@ -3,8 +3,9 @@
 Loaded by the calling skill's Preflight. Scope is caller-specific — the unit a scheduled Routine
 fires with nobody present to read a stop message. For `/claude-tweaks:dispatch`, that scope is
 the headless drain: a bare drain firing when Routine-fired, and its deprecated `next` alias.
-Dispatch's explicit `#N`/`#N,#M,...` forms always run with a human present per the Input table in
-`dispatch/SKILL.md`, report the failing check directly, and never reach this file. For
+Dispatch's explicit `#N`/`#N,#M,...` forms are never Routine-fired, and build a record without
+`auto:build` only on a command a person typed (`dispatch/queue-pull-notes.md`'s Typed command);
+they report the failing check directly and never reach this file. For
 `/claude-tweaks:specify`, that scope is the headless drain: bare invocation (which always
 drains immediately, human present or not — there is no separate interactive confirmation
 path) and its deprecated `next` alias, per that skill's own Input table. Specify's explicit
@@ -64,24 +65,26 @@ failure is definitionally a defect). The body now carries the marker so future f
 # work-types: native
 gh issue create \
   --title "{Caller} headless self-report: {failing-check-name}" \
-  --body "{the exact diagnostic message this check would otherwise report to a human}
-
-Resolved build: claude-tweaks v{version} @ {resolved CLAUDE_PLUGIN_ROOT}
-
-<!-- {caller}-preflight-marker: {failing-check-name} -->" \
+  --body-file "{body-file}" \
   --type bug \
   --label by:{caller}
 
 # work-types: labels
 gh issue create \
   --title "{Caller} headless self-report: {failing-check-name}" \
-  --body "{the exact diagnostic message this check would otherwise report to a human}
+  --body-file "{body-file}" \
+  --label by:{caller} \
+  --label type:bug
+```
+
+Write `{body-file}` with the Write tool, to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {a name}` prints, because a diagnostic can carry forge-supplied text with backticks, `$(` and `"` that must not reach a shell command line. It holds:
+
+```
+{the exact diagnostic message this check would otherwise report to a human}
 
 Resolved build: claude-tweaks v{version} @ {resolved CLAUDE_PLUGIN_ROOT}
 
-<!-- {caller}-preflight-marker: {failing-check-name} -->" \
-  --label by:{caller} \
-  --label type:bug
+<!-- {caller}-preflight-marker: {failing-check-name} -->
 ```
 - Otherwise (`canonical` is set — a match was found): if `duplicates` is non-empty (however that happened — this is the hedge, not the expected path), resolve this firing's run dir first — via `_shared/run-dir-resolution.md`'s standalone-auto fallback (the calling skill must be on that fallback's allowlist — dispatch already is; this block runs in Preflight, before Workflow Step 1 would otherwise resolve `$RUN_ID`, so it cannot be assumed already resolved here) — then close every duplicate entry: `gh issue close {n} --reason "not planned"` with a comment `` "Duplicate of #{canonical.number} — same `{caller}-preflight-marker` match, closing to keep one open self-report per failing check." `` — then log one line per closed duplicate to that run dir's `decisions.md`: `AUTO {time} — {caller} headless self-report: closed duplicate issue #{n} (marker match with canonical #{canonical.number}). Reversibility: low (GitHub state; issue can be manually re-opened).` Then, whether or not any duplicates were found, reference `#{canonical.number}` in the stop output and file nothing new — **except** the Resolved build line, under the once-per-build rule below.
 
@@ -89,6 +92,6 @@ Resolved build: claude-tweaks v{version} @ {resolved CLAUDE_PLUGIN_ROOT}
 
 This is deliberately not gated on the marker: the marker asks "has this check already been reported," and the answer stays yes across every firing, which is what left #129's own self-report issue silent through three later firings on a stale sandbox. The build line asks a different question — "has *this* build already been seen failing this check" — and it is the one whose answer changes when a sandbox is finally repaired, or when it silently rolls back. One comment per distinct build keeps that a timeline rather than a repeat-notification.
 
-No `ready`/`auto:build` on the filed issue — a human confirms and applies the fix, the same conservative default `/capture`'s `keep` route uses elsewhere in this codebase. Self-filing scope follows the caller: for `dispatch`, it covers the headless drain (bare when Routine-fired, including the `next` alias) — the explicit `#N`/`#N,#M,...` forms always run with a human present (per the Input table in `dispatch/SKILL.md`) and just report and stop. For `specify`, self-filing covers bare invocation (drain mode, human present or not) including its deprecated `next` alias — the explicit `#N`/`#N,#M,...`/`#A-#B`/design-doc-path/topic forms always run with a human present (per that skill's own Input table) and just report and stop.
+No `ready`/`auto:build` on the filed issue — a human confirms and applies the fix, the same conservative default `/capture`'s `keep` route uses elsewhere in this codebase. Self-filing scope follows the caller: for `dispatch`, it covers the headless drain (bare when Routine-fired, including the `next` alias) — the explicit `#N`/`#N,#M,...` forms are never Routine-fired (a record without `auto:build` builds on one only when a person typed it, `dispatch/queue-pull-notes.md`'s Typed command) and just report and stop. For `specify`, self-filing covers bare invocation (drain mode, human present or not) including its deprecated `next` alias — the explicit `#N`/`#N,#M,...`/`#A-#B`/design-doc-path/topic forms always run with a human present (per that skill's own Input table) and just report and stop.
 
 **MCP path** (`gh` unavailable; CRUD mapping per `_shared/github-write-transport.md`): this block's `gh` calls also have a documented MCP path — the list-then-filter lookup (`gh issue list --label by:{caller} ...`) uses the confirmed "list issues by label" mapping (`list_issues`, filtered by label/state — never `search_issues`, same eventually-consistent-index caveat as elsewhere in this file), issue creation (`gh issue create`, both the `work-types: native` and `work-types: labels` variants) uses `issue_write` (create mode), and the duplicate-closing `gh issue close` uses `issue_write` (update mode, state change) — same as every other create/close call site in `dispatch/SKILL.md` and `dispatch/mcp-transport.md`. The Resolved build once-per-build record uses two more of that file's confirmed mappings: reading the canonical issue's existing comments is `issue_read` (get_comments mode), and posting the one new comment is `add_issue_comment`. This path matters more on MCP than on `gh`, not less — a `gh`-absent sandbox is exactly the shape that was pinned to a stale build in #129.

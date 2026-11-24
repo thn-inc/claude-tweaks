@@ -6,10 +6,12 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, execSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { initRepo } = require('./helpers/git-fixtures');
 
 const DOC = path.join(__dirname, '..', 'plugin', 'skills', 'assess-agent-autonomy', 'merge-check.md');
 const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin');
@@ -25,10 +27,8 @@ function git(cwd, ...args) {
 }
 
 test('merge-check.md Step 1 snippet executes verbatim against a fixture repo', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-snippet-'));
-  git(dir, 'init', '-b', 'main');
-  git(dir, 'config', 'user.email', 'test@example.invalid');
-  git(dir, 'config', 'user.name', 'Test');
+  const dir = scratchDir('blast-snippet-');
+  initRepo(dir, { name: 'Test', email: 'test@example.invalid', branch: 'main', cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   fs.writeFileSync(path.join(dir, 'a.txt'), 'a\n');
   git(dir, 'add', '.');
   git(dir, 'commit', '-m', 'base');
@@ -50,7 +50,7 @@ test('merge-check.md Step 1 snippet executes verbatim against a fixture repo', (
 });
 
 test('CRLF control (#3670): blast-radius-snippet extracts the same result after a CRLF round-trip through readText()', (t) => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'blast-radius-crlf-'));
+  const tmp = scratchDir('blast-radius-crlf-');
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const lf = readText(DOC);
   const crlf = lf.replace(/\n/g, '\r\n');

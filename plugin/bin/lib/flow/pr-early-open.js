@@ -12,11 +12,14 @@
 // hasLoggedPrDegrade releases a PR-less run only on a `... FAILED` line. That
 // regex is case-insensitive, so a line on a path that can leave the run
 // PR-less must not contain "failed" unless it is that degrade: this is why
-// the reopen-rejected line carries no reason. The one other line containing
-// "failed" is the spec's own rebind SKIP wording. It does read as a degrade,
-// and that is harmless only because the reopened PR is recorded right after
-// the rebind attempt, whatever its outcome, and before the push, so that run
-// is never PR-less.
+// the reopen-rejected line carries no reason, and the unconfirmed-reopen line
+// names its error with "failed" turned into "errored" (execFileSync's "Command
+// failed:" would match). The one other line containing
+// "failed" is the spec's own rebind SKIP wording, shared by the reopened and
+// reused paths. It does read as a degrade, and that is harmless only because
+// the PR is recorded right after the rebind attempt, whatever its outcome,
+// and before the push (Step 1's paths), or already is (the recorded-PR path),
+// so that run is never PR-less.
 //
 // deps: { gh(args) -> stdout (throws on failure), git(args, {cwd}) -> stdout,
 //   sleep(ms), now(), appendDecision(line), recordPr({number, url}),
@@ -29,7 +32,8 @@
 'use strict';
 
 const path = require('path');
-const { composePrEarlyBody } = require('./pr-body');
+const { composePrEarlyBody, repairPrBody } = require('./pr-body');
+const { firstLineRunId } = require('./pr-checklist');
 const { formatEntry } = require('../log-decision/append');
 
 const RETRY_WAIT_MS = 15000;
@@ -90,11 +94,44 @@ async function openPrEarly(opts, deps) {
   }));
   const listPrs = () => {
     const v = parseJson(deps.gh(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'all',
-      '--json', 'number,url,state,isDraft']), 'gh pr list');
+      '--json', 'number,url,state,isDraft,body']), 'gh pr list');
     if (!Array.isArray(v)) throw new Error('gh pr list did not return an array');
     return v;
   };
   const record = (number, url) => deps.recordPr({ number, url });
+
+  // Step 3's body: session temp file keyed on this run id, first line re-read
+  // and checked before anything consumes it.
+  const writeBody = () => {
+    const body = composePrEarlyBody({
+      runId, specSummary: summary, target, nextStep, runDir,
+      fixesLines: fixes.map((n) => `Fixes #${String(n).replace(/^#/, '')}`),
+    });
+    const bodyPath = deps.writeBodyFile(`pr-early-body-${runId}.md`, body);
+    const expected = `<!-- claude-tweaks-run: ${runId} -->`;
+    const first = String(deps.readFile(bodyPath)).split(/\r?\n/)[0];
+    if (first !== expected) {
+      throw new Error(`PR body first line is "${first}", expected "${expected}" — refusing to write a body naming another run (${bodyPath})`);
+    }
+    return bodyPath;
+  };
+  // A body names another run when pr-checklist.js would refuse it (exit 4): its
+  // first line, after the same marker repair, is not this run's id. An absent
+  // or non-string body never rebinds: repairPrBody treats it as empty and adds
+  // this run's marker, the same way pr-checklist.js would repair it, so there
+  // is nothing to rebind.
+  const namesOtherRun = (body) => firstLineRunId(repairPrBody({ body, runId, fixesLines: [] }).body) !== runId;
+  // Rebind a reopened or reused PR's body to this run before anything pushes
+  // (#3887, #4580). Any failure here, a first-line mismatch included, is a
+  // logged degrade, never a stop.
+  const rebind = (number, kind) => {
+    try {
+      deps.gh(['pr', 'edit', String(number), '--repo', repo, '--body-file', writeBody()]);
+      log(`rebound ${kind} PR #${number} to run ${runId}`, 'high');
+    } catch (e) {
+      log(`rebind of ${kind} PR #${number} failed (${oneLine(errText(e))}); phase-checklist updates will exit 4 until its body names run ${runId}`, 'n/a', 'SKIP');
+    }
+  };
 
   // Resume: a recorded PR is re-verified before it is trusted.
   const state = deps.readRunState ? deps.readRunState() : null;
@@ -103,11 +140,14 @@ async function openPrEarly(opts, deps) {
   if (recorded) {
     let view = null;
     try {
-      view = parseJson(deps.gh(['pr', 'view', String(recorded.number), '--repo', repo, '--json', 'state,isDraft,url']), 'gh pr view');
+      view = parseJson(deps.gh(['pr', 'view', String(recorded.number), '--repo', repo, '--json', 'state,isDraft,url,body']), 'gh pr view');
     } catch (e) {
       if (!NOT_FOUND_RE.test(errText(e))) throw e;
     }
-    if (view && view.state === 'OPEN') return { outcome: 'reused', number: recorded.number, url: view.url || recorded.url };
+    if (view && view.state === 'OPEN') {
+      if (namesOtherRun(view.body)) rebind(recorded.number, 'reused');
+      return { outcome: 'reused', number: recorded.number, url: view.url || recorded.url };
+    }
     stale = recorded.number;
   }
   const logStale = (verb, number) => {
@@ -131,27 +171,12 @@ async function openPrEarly(opts, deps) {
     }
   };
 
-  // Step 3's body: session temp file keyed on this run id, first line re-read
-  // and checked before anything consumes it.
-  const writeBody = () => {
-    const body = composePrEarlyBody({
-      runId, specSummary: summary, target, nextStep, runDir,
-      fixesLines: fixes.map((n) => `Fixes #${String(n).replace(/^#/, '')}`),
-    });
-    const bodyPath = deps.writeBodyFile(`pr-early-body-${runId}.md`, body);
-    const expected = `<!-- claude-tweaks-run: ${runId} -->`;
-    const first = String(deps.readFile(bodyPath)).split(/\r?\n/)[0];
-    if (first !== expected) {
-      throw new Error(`PR body first line is "${first}", expected "${expected}" — refusing to write a body naming another run (${bodyPath})`);
-    }
-    return bodyPath;
-  };
-
   // Step 1: check GitHub before creating anything.
   const prs = listPrs();
   const open = prs.find((p) => p.state === 'OPEN');
   if (open) {
     log(`reusing open PR #${open.number} for ${branch}`, 'high');
+    if (namesOtherRun(open.body)) rebind(open.number, 'reused');
     record(open.number, open.url);
     logStale('reused', open.number);
     const failed = await push();
@@ -159,11 +184,28 @@ async function openPrEarly(opts, deps) {
     return { outcome: 'reused', number: open.number, url: open.url };
   }
 
+  // Re-list after a reopen that exited 0: null when the PR reads OPEN, else the
+  // cause line for the create path.
+  const unconfirmedReopenLine = (number) => {
+    try {
+      const now = listPrs().find((p) => p.number === number);
+      if (now && now.state === 'OPEN') return null;
+      return `reopen of closed PR #${number} for ${branch} exited 0 but the PR still reads ${now ? now.state : 'ABSENT'}; creating`;
+    } catch (e) {
+      return `could not confirm reopen of closed PR #${number} for ${branch} (${oneLine(errText(e).replace(/failed/gi, 'errored'))}); creating`;
+    }
+  };
+
   const closed = prs.filter((p) => p.state === 'CLOSED');
   let reopenRejected = null;
+  // The picked CLOSED PR's number, kept for the landed-PR rebind after creation.
+  let closedPick = null;
+  // The one cause line for an unconfirmed reopen, in place of the rejected line.
+  let unconfirmedLine = null;
   if (closed.length) {
     const adopted = adoptedPriorAttemptPr(deps.readDecisions ? deps.readDecisions() : '', branch);
     const pick = (adopted !== null && closed.find((p) => p.number === adopted)) || closed[0];
+    closedPick = pick.number;
     try {
       deps.gh(['pr', 'reopen', String(pick.number), '--repo', repo]);
     } catch {
@@ -171,19 +213,17 @@ async function openPrEarly(opts, deps) {
       // any state GitHub refuses) falls through to creation.
       reopenRejected = pick.number;
     }
+    // #4833: a reopen that exits 0 proves nothing. Only a re-list that reads
+    // the picked PR OPEN confirms it; anything else falls through to creation.
+    if (reopenRejected === null) {
+      unconfirmedLine = unconfirmedReopenLine(pick.number);
+      if (unconfirmedLine !== null) reopenRejected = pick.number;
+    }
     if (reopenRejected === null) {
       log(`reopened PR #${pick.number} for ${branch} (retry)`, 'high');
       // A reopened prior attempt's body names the old run: rebind it before
-      // the push (#3887). Any failure here, a first-line mismatch included,
-      // is a logged degrade, never a stop.
-      if (adopted === pick.number) {
-        try {
-          deps.gh(['pr', 'edit', String(pick.number), '--repo', repo, '--body-file', writeBody()]);
-          log(`rebound reopened PR #${pick.number} to run ${runId}`, 'high');
-        } catch (e) {
-          log(`rebind of reopened PR #${pick.number} failed (${oneLine(errText(e))}); phase-checklist updates will exit 4 until its body names run ${runId}`, 'n/a', 'SKIP');
-        }
-      }
+      // the push (#3887).
+      if (adopted === pick.number) rebind(pick.number, 'reopened');
       record(pick.number, pick.url);
       logStale('reused', pick.number);
       const failed = await push();
@@ -193,7 +233,8 @@ async function openPrEarly(opts, deps) {
   }
 
   // No usable match (none, MERGED only, or a rejected reopen): create.
-  if (reopenRejected !== null) log(`reopen of closed PR #${reopenRejected} for ${branch} was rejected; creating`, 'n/a');
+  if (unconfirmedLine !== null) log(unconfirmedLine, 'n/a');
+  else if (reopenRejected !== null) log(`reopen of closed PR #${reopenRejected} for ${branch} was rejected; creating`, 'n/a');
   else log(`no existing PR for ${branch}; creating`, 'n/a');
 
   // The result names a rejected reopen, so the caller can repoint an earlier
@@ -219,6 +260,8 @@ async function openPrEarly(opts, deps) {
     '--title', title, '--body-file', bodyPath];
   let created = null;
   let reason = null;
+  // The open PR lookForLanded adopted, when the create path adopted one.
+  let landedRow = null;
   const tryCreate = () => {
     try { created = createdPr(deps.gh(createArgs)); } catch (e) { reason = oneLine(errText(e)); }
     return created !== null;
@@ -230,7 +273,10 @@ async function openPrEarly(opts, deps) {
   const lookForLanded = () => {
     try {
       const landed = listPrs().find((p) => p.state === 'OPEN');
-      if (landed) created = { number: landed.number, url: landed.url };
+      if (landed) {
+        created = { number: landed.number, url: landed.url };
+        landedRow = landed;
+      }
       return true;
     } catch (e) {
       // The marker goes first and each error is bounded on its own: a single
@@ -252,6 +298,15 @@ async function openPrEarly(opts, deps) {
   if (!created) {
     log(`gh pr create for ${branch} FAILED (${reason}); run proceeds local-only, no PR opened`, 'n/a');
     return degrade({ outcome: 'create-failed', reason });
+  }
+  // #4833: a picked CLOSED PR that a look found OPEN is this run's reopened PR
+  // after all (its reopen landed despite the unconfirmed read). Rebind its body
+  // like the reopened path does, before it is recorded. Unlike that path, this
+  // runs after the push: the create path has already pushed by the time a
+  // landed PR is known. A PR created here is never compared: only a
+  // landed-look adoption sets landedRow.
+  if (landedRow !== null && created.number === closedPick && namesOtherRun(landedRow.body)) {
+    rebind(created.number, 'reopened');
   }
   log(`opened PR #${created.number} for ${branch}`, 'high');
   record(created.number, created.url);

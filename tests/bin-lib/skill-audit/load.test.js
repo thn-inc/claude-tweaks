@@ -6,6 +6,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -13,7 +14,7 @@ const { measuredTextBytes, measuredBytes } = require('../../../plugin/bin/lib/sk
 
 test('measuredTextBytes equals measuredBytes for the same content (CRLF + markers)', () => {
   const text = '<!-- when: mode=auto -->\r\nhello\r\n<!-- /when -->\r\nbye\r\n';
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'load-model-'));
+  const dir = scratchDir('load-model-');
   const file = path.join(dir, 'x.md');
   fs.writeFileSync(file, text);
   assert.deepStrictEqual(measuredTextBytes(text), measuredBytes(file));

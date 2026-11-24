@@ -540,3 +540,88 @@ test('#2090: a sweep write conflict whose re-read shows the ORIGINAL holder stil
   assert.match(r.error, /still held by the original holder/);
   assert.deepEqual(calls, [], 'no release comment — the sweep release did not actually happen');
 });
+
+// #5902: the released claim's own claimedAt rides on the result, so a station event can key a
+// release to the claim instance it ended.
+test('#5902: a released claim exposes the claimedAt of the blob it overwrote; a non-release carries none', () => {
+  const f = fakeRunner({ content: live(OWN) });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'merged: spec 999', runner: f.runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'released');
+  assert.equal(r.claimedAt, '2026-08-16T11:00:00.000Z');
+  const foreign = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: SWEEP_RUN, reason: 'merged: spec 999', runner: fakeRunner({ content: live(OWN) }).runner, now: NOW,
+  });
+  assert.equal(foreign.outcome, 'skipped-not-owner');
+  assert.equal('claimedAt' in foreign, false);
+  const absent = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'merged: spec 999', runner: fakeRunner({ content: null }).runner, now: NOW,
+  });
+  assert.equal('claimedAt' in absent, false);
+  const noStamp = fakeRunner({ content: JSON.stringify({ runId: OWN, sessionId: 's', ttlHours: 72, host: 'h' }) });
+  assert.equal('claimedAt' in releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'merged: spec 999', runner: noStamp.runner, now: NOW,
+  }), false, 'a blob with no claimedAt leaves the field off');
+});
+
+// #4495: a remote with no claims-registry branch has no claim to release — the
+// release path reports that as already-released with a note and never creates
+// the branch (claim-targets alone bootstraps it).
+test('releaseClaim against a branchless remote: nothing to release, no registry write', () => {
+  const ghCalls = [];
+  const gitCalls = [];
+  const gitRunner = (args) => { gitCalls.push(args); if (args[0] === 'fetch') { const e = new Error('x'); e.stderr = "fatal: couldn't find remote ref claims-registry"; throw e; } return ''; };
+  const runner = (args) => { ghCalls.push(args); return ''; };
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 7, runId: 'run-a', reason: 'done', runner, gitRunner, now: 0,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.match(r.note, /nothing to release/);
+  assert.equal(r.error, undefined);
+  assert.equal(gitCalls.some((a) => a[0] === 'push'), false);
+  assert.equal(ghCalls.some((a) => a.includes('PUT') || a.includes('POST')), false);
+  assert.equal(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'comment'), false, 'no false "Released by run" comment on a record this run never claimed');
+  assert.equal(r.commentPosted, false);
+});
+
+// #4495: the contents API reads "no claim" and "no branch" as the same 404, so a
+// contents-API-only release (no gitRunner, or a git-side failure that fell
+// through) tells them apart with a branch lookup. Both tests drive that lookup
+// through the runner: the branch is missing -> nothing to release, no comment;
+// the branch exists -> a genuinely absent claim still posts the release comment.
+const isBranchGet = (a) => a[0] === 'api' && a[1] === 'repos/acme/w/branches/claims-registry';
+function branchRunner({ branchExists }) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGet(args)) throw new Error('gh: Not Found (HTTP 404)');
+    if (isBranchGet(args)) { if (branchExists) return 'claims-registry'; throw new Error('gh: Not Found (HTTP 404)'); }
+    if (isComment(args) || isEdit(args)) return '';
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+
+test('releaseClaim on the contents API against a branchless remote: nothing to release, no comment', () => {
+  const { runner, calls } = branchRunner({ branchExists: false });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'done', runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.match(r.note, /nothing to release/);
+  assert.equal(r.commentPosted, false);
+  assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
+  assert.equal(calls.some(isPut), false);
+});
+
+test('releaseClaim on the contents API with the branch present and no claim blob still posts the release comment', () => {
+  const { runner, calls } = branchRunner({ branchExists: true });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'done', runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.doesNotMatch(String(r.note || ''), /nothing to release/);
+  assert.equal(r.commentPosted, true);
+  assert.equal(calls.some(isComment), true);
+});

@@ -1,0 +1,6 @@
+[
+  { "id": "ccccccccccc1", "lens": "3a", "path": ".claude-tweaks/policy.yml", "line": 3, "claim": "policy claim", "reporterSeverity": "medium", "kind": "unconfirmed" },
+  { "id": "ccccccccccc2", "lens": "3b", "path": ".claude-tweaks/pipelines/earlier-name/work/900-spec.md", "line": 5, "claim": "spec claim", "reporterSeverity": "low", "kind": "unconfirmed" },
+  { "id": "ccccccccccc3", "lens": "3c", "path": ".claude-tweaks/pipelines/earlier-name/decisions.md", "line": 2, "claim": "decisions claim", "reporterSeverity": "low", "kind": "unconfirmed" },
+  { "id": "ccccccccccc4", "lens": "3d", "path": ".claude-tweaks/pipelines/earlier-name/work/other-spec.md", "line": 4, "claim": "other spec claim", "reporterSeverity": "low", "kind": "unconfirmed" }
+]

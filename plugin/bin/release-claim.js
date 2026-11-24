@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/release-claim.js — release a claims-registry claim in one command.
 //   node bin/release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] \
-//     [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] \
+//     [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] \
 //     [--sweep] [--section "/<skill>"] [--step <text>] [--help]
 // Performs wrap-up/cleanup-procedures.md Section E steps 3-8 for one issue: read the
 // blob, ownership check (never delete a successor's claim), releasePayload -> tombstone
@@ -36,7 +36,8 @@
 // the claim is STILL held by this run (an unrelated commit on `claims-registry` lost us
 // the compare-and-swap: nothing was released, retry) or a re-read that itself failed, so
 // the outcome could not be verified; 2 malformed
-// invocation or `gh` absent — the MCP path in _shared/github-write-transport.md is the
+// invocation, an origin host that is not a known GitHub host (refused before any gh
+// call, #4933; an exported `GH_HOST` opts in), or `gh` absent — the MCP path in _shared/github-write-transport.md is the
 // documented fallback there, deliberately not grown into this CLI. Logging is
 // bookkeeping, never a gate: the exit code always reflects the release outcome, never
 // whether decisions.md was written.
@@ -47,9 +48,13 @@ const { execFileSync } = require('child_process');
 const release = require('./lib/release-claim/release');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { parseRepo, ghAvailable, repoSlug } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, repoSlug, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
+const { appendStationEvent, toRepoName } = require('./lib/station-events/emit');
+const { releaseTransition } = require('./lib/station-events/stations');
 
-const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
+const USAGE = 'usage: release-claim.js <issue> --run <run-dir> --reason <reason> [--link <url>] [--remove-grants] [--remove-in-progress] [--keep-in-progress-label] [--repo [host/]owner/name] [--sweep] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { released: 0, 'already-released': 3, 'skipped-not-owner': 4, unreadable: 5, failed: 1 };
 
 // bot:in-progress removal is opt-out, not opt-in (#1631) — parseArgs models this as two
@@ -93,12 +98,18 @@ const realDeps = {
   runner: release.defaultRunner,
   gitRunner: gitDefaultRunner,
   ghAvailable,
+  // #4505: an explicit --repo's host reaches the claim blob's contents-API
+  // calls, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   now: () => Date.now(),
   cwd: () => process.cwd(),
   mainRoot: undefined,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
+  sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
+  // #5902: the release's `exited build` transition event.
+  stationEvent: (e) => appendStationEvent(e),
 };
 
 function decisionText(issue, r, reason, link) {
@@ -135,8 +146,15 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
-  if (!repoSpec) { deps.stderr('release-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  let repoSpec;
+  if (o.repo) repoSpec = parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`release-claim.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
+  if (!repoSpec) { deps.stderr('release-claim.js: could not resolve owner/repo — pass --repo [host/]owner/name\n'); return 2; }
+  if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). release.releaseClaim -> lib/issues/claim-store.js interpolates
   // `${owner}/${repo}` directly into a `gh api repos/{repoSlug}/contents/...` path rather than
@@ -161,7 +179,9 @@ function run(argv, deps = realDeps) {
   try { target = resolveTarget({ runDir, cwd: deps.cwd(), mainRoot: deps.mainRoot }); } catch { target = { ok: false, reason: 'missing' }; }
   if (!target.ok) {
     if (target.reason === 'not-anchored') {
-      deps.stderr(`release-claim.js: decisions.md not written — run dir is not anchored under the main checkout (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+      deps.stderr(`release-claim.js: decisions.md not written — run dir is not anchored under the main checkout's .claude-tweaks/pipelines (a worktree-local shadow): ${runDir} — see _shared/pipeline-run-dir.md\n`);
+    } else if (target.reason === 'not-a-run-dir') {
+      deps.stderr(`release-claim.js: decisions.md not written — run dir is not a pipeline run directory (it must sit under .claude-tweaks/pipelines): ${runDir}\n`);
     } else {
       deps.stderr(`release-claim.js: decisions.md not written — run dir does not exist: ${runDir}\n`);
     }
@@ -179,6 +199,31 @@ function run(argv, deps = realDeps) {
     owner: repoSpec.owner, repo: repoSpec.repo, host: repoSpec.host, issueNumber: issue, runId, reason, link: o.link || undefined, sweep,
     removeGrants: o.removeGrants, removeInProgress, runner: deps.runner, gitRunner: deps.gitRunner, now: deps.now(),
   });
+  // #5902: only a real release ends the build visit; `already-released` is a
+  // repeat and writes nothing. Optional dep (absent = none), wrapped so a
+  // throwing emitter never changes stdout, `logged` or the exit code.
+  // A sweep closes the holder's visit, so the event carries the holder's runId
+  // (matching its entered/session_bound events) and names the sweeper in sweptBy.
+  // The holder's session is unknown, so sessionId is null; the sweeper's own
+  // session goes only to payload.sweptBySession.
+  // A shaping claim's release (`shaped:`, `routed:`, `failed: shaping`) makes no transition.
+  const transition = releaseTransition(reason);
+  if (r.outcome === 'released' && transition && typeof deps.stationEvent === 'function') {
+    try {
+      const visitRunId = r.sweptFrom || runId;
+      const ownSession = deps.sessionId || '';
+      const payload = { ...transition.payload, reason, link: o.link || null };
+      if (r.sweptFrom) {
+        payload.sweptBy = runId;
+        if (ownSession) payload.sweptBySession = ownSession;
+      }
+      deps.stationEvent({
+        ...transition, recordNumber: issue,
+        repoName: toRepoName(`${repoSpec.owner}/${repoSpec.repo}`), runId: visitRunId, sessionId: r.sweptFrom ? null : ownSession, lane: 'unknown',
+        payload, discriminator: `release:${visitRunId}:${r.claimedAt || ''}`,
+      });
+    } catch { /* best-effort: the release stands */ }
+  }
   for (const label of r.labelsFailed) {
     deps.stderr(`release-claim.js: warning — could not remove label ${label} on #${issue} (best-effort, continuing)\n`);
   }

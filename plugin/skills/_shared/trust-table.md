@@ -22,8 +22,8 @@ never here. **Rendering and acting stay separate surfaces on purpose:** do not a
 step" suggestion to a verdict in this table, whatever the ceiling is set to. That is exactly the
 mid-flow autonomy the bookend architecture withholds.
 
-**Omit entirely under `work-backend: local-files`.** `demo:approved`/`demo:changes-requested` are
-GitHub Issue labels this table reads directly; there is no local-record equivalent to fetch.
+**Omit entirely under `work-backend: local-files`.** The approved and changes-requested acceptance labels
+(`_shared/work-record.md`, either spelling) are GitHub Issue labels this table reads directly; there is no local-record equivalent to fetch.
 
 ## Fetch
 
@@ -56,16 +56,17 @@ are sub-issues reuses the same parent-side enumeration `_shared/github-pr-scan-a
 for the same reason that scope does: an approved parent issue is closed, so an open-only fetch
 would miss exactly the parents this filter needs to see.
 
-This table grades the **entire** historical closed-record set with no recency bound at all — and
-so does the `--state all` parent-issue fetch that feeds it. A fixed `--limit 200` here would let
+This table's fetch covers the **entire** historical closed-record set with no recency bound at all
+(`trustRows` applies the evaluation window afterwards, below) — and so does the `--state all`
+parent-issue fetch that feeds it. A fixed `--limit 200` here would let
 `gh issue list`'s newest-first ordering silently drop the **oldest** `parent-issue` records first —
 and older parents are exactly the ones most likely to already sit inside a `total >= 8` cell, so
 truncation would reopen the exact defect this filter exists to close, with no warning. The
 parent-issue fetches below therefore use the same `{resolved-limit}` and the same
 truncation-warning discipline as the main record fetch further down, not a separate hardcoded cap.
-(`acceptance-gap`'s own *closed-record* fetch is bounded by the same `{resolved-limit}` and
-carries the same truncation-warning discipline — a 30-day window does not bound it, per that
-file's "Fetch limit" section — not a separate hardcoded cap.)
+(`acceptance-gap`'s own *closed-record* fetch is bounded server-side by its date window (one date wider than the 30-day cutoff) and
+disposition filter, and still carries the same `{resolved-limit}` and truncation-warning
+discipline, per that file's "Fetch limit" section — not a separate hardcoded cap.)
 
 Every intermediate file this procedure writes below lands in the session scratchpad, never bare
 `/tmp` — per `_shared/session-tmp-root.md`'s convention (cited, not restated): a literal
@@ -301,7 +302,7 @@ export FETCH_LIMIT="$LIMIT"
  with {tmp-records-file} = {tmp-records}}
 node -e "
   const fs = require('fs');
-  const { trustRows, parseGitLog } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/trust.js');
+  const { trustRows, parseGitLog, TRUST_POLICY_KEYS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/trust.js');
   const issues = require('{tmp-records}');
   const subIssues = new Set(require('{tmp-sub-issues}'));
   if (issues.length >= Number(process.env.FETCH_LIMIT)) {
@@ -309,16 +310,18 @@ node -e "
   }
   const records = issues.map((i) => ({ ...i, labels: i.labels.map((l) => l.name), hasParent: subIssues.has(i.number) }));
   const gitLog = parseGitLog(fs.readFileSync('{tmp-git-log}', 'utf8'));
-  const policy = { 'trust-revert-window-days': process.argv[1] };
+  const policy = Object.fromEntries(TRUST_POLICY_KEYS.map((k, i) => [k, process.argv[1 + i]]));
   console.log(JSON.stringify(trustRows(records, gitLog, Date.now(), policy)));
-" -- "{resolved-window}"
+" -- "{resolved-window}" "{resolved-eval-window}" "{resolved-follow-up-rate}"
 ```
 
-Resolve `trust-revert-window-days` with
-`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values trust-revert-window-days` and
-substitute its literal value for `{resolved-window}` above — the resolver applies the schema
-default, so the substitution is never empty (`trustRows` tolerates one anyway). It reaches the script
-as a `process.argv` arg after `--`, never spliced into the JS source — a value containing a quote
+Resolve the three trust keys with
+`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values trust-revert-window-days trust-evaluation-window-days trust-follow-up-rate-max-percent`
+(one value per line, in that order) and substitute the lines' literal values for
+`{resolved-window}`, `{resolved-eval-window}` and `{resolved-follow-up-rate}` above, in the order
+`TRUST_POLICY_KEYS` lists them — the resolver applies each schema default, so no substitution is
+ever empty (`trustRows` tolerates one anyway). They reach the script as `process.argv` args after
+`--`, never spliced into the JS source — a value containing a quote
 character would otherwise break out of the string literal, the same reason
 `code-health/focus-mode.md`'s F1 block passes its own values that way.
 
@@ -338,43 +341,54 @@ parent silently un-suppresses its sub-issues back into `total`, the same failure
 One row per cell, in the module's own `key` sort order (already stable — do not re-sort, and
 never cap or truncate the row count; see the row-count note below):
 
-| Provenance | Risk | Total | Approved | Approved (Batch) | Changes Requested | Operational | Negative Evidence | Undispositioned | Coverage | Not Planned | Follow-ups | Verdict |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| {provenance} | {band} | {total} | {approved} | {approvedBatch} | {changesRequested} | {operationalGood} | {negativeEvidence} | {undispositioned} | {coverage} | {notPlanned} | {followUps} | {verdict} |
+Above the table, one header line: `Window: last {evaluationWindowDays} days (oldest graded close {N}
+days ago) · follow-up rate ≤ {followUpRateMaxPercent}%`. `{evaluationWindowDays}` and
+`{followUpRateMaxPercent}` come from the rows (every row carries the same two values), and `{N}` is
+the whole days between now and the minimum `oldestClosedAt` across the rows.
+
+| Provenance | Risk | Total | Approved | Approved (Batch) | Changes Requested | Operational | Negative Evidence | Undispositioned | Coverage | Not Planned | Follow-ups | Follow-up rate | Verdict | Verdict (revocation-only) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| {provenance} | {band} | {total} | {approved} | {approvedBatch} | {changesRequested} | {operationalGood} | {negativeEvidence} | {undispositioned} | {coverage} | {notPlanned} | {followUps} | {followUpRate}% | {verdict} | {revocationOnly.verdict} |
 
 Render `{coverage}` as a percentage with no decimals (`row.coverage`, e.g. `0.125` renders `13%`).
+Render `{followUpRate}` as `followUpRatePercent(row)` (`bin/lib/issues/trust.js`) with a `%` suffix —
+one decimal, rounded up — the same figure gate 2 prints, so a rate that fails the threshold never
+renders equal to it. `Follow-ups` counts every follow-up record naming one of the class's
+in-window records, so one record drawing three reads `3` there; `Follow-up rate` is the share of
+the class's in-window records that shipped (`Not Planned` closes excluded) which drew at least one
+corrective follow-up, and the verdict reads the rate.
 
 **Undispositioned is never omitted, hidden, or folded into another column.** It is the count of
-closed records carrying no `demo:*` disposition at all — not a count of failures, a count of
+closed records carrying no acceptance disposition at all — not a count of failures, a count of
 unknowns. It is the measure of how blind the system currently is, and on a repo with no
 acceptance-verdict discipline yet it is the largest number on the table.
 
-**Operational is a second, independent evidence source** — a closed record with no `demo:*`
+**Operational is a second, independent evidence source** — a closed record with no acceptance
 disposition still counts as known-good when it was merged and stayed unreverted for at least
 `trust-revert-window-days` (applied by `bin/lib/issues/trust.js`; default in `_shared/policy-schema.md`). It folds into `Coverage`
 the same way `Approved`/`Changes Requested` do (it sums into `dispositioned`). A record with
-a `demo:*` verdict is never double-counted here — demo-descent evidence is tried first, and the
+an acceptance verdict is never double-counted here — demo-descent evidence is tried first, and the
 operational path only runs when it found nothing.
 
 **Negative Evidence is what pins a verdict below `clean` regardless of positive count**
 (`bin/lib/issues/trust.js`'s `negativeEvidence`, `_shared/autonomy-ceiling.md`'s Revocation
-section). Two sources feed it, both scoped to the same `demo:*`-absent records the Operational
+section). Two sources feed it, both scoped to the same acceptance-absent records the Operational
 column reads: a dispatch Settle failure classified `correctness`/`ambiguous`
 (`dispatch/settle-and-merge.md` Step 6.5's persisted marker), and a closing commit the Operational
 path would have counted known-good but discovers was reverted. It folds into `Coverage` the same
 way every other column does — a known-bad outcome is not an unknown one — so
 `Total = Approved + Changes Requested + Operational + Negative Evidence + Undispositioned` always
 holds, superseding the pre-#268 formula that summed only the first three into `dispositioned`. A
-non-zero cell here reads `mixed` even when `Changes Requested` and `Follow-ups` are both `0` — the
-same precedence a `changes-requested` disposition already had.
+non-zero cell here reads `mixed` even when `Changes Requested` is `0` and the follow-up rate is
+under the threshold — the same zero tolerance a `changes-requested` disposition has.
 
-**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:demo`
+**Approved (Batch) is the subset of Approved that was sign-off via a `/claude-tweaks:accept`
 `#N,#M` batch invocation rather than a dedicated single-record session** — a legitimate,
 deliberately cheap path (`_shared/work-record.md`'s Acceptance provenance row), distinguished by
-the `demo:approved-batch` label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
-Both invocation shapes run the same per-item walkthrough (`skills/demo/SKILL.md` Step 2) — the
+the `-batch` provenance label `bin/lib/issues/acceptance.js`'s `approvalProvenance` reads back.
+Both invocation shapes run the same per-item walkthrough (`skills/accept/SKILL.md` Step 2) — the
 marker distinguishes a rapid multi-item pass from a single-record session, not whether a
-walkthrough happened. A pre-existing `demo:approved` with no marker reads as single-record-backed,
+walkthrough happened. A pre-existing approved label with no marker reads as single-record-backed,
 so this column is `0` for every cell graded before the signal existed. **A cell whose Approved
 evidence is entirely Approved (Batch), with no Operational corroboration, cannot reach `clean`**
 — it demotes to `mixed` the same way a non-zero Negative Evidence does (`trust.js`'s
@@ -389,11 +403,19 @@ believed. A cell needs `trust.js`'s `MIN_VERDICTS` real dispositions before it g
 a graded cell is never resting on one lucky record — but a `clean` verdict at 12% coverage and
 one at 90% are different claims, and only this column distinguishes them.
 
+**Verdict (revocation-only) is ADR 0035's expand step** (`docs/decisions/0035-acceptance-verdicts-are-a-revocation-input-only.md`).
+It renders `row.revocationOnly.verdict`: what Verdict becomes once an approval stops counting as
+positive evidence. An approved record is graded on its own operational outcome instead. A
+changes-requested verdict still counts as a disposition, and a cell that clears the `MIN_SAMPLES`
+and `MIN_VERDICTS` floors reads `mixed` while it holds one. Verdict stays the column consumers act on until the
+contract step.
+
 **Not Planned is counted and rendered, and is deliberately not a verdict input.** A record closed
 `NOT_PLANNED` was declined before any work happened, so there is no work product for the class to
 be judged on. It stays on the row because it says something real about a class's filing precision
 — a class that files a lot of work nobody wants is worth seeing — but treating it as a quality
-failure would be a category error, and with no time window in this table an unrecoverable one.
+failure would be a category error, and a wrong one to hold against the class for as long as it
+stays inside the evaluation window.
 
 It does still count toward `total`, and therefore toward `MIN_SAMPLES`. That is the exact inverse
 of its old effect: a declined record used to hard-block `clean`, and now it helps a cell reach the
@@ -444,15 +466,26 @@ which is exactly while it is accumulating.
 
 Render the full table as soon as at least one row's Verdict is `clean` or `mixed`.
 
-## Known limitation: no time window
+## Evaluation window
 
-Every count on this table is all-time. `changesRequested` and `followUps` are permanent, so a
-class that earns one rejection is `mixed` from then on, with no path back however well it
-performs afterward. That is the right failure direction for now — it is conservative, and on this
-repo both counts are currently zero everywhere, so nothing is pinned yet. It stops being right as
-soon as a class accumulates its first rejection and then improves.
+A closed record counts toward a cell only when its `closedAt` falls inside the last
+`trust-evaluation-window-days` days (integer ≥ 1, default 30; `_shared/policy-schema.md`). The
+boundary is inclusive, a `closedAt` in the future counts, and a closed record with no parseable
+`closedAt` is out of window. A record outside the window forms no cell, but it is still scanned as
+a follow-up source, like an open record. So a class that earned a rejection and then improved can
+recover: once the rejected record ages out, the cell stops carrying it.
 
-The fix is a trailing evaluation window (grade on records closed in the last N days, keep the
-all-time counts for display), which also subsumes the reason `notPlanned` had to leave the verdict
-above. **Revisit when any cell first reads `mixed`** — that is the point at which the limitation
-becomes observable rather than theoretical.
+Inside the window the rule is split. `changesRequested` and `negativeEvidence` keep zero tolerance —
+one of either reads `mixed`. Corrective follow-ups are a rate, the share of the class's
+in-window records that shipped (NOT_PLANNED closes excluded) which drew a corrective follow-up
+(`followUpRecords` is the distinct such records), and the cell stays
+`clean` while that rate is at or under `trust-follow-up-rate-max-percent` (integer 0-100, default
+30; `0` restores zero tolerance). The `mixed` reasons are named on the row (`mixedReasons`,
+`describeMixedReasons`), and gate 2's refusal prints them.
+
+**The window can be shorter than the key says.** `gh issue list` is newest-first and capped at
+`backlog-fetch-limit`, so on a repo whose closed history exceeds the cap the oldest records are
+already gone before the window applies: the effective window is then the span the fetched records
+cover, and the header's "oldest graded close {N} days ago" shows it. The truncation warnings above
+still apply and are never suppressed — a truncated fetch can strip a rejection and keep every
+approval.

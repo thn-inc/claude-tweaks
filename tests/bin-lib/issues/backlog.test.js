@@ -12,8 +12,15 @@ const {
   funnelBuckets,
   machineGrantOutlook,
   readyGrantedSubset,
+  attachBodyForeignBlockers,
+  foreignLookupSet,
+  allRefusedOutlookLine,
+  refusedKeyCounts,
 } = require('../../../plugin/bin/lib/issues/backlog');
-const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record');
+const { parseRecordFacets, foreignBlockerRef } = require('../../../plugin/bin/lib/issues/record');
+const { bodyForeignBlockers } = require('../../../plugin/bin/lib/issues/cross-repo-states');
+
+const range = (n) => Array.from({ length: n }, (_, i) => i + 1);
 
 function record(overrides) {
   return {
@@ -367,6 +374,82 @@ test('funnelBuckets: blockedBy ids outside the open input set do not demote to g
   assert.deepEqual(b.granted, []);
 });
 
+test('Q6 (#4793): a ready+granted record blocked only by a still-blocking foreign ref is granted, not dispatchable — the records /dispatch refuses', () => {
+  for (const ref of ['other/repo#5', 'other/repo#6 (state unreadable)']) {
+    const b = funnelBuckets([rec(1, { stage: 'ready', grants: { build: true, merge: false } }, { blockedBy: [ref] })]);
+    assert.deepEqual(b.granted.map((r) => r.number), [1], ref);
+    assert.deepEqual(b.dispatchable, [], ref);
+  }
+});
+
+test('Plan Review Clarifications: attachBodyForeignBlockers adds a body-declared foreign blocker that still blocks, so funnelBuckets files the record under granted', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const body = 'Blocked by #3\nBlocked by other/repo#5';
+  const records = [rec(1, g, { body }), rec(2, g, { body }), rec(4, g, { body, blockedBy: [] }), rec(6, { ...g, unsynced: true }, { body })];
+  const foreign = new Map([
+    [1, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [2, [{ number: 5, repository: 'other/repo', state: 'CLOSED' }]],
+    [4, [{ number: 5, repository: 'other/repo', state: 'OPEN' }]],
+    [6, [{ number: 5, repository: 'other/repo', state: null }]],
+  ]);
+  const out = attachBodyForeignBlockers(records, foreign);
+  assert.deepStrictEqual(out.map((r) => r.blockedBy), [[3, 'other/repo#5'], [3], ['other/repo#5'], undefined]);
+  assert.equal('blockedBy' in records[0], false, 'the input records are not mutated');
+  const b = funnelBuckets(out);
+  assert.deepEqual(b.granted.map((r) => r.number).sort(), [1, 4]);
+  assert.deepEqual(b.dispatchable.map((r) => r.number).sort(), [2, 6]);
+});
+
+test('Plan Review Clarifications: attachBodyForeignBlockers merges into an already-attached tier, once per owner/name#N key', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const body = 'Blocked by Other/Repo#5';
+  const open5 = { number: 5, repository: 'Other/Repo', state: 'OPEN' };
+  const records = [
+    rec(1, g, { body, blockedBy: ['other/repo#5'] }),
+    rec(2, g, { body, blockedBy: [foreignBlockerRef({ repository: 'other/repo', number: 5, state: null })] }),
+    rec(3, { ...g, blockedBy: [9] }, { body }),
+    rec(4, { ...g, blockedBy: ['other/repo#5'] }, { body }),
+  ];
+  const foreign = new Map([1, 2, 3, 4].map((n) => [n, [open5]]));
+  const out = attachBodyForeignBlockers(records, foreign);
+  assert.deepStrictEqual(out[0].blockedBy, ['other/repo#5'], 'a natively linked ref is not listed twice, case-insensitively');
+  assert.deepStrictEqual(out[1].blockedBy, [foreignBlockerRef({ repository: 'other/repo', number: 5, state: null })], 'an unreadable-suffixed native ref counts as the same key');
+  assert.deepStrictEqual(out[2].facets.blockedBy, [9, 'Other/Repo#5'], 'facets.blockedBy tier gets the ref appended');
+  assert.equal('blockedBy' in out[2], false, 'no top-level tier is invented when facets.blockedBy holds the blockers');
+  assert.deepStrictEqual(out[3].facets.blockedBy, ['other/repo#5']);
+  assert.deepStrictEqual(records[2].facets.blockedBy, [9], 'the input facets are not mutated');
+  assert.deepEqual(funnelBuckets(out).granted.map((r) => r.number).sort(), [1, 2, 3, 4]);
+});
+
+test('Plan Review Clarifications: foreignLookupSet keeps an unsynced local id out of the lookup, so it never collides with the GitHub record of the same number (#512 namespace rule)', () => {
+  const g = { stage: 'ready', grants: { build: true, merge: false } };
+  const local = (body) => {
+    const { number, ...r } = rec(12, { ...g, unsynced: true }, { body });
+    return { ...r, id: number };
+  };
+  const spawn = () => ({ status: 0, stdout: JSON.stringify({ 'other/repo#7': 'OPEN', 'other/repo#8': 'CLOSED' }) });
+  const run = (records, filter) => {
+    const candidates = filter ? foreignLookupSet(records) : records;
+    const attached = attachBodyForeignBlockers(records, bodyForeignBlockers(candidates, { spawn, stderr: () => {} }));
+    return funnelBuckets(attached);
+  };
+  const cases = [
+    ['an unsynced ref must not attach to GitHub #12', 'plain', 'Blocked by other/repo#7', []],
+    ['a later unsynced CLOSED ref must not replace GitHub #12\'s OPEN one', 'Blocked by other/repo#7', 'Blocked by other/repo#8', [12]],
+  ];
+  for (const [label, githubBody, localBody, grantedNumbers] of cases) {
+    for (const order of ['github-first', 'local-first']) {
+      const github = rec(12, g, { body: githubBody });
+      const records = order === 'github-first' ? [github, local(localBody)] : [local(localBody), github];
+      const b = run(records, true);
+      assert.deepEqual(b.granted.map((r) => r.number), grantedNumbers, `${label} (${order})`);
+    }
+    // go-red control: without the filter the ids collide and the verdict flips.
+    const collided = run([rec(12, g, { body: githubBody }), local(localBody)], false);
+    assert.notDeepEqual(collided.granted.map((r) => r.number), grantedNumbers, `${label}: the unfiltered lookup collides`);
+  }
+});
+
 test('funnelBuckets: blockedBy absent means every granted record is dispatchable (pre-#514 dormancy)', () => {
   const b = funnelBuckets([rec(1, { stage: 'ready', grants: { build: true, merge: true } })]);
   assert.deepEqual(b.dispatchable.map((r) => r.number), [1]);
@@ -595,6 +678,7 @@ test('machineGrantOutlook: needs:definition refuses ahead of trust (gate order p
     [],
   );
   assert.deepEqual(out.refused, { 'needs-definition': [5] });
+  assert.deepEqual(out.trustRefusedClasses, []);
 });
 
 test('machineGrantOutlook: refused ids aggregate per failedKey in input order alongside eligibles', () => {
@@ -644,4 +728,71 @@ test('machineGrantOutlook: origin pre-filter does not engage under a non-unatten
   assert.deepEqual(out.eligible, []);
   assert.deepEqual(out.refused, { ceiling: [11] });
   assert.strictEqual(out.excludedOrigin, 0);
+});
+
+// --- allRefusedOutlookLine + trustRefusedClasses (#5291) ---
+
+test('machineGrantOutlook reports the classes refused at trust', () => {
+  const out = machineGrantOutlook(
+    [outlookRecord(2, ['by:code-health', 'ready', 'risk:low', 'size:low']), outlookRecord(3, ['by:code-health', 'ready', 'risk:low', 'size:low'])],
+    unattendedPolicy,
+    [{ key: 'producer:code-health|low', verdict: 'mixed' }],
+  );
+  assert.deepEqual(out.trustRefusedClasses, ['producer:code-health|low']);
+  assert.deepEqual(out.refused, { trust: [2, 3] });
+});
+
+test('machineGrantOutlook: trustRefusedClasses is empty when nothing refused at trust', () => {
+  const out = machineGrantOutlook(
+    [outlookRecord(1, ['by:code-health', 'ready', 'risk:low', 'size:low'])],
+    unattendedPolicy,
+    cleanCodeHealthRow,
+  );
+  assert.deepEqual(out.trustRefusedClasses, []);
+});
+
+test('AC9.1: allRefusedOutlookLine renders the all-refused line', () => {
+  const line = allRefusedOutlookLine({ eligible: [], refused: { trust: range(104) }, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('none possible — all 104 candidates refused (trust: 104)'), line);
+  assert.ok(line.startsWith('# machine grants: '), line);
+  assert.doesNotMatch(line, / — trust: /);
+});
+
+test('allRefusedOutlookLine appends each trust-refused class with its reasons', () => {
+  const outlook = { eligible: [], refused: { trust: [1, 2] }, excludedOrigin: 0, trustRefusedClasses: ['producer:capture|elevated'] };
+  const mixed = { key: 'producer:capture|elevated', verdict: 'mixed', mixedReasons: ['follow-up-rate', 'negative-evidence'], followUpRecords: 1, total: 3, followUpRateMaxPercent: 30, negativeEvidence: 2 };
+  const line = allRefusedOutlookLine(outlook, [mixed]);
+  assert.ok(line.includes('trust: producer:capture|elevated mixed (follow-up rate 33.4% > 30%, 2 negative)'), line);
+  const bare = allRefusedOutlookLine(outlook, [{ key: 'producer:capture|elevated', verdict: 'mixed' }]);
+  assert.ok(bare.endsWith(' — trust: producer:capture|elevated mixed'), bare);
+  assert.doesNotMatch(bare, /\(\)/);
+});
+
+test('allRefusedOutlookLine names the verdict of a non-mixed row and no-cell for a missing row', () => {
+  const outlook = { eligible: [], refused: { trust: [1, 2] }, excludedOrigin: 0, trustRefusedClasses: ['a:b|low', 'c:d|low'] };
+  const line = allRefusedOutlookLine(outlook, [{ key: 'a:b|low', verdict: 'insufficient-evidence' }]);
+  assert.ok(line.endsWith(' — trust: a:b|low insufficient-evidence; c:d|low no-cell'), line);
+  assert.equal(allRefusedOutlookLine(outlook, undefined).endsWith(' — trust: a:b|low no-cell; c:d|low no-cell'), true);
+});
+
+test('allRefusedOutlookLine lists every refusing key by count and returns null when any candidate is eligible', () => {
+  const refused = { trust: [1, 2], 'needs-label': [3] };
+  const line = allRefusedOutlookLine({ eligible: [], refused, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('all 3 candidates refused (trust: 2, needs-label: 1)'), line);
+  assert.equal(allRefusedOutlookLine({ eligible: [9], refused, excludedOrigin: 0, trustRefusedClasses: [] }, []), null);
+  assert.equal(allRefusedOutlookLine({ eligible: [], refused: {}, excludedOrigin: 0, trustRefusedClasses: [] }, []), null);
+});
+
+test('allRefusedOutlookLine breaks count ties by key ascending', () => {
+  const line = allRefusedOutlookLine({ eligible: [], refused: { zeta: [1], alpha: [2], mid: [3, 4] }, excludedOrigin: 0, trustRefusedClasses: [] }, []);
+  assert.ok(line.includes('(mid: 2, alpha: 1, zeta: 1)'), line);
+});
+
+test('refusedKeyCounts sorts descending by count, breaks ties by key ascending, and sums the total', () => {
+  assert.deepStrictEqual(
+    refusedKeyCounts({ zeta: [1], alpha: [2], mid: [3, 4], big: [5, 6, 7] }),
+    { counts: [['big', 3], ['mid', 2], ['alpha', 1], ['zeta', 1]], total: 7 },
+  );
+  assert.deepStrictEqual(refusedKeyCounts({}), { counts: [], total: 0 });
+  assert.deepStrictEqual(refusedKeyCounts(undefined), { counts: [], total: 0 });
 });

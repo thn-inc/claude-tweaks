@@ -6,4 +6,6 @@
 'use strict';
 const { run, realDeps } = require('./lib/compose-subject');
 
+module.exports = { run, realDeps };
+
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

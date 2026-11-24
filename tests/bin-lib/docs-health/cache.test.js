@@ -1,11 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { cachePath, readCache, writeCache, readDurableState, writeDurableState } = require('../../../plugin/bin/lib/docs-health/cache');
 
-function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'docs-health-cache-')); }
+function tmp() { return scratchDir('docs-health-cache-'); }
 
 test('readCache returns {} when the cache file does not exist', () => {
   const root = tmp();

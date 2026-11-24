@@ -15,12 +15,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const cp = require('child_process');
 const { execFileSync } = cp;
 const post = require('../plugin/bin/lib/hooks/post-tool-use');
-const { gitRepo, harnessWorktreeOf } = require('./helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf, cleanGitEnv } = require('./helpers/git-fixtures');
+const { withBrokenGitDir } = require('./helpers/process-env');
 
 // gitRepo() runs a bare `git init`, so the initial branch name depends on the
 // machine's init.defaultBranch — resolve it rather than hardcoding "main".
@@ -58,7 +60,7 @@ function advance(main, n) {
 function enterWorktreeCtx(wt, { toolResponse, ownedRun, platform } = {}) {
   const input = { tool_name: 'EnterWorktree', cwd: wt };
   if (toolResponse !== undefined) input.tool_response = toolResponse;
-  const ctx = { input, cwd: wt, ownedRun };
+  const ctx = { input, cwd: wt, env: process.env, ownedRun };
   if (platform !== undefined) ctx.platform = platform;
   return ctx;
 }
@@ -145,7 +147,7 @@ test('recognizes "Entered worktree at" (an existing worktree), not only "Created
   // `main` instead means the ONLY way to resolve `wt` is the primary
   // tool-result parse actually recognizing "Entered worktree at".
   const input = { tool_name: 'EnterWorktree', cwd: main, tool_response: toolResponse };
-  const out = post.run({ input, cwd: main });
+  const out = post.run({ env: process.env, input, cwd: main });
   assert.ok(out.json && typeof out.json.systemMessage === 'string');
   assert.match(out.json.systemMessage, /\b1\b/);
 });
@@ -154,14 +156,14 @@ test('does not fire for a tool other than EnterWorktree', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
   advance(main, 5);
-  const out = post.run({ input: { tool_name: 'ExitWorktree', cwd: wt }, cwd: wt });
+  const out = post.run({ env: process.env, input: { tool_name: 'ExitWorktree', cwd: wt }, cwd: wt });
   assert.deepStrictEqual(out, {});
 });
 
 test('logs "clean" (not silently identical to a fetch failure) when the worktree is not behind', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-run-'));
+  const runDir = scratchDir('ct-wts-run-');
   post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), ownedRun: { dir: runDir } }));
   const events = readEvents(runDir).filter((e) => e.type === 'worktree-staleness');
   assert.strictEqual(events.length, 1);
@@ -171,7 +173,7 @@ test('logs "clean" (not silently identical to a fetch failure) when the worktree
 test('emits no warning but a distinct log entry when the fetch fails (no such remote)', () => {
   const { main } = setupProject({ withOrigin: false });
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-run-'));
+  const runDir = scratchDir('ct-wts-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a fetch failure must never produce a warn message');
   const events = readEvents(runDir).filter((e) => e.type === 'worktree-staleness');
@@ -197,7 +199,7 @@ test('does not execute an injected --upload-pack value when integration-branch s
   // program actually executed. This test instead checks for the side effect
   // itself: does the injected program run at all?
   const { main } = setupProject();
-  const markerFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wts-marker-')), 'ran.txt');
+  const markerFile = path.join(scratchDir('ct-wts-marker-'), 'ran.txt');
   const markerScript = path.join(path.dirname(markerFile), 'marker.sh');
   fs.writeFileSync(markerScript, `#!/bin/sh\ntouch ${markerFile}\n`);
   fs.chmodSync(markerScript, 0o755); // root-safe: makes a marker script executable, not a permission-denial simulation
@@ -219,7 +221,7 @@ test('does not execute an injected --upload-pack value when integration-branch s
 // this file's Deliverable 4 ("fail open on any error... never throw"),
 // exercised end-to-end via post.run() rather than asserted only in prose.
 test('an unusable cwd (no tool result, no resolvable worktree) never throws — returns {} rather than crashing', () => {
-  const out = post.run({ input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all' } });
+  const out = post.run({ env: process.env, input: { tool_name: 'EnterWorktree', cwd: '/this/path/does/not/exist/at/all' } });
   assert.deepStrictEqual(out, {});
 });
 
@@ -243,7 +245,7 @@ function withGitConfigEnv(vars, fn) {
 }
 
 function tempGitConfig(contents) {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-gitcfg-')), 'gitconfig');
+  const file = path.join(scratchDir('ct-wlp-gitcfg-'), 'gitconfig');
   fs.writeFileSync(file, contents);
   return file;
 }
@@ -337,7 +339,7 @@ test('#2476: a forced no-git failure on core.longpaths never warns and logs chec
   const err = new Error('spawn git ENOENT');
   err.code = 'ENOENT';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -353,7 +355,7 @@ test('#2476: a forced timeout failure on core.longpaths never warns and logs che
   err.killed = true;
   err.signal = 'SIGTERM';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -367,7 +369,7 @@ test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and l
   const err = new Error('spawn git EAGAIN');
   err.code = 'EAGAIN';
   mockConfigFailure(t, err);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } }));
   assert.deepStrictEqual(out, {}, 'a forced check failure must never produce the core.longpaths warning');
   const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
@@ -378,7 +380,7 @@ test('#2476: a forced spawn failure (EAGAIN) on core.longpaths never warns and l
 test('#2476: a real (non-forced) unset key still logs result: unset, distinct from check-failed', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-wlp-run-'));
+  const runDir = scratchDir('ct-wlp-run-');
   const out = runnerLikeGlobalConfig(() => isolatedGitConfig(
     () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir } })),
   ));
@@ -392,8 +394,37 @@ test('#2476: a real (non-forced) unset key still logs result: unset, distinct fr
 test('#3811: resolveWorktreePathViaPorcelain matches win32 forward-slash porcelain against a backslash cwd', () => {
   const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
   const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x\\feat' }, deps), { path: 'D:/a/x/feat', isMain: false });
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'd:\\a\\x\\feat\\' }, deps), { path: 'D:/a/x/feat', isMain: false });
-  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\a\\x' }, deps), { path: 'D:/a/x', isMain: true });
-  assert.strictEqual(post.resolveWorktreePathViaPorcelain({ cwd: 'D:\\elsewhere' }, deps), null);
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\a\\x\\feat' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'd:\\a\\x\\feat\\' }, deps), { path: 'D:/a/x/feat', isMain: false });
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\a\\x' }, deps), { path: 'D:/a/x', isMain: true });
+  assert.strictEqual(post.resolveWorktreePathViaPorcelain({ env: process.env, cwd: 'D:\\elsewhere' }, deps), null);
+});
+
+test('#5377: resolveWorktreePathViaPorcelain runs its git child under ctx.env and throws without one', () => {
+  const porcelain = 'worktree /a/x\nbranch refs/heads/trunk\n\n';
+  let seen = null;
+  const deps = { runGit: (args, cwd, opts) => { seen = opts; return { stdout: porcelain, failure: null }; } };
+  const env = { SENTINEL_5377: 'ctx-env' };
+  assert.deepStrictEqual(post.resolveWorktreePathViaPorcelain({ env, cwd: '/a/x' }, deps), { path: '/a/x', isMain: true });
+  assert.strictEqual(seen.env, env, 'the lookup\'s git child gets the context environment');
+  assert.throws(() => post.resolveWorktreePathViaPorcelain({ cwd: '/a/x' }, deps), TypeError);
+});
+
+// #5377: the integration branch is resolved in ctx.env. With no policy pinned, the only git child that
+// resolves it is the `rev-parse --abbrev-ref origin/HEAD` probe; the context env is clean while the real
+// process.env names no repository for the length of the call (restored in `finally`), so a probe that
+// ignores ctx.env finds no integration branch and the check returns {} instead of the warning.
+test('#5377: the origin/HEAD probe runs under ctx.env, not the process environment', () => {
+  const main = gitRepo();
+  const base = defaultBranch(main);
+  execFileSync('git', ['remote', 'add', 'origin', main], { cwd: main });
+  execFileSync('git', ['fetch', 'origin'], { cwd: main });
+  execFileSync('git', ['remote', 'set-head', 'origin', '-a'], { cwd: main });
+  const wt = harnessWorktreeOf(main);
+  advance(main, 3);
+  const ctx = enterWorktreeCtx(wt, { toolResponse: createdAt(wt, `wt-branch-${path.basename(wt)}`) });
+  ctx.env = cleanGitEnv();
+  const out = withBrokenGitDir(() => post.run(ctx));
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'expected the staleness warning through the clean ctx.env');
+  assert.match(out.json.systemMessage, new RegExp(`origin/${base}`));
 });

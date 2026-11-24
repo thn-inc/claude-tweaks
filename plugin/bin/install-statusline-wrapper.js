@@ -38,9 +38,17 @@ function installWrapper(homedir = os.homedir()) {
   return targetPath;
 }
 
-if (require.main === module) {
-  const targetPath = installWrapper();
-  process.stdout.write(targetPath);
+// argv is ignored: the installer takes no arguments.
+function run(argv, deps = realDeps) {
+  deps.stdout(installWrapper(deps.homeDir()));
+  return 0;
 }
 
-module.exports = { installWrapper, buildWrapperSource };
+const realDeps = {
+  homeDir: () => os.homedir(),
+  stdout: (text) => process.stdout.write(text),
+};
+
+module.exports = { installWrapper, buildWrapperSource, run, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

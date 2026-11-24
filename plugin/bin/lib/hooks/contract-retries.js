@@ -11,26 +11,31 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
+const { envTmpdir } = require('../session-tmp');
+const { assertEnvObject } = require('./context');
 
 function resolveSessionId(sessionId) {
   return sessionId && String(sessionId).trim() ? String(sessionId).trim() : null;
 }
 
-function retriesPath(sessionId) {
+// Only the SubagentStop event calls these, so `env` (the hook context's) is required: no fallback to
+// the real process.env (#5377).
+
+function retriesPath(sessionId, opts) {
+  const env = assertEnvObject(opts && opts.env, 'contract-retries');
   const id = resolveSessionId(sessionId);
   if (!id) return null;
-  return path.join(os.tmpdir(), `ct-contract-retries-${id}.json`);
+  return path.join(envTmpdir(env), `ct-contract-retries-${id}.json`);
 }
 
 // -> Set<string> of agent ids already offered their one forced retry this
 // session. Any read failure (missing file, malformed JSON) degrades to an
 // empty set — a corrupt or absent counter must never itself cause a retry
 // loop; it can only fail to prevent one extra retry.
-function readRetried(sessionId) {
-  const p = retriesPath(sessionId);
+function readRetried(sessionId, opts) {
+  const p = retriesPath(sessionId, opts);
   if (!p) return new Set();
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -46,11 +51,11 @@ function readRetried(sessionId) {
 // return exactly like "already retried": a broken tmp dir must never be the
 // reason a violating subagent gets blocked twice, since that risks looping
 // forever if the subagent keeps failing to comply.
-function recordRetry(sessionId, agentId) {
-  const p = retriesPath(sessionId);
+function recordRetry(sessionId, agentId, opts) {
+  const p = retriesPath(sessionId, opts);
   if (!p || !agentId) return false;
   try {
-    const current = readRetried(sessionId);
+    const current = readRetried(sessionId, opts);
     current.add(agentId);
     writeFileAtomic(p, JSON.stringify([...current]));
     return true;

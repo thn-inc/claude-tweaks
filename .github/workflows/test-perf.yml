@@ -37,11 +37,11 @@ jobs:
       # whole pass, which is exactly what happened here without a token.
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history, as in test.yml, for suites that read git history.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
       # No install step: the plugin ships zero npm deps, and node --test is built in.

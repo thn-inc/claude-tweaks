@@ -146,9 +146,9 @@ test('computeLevers runs only the auto FYI path: confirm, hybrid and interactive
   }
 });
 
-test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy and the run pin', () => {
+test('POLICY_REQUEST_KEYS is preflight\'s LEVER_KEYS minus the two non-policy levers, plus autonomy, the run pin and auto-mode', () => {
   const policyLevers = LEVER_KEYS.filter((k) => k !== 'ceremony-profile' && k !== 'merge-authorization');
-  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model']);
+  assert.deepStrictEqual(POLICY_REQUEST_KEYS, [...policyLevers, 'autonomy', 'integration-model', 'auto-mode']);
 });
 
 test('computeLevers refuses an unresolved policy lever rather than guessing', () => {
@@ -160,9 +160,11 @@ test('computeLevers refuses an unresolved policy lever rather than guessing', ()
 
 // --- writeManifesto ----------------------------------------------------------
 
-function write(fx, { records = ONE_STANDARD, res = resolved(), integrationModel = 'pr-first', deps } = {}) {
+function write(fx, { records = ONE_STANDARD, res = resolved(), integrationModel = 'pr-first', integrationModelDegraded, deps } = {}) {
   const levers = computeLevers({ mode: 'auto', modeSource: 'default', records, resolved: res });
-  return { levers, out: writeManifesto({ runDir: fx.runDir, records, levers, integrationModel, now: NOW }, deps) };
+  const args = { runDir: fx.runDir, records, levers, integrationModel, now: NOW };
+  if (integrationModelDegraded !== undefined) args.integrationModelDegraded = integrationModelDegraded;
+  return { levers, out: writeManifesto(args, deps) };
 }
 
 test('a decisions.md holding Step 2.8 claim lines keeps them byte-for-byte below the new snapshot header', () => {
@@ -191,6 +193,72 @@ test('config.yml holds the 13 levers in canonical order, then the run pin, then 
   const expected = [...levers.map((l) => `${l.key}: ${l.value}`), 'integration-model: pr-first', 'spec: 4027', 'created: 2026-10-25T172400', ''].join('\n');
   assert.strictEqual(fs.readFileSync(configPath, 'utf8'), expected);
   assert.ok(fs.statSync(path.join(fx.runDir, 'staged')).isDirectory(), 'staged/ created');
+});
+
+// --- run manifest fill (#5903) -----------------------------------------------
+
+const { initRunManifest, MANIFEST_FILE } = require('../../../plugin/bin/lib/run-manifest/write');
+const readManifest = (runDir) => JSON.parse(fs.readFileSync(path.join(runDir, MANIFEST_FILE), 'utf8'));
+const seedManifest = (runDir, lane) => initRunManifest(runDir, { lane, cwd: runDir }, {
+  gatherFacts: () => ({ pluginVersion: '6.200.0', policyHash: 'abc123', baseCommit: 'deadbeef', modelProfile: 'standard' }),
+  stderr: () => {},
+});
+
+test('writeManifesto fills the seeded manifest: ceremonyProfile is the ceremony-profile lever, lane is standard, the facts stay', () => {
+  for (const [ceremony, expected] of [['fast-lane', 'fast-lane'], ['standard', 'standard']]) {
+    const fx = fixture();
+    seedManifest(fx.runDir);
+    const { levers } = write(fx, { records: [{ n: 4027, ceremony, ceremonySource: 'label' }] });
+    assert.strictEqual(lever(levers, 'ceremony-profile').value, expected);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.ceremonyProfile, expected);
+    assert.strictEqual(m.lane, 'standard');
+    assert.strictEqual(m.pluginVersion, '6.200.0');
+    assert.strictEqual(m.baseCommit, 'deadbeef');
+  }
+});
+
+test('writeManifesto with no manifest creates one carrying only ceremonyProfile and lane; every other field stays null', () => {
+  const fx = fixture();
+  write(fx);
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.lane, 'standard');
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  for (const key of ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']) assert.strictEqual(m[key], null, key);
+});
+
+test('writeManifesto does not overwrite a known lane: an express or driver run keeps it', () => {
+  for (const lane of ['express', 'driver']) {
+    const fx = fixture();
+    seedManifest(fx.runDir, lane);
+    write(fx);
+    const m = readManifest(fx.runDir);
+    assert.strictEqual(m.lane, lane);
+    assert.strictEqual(m.ceremonyProfile, 'standard');
+  }
+});
+
+test('writeManifesto fills no lane when the config.yml write fails mid-batch', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  let n = 0;
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (++n === 5) throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.strictEqual(readManifest(fx.runDir).lane, 'unknown');
+});
+
+test('a writeManifesto failure after the ceremony-profile lever keeps the filled ceremonyProfile while config.yml is removed', () => {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'merge-authorization') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { deps: { setConfigLever: flaky } }), /EIO/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('config.yml'), 'partial config.yml rolled back');
+  // The fill rides setConfigLever, so it already landed; a re-run rewrites the same value.
+  const m = readManifest(fx.runDir);
+  assert.strictEqual(m.ceremonyProfile, 'standard');
+  assert.strictEqual(m.lane, 'unknown', 'the lane fill is after the whole batch, so it did not run');
 });
 
 test('an existing config.yml -> AdoptedRunError and nothing in the run dir changes', () => {
@@ -226,6 +294,145 @@ test('an empty integration-model resolve omits the pin, still writes the 13 leve
   const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
   assert.ok(!text.includes('- integration-model:'), 'the snapshot header lists no pin either');
   assert.match(text, /^- SKIP 17:24:30 — Manifesto: condition: integration-model resolved empty .*→ fallback: .*unpinned.*\. Reversibility: n\/a\.$/m);
+});
+
+test('a degraded integration-model resolve omits the pin, still writes the 13 levers, and logs the degraded SKIP, not the empty one (#4578 Q10, AC20.1, AC20.2)', () => {
+  const fx = fixture();
+  write(fx, { integrationModel: null, integrationModelDegraded: 'timeout' });
+  const config = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.ok(!/^integration-model:/m.test(config), config);
+  for (const key of MANIFESTO_LEVERS) assert.match(config, new RegExp(`^${key}: `, 'm'), key);
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.ok(!text.includes('- integration-model:'), 'the snapshot header lists no pin either');
+  assert.match(text, /^- SKIP 17:24:30 — Manifesto: condition: integration-model forge detection degraded \(timeout\) → fallback: config\.yml written without the run pin; later --run reads detect again\. Reversibility: n\/a\.$/m);
+  assert.doesNotMatch(text, /integration-model resolved empty/);
+});
+
+test('writeManifesto: a degraded flag beside a non-null integrationModel still writes no pin; an unknown reason code is refused', () => {
+  const fx = fixture();
+  write(fx, { integrationModel: 'local-merge', integrationModelDegraded: 'timeout-then-exit' });
+  assert.ok(!/^integration-model:/m.test(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8')));
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.ok(!text.includes('- integration-model:'));
+  assert.match(text, /integration-model forge detection degraded \(timeout-then-exit\) → fallback/);
+
+  const bad = fixture({ decisions: CLAIM });
+  const before = snapshot(bad.runDir);
+  assert.throws(() => write(bad, { integrationModel: null, integrationModelDegraded: 'bogus' }), (e) => e instanceof ManifestoInputError);
+  assert.deepStrictEqual(snapshot(bad.runDir), before, 'nothing written');
+});
+
+test('computeLevers: a derived merge-verification from a degraded detection becomes wait (source degraded); a policy value or a clean derived off is untouched (plan review)', () => {
+  const lv = (mv) => lever(computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': mv }) }), 'merge-verification');
+  assert.deepStrictEqual(lv({ value: 'off', source: 'default', degraded: 'timeout' }), { key: 'merge-verification', value: 'wait', source: 'degraded' });
+  assert.deepStrictEqual(lv({ value: 'off', source: 'policy', degraded: 'timeout' }), { key: 'merge-verification', value: 'off', source: 'policy' });
+  assert.deepStrictEqual(lv({ value: 'off', source: 'default' }), { key: 'merge-verification', value: 'off', source: 'default' });
+});
+
+test('writeManifesto: a degraded-sourced merge-verification lever writes wait and logs the AUTO line naming pr-first-merge Step 2.5; a clean one logs none', () => {
+  const fx = fixture();
+  write(fx, { res: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), /^merge-verification: wait$/m);
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(text, /— Manifesto: merge-verification derived from a degraded forge detection → written as wait \(an unresolved lever never becomes off, _shared\/pr-first-merge\.md Step 2\.5\)/);
+  assert.match(text, /^- AUTO 17:24:30 — Manifesto: merge-verification derived/m);
+
+  const clean = fixture();
+  write(clean, { res: resolved({ 'merge-verification': { value: 'off', source: 'default' } }) });
+  assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
+});
+
+test('manifesto-write: a factory lever renders Source factory', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const fromFactory = resolvePolicyKeys(['tidy-aggressiveness', 'review-auto-apply-ceiling', 'autonomy'], {
+    factoryRaw: 'tidy-aggressiveness: conservative\nreview-auto-apply-ceiling: low\nautonomy: unattended\n',
+  });
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved(fromFactory) });
+  assert.deepStrictEqual(lever(levers, 'tidy-aggressiveness'), { key: 'tidy-aggressiveness', value: 'conservative', source: 'factory' });
+  // A factory ceiling is set, not the default, so the unattended-default lift to medium does not apply.
+  assert.deepStrictEqual(lever(levers, 'review-auto-apply-ceiling'), { key: 'review-auto-apply-ceiling', value: 'low', source: 'factory' });
+  assert.match(renderFyi(levers), /\| Tidy aggressiveness \| conservative \| factory \|/i);
+});
+
+test('manifesto-write: a factory-only auto-mode renders the Mode row with Source factory (#6006)', () => {
+  const { resolvePolicyKeys } = require('../../../plugin/bin/lib/policy-schema');
+  const modeRow = (raws, modeSource = 'policy') => {
+    const levers = computeLevers({ mode: 'auto', modeSource, records: ONE_STANDARD, resolved: resolved(resolvePolicyKeys(['auto-mode'], raws)) });
+    return renderFyi(levers).split('\n').find((line) => line.startsWith('| Mode |'));
+  };
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }), '| Mode | auto | factory |');
+  assert.strictEqual(modeRow({ policyRaw: 'auto-mode: default-on\n', factoryRaw: 'auto-mode: default-off\n' }), '| Mode | auto | policy |');
+  // Only rung 3 reads the layer: an arg-sourced mode stays arg whatever auto-mode resolved.
+  assert.strictEqual(modeRow({ factoryRaw: 'auto-mode: default-on\n' }, 'arg'), '| Mode | auto | arg |');
+});
+
+test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
+  assert.match(renderFyi(levers), /\| Merge verification \| wait \| degraded \|/i);
+});
+
+// --- replanned (#6148): the Manifesto write replans a claimed record once, after its batch and lane fill ---
+
+const { STARTING_LISTS } = require('../../../plugin/bin/lib/station-events/plan');
+const { STATION, KIND } = require('../../../plugin/bin/lib/station-events/stations');
+
+function claimedFixture() {
+  const fx = fixture({ decisions: CLAIM });
+  seedManifest(fx.runDir);
+  fs.writeFileSync(path.join(fx.root, '.claude-tweaks', 'station-events.jsonl'), JSON.stringify({
+    v: 1, repoName: 'acme/w', recordNumber: 7, kind: KIND.PLANNED, station: STATION.BUILD, lane: 'unknown',
+    runId: RUN_ID, payload: { stations: STARTING_LISTS.standard },
+  }) + '\n');
+  return fx;
+}
+const FAST = [{ n: 4027, ceremony: 'fast-lane', ceremonySource: 'label' }];
+
+test('writeManifesto with a fast-lane ceremony after a standard claim writes one replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { records: FAST, deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.strictEqual(events.length, 1);
+  assert.strictEqual(events[0].payload.cause.ref, 'ceremony-profile');
+  assert.strictEqual(events[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
+test('writeManifesto with no stationEvent in deps appends one replanned through the real default sink', () => {
+  const fx = claimedFixture();
+  const logFile = path.join(fx.root, '.claude-tweaks', 'station-events.jsonl');
+  write(fx, { records: FAST });
+  const lines = fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const replans = lines.filter((l) => l.kind === KIND.REPLANNED);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(replans.length, 1);
+  assert.strictEqual(replans[0].payload.stations.includes('polish'), false);
+  assert.strictEqual(replans[0].payload.reasonCode, 'ceremony-downgrade');
+});
+
+test('writeManifesto with a standard ceremony after a standard claim writes nothing', () => {
+  const fx = claimedFixture();
+  const events = [];
+  write(fx, { deps: { stationEvent: (e) => events.push(e), stationMainRoot: fx.root } });
+  assert.deepStrictEqual(events, []);
+});
+
+test('a writeManifesto that fails mid-batch writes no replanned', () => {
+  const fx = claimedFixture();
+  const events = [];
+  const { setConfigLever } = require('../../../plugin/bin/lib/set-config/write');
+  const flaky = (args) => { if (args.key === 'spec') throw new Error('EIO: simulated'); return setConfigLever(args); };
+  assert.throws(() => write(fx, { records: FAST, deps: { setConfigLever: flaky, stationEvent: (e) => events.push(e), stationMainRoot: fx.root } }), /EIO/);
+  assert.deepStrictEqual(events, []);
+});
+
+test('a throwing stationEvent leaves writeManifesto\'s result, config.yml and decisions.md as with stationEvent null', () => {
+  const runOnce = (stationEvent) => {
+    const fx = claimedFixture();
+    const { out } = write(fx, { records: FAST, deps: { stationEvent, stationMainRoot: fx.root } });
+    return { table: out.table, config: fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), log: fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').split(fx.root).join('<root>') };
+  };
+  const off = runOnce(null);
+  const thrown = runOnce(() => { throw new Error('sink exploded'); });
+  assert.deepStrictEqual(thrown, off);
 });
 
 test('a config.yml write that fails mid-batch removes the partial config.yml, so the run reads as case 3, never case 1', () => {
@@ -460,6 +667,32 @@ test('CLI: an invalid integration-model in policy.yml (resolves to null) still e
   assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
   assert.ok(!/^integration-model:/m.test(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8')));
   assert.match(err.join(''), /integration-model resolved empty — config\.yml written without the run pin/);
+});
+
+test('CLI: a degraded integration-model resolve exits 0 unpinned and says so on stderr (#4578 Q10)', () => {
+  const fx = fixture();
+  // The real resolve copies `degraded` onto merge-verification too (Task 2's producer).
+  const { err, deps } = cliDeps(fx, {
+    resolvePolicy: () => resolved({
+      'integration-model': { value: 'local-merge', source: 'default', degraded: 'timeout' },
+      'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' },
+    }),
+  });
+  assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
+  const config = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.ok(!/^integration-model:/m.test(config));
+  assert.match(config, /^merge-verification: wait$/m);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /^- AUTO 17:24:30 — Manifesto: merge-verification derived from a degraded forge detection → written as wait/m);
+  assert.match(err.join(''), /integration-model forge detection degraded \(timeout\) — config\.yml written without the run pin \(SKIP logged\)/);
+  assert.doesNotMatch(err.join(''), /resolved empty/);
+});
+
+test('CLI: a clean local-merge resolve (no degraded field) still pins integration-model: local-merge', () => {
+  const fx = fixture();
+  const { err, deps } = cliDeps(fx, { resolvePolicy: () => resolved({ 'integration-model': { value: 'local-merge', source: 'default' } }) });
+  assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), /^integration-model: local-merge$/m);
+  assert.ok(!err.join('').includes('degraded'), err.join(''));
 });
 
 test('CLI: a policy-resolution failure exits 1 with nothing written', () => {

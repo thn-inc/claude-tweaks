@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/tidy-report-lint');
@@ -72,7 +73,7 @@ test('cli: a known-nonconformant report (over-width line, missing footer, omitte
 });
 
 test('cli: reads a real file path with fs, end to end', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trl-cli-'));
+  const tmp = scratchDir('trl-cli-');
   const file = path.join(tmp, 'report.md');
   fs.writeFileSync(file, conformantReport());
   const out = [];

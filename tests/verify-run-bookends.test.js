@@ -493,6 +493,71 @@ test('isSpecCommitted: a git timeout or spawn error is undetermined (null), neve
   assert.strictEqual(realDeps.isSpecCommitted(args, catFileTimeoutRevParseOk), null, 'cat-file timed out: not provably absent');
 });
 
+// ---- #3974: a header archived by wrap-up or archiveRunDir still reads as committed ----
+
+const exitOne = () => { const e = new Error('fatal'); e.status = 1; return e; };
+// An exec that exits 0 for `rev-parse` and for `cat-file -e HEAD:<rel>` with the one rel given; any other cat-file exits 1.
+const execOnlyFor = (rel) => (cmd, argv) => {
+  if (argv.includes('rev-parse') || argv.includes(`HEAD:${rel}`)) return;
+  throw exitOne();
+};
+
+test('AC1.1/AC2.1 isSpecCommitted: archived-only header reads as committed', () => {
+  const flat = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/1728-spec.md`;
+  const nested = `.claude-tweaks/pipelines/archive/${RUN_ID}/spec-1728/work/1728-spec.md`;
+  const args = { runDir: RUN_DIR, worktree: os.tmpdir(), issue: 1728 };
+  assert.strictEqual(realDeps.isSpecCommitted(args, execOnlyFor(flat)), true, 'archived flat');
+  assert.strictEqual(realDeps.isSpecCommitted({ ...args, multiTarget: true }, execOnlyFor(nested)), true, 'archived nested, multi-target');
+  assert.strictEqual(realDeps.isSpecCommitted({ ...args, multiTarget: true }, execOnlyFor(flat)), false, 'a multi-target bundle never reads a flat header, archived either');
+  const specRunDir = `${RUN_DIR}/spec-1728`;
+  const perSpec = `.claude-tweaks/pipelines/archive/${RUN_ID}/spec-1728/work/1728-spec.md`;
+  assert.strictEqual(realDeps.isSpecCommitted({ ...args, runDir: specRunDir }, execOnlyFor(perSpec)), true, 'archived per-spec run dir');
+});
+
+test('AC3.1 isSpecCommitted on a real repo whose last commit git-mv\'d the header to the archive path', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bookends-archived-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  const git = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { cwd: root, stdio: 'pipe', env });
+  git('init', '-q');
+  const liveRel = `.claude-tweaks/pipelines/${RUN_ID}/work/1728-spec.md`;
+  const archivedRel = `.claude-tweaks/pipelines/archive/${RUN_ID}/work/1728-spec.md`;
+  fs.mkdirSync(path.join(root, path.dirname(liveRel)), { recursive: true });
+  fs.writeFileSync(path.join(root, liveRel), 'spec\n');
+  git('add', liveRel);
+  git('commit', '-q', '-m', 'materialize');
+  const args = { runDir: path.join(root, '.claude-tweaks', 'pipelines', RUN_ID), worktree: root, issue: 1728 };
+  assert.strictEqual(realDeps.isSpecCommitted(args), true, 'live');
+  fs.mkdirSync(path.join(root, path.dirname(archivedRel)), { recursive: true });
+  git('mv', liveRel, archivedRel);
+  git('commit', '-q', '-m', 'archive');
+  assert.strictEqual(realDeps.isSpecCommitted(args), true, 'archived after the move');
+  assert.strictEqual(realDeps.isSpecCommitted({ ...args, issue: 1729 }), false, 'other record stays absent');
+});
+
+test('AC9.1/AC9.5 isSpecCommitted stays null when an archived cat-file probe times out after a live miss', () => {
+  const args = { runDir: RUN_DIR, worktree: os.tmpdir(), issue: 1728 };
+  // rev-parse succeeds, so only the `undetermined` flag can yield null here.
+  const exec = (cmd, argv) => {
+    if (argv.includes('rev-parse')) return;
+    const spec = argv.find((a) => a.startsWith('HEAD:')) || '';
+    if (spec.includes('/archive/')) { const e = new Error('timed out'); e.code = 'ETIMEDOUT'; e.signal = 'SIGTERM'; throw e; }
+    throw exitOne();
+  };
+  assert.strictEqual(realDeps.isSpecCommitted(args, exec), null);
+});
+
+test('AC8 materialize remedy names no header path', () => {
+  for (const [targets, label] of [['1728', 'single'], [BUNDLE_TARGETS, 'bundle']]) {
+    const deps = captured(makeDeps({ claims: BUNDLE_CLAIMS, isSpecCommitted: () => false }));
+    assert.strictEqual(run(['--run', RUN_DIR, '--targets', targets], deps), 1);
+    const m = JSON.parse(deps.out[0]).missing.find((x) => x.bookend === 'materialize');
+    assert.ok(m.remedy.includes('then commit the spec file it writes'), `${label}: ${m.remedy}`);
+    assert.ok(m.remedy.includes('materialize.js'), label);
+    assert.doesNotMatch(m.remedy, /work\/\d+-spec\.md/, label);
+  }
+});
+
 // ---- #4026: the degrade line logs its own SKIP ----
 
 const degradeLine = (pin) => `verify-run-bookends: degraded — ${RUN_DIR}/config.yml carries no valid integration-model pin (${pin}); PR bookend not checked (_shared/integration-model.md's Run-scoped stability)\n`;

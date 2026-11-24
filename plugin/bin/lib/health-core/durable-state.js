@@ -1,6 +1,8 @@
 'use strict';
 const { execFileSync } = require('child_process');
 const { parseLsTreeZ } = require('../git-z');
+const { DEFAULT_IO, makeExec } = require('./io');
+const { LARGE_MAX_BUFFER_BYTES } = require('../shared-primitives');
 
 // Durable cross-firing state for the health skills, backed by a dedicated
 // git branch (never merged into main) instead of local gitignored disk —
@@ -128,6 +130,33 @@ function defaultRun(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { encoding: 'utf8', timeout: DEFAULT_RUN_TIMEOUT_MS, ...opts, windowsHide: true });
 }
 
+// `git cat-file --batch` output for `count` requested objects -> `count`
+// slots in request order: a blob's text, or null for a `missing`/`ambiguous`/
+// any other body-less header, a non-blob object (its body is skipped by its
+// byte length so the next slot stays framed), or a slot the stream ended
+// before (truncation nulls it and every later slot). Position-based like
+// bin/load-delta.js's parseBatchOutput, but tolerant: never throws. Takes a
+// Buffer or a string (a fake runner may ignore `encoding: 'buffer'`); a string
+// is converted first so framing always counts bytes, not UTF-16 code units.
+function parseBatchBlobs(out, count) {
+  const buf = Buffer.isBuffer(out) ? out : Buffer.from(String(out ?? ''), 'utf8');
+  const slots = new Array(count).fill(null);
+  let offset = 0;
+  for (let i = 0; i < count; i++) {
+    const nl = buf.indexOf(0x0a, offset);
+    if (nl === -1) break;
+    const header = buf.toString('utf8', offset, nl);
+    offset = nl + 1;
+    const m = /^[0-9a-f]+ (\S+) (\d+)$/.exec(header);
+    if (!m) continue;
+    const size = Number(m[2]);
+    if (offset + size > buf.length) break;
+    if (m[1] === 'blob') slots[i] = buf.toString('utf8', offset, offset + size);
+    offset += size + 1; // +1 skips the single trailing newline git appends after content
+  }
+  return slots;
+}
+
 // namespace: the top-level path segment under the health-state branch's root
 // tree (a skill name for the four health skills; a feature namespace like
 // 'merge-lane' for any other caller).
@@ -146,19 +175,27 @@ function defaultRun(cmd, args, opts = {}) {
 // failure — merge-lane-breaker.js's Fail-closed read requirement — can react
 // to that distinction; readState itself always degrades to defaults, same as
 // before this extraction.
-function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep = defaultSleep } = {}) {
+//
+// Optional injection (#5380), every default unchanged: `env` is the child
+// environment for every git call (undefined = inherited); `stderr` receives the
+// child git's stderr and the read-failure trace instead of process.stderr. With
+// neither and no `run`, the runner is defaultRun exactly as before; with env or
+// stderr and no `run`, it is makeExec (stderr piped to the injected sink) with
+// defaultRun's 30 s timeout; with a caller `run` and an `env`, every call
+// receives that env (a per-call opts.env still wins).
+function createNamespacedState(namespace, fileSpecs, {
+  run: callerRun, sleep = defaultSleep, env, stderr,
+} = {}) {
   const specs = Array.isArray(fileSpecs) ? fileSpecs : [];
-
-  // `git show <ref>:<path>` works identically whether <ref> is a branch ref
-  // (origin/<branch>) or a bare commit sha (LOCAL_REF's tip), so the
-  // origin-tip read and the local-only write path share this one reader.
-  function showFileAt(root, ref, relPath, fallback) {
-    try {
-      const out = run('git', ['-C', root, 'show', `${ref}:${relPath}`]);
-      return JSON.parse(out);
-    } catch {
-      return fallback;
-    }
+  const writeStderr = stderr || DEFAULT_IO.stderr;
+  let run;
+  if (callerRun) {
+    run = env === undefined ? callerRun : (cmd, args, opts = {}) => callerRun(cmd, args, { env, ...opts });
+  } else if (env !== undefined || stderr !== undefined) {
+    const exec = makeExec({ env, stderr: writeStderr });
+    run = (cmd, args, opts = {}) => exec(cmd, args, { timeout: DEFAULT_RUN_TIMEOUT_MS, ...opts });
+  } else {
+    run = defaultRun;
   }
 
   // namespace-local branch ref used ONLY to stage writeStateLocal's
@@ -200,27 +237,55 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
   }
 
   // Read every fileSpec at whatever branch tip the caller already fetched,
-  // WITHOUT triggering another network fetch. Shared by readStateWithMeta
-  // below (which fetches first, for standalone callers) and by writeState's
-  // own CAS loop (which already fetched once per attempt). The loop must
-  // never call the fetch-then-read path a second time: a redundant fetch
-  // transiently failing would make that path silently degrade to empty
-  // defaults and hand the mutator bogus near-empty state, durably
-  // overwriting the branch's real content even though the push's
-  // fast-forward check has no way to catch a bad-but-valid write like that.
+  // WITHOUT triggering another network fetch. Used by readStateWithMeta
+  // below (which fetches first, for standalone callers). writeState's CAS
+  // loop does not use it: it already fetched once per attempt and reads at
+  // the commit sha it resolved (no git call at all when that is null), which
+  // also keeps the mutator's input and the new commit's parent on one
+  // commit. The loop must never call the fetch-then-read path a second
+  // time: a redundant fetch transiently failing would make that path
+  // silently degrade to empty defaults and hand the mutator bogus
+  // near-empty state, durably overwriting the branch's real content even
+  // though the push's fast-forward check has no way to catch a bad-but-valid
+  // write like that.
   function readFilesAtFetchedTip(root) {
     return readFilesAt(root, `origin/${HEALTH_STATE_BRANCH}`);
   }
 
-  // Same read at an arbitrary ref/sha (or falsy for "nothing to read yet" —
-  // the brand-new-namespace case, where every spec resolves straight to its
-  // default with no git call at all). writeStateLocal/pushState use it to
-  // read this namespace's state at the LOCAL branch's own tip.
+  // Reads every fileSpec at `ref` in ONE `git cat-file --batch` process, fed
+  // one `{ref}:{namespace}/{file}` line per spec. `ref` may be a branch ref
+  // or a bare commit sha — `<rev>:<path>` resolves either way. Callers:
+  // readStateWithMeta (via readFilesAtFetchedTip, at origin/<branch>),
+  // writeState (at the commit sha its rev-parse resolved), and
+  // writeStateLocal/pushState (at local shas — LOCAL_REF's tip or its
+  // origin seed). A falsy `ref` ("nothing to read yet" — the
+  // brand-new-namespace case) resolves every spec straight to its default
+  // with no git call at all. A failed process degrades every spec to its
+  // default; a missing/non-blob/unparseable slot degrades only its own.
+  // `input` is a Buffer, never a string: execFileSync/spawnSync throw
+  // ERR_UNKNOWN_ENCODING for a string input with `encoding: 'buffer'`, and
+  // the catch below would turn that into every read silently returning
+  // defaults, which writeState would then write over the branch.
   function readFilesAt(root, ref) {
     const values = {};
-    for (const spec of specs) {
-      values[spec.key] = ref ? showFileAt(root, ref, statePath(namespace, spec.file), spec.default) : spec.default;
+    for (const spec of specs) values[spec.key] = spec.default;
+    if (!ref || specs.length === 0) return values;
+    const input = Buffer.from(specs.map((spec) => `${ref}:${statePath(namespace, spec.file)}\n`).join(''), 'utf8');
+    let blobs;
+    try {
+      const out = run('git', ['-C', root, 'cat-file', '--batch'], { input, encoding: 'buffer', maxBuffer: LARGE_MAX_BUFFER_BYTES });
+      blobs = parseBatchBlobs(out, specs.length);
+    } catch {
+      return values;
     }
+    specs.forEach((spec, i) => {
+      if (blobs[i] === null) return;
+      try {
+        values[spec.key] = JSON.parse(blobs[i]);
+      } catch {
+        // invalid or empty JSON keeps this spec's default
+      }
+    });
     return values;
   }
 
@@ -250,7 +315,7 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
       // Distinguish a genuine first run (the branch simply doesn't exist yet)
       // from a real fetch failure (network/auth/timeout) — both degrade to
       // the same defaults, but only the latter is worth a trace.
-      process.stderr.write(`health-state: fetch failed, treating as empty state: ${meta.error.message}\n`);
+      writeStderr(`health-state: fetch failed, treating as empty state: ${meta.error.message}\n`);
     }
     return meta.values;
   }
@@ -374,7 +439,7 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
           // history, and the next attempt re-fetches from scratch).
         }
         const { commitSha: parentSha, treeSha: baseTreeSha } = currentRefShas(root);
-        const current = readFilesAtFetchedTip(root);
+        const current = readFilesAt(root, parentSha);
         const next = mutatorFn(current);
         const files = buildFiles(next);
         const rootTreeSha = buildRootTree(root, baseTreeSha, files);
@@ -493,7 +558,7 @@ function createNamespacedState(namespace, fileSpecs, { run = defaultRun, sleep =
 // cursors/retryQueue/runs(/remembered)(/declined) shape — see the header
 // comment above for why the generic primitive lives separately.
 function createDurableState(skillName, {
-  run = defaultRun, sleep = defaultSleep, includeRemembered = false, includeDeclined = false,
+  run, sleep = defaultSleep, includeRemembered = false, includeDeclined = false, env, stderr,
 } = {}) {
   const fileSpecs = [
     { key: 'cursors', file: 'cursors.json', default: {} },
@@ -516,7 +581,9 @@ function createDurableState(skillName, {
 
   const {
     readState, writeState, writeStateLocal, pushState,
-  } = createNamespacedState(skillName, fileSpecs, { run, sleep });
+  } = createNamespacedState(skillName, fileSpecs, {
+    run, sleep, env, stderr,
+  });
   return {
     readState, writeState, writeStateLocal, pushState,
   };

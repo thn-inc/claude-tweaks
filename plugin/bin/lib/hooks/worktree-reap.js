@@ -17,12 +17,16 @@
 // it is parsed defensively and tested against a frozen fixture, never live
 // output: if it changes shape, pid comes back null and nothing is reaped.
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { runGit } = require('./git-exec');
 const { mainCheckoutRoot, safeReal } = require('./worktree-detect');
 const policy = require('../policy');
 const { release: releasePortsDefault } = require('../ports/registry');
 const { isPathContained } = require('../shared-primitives');
+const { readHolds } = require('./worktree-hold');
+const { pidStartTime } = require('../run-liveness/process-probe');
+const { probeOwnerPid } = require('../run-liveness/owner-pid-probe');
 
 const PID_RE = /\(pid\s+(\d+)\b/;
 
@@ -75,12 +79,16 @@ const REASON = {
   UNKNOWN_LOCK: 'lock reason unrecognized',
   OUT_OF_DOMAIN: `outside the harness worktree domain (${HARNESS_WORKTREE_DIR}/)`,
   RECENT: 'lock owner is gone, but the worktree was modified within the grace period',
+  HELD: 'held by a live session in this worktree',
+  // Not quiet: a hold that cannot be read or verified is reported, so a stuck one surfaces.
+  HELD_UNVERIFIABLE: 'held by a session hold that cannot be verified',
 };
 
 // Skip reasons that are the normal, expected state of a healthy repo and would
 // otherwise be reprinted on every single SessionStart. Consumed by
-// session-start.js, which reports only the reasons NOT in this set.
-const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT]);
+// session-start.js, which reports only the reasons NOT in this set. 'held' and 'in-use' are
+// reap-merged.js's short codes for the same two states (its skips reach the same banner).
+const QUIET_SKIP_REASONS = new Set([REASON.IN_USE, REASON.OUT_OF_DOMAIN, REASON.RECENT, REASON.HELD, 'held', 'in-use']);
 
 function parseWorktreeList(porcelain) {
   const out = [];
@@ -291,6 +299,15 @@ function reapWorktrees({
       skipped.push({ path: real, reason: verdict === 'in-use' ? REASON.IN_USE : REASON.UNKNOWN_LOCK });
       continue;
     }
+    // A live session's hold (#4960): a dispatch worktree is unlocked, but its session leaves a
+    // hold file in the worktree's git admin dir. Cost: fs reads plus at most one `ps` per live hold
+    // with a recorded start time (pidStartTime) — no git spawn, which is why it sits before the
+    // git-forking MAX_EXAMINED_PER_RUN cap rather than under it.
+    const held = holdVerdict(real);
+    if (held !== 'free') {
+      skipped.push({ path: real, reason: held === 'held' ? REASON.HELD : REASON.HELD_UNVERIFIABLE });
+      continue;
+    }
     if (verdict === 'orphaned' && !isStale(real, now)) {
       skipped.push({ path: real, reason: REASON.RECENT });
       continue;
@@ -366,17 +383,20 @@ function reapWorktrees({
 // few lines below is deliberately left as the bare name it has always
 // returned -- it is already the freshest signal available (origin/HEAD's own
 // target), and existing callers/tests depend on that exact bare-name shape.
-function preferRemoteTrackingRef(repoRoot, name) {
-  const { failure } = runGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], repoRoot);
+//
+// `opts.env` (optional) is the environment its git child runs in; absent, the inherited one.
+function preferRemoteTrackingRef(repoRoot, name, opts = {}) {
+  const { failure } = runGit(['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`], repoRoot, opts.env ? { env: opts.env } : {});
   return failure ? name : `origin/${name}`;
 }
 
-function resolveIntegrationBranch(repoRoot, cache) {
+// `opts.env` (optional) is likewise the environment of its git children.
+function resolveIntegrationBranch(repoRoot, cache, opts = {}) {
   if (!repoRoot) return null;
   const fromPolicy = policy.readIntegrationBranch(repoRoot);
-  if (fromPolicy) return preferRemoteTrackingRef(repoRoot, fromPolicy);
+  if (fromPolicy) return preferRemoteTrackingRef(repoRoot, fromPolicy, opts);
   if (cache && cache.integrationBranch.has(repoRoot)) return cache.integrationBranch.get(repoRoot);
-  const { stdout, failure } = runGit(['rev-parse', '--abbrev-ref', 'origin/HEAD'], repoRoot);
+  const { stdout, failure } = runGit(['rev-parse', '--abbrev-ref', 'origin/HEAD'], repoRoot, opts.env ? { env: opts.env } : {});
   const name = failure || !stdout ? null : stdout.trim().replace(/^origin\//, '') || null;
   if (cache) cache.integrationBranch.set(repoRoot, name);
   return name;
@@ -417,6 +437,35 @@ function isWorktreeLocked(wtPath, { cwd } = {}) {
   return false;
 }
 
+// Is a session standing in this worktree right now, per the hold files in its git admin dir
+// (worktree-hold.js)? Each hold is judged by probeOwnerPid (#4153's single owner-pid judge):
+// positive, alive-no-start-time and start-time-unavailable are LIVE (a live pid whose start time
+// cannot be compared, e.g. win32, stays held); gone and pid-reused are dead; every other answer
+// (unreadable hold, other-host — inverted from run-liveness on purpose — no-pid, invalid start
+// time, a probe error) is UNVERIFIABLE. The mapping is by result AND detail, never detail alone. Any live hold -> 'held' (the verified reason wins over an
+// unverifiable neighbour); else any unverifiable one -> 'unverifiable'; else 'free'.
+// Never throws: an error reads 'unverifiable', so the worktree is kept.
+function holdVerdict(wtPath, { hostname = os.hostname, isAlive = isPidAlive, startTime = pidStartTime } = {}) {
+  try {
+    let unverifiable = false;
+    // An empty start time is as unreadable as null: it must never read as a recycled pid.
+    const current = (pid) => { const t = startTime(pid); return t === '' ? null : t; };
+    for (const { hold } of readHolds(wtPath)) {
+      const { result, detail } = probeOwnerPid(hold, { hostname, pidAlive: isAlive, pidStartTime: current });
+      // result is checked before detail: a thrown probe carries its error message as detail (result
+      // 'error'), so a message that happens to read 'gone' must never be taken for a dead owner.
+      if (result === 'positive'
+        || (result === 'negative' && detail === 'alive-no-start-time')
+        || (result === 'error' && detail === 'start-time-unavailable')) return 'held';
+      if (result === 'negative' && (detail === 'gone' || detail === 'pid-reused')) continue;
+      unverifiable = true;
+    }
+    return unverifiable ? 'unverifiable' : 'free';
+  } catch {
+    return 'unverifiable';
+  }
+}
+
 module.exports = {
   parseWorktreeList,
   findWorktreeEntry,
@@ -430,6 +479,7 @@ module.exports = {
   preferRemoteTrackingRef,
   bareIntegrationName,
   isWorktreeLocked,
+  holdVerdict,
   HARNESS_WORKTREE_DIR,
   ORPHAN_GRACE_MS,
   MAX_EXAMINED_PER_RUN,

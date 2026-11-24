@@ -1,0 +1,97 @@
+# Learned-Skills PR — keeping auto-applied skill edits off the run branch
+
+Cited from `curation-engine.md` section 4's serial-commit pass, which reads this file for every applied finding named under "When it applies". `merge-check`'s agent-instruction floor parks a run whose own diff carries a `.claude/skills/**` edit, so an auto-applied Skills-row edit committed on the run branch would park a record whose own change could have merged (#5290). This file moves that edit off the run branch: onto a separate learned-skills PR that the drain at the end of wrap-up merges once it is green (`learned-skills-auto-merge`), or into a staged Review Console proposal. Its one CLI is `bin/learned-skills-pr.js`. That file's header is the authoritative contract for every route and exit code quoted here.
+
+## When it applies
+
+- Every applied finding from the `skills` row.
+- Any other row's applied finding whose `targetPath` an earlier finding in this same pass already captured. It rides that same patch, and `capture` returns `shared: true` for it.
+
+Console-approved skill updates (the Review Console's "On approval" step) are out of scope. A human approved them, and they commit on the run branch as before.
+
+## Call sequence
+
+Resolve these once per pass, each as its own plain call, and paste each value literally into the commands below:
+
+- `{run}`: the main-checkout run dir every call below writes into — `$PIPELINE_RUN_DIR`'s path on a single-spec run. In a multi-spec consolidated wrap-up it is the **parent** run dir, `$MULTISPEC_PARENT_DIR`'s path (`flow/multispec-batch-curation.md`), never `$PIPELINE_RUN_DIR`, which there names one member's `{parent}/spec-{N}/` and would put the patches, the manifest and `staged/` under that member and name the branch `learned-skills/spec-{N}`. Substitute the literal path, not a `$VAR`.
+- `{integration-branch}`: per `_shared/integration-branch.md`. `land` always takes it, whichever source the merge-base came from.
+- `{merge-base}`: `pack.blastRadius.value.mergeBase` from `{run-dir}/wrap-up-pack.json`. In a multi-spec consolidated wrap-up, use the batch merge-base from `flow/multispec-batch-curation.md` step 1 instead. With neither, use what `git merge-base --end-of-options HEAD "origin/{integration-branch}"` prints.
+- `{worktree}`: the run worktree's absolute root.
+
+**Per finding, in the serial-commit pass's own order.** Write the finding's `summary` with the Write tool to a session-tmp file (`_shared/session-tmp-root.md`), then run it with the finding's own `rowId` (`skills`, or the later row whose finding rides the capture):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" capture --run "{run}" --worktree "{worktree}" --merge-base "{merge-base}" --target "{targetPath}" --summary-file "{tmp-summary-file}" --row "{rowId}"
+```
+
+It prints one JSON line. Act on its `route`, or on its exit code:
+
+| Outcome | What the controller does |
+|---|---|
+| `run-branch` (`reason: "record-owned"`) | The record-owned rule: the record's own commits already touch this file, so the edit stays on the run branch. Commit it there as section 4's step (2) does, and log `skill-curation.md`'s run-branch AUTO line. `merge-check`'s floor applies to that diff, by design. |
+| `captured` (`shared: true` included) | The edit has left the tree as a patch. Do not commit it. Keep the `id` it printed: the finding's `commit` and `pr` are filled from `land` by that id (Payload rewrite, below). Its entry records the finding's row and summary, so `land` logs it. On `manifestFailed: true` that record could not be written, so `land` logs no AUTO line for this finding: hand-log one in `skill-curation.md`'s learned-skills PR shape, with this finding's own row and summary, from `land`'s output. |
+| `staged` | The edit is staged at `stagePath`, and the library wrote its STAGED line. Hand-log that line only on `logFailed: true`. On `residue: true` the target still shows in `git status`, so add a wrap-up ledger item (status `open`) naming it: a later catch-all commit would sweep it onto the run branch. Rewrite the payload as a staged finding. |
+| `clean` | Nothing changed and nothing was captured before. This is the audit's clean-path case, handled exactly as section 4's step (1) says. |
+| Exit 1, stderr "nothing was changed" | Commit on the run branch as today, and log `SKIP {time} — Learned-skills PR capture (degraded): condition: capture exited 1 ({stderr line}) → fallback: committed on the run branch. Reversibility: n/a.` through `log-decision.js --status SKIP`, the stderr line passed by `--text-file` (`_shared/auto-decision-log.md`'s Degrade-trace rule). This is the one fail-safe exception, and `merge-check`'s floor still holds that run. |
+| Exit 1, stderr "staging failed too" | Go where stderr says the edit is. **In the working tree** ("commit it", or "commit the tree on the run branch", the joined case whose earlier capture stays captured included): commit the tree on the run branch and log the same SKIP line. **In a named patch file**: the edit is only there. Log the SKIP line naming that file, add a wrap-up ledger item (status `open`) naming it so Phase 3's nothing-left-behind gate forces a decision, and drop the finding from the payload, as section 4 drops an unanchored one. |
+| Exit 2 | A malformed call, a refused `--run`, or a target outside `.claude/skills/`. Nothing changed. For the first two, fix the call and re-run it. A target outside `.claude/skills/` is not this file's to capture: handle that finding as `curation-engine.md` section 4 does for its own row. |
+
+**Ordering.** Every finding sent back to the run branch above (`run-branch`, and both exit-1 working-tree cases) is committed there **before** the `land` or `stage` call below. `land` reads `--merge-base` to recognize an edit the run branch already carries. It marks that entry superseded and logs `already rides the run branch; not delivered twice`, so committing first is what keeps one edit from being delivered twice.
+
+## After the pass, before any `record` call
+
+Run this once when any finding was captured. Pick the verb by `integration-model` (`_shared/integration-model.md`):
+
+- `pr-first` → `land`. Pass `--record` once per record. In a multi-spec consolidated wrap-up, repeat it once per member (`--record 5290 --record 5291`). When no record resolves, run `stage --reason "no record resolved"` instead.
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" land --run "{run}" --worktree "{worktree}" --record {n} --integration-branch "{integration-branch}" --merge-base "{merge-base}"
+  ```
+
+- `local-merge` → `stage`:
+
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" stage --run "{run}" --worktree "{worktree}" --reason "integration-model is local-merge" --merge-base "{merge-base}"
+  ```
+
+Both print one JSON line. `land` commits each patch to `learned-skills/{run-id}` through git plumbing on a temp index, so the worktree's own branch, index and files are never touched. It then pushes that branch and opens one ready PR, or reuses the open one on a resumed run. A resumed run also recognises entries a merged learned-skills PR already shipped: each is recorded landed against that merged PR, never re-opened or re-staged. A patch that cannot ride it (a failed `git apply --check`, push or PR create) is staged instead.
+
+The CLI writes the log lines itself: one AUTO line per landed finding, in `skill-curation.md`'s learned-skills PR shape, and one STAGED line per finding of each staged entry, each under its own row, all naming the entry's one stage path. Every finding a landed entry carries, each `shared: true` one included, gets its own AUTO line under its own row and summary, all naming that entry's one commit, and the PR body lists every finding's summary. A stage whose gate wrote the description-only form, or could not run, logs `_shared/staged-patch.md`'s own line for that case instead of the STAGED shape. Hand-log the AUTO lines only on a top-level `logFailed: true`, and a STAGED line only on that `staged[]` row's `logFailed: true`.
+
+- A `failed[]` entry (exit 1) is one whose staged write failed too. Its edit is only in its patch file, so handle it as capture's patch-file case above.
+- A top-level `manifestFailed: true` from `land` (exit 0) means the manifest write after the push and the PR failed. Every `landed[]` entry is on the PR: rewrite the payload from `landed[]` and `pr` as usual, hand-log the AUTO lines only when `logFailed` is set too, and do not call `stage`, which would stage edits the PR already carries. The manifest still reads those entries as captured, so re-run the same `land` call once the run dir is writable: it reuses the pushed commits, records them, and writes no AUTO line twice. The same flag after staging, from `land` or `stage`, means every `staged[]` file exists: treat each as staged, never stage it again by hand. A re-run of the same call recognises each staged copy by its target and diff, records it, and writes no second staged file or STAGED line.
+- A top-level `prBodyStale: true` from `land` means commits were added to the open PR but its body could not be rewritten, so the body lists only the earlier entries. The landed entries stand: rewrite the payload as usual, and add a wrap-up ledger item (status `open`) naming the PR's URL, so a human refreshes its body before reviewing it.
+- A `land` or `stage` exit 1 with no JSON line means a git or gh failure escaped the per-entry downgrades.
+  - For `land`: run `stage` with `--reason "land exited 1"`, never the stderr text on the command line. Log `SKIP {time} — Learned-skills PR land (degraded): condition: land exited 1 ({stderr line}) → fallback: every captured patch staged. Reversibility: n/a.` the same way as the capture SKIP line.
+  - For `stage` (the direct `local-merge` call or that fallback): every captured patch still sits only in `{run}/learned-skills/`. Handle each as capture's patch-file case: a SKIP line naming its patch file, and an open wrap-up ledger item so Phase 3's nothing-left-behind gate sees it.
+
+**Two backstops catch a skipped delivery.** `record` refuses an applied `skills`-row finding with no `commit` (exit 1), so a captured finding cannot be recorded before `land` or `stage` gave it a commit or a stage path. And `wrap-up-engine.js verify`'s `learned-skills-delivered` row fails while the manifest still holds a `captured` entry, naming each patch file, and that fail blocks the verdict. In a multi-spec consolidated wrap-up the manifest is the parent's, which no `spec-*/` verify reads, so the backstop there is the parent residue scan, `console-residue.js --require-verify`, that `flow/multispec-summary.md` runs: it lists the entry under "Needs a human" at summary time and does not block. When either one reports an entry, run `land` (`pr-first`) or `stage` (`local-merge`) with `--run` set to the run dir the row names, which is the archived copy once the run dir is archived, then re-run `verify`. Pass `--worktree` the run worktree's root while it exists. Once it is removed, pass the main checkout's root (`$RUN_ROOT`): both verbs read the repository only through git, and `land` builds its commits on a temp index, so any checkout of it serves. Under `local-merge`, when that `stage` runs after the Review Console resolved, the console can no longer show what it staged: add one wrap-up ledger item (status `open`) per `staged[].stagePath`, as capture's patch-file case does, so Phase 3's nothing-left-behind gate surfaces each.
+
+## Payload rewrite
+
+Match each finding to the output by the `id` its `capture` printed. Findings that shared one capture share one entry, so they share its commit:
+
+- **Landed** (`landed[]`): `action` stays `applied`. Set `commit` to `landed[].commit`, shortened to the hash its AUTO line prints, and `pr` to the row's own `pr.url` when it carries one (a merged PR that already shipped it), else the top-level `pr.url`.
+- **Staged** (`staged[]`): set `action: "staged"` and `stagePath` to the absolute `staged[].stagePath`, and remove `commit`. A staged finding carries no `pr`.
+- **Superseded**: the edit rides the run branch. Its `commit` is the run-branch commit made above.
+
+## Drain at the end of wrap-up
+
+Resolve the lever from the run's own config, the same read the CLI makes: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run}" --values learned-skills-auto-merge`; only when it prints `true`, run once, after the Review Console resolves and every `record` call, before the phase-trace report. On the auto-merge short-circuit path, where no console renders, run it after `land` and every `record` call and before the FYI is composed. A pending own PR holds the call in a watch of up to 900 s, so give the Bash call a timeout of `1200000` ms:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/learned-skills-pr.js" drain --run "{run}" --integration-branch "{integration-branch}" --own-pr {pr-number}
+```
+
+`{pr-number}` is `land`'s `pr.number`; omit `--own-pr` when `land` opened no PR this run. With the lever off, run nothing: no drain call is made and the PR stays open for a human to merge.
+
+It prints one JSON line, `{merged, armed, leftOpen: [{pr, reason, detail?}], conflicting, rebuilt}`, and exits 0 on any outcome:
+
+- `merged`: green, so the CLI merged it. `armed`: checks still pending, so auto-merge is set and GitHub merges it when they pass. `leftOpen`: not merged, each with its `reason` (red or pending checks, a head that moved, a PR outside the learned-skills scope, a failed merge with its `detail`). `rebuilt`: a PR that conflicted with the integration branch and whose conflicts were all a pure double append, so the CLI rebuilt it on the integration tip with one leased push; it is also in `leftOpen` as `pending` until its checks re-run (this run's own PR is watched on from the new head). A conflict that is anything else is left open with reason `conflict needs a human: {files}` (the files named), and `lease-rejected`, `git-too-old` and `rebuild-failed` are the other refusals. `conflicting` now means only a conflict the merge call itself reported, or a PR that conflicts again after its rebuild: it needs a human. Without `gh` the CLI merges nothing, prints the own PR as `leftOpen` with reason `no-gh`, and exits 0. Under `merge-verification: off`, an own PR with no checks at all (an empty rollup and no head runs) is reported `leftOpen` `pending` at once, without the watch.
+- The CLI logs one `decisions.md` line per PR it classified (a rebuilt PR also gets its `AUTO` rebuild line), this run's and other runs' alike, tagged `[lever: learned-skills-auto-merge={value}]` (`AUTO` for merged, armed and rebuilt, `SKIP` for left open and conflicting). Hand-log nothing for it.
+- Exit 1 (a listing or repo-read failure): nothing was merged. Log `SKIP {time} — Learned-skills drain (degraded): condition: drain exited 1 ({stderr line}) → fallback: the learned-skills PRs wait for a human. Reversibility: n/a.` through `log-decision.js --status SKIP`, the stderr line passed by `--text-file`, and continue. Exit 2 is a malformed call: fix it and re-run. A call the Bash timeout still killed, or one that returned no JSON line, is the same degrade: log the same `SKIP` line the same way, with the stderr line replaced by `drain killed or returned no output`.
+
+## The PR
+
+- **Body.** The body carries the `<!-- wrap-up-skills-pr -->` marker and names each record only as `refs #{n}`. It never carries a closing keyword or the run marker.
+- **Where a human sees it.** The phase-trace Skills row appends the drain outcome after the PR URL (`— merged`, `— armed`, `— conflicting`, `— left open: {reason}`), for this run's PR only. The Skill updates disposition reads `applied ({commit}, learned-skills PR {url})`. On the short-circuit path, which renders no console, the FYI `PushNotification` carries that same engine-rendered section (`auto-merge-short-circuit.md`) with the same suffix. On the interactive path the drain runs after the console resolves, so the console's own disposition carries no drain suffix. The final summary's Phase 2 trace appends `learned-skills PR {url}` to the Skills row's Detail cell. Both come from `render` (`curation-engine.md` section 2, Step 3), never from hand-composed text.

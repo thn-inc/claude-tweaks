@@ -9,12 +9,14 @@
 // plus each reader's own value interpretation.
 'use strict';
 const fs = require('fs');
-const path = require('path');
-const { parseFlatLines, RENAMED_KEYS, resolveValue } = require('./policy-schema');
+const {
+  parseFlatLines, RENAMED_KEYS, resolveValue, resolvePolicyKeys,
+} = require('./policy-schema');
+const { locatePolicyFile } = require('./policy-file');
 
 function readPolicyFile(repoRoot) {
   try {
-    return fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+    return fs.readFileSync(locatePolicyFile(repoRoot).path, 'utf8');
   } catch {
     return null;
   }
@@ -42,6 +44,8 @@ function parsePolicy(repoRoot) {
 // the same alias-aware lookup isWorktreeAlwaysOn always did, now exposing
 // WHICH key resolved it. session-start.js's verdict banner and this gate
 // must never disagree, so both call this — see docs/incident-log.md IL-133.
+// bin/hooks.sh's policy_verdict is a shell copy of this read for sessions with
+// no node (#5392): change both, plus its hooks.sh AC9 differential fixtures.
 function resolveWorktreeAlways(repoRoot) {
   const parsed = parsePolicy(repoRoot);
   if (Object.prototype.hasOwnProperty.call(parsed, 'worktree-always')) {
@@ -94,6 +98,52 @@ function readListKey(repoRoot, key) {
   return value.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// `control-mode` (#4609): the one comparison site every consumer of the control-
+// mode keys goes through, so "is it on" is decided in exactly one place. Takes the
+// resolved value (e.g. from resolve-policy.js --values), strictly the exact string
+// `on` — `ON`, `yes`, an absent value and a boolean are all off, so a typo can
+// never switch the mode on. #4609 shipped it ahead of the #4608 control-mode
+// leaves (#4615-#4624) so they share one comparison. Callers: readRiskPolicy
+// (#4618) and bin/lib/issues/autonomy.js's effectiveCeiling (#4620).
+function isControlModeOn(value) {
+  return value === 'on';
+}
+
+const controlModeOff = () => ({ controlMode: false, extraCategories: [], pathGlobs: {}, globsInvalid: false });
+
+// The `risk-categories` value (a list, or a comma-joined string) as a list of slugs.
+function extraCategoriesOf(value) {
+  return Array.isArray(value) ? value : String(value).split(',').map((slug) => slug.trim()).filter(Boolean);
+}
+
+// The risk-flag policy (#4618): repoRoot, { readFile } -> { controlMode, extraCategories,
+// pathGlobs, globsInvalid }, the extras bin/lib/issues/risk-flag-classify.js and Check G
+// take. `.claude-tweaks/policy.yml` found through locatePolicyFile (repoRoot's own, else a linked worktree's main checkout's; a non-string repoRoot throws a TypeError); an absent file (ENOENT/ENOTDIR) is
+// control mode off and any other read error throws — unlike readPolicyFile's null, since
+// "no extra categories" would read a policy slug as unknown. `risk-categories` and
+// `risk-path-globs` are consulted only with control mode on (isControlModeOn), each
+// through resolvePolicyKeys; a rejected `risk-path-globs` block reads `globsInvalid: true`
+// with no globs.
+function readRiskPolicy(repoRoot, deps) {
+  const { readFile = fs.readFileSync } = deps || {};
+  let policyRaw;
+  try {
+    const policyPath = locatePolicyFile(repoRoot).path;
+    if (policyPath === null) throw new TypeError('readRiskPolicy: repoRoot must be a string');
+    policyRaw = readFile(policyPath, 'utf8');
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return controlModeOff();
+    throw error;
+  }
+  const mode = resolvePolicyKeys(['control-mode'], { policyRaw })['control-mode'];
+  if (!isControlModeOn(mode.value)) return controlModeOff();
+  const resolved = resolvePolicyKeys(['risk-categories', 'risk-path-globs'], { policyRaw });
+  const extraCategories = extraCategoriesOf(resolved['risk-categories'].value);
+  const globs = resolved['risk-path-globs'];
+  const globsInvalid = globs.invalid === true;
+  return { controlMode: true, extraCategories, pathGlobs: globsInvalid || globs.value === null ? {} : globs.value, globsInvalid };
+}
+
 // `commit-scope` (#3298): the constant Conventional-Commits scope token
 // bin/compose-subject.js falls back to. Read raw (trimmed; blank -> null),
 // deliberately not through resolveValue — that would silently turn a bad
@@ -138,6 +188,22 @@ function readEfficiencyCeilings(repoRoot, profile) {
   return { roundTrips: read('round-trip'), procedureKb: read('procedure-kb'), verifyMinutes: read('verify-minutes') };
 }
 
+// `changelog-max-releases` (#5563) — takes the raw policy.yml reader as a dep so
+// the release consumers keep their own file access. null (absent file) or an
+// absent/invalid key is 0 (never trim); a throwing reader is reported in `error`
+// rather than read as 0 silently.
+function readChangelogMaxReleases(readPolicy) {
+  let raw;
+  try {
+    raw = readPolicy();
+  } catch (err) {
+    return { count: 0, error: String((err && err.message) || err) || 'unknown error' };
+  }
+  if (raw == null) return { count: 0, error: null };
+  const key = 'changelog-max-releases';
+  return { count: resolveValue(key, parseFlatLines(raw)[key]), error: null };
+}
+
 const SERVICE_NAME_RE = /^[a-z][a-z0-9-]*$/;
 
 // `port-services` (#1792): the list-key convention above, plus per-entry
@@ -175,5 +241,5 @@ function resolvePortServices(repoRoot) {
 
 module.exports = {
   isWorktreeAlwaysOn, resolveWorktreeAlways, readIntegrationBranch, readListKey, readCommitScope, resolvePortServices, readGhTimeoutMs,
-  readGitTimeoutMs, readEfficiencyCeilings,
+  readGitTimeoutMs, readEfficiencyCeilings, isControlModeOn, readRiskPolicy, extraCategoriesOf, readChangelogMaxReleases,
 };

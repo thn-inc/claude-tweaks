@@ -1,54 +1,5 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { toIssuePayload } = require('../../../plugin/bin/lib/code-health/issue-payload');
-
-const FINDING = {
-  id: 'codehealth-abc12345',
-  title: 'Oversized file: big.js (700 lines)',
-  lens: 'oversized-file',
-  category: 'architecture',
-  severity: 'high',
-  confidence: 'high',
-  area: 'apps/web',
-  files: ['apps/web/big.js'],
-  evidence: 'apps/web/big.js has 700 lines, exceeding the 300-line threshold.',
-  suggestion: 'Break big.js into smaller modules.',
-  acceptance: 'No module exceeds 300 lines, or the threshold is documented.',
-};
-
-test('labels are code-health + code-health:<severity>', () => {
-  assert.deepStrictEqual(toIssuePayload(FINDING).labels, ['code-health', 'code-health:high']);
-});
-
-test('title is the finding title', () => {
-  assert.strictEqual(toIssuePayload(FINDING).title, 'Oversized file: big.js (700 lines)');
-});
-
-test('body embeds the fingerprint marker so it can be re-extracted for dedup', () => {
-  const { body } = toIssuePayload(FINDING);
-  assert.ok(body.includes('<!-- code-health-fingerprint: codehealth-abc12345 -->'));
-});
-
-test('body carries /specify-shaped sections sourced from the finding', () => {
-  const { body } = toIssuePayload(FINDING);
-  assert.ok(body.includes('## Current State'));
-  assert.ok(body.includes('apps/web/big.js'));                 // files
-  assert.ok(body.includes('has 700 lines'));                   // evidence
-  assert.ok(body.includes('## Deliverables'));
-  assert.ok(body.includes('Break big.js into smaller modules.')); // suggestion
-  assert.ok(body.includes('## Acceptance Criteria'));
-  assert.ok(body.includes('No module exceeds 300 lines'));     // acceptance
-});
-
-// The marker is the dedup contract: the skill reads issue bodies and matches this.
-test('the fingerprint can be re-extracted from the body with a stable regex', () => {
-  const { body } = toIssuePayload(FINDING);
-  const m = body.match(/<!--\s*code-health-fingerprint:\s*(codehealth-[0-9a-f]{8})\s*-->/);
-  assert.strictEqual(m[1], 'codehealth-abc12345');
-});
-
-// ── v2 issue payload ───────────────────────────────────────────────────────
-
 const { toIssuePayloadV2 } = require('../../../plugin/bin/lib/code-health/issue-payload');
 
 const V2_FINDING = {
@@ -133,25 +84,6 @@ test('v2 fingerprint marker is re-extractable with extractFingerprint', () => {
   assert.strictEqual(extractFingerprint(body), 'codehealth-ab12cd34');
 });
 
-test('toIssuePayload (v1) still works after extending the module', () => {
-  // Guard: existing v1 export must be unaffected.
-  const { toIssuePayload: v1 } = require('../../../plugin/bin/lib/code-health/issue-payload');
-  const FINDING = {
-    id: 'codehealth-abc12345', title: 'T', lens: 'oversized-file', category: 'architecture',
-    severity: 'high', confidence: 'high', area: 'apps/web',
-    files: ['apps/web/big.js'], evidence: 'E', suggestion: 'S', acceptance: 'A',
-  };
-  const p = v1(FINDING);
-  assert.ok(p.body.includes('<!-- code-health-fingerprint: codehealth-abc12345 -->'));
-  assert.deepStrictEqual(p.labels, ['code-health', 'code-health:high']);
-});
-
-// legacy: v1's footer is frozen — this documents the contract, not a live convention.
-test('toIssuePayload (v1) footer stays the unqualified legacy form', () => {
-  const { body } = toIssuePayload(FINDING);
-  assert.ok(body.includes('_Filed by `/code-health`.'), 'v1 footer must stay unqualified (frozen legacy behavior)');
-});
-
 test('v2 footer cites the fully-qualified command name', () => {
   const { body } = toIssuePayloadV2(V2_FINDING);
   assert.ok(body.includes('_Filed by `/claude-tweaks:code-health`.'), 'v2 footer must use the qualified command name');
@@ -188,16 +120,6 @@ test('toIssuePayloadV2 threads verifiedAsOf through to the composed body', () =>
   const { extractVerifiedAsOf } = require('../../../plugin/bin/lib/issues/record');
   const { body } = toIssuePayloadV2(V2_FINDING, 'abc1234');
   assert.strictEqual(extractVerifiedAsOf(body), 'abc1234');
-});
-
-test('legacy toIssuePayload (v1) never carries a verifiedAsOf param — frozen shape unaffected', () => {
-  // v1 is a historical fixed shape (see the frozen-legacy comment at its
-  // definition) — it is not called by bin/code-health.js and must not gain
-  // this feature, so this only proves it still ignores an extra argument
-  // rather than throwing.
-  const { toIssuePayload } = require('../../../plugin/bin/lib/code-health/issue-payload');
-  const { body } = toIssuePayload(FINDING);
-  assert.ok(!body.includes('Verified-as-of:'));
 });
 
 test('AC4.1: toIssuePayloadV2 lists the anchor path under ### Key Files', () => {

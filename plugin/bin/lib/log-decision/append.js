@@ -19,6 +19,10 @@
 // mainRoot. No `.git` found anywhere above the run dir also refuses — this
 // predicate fails CLOSED on the unknown case, same as
 // bin/lib/hooks/worktree-reap.js.
+//
+// Anchoring is the first half of the guard. The second half (#5830,
+// bin/lib/run-dir-guard.js) requires the run dir to sit strictly inside
+// <checkout>/.claude-tweaks/pipelines/ — 'not-a-run-dir' otherwise.
 'use strict';
 
 const fs = require('fs');
@@ -26,8 +30,11 @@ const path = require('path');
 const { mainCheckoutRoot, safeReal } = require('../hooks/worktree-detect');
 const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
+const { isUnderPipelines } = require('../run-dir-guard');
 
 const STATUSES = ['AUTO', 'STAGED', 'KEPT-PROMPT', 'SCANNED', 'REFUSED', 'SKIP'];
+// Read vocabulary: the writer's set plus FAILED, a hand-composed historical status log-decision.js never writes.
+const DECISION_STATUSES = [...STATUSES, 'FAILED'];
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -82,7 +89,8 @@ function isDirectory(p) {
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
 
-// { runDir, cwd?, mainRoot? } -> { ok, file } | { ok:false, reason:'missing'|'not-anchored' }
+// { runDir, cwd?, mainRoot? } -> { ok, file } | { ok:false, reason:'missing'|'not-anchored'|'not-a-run-dir' }
+// 'not-a-run-dir': anchored, but not strictly inside <checkout>/.claude-tweaks/pipelines/ (#5830).
 function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   const real = safeReal(runDir);
   if (!real || !isDirectory(real)) return { ok: false, reason: 'missing' };
@@ -98,13 +106,16 @@ function resolveTarget({ runDir, cwd = process.cwd(), mainRoot }) {
   // accept whatever real checkout the run dir happens to sit in ([IL-127]-
   // class bypass). An explicit `mainRoot: null` is a distinct, deliberate
   // opt-out kept for callers that only want the .git-file structural gate
-  // above and never asked for a domain match.
+  // above and never asked for a domain match; the pipelines containment check
+  // below still applies to them.
   let anchor = mainRoot;
   if (mainRoot === undefined) {
     anchor = mainCheckoutRoot(cwd);
     if (!anchor) return { ok: false, reason: 'not-anchored' };
   }
   if (anchor && (safeReal(anchor) || anchor) !== gitRoot) return { ok: false, reason: 'not-anchored' };
+  // Last on purpose: missing and not-anchored keep priority; runs even with `mainRoot: null`.
+  if (!isUnderPipelines(real, gitRoot)) return { ok: false, reason: 'not-a-run-dir' };
   return { ok: true, file: path.join(real, 'decisions.md') };
 }
 
@@ -147,8 +158,8 @@ function placeEntry(text, section, entry) {
 
 // { runDir, section?, entry } -> { file, created }. Append-only; never rewrites prior lines.
 // A one-item appendEntries call.
-function appendEntry({ runDir, section, entry }) {
-  return appendEntries({ runDir, items: [{ section, entry }] });
+function appendEntry({ runDir, section, entry, createParent }) {
+  return appendEntries({ runDir, items: [{ section, entry }], createParent });
 }
 
 // { runDir, items: [{ section?, entry }] } -> { file, created }. Places every
@@ -169,7 +180,11 @@ function appendEntry({ runDir, section, entry }) {
 // lock is best-effort/fail-open (file-lock.js's own contract) — a write that
 // can't acquire it in time still proceeds unlocked rather than hang the
 // caller.
-function appendEntries({ runDir, items }) {
+//
+// `createParent: false` (#5555) is for a caller whose run dir a concurrent
+// archive may move away: a missing run dir is then never recreated by the lock,
+// and the write throws instead (writeFileAtomic does not create it either).
+function appendEntries({ runDir, items, createParent }) {
   const file = path.join(runDir, 'decisions.md');
   if (!items.length) return { file, created: false };
   const lockPath = path.join(runDir, '.decisions.lock');
@@ -186,9 +201,9 @@ function appendEntries({ runDir, items }) {
     for (const { section, entry } of items) text = placeEntry(text, section, entry);
     writeFileAtomic(file, text);
     return { file, created };
-  });
+  }, { createParent });
 }
 
 module.exports = {
-  STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
+  STATUSES, DECISION_STATUSES, formatEntry, parseEntry, resolveTarget, appendEntry, appendEntries, hms, normalizeSection,
 };

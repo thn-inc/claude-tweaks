@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const { run } = require('../../../plugin/bin/closing-tally');
@@ -18,7 +19,7 @@ function fakeDeps() {
 }
 
 test('--file reads a fixture and prints the JSON envelope with counts, line, and unclassified', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-'));
+  const dir = scratchDir('ct-');
   const file = path.join(dir, 'decisions.md');
   fs.writeFileSync(file, '## /backlog\n- AUTO 10:00:00 — Backlog refine: set priority:high on #1.\n');
   const deps = fakeDeps();
@@ -26,12 +27,29 @@ test('--file reads a fixture and prints the JSON envelope with counts, line, and
   assert.equal(code, 0);
   const envelope = JSON.parse(deps.out.join(''));
   assert.equal(envelope.counts.priority, 1);
-  assert.equal(envelope.line, '1 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 skipped · 0 failed');
+  assert.equal(envelope.line, '1 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 resolved · 0 skipped · 0 failed');
   assert.deepEqual(envelope.unclassified, []);
 });
 
+test('--run counts two Resolve-lane lines as 2 resolved with nothing unclassified (#4566, real input)', () => {
+  const dir = scratchDir('ct-resolved-');
+  fs.writeFileSync(path.join(dir, 'decisions.md'), [
+    '## /backlog',
+    '- AUTO 05:53:50 — Backlog refine: Backlog refine: resolved decision on #3944 as keep (human-confirmed) — accepted the proposal: the flagged chain line describes this parent\'s sub-issue chain, not a blocker of #3944 — no dependency wire; needs:decision removed; live labels now priority:high. Reversibility: high (Resolved line and label are reversible).',
+    '- AUTO 05:53:50 — Backlog refine: Backlog refine: resolved decision on #4456 as keep (human-confirmed) — stays ready as a human-run check; blocked in practice until #3977\'s draft PR #4445 merges (the report-only disposition pass is absent from main, so the dry-run prints no would-close lines yet); needs:decision removed; live labels now ready, priority:low. Reversibility: high (Resolved line and label are reversible).',
+    '',
+  ].join('\n'));
+  const deps = fakeDeps();
+  const code = run(['--run', dir], deps);
+  assert.equal(code, 0);
+  const envelope = JSON.parse(deps.out.join(''));
+  assert.equal(envelope.counts.resolved, 2);
+  assert.deepEqual(envelope.unclassified, []);
+  assert.equal(envelope.line, '0 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 2 resolved · 0 skipped · 0 failed');
+});
+
 test('--run reads {dir}/decisions.md', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-run-'));
+  const dir = scratchDir('ct-run-');
   fs.writeFileSync(path.join(dir, 'decisions.md'), '## /backlog\n- AUTO 10:00:00 — Backlog refine: flagged back #7 — needs scoring.\n');
   const deps = fakeDeps();
   const code = run(['--run', dir], deps);

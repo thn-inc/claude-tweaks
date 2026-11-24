@@ -1,0 +1,32 @@
+{
+  "budgets": [
+    {
+      "id": "b-1",
+      "budget_type": "ProductPricing",
+      "budget_product_sku": "actions",
+      "budget_scope": "organization",
+      "budget_amount": 100,
+      "prevent_further_usage": true,
+      "budget_entity_name": "example-org",
+      "budget_alerting": {
+        "will_alert": false,
+        "alert_recipients": []
+      }
+    },
+    {
+      "id": "b-2",
+      "budget_type": "ProductPricing",
+      "budget_product_sku": "git_lfs",
+      "budget_scope": "organization",
+      "budget_amount": 50,
+      "prevent_further_usage": true,
+      "budget_entity_name": "example-org",
+      "budget_alerting": {
+        "will_alert": false,
+        "alert_recipients": []
+      }
+    }
+  ],
+  "has_next_page": false,
+  "total_count": 2
+}

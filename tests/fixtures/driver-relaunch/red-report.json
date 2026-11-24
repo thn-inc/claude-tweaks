@@ -1,0 +1,23 @@
+{
+  "sha": "9433bf12308984d87b72efe56795e3331f00a623",
+  "dirty": true,
+  "startedAt": "2026-11-23T07:39:03.875Z",
+  "durationMs": 170,
+  "pass": false,
+  "checks": {
+    "tests": {
+      "command": "node --test failing.test.js ok.test.js",
+      "exitCode": 1,
+      "durationMs": 124,
+      "logPath": "/scratch/.git/claude-tweaks-verify/tests.log",
+      "summary": "tests 2, pass 1, fail 1",
+      "failingRegion": "✖ failing tests:\n\ntest at failing.test.js:1:21\n✖ adds (0.832208ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  2 !== 3\n  \n      at TestContext.<anonymous> (/scratch/failing.test.js:1:59)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1402:25)\n      at Test.start (node:internal/test_runner/test:1262:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 2,\n    expected: 3,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n",
+      "counts": {
+        "tests": 2,
+        "pass": 1,
+        "fail": 1
+      }
+    }
+  },
+  "effectivePass": false
+}

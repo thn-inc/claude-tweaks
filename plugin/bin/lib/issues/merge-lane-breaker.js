@@ -26,6 +26,8 @@
 
 const { createNamespacedState } = require('../health-core/durable-state');
 const { discoverClosingCommits, isClosingCommitReverted } = require('./trust.js');
+const { dispositionState } = require('./acceptance.js');
+const { LABELS } = require('./record.js');
 
 const NAMESPACE = 'merge-lane';
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -125,7 +127,7 @@ function writeWatched(root, mutatorFn, opts) {
 // windowDays: the resolved trust-revert-window-days policy value.
 //
 // Returns exactly one of:
-//   { action: 'trip', reason: 'demo:changes-requested' | 'revert' | 'reopened' }
+//   { action: 'trip', reason: 'demo:changes-requested' | 'accept:changes-requested' | 'revert' | 'reopened' }
 //   { action: 'prune' }                        — resolved-good, drop from watched.json
 //   { action: 'update', newState: 'OPEN' | 'CLOSED' }  — still-pending, leave in place
 //     (newState is what Step 0.5 writes back as the entry's lastKnownState)
@@ -133,11 +135,18 @@ function classifyWatchedRecord(entry, gitLog, now, windowDays) {
   const rec = entry || {};
   const labels = Array.isArray(rec.labels) ? rec.labels : [];
 
-  // demo:changes-requested is checked first regardless of open/closed state
-  // — a machine-granted record that a human explicitly rejected at demo is
-  // the clearest possible signal, independent of the merge/reopen timeline.
-  if (labels.includes('demo:changes-requested')) {
-    return { action: 'trip', reason: 'demo:changes-requested' };
+  // A changes-requested acceptance verdict is checked first regardless of
+  // open/closed state — a machine-granted record that a human explicitly
+  // rejected at acceptance is the clearest possible signal, independent of the
+  // merge/reopen timeline. dispositionState reads both label spellings under the
+  // one precedence rule, so the verdict outranks a leftover pending label. The
+  // reason names the spelling the record carries, preferring demo:* so the
+  // existing reason pin holds.
+  if (dispositionState(labels) === 'changes-requested') {
+    const reason = labels.includes(LABELS.DEMO_CHANGES_REQUESTED)
+      ? LABELS.DEMO_CHANGES_REQUESTED
+      : LABELS.ACCEPT_CHANGES_REQUESTED;
+    return { action: 'trip', reason };
   }
 
   // Reopen detection: the watched.json entry's own last-observed state

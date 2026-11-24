@@ -5,6 +5,9 @@ files:
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/skills/dispatch/reporting.md
   - plugin/skills/_shared/auto-mode-contract.md
+  - plugin/skills/build/plan-review-asked-classes.md
+  - plugin/skills/_shared/planning-decisions.md
+  - plugin/bin/risk-flags.js
 ---
 
 # Answer a Plan-Review Question Before the Build Starts
@@ -24,6 +27,7 @@ files:
   - A gap the spec's own text settles is fixed by an additive `## Plan Review Clarifications` section in the in-run spec and posted once as a comment on the record; the record body is never edited and nothing is staged.
   - Undecided-behaviour and cross-task findings amend the plan; the plan audit re-runs once and the review itself never repeats.
   - A `fast-lane` record or a trivial plan skips the step (roster tag `plan-review`), with a `SKIP` line in the run's `decisions.md`.
+  - Under `plan-at-specify: on`, a build that reuses the plan already reviewed at `/claude-tweaks:specify` skips the step too, with a `SKIP` line whose condition reads `plan reviewed at specify ({commit})`; that plan's questions were asked while the record was shaped (`build-a-record-whose-plan-was-reviewed-at-specify-6060.md`).
 - **Red flags:**
   - An existing Acceptance Criterion edited or loosened by the review.
   - A reviewer reply that could not be read being treated as "No findings."
@@ -35,27 +39,38 @@ files:
 - **Should feel:** Like a decision only the user can make, asked once, before any code exists — not a mid-build interruption over something the spec already said.
 - **Should understand:** The pick becomes a clarification attributed `Decided by the user at plan review:` in the in-run spec and in one record comment; the build then continues. `Stop the build` ends the run with the HARD-GATE `plan-review-needs-human`, and the failure card offers the claim release rather than taking it.
 - **Should understand:** A `parallel`-wave member of a multi-spec `/claude-tweaks:flow` run gets no prompt — it runs inside a subagent that cannot ask. It posts the same `<!-- plan-review-question -->` comment as step 3 and stops with `plan-review-needs-human`; the orchestrating `/flow` shows that stop on its failure card, and the answer goes on the record body as in step 3.
+- **Should understand:** Under `planning-decisions: asked-classes`, only a design-level, hard-to-undo or contradictory gap is asked; every other one is settled with a `Settled at planning:` line under `## Planning Decisions` (`_shared/planning-decisions.md`).
+- **Should understand:** Under `asked-classes` each asked question lists the recommended reading first, labelled `(Recommended)`, then the other reading, then `Stop the build`; a hard-to-undo question in a risk category the record does not flag gets that flag added to the in-run spec first (`risk-flags.js add`), so the plan owes its Check G proof.
 - **Red flags:** A question whose two readings are not both defensible; one prompt per finding instead of one batched prompt; the claim released without the card offering it.
+- **Red flags (`asked-classes`):** A low-level detail question (which error string, which file holds a pointer) reaching the prompt; a settled call with no `Settled at planning:` line in the in-run spec or no record comment.
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
 - **URL:** the record's `<!-- plan-review-question -->` comment, linked from the dispatch report block
-- **Action:** Read each question and its two readings, then edit the record's **body** to state the decision.
+- **Action:** Read each question and its two readings, then answer each one by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's **body**.
 - **Should feel:** Self-contained — the comment carries the finding, its evidence and both readings, so the answer needs no access to the build's worktree.
 - **Should understand:**
   - A dispatched build runs in a subagent that cannot ask, so it posts the question, stops before Task 1, and the dispatching session relays it; Settle releases the claim without counting a retry and the draft PR stays open.
   - The question also rides in the build's `BLOCKED` reply, so a failed comment post or label write still reaches the dispatch report — flagged there as a concern, never dropped.
   - The next build materializes the record body, not its comments — an answer left only as a comment does not reach it.
   - A headless (Routine-fired) stop also adds `bot:blocked` and removes the record's `auto:*` grants; a human-typed dispatch keeps `auto:build`, so a later drain can re-pick the record until it is answered.
+  - Under `planning-decisions: asked-classes`, the comment for a hard-to-undo question names the risk category and asks you to add it to the body's `Risk-flags:` line alongside the `**Decision**`.
 - **Red flags:** The draft PR closed as a failure tombstone; an attempt counted against `dispatch-retry-ceiling`; a stop whose question appears nowhere on the record.
 
 ### 4. Resume the build — terminal
 - **URL:** `/claude-tweaks:backlog refine` (only when the stop was headless), then `/claude-tweaks:dispatch #{n}`
 - **Action:** Re-grant `auto:build` if the headless stop removed it, then dispatch the record again.
 - **Should feel:** Like continuing, not starting over — the answered body is the new spec.
-- **Should understand:** The resumed build re-materializes from the answered body; the earlier run's local worktree was removed by dispatch's ordinary first-call-failure teardown, and nothing from it is needed.
-- **Red flags:** The resumed run asking the same question again after the body answered it; a `bot:blocked` record re-dispatched without the question being answered first.
+- **Should understand:**
+  - The resumed build re-materializes from the answered body; the earlier run's local worktree was removed by dispatch's ordinary first-call-failure teardown, and nothing from it is needed.
+  - Its plan review is a **converged round** (#4958): the record carries the trusted question comment and its body was edited after it. A fresh reviewer may still find new gaps, but each one that some reading settles without altering a criterion or contradicting a recorded decision is settled by the build itself — appended under `## Plan Review Clarifications` as `Settled by plan review after an answered round:` with the reading not taken, and listed at the Wrap-Up Review Console. Only a gap no reading can settle that way stops the build again.
+  - A record re-picked before anyone edited its body is not converged: it stops on the same question rather than having it settled for you.
+  - Under `planning-decisions: asked-classes` the converged-round rule does not apply: a gap your recorded decision already answers is settled with a `Decided by the user at planning:` line and never asked again, and a hard-to-undo gap you answered without adding its risk flag still gets the flag added, so the implementing plan owes the proof.
+- **Red flags:** The resumed run asking a new question that a reading could have settled without touching a criterion or a recorded decision; a settled gap missing from the Review Console; a `bot:blocked` record re-dispatched without the question being answered first.
 
 ## Origin
 - Created during build of #3377, part of the "Build dispatch cost shape" decomposition (origin #3229) — in a measured 10-task build, 3 of the 5 Important final-review findings were spec or plan gaps found only after all the code was written.
-- Pinned by `tests/build-plan-review-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js` and `tests/plan-review-dispatch-relay-conformance.test.js`.
+- Updated by #4958: a resumed build's plan review converges after one answered round instead of stopping round after round (10 plan-review attempts across 7 records in the 2026-10-31 dispatch firing produced no implementation), and dispatched questions ask for a `**Decision**` paragraph.
+- Updated by #6051: an opt-in `planning-decisions: asked-classes` policy value settles every needs-human gap except design-level, hard-to-undo and contradictory ones (#5292 counted 271 plan-review questions over 157 of 714 runs); the default `ask-all` leaves steps 1-4 exactly as described above.
+- Updated at the wrap-up of #6060: under `plan-at-specify: on`, a build that reuses the plan reviewed at specify skips this review, so step 1 names that skip beside the fast-lane and trivial-plan ones.
+- Pinned by `tests/build-plan-review-conformance.test.js`, `tests/planning-decisions-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`, `tests/plan-review-dispatch-relay-conformance.test.js` and `tests/plan-review-convergence-conformance.test.js`.
 - Related: `merge-small-adjacent-tasks-at-plan-time-3379.md` and `add-a-fast-lane-skip-to-the-roster-1926.md`, other plan-time steps of the same build.

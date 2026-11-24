@@ -5,18 +5,21 @@
 const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { classifyGhApiError } = require('../issues/claim-store');
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
+const { ghOptions, injectedGhDeps } = require('../repo-resolve');
 
 // #2567: this bound is deliberately its own, smaller value — not GH_TIMEOUT_MS
 // — so a single retry-on-timeout (opted into below) still costs at most 4s
 // worst case, well under a real check's 5-10s cold-call latency.
 const PREFLIGHT_TIMEOUT_MS = 2000;
 
-function defaultRunner(args, timeoutMs) {
-  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true });
+// `inj` ({ env, homeDir, cwd }, all optional) is a hook event's context (#5377): the child runs in that environment and
+// directory, and gh's host lookup reads it too. Absent, the child inherits the process's, as before.
+function defaultRunner(args, timeoutMs, inj = {}) {
+  return execFileSyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true, ...(inj.cwd ? { cwd: inj.cwd } : {}), ...(inj.env ? { env: inj.env } : {}) }, injectedGhDeps(inj)));
 }
 
-async function defaultRunnerAsync(args, timeoutMs) {
-  const { stdout } = await execFileAsyncTimed('gh', args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+async function defaultRunnerAsync(args, timeoutMs, inj = {}) {
+  const { stdout } = await execFileAsyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true, ...(inj.cwd ? { cwd: inj.cwd } : {}), ...(inj.env ? { env: inj.env } : {}) }, injectedGhDeps(inj)));
   return stdout;
 }
 
@@ -42,7 +45,7 @@ function buildFailure(e) {
 // reach the GitHub API at all", not "does this repo's data look right".
 function ghHealthCheck(opts = {}) {
   const timeoutMs = opts.timeoutMs || PREFLIGHT_TIMEOUT_MS;
-  const runner = opts.runner || ((args) => defaultRunner(args, timeoutMs));
+  const runner = opts.runner || ((args) => defaultRunner(args, timeoutMs, opts));
   return runClassified(
     () => { runner(['api', 'rate_limit', '-q', '.rate.remaining']); return buildSuccess(); },
     buildFailure,
@@ -58,7 +61,7 @@ function ghHealthCheck(opts = {}) {
 // version above — only the blocking-vs-non-blocking spawn differs.
 async function ghHealthCheckAsync(opts = {}) {
   const timeoutMs = opts.timeoutMs || PREFLIGHT_TIMEOUT_MS;
-  const runner = opts.runner || ((args) => defaultRunnerAsync(args, timeoutMs));
+  const runner = opts.runner || ((args) => defaultRunnerAsync(args, timeoutMs, opts));
   return runClassifiedAsync(
     async () => { await runner(['api', 'rate_limit', '-q', '.rate.remaining']); return buildSuccess(); },
     buildFailure,

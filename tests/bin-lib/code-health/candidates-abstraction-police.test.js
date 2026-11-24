@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { scratchDir } = require('../../helpers/tmp-dir');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
@@ -20,7 +21,7 @@ const {
 } = require('../../../plugin/bin/lib/code-health/candidates-abstraction-police');
 
 function tmp() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codehealth-abspolice-'));
+  return scratchDir('codehealth-abspolice-');
 }
 function gitInit(root) {
   execFileSync('git', ['-C', root, 'init', '-q']);

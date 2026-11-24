@@ -2,14 +2,20 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const os = require('node:os');
 const { readTsv } = require('./lib/calibration/tsv-reader.js');
 const { readEventsKinds } = require('./lib/calibration/events-reader.js');
 const { aggregate } = require('./lib/calibration/aggregate.js');
 const { ROW_IDS } = require('./lib/wrap-up/registry.js');
+const { lstatType } = require('./lib/path-guard/index.js');
+const { resolveAgainst } = require('./lib/health-core/io.js');
+const { resolvePolicy, callerDeps, scalarValue, warningLines, EXIT_OK } = require('./resolve-policy');
 
-function parseArgs(argv) {
-  const out = { runs: 20, json: false, root: process.cwd() };
+// -> { runs, json, root, displayRoot } or { error }. `root` is what the reads use
+// (a relative --root resolved against cwd); `displayRoot` is the spelling the
+// "no telemetry yet" line prints (the --root value as given, else cwd).
+function parseArgs(argv, cwd) {
+  const out = { runs: 20, json: false, root: cwd, displayRoot: cwd };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--runs') {
@@ -21,18 +27,17 @@ function parseArgs(argv) {
       // typo like `--runs abc` would silently report over unlimited history
       // instead of the requested window. Review finding #901.
       if (raw === undefined || !Number.isFinite(parsed) || parsed <= 0) {
-        process.stderr.write(`--runs requires a positive number, got: ${raw}\n`);
-        process.exitCode = 2;
-        return null;
+        return { error: `--runs requires a positive number, got: ${raw}` };
       }
       out.runs = parsed;
     } else if (a === '--json') out.json = true;
-    else if (a === '--root') out.root = argv[++i];
-    else {
-      process.stderr.write(`unknown flag: ${a}\n`);
-      process.exitCode = 2;
-      return null;
-    }
+    else if (a === '--root') {
+      // A missing value used to reach resolveAgainst(cwd, undefined) and throw
+      // an uncaught TypeError (exit 1); refuse it like --runs does.
+      if (argv[i + 1] === undefined) return { error: '--root requires a value' };
+      out.displayRoot = argv[++i];
+      out.root = resolveAgainst(cwd, out.displayRoot);
+    } else return { error: `unknown flag: ${a}` };
   }
   return out;
 }
@@ -59,15 +64,37 @@ function loadRuns(root) {
   });
 }
 
-// resolve-policy.js resolves its project root via `git rev-parse
-// --show-toplevel` at ITS OWN process cwd (never from a --run value or a
-// positional argument — see that file's own header comment: "--run" there
-// names a pipeline run directory's config.yml overlay, a different concept
-// entirely). The only way to make it read `root`'s own policy.yml is to
-// spawn it with `root` as the child process's cwd.
-function resolveAutonomyCeiling(root, runner = execFileSync) {
+// A finished run still awaiting archival has a live dir under
+// pipelines/{runId}/ — load it so the newest runs aren't empty stubs. Only a
+// single path segment is a dir name, and lstat (not stat) keeps a symlink at
+// pipelines/{runId} from redirecting the read; anything else stays an empty stub.
+function loadLiveRun(root, runId) {
+  const emptyRun = { runId, decisionLines: [], events: { counts: {} } };
+  const isDirName = /^[^/\\]+$/.test(runId) && runId !== '.' && runId !== '..';
+  if (!isDirName) return emptyRun;
+  const liveDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  if (lstatType(liveDir).type !== 'directory') return emptyRun;
+  return {
+    runId,
+    decisionLines: readDecisionLines(path.join(liveDir, 'decisions.md')),
+    events: readEventsKinds(path.join(liveDir, 'events.jsonl')) || { counts: {} },
+  };
+}
+
+// The policy core resolves its project root via `git rev-parse --show-toplevel`
+// at the cwd it is given (never from a run value — its `--run` names a pipeline
+// run directory's config.yml overlay, a different concept entirely), so `root`
+// is passed as that cwd to read `root`'s own policy.yml. In-process, so no
+// child process: whatever the spawned `--values autonomy` call forwarded to
+// the parent's stderr (library notes, then the invalid-value warning) goes to
+// deps.stderr.
+function resolveAutonomyCeiling(root, deps) {
   try {
-    return runner('node', [path.join(__dirname, 'resolve-policy.js'), '--values', 'autonomy'], { encoding: 'utf8', cwd: root, windowsHide: true }).trim();
+    const keys = ['autonomy'];
+    const out = deps.resolvePolicy({ keys }, callerDeps({ cwd: root, env: deps.env, homeDir: deps.homeDir, stderr: deps.stderr }));
+    if (out.code !== EXIT_OK) return 'unknown';
+    for (const line of warningLines({ keys, ...out }, { values: true })) deps.stderr(line);
+    return scalarValue(out.result.autonomy);
   } catch {
     return 'unknown';
   }
@@ -77,7 +104,11 @@ function renderText(result, ceiling) {
   const lines = [];
   lines.push('## Calibration read-out');
   lines.push('');
-  lines.push(`Window: last ${result.window.runIds.length} archived run(s).`);
+  const { excluded } = result.window;
+  const excludedNote = excluded > 0
+    ? `; ${excluded} run id${excluded === 1 ? '' : 's'} without a timestamp excluded`
+    : '';
+  lines.push(`Window: last ${result.window.runIds.length} archived run(s)${excludedNote}.`);
   lines.push('');
   lines.push('### Per-registry-row finding rate');
   for (const [rowId, v] of Object.entries(result.perRow)) {
@@ -124,22 +155,24 @@ function renderText(result, ceiling) {
   return lines.join('\n') + '\n';
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (!args) return;
+function run(argv, deps) {
+  const args = parseArgs(argv, deps.cwd());
+  if (args.error !== undefined) {
+    deps.stderr(`${args.error}\n`);
+    return 2;
+  }
   const tsvPath = path.join(args.root, '.claude-tweaks', 'wrap-up-outcomes.tsv');
   const tsv = readTsv(tsvPath);
   if (!tsv) {
-    process.stdout.write(`no telemetry yet (${tsvPath} absent)\n`);
-    process.exitCode = 0;
-    return;
+    deps.stdout(`no telemetry yet (${path.join(args.displayRoot, '.claude-tweaks', 'wrap-up-outcomes.tsv')} absent)\n`);
+    return 0;
   }
-  const runs = loadRuns(args.root);
-  if (!runs) {
-    process.stdout.write('no archived runs found\n');
-    process.exitCode = 0;
-    return;
-  }
+  const loaded = loadRuns(args.root);
+  // No archive dir yet is a normal state (a project's first run awaits its
+  // first archival): live-dir stubs below still apply, so only an empty
+  // result after them is "no archived runs".
+  const archiveAbsent = loaded === null;
+  const runs = loaded || [];
   if (tsv.rows.length > 0) {
     // #917: a partially-pruned archive (older run dirs archived-then-deleted
     // while wrap-up-outcomes.tsv persists) must not silently drop TSV rows
@@ -151,15 +184,30 @@ function main() {
     const tsvRunIds = new Set(tsv.rows.map((r) => r.runId));
     for (const runId of tsvRunIds) {
       if (!existingRunIds.has(runId)) {
-        runs.push({ runId, decisionLines: [], events: { counts: {} } });
+        runs.push(loadLiveRun(args.root, runId));
       }
     }
   }
+  if (archiveAbsent && runs.length === 0) {
+    deps.stdout('no archived runs found\n');
+    return 0;
+  }
   const result = aggregate({ tsv, runs, rowIds: ROW_IDS, windowN: args.runs });
-  const ceiling = resolveAutonomyCeiling(args.root);
-  if (args.json) process.stdout.write(JSON.stringify(result) + '\n');
-  else process.stdout.write(renderText(result, ceiling));
-  process.exitCode = 0;
+  const ceiling = resolveAutonomyCeiling(args.root, deps);
+  if (args.json) deps.stdout(JSON.stringify(result) + '\n');
+  else deps.stdout(renderText(result, ceiling));
+  return 0;
 }
 
-main();
+const realDeps = {
+  stdout: (t) => process.stdout.write(t),
+  stderr: (t) => process.stderr.write(t),
+  cwd: () => process.cwd(),
+  env: process.env,
+  homeDir: () => os.homedir(),
+  resolvePolicy,
+};
+
+module.exports = { run, realDeps };
+
+if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

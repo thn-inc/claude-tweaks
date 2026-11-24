@@ -35,8 +35,8 @@ function tryGit(execImpl, args) {
 }
 
 // usableAnchor({ stamp, execImpl }): the canonical sha of the stamp's own
-// anchor (stamp.js's anchorOf: fullSha, or sha for a legacy stamp) when — and
-// only when — it is a real ancestor of HEAD, else null. Shared by
+// anchor (stamp.js's anchorOf: fullSha, or sha for a stamp with no fullSha)
+// when — and only when — it is a real ancestor of HEAD, else null. Shared by
 // resolveBase's own anchor-first path below and bin/verify.js's
 // --base-vs-anchor conflict check, so "is this anchor still usable" (a
 // rewritten/rebased history can strand the old anchor even though it still
@@ -54,13 +54,15 @@ function usableAnchor({ stamp = null, execImpl = execFileSync } = {}) {
 
 function resolveBase({
   stamp = null, integrationBranch = null, base = null, execImpl = execFileSync, requireNonDegenerate = false,
+  head = undefined, anchor: knownAnchor = undefined,
 } = {}) {
   if (base) {
     const out = tryGit(execImpl, ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
     if (out === null || out.trim() === '') throw new ChangedFilesError(`--base "${base}" does not resolve to a commit`);
     return out.trim();
   }
-  const anchor = usableAnchor({ stamp, execImpl });
+  // A caller that already derived the usable anchor (or read HEAD) passes it, so the same git question is not asked twice.
+  const anchor = knownAnchor !== undefined ? knownAnchor : usableAnchor({ stamp, execImpl });
   if (anchor !== null) {
     // #2486: a stamp anchor identical to HEAD answers "nothing since the
     // last full verify" — correct for --scope's own incremental intent
@@ -70,10 +72,12 @@ function resolveBase({
     // question instead produces a plausible-looking but empty diff. When
     // the anchor is this degenerate and an integration branch was given,
     // skip it and fall through to the integration-branch resolution below.
-    const head = requireNonDegenerate && integrationBranch
-      ? tryGit(execImpl, ['rev-parse', '--verify', 'HEAD'])
-      : null;
-    const degenerate = head !== null && head.trim() === anchor;
+    let headSha = null;
+    if (requireNonDegenerate && integrationBranch) {
+      if (typeof head === 'string' || head === null) headSha = head;
+      else headSha = tryGit(execImpl, ['rev-parse', '--verify', 'HEAD']);
+    }
+    const degenerate = headSha !== null && headSha.trim() === anchor;
     if (!degenerate) return anchor;
   }
   if (!integrationBranch) {
@@ -141,7 +145,9 @@ function statusPorcelainPaths(raw) {
 // The committed diff is read first, then the working tree; the first non-M
 // status seen for a path wins (an existence change outranks a content edit),
 // else M. Without the flag the return shape is exactly { base, files }.
-function changedFiles({ base, execImpl = execFileSync, withStatus = false }) {
+// `capture` (#5773), when an object, receives the raw porcelain read as `capture.status`, so a caller
+// that needs the same working-tree read next (mergeNarrowing) can pass it on instead of asking git again.
+function changedFiles({ base, execImpl = execFileSync, withStatus = false, capture = null }) {
   const seen = new Map();
   const record = ([f, s]) => { if (!seen.has(f) || seen.get(f) === 'M') seen.set(f, s); };
   const diff = git(execImpl, ['diff', '--name-status', '-z', '--end-of-options', `${base}..HEAD`]);
@@ -149,6 +155,7 @@ function changedFiles({ base, execImpl = execFileSync, withStatus = false }) {
   // --untracked-files=all: an untracked directory reports each file inside
   // it individually rather than collapsing to the directory name.
   const status = git(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+  if (capture !== null) capture.status = status;
   for (const pair of parseStatusPorcelainPairsZ(status)) record(pair);
   const files = [...seen.keys()].sort();
   if (!withStatus) return { base, files };
@@ -179,7 +186,17 @@ function parseNameOnlyZ(raw) {
 // there is no such merge, {ref} does not resolve, or any read above fails: the
 // fallback over-verifies, never under-verifies. resolveBase's anchor-first
 // contract is untouched — this filters its result, it never moves the base.
-function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync }) {
+// Narrowing declines (#4638) when HEAD has no commit ahead of {ref}, or when HEAD's
+// committed tree equals {ref}'s (an empty {ref}..HEAD diff, such as a branch whose
+// only commit merges {ref}). In either case {ref}'s tip would vouch for itself, and
+// the premise that it passed its own CI is exactly what the run is there to check.
+// At 844e0d7eb this excluded all 298 changed paths and stamped a zero-suite pass.
+// Both checks run before the working tree is read, so a dirty edit never rescues a
+// narrowing. verify.js also drops a narrowing whose result selects no suite.
+// `status` (#5773), when a string, is the working-tree read changedFiles just made: the caller passes it
+// only when nothing that can write the tree ran between the two reads (this function's own git calls
+// are reads). Without it the working tree is read here, as before.
+function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileSync, status: knownStatus = null }) {
   if (!anchor || !integrationBranch) return null;
   const ref = preferOriginRef((args) => git(execImpl, args), integrationBranch);
   const merges = tryGit(execImpl, ['rev-list', '--merges', '--parents', '--end-of-options', `${anchor}..HEAD`]);
@@ -189,10 +206,14 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
     return otherParents.some((p) => tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', p, ref]) !== null);
   });
   if (!hasMergedRef) return null;
+  const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
+  if (ahead === null || !/^[1-9]\d*$/.test(ahead.trim())) return null;
   const differs = tryGit(execImpl, ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', ref, 'HEAD']);
   if (differs === null) return null;
-  const own = new Set(parseNameOnlyZ(differs));
-  const status = tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+  const differing = parseNameOnlyZ(differs);
+  if (differing.length === 0) return null;
+  const own = new Set(differing);
+  const status = typeof knownStatus === 'string' ? knownStatus : tryGit(execImpl, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
   if (status === null) return null;
   for (const f of statusPorcelainPaths(status)) own.add(f);
   const mb = tryGit(execImpl, ['merge-base', '--end-of-options', anchor, ref]);

@@ -33,6 +33,10 @@ references are the primary input) and it has no use for decomposition mode's muc
 
 > **Parallel execution:** On a comma-list batch, the per-record resolution fetch (`gh issue view` / local-store read) and Step 2.5a's surface sniff are independent per-record reads — the same fetches `flow/materialize.md`'s Resolution already parallelizes — and should run concurrently across every record in the batch. The per-record write calls (compose-then-write-once, `ceremony-check #{n}`, `framing-check #{n}`) and the single batched design-intent question stay sequential — not because cross-record writes collide (Parallel-safety above: they don't, each record's write targets its own issue), but because each is a multi-step invocation depending on that record's own already-resolved content and verdicts rather than a single independent read, and the loop itself never fans out (`SKILL.md`'s "a loop never a fan-out — no Task dispatch, one record at a time").
 
+<!-- plan-at-specify:start -->
+**Planning at specify (#6056).** Under `work-backend: github-issues` only, resolve `plan-at-specify` once per invocation, before the first record: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, read `planning.md` in this skill's directory now; it runs at the points the `plan-at-specify` blocks in `shaping-mode-stamping.md` and `shaping-mode-readback.md` name, plus a per-record hold-state capture before `shaping-mode-stamping.md`'s `needs:*` bullet, and on a batch it defers the writes and fans its planners and reviewers out, the one exception to the loop's no-fan-out rule above. Any other backend, any other output, or a failed call skips every `plan-at-specify` block and shaping runs as written. Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice.
+<!-- plan-at-specify:end -->
+
 ---
 
 ### Edit the body into spec shape
@@ -72,7 +76,7 @@ Rewrite the record's body into seven sections, in this literal shape (`spec-temp
 
 `## Current State`, `## Deliverables`, `## Acceptance Criteria`, `## Release Note`, `## Technical Approach`, and `## Gotchas` are the core of the record body template `spec-template.md` documents — Current State, Deliverables, Acceptance Criteria, and Release Note are the structural minimum (`_shared/work-record.md`'s spec-shaped-body check re-verifies exactly these four are present and non-empty before the authorization gate will grant anything); Technical Approach and Gotchas can stay brief for a small record. `### Key Files` lists every file path the composed Technical Approach section references, plus — when the work renames a contract surface — every consumer file the rename-grep in `spec-template.md`'s `### Key Files` guidance turns up, plus — always — every generator module the generated-file grep in that same guidance turns up, with the generated entry annotated per that guidance. One bullet per path, in `spec-template.md`'s `- \`{path}\` — {what changes}` format. This is what `/flow`, `/dispatch`, and `/help` read for cross-spec file-overlap detection (`bin/lib/issues/grouping.js`'s `extractKeyFilesSection`) — omitting it silently disables that detection for this record (see Cross-spec conflict detection in `flow/multi-spec.md`). The template's fuller section list (Overview, Non-Goals, Prerequisites, and so on) is decomposition-mode scaffolding for multi-record output — a single shaped record doesn't need it.
 
-Absorb the record's existing content into whichever section it belongs in — a human-filed or captured record's raw text usually becomes Current State plus Deliverables context, with Acceptance Criteria freshly written since raw captures rarely state them explicitly. A record already filed in this shape — every `by:code-health`/`by:harness-health`/`by:journey-health`/`by:docs-health` record is spec-shaped and agent-sized by construction, per `_shared/work-record.md`'s born-ready rule — needs near-zero translation — but "already shaped" is never a by-eye judgment (#2841): write the record's fetched body, unmodified, to this run's session-scoped temp file (`_shared/session-tmp-root.md` — the same `specify-shaped-body.md` path `shaping-mode-stamping.md`'s Compose-then-write-once fence resolves into `$SPECIFY_SHAPED_BODY`; resolve it in the same Bash call as the check, since no shell variable survives from one call to the next) and run `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" --check "$SPECIFY_SHAPED_BODY"` on it. Exit 0 → the live body is already spec-shaped: move on rather than rewriting content that's already correct. Any non-zero exit → it is not, whatever it looks like. Shape it through the sections below like any other record, and never report it `already shaped, no-op`.
+Absorb the record's existing content into whichever section it belongs in — a human-filed or captured record's raw text usually becomes Current State plus Deliverables context, with Acceptance Criteria freshly written since raw captures rarely state them explicitly. A record already filed in this shape — every `by:code-health`/`by:harness-health`/`by:journey-health`/`by:docs-health`/`by:ci-health` record is spec-shaped and agent-sized by construction, per `_shared/work-record.md`'s born-ready rule — needs near-zero translation — but "already shaped" is never a by-eye judgment (#2841): write the record's fetched body, unmodified, to this run's session-scoped temp file (`_shared/session-tmp-root.md` — the same `specify-shaped-body.md` path `shaping-mode-stamping.md`'s Compose-then-write-once fence resolves into `$SPECIFY_SHAPED_BODY`; resolve it in the same Bash call as the check, since no shell variable survives from one call to the next) and run `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-record.js" --check "$SPECIFY_SHAPED_BODY"` on it. Exit 0 → the live body is already spec-shaped: move on rather than rewriting content that's already correct. Any non-zero exit → it is not, whatever it looks like. Shape it through the sections below like any other record, and never report it `already shaped, no-op`. On exit 0, an explicit single-record invocation (a lone `#N`, a range with equal bounds, or `#N --chained`) still runs `shaping-mode-stamping.md`'s `### Risk flags` on the fetched body in that same file, with an unmodified copy as its `--prior-body-file` (the paths that section names); afterwards `cmp -s "{tmp-shaped-body}" "{tmp-prior-body}"` exits 0 when the two are byte-identical, and any non-zero exit (1 they differ, 2 a file is missing) counts as changed. When `settle` changed the body, the record is written as it stands, with no recomposition, through Compose-then-write-once and reports `shaped`: it enters Compose-then-write-once after this Risk flags run and skips that section's own `### Risk flags` run, since a second run would re-keep a removed flag the prior body still carries and log its removal again; when the body comes back byte-identical, it stays `already shaped, no-op`. On a comma list, a range with `A < B`, and bare drain (`--budget`, the deprecated `next` alias, `/claude-tweaks:sweep`'s `--source sweep`), an exit-0 record moves on untouched, as before.
 
 **Feedback-filing deliverable check.** Before composing any Deliverable or Acceptance Criterion that directs `/claude-tweaks:feedback` to file an upstream report, classify the affected component against `_shared/learning-routing.md`'s classifier rule 1 using the `## Current State`/`## Technical Approach` content just drafted above: does it name a `/claude-tweaks:*` skill, a `skills/_shared/*` contract, or a `bin/*.js` behavior as the affected component? If yes, the Deliverable may proceed unchanged. If no — the drafted Current State itself places the subject outside the plugin (a third-party dependency, the Claude Code harness, or a corrected mis-attribution) — never emit that Deliverable/AC; such a filing is structurally unreachable (`feedback/SKILL.md` Step 2 stops before D5 is ever reached). Route the concern instead per `learning-routing.md`'s Non-claude-tweaks-upstream paragraph ("Report it to the user, name the owner, and stop") when the subject is a live third-party dependency worth flagging, or omit it from Deliverables entirely (a one-line note in `## Gotchas` is enough) when it doesn't warrant separate action. This mirrors `feedback/SKILL.md` Step 2's own "if it is not D5, stop" gate, applied here at composition time instead of at filing time.
 
@@ -96,16 +100,32 @@ more, render a three-column table in the shaping output before proceeding —
 |--------|-------|---------|
 | #{n} | {score} | {signals, comma-joined} |
 
-— and append every candidate as `#{n}` to the composed body's `**Related:**` line (creating the
-line if the record doesn't already carry one). A candidate surfaced here is worth a human's
+— render every candidate in the table, then split the hits mechanically — the table omits anchor counts, so never filter by eye. Resolve `$NEAR_DUP_HITS` first (`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json` prints it), overwrite it with this record's finder output — never run against a file an earlier record left — then run the call below (its first line re-resolves the same path; the refusal step reuses the file):
+
+```bash
+NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
+node -e "
+const { isRelatedCandidate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const hits = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+console.log(JSON.stringify({ related: hits.filter(isRelatedCandidate).map((h) => h.number), rest: hits.filter((h) => !isRelatedCandidate(h)).map((h) => h.number) }));
+" -- "$NEAR_DUP_HITS"
+```
+
+Append only `related` to the composed body's `**Related:**` line (creating the line if the record doesn't already carry one) — the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit. Name `rest` on one line under the table, `Not added to Related (one signal, under 2 shared anchors): #a, #b`, so a human can still add one by hand. Omit that line when `rest` is empty, and leave `**Related:**` untouched (create no line) when `related` is empty. When the call exits non-zero or prints no JSON line, append nothing and name every hit on the `Not added to Related` line followed by `(split failed: {stderr})` — never fall back to appending every candidate or to filtering by eye. A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
+A candidate in `deepOverlapHits` (`bin/lib/issues/near-duplicate.js`) has at least 3 shared Current State
+anchors (`DEEP_OVERLAP_MIN`, #4701) and is a likely duplicate, so name it in the shaping output with its
+shared-anchor count and read that record's body before stamping `ready`. The refusal call below prints every
+such hit as `deep` (number and shared-anchor count); the finder ranks deeper overlap higher, but a deep hit
+need not be the table's first row, so name every `deep` entry rather than reading only the top row. This call-out is in addition to the table and the `**Related:**` line and is
+surface-only: shaping still proceeds, and a deep-overlap hit never refuses on its own.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
 only on a hit scoring **at least 2 signals** (`MIN_REFUSAL_SCORE`, #3366), `title-similarity` among
 them, whose candidate is `ready` **and** in flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob as `live`) or an
 open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
 reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). A score-1 candidate is
-surfaced in the table and the `**Related:**` line only; file and anchor overlap alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
+surfaced in the table (and on the `**Related:**` line when `isRelatedCandidate` accepts it) only; file and anchor overlap alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
 build. Build the state and decide in one call. First resolve this run's two session-scoped paths
 (`_shared/session-tmp-root.md` — `NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"` and `NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"`
 prints them) and write the finder's output and the candidates' snapshot entries there as JSON —
@@ -116,7 +136,7 @@ Then run the call below; its first line re-resolves the same two paths:
 NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
 NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"
 node -e "
-const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE, deepOverlapHits } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
 const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
 const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
 const { execFileSync } = require('child_process');
@@ -145,6 +165,8 @@ const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber,
 const hit = shapingRefusal(hits, state);
 const result = hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false };
 if (unreadable.length) result.unreadable = unreadable;
+const deep = deepOverlapHits(hits).map((h) => ({ number: h.number, sharedAnchors: h.sharedAnchors.length }));
+if (deep.length) result.deep = deep;
 console.log(JSON.stringify(result));
 " -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```
@@ -180,7 +202,7 @@ Report this record's Actions Performed row as `refused — proposed Absorb into 
 rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
 already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
 refusal the finder's signals authorize — and only in combination, never a single signal; every other candidate (no title-similar, `ready`,
-in-flight match scoring at least 2 signals per `shapingRefusal`) is surfaced via the table and `**Related:**` append only, mirroring the
+in-flight match scoring at least 2 signals per `shapingRefusal`) is surfaced via the table and, when `isRelatedCandidate` accepts it, the `**Related:**` append only, mirroring the
 refusal grounds an earlier sweep applied by hand for the same reason (#1944).
 
 ### Dependency-narration check

@@ -24,11 +24,13 @@ function repairOriginHead(root, opts = {}) {
   const runGit = opts.runGit || defaultRunGit;
   const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : FETCH_TIMEOUT_MS;
   const now = opts.now != null ? opts.now : Date.now();
+  // `opts.env` (optional) is the environment both git children run in; absent, the inherited one (#5377).
+  const envOpts = opts.env ? { env: opts.env } : undefined;
   // writeCache is best-effort and never throws, so this is safe on every
   // failure path, the catch below included.
   const rememberFailure = () => writeCache(root, { ...readCache(root), lastOriginHeadRepairFailedAt: now });
   try {
-    const remote = runGit(['remote', 'get-url', 'origin'], root);
+    const remote = runGit(['remote', 'get-url', 'origin'], root, envOpts);
     if (remote.failure) return null;
     // #4180: a dry run writes neither a ref nor the cache. Checked after the read-only remote
     // probe so a checkout with no `origin` still reports nothing, as before.
@@ -41,7 +43,7 @@ function repairOriginHead(root, opts = {}) {
     if (isFresh(readCache(root), now, DEFAULT_TTL_MS, 'lastOriginHeadRepairFailedAt')) {
       return { outcome: 'skipped', reason: 'recent-failure' };
     }
-    const set = runGit(['remote', 'set-head', 'origin', '--auto'], root, { timeoutMs });
+    const set = runGit(['remote', 'set-head', 'origin', '--auto'], root, { timeoutMs, ...envOpts });
     if (set.failure) {
       rememberFailure();
       // git's own message (auth reject, unreachable host) is what an operator

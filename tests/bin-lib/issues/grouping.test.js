@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
+const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
 const { readText } = require('../../helpers/read-skill');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
@@ -281,15 +281,26 @@ test('never merges across priority bands', () => {
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
 });
 
-test('never merges records with different auto:merge state', () => {
+test('never merges records with different merge-grant state', () => {
   const groups = [
-    [fastLaneIssue(1, { labels: ['auto:merge'] })],
-    [fastLaneIssue(2)],
-    [fastLaneIssue(3, { labels: ['auto:merge'] })],
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:build'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
   ];
   const { bundles } = bundleFastLaneSingletons(groups);
   assert.strictEqual(bundles.length, 1);
   assert.deepStrictEqual(bundles[0].records, [1, 3]);
+});
+
+test('#5734: a leftover auto:merge without auto:build buckets with the ungranted records, never with a granted bundle', () => {
+  const groups = [
+    [fastLaneIssue(1, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(2, { labels: ['auto:merge'] })],
+    [fastLaneIssue(3, { labels: ['auto:build', 'auto:merge'] })],
+    [fastLaneIssue(4)],
+  ];
+  const { bundles } = bundleFastLaneSingletons(groups);
+  assert.deepStrictEqual(bundles.map((b) => b.records).sort((a, b) => a[0] - b[0]), [[1, 3], [2, 4]]);
 });
 
 test('bundles oldest-first within a bucket', () => {
@@ -533,7 +544,7 @@ test('accepts label objects ({name}) as well as plain strings', () => {
 
 // ── extractKeyFiles: the `### Key Files` fallthrough (#154) ──────────────────
 // /specify-produced sub-issues and /capture records carry no by:* origin label, so
-// they reach the fallthrough below the four health-sweep branches. Before #154
+// they reach the fallthrough below the five health-sweep branches. Before #154
 // that fallthrough was a bare `return []`, and every such record reported zero
 // key files — making groupByFileOverlap emit singletons regardless of real
 // overlap, which is exactly the collision guard /dispatch relies on.
@@ -712,6 +723,50 @@ test('extractKeyFilesSection returns [] for a body with no Key Files subsection'
   assert.deepStrictEqual(extractKeyFilesSection('## Current State\n\nno key files here\n'), []);
 });
 
+// ── extractKeyFileEntries ─────────────────────────────────────────────────────
+
+test('extractKeyFileEntries returns null when the body has no Key Files heading', () => {
+  assert.strictEqual(extractKeyFileEntries('## Current State\n\nno key files here\n'), null);
+});
+
+test('extractKeyFileEntries reads an empty section as {entries: [], unparsed: 0}', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n### Gotchas\n\n- `x.js`\n'), { entries: [], unparsed: 0 });
+});
+
+test('extractKeyFileEntries counts a section with prose but no list as unparsed 1', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\nsee the plan\n'), { entries: [], unparsed: 1 });
+});
+
+test('extractKeyFileEntries counts a list item with no backticked span as unparsed', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- plain/path.js no backticks\n'), { entries: [], unparsed: 1 });
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `a.js` — ok\n- plain/b.js\n'), { entries: [{ path: 'a.js', note: '— ok' }], unparsed: 1 });
+});
+
+test('extractKeyFileEntries splits the first backticked span from its note and counts a template placeholder as unparsed', () => {
+  assert.deepStrictEqual(
+    extractKeyFileEntries('### Key Files\n\n- `plugin/a.js` — new predicate\n- `{path}` — {what changes}\n'),
+    { entries: [{ path: 'plugin/a.js', note: '— new predicate' }], unparsed: 1 },
+  );
+});
+
+test('extractKeyFileEntries reads an unfilled template section as unparsed 1, not as empty', () => {
+  assert.deepStrictEqual(extractKeyFileEntries('### Key Files\n\n- `{path}` — {what changes}\n'), { entries: [], unparsed: 1 });
+});
+
+// Expected values are what extractKeyFilesSection returned at e11c6e29c (before extractKeyFileEntries), so they
+// pin that the path view stayed byte-identical, including for a placeholder-only and an empty section.
+test('extractKeyFilesSection keeps its pre-extractKeyFileEntries results', () => {
+  const cases = [
+    ['## Technical Approach\n\n### Key Files\n\n- `src/only.js` — the change\n', ['src/only.js']],
+    ['## Current State\n\nno key files here\n', []],
+    ['### Key Files\n\n- `a.js`\n- plain.js\n- `{path}` — x\n* `b.js` (modify, c)\n\n### Gotchas\n\n- `z.js`\n', ['a.js', 'b.js']],
+    ['### Key Files\n\n- `a/tests/` or `tests/`\n', ['a/tests/']],
+    ['### Key Files\n\n- `{path}` — {what changes}\n', []],
+    ['### Key Files\n\n### Gotchas\n\n- `x.js`\n', []],
+  ];
+  for (const [body, expected] of cases) assert.deepStrictEqual(extractKeyFilesSection(body), expected);
+});
+
 // ── expectsKeyFilesSection (#661) ──────────────────────────────────────────────
 
 test('expectsKeyFilesSection is true for a plain /specify-shaped issue (no origin label)', () => {
@@ -732,6 +787,12 @@ test('expectsKeyFilesSection is false for a by:journey-health-origin issue', () 
 
 test('expectsKeyFilesSection is false for a by:docs-health-origin issue', () => {
   assert.strictEqual(expectsKeyFilesSection({ labels: ['by:docs-health'] }), false);
+});
+
+test('a by:ci-health record: expectsKeyFilesSection false, and its Check header id is never read as a file', () => {
+  const issue = { labels: ['by:ci-health', 'ready'], body: '**Check:** `repeated-work` | **Workflow:** `ci` | **Step:** `npm ci`\n\n## Current State\n' };
+  assert.strictEqual(expectsKeyFilesSection(issue), false);
+  assert.deepStrictEqual(extractKeyFiles(issue), []);
 });
 
 test('expectsKeyFilesSection is true for an issue with no labels at all', () => {
@@ -1220,6 +1281,23 @@ test('findInFlightNeighbours drops an in-flight duplicate of a candidate before 
     [{ id: 5, keyFiles: ['x.js'] }, { id: 9, keyFiles: ['x.js'] }],
   );
   assert.deepStrictEqual(result.get(5), [{ number: 9, files: ['x.js'] }]);
+});
+
+test('AC1.1: findInFlightNeighbours collapses an in-flight id listed twice into one edge (liveIds dedupe, #4645)', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js'] }],
+    [{ id: 9, keyFiles: ['a.js'] }, { id: 9, keyFiles: ['a.js'] }],
+    { hubPathMinCount: Infinity },
+  );
+  assert.deepStrictEqual(result.get(1), [{ number: 9, files: ['a.js'] }]);
+});
+
+test('AC1.1: a twice-listed in-flight id does not inflate the pool toward the hub threshold (liveIds dedupe, hubs enabled, #4645)', () => {
+  const result = findInFlightNeighbours(
+    [{ id: 1, keyFiles: ['a.js'] }],
+    [{ id: 9, keyFiles: ['a.js'] }, { id: 9, keyFiles: ['a.js'] }],
+  );
+  assert.deepStrictEqual(result.get(1), [{ number: 9, files: ['a.js'] }]);
 });
 
 test('buildDispatchGroups keeps two fast-lane records that share a file out of one bundle', () => {

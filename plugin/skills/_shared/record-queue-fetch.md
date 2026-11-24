@@ -41,7 +41,7 @@ snapshot instead of shelling out on every call.
   as before this section existed. Nothing breaks; only the caching benefit is unavailable to a
   session-id-less caller.
 - **Field set** — the union every consumer needs, so one fetch covers all of them:
-  `number,title,labels,body,state,stateReason,createdAt,closedAt,comments,updatedAt,milestone`
+  `number,title,labels,body,state,stateReason,createdAt,closedAt,comments,updatedAt,milestone,author`
   (`record-snapshot.js`'s `UNION_FIELDS` — the code twin of this line; cite the constant, never
   retype the field list).
 - **Freshness** — the snapshot file's mtime younger than `record-snapshot-ttl-seconds` seconds
@@ -81,9 +81,12 @@ else
       require('fs').writeFileSync('{tmp-records-file}', JSON.stringify(mergeOpenIntoUnion(union, open)));
     "
   fi
+  node -e "require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/author-association.js').enrichRecordsFile('{tmp-records-file}')"
   [ -n "$SNAPSHOT" ] && cp "{tmp-records-file}" "$SNAPSHOT"
 fi
 ```
+
+**Author association (#4577).** The `enrichRecordsFile` line adds each `Origin:` record's `authorAssociation` (`gh issue list --json` has no such field) through aliased GraphQL batches, so `provenance.js`'s `issueAuthorTrust` can ignore an outsider's `Origin:` line. It fails open: a failed batch (its first cause on the line), an issue the answer carries no association for, an unresolvable repo or an unreadable file leaves the records as fetched and prints one `author-association enrichment incomplete …` line on stderr, and those records keep the pre-#4577 Origin-line behaviour. A fresh snapshot is never re-enriched, so a degraded enrichment is cached with it: the gap lasts the snapshot's TTL and only the call that fetched prints the warning. The association is the author's current one, as seen by the fetching token: a former collaborator's old records, or a private org member seen through a token without org visibility, can read `CONTRIBUTOR`/`NONE`, so their `Origin:` lines count as untrusted and the record resolves `human:human` — the fail-closed direction, accepted.
 
 The fences quote every `{tmp-*}` placeholder themselves — substitute a bare path or a bare `$VAR`, never a pre-quoted value.
 
@@ -142,8 +145,8 @@ node -e "
 Note that `{tmp-records-file}` now holds the **unfiltered** `--state all` snapshot content (open
 and closed together) — the `.filter((i) => i.state === 'OPEN')` above is what narrows it down to
 this section's open-only contract on the way to `{tmp-faceted-file}`. A consumer that reads
-`{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` (none do today) would
-need to apply the same filter itself.
+`{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` would need to apply
+the same filter itself.
 
 `backlog-fetch-limit` replaces the previous hardcoded 200/500 per-consumer limits — `gh issue list --limit N` auto-paginates internally regardless of how large `N` is, so raising the default doesn't change the fetch mechanism, only how much it's willing to pull before stopping. A consumer whose own population is naturally small (e.g. a `--label ready` filtered fetch) still uses this same limit and the same truncation check — the limit bounds "how many rows before we assume there might be more," not a per-consumer tuning knob.
 

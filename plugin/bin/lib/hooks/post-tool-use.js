@@ -1,12 +1,13 @@
-// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
+// bin/lib/hooks/post-tool-use.js — E2: commit breadcrumbs (log tier) + closing-keyword check (warn tier) + design-doc capture nudge (warn tier) + EnterWorktree staleness backstop (warn tier) + post-teardown re-anchor backstop (warn tier, see checkPostTeardownReanchor below) + worktree hold stamp/clear on EnterWorktree/ExitWorktree (log tier, see ./worktree-hold.js) + ad-hoc-session run-dir stamping (log tier, see stampAdHocRunDir below) + skill-invocation ledger (log tier, see ./skill-invocation.js) + AskUserQuestion ledger (log tier, see logAskUserQuestion below).
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { gitTargets } = require('./git-command');
+const { gitTargets, subjectLine } = require('./git-command');
 const ctxLib = require('./context');
 const runDirResolve = require('./run-dir-resolve');
 const skillInvocation = require('./skill-invocation');
 const wtDetect = require('./worktree-detect');
+const holdLib = require('./worktree-hold');
 // Reused, not reimplemented (#703): the same teardown-target resolution
 // pre-tool-use.js's own checkTeardownGate relies on. Safe to require here —
 // pre-tool-use.js never requires this file back.
@@ -21,10 +22,10 @@ const { ISSUE_REF_SOURCE } = require('../issue-branch-tracking');
 // Reused rather than reimplemented a third time (CLAUDE.md's don't-duplicate
 // rule) — `resolveIntegrationBranch`'s fallback profile (no explicit arg,
 // policy.yml then origin/HEAD) fits this file's EnterWorktree handler as-is.
-const { resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
+const { resolveIntegrationBranch, bareIntegrationName, parseWorktreeList } = require('./worktree-reap');
 // Session-scoped marker path for the non-EnterWorktree ad-hoc-run-dir rate-limit (#1333) — see
 // stampAdHocRunDir below.
-const { sessionTmpPath } = require('../session-tmp');
+const { sessionTmpPath, envTmpdir } = require('../session-tmp');
 
 // Field/record separators for recentCommits' combined --format string below.
 // ASCII 0x1f/0x1e (unit/record separator) — practically never appear in a
@@ -42,9 +43,9 @@ const REC_SEP = '\x1e';
 // commit for every one of them, so only the last of several real commits
 // was ever actually evaluated. Returns newest-first (git log's own order),
 // each entry `{ hash, ts, message }` (ts null if unparseable).
-function recentCommits(dir, count) {
+function recentCommits(dir, count, env) {
   if (count <= 0) return [];
-  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir);
+  const { stdout: out } = runGit(['log', '-n', String(count), `--format=%h${FIELD_SEP}%ct${FIELD_SEP}%B${REC_SEP}`], dir, { env });
   if (out === null) return [];
   return out
     .split(REC_SEP)
@@ -95,13 +96,13 @@ const BARE_ISSUE_REF_RE = /#\d+/g;
 // Harness-wide, not code-health-specific: fires for any bare issue reference,
 // including harness-health-labelled or human-filed issues.
 //
-// Takes `recentByDir` (dir -> that dir's own recentCommits() results, built
-// once in run() and shared with the breadcrumb loop) rather than the raw
-// target list, so each of possibly several commit-action targets sharing one
-// dir is checked against its OWN commit instead of every target re-reading
-// back the same current-HEAD commit.
-function checkClosingKeyword(recentByDir) {
-  for (const commits of recentByDir.values()) {
+// Takes `commitLists` (each dir's own recentCommits() results, built once in
+// run() and shared with the breadcrumb loop, plus the commits run() matched to
+// lost targets, #4303) rather than the raw target list, so each of possibly
+// several commit-action targets sharing one dir is checked against its OWN
+// commit instead of every target re-reading back the same current-HEAD commit.
+function checkClosingKeyword(commitLists) {
+  for (const commits of commitLists) {
     for (const commit of commits) {
       // Guard against a `git commit` that never actually landed — see
       // recentCommits()'s comment. If this commit isn't fresh, skip it
@@ -235,7 +236,8 @@ function extractToolResponseText(toolResponse) {
 // worktree-reap.js's `findWorktreeEntry`, so a win32 forward-slash porcelain path matches a
 // backslash cwd (#3811).
 function resolveWorktreePathViaPorcelain(ctx, deps = {}) {
-  return ctxLib.listedWorktreeForCwd(ctx.cwd, deps);
+  ctxLib.requireEnv(ctx);
+  return ctxLib.listedWorktreeForCwd(ctx.cwd, { env: ctx.env, ...deps });
 }
 
 function resolveCreatedWorktreePath(ctx) {
@@ -295,7 +297,7 @@ function stampAdHocRunDir(ctx) {
     if (isEnterWorktree) {
       worktreePath = resolveCreatedWorktreePath(ctx);
     } else {
-      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER);
+      const markerPath = sessionTmpPath(sessionId, ADHOC_WORKTREE_CHECKED_MARKER, { tmpdir: envTmpdir(ctx.env) });
       if (markerPath && fs.existsSync(markerPath)) return; // already checked (or ruled out) this session — skip the git call entirely
       // #1864: the porcelain lookup shells out `git -C ctx.cwd worktree list --porcelain`,
       // which is guaranteed to fail when ctx.cwd no longer exists on disk — the shape produced
@@ -327,8 +329,8 @@ function stampAdHocRunDir(ctx) {
     // silently reassign the dir mid-session.
     const existing = ctxLib.readRunState(result.path);
     if (existing && typeof existing.sessionId === 'string' && existing.sessionId && existing.sessionId !== sessionId) return;
-    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(process.env) };
-    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId));
+    const todaysPatch = { worktree: path.resolve(worktreePath), status: 'active', sessionId, ...ctxLib.ownerPidPatch(ctx.env) };
+    const written = ctxLib.writeRunState(result.path, ctxLib.patchWithOwnerBlock(todaysPatch, sessionId, { env: ctx.env }), { env: ctx.env });
     if (!written) {
       // writeRunState failed (I/O error). The mint above already touched
       // decisions.md, which isUnadoptedMint (context.js) treats as evidence
@@ -381,7 +383,7 @@ function checkWindowsLongpaths(ctx) {
     // Read-only: `--get` never writes. A non-zero exit (key unset) and an
     // explicit `false` are both treated as "not enabled" — only a literal
     // `true` skips the nudge.
-    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath);
+    const result = runGit(['config', '--get', 'core.longpaths'], worktreePath, { env: ctx.env });
     // An unset key is a definitive answer from git itself (`config --get`
     // exits 1 with no output) — classified 'git-error', not indeterminate.
     // Only a real check failure (timeout/spawn/no-git — the question was
@@ -424,7 +426,7 @@ function checkWorktreeStaleness(ctx) {
     // name — `branch` is both the remote-side fetch target below (a remote
     // has no `origin/`-prefixed branches of its own) and re-prefixed with
     // `origin/` again for the rev-list comparison — so normalize immediately.
-    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath));
+    const branch = bareIntegrationName(resolveIntegrationBranch(worktreePath, undefined, { env: ctx.env }));
     if (!branch) return null; // no integration branch resolved — nothing to compare against
 
     // `--` guards against argument injection: `branch` traces back to
@@ -436,13 +438,13 @@ function checkWorktreeStaleness(ctx) {
     // which warns and ignores it, but not every consumer of this plugin uses
     // https remotes). `--` forces everything after it to be read as a
     // positional refspec regardless of leading characters.
-    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS });
+    const fetch = runGit(['fetch', 'origin', '--', branch], worktreePath, { timeoutMs: WORKTREE_FETCH_TIMEOUT_MS, env: ctx.env });
     if (fetch.failure) {
       logWorktreeStalenessEvent(ctx, { worktree: worktreePath, branch, result: 'check-failed', reason: fetch.failure });
       return null;
     }
 
-    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath);
+    const revList = runGit(['rev-list', '--count', `HEAD..origin/${branch}`], worktreePath, { env: ctx.env });
     if (revList.failure || revList.stdout === null) {
       logWorktreeStalenessEvent(ctx, {
         worktree: worktreePath, branch, result: 'check-failed', reason: revList.failure || 'unparseable-count',
@@ -526,7 +528,7 @@ function checkPostTeardownReanchor(ctx) {
     // `toplevel()` above) it still resolves correctly even though that exact
     // directory is now gone. Fails closed to null (skip silently) rather
     // than guessing when the walk-up can't find a `.git` at all.
-    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd || process.cwd());
+    const runRoot = wtDetect.mainCheckoutRoot(ctx.cwd);
     const reanchor = runRoot
       ? `Re-anchor there (\`cd ${runRoot}\`) before issuing any further git-dependent command.`
       : 'Re-anchor to this project\'s main checkout before issuing any further git-dependent command ' +
@@ -554,20 +556,20 @@ function checkPostTeardownReanchor(ctx) {
 // `tool_input` — reliable, SDK-typed. What's logged as `response` does NOT
 // come from the SDK's structured `AskUserQuestionOutput` shape
 // (`{questions, answers}`) an earlier version of this function assumed —
-// real captured transcripts (see evals/NOTES.md's "AskUserQuestion
-// input/output shapes" section's Correction) show `tool_response` for
-// this tool is always a plain natural-language string (e.g. `Your questions
-// have been answered: "..."="...". You can now continue with these answers
-// in mind.`) with a varying prefix/suffix, and the embedded question text can
-// contain unescaped nested double quotes — not safely regex-parseable into a
-// structured per-question answer map. So there is no per-question `answer`
-// field; instead ONE raw `response` string for the whole event, extracted via
-// this file's own `extractToolResponseText` (reused, not reimplemented — see
-// that function's header comment, which already documents this exact class
-// of `tool_response`-shape problem for other tools). Never throws — a
-// malformed tool_input/tool_response degrades to an empty questions array
-// and/or a null response rather than breaking the session, per CLAUDE.md's
-// Hooks section ("Never break a session").
+// real captured transcripts (see docs/reference/agent-sdk-payload-notes.md's
+// "AskUserQuestion input/output shapes" section's Correction) show
+// `tool_response` for this tool is always a plain natural-language string
+// (e.g. `Your questions have been answered: "..."="...". You can now
+// continue with these answers in mind.`) with a varying prefix/suffix, and
+// the embedded question text can contain unescaped nested double quotes —
+// not safely regex-parseable into a structured per-question answer map. So
+// there is no per-question `answer` field; instead ONE raw `response` string
+// for the whole event, extracted via this file's own `extractToolResponseText`
+// (reused, not reimplemented — see that function's header comment, which
+// already documents this exact class of `tool_response`-shape problem for
+// other tools). Never throws — a malformed tool_input/tool_response degrades
+// to an empty questions array and/or a null response rather than breaking the
+// session, per CLAUDE.md's Hooks section ("Never break a session").
 function logAskUserQuestion(ctx) {
   const ownedRun = ctx.ownedRun || {};
   if (!ownedRun.dir) return {};
@@ -583,7 +585,9 @@ function logAskUserQuestion(ctx) {
         : [],
     }));
     const response = extractToolResponseText(ctx.input.tool_response);
-    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response }, ownedRun.attribution);
+    // tool_use_id is a hook-envelope field the transcript cannot confirm: null when absent (#5556).
+    const toolUseId = typeof ctx.input.tool_use_id === 'string' ? ctx.input.tool_use_id : null;
+    ctxLib.appendEvent(ownedRun.dir, 'ask-user-question', { questions, response, toolUseId }, ownedRun.attribution);
   } catch {
     /* best-effort — never break the session over a log-tier event */
   }
@@ -591,6 +595,7 @@ function logAskUserQuestion(ctx) {
 }
 
 function run(ctx) {
+  ctxLib.requireEnv(ctx);
   if (ctx.input.tool_name === 'Skill') return skillInvocation.run(ctx);
   if (ctx.input.tool_name === 'AskUserQuestion') return logAskUserQuestion(ctx);
 
@@ -598,7 +603,36 @@ function run(ctx) {
   const hasCommand = typeof command === 'string' && !!command;
   // Computed once and shared below — the breadcrumb loop and the
   // closing-keyword check both need the same command/cwd's git targets.
-  const targets = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  const resolved = hasCommand ? gitTargets(command, ctx.cwd) : [];
+  // #4303: a git command the scanner resolved from a cwd it lost (`lost: true`, past
+  // git-command.js's CWD_SET_CAP) ran in a repo the walk does not know, and its `dir` is only the
+  // walk's start. Its commit is looked for in every candidate repo instead: that start, the main
+  // checkout pre-tool-use's walk collapses onto, the main checkout of each of the command's readings
+  // (the targets marked `reading`: base d9aa6b82d's own reading of the command, git-command.js's
+  // BASE_VIEW), and each worktree `git worktree list` gives for those (the lost cwd may have been
+  // any of them). A reading is a candidate, never a commit target of its own. None is invented:
+  // each is a real checkout, and only a fresh commit in one counts (lostCommitFor,
+  // checkClosingKeyword).
+  const targets = resolved.filter((t) => !t.reading);
+  const readingDirs = resolved.filter((t) => t.reading).map((t) => t.dir);
+  const checkoutsByMain = new Map();
+  const checkoutsOf = (main) => {
+    if (!checkoutsByMain.has(main)) {
+      const listed = runGit(['worktree', 'list', '--porcelain'], main, { env: ctx.env }).stdout;
+      checkoutsByMain.set(main, [main, ...parseWorktreeList(listed).filter((e) => !e.bare && !e.prunable).map((e) => e.path)]);
+    }
+    return checkoutsByMain.get(main);
+  };
+  const mainOf = new Map();
+  const mainCheckoutOf = (d) => {
+    if (!mainOf.has(d)) mainOf.set(d, wtDetect.mainCheckoutRoot(d));
+    return mainOf.get(d);
+  };
+  const candidateDirs = (t) => {
+    if (!t.lost) return [t.dir];
+    const mains = new Set([ctx.cwd || t.dir, ...readingDirs].map(mainCheckoutOf).filter(Boolean));
+    return [...new Set([t.dir, ...[...mains].flatMap(checkoutsOf)].map((d) => path.resolve(d)))];
+  };
 
   // Fetch each dir's own N most recent commits ONCE per dir (a single git
   // spawn returns hash + timestamp + message together), shared by both the
@@ -608,19 +642,65 @@ function run(ctx) {
   // gets each of its own real commits back, not the same current-HEAD
   // commit read N times. Oldest-first, to line up with `targets`' own
   // left-to-right command order (git log itself returns newest-first).
+  // A lost target (#4303) has no dir of its own, so it adds to no count here.
   const commitCountByDir = new Map();
   for (const t of targets) {
-    if (t.action !== 'commit') continue;
+    if (t.action !== 'commit' || t.lost) continue;
     commitCountByDir.set(t.dir, (commitCountByDir.get(t.dir) || 0) + 1);
   }
   const recentByDir = new Map();
-  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count).reverse());
+  for (const [dir, count] of commitCountByDir) recentByDir.set(dir, recentCommits(dir, count, ctx.env).reverse());
   const dirCursor = new Map();
   function nextCommitFor(dir) {
     const list = recentByDir.get(dir) || [];
     const idx = dirCursor.get(dir) || 0;
     dirCursor.set(dir, idx + 1);
     return idx < list.length ? list[idx] : null;
+  }
+  // #4303: the commit a lost commit target made. Each candidate offers its fresh commits (inside
+  // COMMIT_FRESHNESS_WINDOW_SECONDS) that no other target's commit list above already holds, read
+  // once per candidate, and the target takes the one whose subject is its own message's (the
+  // scanner's `subject`, from the command's `-m` text; any fresh one when the command's text gives
+  // none): the oldest such in each candidate, when the candidates offer exactly one. Otherwise (the
+  // commit did not land, a fresh commit has another subject, or two checkouts offer one) the target
+  // has no commit (null): the closing-keyword check judges none for it and it leaves no breadcrumb,
+  // since which commit is this command's own is unknowable, and no warning beats one about another
+  // session's commit.
+  const lostCommitFor = new Map();
+  const judgedLostCommits = [];
+  const lostCommitTargets = targets.filter((t) => t.action === 'commit' && t.lost);
+  if (lostCommitTargets.length) {
+    const held = new Set();
+    for (const list of recentByDir.values()) for (const c of list) if (c.hash) held.add(c.hash);
+    const isFresh = (c) => c.ts !== null && Math.abs(Date.now() / 1000 - c.ts) <= COMMIT_FRESHNESS_WINDOW_SECONDS;
+    const offers = new Map();
+    const offerOf = (dir) => {
+      if (!offers.has(dir)) {
+        const recent = recentCommits(dir, (commitCountByDir.get(dir) || 0) + lostCommitTargets.length, ctx.env);
+        offers.set(dir, recent.filter((c) => c.hash && isFresh(c) && !held.has(c.hash)).reverse());
+      }
+      return offers.get(dir);
+    };
+    const taken = new Set();
+    for (const t of lostCommitTargets) {
+      const found = new Map(); // hash -> { dir, commit }
+      // With no readable message (`-F`, an editor, a variable) any fresh commit is a match, so only a
+      // lone one is taken.
+      const matches = (c) => !taken.has(c.hash) && (typeof t.subject !== 'string' || subjectLine(c.message) === t.subject);
+      for (const dir of candidateDirs(t)) {
+        const commit = offerOf(dir).find(matches);
+        // Two candidates can be one checkout (the start a subdirectory of it): one commit offered is one.
+        if (commit && !found.has(commit.hash)) found.set(commit.hash, { dir, commit });
+      }
+      if (found.size === 1) {
+        const [match] = found.values();
+        taken.add(match.commit.hash);
+        lostCommitFor.set(t, match);
+        judgedLostCommits.push(match.commit);
+      } else {
+        lostCommitFor.set(t, null);
+      }
+    }
   }
   // #2553: a 'push' target carries no per-call commit of its own (unlike
   // 'commit', which advances through nextCommitFor above) — it pushes
@@ -630,7 +710,7 @@ function run(ctx) {
   const pushHeadByDir = new Map();
   function headHashFor(dir) {
     if (!pushHeadByDir.has(dir)) {
-      const head = recentCommits(dir, 1);
+      const head = recentCommits(dir, 1, ctx.env);
       pushHeadByDir.set(dir, head.length ? head[0].hash : null);
     }
     return pushHeadByDir.get(dir);
@@ -661,16 +741,21 @@ function run(ctx) {
       seen.add(`${ev.action}\u0000${ev.hash}\u0000${ev.dir}`);
     }
     for (const target of targets) {
-      const commit = target.action === 'commit' ? nextCommitFor(target.dir) : null;
-      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(target.dir) : null);
+      const lostCommit = lostCommitFor.get(target);
+      if (lostCommit === null) continue; // #4303: a lost commit with no commit of its own logs nothing
+      const dir = lostCommit ? lostCommit.dir : target.dir;
+      let commit = null;
+      if (lostCommit) commit = lostCommit.commit;
+      else if (target.action === 'commit') commit = nextCommitFor(dir);
+      const hash = commit ? commit.hash : (target.action === 'push' ? headHashFor(dir) : null);
       if (hash) {
-        const key = `${target.action}\u0000${hash}\u0000${target.dir}`;
+        const key = `${target.action}\u0000${hash}\u0000${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
       }
       ctxLib.appendEvent(ownedRun.dir, 'commit', {
         action: target.action,
-        dir: target.dir,
+        dir,
         hash: hash || undefined,
       }, ownedRun.attribution);
     }
@@ -678,13 +763,29 @@ function run(ctx) {
 
   // Closing-keyword check (warn tier) — deliberately NOT gated on ctx.runDir.
   if (hasCommand) {
-    const warning = checkClosingKeyword(recentByDir);
+    const warning = checkClosingKeyword([...recentByDir.values(), judgedLostCommits]);
     if (warning) return warning;
   }
 
   // Deferred-subproject capture nudge (warn tier) — deliberately NOT gated on ctx.runDir.
   const designDocNudge = checkDesignDocWrite(ctx);
   if (designDocNudge) return designDocNudge;
+
+  // Worktree hold (#4960, log tier): record that this session now stands in the entered
+  // worktree (or has left it) so the reapers skip it. No early return lies between here and
+  // the run-dir stamp below, and the only earlier returns (closing-keyword, design-doc) fire
+  // on Bash/Write calls, so an EnterWorktree/ExitWorktree call always reaches it; it also runs
+  // ahead of the later nudges that return. Never changes this hook's answer.
+  try {
+    const holdOutcome = holdLib.syncHoldForToolUse(ctx.input, {
+      cwd: ctx.cwd, env: ctx.env, ownerBlock: ctxLib.ownerBlock, resolveEnteredPath: () => resolveCreatedWorktreePath(ctx),
+    });
+    // A failed write leaves the session standing in the worktree unheld: leave a trace (owned run only).
+    const ownedRun = ctx.ownedRun || {};
+    if (holdOutcome === 'failed' && ownedRun.dir) {
+      ctxLib.appendEvent(ownedRun.dir, 'worktree-hold-failed', { tool: ctx.input.tool_name }, ownedRun.attribution);
+    }
+  } catch { /* log tier: never break a session */ }
 
   // Ad-hoc-session run-dir stamping (log tier, side effect only — no
   // message). Runs before the staleness check below so a formal pipeline's

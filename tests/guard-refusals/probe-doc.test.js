@@ -69,9 +69,9 @@ test('AC3.1: docs/hooks.md carries the measured ordering and the shipped doc poi
 
 test('AC3.1: the rule ids the prose lists are the rule ids the normalizer runs', () => {
   const hooks = readText(path.join(ROOT, 'docs', 'hooks.md'));
-  // Derived from the code, not retyped: a sixth rule, or a rename, goes red here until the prose follows.
-  assert.strictEqual(RULE_IDS.length, 5,
-    'docs/hooks.md, the probe reference doc and scratch-worktree.md section 7 say "five shapes" — update them with the rule count');
+  // Derived from the code, not retyped: an eighth rule, or a rename, goes red here until the prose follows.
+  assert.strictEqual(RULE_IDS.length, 7,
+    'docs/hooks.md, the probe reference doc and scratch-worktree.md section 7 name seven rules — update them with the rule count');
   for (const id of RULE_IDS) {
     assert.ok(hooks.includes(id), `docs/hooks.md must name the rule id ${id}`);
     assert.ok(REF.includes(id), `${REF_PATH} must name the rule id ${id}`);

@@ -1,6 +1,6 @@
 # Dispatch — Express Lane Task() Prompt Templates (#4025)
 
-Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). The same rules as `task-prompt.md` bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call, substituting its placeholders. `{context-pack}` is `task-prompt.md`'s Context pack section, resolved and substituted as that section directs. Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
+Referenced by `skills/dispatch/SKILL.md` Step 5 (the express call) and Step 3's loop termination (the post-merge sample review call). `task-prompt.md`'s template rules bind both templates: inline each fenced block verbatim into its own `Task()` call, never paraphrased and never both in one call. Unlike `task-prompt.md`'s, its placeholders are substituted by hand, since `dispatch-prompt.js` renders only that file (#4735). `{context-pack}` is `task-prompt.md`'s Context pack section, each numbered item resolved as it states (item 3's `{policy-values}`: its command's five values as `key=value`, joined by `, `). Neither of Templates A/B/C fits an agent that runs a procedure rather than returning findings, so these are their own minimal templates, as `task-prompt.md`'s are: minimal input, the literal output format inlined, and the four-value status line.
 
 ## Express call
 
@@ -28,34 +28,6 @@ special case (a `DISPATCH_HEADLESS=1` first line on this prompt is the marker it
 otherwise its numbered steps 1-7, with `--reason "failed: express-{step}"`, where `{step}` is the
 bold name of the Procedure step that stopped, lowercased and hyphenated (e.g. `check`, `pr`).
 
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
-wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
-backgrounded sleep): treat every child still outstanding as silent at the bound. A reply that ends
-without a tool call ends the turn.
-
 {context-pack}
 
 Working directory: the dispatching session has ALREADY entered this group's worktree; you
@@ -72,10 +44,16 @@ Either STOP above is outcome `blocked`; every other hook or gate denial up to th
 Procedure's `gate-denial` escalation. Do NOT tear the worktree down, run ExitWorktree or
 `git worktree remove`, or archive the run directory, on any outcome.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
+
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
@@ -83,6 +61,7 @@ GROUP: {issue}
 OUTCOME: {merged | armed | pending-review | express-escalated | blocked}
 MANIFEST: {absolute path to this group's run-dir decisions.md -- a human-readable trace only;
   the dispatching session already holds this run's identity as {minted-run-dir}}
+ISSUE #{issue}: failed:claim-permission-denied -- only when step 1's claim-targets.js exited 7; omit otherwise
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /
@@ -110,34 +89,6 @@ every `${CLAUDE_PLUGIN_ROOT}` as `{plugin-root}`. File every confirmed finding w
 last paragraph says.
 Of its last bullet, log the posted review's `AUTO` line but do not run `close-run`: the
 dispatching session closes the run dir after you report.
-
-Foreground execution (required): run `npm test` and every other long-running command in the
-foreground of this turn, output redirected to a file if it's long -- never with `run_in_background`.
-Never end this turn waiting on a background test run or fix-round you started this way -- you cannot
-count on being re-woken by either, and the run stalls silently when you are not (#1965). A nested
-`Agent` call (a lens-dispatch fan-out, a reproduction pair) launches async, and its completion
-notification reaches you only while this turn is alive (when the call instead returns the child's
-own reply, that child has reported and needs no wait): keep the turn alive with bounded
-foreground waits -- repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children
-(the set launched together), each wait logged as one line (what you wait on, the iteration against
-the bound, how many children are still pending), stopping as soon as every child's
-`<task-notification>` has arrived, never reading or tailing a running child's `output_file` --
-until every child has reported, and never end this turn with one child outstanding. With no `Agent`
-tool (`ToolSearch` finds none, deferred or otherwise), or a child still silent when the bound
-expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
-child is abandoned and no longer counts as outstanding, so your final reply still ends with its
-usual `STATUS:` line. Ignore that child's result if it arrives later; if a late notification
-re-wakes you after your final reply, repeat your whole final reply unchanged -- the dispatcher keeps
-only your latest reply, so a bare `STATUS:` line would replace the report. A child that reports a
-failure (a `failed` notification, an API error, a `BLOCKED`/`NEEDS_CONTEXT` reply) has reported, so
-it is not outstanding: handle it per the dispatching skill's own status handling where one exists,
-otherwise judge that unit yourself. Self-judging is for a read-only unit (a lens, a single read, a
-judge); a write-capable child (one that edits files) still silent at the bound is never redone
-in-session, because an abandoned child keeps running and may still write -- stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
-wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
-backgrounded sleep): treat every child still outstanding as silent at the bound. A reply that ends
-without a tool call ends the turn.
 
 {context-pack}
 

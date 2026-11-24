@@ -12,6 +12,8 @@ const {
 } = require(path.join(LIB, 'express', 'cli.js'));
 const { REASONS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { expressMarker, REVIEW_COMMENT_MARKER } = require(path.join(LIB, 'express', 'sampling.js'));
+const { resolveProtectedPathsEntry } = require(path.join(LIB, 'express', 'policy.js'));
+const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
 const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'blast-radius-cli.js'));
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
@@ -244,6 +246,80 @@ test('gate --run marks a record already escalated in this run (Review Focus 4)',
   assert.deepStrictEqual(h.calls.resolvePolicy[0].opts, { runDir: fx.runDir });
 });
 
+// The gate's lane fill (#5903): the run's manifest.json, as the mint left it.
+const manifestFile = (fx) => path.join(fx.runDir, 'manifest.json');
+function seedManifest(fx, over = {}) {
+  const manifest = { v: 1, runId: path.basename(fx.runDir), createdAt: '2026-10-25T09:00:00.000Z', lane: 'unknown', ceremonyProfile: null, pluginVersion: '1.2.3', policyHash: 'abc', baseCommit: 'def', modelProfile: 'standard', ...over };
+  fs.writeFileSync(manifestFile(fx), `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+const readManifest = (fx) => JSON.parse(fs.readFileSync(manifestFile(fx), 'utf8'));
+
+test('gate --run with eligible:true sets lane express', () => {
+  const fx = fixture();
+  const seeded = seedManifest(fx);
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7), record(8)])), '--run', fx.runDir], h.deps), 0);
+  assert.deepStrictEqual(readManifest(fx), { ...seeded, lane: 'express' });
+  assert.deepStrictEqual(h.json().verdicts.map((v) => v.eligible), [true, true]);
+});
+
+test('gate --run --issue (one verdict) with eligible:true sets lane express', () => {
+  const fx = fixture();
+  seedManifest(fx);
+  const h = harness(fx, { gh: () => JSON.stringify(record(7)) });
+  assert.strictEqual(run(['gate', '--issue', '7', '--run', fx.runDir], h.deps), 0);
+  assert.strictEqual(readManifest(fx).lane, 'express');
+});
+
+test('gate --run with one eligible:false verdict leaves the manifest untouched', () => {
+  const fx = fixture();
+  seedManifest(fx);
+  const before = fs.readFileSync(manifestFile(fx), 'utf8');
+  const medium = record(8, ['risk:medium', 'size:low', 'ceremony:fast-lane', 'type:task']);
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7), medium])), '--run', fx.runDir], h.deps), 0);
+  assert.deepStrictEqual(h.json().verdicts.map((v) => v.eligible), [true, false]);
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), before);
+  const off = harness(fx, {}, { 'express-lane': false });
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)])), '--run', fx.runDir], off.deps), 0);
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), before, 'a disabled lane leaves it untouched');
+});
+
+test('gate without --run writes no manifest', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)]))], h.deps), 0);
+  assert.strictEqual(h.json().verdicts[0].eligible, true);
+  assert.deepStrictEqual(fs.readdirSync(fx.runDir), []);
+  assert.deepStrictEqual(fs.readdirSync(fx.shadow), []);
+});
+
+test('gate --run keeps a known lane: an express gate never overwrites it', () => {
+  const fx = fixture();
+  seedManifest(fx, { lane: 'driver' });
+  const h = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', fx.file('records.json', JSON.stringify([record(7)])), '--run', fx.runDir], h.deps), 0);
+  assert.strictEqual(readManifest(fx).lane, 'driver');
+});
+
+test('a manifest fill failure leaves stdout and exit code unchanged', () => {
+  const fx = fixture();
+  const file = fx.file('records.json', JSON.stringify([record(7)]));
+  const clean = harness(fx);
+  assert.strictEqual(run(['gate', '--records-json', file, '--run', fx.runDir], clean.deps), 0);
+  fs.rmSync(manifestFile(fx));
+
+  fs.writeFileSync(manifestFile(fx), 'not json');
+  const h = harness(fx);
+  const code = run(['gate', '--records-json', file, '--run', fx.runDir], h.deps);
+  assert.strictEqual(h.err.length, 1, 'the fill really failed, on the gate\'s one injected stderr channel');
+  assert.match(h.err[0], /run-manifest: manifest\.json is not valid JSON/);
+  assert.strictEqual(code, 0);
+  assert.strictEqual(h.out.join(''), clean.out.join(''));
+  assert.strictEqual(fs.readFileSync(manifestFile(fx), 'utf8'), 'not json', 'the unreadable manifest is left as it was');
+});
+
 // --- check ----------------------------------------------------------------------
 
 // check reads run-state.json's worktree; seed it (the linked worktree, never the cwd) unless a test already did.
@@ -297,7 +373,7 @@ test('check proceed: a Key-File-only diff logs the proceed line and no escalatio
   const res = h.json();
   assert.strictEqual(res.action, 'proceed');
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
   assert.strictEqual(res.bounds.implLines, 4);
   assert.strictEqual(res.head, HEAD_SHA);
   const text = decisions(fx);
@@ -339,11 +415,24 @@ test('AC4.1 configSet: check under merge-verification off yields merge-when-gree
   assert.strictEqual(run(checkArgv(fx), h.deps), 0);
   const res = h.json();
   assert.strictEqual(res.mergeVerification, 'merge-when-green');
-  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green');
+  assert.strictEqual(res.configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=merge-when-green,spec=7');
 
   const wait = harness(fx, {}, { 'merge-verification': 'wait' });
   assert.strictEqual(run(checkArgv(fx), wait.deps), 0);
-  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait');
+  assert.strictEqual(wait.json().configSet, 'mode=auto,ceremony-profile=fast-lane,integration-model=pr-first,merge-verification=wait,spec=7');
+});
+
+test('AC1.1 AC3.1: the proceed configSet written through set-config.js leaves spec: {n} in config.yml', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx), h.deps), 0);
+  const { configSet } = h.json();
+  const out = []; const err = [];
+  const scDeps = { cwd: () => fx.main, stdout: (s) => out.push(s), stderr: (s) => err.push(s) };
+  assert.strictEqual(require('../../../plugin/bin/set-config.js').run(['--run', fx.runDir, '--set', configSet], scDeps), 0, err.join(''));
+  const body = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.match(body, /^spec: 7$/m);
+  assert.match(body, /^integration-model: pr-first$/m);
 });
 
 test('check: a BlastRadiusError from the diff gather escalates as express-error, never a proceed', () => {
@@ -750,4 +839,220 @@ test('bin/express-lane.js runs as a process: --help prints USAGE (exit 0), a mal
   const bad = spawnSync(process.execPath, [cli, 'verify', '--issue', '7'], { encoding: 'utf8' });
   assert.strictEqual(bad.status, 2);
   assert.match(bad.stderr, /verify requires --run/);
+});
+
+// --- check --max-lines (#5224) --------------------------------------------------
+
+test('AC4.1: check with --max-lines evaluates the diff bounds with that maxLines', () => {
+  const sixty = numstat([[60, 0, KEY_FILES[0]]]);
+  const config = () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 });
+
+  const without = fixture();
+  const w = harness(without, { git: fakeGit(without, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(without), w.deps), 0);
+  assert.deepStrictEqual(w.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 40' });
+
+  const withFlag = fixture();
+  const f = harness(withFlag, { git: fakeGit(withFlag, sixty), blastRadiusConfig: config });
+  assert.strictEqual(run(checkArgv(withFlag, ['--max-lines', '80']), f.deps), 0);
+  const res = f.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.strictEqual(res.bounds.implLines, 60);
+
+  const tight = fixture();
+  const t = harness(tight, { git: fakeGit(tight, sixty), blastRadiusConfig: () => ({ ...config(), autoMergeMaxLines: 100 }) });
+  assert.strictEqual(run(checkArgv(tight, ['--max-lines', '50']), t.deps), 0);
+  assert.deepStrictEqual(t.json(), { action: 'escalate', reason: 'out-of-bounds', detail: '60 implementation lines > 50' });
+});
+
+test('AC4.2: a malformed --max-lines is a usage error', () => {
+  for (const v of ['5.0', '-3', '0', 'abc']) {
+    const fx = fixture();
+    const h = harness(fx);
+    assert.strictEqual(run(checkArgv(fx, ['--max-lines', v]), h.deps), 2, v);
+    assert.match(h.err.join(''), /--max-lines/, v);
+    assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false, v);
+    assert.strictEqual(h.out.join(''), '', v);
+  }
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx, ['--max-lines']), h.deps), 2);
+  assert.match(h.err.join(''), /--max-lines requires a value/);
+  assert.strictEqual(fs.existsSync(path.join(fx.runDir, 'decisions.md')), false);
+});
+
+test('AC4.1: the USAGE check line names --max-lines as the driver flag', () => {
+  assert.ok(USAGE.includes('[--repo owner/name] [--max-lines <n>]'));
+  assert.match(USAGE, /--max-lines: the pipeline driver's implementation-line bound/);
+});
+
+// --- check --protected-paths reviewer (#6019) -----------------------------------
+
+function protectedArgv(fx, keyFile, extra = []) {
+  seedRunState(fx);
+  const rec = { ...record(7), body: body([keyFile]) };
+  return ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(rec)), ...extra];
+}
+
+function protectedHarness(fx, p) {
+  return harness(fx, { git: fakeGit(fx, numstat([[3, 1, p]])), blastRadiusConfig: () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 }) });
+}
+
+test('AC3.1 (#6019): check --protected-paths reviewer on a diff changing a listed _shared Key File proceeds and reports the path', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.strictEqual(res.bounds.withinBounds, true);
+  assert.deepStrictEqual(res.bounds.protectedPaths, [p]);
+  assert.match(decisions(fx), /protected path\(s\) left for the reviewer and a human merge: plugin\/skills\/_shared\/a\.md/);
+});
+
+test('#6019: the proceed line neutralizes a reported protected path, as the driver copy of the note does', () => {
+  // `@` is one of the characters neutralize rewrites (to `@` + U+200B), so a raw write differs.
+  const p = 'plugin/skills/_shared/@team.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  assert.deepStrictEqual(h.json().bounds.protectedPaths, [p]);
+  assert.ok(decisions(fx).includes('left for the reviewer and a human merge: plugin/skills/_shared/@​team.md'));
+});
+
+test('AC3.2 (#6019): the same diff without the flag escalates out-of-bounds naming the protected path', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'escalate');
+  assert.strictEqual(res.reason, 'out-of-bounds');
+  assert.ok(res.detail.includes(`protected path: ${p}`));
+});
+
+test('#6019: a --protected-paths value other than reviewer is a usage error', () => {
+  const p = 'plugin/skills/_shared/a.md';
+  for (const v of ['refuse', 'Reviewer', 'on']) {
+    const fx = fixture();
+    const h = protectedHarness(fx, p);
+    assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', v]), h.deps), 2, v);
+    assert.match(h.err.join(''), /--protected-paths/, v);
+    assert.strictEqual(h.out.join(''), '', v);
+  }
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths']), h.deps), 2);
+  assert.match(h.err.join(''), /--protected-paths requires a value/);
+});
+
+test('AC9.3 (#6019, check half): with the flag a build-time Key File change still escalates', () => {
+  const p = '.github/workflows/ci.yml';
+  const fx = fixture();
+  const h = protectedHarness(fx, p);
+  assert.strictEqual(run(protectedArgv(fx, p, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'escalate');
+  assert.ok(res.detail.includes(`protected path: ${p}`));
+});
+
+test('#6019: the proceed line is unchanged when the flag finds no protected path', () => {
+  const fx = fixture();
+  const h = harness(fx);
+  assert.strictEqual(run(checkArgv(fx, ['--protected-paths', 'reviewer']), h.deps), 0);
+  const res = h.json();
+  assert.strictEqual(res.action, 'proceed');
+  assert.deepStrictEqual(res.bounds.protectedPaths, []);
+  assert.doesNotMatch(decisions(fx), /left for the reviewer/);
+});
+
+test('#6019: the USAGE check line names --protected-paths reviewer as the driver flag', () => {
+  assert.ok(USAGE.includes('[--max-lines <n>] [--protected-paths reviewer]'));
+  assert.match(USAGE, /^ {7}--protected-paths reviewer:/m);
+});
+
+// --- protected-paths (#6020): the resolved list reaches gate and check ---------------
+
+function realFixture() {
+  const main = gitRepo();
+  const wt = harnessWorktreeOf(main, 'express-7');
+  const runDir = path.join(main, '.claude-tweaks', 'pipelines', '2026-10-25T090000-record-7');
+  const shadow = path.join(wt, '.claude-tweaks', 'pipelines', '2026-10-25T090000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.mkdirSync(shadow, { recursive: true });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'express-cli-real-'));
+  FIXTURE_ROOTS.push(root);
+  const file = (name, text) => { const p = path.join(root, name); fs.writeFileSync(p, text); return p; };
+  return { root, main, wt, runDir, shadow, file };
+}
+
+function writeMainPolicy(dir, text) {
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+}
+
+// The existing fake for every key but protected-paths, which resolves through the real resolver from cwdDir
+// (or, with `entry`, is a fixed reply).
+function realHarness(fx, cwdDir, over = {}, entry = null) {
+  const base = harness(fx, over);
+  const fakeResolve = base.deps.resolvePolicy;
+  base.deps.resolvePolicy = (keys, opts) => {
+    const out = fakeResolve(keys, opts);
+    if (keys.includes('protected-paths')) out['protected-paths'] = entry || resolveProtectedPathsEntry(cwdDir);
+    return out;
+  };
+  base.deps.blastRadiusConfig = () => ({ mergeSensitivePaths: [], autoMergeMaxLines: 40, autoMergeMaxFiles: 2 });
+  return base;
+}
+
+function realCheckArgv(fx, keyFiles) {
+  fs.writeFileSync(path.join(fx.runDir, 'run-state.json'), JSON.stringify({ worktree: fx.wt, dispatched: true }));
+  const rec = { ...record(7), body: body(keyFiles) };
+  return ['check', '--run', fx.runDir, '--issue', '7', '--base', 'abc123', '--record-json', fx.file('r7.json', JSON.stringify(rec))];
+}
+
+test('AC2.1 (express CLI half): gate passes the resolved list', () => {
+  const fx = realFixture();
+  const records = [{ ...record(7), body: body(['package.json']) }, { ...record(8), body: body(['infra/main.tf']) }];
+  const file = fx.file('records.json', JSON.stringify(records));
+  const h = realHarness(fx, fx.main, {}, { value: 'infra/**', source: 'policy' });
+  assert.strictEqual(run(['gate', '--records-json', file], h.deps), 0);
+  const res = h.json();
+  assert.ok(!res.verdicts[0].reasons.includes('protected path: package.json'), JSON.stringify(res.verdicts[0]));
+  assert.ok(res.verdicts[1].reasons.includes('protected path: infra/main.tf'), JSON.stringify(res.verdicts[1]));
+  assert.ok(h.calls.resolvePolicy[0].keys.includes('protected-paths'));
+});
+
+test('AC4.1 (express half): check reads protected-paths from the fixture repository\'s policy.yml', () => {
+  const fx = realFixture();
+  writeMainPolicy(fx.main, 'protected-paths: infra/**\n');
+  const bad = realHarness(fx, fx.main, { git: fakeGit(fx, numstat([[1, 0, 'infra/main.tf']])) });
+  assert.strictEqual(run(realCheckArgv(fx, ['infra/main.tf']), bad.deps), 0);
+  assert.strictEqual(bad.json().reason, 'out-of-bounds');
+  assert.ok(bad.json().detail.includes('protected path: infra/main.tf'), bad.json().detail);
+  const fx2 = realFixture();
+  writeMainPolicy(fx2.main, 'protected-paths: infra/**\n');
+  const ok = realHarness(fx2, fx2.main, { git: fakeGit(fx2, numstat([[1, 0, 'package.json']])) });
+  assert.strictEqual(run(realCheckArgv(fx2, ['package.json']), ok.deps), 0);
+  assert.strictEqual(ok.json().action, 'proceed');
+  const fx3 = realFixture();
+  const none = realHarness(fx3, fx3.main, { git: fakeGit(fx3, numstat([[1, 0, 'package.json']])) });
+  assert.strictEqual(run(realCheckArgv(fx3, ['package.json']), none.deps), 0);
+  assert.strictEqual(none.json().reason, 'out-of-bounds');
+  assert.ok(none.json().detail.includes('protected path: package.json'), none.json().detail);
+});
+
+test('AC8.1 (check half): a worktree edit removing package.json from the list does not change check\'s verdict', () => {
+  const files = ['package.json', '.claude-tweaks/policy.yml'];
+  const verdict = (withWorktreePolicy) => {
+    const fx = realFixture();
+    if (withWorktreePolicy) writeMainPolicy(fx.wt, 'protected-paths: infra/**\n');
+    const h = realHarness(fx, fx.wt, { git: fakeGit(fx, numstat(files.map((f) => [1, 0, f]))) });
+    assert.strictEqual(run(realCheckArgv(fx, files), h.deps), 0);
+    return h.json();
+  };
+  const without = verdict(false);
+  const withEdit = verdict(true);
+  assert.deepStrictEqual(withEdit, without);
+  assert.ok(withEdit.detail.includes('protected path: package.json'), withEdit.detail);
 });

@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
+const { scratchDir } = require('../../../tests/helpers/tmp-dir');
 const path = require('path');
 const { parseManifest, validateManifest, loadManifest } = require('../manifest');
 
@@ -332,7 +333,7 @@ test('loadManifest throws an error message naming every validation failure, not 
   delete dep.kind;
   delete dep.pinned;
 
-  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'ct-manifest-'));
+  const tmpDir = scratchDir('ct-manifest-');
   const tmpFile = path.join(tmpDir, 'bad-manifest.yml');
   // Build the bad manifest as YAML text so this exercises loadManifest's
   // real file-reading path, not just validateManifest on a JS object.

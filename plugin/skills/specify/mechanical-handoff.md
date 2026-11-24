@@ -25,6 +25,7 @@ prompt, never a reason to fork the template.
 | Collapse decision | Step 2.6's verdict — kept-parent / 2-unit independent collapse / 1-unit collapse, plus the parent's own draft body when kept | Step 3 branches its whole create sequence on this; Step 9's summary and origin-closure logic both read it |
 | Dependency graph | Step 1's Overlap Analysis resolutions (`Blocked by #N` from companion/extend/replace decisions) plus Step 2's Implicit Dependency Detection groups (file-overlap flags) | Step 4 (Link and order) wires every relationship this pass produces |
 | Step 2.5 answers (frontend specs only — omit entirely for backend/infra) | `design-intent:`, `ui-stack:`, and the resolved `shape` from Step 2.5 | Step 3 writes these onto each sub-issue's metadata lines |
+| Risk-flag answers (omit only when no human was reachable at the pre-pass) | `record-creation-subissues.md`'s Risk flags pre-pass, run in the main thread before this dispatch (a subagent cannot ask the flag question): per unit, the absolute path of its held answers file and its `--add` slugs | Step 3's per-unit `settle` applies them with `--answers-file`; with none passed, it takes the headless `settle` |
 | Accepted scaffold path (frontend specs only — omit unless Step 2.5b-ii's variant exploration ran and a direction was accepted) | Step 2.5b-ii's `visual_reference` output (`design-pre-steps.md` item 5) | Step 3 prefixes `Visual-reference: {scaffold path}` on every generated sub-issue covering that surface — `record-creation-subissues.md`'s Body section (#1346's split of `record-creation.md`) |
 | Diagram suggestions (omit if Step 2.5d emitted none) | Step 2.5d's output — at most two recommendations | Step 9's summary renders them under `### Diagram suggestions` |
 | Design doc — path and, if it will be deleted before the subagent could read it, its full content | Resolve-the-input | Step 4 absorbs remaining Decision Rationale / Assumptions / Cross-Spec Promises from it; Step 7 deletes it (or marks it, under `phase-N`) |
@@ -51,6 +52,8 @@ Dependency Detection groups}
 Design doc: {path, or full content when it will be deleted before you could read it}
 [Design pre-step answers — frontend specs only: design-intent: {value}, ui-stack: {value},
 shape: {value}]
+[Risk-flag answers — omit only when no human was reachable at the pre-pass: per unit, answers
+file {absolute path} and --add {slugs, or none}; run settle with these and never ask]
 [Accepted scaffold path — frontend specs only, omit unless Step 2.5b-ii accepted a variant:
 Visual-reference: {scaffold path}]
 [Diagram suggestions — omit if none: {Step 2.5d's output}]
@@ -70,6 +73,16 @@ Status line (required): after the summary above, on its own trailing line — th
 line of your reply — must read exactly `STATUS: DONE` (or DONE_WITH_CONCERNS / NEEDS_CONTEXT /
 BLOCKED).
 ```
+
+<!-- plan-at-specify:start -->
+**Planning at specify (#6057).** Under `work-backend: github-issues` only, resolve `plan-at-specify` before composing the prompt: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. When it prints `on`, add these two lines as the last lines of the prompt's Task scope:
+
+> Planning is not yours: your caller plans every sub-issue after you return, so skip the `plan-at-specify` paragraph in `decomposition-mode-closeout.md` and ask no planning question.
+>
+> After your summary and before your status line, add one line `Resumed: #a, #b` naming every sub-issue Step 3 resumed rather than created, or `Resumed: none`.
+
+With any other output, or a failed call, the prompt is unchanged and this paragraph's remaining steps are skipped. Relay a stderr warning the call prints, which names a conflict with `planning-decisions`, as a one-line notice. Once the handoff returns `STATUS: DONE` or `DONE_WITH_CONCERNS`, read `planning.md` in this skill's directory, run `planning.md`'s `## Decomposition` entry in this session over the Work Units Created refs minus the refs on that `Resumed:` line (the table lists resumed sub-issues beside created ones, and only the subagent knows which is which), and append its `### Planning` section to the returned summary before relaying it, opening with the line "Planned in specify's own session after the handoff returned; the handoff planned nothing." A reply with no `Resumed:` line, whatever its status, plans nothing and appends the one line `Not planned: the handoff reply carried no Resumed: line.` to that section, so a resumed sub-issue is never planned or given a `skipped` row by mistake; this rule comes before the status rule that follows. Any other status plans nothing: the appended `### Planning` section, under the same opening line, gets a `skipped` row with Detail `handoff {status}` for each Work Units Created ref minus the `Resumed:` refs, since its body may not have reached Step 6; a reply with no Work Units Created table appends, in place of either line above, only the one line `Not planned: the handoff returned {status} with no Work Units Created table.` The subagent's summary shape is unchanged.
+<!-- plan-at-specify:end -->
 
 `[Use: Standard]` — resolve via `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" standard`.
 This is a whole-procedure execution dispatch (record creation through commit), not a lightweight

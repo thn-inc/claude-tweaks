@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const { scratchDir } = require('./helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 const {
@@ -14,7 +15,7 @@ const { pidStartTime } = require('../plugin/bin/lib/run-liveness/process-probe')
 const { gitRepo, linkedWorktreeOf, fixtureGit } = require('./helpers/git-fixtures');
 
 function tmpRunDir(state) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-'));
+  const dir = scratchDir('ct-resume-freshness-');
   if (state) fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
   return dir;
 }
@@ -47,6 +48,19 @@ test('checkResumeFreshness: interrupted with a worktree path that no longer exis
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: '/no/such/path/at/all' });
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
   assert.deepStrictEqual(result, { safe: true, verdict: 'worktree-gone' });
+});
+
+test('checkResumeFreshness: interrupted with a self-referential symlink worktree (ELOOP) is indeterminate, not worktree-gone', () => {
+  // existsSync follows the link, hits ELOOP and reads false, so the old gate
+  // reported the worktree as gone. The path exists as a link; only the probe
+  // through it fails, so the verdict must fail closed.
+  const dir = scratchDir('ct-resume-freshness-loop-');
+  const loop = path.join(dir, 'loop');
+  fs.symlinkSync(loop, loop);
+  const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: loop });
+  const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
+  assert.equal(result.safe, false);
+  assert.equal(result.verdict, 'indeterminate');
 });
 
 test('checkResumeFreshness: interrupted + a live worktree lock blocks', () => {
@@ -91,7 +105,7 @@ test('checkResumeFreshness: interrupted + a worktree path that exists but is not
   // finding #1). Before that fix this fell through the collapsed
   // isWorktreeLocked boolean and reported `verdict: 'locked'`, which is
   // simply false: there is no lock and no process here.
-  const notAWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-not-git-'));
+  const notAWorktree = scratchDir('ct-resume-freshness-not-git-');
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: notAWorktree });
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
   assert.equal(result.safe, false);
@@ -112,7 +126,7 @@ const thrower = (msg) => () => { throw new Error(msg); };
 // An interrupted run whose recorded worktree is a real, existing directory; the
 // lock and commit answers come from `probes`.
 function probed(probes, state = {}, now = Date.now()) {
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-wt-'));
+  const wt = scratchDir('ct-resume-freshness-wt-');
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: wt, ...state });
   return checkResumeFreshness(runDir, { sessionId: 'sess-b', now, probes });
 }
@@ -196,7 +210,7 @@ test('AC3.1: every old indeterminate source fails closed with a non-empty reason
 });
 
 test('AC3.1: a real unborn-HEAD worktree is indeterminate', () => {
-  const wt = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-unborn-'));
+  const wt = scratchDir('ct-resume-freshness-unborn-');
   fixtureGit(['init', '-q', wt]);
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: wt });
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
@@ -276,7 +290,7 @@ test('own session returns before any liveness probe runs', () => {
 test('AC5.1 AC5.2 AC5.3: the verdict set is exactly today\'s nine, and recent-commit carries ageMs', () => {
   const now = Date.now();
   const quiet = { lockInUse: () => false, lastCommitAt: () => OLD };
-  const gone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-gone-')), 'deleted');
+  const gone = path.join(scratchDir('ct-resume-freshness-gone-'), 'deleted');
   const recent = probed({ lockInUse: () => false, lastCommitAt: () => now - 60000 }, {}, now);
   const results = [
     checkResumeFreshness(tmpRunDir(null), { sessionId: 'sess-b' }),
@@ -300,7 +314,7 @@ test('symlinked worktree path with a live lock is still locked', () => {
   const main = gitRepo();
   const wt = linkedWorktreeOf(main);
   fixtureGit(['-C', main, 'worktree', 'lock', wt, '--reason', `claude session test (pid ${process.pid} start now)`]);
-  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-link-')), 'wt-link');
+  const link = path.join(scratchDir('ct-resume-freshness-link-'), 'wt-link');
   fs.symlinkSync(wt, link);
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: link });
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });
@@ -315,7 +329,7 @@ test('future-dated commit is recent-commit with a negative ageMs', () => {
 });
 
 test('worktree path is a file stays indeterminate', () => {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-resume-freshness-file-')), 'a-file');
+  const file = path.join(scratchDir('ct-resume-freshness-file-'), 'a-file');
   fs.writeFileSync(file, 'x');
   const runDir = tmpRunDir({ status: 'interrupted', sessionId: 'sess-a', worktree: file });
   const result = checkResumeFreshness(runDir, { sessionId: 'sess-b' });

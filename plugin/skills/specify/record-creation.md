@@ -182,7 +182,7 @@ fi
 `isParentIssue: true` is the local-files parity for the `parent-issue` label above — the same
 queryable-parent problem, on the backend with no labels at all. `local-store.js` serializes it as
 an `is-parent-issue: true` frontmatter line and parses it back into `facets.isParentIssue`; no
-sub-issue ever sets it, so it stays `false` there. `/claude-tweaks:demo`'s Approve step reads it
+sub-issue ever sets it, so it stays `false` there. `/claude-tweaks:accept`'s Approve step reads it
 to decide whether to close the parent once its sub-issues are accepted.
 
 `$PARENT_NUM` / `$PARENT_ID` is now captured — every sub-issue below links back to it.

@@ -16,25 +16,24 @@ weaker phrasing independently.
 
 A skill in this project can be invoked headlessly, with no interactive human present to
 receive a "point the user at doing X manually" message. Three separate real incidents — found
-via this repo's own `evals/` harness running against real API calls, not hypothesized —
+via a since-removed eval harness running against real API calls, not hypothesized —
 confirmed that a live model finds a way to treat a local-files stop as inapplicable unless the
 paragraph explicitly rules out each specific rationalization it reaches for:
 
 - `/claude-tweaks:triage`'s original Preflight (now `/claude-tweaks:backlog refine`'s grant sub-stage) said "report that grants are not applicable...
   point the user at running `/claude-tweaks:flow` manually" — a live headless run instead
   built and committed real application code, reproduced twice
-  (`evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`,
-  `.superpowers/sdd/task-9-report.md`). Root cause: a purely informational "point the user at
+  (`.superpowers/sdd/task-9-report.md`). Root cause: a purely informational "point the user at
   X and stop" reads as license to do X itself when no human is there to act on the pointer.
 - `/claude-tweaks:dispatch` had the identical weak phrasing, found and fixed pre-emptively
   once the triage incident established the pattern was real, then confirmed safe via a real
-  run (`evals/scenarios/dispatch-local-files-preflight-stop.yaml`).
+  run.
 - `/claude-tweaks:backlog refine`'s grant sub-stage, already hardened to the enumerated
   pattern below (elements 1-5), still failed against a realistic `/init`-generated `CLAUDE.md`
   (the original fix's confirming run used a bare, never-init'd fixture) — a live headless run
   again built and shipped real application code, this time running a full build-to-close
   lifecycle (`/specify` → `/flow` → build → `/review` → `/wrap-up` → `/demo`; 18 commits, 49
-  tool calls, $17.47 — `evals/scenarios/backlog-refine-permission-matrix-compliance.yaml`).
+  tool calls, $17.47).
   Root cause: the realistic fixture's own `## claude-tweaks Pipeline` CLAUDE.md section
   documents this project's own auto-mode/hands-off pipeline architecture ("skills MUST NOT
   invent new mid-flow stops in auto") — the model resolved the conflict between that

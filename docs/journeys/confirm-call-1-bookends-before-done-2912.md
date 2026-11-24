@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/verify-run-bookends.js
+  - plugin/bin/lib/run-header.js
   - plugin/bin/lib/log-decision/claim-log.js
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/flow/claim-targets.md
@@ -36,13 +37,18 @@ files:
   - `materialize` with reason `not-committed` means the spec file is absent from HEAD (it may exist on disk, uncommitted); `undetermined` means git could not answer (timeout, no worktree), which is never treated as done.
   - `claim-log` means `decisions.md` carries no exact `Step 2.8: claimed #{n}` line. A paraphrase ("claimed issue #{n}") does not count here, even though the stamps gate tolerates it.
   - For a bundle (a parent run dir with more than one target), only `spec-{n}/work/{n}-spec.md` counts.
+  - The spec counts at either location `plugin/bin/lib/run-header.js` resolves (#3974):
+    - the live run-dir path;
+    - the archived path, `.claude-tweaks/pipelines/archive/{run-id}/…`.
+
+    A run whose header was moved to the archive on its branch still reads as committed.
 - **Red flags:**
   - a `materialize` entry for a spec that is visibly committed at HEAD;
   - a `claim-log` entry when an exact `Step 2.8: claimed #{n}` line is present.
 
 ### 3. Run the remedies — same agent
 - **URL:** each `missing` entry's `remedy` string
-- **Action:** substitute the remedy's `<...>` and `{...}` placeholders and run it: `materialize.js {n} --run-dir "…"` (plus `--multi-record-slug {n}` for a bundle, `--record-json <path>` when `gh` is absent) then commit the spec; `hooks.js record-worktree`; the PR-early lifecycle then `hooks.js record-pr`; `log-decision.js … --text "claimed #{n} (bin/claim-targets.js, transport: …)"`; or `claim-targets.js` (gh-absent: `flow/claim-targets.md`'s MCP claim procedure).
+- **Action:** substitute the remedy's `<...>` and `{...}` placeholders and run it: `materialize.js {n} --run-dir "…"` (plus `--multi-record-slug {n}` for a bundle, `--record-json <path>` when `gh` is absent) then commit the spec file it writes (the JSON's `file` field); `hooks.js record-worktree`; the PR-early lifecycle then `hooks.js record-pr`; `log-decision.js … --text "claimed #{n} (bin/claim-targets.js, transport: …)"`; or `claim-targets.js` (gh-absent: `flow/claim-targets.md`'s MCP claim procedure).
 - **Should feel:** like finishing the steps `/flow` would have done, through the same sanctioned writers.
 - **Should understand:** when a `claim` entry is missing for the same issue, its remedy already writes the canonical claim line, so the matching `claim-log` remedy says it is covered rather than logging a duplicate.
 - **Red flags:**
@@ -59,4 +65,5 @@ files:
 ## Origin
 - Created during build of #2912: the trace of run `2026-10-02T182455-record-2765` showed call 1 bypassed `/flow`'s build step, so no materialize commit, no draft PR, and a free-hand claim line reached call 2. `verify-run-bookends.js` gained the `materialize` and `claim-log` bookends and a `remedy` per entry, and dispatch's first-call template now requires the check on every transport.
 - Updated during build of #3350: the Manifesto now writes the `integration-model` run pin, so the `pr` bookend is live on `pr-first` runs; an unpinned run prints a `degraded —` line that the agent logs as a `SKIP`.
+- Updated during build of #3974. The `materialize` bookend now reads the spec header through `run-header.js`, so a header at the archived path counts. This is the expand step ahead of #3976's move. The remedy now says to commit the spec file `materialize.js` writes, instead of naming a `work/` path.
 - Related records: #3225 (`recover-from-a-dispatch-config-deny-3225.md`, the pre-implementation config gate), #2837 (`clear-the-two-call-gate-for-a-dispatched-group-2775.md`, the dispatcher's post-hoc artifact check), #1728 (the CLI's origin on the MCP path).

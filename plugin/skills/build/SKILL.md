@@ -71,7 +71,7 @@ When a parent `/claude-tweaks:flow` already materialized the file (`$PIPELINE_RU
 
 ### Spec Step 2: Check for Existing Plan
 
-**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base, meaning the Current State claim it named no longer holds — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote) rather than planning a build against a premise that is already gone. When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), this paragraph is a no-op — proceed below exactly as before.
+**Premise-check routing first (#1829).** Read `premise.satisfiedAtBase` from the materialize envelope (`skills/flow/materialize.md`'s "Premise check" paragraph) before searching for a plan. When `true` — the record's own `Premise-check:` command exited non-zero at this checkout's base — do not search for a plan or proceed to Spec Step 3: route directly to the Wrap-Up Review Console's staged-close surface (the `staged/premise-satisfied-{n}.md` proposal materialize.js already wrote). When `premise` is `null` (no `Premise-check:` line, or the check itself couldn't run), proceed below.
 
 **Already-shipped assessment (#2502).** Before searching for a plan, check whether every Deliverable and Acceptance Criterion is already satisfied on the base branch with zero implementation diff required. Read `already-shipped-assessment.md` in this skill's directory for the full check and its stop procedure (`OUTCOME: already-shipped`, stage a Close proposal, close any draft PR, release the claim, skip the bookkeeping-only commit). When even one item still needs real work, however small, this is a normal build: proceed below exactly as before.
 
@@ -93,32 +93,19 @@ Search `docs/superpowers/plans/` for a plan matching this spec (by number, topic
 
 Proceed to Spec Step 3.
 
+#### Before Spec Step 3: a plan reviewed at specify (#6060)
+
+When a branch above proceeds to Spec Step 3 (the stale-plan route only when the plan found was not added by an `Add the plan reviewed at specify` commit, checked first thing there), first run `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values plan-at-specify`. Only when it prints `on`, read `plan-reuse.md` in this skill's directory and follow it: a stored plan that still checks valid is committed into the worktree and Spec Step 3 and Common Step 1.6 are skipped; a failed check re-plans at Spec Step 3. Any other output, or a spec with no `Plan:` line, changes nothing and logs nothing. A resumed build whose reused plan is committed takes the existing-plan branch above; if that plan is stale it goes to Spec Step 3 as written, with no reuse verdict logged.
+
 ### Spec Step 2.5: Classify and Seed Manual Steps
 
-If the spec has a "Manual Steps" section, classify each item before deciding what to do with it. "Outside the codebase" is not the same as "human-only" — many such tasks have CLIs and should be executed inline rather than dumped to the ledger.
-
-**No Manual Steps section, but every `## Deliverables` item is operational (#2554).** A record whose Deliverables are wholly operational actions — dispatch a deploy workflow, trigger a job run through an API, apply infrastructure, verify a live result — with no source file changes, and no separate `## Manual Steps` section, still has real triage work to do: the `## Deliverables` list itself is the triage input. Read each Deliverable item through the same probe-then-triage procedure below (CLI/API check → credential check → auto-executable / auth-gap / truly-manual), exactly as if it were a Manual Steps line. When **every** Deliverable classifies this way (nothing left that touches the codebase), proceed directly to Common Step 5 after acting on them, writing **one consolidated** `SKIP` entry for the code-oriented steps this run has nothing to do (Spec Step 3, Common Steps 1.5, 1.7, 2, 3, 6, 6.5) instead of one `SKIP` per step — condition: "record is wholly operational (Deliverables triaged as Manual Steps, no code change)". A record with even one Deliverable that touches the codebase is not wholly operational — fall through to the ordinary per-step SKIP/execute behavior below instead.
-
-> **Parallel execution:** Use parallel tool calls — the CLI/credential probes for each Manual Steps item are independent Bash operations and should run concurrently, the same shape `operational-checklist.md`'s Common Step 5.5 already parallelizes for its own probes.
-
-For each item, probe in this order:
-
-1. **CLI/API check** — infer the relevant tool from the item text, then probe: `which terraform`, `which vercel`, `which gh`, `which fly`, `which wrangler`, `which stripe`, `which ldcli`, `which aws`, `which gcloud`, etc.
-2. **Credential check** — if a tool exists, are creds present? Use `{tool} auth status` (or equivalent: `gh auth status`, `vercel whoami`, `fly auth whoami`, expected env var, config file at the documented path).
-3. **Triage:**
-   - **Auto-executable** (tool + creds present) — execute now via Bash. In `auto` mode, log command, exit code, and one-line outcome to `decisions.md`. In interactive mode, surface the command and result inline. Do NOT seed the ledger. **`ops=confirm` token:** when present in `$ARGUMENTS`, do not execute automatically even here — call `AskUserQuestion` with the exact command and a one-line description of its effect, options "Run it (Recommended)" and "Skip — seed to ledger instead," before running (or, if skipped, seed as `ops` with `(reason-not-auto: user-declined)`). This applies in both interactive and `auto` mode — `ops=confirm` is a stronger, explicit opt-in for operational/secret-mutating commands specifically, so it is not silenced by `auto`.
-   - **Auth-gap** (tool present, creds missing) — in interactive mode, surface the one-time `{tool} login` command and wait; on success, fall through to auto-execute. In `auto` mode, seed as `ops` with `(reason-not-auto: auth-not-configured)` so the user can resolve at the wrap-up Review Console.
-   - **Truly manual** (no CLI, requires human judgment, requires signoff) — seed as `ops` with the matching `(reason-not-auto: …)` qualifier from `_shared/ledger-format.md`'s Required-for-ops section.
-
-If the ledger doesn't exist, create it using the ledger skill's create operation.
-
-**Anti-pattern:** Seeding the entire Manual Steps section verbatim into `ops` without probing. The spec writer cannot know which CLIs are installed on the executing machine — that classification must happen here, at execution time, where probes can actually run.
+When the spec has a `## Manual Steps` section, or has none but every `## Deliverables` item is operational (#2554) — dispatching a deploy workflow, triggering a job through an API, applying infrastructure, verifying a live result, with no source file changes — read `manual-steps.md` in this skill's directory and follow it: it probes each item for a CLI and credentials, then executes, seeds, or escalates it. Otherwise — no Manual Steps section, and at least one Deliverable touches the codebase — take the skip line below.
 
 **No Manual Steps section (skip):** write one `SKIP` entry per the degrade-trace rule (`_shared/auto-decision-log.md`) — condition: no Manual Steps section → fallback: nothing probed. Standalone: list in the handoff instead.
 
 ### Spec Step 3: Create the Plan
 
-**Micro-plan check first (#1911):** before invoking `/superpowers:writing-plans`, check the applicability gate in `micro-plan.md` in this skill's directory — a `ceremony: fast-lane` + `size: low` header whose `### Key Files` names at most one implementation file composes a one-task plan directly, skipping this skill and `plan-audit.md` entirely. Read that file for the full gate, the composed plan's exact shape, the skip-logging call, and the NEEDS_CONTEXT escape hatch. Any other header shape falls through to the normal path below unchanged.
+**Micro-plan check first (#1911):** before invoking `/superpowers:writing-plans`, check the applicability gate in `micro-plan.md` in this skill's directory — a `ceremony: fast-lane` + `size: low` header whose `### Key Files` stays within the gate's file limit composes a one-task plan directly, skipping this skill and `plan-audit.md` entirely. Read that file for the full gate, the composed plan's exact shape, the skip-logging call, and the NEEDS_CONTEXT escape hatch. Any other header shape falls through to the normal path below unchanged.
 
 Invoke the `/superpowers:writing-plans` skill. After it saves the plan file, **stop the skill and return here** — do not let it present an execution choice or invoke an execution skill. `/build` controls execution strategy.
 
@@ -138,7 +125,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -168,11 +155,13 @@ Because design mode has no spec with structured acceptance criteria, extract tes
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`. Same plan-header artifact rule and plan-authoring check as Spec Step 3 apply (ignore the "For agentic workers" boilerplate).
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
 ## Common Steps (both modes)
+
+**PR-body claims, any step.** A decision line that says the PR body carries something follows `architecture-alignment.md`'s `## Claims about the PR body` first, whether or not Common Step 4.5 runs.
 
 ### Common Step 1: Set Up Worktree (worktree strategy only)
 
@@ -184,40 +173,43 @@ If the user did not specify `worktree`, skip this step.
 
 ### Common Step 1.5: Plan Audit
 
-Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage) (`plan-audit.md`). Five checks:
-- **Check A (always):** verify every path in the plan's Files: sections exists (or its parent directory exists for Create/Test, or is created by another Create/Test entry in the same plan).
+**Dispatch-capability preflight (#4555), first, whatever this step's skip gate decides:** under `subagent`, probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before Common Step 1.6's plan reviewer and Common Step 2's `subagent` execution. None found → stop BLOCKED per `execution-mode-policy.md`'s No-dispatch host section — never implement the plan's tasks inline, and never switch to `batched` on the run's behalf.
+
+Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--surface-diff {before-plan}] [--count-tasks] [--bytes] [--task-markers] [--risk-proofs]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage), and the gating Check G (risk-flag proof) (`plan-audit.md`). Six checks:
+- **Check A (always):** every path in the plan's Files: sections exists (for Create/Test, its parent directory exists or another Create/Test entry creates it).
 - **Check B (conditional):** when the plan declares `Scope keywords:`, an fs-walk sweeps the repo for each keyword and lists any matched files not in the plan.
-- **Check C (always):** pre-run each task's own declared Step 2 `Run:`/`Expected: FAIL` verification command once, read-only, against current repo state before dispatch; stop unconditionally if a command already exhibits a passing signature despite declaring `Expected: FAIL`. An append-shaped task (Step 1 appends to an existing, already-passing file) is not a finding — reported under `appendShaped` instead. A `warnings` entry (Step 2 present but unparseable) is informational only — never a stop, even though the summary line names Check C.
-- **Check D (always):** scan the raw plan text for a control byte other than tab/LF/CR (e.g. a raw NUL) — an unconditional stop, the one check the skip gate below does not cover.
+- **Check C (always):** pre-run each task's own declared Step 2 `Run:`/`Expected: FAIL` command once, read-only, against current repo state; stop unconditionally if one already passes despite declaring `Expected: FAIL`. An append-shaped task and a `warnings` entry (Step 2 unparseable) are not stops (`plan-audit.md`).
+- **Check D (always):** scan the raw plan text for a control byte other than tab/LF/CR (e.g. a raw NUL) — an unconditional stop the skip gate below does not skip.
 - **Headroom (always):** for each existing governed-corpus `.md` file (`plugin/skills/**/*.md`) the plan modifies, current bytes + headroom against `RAIL_BYTES`, the Read-limit rail — a soft `nearCeiling` flag (at or above 90% of the rail) never fails the check; a `breach` (over the rail) does.
+- **Check G (`--spec` only):** each risk flag the spec keeps needs a plan line `Proof(<slug>): {text}`: on `checkG.missing` amend the plan once and re-run; on `checkG.couldNotParse` stop.
 
 **Auto mode** (including a standalone `auto` invocation with no pipeline run dir): apply the `scope-creep` policy, resolved per the standard precedence (default `add-to-plan`). **Interactive mode:** call `AskUserQuestion` with three options: "Add to plan and continue" (Recommended), "Continue without", "Stop".
 
-**Skip this step entirely when** the plan has fewer than 3 file references (trivial plans don't benefit from audit) AND no `Scope keywords:` field is present, **or** when `config.yml`'s `ceremony-profile` is `fast-lane` (read fresh from the run directory) — roster tag `plan-audit`, `_shared/ceremony-profile.md`, which holds the rationale. Standalone `/build` (no `config.yml`) always falls back to the size-based condition alone. **Even on this skip path, still run `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} --bytes`** and treat `checkD.ok === false` as the same unconditional stop — Check D is the one check this gate does not cover (a byte scan on text already in memory costs nothing, and a raw NUL is exactly as fatal in a small plan as a large one). This is the full gate — deciding skip-vs-run never requires loading `plan-audit.md` itself.
+**Skip this step entirely when** the plan has fewer than 3 file references (trivial plans don't benefit from audit) AND no `Scope keywords:` field is present, **or** when `config.yml`'s `ceremony-profile` is `fast-lane` (read fresh from the run directory) — roster tag `plan-audit`, `_shared/ceremony-profile.md`, which holds the rationale. Standalone `/build` (no `config.yml`) always falls back to the size-based condition alone. **Even on this skip path, still run `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} --bytes`** and treat `checkD.ok === false` as the same unconditional stop; with a materialized spec, also run it with `--risk-proofs --spec {spec-file}`: on `checkG.missing` amend the plan once, log it, and re-run, on `checkG.couldNotParse` or a second `checkG.missing` stop; an exit other than 0 or 1, or output with no `checkG`, stops too. This is the full gate — deciding skip-vs-run never requires loading `plan-audit.md` itself.
 
-> **Project setting:** When `.claude-tweaks/policy.yml` declares `scope-keywords-required: true`, plans without a `Scope keywords:` field are treated as failed audits (require the field, not just optional). See `plan-audit.md` for the policy table.
+> **Project setting:** `scope-keywords-required: true` in `.claude-tweaks/policy.yml` makes a plan without a `Scope keywords:` field a failed audit (`plan-audit.md`'s policy table).
 
 For the full procedure (CLI invocation and JSON envelope, Check A/headroom failure handling, Check B scope-keyword sweep, Check C verification-command pre-check, `scope-keywords-required` setting, auto-mode policy table, interactive prompt), read `plan-audit.md` in this skill's directory.
 
 ### Common Step 1.6: Plan Review (Spec Mode only)
 
-Spec Mode only — design mode has no materialized spec, so this step never runs there. After Common Step 1.5 and before Common Step 1.7 (so plan amendments land before design references are pre-loaded) and Task 1, dispatch one Capable reviewer over the materialized spec and the plan, then route its findings. **Skip this step when** `config.yml`'s `ceremony-profile` is `fast-lane` — roster tag `plan-review`, `_shared/ceremony-profile.md` — or the plan is trivial by Common Step 1.5's own test (fewer than 3 file references and no `Scope keywords:` field); standalone `/build` (no `config.yml`) uses the size test alone. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff. This is the full gate — deciding skip-vs-run never loads the sub-file. Otherwise read `plan-review.md` in this skill's directory.
+Spec Mode only — design mode has no materialized spec, so this step never runs there. After Common Step 1.5 and before Common Step 1.7 (so plan amendments land before design references are pre-loaded) and Task 1, dispatch one Capable reviewer over the materialized spec and the plan, then route its findings. **Skip this step when** `config.yml`'s `ceremony-profile` is `fast-lane` — roster tag `plan-review`, `_shared/ceremony-profile.md` — or the plan is trivial by Common Step 1.5's own test (fewer than 3 file references and no `Scope keywords:` field), or Spec Step 2 reused a plan reviewed at specify (`plan-reuse.md` logs that skip); standalone `/build` (no `config.yml`) drops the fast-lane condition. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule, except on the reuse route, whose entry `plan-reuse.md` already wrote; standalone: list in the Step 7 handoff. This is the full gate — deciding skip-vs-run never loads the sub-file. Otherwise read `plan-review.md` in this skill's directory.
 
 ### Common Step 1.7: Design Pre-Build (frontend specs + terminal)
 
-For a surface routed to pre-build — `surface` ∈ `web | mobile | desktop | terminal`, read from the materialized header's `surface:` field (lifted from the record body's `Surface:` metadata line per `skills/flow/materialize.md`) — invoke `/claude-tweaks:design-wrapper pre-build <spec>` to lazy-load relevant design references into the implementer subagent's context. For the full skip conditions, invocation rules, result handling, the terminal-track always-load set, and where loaded references go, see `design-prebuild.md` in this skill's directory. **On skip**, write a `SKIP` entry per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff.
+Gate per `_shared/skill-load-gate.md`: `--skill design-wrapper --mode pre-build`, `--surface`, no file list, and `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Common Step 1.7"` with a run dir. On `skip`, do not invoke the wrapper; the gate logs it (`logged: false`: report it per that file). On `proceed`, invoke `/claude-tweaks:design-wrapper pre-build <spec>` to load design references. For its own skips (trivial plan, design mode) and result handling, see `design-prebuild.md` in this skill's directory. **On skip**, write a `SKIP` entry for those only, per `_shared/auto-decision-log.md`'s degrade-trace rule; standalone: list in the Step 7 handoff.
 
 ### Common Step 2: Execute the Plan
 
 Execution depends on the chosen execution strategy (see Build Options). **These two are the only licensed strategies** — read `execution-mode-policy.md` in this skill's directory (record #491) for why an interactive session executing the plan directly, bypassing Task dispatch entirely, is never a third option — applies identically to standalone `/build` and `/flow`-orchestrated `/build`.
 
-> **Working Directory Discipline:** Before any commit (and before dispatching subagents that run `git` or `node --test`), anchor the working directory explicitly — `pwd` + `git rev-parse --show-toplevel` must match the worktree path (or the project root in `current-branch` strategy). When dispatching subagents, require them to use `cd "$WORKTREE" && …` or `git -C "$WORKTREE" …`. See the Working Directory Discipline section of `_shared/subagent-dispatch-core.md` for the full pattern.
+> **Working Directory Discipline:** Before any commit (and before dispatching subagents that run `git` or `node --test`), anchor the working directory explicitly — `pwd` + `git rev-parse --show-toplevel` must match the worktree path (or the project root in `current-branch` strategy). When dispatching subagents, require `git -C "{worktree}" …` and absolute paths, one plain command per Bash call — never a `cd … &&` chain (`_shared/subagent-dispatch-core.md`'s Working Directory Discipline).
 
 > **Cherry-pick source-branch PR check (#1957):** worktree strategy only. After each commit lands in this worktree, before moving to the next task, run `worktree-setup.md`'s "Cherry-pick source-branch PR check" section — a git-native `(cherry picked from commit {sha})` trailer scan that stops the build (not a silenceable auto-mode lever) when the cherry-picked source is also reachable from another record's branch that backs a still-open PR (#1821's incident). No trailer on the commit means no added work — the check is a no-op for the common case of an ordinary authored commit.
 
 **subagent** (default): read `dispatch.md` in this skill's directory and follow its full dispatch procedure — profile resolution, `tier=` alias handling, AC-forwarding, and review-model pinning. After the final code review completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`.
 
-**batched**: Invoke `/superpowers:executing-plans`. After the last batch completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`. `/build` handles post-execution steps before any branch finishing.
+**batched**: Invoke `/superpowers:executing-plans`. Read `dispatch.md`'s **Affected-set testing (#5117)** rule and fold it in; it covers this strategy's per-task and final whole-suite runs. After the last batch completes, **stop the skill and return here** — do not let it invoke `/superpowers:finishing-a-development-branch`. `/build` handles post-execution steps before any branch finishing.
 
 **Maturity-scaled test discipline (both strategies, all modes):** resolve `project-maturity` once per build — `MATURITY=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values project-maturity)`. The resolver's schema default is `greenfield`, and a value outside the four-item enum also resolves to `greenfield` — either way, add nothing. Fold one additional instruction into whichever execution skill was invoked above:
 
@@ -259,7 +251,7 @@ If any part of the plan is blocked (missing infrastructure, unresolved dependenc
    - **Record mode:** add to the materialized spec file under a "Blocked / Future Work" section
    - **Design mode:** file a backlog work record via `/claude-tweaks:capture`
 2. Note what unblocks them
-3. Append blocked items to the open items ledger (see `/claude-tweaks:ledger`) with phase `build` and status `open`, naming `Defer-reason: blocked-dependency` or `blocked-external` in the Resolution text. A review finding carried to the ledger (any execution strategy) takes a `build`-phase row (`open`, or `deferred` for SDD's carried `minor (deferred):` lines) only after `_shared/deferral-gate.md`'s fix-now check with exactly one `Defer-reason:` from that file's vocabulary, inline in the Resolution text — otherwise fix it in this build. Severity alone ("minor", "fine to defer") is never a reason.
+3. Append blocked items to the open items ledger (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section) with phase `build` and status `open`, naming `Defer-reason: blocked-dependency` or `blocked-external` in the Resolution text. A review finding carried to the ledger (any execution strategy) takes a `build`-phase row (`open`, or `deferred` for SDD's carried `minor (deferred):` lines) only after `_shared/deferral-gate.md`'s fix-now check with exactly one `Defer-reason:` from that file's vocabulary, inline in the Resolution text — otherwise fix it in this build. Severity alone ("minor", "fine to defer") is never a reason.
 4. These are resolved by the ledger resolve gate (`/claude-tweaks:ledger resolve`), run by `/claude-tweaks:wrap-up`'s Phase 3 ledger gate or `/claude-tweaks:flow` Step 5 — not by `/claude-tweaks:help`, which does not scan ledger files
 
 **Follow-up ideas (independent of blocking).** If, while implementing, you notice an opportunistic improvement or idea outside the current spec/design's scope — not blocking the current work, just observed in passing — file it via `/claude-tweaks:capture` as a fresh backlog work record before it's lost, rather than inflating this build's scope. This applies in both spec and design mode, and runs regardless of whether any part of the plan is actually blocked.
@@ -276,13 +268,11 @@ When a mismatch is an architectural deviation at module level — a boundary in 
 
 ### Common Step 6: User Journey Capture
 
-After simplification and alignment (Common Steps 3 + 4.5), run `/claude-tweaks:journeys`. Pass:
+After Common Steps 3 + 4.5, gate per `_shared/skill-load-gate.md`: `--skill journeys --integration-branch {ref}` (`_shared/integration-branch.md`), and `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Common Step 6"` with a run dir. On `skip`, do not invoke the skill. On `proceed`, run `/claude-tweaks:journeys`. Pass:
 - **Changed files** — files modified during this build session
 - **Spec or design doc context** — what was built and why
 
-The journeys skill handles scanning existing journeys, creating new journey files, updating existing ones, and committing. See `/claude-tweaks:journeys` for details.
-
-This is not optional and does not require user input — if you built a feature that any persona interacts with (end user, admin, developer, internal tooling user), the journeys skill documents it.
+On `proceed` this is not optional and does not require user input — if you built a feature that any persona interacts with, the journeys skill documents it.
 
 ### Common Step 6.5: Documentation Sync
 
@@ -290,17 +280,21 @@ If `docs/REGISTRY.md` exists, read `docs-sync.md` in this skill's directory for 
 
 ### Common Step 5: Final Verification
 
-After Common Steps 6 and 6.5, so the verified tree includes the journeys and synced docs, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md. **Folded plan tasks:** a plan task folded into this step contributes only its runner checks — every other step it names runs before Common Step 7 or writes a `SKIP` entry — read `dispatch.md`'s "Folded verification task" rule for the exact entry; it applies under `batched` too.
+After Common Steps 6 and 6.5, so the verified tree includes the journeys and synced docs, run the shared verification procedure (`skills/test/verification.md`). This runs type checking, linting, and tests using the project's commands from CLAUDE.md. **Folded plan tasks:** a plan task folded into this step contributes only its runner checks — every other step it names runs before Common Step 7 or writes a `SKIP` entry — read `dispatch.md`'s "Folded verification task" rule for the exact entry; it applies under `batched` too. **Scoped, push first (#5370):** with a declaration this run is `verification.md`'s scoped invocation; with a `ci` block a `pr-first` worktree run pushes immediately before it, after the catch-up below, and handles exit 3 per that file's Push first paragraph.
 
-**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation instead of trusting a bare boolean.
+**Operational fixes first (#3489).** Before that run, when the build's diff matches `operational-checklist.md`'s Category A triggers (schema/migration files, a changed shared-constant value, new env access, a changed `package.json` `exports`), read that file's Category A section in this skill's directory, then apply that file's Category A fixes and commit them with `Category A` in the subject, so the verified tree includes them and no fix moves HEAD past `VERIFICATION_SHA`; re-check those triggers against any fix commit below before re-running verification. A Category A action that fails or cannot complete (a rejected schema push, a broken `exports` build) is not `fixed`: resolve it like any failure in this step, or leave it `open` for Common Step 5.5's ledger row. Category B tasks and every ledger row stay in Common Step 5.5, after verification.
+
+**Catch up before verifying (#4343).** Immediately before that run and after any Category A fix commit, run `_shared/pre-verification-catchup.md`: a single-spec `pr-first` worktree run, in every mode, merges in a moved base, so `VERIFICATION_SHA` is then the post-merge HEAD; any other run logs its `SKIP`. It is not repeated before a re-run after a fix, and a conflict it cannot resolve confidently aborts the merge, and the run verifies the un-merged tree.
+
+**Note:** `/build` always runs verification (it is the *producer* of `VERIFICATION_PASSED` and of the runner-written pass stamp, #1921). The skip-if-recent rule in `test/verification.md` applies only to `/test` callers — never to this step. On a pass (runner exit 0 — a baseline-adjudicated pass included), read `VERIFICATION_SHA` from `report.json`'s `sha` and pass it forward with `VERIFICATION_PASSED=true`, so `/test`'s skip-if-recent check can detect a tree change between this step and its own invocation.
 
 If anything fails, fix it and commit the fix. If a fix changes behavior, re-check, before re-running verification, any journey or doc Common Steps 6/6.5 wrote that the fix now contradicts. **When a failure is a behavioral bug — not a mechanical type/lint error — follow the reproduce-first discipline in `_shared/reproduce-first-discipline.md` before changing code** (reproduce on command, fix the confirmed cause, escalate rather than guess if it can't be reproduced; once green, walk the causal-depth chain per the discipline's step 3) — see `failure-recovery.md` for the fuller recovery table this step falls back to.
 
 ### Common Step 5.5: Operational Checklist
 
-After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs).
+After verification passes, check for operational tasks that are easy to forget — deployment and environment concerns that slip through code review (schema/migration files, env access patterns, IaC, CI/CD, container configs). Category A fixes already landed in Common Step 5, before its verification run; this step runs the Category B tasks and writes every ledger row, a `fixed` row per Category A fix included.
 
-If your build's diff matches schema/env/IaC/CI/platform-config files, read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
+If your build's diff matches schema/env/IaC/CI/platform-config files, or Common Step 5 applied a Category A fix (a `Category A` commit in `git log` since build start), read `operational-checklist.md` in this skill's directory for the full Category A/B trigger lists, check tables, probe-then-classify procedure, and ledger format. Otherwise skip this step entirely. **On skip**, write a `SKIP` entry per the degrade-trace rule (condition: no schema/env/IaC/CI/platform-config files in diff); standalone: list in the handoff.
 
 > **Parallel execution:** Use parallel tool calls — all checks are independent Grep/Glob operations.
 

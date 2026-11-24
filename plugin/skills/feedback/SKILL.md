@@ -41,7 +41,7 @@ publishes nothing — see `upstream-draft.md` in this skill's directory, and
 | `--dry-run` | Run Steps 1-7 (classification, self-reference, dedup, drafting, scrub, and the confirm gate's dry-run branch), then render the draft and **stop** — Step 8 (label resolution and `gh issue create`) never runs. With `--upstream` also passed, Steps 3-8 never run — `upstream-draft.md`'s Steps A-D run instead, where `--dry-run` means render without persisting (Step D). Step 4's dedup search is a real, read-only `gh issue list` call; no `gh` call ever creates, labels, or files anything. When `--pre-confirmed` is also passed, `--dry-run` wins — see Step 7. |
 | `--queue` | Explicit bare-invocation mode (see Step 0) even when free-text is also present — process this project's own `upstream-candidate` backlog instead of (or in addition to) the free-text learning. |
 | `--full` | Presence-only, meaningful only for bare/`--queue` invocation (Step 0's session-evaluation gather): ignore any existing watermark for the resolved transcript, dispatch the full un-scoped judge (no offset clause), then overwrite the watermark with the fresh result exactly as a first-ever evaluation would. This is also what bypasses `session-evaluation.md`'s Skip check (Step 0's Gather 2): that check reads the same watermark, so ignoring it always resolves to dispatch. A no-op combined with free-text-only invocation — free-text invocation without `--queue` runs no session evaluation at all (Step 0's rule). |
-| `--pre-confirmed` | Presence-only like `--dry-run`; the caller passes the item's staged-file path and the approved snapshot body alongside it. Skip Step 7's `AskUserQuestion` for this item when the caller-supplied approved snapshot is diffed against the current staged file with no mismatch (drift check); Step 6's scrub always reruns as a separate safety net regardless. On drift, falls back to a normal per-item confirm (see Step 7). Legitimate only from `/claude-tweaks:wrap-up`'s Review Console or `/claude-tweaks:flow`'s consolidated multi-spec console (see Component-Skill Contract). |
+| `--pre-confirmed` | Presence-only like `--dry-run`; the caller passes the item's staged-file path and the approved snapshot body alongside it. Skip Step 7's `AskUserQuestion` for this item when the caller-supplied approved snapshot is diffed against the current staged file with no mismatch (drift check); Step 6's scrub always reruns as a separate safety net regardless. On drift, falls back to a normal per-item confirm (see Step 7); under control mode it holds the item instead (`pre-confirmed.md`). Legitimate only from `/claude-tweaks:wrap-up`'s Review Console or `/claude-tweaks:flow`'s consolidated multi-spec console (see Component-Skill Contract). |
 
 ## Workflow
 
@@ -68,17 +68,14 @@ the symptom. For a defect, also gather repro steps and expected-vs-actual. For a
 gap, gather the use case — what the user was trying to do and why the plugin's
 current behavior does not support it.
 
-Also judge Definition: does this learning name a genuine open choice with no
-tradeoff made yet — two or more viable directions, no stated preference — or a
-single clear ask? This is a content call made in this same turn, not a
-structural heuristic (the same posture `solution:unjustified`'s judgment takes).
-`Needed` only when the learning genuinely names an undecided choice; default
-`Clear` otherwise. When `Needed`, form a one-line rationale naming the open
+Also judge Definition: read `_shared/needs-definition-judgment.md` and judge
+the learning by it in this same turn: `needed` renders `Needed`, `clear`
+renders `Clear`. When `Needed`, form a one-line rationale naming the open
 choice — this and the verdict feed Step 5's draft.
 
 **Bash-refusal attribution (#3338).** When the learning's evidence quotes a refused Bash call and the candidate affected component is `bin/lib/hooks/pre-tool-use.js` or any other plugin hook, first grep the quoted text under the plugin's own `bin/`: `"${CLAUDE_PLUGIN_ROOT}/bin/"` (this repo's `plugin/bin/`; the installed build's in a consumer project), e.g. `grep -rnF -- '{fragment}' "${CLAUDE_PLUGIN_ROOT}/bin/"`.
 
-- Grep the refusal's distinctive reason clause (`too complex to verify`, `computed at runtime`), never the surrounding `This session is isolated in the worktree … Refusing to run it` frame: the plugin's `post-tool-use-failure`/`bash-prefilter` hooks quote that frame to recognize harness refusals, so it matches without the plugin having emitted it.
+- Grep the refusal's distinctive reason clause (`too complex to verify`, `computed at runtime`), never the surrounding `This session`/`This agent is isolated in the worktree … Refusing to run it`/`there` frame: the plugin's `post-tool-use-failure`/`bash-prefilter` hooks quote that frame to recognize harness refusals, so it matches without the plugin having emitted it.
 - Pick a fragment without the substring `git`, since the guard refuses that grep itself inside a worktree session.
 - A match on a `claude-tweaks:`-prefixed deny (`claude-tweaks: this project requires an isolated worktree…`, `claude-tweaks working-directory discipline: …`) keeps the plugin-hook attribution; telling the two apart is `docs/skill-authoring.md`'s "Harness-level worktree Bash guard vs. the plugin's PreToolUse gate" section.
 - A match on any other string: read the hit. A line that only quotes or recognizes the refusal (a regex, a signature constant) is not the plugin emitting it, so count it as no match; a line that emits the text as a deny reason keeps the plugin-hook attribution.
@@ -335,7 +332,8 @@ repository is outward-facing and effectively irreversible.
 section — an unconditional Step 6 scrub rerun on the on-disk staged content, then a byte-for-byte
 drift check against the caller's approved snapshot, with three outcomes: no mismatch → skip this
 item's `AskUserQuestion` and file the post-scrub content directly; a mismatch → fall back to a
-normal per-item confirm showing the post-scrub content; the staged file already gone → already
+normal per-item confirm showing the post-scrub content (under control mode, hold the item instead —
+`pre-confirmed.md`'s Drift check); the staged file already gone → already
 filed, skip the item without re-filing or erroring. Never read on a direct invocation.
 
 **`--dry-run`:** render every draft, state the classified destination and kind, then **stop here**
@@ -419,7 +417,10 @@ goes via `--body-file`.
    `multispec-review-console.md` both scan, so a stop-and-resume never re-enumerates a failed
    draft as a fresh upstream proposal — and tell the user the filing did not happen and the draft
    is preserved. This row means the CLI's own single retry (above) already ran and still failed —
-   not that no retry was attempted.
+   not that no retry was attempted. Under control mode the row also runs the `--hold filing-failed`
+   call of `wrap-up/review-console.md`'s step 9 for that draft, against the run dir owning its staged
+   file (`pre-confirmed.md`), its `{why}` a short phrase you write
+   (not pasted tool output), any `'` in it written `'\''`.
 5. **On success when invoked via `--pre-confirmed`:** run `pre-confirmed.md`'s Step 8 section
    (this skill's directory) — the per-draft `staged/wrap-up-upstream-{N}.md` cleanup keyed on the
    CLI table's `filed`/`dedup-hit` status. A direct invocation has no staged file — no-op.
