@@ -57,7 +57,7 @@
 // the two levers (learned-skills-auto-merge, merge-verification) through resolve-policy.js, anything but the
 // literal `true` meaning off. Without gh it reads no repo and prints the library's no-gh result (exit 0); with
 // gh, --repo defaults to the current repo (a read failure is exit 1). Stdout is one JSON line:
-//   drain: {merged: [n], armed: [n], leftOpen: [{pr, reason[, detail]}], conflicting: [n][, disabled]}
+//   drain: {merged: [n], armed: [n], leftOpen: [{pr, reason[, detail]}], conflicting: [n], rebuilt: [n][, disabled]}
 //   exit 0 any outcome; 1 a listing or repo-read failure; 2 malformed call (--own-pr not a positive integer)
 //
 // Exit 0 ok (every route above, staged included)
@@ -91,7 +91,7 @@ const USAGE = 'usage: learned-skills-pr.js capture --run <run-dir> --worktree <a
   + '       learned-skills-pr.js land --run <run-dir> --worktree <abs> --record <n> [--record <m> ...] --integration-branch <name> --merge-base <sha>\n'
   + '       learned-skills-pr.js stage --run <run-dir> --worktree <abs> --reason <text> --merge-base <sha>\n'
   + '       learned-skills-pr.js drain --run <run-dir> --integration-branch <name> [--own-pr <n>] [--repo <owner/name>]\n'
-  + '  drain prints {merged, armed, leftOpen, conflicting[, disabled]}; exit 0 any outcome, 1 a listing or repo-read failure\n'
+  + '  drain prints {merged, armed, leftOpen, conflicting, rebuilt[, disabled]}; exit 0 any outcome, 1 a listing or repo-read failure\n'
   + '  land / stage print one JSON line ({branch, pr, landed, staged} / {staged}); exit 1 when a staged write failed\n'
   + '  prints {route: run-branch | captured | clean | staged, ...}\n'
   + '  staged results may carry patch (the file holding the edit when the stage is description-only or unvalidated),\n'
@@ -234,7 +234,7 @@ function runDrain(o, target, deps, usageError) {
   const fail = (message) => { deps.stderr(`learned-skills-pr.js: drain failed: ${message}\n`); return 1; };
   try {
     const { autoMerge, mergeVerification } = deps.resolvePolicy(target.dir);
-    const common = { runDir: target.dir, integrationBranch: o.integrationBranch, ownPr: o.ownPr ? Number(o.ownPr) : undefined, autoMerge: autoMerge === true, mergeVerification };
+    const common = { runDir: target.dir, integrationBranch: o.integrationBranch, ownPr: o.ownPr ? Number(o.ownPr) : undefined, autoMerge: autoMerge === true, mergeVerification, cwd: deps.cwd() };
     let result;
     if (!common.autoMerge) {
       // The lever is off: the library reports {disabled:true} before it reads anything, so neither gh nor the repo is touched.
