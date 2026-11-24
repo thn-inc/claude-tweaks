@@ -2857,6 +2857,22 @@ test('hollow merge: the pass budget is checked between runs; an exhausted budget
   assert.equal(gh.calls.length, 0);
 });
 
+test('hollow merge: a project on another work backend is still checked and held, with no record comment', async () => {
+  const root = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local-files\n' });
+  const dir = addRun(root, HR, { decisions: ONE_LINE_DECISION });
+  const gh = hollowGh({ views: { 11: view(hollowBody(HR)) } });
+  const r = await detect(root, { gh });
+  assert.deepEqual(r, {
+    entries: [{
+      runDir: dir, runId: HR, pr: 11, action: 'held', reason: 'hollow-merge', phase: 'build', records: [], commented: [],
+      detail: 'work backend is not github-issues: no record comment',
+    }],
+    hollowRunDirs: [dir],
+  });
+  assert.equal(gh.comments().length, 0);
+  assert.equal(hollowMarkers(dir).length, 0);
+});
+
 test('hollow merge: a setup failure returns the failure with empty sets', async () => {
   const root = mainCheckout({ origin: false });
   addRun(root, HR, { decisions: ONE_LINE_DECISION });

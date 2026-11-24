@@ -81,7 +81,8 @@
 // each followed by an HOLLOW_STEP marker line in the run's decisions.md, so a later pass never comments
 // on that record again. The comments and markers are written under the run's post-merge claim (takeClaim,
 // the lock Steps 4.0/4.0b take), the marker read after it is taken, so two racing passes post one comment; a
-// claim another pass holds posts nothing this pass and the run is still held. A PR with no run marker, or one naming another run, gets no entry and settles as
+// claim another pass holds posts nothing this pass and the run is still held. It runs on any work backend:
+// only the comment needs `github-issues`, so another backend's hollow run is held with no comment. A PR with no run marker, or one naming another run, gets no entry and settles as
 // today. A setup failure returns `failure` with empty sets; the caller then fails the whole pass closed.
 'use strict';
 const fs = require('fs');
@@ -121,6 +122,14 @@ const UNKNOWN_MERGE_TIME = 'an unknown time';
 const NO_HOLLOW_RECORD_DETAIL = 'no record to comment on';
 // A hollow merge inside MERGE_GRACE_MS: held, its comment left to a pass past the grace.
 const HOLLOW_GRACE_DETAIL = 'merged within the merge grace: comment deferred';
+// A hollow merge in a project whose work records are not GitHub issues: held, with nothing to comment on.
+const NOT_GITHUB_ISSUES_DETAIL = 'work backend is not github-issues: no record comment';
+// A held hollow merge's `detail`, or null.
+function holdDetail(inGrace, githubIssues, records) {
+  if (inGrace) return HOLLOW_GRACE_DETAIL;
+  if (!githubIssues) return NOT_GITHUB_ISSUES_DETAIL;
+  return records.length === 0 ? NO_HOLLOW_RECORD_DETAIL : null;
+}
 // A holder whose claim another pass took over (heartbeatClaim found a different token): its entry's `detail`.
 // An unreadable own claim (a non-ENOENT read error in heartbeatClaim) is reported with it too: an accepted
 // mislabel, the safe stop being the point.
@@ -487,10 +496,13 @@ const LATE_MERGE_PARAMS = { settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS, selfInc
 const IN_SESSION_PARAMS = { settleMs: null, closeWindowMs: null, selfInclude: true };
 
 // -> { failure } when this project or caller cannot run the check, else the context both paths share.
-function setupContext({ cwd, deps }) {
+// `anyBackend` (detectHollowMerges) runs on any work backend, reporting `githubIssues` instead of refusing:
+// only its record comment needs GitHub issues, never the PR lookups and the hold.
+function setupContext({ cwd, deps, anyBackend = false }) {
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
-  if (readWorkBackend(root) !== 'github-issues') return { failure: 'not-github-issues' };
+  const githubIssues = readWorkBackend(root) === 'github-issues';
+  if (!githubIssues && !anyBackend) return { failure: 'not-github-issues' };
   // The host too: off github.com, Step 4.0b's gh calls name it (`--repo host/owner/repo`, `--hostname`).
   // #4933: an origin on an unknown host is refused before any gh call; `detail` carries the opt-in text.
   const repoSpec = repoSpecOf(root, deps.gateDeps);
@@ -517,7 +529,7 @@ function setupContext({ cwd, deps }) {
   const writeEntries = deps.appendEntries || appendEntries;
 
   return {
-    root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries,
+    root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, githubIssues,
   };
 }
 
@@ -703,10 +715,10 @@ async function detectHollowMerges({
 } = {}) {
   const entries = [];
   const hollowRunDirs = [];
-  const ctx = setupContext({ cwd, deps });
+  const ctx = setupContext({ cwd, deps, anyBackend: true });
   if (ctx.failure) return { entries, hollowRunDirs, failure: ctx.failure, ...(ctx.detail ? { detail: ctx.detail } : {}) };
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, hollowRunDirs, failure: 'no-pr-states' };
-  const { root, owner, repo, timedGh } = ctx;
+  const { root, owner, repo, timedGh, githubIssues } = ctx;
   const specNumberOf = deps.readSpecNumber || readSpecNumber;
   const slug = `${owner}/${repo}`.toLowerCase();
   let worktreeList = null;
@@ -750,8 +762,9 @@ async function detectHollowMerges({
         })
         .map((r) => Number(r.number))
         .filter((n) => Number.isInteger(n) && n > 0);
-      let records = [...new Set(closing)];
-      if (records.length === 0) {
+      // The records to comment on are GitHub issues: another work backend's run is held with none.
+      let records = githubIssues ? [...new Set(closing)] : [];
+      if (githubIssues && records.length === 0) {
         const spec = specNumberOf(dir);
         records = spec ? [Number(spec)] : [];
       }
@@ -787,9 +800,10 @@ async function detectHollowMerges({
           releaseClaim(dir, claim.token);
         }
       }
+      const detail = holdDetail(inGrace, githubIssues, records);
       entries.push({
         runDir: dir, runId, pr, action: 'held', reason: 'hollow-merge', phase, records, commented,
-        ...(inGrace ? { detail: HOLLOW_GRACE_DETAIL } : records.length === 0 ? { detail: NO_HOLLOW_RECORD_DETAIL } : {}),
+        ...(detail ? { detail } : {}),
       });
     } catch (e) {
       entries.push({

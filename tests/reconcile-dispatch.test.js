@@ -1032,7 +1032,12 @@ test('AC5.1 (#6143): a clean pass hands release, post-merge and archive empty ho
 });
 
 test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post-merge and archive for the pass', async () => {
-  const failing = [async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }), async () => { throw new Error('boom'); }];
+  // `not-github-issues` is no longer a not-applicable refusal (detection runs on any work backend), so it fails closed too.
+  const failing = [
+    async () => ({ entries: [], hollowRunDirs: [], failure: 'no-pr-states' }),
+    async () => ({ entries: [], hollowRunDirs: [], failure: 'not-github-issues' }),
+    async () => { throw new Error('boom'); },
+  ];
   for (const hollow of failing) {
     const { r, order, archiveCalled } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow });
     assert.deepEqual(order, [], 'none of release, post-merge, archive ran');
@@ -1043,10 +1048,10 @@ test('AC7.1 (#6143): a failed or throwing hollow-merge check skips release, post
   }
 });
 
-test('(#6143): a project with no GitHub work records, no remote or an origin on an unknown host has nothing to hold, so the three checks still run', async () => {
+test('(#6143): a project with no remote or an origin on an unknown host has nothing to hold, so the three checks still run', async () => {
   // `unknown-host`: setupContext refuses the origin (#4933) before any gh call, so the check can never run;
   // treating it as a failure would hold release, post-merge and archive on every pass, forever.
-  for (const failure of ['not-github-issues', 'no-remote', 'unknown-host']) {
+  for (const failure of ['no-remote', 'unknown-host']) {
     const { r, order, releaseOpts, postMergeOpts } = await reconcileWithAsyncMerge(['release', 'archive'], { hollow: async () => ({ entries: [], hollowRunDirs: [], failure }) });
     assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive'], failure);
     assert.deepEqual(releaseOpts.hollowRunIds, []);

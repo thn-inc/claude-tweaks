@@ -9,7 +9,7 @@
 // per-check properties, not by a global lock.
 'use strict';
 const path = require('path');
-const HOLLOW_CHECK_NOT_APPLICABLE = ['not-github-issues', 'no-remote', 'unknown-host'];
+const HOLLOW_CHECK_NOT_APPLICABLE = ['no-remote', 'unknown-host'];
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { findNonCanonicalRunDirs } = require('../hooks/context');
 const { resolveIntegrationBranch, bareIntegrationName, reapWorktrees: legacyReapWorktrees } = require('../hooks/worktree-reap');
@@ -559,10 +559,11 @@ async function reconcileInner(opts, state) {
     try {
       // Its own PR warm-up runs first, and the pass budget is checked between runs (a run left unjudged fails the pass closed).
       const h = await timePhase('hollow-merge', () => detectHollowMerges({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() }));
-      // `not-github-issues`, `no-remote` and `unknown-host`: this project has no GitHub work records to
-      // comment on, no PR to ask about, or an origin the #4933 host gate refuses before any gh call (release
-      // and post-merge refuse it too), so the check can never run and has nothing to hold. Treating them as a
-      // failed check would skip archive on every pass for every such project, which never had the hazard.
+      // `no-remote` and `unknown-host`: this project has no PR to ask about, or an origin the #4933 host gate
+      // refuses before any gh call (release and post-merge refuse it too), so the check can never run and has
+      // nothing to hold. Treating them as a failed check would skip archive on every pass for every such project,
+      // which never had the hazard. Another work backend is not among them: detection runs there and holds,
+      // and only its record comment, which needs GitHub issues, is skipped.
       if (h.failure && !HOLLOW_CHECK_NOT_APPLICABLE.includes(h.failure)) {
         hollowCheckFailed = true;
         result.skipped.push({ check: 'release,post-merge,archive', reason: 'hollow-merge-check-failed', detail: h.detail ? `${h.failure}: ${h.detail}` : h.failure });
