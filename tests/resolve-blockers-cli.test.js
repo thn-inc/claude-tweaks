@@ -244,6 +244,14 @@ test('#5902: run builds the blocker sink from deps.stationEvent when no onSnapsh
   ]);
 });
 
+test('an unchanged snapshot is not appended through run', () => {
+  const events = [];
+  const last = (repo, n) => (n === 13 ? { blockedBy: [], openBlockerIds: [], crossRepoBlockers: [], fetchedAt: 'old' } : null);
+  const deps = fakeDeps({ runner: twelveThirteen, stationEvent: (e) => events.push(e), lastPayload: last });
+  assert.equal(run(['12,13'], deps), 0);
+  assert.deepEqual(events.map((e) => e.recordNumber), [12]);
+});
+
 test('#5902: an explicit onSnapshot wins over deps.stationEvent', () => {
   const events = [];
   const { seen, onSnapshot } = snapshotRecorder();

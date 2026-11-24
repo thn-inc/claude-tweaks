@@ -55,3 +55,44 @@ test('the sink swallows a throwing stationEvent', () => {
   const sink = makeBlockerSnapshotSink({ stationEvent: () => { throw new Error('emit boom'); } });
   assert.doesNotThrow(() => sink(11, { blockedBy: [], openBlocker: false, openBlockerIds: [] }, META));
 });
+
+const { blockersChanged, makeHoldSink } = require('../../../plugin/bin/lib/station-events/blockers');
+
+const ENTRY = { blockedBy: [5], openBlocker: true, openBlockerIds: [5] };
+const SNAP = { blockedBy: [5], openBlockerIds: [5], crossRepoBlockers: [], fetchedAt: 'a' };
+
+test('an unchanged snapshot is not appended', () => {
+  const { events, stationEvent } = capture();
+  makeBlockerSnapshotSink({ stationEvent, lastPayload: () => SNAP })(11, ENTRY, META);
+  assert.deepEqual(events, []);
+  assert.equal(blockersChanged(SNAP, { ...SNAP, fetchedAt: 'b' }), false);
+});
+
+test('a changed blocker set is appended', () => {
+  const { events, stationEvent } = capture();
+  makeBlockerSnapshotSink({ stationEvent, lastPayload: () => ({ ...SNAP, openBlockerIds: [] }) })(11, ENTRY, META);
+  assert.equal(events.length, 1);
+});
+
+test('the first snapshot for a record is appended', () => {
+  const { events, stationEvent } = capture();
+  makeBlockerSnapshotSink({ stationEvent, lastPayload: () => null })(11, ENTRY, META);
+  assert.equal(events.length, 1);
+  assert.equal(blockersChanged(null, SNAP), true);
+});
+
+test('adding bot:blocked writes held why blocked with the blocker ref', () => {
+  const { events, stationEvent } = capture();
+  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: true, number: 11, repoName: 'acme/w', station: 'build', ref: '#5' });
+  assert.equal(events[0].kind, 'held');
+  assert.deepEqual(events[0].payload, { why: 'blocked', ref: '#5' });
+  assert.notEqual(buildLine(events[0]), null);
+});
+
+test('removing it writes released why blocked', () => {
+  const { events, stationEvent } = capture();
+  makeHoldSink({ stationEvent })({ label: 'bot:blocked', added: false, number: 11, repoName: 'acme/w', station: 'build', ref: '#5' });
+  assert.equal(events[0].kind, 'released');
+  assert.deepEqual(events[0].payload, { why: 'blocked' });
+  assert.notEqual(buildLine(events[0]), null);
+});

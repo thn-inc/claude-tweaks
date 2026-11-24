@@ -44,7 +44,8 @@
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { makeNumberListCli } = require('./lib/number-list-cli');
 const { appendStationEvent } = require('./lib/station-events/emit');
-const { snapshotSinkOf } = require('./lib/station-events/blockers');
+const { snapshotSinkOf, lastBlockersPayload } = require('./lib/station-events/blockers');
+const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
 const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo [host/]owner/name] [--help]\n';
 
@@ -63,7 +64,15 @@ const {
 });
 
 // #5902: the station-event emitter; a caller that passes its own deps omits it (no emission).
-const realDeps = { ...numberListDeps, stationEvent: (e) => appendStationEvent(e) };
+const realDeps = {
+  ...numberListDeps,
+  stationEvent: (e) => appendStationEvent(e),
+  // The previous snapshot for a record, from the tail of the station-event file.
+  lastPayload: (repoName, n) => {
+    const root = mainCheckoutRoot(process.cwd());
+    return typeof root === 'string' ? lastBlockersPayload(repoName, n, root) : null;
+  },
+};
 
 // A `blockers` station event per fetched number: with no explicit `onSnapshot`, the
 // sink is built from `deps.stationEvent`; neither present = no emission.
