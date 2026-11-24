@@ -182,6 +182,16 @@ test('lastBlockersPayload on a file larger than the tail window still returns th
   assert.deepEqual(lastBlockersPayload('acme/w', 11, root), { blockedBy: [2] });
 });
 
+test('lastBlockersPayload ignores a snapshot older than the tail window', () => {
+  const root = tmpRoot();
+  const filler = JSON.stringify({ kind: 'held', repoName: 'x/y', recordNumber: 1, pad: 'p'.repeat(200) });
+  const lines = [bl('acme/w', 12, 7)];
+  for (let i = 0; i < 500; i += 1) lines.push(filler);
+  writeEvents(root, lines);
+  assert.ok(fs.statSync(stationEventPath(root)).size > 65536 + 1000);
+  assert.equal(lastBlockersPayload('acme/w', 12, root), null);
+});
+
 test('appendStationEvent and lastBlockersPayload together: an unchanged snapshot is not appended, a changed one is', () => {
   const root = tmpRoot();
   const deps = { mainRoot: root };
