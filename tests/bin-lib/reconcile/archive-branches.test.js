@@ -750,3 +750,21 @@ test('index: no-remote repo never dispatches archive-branches; result.branches s
   const r = await reconcile({ cwd: dir, checks: ['archive-branches'] });
   assert.strictEqual(r.branches, null);
 });
+
+test('archiveBranches: a branch in heldBranches (a hollow-merge hold, #6143) is skipped hollow-merge before any screen and left in place', () => {
+  const dir = makeRepo();
+  git(dir, 'checkout', '-b', 'worktree-held');
+  fs.writeFileSync(path.join(dir, 'h.txt'), 'h\n');
+  git(dir, 'add', 'h.txt');
+  git(dir, 'commit', '-m', 'held change');
+  git(dir, 'checkout', 'main');
+  git(dir, 'cherry-pick', 'worktree-held');
+  const screened = [];
+  const screen = (root, branches) => { screened.push(...branches); return nullScreen(root, branches); };
+  const r = archiveBranches({
+    cwd: dir, integration: 'main', dryRun: false, resolvePr: () => null, resolvePrBulk: screen, heldBranches: ['worktree-held'],
+  });
+  assert.deepStrictEqual(r.entries.find((e) => e.name === 'worktree-held'), { name: 'worktree-held', kind: 'branch', action: 'skip', reason: 'hollow-merge' });
+  assert.deepStrictEqual(screened, []);
+  assert.match(git(dir, 'branch', '--list', 'worktree-held'), /worktree-held/);
+});

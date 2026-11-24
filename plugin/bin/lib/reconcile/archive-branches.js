@@ -142,7 +142,9 @@ function isCherryEquivalent(root, integration, branch) {
   return lines.every((l) => l.startsWith('-'));
 }
 
-function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk, gateDeps } = {}) {
+// `heldBranches`: branches of runs reconcile holds as hollow merges (post-merge.js's hollowRunRefs, #6143) —
+// skipped `hollow-merge` before any screen, so a held run stays resumable.
+function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBulk, gateDeps, heldBranches = [] } = {}) {
   const root = cwd || process.cwd();
   const nowMs = now || Date.now();
   const resolve = resolvePr || resolvePrState;
@@ -160,9 +162,11 @@ function archiveBranches({ cwd, integration, dryRun, now, resolvePr, resolvePrBu
   // screen is one bulk call (#1083, adopting #1082's screen-then-confirm).
   // No preferOpen, screen or confirm — deliberate; see the module header (#664 census).
   const candidates = [];
+  const held = new Set(heldBranches);
   for (const line of refs.stdout.split('\n').map((s) => s.trim()).filter(Boolean)) {
     const [branch, committerDate, tip] = line.split('\t');
     if (!inScope(branch, worktrees)) continue;
+    if (held.has(branch)) { entries.push({ name: branch, kind: 'branch', action: 'skip', reason: 'hollow-merge' }); continue; }
     candidates.push({ branch, committerDate, tip });
   }
 

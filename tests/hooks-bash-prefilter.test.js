@@ -126,6 +126,11 @@ for (const command of [
   'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'TASKKILL /IM node.exe', 'Stop-process -Name node',
   'KILLALL node', "sh -c 'pkill node'", 'bash -c "killall node"', 'cmd /c taskkill /IM node.exe',
   'powershell -c "Stop-Process -Name node"', 'pwsh -Command "Get-Process node | Stop-Process"',
+  // #6143: gh pr ready|merge reach the handler through a pre-tool-use-only rule, not GUARDED_PROGRAM_WORDS.
+  'gh pr merge 123 --squash', 'gh pr ready 7', 'cd x && gh pr merge 5', '/usr/local/bin/gh.exe pr merge 5',
+  'GH pr merge 5', 'GH.EXE pr ready 5', 'cd $X && gh pr merge 5', 'gh pr merge -sb x 5', 'gh pr merge -R=o/r 5', 'env -C $X gh pr merge 5',
+  // #6143 review: a GH_REPO/GH_HOST assignment prefix and --disable-auto still reach the handler.
+  'GH_REPO=o/r gh pr merge 5', 'GH_HOST=ghe.example.com GH_REPO=o/r gh pr ready 5', 'export GH_REPO=o/r; gh pr merge 5', 'gh pr merge --disable-auto 5',
 ]) {
   test(`pre-tool-use runs the full handler for: ${command}`, () => {
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), true);
@@ -143,7 +148,7 @@ for (const command of [
 }
 
 for (const command of ['echo hi', 'ls -la', 'node script.js', 'for i in 1; do echo probe-loop-$i; done',
-  'echo digit gitk sedate envoy', 'gh issue view 3074', '']) {
+  'echo digit gitk sedate envoy', 'gh issue view 3074', 'gh pr view 5', 'gh pr list --state open', '']) {
   test(`pre-tool-use skips: ${JSON.stringify(command)}`, () => {
     assert.strictEqual(shouldRunFull('pre-tool-use', bash(command)), false);
   });
