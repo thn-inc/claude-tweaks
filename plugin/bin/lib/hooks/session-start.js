@@ -257,9 +257,8 @@ async function run(ctx) {
       parts.push(advisoryBanner(
         'claude-tweaks: closed or archived run(s) whose unattended Review Console left item(s) no human has reviewed:',
         lines,
-        'Read each item, then act on it (apply it, file it with /claude-tweaks:capture, or drop it) and mark the run reviewed with its own command above.\n' +
-          `${sessionResidue.consoleAckAllLine(pluginRoot)}\n` +
-          'Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it.',
+        `${sessionResidue.consoleAckAllLine(pluginRoot)}\n` +
+          "Relay this list once, in your first reply to the user, one line per item with its command — do not proceed silently without mentioning it, and never run it yourself: no human has reviewed these items, so acting on one (apply, /claude-tweaks:capture, drop) or marking a run reviewed is the user's call, and you do it only when they ask in this session.",
       ));
     }
   } catch { /* best-effort */ }
