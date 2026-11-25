@@ -90,6 +90,8 @@
 
 ### Task 4: Bundler library `bundle.js`
 
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/console/bundle.js`
 - Test: `tests/bin-lib/console/bundle.test.js`
@@ -128,9 +130,12 @@ Proof(public-contract): the staged-file contract an older console reads stays va
 
 ### Task 5: Bundler CLI `bundle-proposals.js`
 
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/bundle-proposals.js`
-- Test: `tests/bin-lib/console/bundle-proposals-cli.test.js`
+- Modify: `plugin/bin/lib/stage-item/ledger.js` (`settleRow`'s terminal-move guard ~line 347)
+- Test: `tests/bin-lib/console/bundle-proposals-cli.test.js`, `tests/bin-lib/stage-item/ledger.test.js`
 
 **Interfaces:**
 - Consumes: Task 4 (`parseProposal`, `classifyLandingClass`, `planBundles`, `composeBundle`); Task 1 `backlogHubPaths`; `refusedStagedNames`, `SHADOW_DUP_RE` (`resolve.js`); `writeStagedItem`/`resolveTarget` (`plugin/bin/lib/stage-item/write.js`, the `--allocate` path); `settleRow` (`plugin/bin/lib/stage-item/ledger.js`) and `resolveLedgerPath` (`plugin/bin/lib/wrap-up/ledger-write.js`) exactly as `hooks.js`'s `runLedgerRow` uses them; `appendEntry`/`formatEntry` (`plugin/bin/lib/log-decision/append.js`); `queryRecords` (`plugin/bin/lib/issues/local-store.js`) for `--local`.
@@ -139,6 +144,9 @@ Proof(public-contract): the staged-file contract an older console reads stays va
   - `node plugin/bin/bundle-proposals.js --run <run-dir> --unbundle bundle-{n}.md [--ledger <path>]` → restores every member and removes the bundle.
   - Exit codes: 0 success (including nothing to bundle); 2 malformed invocation; 3 run dir not anchored or a write failed; 4 open-backlog records unreadable, not an array, or an empty array (nothing written, nothing logged).
 - Behavior:
+  - **Bundle re-point move in `settleRow` (plan review):** `settleRow` refuses every terminal-to-terminal move except the #4620 carried move, so add a second narrow move `bundleRepointMove`: `status === 'deferred'`, current status `deferred`, both the current and the new Resolution match `LEDGER_DEFERRED_STAGED_RE`, and exactly one of the two names a `staged/bundle-{n}.md` path (the bundle direction and the un-bundle direction). Pin both directions and a refused unrelated deferred→deferred rewrite in `ledger.test.js`.
+  - **Records file:** keep only open records (`state` absent, or `String(state).toUpperCase() === 'OPEN'`) — the session snapshot is a `--state all` pull — before `backlogHubPaths`, the near-duplicate screen, and the empty check (exit 4 when the filtered array is empty). Pass the filtered open records to `composeBundle` as `openRecords` so the near-duplicate screen always runs.
+  - **Failure atomicity (plan review):** any write failure after a bundle's step (1) rolls that bundle back before exiting 3 — restore every already-retired member from `bundled/` to `staged/`, restore already-rewritten ledger Resolutions, delete the staged bundle — so a non-zero exit bundles nothing. Earlier, fully completed bundles of the same invocation are rolled back too (bundling is all-or-nothing per invocation). On start, a `staged/bundle-*.md` with no `bundled/` file naming it (a crash between steps 1 and 2) is deleted before planning, and a `bundled/` member whose bundle file is missing is restored to `staged/`.
   - Enumerate: `{run}/spec-*/staged/` (spec dirs in `manifest.yml` order when readable — reuse the reader in `plugin/bin/lib/run-manifest/` or `plugin/bin/lib/wrap-up/pack.js`; else numeric `N` order), then `{run}/staged/`; filenames sorted within a dir. Input set: `.md` files named `leftover-*`, `ledger-record-*`, `review-followup-*`, or any `.md` whose header carries `Title:` plus `Type:` or `Labels:`; excluded: `.shadow-dup*`, `ledger-record-sdd-ruling-*`, `bundle-*`, files carrying a `Bundled-into:` header line, and each dir's `refusedStagedNames(decisions.md)`. An unreadable or unparseable member → `skipped` with a reason, left in place.
   - Empty input set → exit 0, print `{ bundles: [], singletons: [], skipped: [] }`, write and log nothing.
   - `ledger-record-*` member: locate its ledger row by the row whose Resolution names its staged path (spec-qualified `spec-{N}/staged/{name}` in a multi-spec run, else `staged/{name}`); none found (or no ledger resolves) → the member is a singleton and `skipped` gets `{ reason: 'singleton: ledger row not found' }` before planning.
@@ -149,7 +157,10 @@ Proof(public-contract): the staged-file contract an older console reads stays va
   - `AC8: after bundling, resolveAll/classifyStagedItem see the bundle and no member; with the bundle- row removed from a SECTION_MAP copy the bundle classifies unmapped-prefix and still no member; every staged path a member's original STAGED decisions.md line names no longer exists under staged/; a scan for Title:/Type:/Labels: headers under staged/ finds only the bundle and singletons`.
   - `AC10: each bundled ledger-record member's ledger row Resolution names staged/bundle-1.md`.
   - `AC11/AC18: one AUTO line per bundle naming the bundle path, its members, the shared paths, and Reversibility: high`.
-  - `AC12: empty set → exit 0, no write, no log; a malformed member stays a singleton in skipped; unreadable --records-json → exit 4, nothing written; Review Focus 5 / AC17: --records-json holding [] → exit 4`.
+  - `AC12: empty set → exit 0, no write, no log; a malformed member stays a singleton in skipped; unreadable --records-json → exit 4, nothing written; Review Focus 5 / AC17: --records-json holding [] → exit 4; holding only closed records → exit 4`.
+  - `closed records in --records-json do not count toward hubs` — 3 closed records citing `x.js` plus 0 open → `x.js` still bridges.
+  - `near-duplicate: a fixture open record near-duplicating the bundle adds a **Related:** #N line to the bundle text`.
+  - `AC9/Review Focus 2: an injected write failure after step (1) and after step (2) exits 3 and leaves every member in staged/ with its original bytes and ledger Resolution, and no staged/bundle-*.md`; `a stray staged/bundle-1.md with no bundled/ members is removed on the next run`.
   - `AC14: a second run over the same dir is a no-op (no new bundle, no member re-staged)`.
   - `AC16 (un-bundle): --unbundle restores every member's staged file byte-for-byte and its original ledger Resolution, removes the bundle, logs one AUTO line`.
   - `Review Focus 3: a ledger-record member with no ledger row stays a singleton and is not retired`.
@@ -160,6 +171,8 @@ Proof(public-contract): the staged-file contract an older console reads stays va
 - [ ] **Step 5: Commit** — `Add the bundle-proposals console CLI — refs #6283`.
 
 ### Task 6: Carrying a bundle settles every member's ledger row
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/console-resolve.js` (`setItem` guard ~line 629, `carryItem` ~line 524-550, usage text ~line 169, header comment ~line 117)
@@ -194,6 +207,6 @@ Proof(public-contract): the staged-file contract an older console reads stays va
   - `review-console.md`: two-sentence section citing `proposal-bundling.md`.
   - `multispec-review-console.md`: one pointer line; trim redundant words elsewhere to stay below 52,500 B.
   - `ledger-narrowing-auto-file.md`: it runs after proposal bundling; skips a proposal carrying `Bundled-into:` and any `decisions.md` line whose staged path no longer resolves to a creatable proposal file.
-  - `ledger-format.md`: a bundled `ledger-record-*` member's Resolution names `staged/bundle-{n}.md`; a bundle whose create fails or is carried settles every member's row through the `--set-item bundle-{n}.md … --ledger` route.
+  - `ledger-format.md`: a bundled `ledger-record-*` member's Resolution names `staged/bundle-{n}.md` (the bundle re-point is the second terminal-to-terminal move `settleRow` allows, beside the carried move, in both directions); a bundle whose create fails or is carried settles every member's row through the `--set-item bundle-{n}.md … --ledger` route.
 - [ ] **Step 4: Run** the conformance test plus every test that pins these files (`git grep -l -e "review-console.md" -e "multispec-review-console.md" -e "ledger-narrowing-auto-file.md" -e "ledger-format.md" -- tests`) and the rail tests (`git grep -l "RAIL_BYTES" -- tests`) — Expected: PASS.
 - [ ] **Step 5: Commit** — `Run proposal bundling before the Review Console files records — refs #6283`.
