@@ -10,7 +10,7 @@ files:
 **Persona:** a maintainer running `/claude-tweaks:flow #N` or `/claude-tweaks:dispatch`, whose build commits a bookkeeping-only change (a run-ledger row recording AC results) after `/build` Common Step 5's full verify, so HEAD moves past `VERIFICATION_SHA` before `/test` and `/review` run.
 **Goal:** reach `/claude-tweaks:review` Step 2 without hand-running `verify.js` and without the test gate re-running `/test` in a loop — and, when the gate cannot pass, learn exactly why.
 **Entry point:** `/claude-tweaks:test` invoked by `/flow` with `VERIFICATION_PASSED=true VERIFICATION_SHA={sha}`, then `/claude-tweaks:review` Step 1.5's pipeline branch reading `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`.
-**Success state:** a bookkeeping-only delta since the last full pass or a clean scoped build pass leaves a `scope: none` stamp at the new HEAD (see step 1), so review Step 1.5 reads `verifiedHead: true` and proceeds; a project with no verification commands proceeds on one logged `AUTO` line; a stamp still unverified after one re-trigger stops the review with a named cause, never a second re-trigger.
+**Success state:** a bookkeeping-only delta since the last full pass or a clean, passing non-full build pass leaves a `scope: none` stamp at the new HEAD (see step 1), so review Step 1.5 reads `verifiedHead: true` and proceeds; a project with no verification commands proceeds on one logged `AUTO` line; a stamp still unverified after one re-trigger stops the review with a named cause, never a second re-trigger.
 
 ## Steps
 
@@ -44,4 +44,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4395 (2026-11-03): `/test`'s `VERIFICATION_PASSED` skip now applies only when `VERIFICATION_SHA` equals `HEAD`, and review Step 1.5 gained a zero-test row and a terminal STOP naming the cause after one re-trigger.
+- Success state and step 4 updated at #5075: a ledger-only delta since a clean, passing non-full stamp resolves to `none` and re-stamps HEAD.
 - Related: `docs/journeys/run-a-deterministic-verification-check.md` (the runner and its stamp), `docs/journeys/stop-a-run-on-its-own-red-pr-check-3013.md` (the `pr-checks.js` read both passing paths run)

@@ -61,5 +61,6 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #4343 (2026-10-31). Build's Common Step 5 now runs a pre-verification catch-up for single-spec `pr-first` worktree runs, so a run whose base moved during the build runs its full suite once instead of twice.
 - Success state and step 4 updated at wrap-up of #5370: under a declaration Common Step 5 is a scoped run, so a later bookkeeping-only commit re-selects the build's mapped suites from the stamp's earlier full-pass anchor instead of resolving to `none`.
+- Success state and step 4 updated at #5075: a ledger-only delta since a clean, passing non-full stamp resolves to `none` and re-stamps HEAD.
 - Related:
   - `docs/journeys/notice-a-run-pr-gone-conflicting-at-phase-exit-2986.md`: the post-push merge-state check that still covers a base moving during verification.
