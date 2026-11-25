@@ -386,4 +386,4 @@ function buildContext({
   };
 }
 
-module.exports = { resolveDir, envTmpdir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, isAlwaysStub, isMarkdown, elideDiff };
+module.exports = { realGit, resolveDir, envTmpdir, buildContext, realLsof, MAX_BUFFER, PER_FILE_CAP_BYTES, TOTAL_CAP_BYTES, ALWAYS_STUB_BASENAMES, isAlwaysStub, isMarkdown, elideDiff };

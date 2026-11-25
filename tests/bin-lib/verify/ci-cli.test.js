@@ -89,10 +89,12 @@ function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
   git('add', '.');
   git('commit', '-q', '-m', 'base');
   const baseSha = git('rev-parse', 'HEAD').trim();
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  git('checkout', '-q', '-b', 'feature');
   const decl = {
     checks: { tests: 'npm test' },
     retry: { tests: 'node --test --test-reporter=tap {file}' },
-    rules: [{ match: '**', suites: '*', static: false }],
+    rules: [{ match: '**', suites: '*', static: true }],
     ...(ci ? { ci: { tests: { workflow: 'test.yml', job: 'test', waitSeconds: 5, pollSeconds: 1 } } } : {}),
     ...declExtra,
   };
@@ -101,7 +103,6 @@ function repoWith({ ci = true, extraFiles = {}, declExtra = {} } = {}) {
   for (const [rel, body] of Object.entries(extraFiles)) fs.writeFileSync(path.join(repo, rel), body);
   git('add', '.');
   git('commit', '-q', '-m', 'head');
-  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   return { repo, git, baseSha, branch, gitDir: path.join(repo, '.git') };
 }
 
