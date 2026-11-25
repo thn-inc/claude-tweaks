@@ -17,7 +17,8 @@
 //   node bin/review-coordination.js write-findings <run-dir> <findings.json>
 //   node bin/review-coordination.js check-coverage <run-dir>
 // categorise-reproduction/log-reproduction-judgment/detect-overlap/corroborate-cross-lens print JSON
-// (corroborate-cross-lens: #3604; log-reproduction-judgment: #5595); resolve-debate prints
+// (corroborate-cross-lens: #3604; log-reproduction-judgment: #5595; detect-overlap pairs are
+// {lensA, lensB, findingA, findingB, substanceScore, substanceMatch}, #4747); resolve-debate prints
 // the bare resolution string. resolve-tiebreak/write-findings/check-coverage
 // (#3945) print one JSON line: the resolver result (a could-not-parse reply is
 // parse:"could-not-parse" with exit 0 — the signal is in the JSON), {path, count}
