@@ -322,8 +322,8 @@ test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule a
 
 // #4118 (Planning Decisions Q1, Reading A): /capture's Shaped-body branch stamps ceremony:*, and the
 // label is the single ceremony authority for every lane. Options are representative driver-lane
-// options (hand-set values, not the schema defaults), not a hand-built DRIVER object.
-function driverDefaults() {
+// options (hand-set values, not the schema defaults).
+function representativeDriverOptions() {
   const values = {
     'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5, 'express-driver-max-risk': 'low',
     'express-driver-review': 'beyond-express', 'express-driver-protected-paths': 'refuse',
@@ -338,12 +338,12 @@ function driverDefaults() {
 test('#4118: a capture-stamped ceremony:fast-lane record is express-eligible and driver-eligible', () => {
   const r = record(['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task', 'by:capture']);
   assert.strictEqual(evaluateRecordEligibility(r, OPTS).eligible, true);
-  assert.strictEqual(evaluateRecordEligibility(r, driverDefaults()).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(r, representativeDriverOptions()).eligible, true);
 });
 
 test('#4118: a capture-stamped ceremony:standard record is refused by representative driver-lane options, naming ceremony', () => {
   const r = record(['risk:low', 'size:low', 'ceremony:standard', 'type:task', 'by:capture']);
-  assert.deepStrictEqual(evaluateRecordEligibility(r, driverDefaults()).reasons, [REASONS.ceremony]);
+  assert.deepStrictEqual(evaluateRecordEligibility(r, representativeDriverOptions()).reasons, [REASONS.ceremony]);
 });
 
 // Driver lane bounds (#5224): sizeCeiling / maxKeyFiles options; absent options keep every express verdict.

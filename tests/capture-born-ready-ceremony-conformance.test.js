@@ -31,7 +31,7 @@ test('capture Shaped-body step 3 judges ceremony through the canonical pattern a
   assert.ok(start >= 0 && end > start, 'Shaped-body branch and Entry Format headings both present');
   const branch = c.slice(start, end);
   assert.ok(branch.includes('`_shared/ceremony-check-invocation.md`'));
-  assert.ok(branch.includes('"ceremony": "<fast-lane|standard>"'));
+  assert.ok(branch.includes('"ceremony": "<fast-lane|standard>, present only when'));
   assert.ok(!/accepted keys are wider[^)]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
   assert.ok(branch.includes('never defaulted to `standard`'), 'missing-verdict clause');
   assert.ok(branch.includes('present only when the ceremony check returned a verdict — omit the key otherwise (null throws)'), 'ceremony payload key must be conditional');

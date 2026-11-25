@@ -355,7 +355,7 @@ On match, skip Entry Format's stub assembly and its character-budget cap, and ru
      "risk": "<low|medium|high>",
      "size": "<low|medium|high>",
      "ready": true,
-     "ceremony": "<fast-lane|standard>",   // present only when the ceremony check returned a verdict — omit the key otherwise (null throws)
+     "ceremony": "<fast-lane|standard>, present only when the ceremony check returned a verdict — omit the key otherwise (null throws)",
      "deferReason": "<one of DEFER_REASONS, present only when the deferral check above applies>"
    }
    ```
