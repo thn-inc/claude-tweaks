@@ -7,7 +7,7 @@ const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('os');
 const path = require('path');
 
-const { fetchCiVerdict, normalizeCiLog, LOG_TIMEOUT_MS } = require('../../../plugin/bin/lib/verify/ci-source');
+const { fetchCiVerdict, normalizeCiLog, LOG_TIMEOUT_MS, GH_MAX_ATTEMPTS, GH_RETRY_BACKOFF_MS } = require('../../../plugin/bin/lib/verify/ci-source');
 
 const SHA = 'a'.repeat(40);
 const SOURCE = { workflow: 'test.yml', job: 'test', waitSeconds: 60, pollSeconds: 20 };
@@ -143,6 +143,54 @@ test('gh not installed falls back as gh-unavailable (#4347)', async () => {
   const runner = () => { const e = new Error('spawn gh ENOENT'); e.code = 'ENOENT'; throw e; };
   const { v } = await call({}, { runner });
   assert.strictEqual(v.ci.fallback, 'gh-unavailable');
+});
+
+function timeoutErr(over = {}) { return Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' }, over); }
+function recSleep() { const waits = []; return { waits, sleep: async (ms) => { waits.push(ms); }, now: () => 1000 }; }
+
+test('#5437: a timed-out read is retried once after 1s and then succeeds', async () => {
+  const good = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]);
+  let n = 0;
+  const runner = (args, o) => { if (/\/pulls$/.test(args[1]) && n++ === 0) throw timeoutErr(); return good.runner(args, o); };
+  const clk = recSleep();
+  const { v } = await call({}, { runner, clk });
+  assert.strictEqual(v.used, true);
+  assert.deepStrictEqual(clk.waits, [GH_RETRY_BACKOFF_MS[0]]);
+});
+
+test('#5437: a read timing out on every attempt names the attempt count; a bare signal counts as a timeout', async () => {
+  for (const err of [timeoutErr(), Object.assign(new Error('spawnSync gh ETIMEDOUT'), { signal: 'SIGTERM' })]) {
+    let n = 0;
+    const clk = recSleep();
+    const { v } = await call({}, { runner: () => { n++; throw err; }, clk });
+    assert.strictEqual(v.ci.fallback, 'gh-error after 3 attempts: spawnSync gh ETIMEDOUT');
+    assert.strictEqual(n, GH_MAX_ATTEMPTS);
+    assert.deepStrictEqual(clk.waits, GH_RETRY_BACKOFF_MS);
+  }
+});
+
+test('#5437: ENOENT, a missing commit and a non-timeout error are never retried', async () => {
+  const cases = [
+    [Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }), 'gh-unavailable'],
+    [Object.assign(new Error('x'), { stderr: 'gh: No commit found for SHA (HTTP 422)' }), 'head-not-pushed'],
+    [Object.assign(new Error('x'), { stderr: 'HTTP 500 boom' }), 'gh-error: HTTP 500 boom'],
+  ];
+  for (const [err, want] of cases) {
+    let n = 0;
+    const clk = recSleep();
+    const { v } = await call({}, { runner: () => { n++; throw err; }, clk });
+    assert.strictEqual(v.ci.fallback, want);
+    assert.strictEqual(n, 1);
+    assert.deepStrictEqual(clk.waits, []);
+  }
+});
+
+test('#5437: a timeout on a poll read does not end the wait', async () => {
+  const good = fakeGh([PULLS, PR, RUNS, jobs('success'), logRoute('ok\n')]);
+  let n = 0;
+  const runner = (args, o) => { if (/\/runs\?head_sha/.test(args[1]) && n++ === 0) throw timeoutErr(); return good.runner(args, o); };
+  const { v } = await call({}, { runner, clk: recSleep() });
+  assert.strictEqual(v.used, true);
 });
 
 test('a red job whose log cannot be fetched falls back — nothing names its failures (#4347)', async () => {
