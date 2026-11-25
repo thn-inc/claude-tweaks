@@ -135,8 +135,9 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
 // empty/null list, an unmatched path, an impact or static rule all fail closed).
 function inertDirtyPaths(decl, paths) {
   if (!decl || !Array.isArray(paths) || paths.length === 0) return null;
+  const generated = (decl.generated || []).map(globToRegExp);
   const inert = (file) => {
-    if ((decl.generated || []).some((g) => globToRegExp(g).test(file))) return true;
+    if (generated.some((re) => re.test(file))) return true;
     const idx = firstRuleIndex(decl, file);
     if (idx === -1) return false;
     const rule = decl.rules[idx];

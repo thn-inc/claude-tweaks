@@ -359,13 +359,14 @@ test('AC1.7: an empty or null list is not inert', () => {
   assert.strictEqual(inertDirtyPaths(INERT, null), null);
 });
 
-test('an impact rule is not inert', () => {
-  assert.strictEqual(inertDirtyPaths(IMPACT, ['lib/a.js']), null);
+test('a parsed impact rule (suites null, impact true) is not inert', () => {
   const d = decl({
     checks: { tests: 'npm test' },
     impact: { suite: 'tests', command: 'node --test {files}', tests: ['tests/**/*.test.js'] },
     rules: [{ match: 'lib/**', impact: true, static: false }],
   });
+  assert.strictEqual(d.rules[0].suites, null);
+  assert.strictEqual(d.rules[0].impact, true);
   assert.strictEqual(inertDirtyPaths(d, ['lib/a.js']), null);
 });
 
