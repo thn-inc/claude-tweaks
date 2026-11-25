@@ -109,7 +109,7 @@ git commit -m "Add review size-proxy module — excludes bookkeeping and lockfil
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/review-context/exit-code.test.js tests/bin-lib/review-context/size-proxy.test.js`
-Expected: FAIL — `unknown command: size-proxy` and `collectSizeProxy is not a function`.
+Expected: FAIL after Step 1 — `unknown command: size-proxy` and `collectSizeProxy is not a function`.
 
 - [ ] **Step 3: Implement** `collectSizeProxy`, export `realGit`, and wire the verb into `build-review-context.js`: new `realDeps.sizeProxy` (calls `collectSizeProxy` with `git = (a, o) => realGit(a, { cwd, env, ...o })`), `--print-dir` rejected on it, missing `--base`/`--branch` → stderr `build-review-context.js: size-proxy requires --base and --branch` + `USAGE`, exit 2. A git throw reaches `run()`'s existing catch (exit 1, stdout untouched). Update the file header, `USAGE`, and both `docs/plugin-structure.md` entries.
 
@@ -137,6 +137,7 @@ git commit -m "Add build-review-context.js size-proxy verb (refs #5148)"
 **Files:**
 - Modify: `plugin/skills/review/review-effort-derivation.md` (step 3's risk-proxy and record-size-proxy bullets; step 4's #4028 example only if its wording no longer matches)
 - Test: `tests/bin-lib/review-context/prose.test.js`
+- Test: `tests/review-effort-label-diff-conformance.test.js` (existing pins on this file — run, no edit expected)
 
 **Interfaces:**
 - Consumes: Task 2's verb exactly as `node "${CLAUDE_PLUGIN_ROOT}/bin/build-review-context.js" size-proxy --base {base} --branch {branch} [--files-from {path}]`.
@@ -149,7 +150,7 @@ git commit -m "Add build-review-context.js size-proxy verb (refs #5148)"
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/review-context/prose.test.js`
-Expected: FAIL on the three new tests.
+Expected: FAIL after Step 1 — the three new tests fail.
 
 - [ ] **Step 3: Edit step 3 of `review-effort-derivation.md`:**
   - Record-size proxy: counts come from `size-proxy`'s `size` (files/lines after excluding declared bookkeeping paths and lockfiles); pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits. A non-zero exit or unparseable output → today's unfiltered `--stat` totals plus a one-line notice; that fallback is never lower than the filtered count. Keep `**high** at 10+ files` and the threshold sentences verbatim.
