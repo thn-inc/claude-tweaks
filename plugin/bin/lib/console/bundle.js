@@ -22,7 +22,17 @@ const { findNearDuplicates, isStrongNearDuplicate, isRelatedCandidate } = requir
 const FILED_BY = 'review console proposal bundling';
 const NO_CHANGE_NOTE = 'No user-visible change.';
 const HEADER_RE = /^([A-Za-z][A-Za-z-]*):[ \t]*(.*)$/;
-const DEFER_LINE_RE = /^Defer-reason: (\S+)[ \t]*$/m;
+// A member's own marker lines, as a producer appends them (record-payload.js) — HTML-comment and plain forms.
+const MARKER_LINE_RE = /^(?:<!--\s*(?:work|code-health|harness-health|journey-health)-fingerprint:\s*[^\s>]+\s*-->|work-fingerprint: \S+)[ \t]*$/;
+
+// The fingerprint of the body's own trailing marker block (the lines after the last non-marker, non-blank line);
+// a marker quoted earlier in the text is not the member's.
+function trailingFingerprint(body) {
+  const lines = body.split('\n');
+  let start = lines.length;
+  while (start > 0 && (lines[start - 1].trim() === '' || MARKER_LINE_RE.test(lines[start - 1]))) start -= 1;
+  return extractFingerprints(lines.slice(start).join('\n')).at(-1) || null;
+}
 
 // name, text -> parsed proposal, or null when the header carries no `Title:`. The header is every
 // line up to the first blank line, CRLF tolerated; the body is everything after it.
@@ -39,8 +49,8 @@ function parseProposal(name, text) {
   const body = lines.slice(end + 1).join('\n');
   const rawLabels = header.Labels ?? '';
   const labels = rawLabels === '' || rawLabels === 'none' ? [] : rawLabels.split(',').map((l) => l.trim()).filter(Boolean);
-  const bodyReason = DEFER_LINE_RE.exec(body);
-  const deferReason = header['Defer-reason'] || (bodyReason ? bodyReason[1] : null) || null;
+  // Header only: a `Defer-reason:` line in the body may be quoted text, so a header with none has none.
+  const deferReason = header['Defer-reason'] || null;
   return {
     name,
     title: header.Title,
@@ -49,8 +59,7 @@ function parseProposal(name, text) {
     deferReason,
     body,
     keyFiles: extractKeyFilesSection(body),
-    // The member's own marker is the trailing one a producer appends; an earlier one is quoted text.
-    fingerprint: extractFingerprints(body).at(-1) || null,
+    fingerprint: trailingFingerprint(body),
   };
 }
 
@@ -131,6 +140,19 @@ function sharedPathsOf(members, hubPaths) {
   return [...counts].filter(([, n]) => n >= 2).map(([file]) => file).sort();
 }
 
+// maxTier plus the union rule for size: the bundle is bigger than any one member, so a bundle of 5+ members,
+// or one whose Key File union is at least twice its largest member's, rises one tier (capped at the top).
+const SIZE_RAISE_MEMBERS = 5;
+const SIZE_RAISE_FILE_RATIO = 2;
+function bundleSize(members, unionCount) {
+  const base = maxTier(members, 'size');
+  if (!base) return null;
+  const largest = Math.max(0, ...members.map((m) => (m.keyFiles || []).length));
+  const raise = members.length >= SIZE_RAISE_MEMBERS || (largest > 0 && unionCount >= SIZE_RAISE_FILE_RATIO * largest);
+  const idx = TIERS.indexOf(base.slice('size:'.length));
+  return `size:${TIERS[raise ? Math.min(idx + 1, TIERS.length - 1) : idx]}`;
+}
+
 function maxTier(members, prefix) {
   let best = -1;
   for (const member of members) {
@@ -173,7 +195,7 @@ function composeBundle(bundle, options = {}) {
   if (origins[0] && origins.every((o) => o === origins[0])) labels.push(origins[0]);
   if (!needsDefinition) {
     const risk = maxTier(members, 'risk');
-    const size = maxTier(members, 'size');
+    const size = bundleSize(members, new Set(members.flatMap((m) => m.keyFiles || [])).size);
     if (risk) labels.push(risk);
     if (size) labels.push(size);
     labels.push(LABELS.READY);

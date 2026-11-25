@@ -281,10 +281,12 @@ test('near-duplicate: an open record near-duplicating the bundle adds a Related 
   const title = /^Title: (.*)$/m.exec(bundle)[1];
   const body = bundle.slice(bundle.indexOf('\n\n') + 2);
   assert.doesNotMatch(bundle, /\*\*Related:\*\*/);
-  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 0);
-  fs.writeFileSync(f.records, JSON.stringify([unrelatedOpen(), { number: 77, title, body, labels: ['ready'], state: 'OPEN' }]));
-  assert.equal(go(f).code, 0);
-  assert.match(f.read(f.staged('bundle-1.md')), /\*\*Related:\*\* #77/);
+  // A second identical run dir (an un-bundled member would stay a singleton, so the first is not reused).
+  const g = fixture();
+  seed(g);
+  fs.writeFileSync(g.records, JSON.stringify([unrelatedOpen(), { number: 77, title, body, labels: ['ready'], state: 'OPEN' }]));
+  assert.equal(go(g).code, 0);
+  assert.match(g.read(g.staged('bundle-1.md')), /\*\*Related:\*\* #77/);
 });
 
 test('AC9: a write failure after step 1 and after step 2 exits 3 and restores every member, the ledger and staged/', () => {
@@ -387,7 +389,7 @@ test('crash after the un-bundling marker: the next bundle-mode run finishes the 
     const ledger = f.read(f.ledger);
     assert.equal(go(f).code, 0);
     assert.equal(go(f, ['--unbundle', 'bundle-1.md'], overrides()).code, 3, label);
-    assert.match(f.decisions(), /Proposal bundling: un-bundling staged\/bundle-1\.md/, label);
+    assert.match(f.decisions(), /Proposal bundling: un-bundling \(override\) staged\/bundle-1\.md/, label);
     fs.writeFileSync(f.records, hubRecords());
     const r = go(f);
     assert.equal(r.code, 0, `${label}: ${r.err}`);
@@ -456,7 +458,7 @@ test('AC16: --unbundle restores every member byte for byte, the original ledger 
   assert.equal(f.read(f.ledger), ledger);
   const unbundled = f.decisions().split('\n').filter((l) => /^- AUTO .*un-bundled/.test(l));
   assert.equal(unbundled.length, 1);
-  assert.match(unbundled[0], /un-bundled staged\/bundle-1\.md → staged\/ledger-record-c\.md, staged\/leftover-a\.md, staged\/leftover-b\.md\. Reversibility: high\.$/);
+  assert.match(unbundled[0], /un-bundled \(override\) staged\/bundle-1\.md → staged\/ledger-record-c\.md, staged\/leftover-a\.md, staged\/leftover-b\.md\. Reversibility: high\.$/);
   assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 2, 'an absent bundle is a usage error');
 });
 
@@ -547,7 +549,7 @@ function hubRecords() {
   return JSON.stringify([1, 2, 3].map((n) => ({ number: n, title: `c${n}`, body, labels: [], state: 'OPEN' })));
 }
 
-const events = (f) => f.decisions().split('\n').map((l) => /Proposal bundling: (bundled|un-bundling|un-bundled) (\S+)/.exec(l)).filter(Boolean).map((m) => `${m[1]} ${m[2]}`);
+const events = (f) => f.decisions().split('\n').map((l) => /Proposal bundling: (bundled|un-bundling|un-bundled)(?: \(override\))? (\S+)/.exec(l)).filter(Boolean).map((m) => `${m[1]} ${m[2]}`);
 
 test('spec-qualified ledger match: a run-level and a spec member of one name each bind to their own row', () => {
   const f = fixture();
@@ -725,4 +727,58 @@ test('--local reads specs/ from the git root, not the cwd', () => {
   const r = go(f, ['--local'], { cwd: () => sub }, { records: false });
   assert.equal(r.code, 0, r.err);
   assert.equal(r.json.bundles.length, 1);
+});
+
+test('crash repair runs before the open-backlog read: an unreadable --records-json exits 4 with the crashed state already repaired', () => {
+  for (const label of ['unreadable', 'empty']) {
+    const f = fixture();
+    const texts = seed(f);
+    const ledger = f.read(f.ledger);
+    const crashed = go(f, [], { settleRow: () => { throw new Error('died'); }, inProcessRollback: false });
+    assert.equal(crashed.code, 3, label);
+    assert.ok(fs.existsSync(f.staged('bundle-1.md')), `${label}: the crash left a half-finished bundle`);
+    if (label === 'unreadable') fs.rmSync(f.records, { force: true });
+    else fs.writeFileSync(f.records, '[]');
+    const r = go(f);
+    assert.equal(r.code, 4, label);
+    assert.equal(r.out, '', label);
+    assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), Object.keys(texts).sort(), `${label}: every member is back and the half bundle is gone`);
+    for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, `${label} ${name}`);
+    assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), [], label);
+    assert.equal(f.read(f.ledger), ledger, `${label}: ledger Resolutions restored`);
+  }
+});
+
+test('override: --unbundle logs (override) wording and a later bundle-mode pass leaves those members singletons; a plain rollback does not', () => {
+  const f = fixture();
+  const texts = seed(f);
+  assert.equal(go(f).code, 0);
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 0);
+  const lines = f.decisions().split('\n').filter((l) => /Proposal bundling: un-bundl/.test(l));
+  assert.equal(lines.length, 2);
+  for (const l of lines) assert.match(l, /Proposal bundling: un-bundl(?:ing|ed) \(override\) staged\/bundle-1\.md → /);
+  const again = go(f);
+  assert.equal(again.code, 0, again.err);
+  assert.deepEqual(again.json.bundles, [], 'the members the human un-bundled are not re-bundled');
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), Object.keys(texts).sort());
+  assert.ok(again.json.skipped.some((s) => s.path === 'staged/leftover-a.md' && /un-bundled by override/.test(s.reason)));
+  assert.deepEqual(events(f), ['bundled staged/bundle-1.md', 'un-bundling staged/bundle-1.md', 'un-bundled staged/bundle-1.md']);
+
+  // The same members after a plain rollback (no override line) bundle again.
+  const g = fixture();
+  seed(g);
+  assert.equal(go(g, [], { settleRow: () => { throw new Error('died'); } }).code, 3);
+  assert.doesNotMatch(g.decisions(), /\(override\)/);
+  assert.equal(go(g).json.bundles.length, 1);
+});
+
+test('a crash after the override un-bundling marker is repaired as an override: the repair line keeps (override) and the members stay singletons', () => {
+  const f = fixture();
+  seed(f);
+  assert.equal(go(f).code, 0);
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md'], { unlink: () => { throw new Error('died'); } }).code, 3);
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.json.bundles, []);
+  assert.match(f.decisions(), /Proposal bundling: un-bundled \(override\) staged\/bundle-1\.md → staged\/ledger-record-c\.md/);
 });

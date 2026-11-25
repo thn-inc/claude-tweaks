@@ -11,8 +11,10 @@
 // --records-json (the console's session snapshot) or, under work-backend local-files, from --local.
 // Exit 0 on success (nothing to bundle included); 2 on a malformed invocation; 3 when the run dir is
 // missing or not anchored under the main checkout's .claude-tweaks/pipelines ([IL-127]) or a write failed;
-// 4 when the open-backlog records are unreadable, not an array, or hold no open record (nothing written,
-// nothing logged).
+// 4 when the open-backlog records are unreadable, not an array, or hold no open record (nothing bundled; a
+// crashed run's repair, which needs no records, has already run).
+// --unbundle is the human Override: it logs `un-bundling (override)` / `un-bundled (override)` lines, and a later
+// bundle-mode pass leaves the members those lines name as singletons.
 // Retirement: a member moves to {its dir}/bundled/ — outside staged/, so an older console reading the run
 // dir sees only the bundle as creatable — with `Bundled-into:` (and for a ledger member `Ledger-row:` /
 // `Ledger-resolution-was:`) header lines prepended to its original bytes; --unbundle strips them again.
@@ -306,14 +308,29 @@ function readOptional(deps, file) {
 
 // decisions.md -> Map(bundle ref -> its last Proposal bundling event: 'bundled' (committed), 'un-bundling' (an
 // un-bundle began; its commit point is the bundle file going) or 'un-bundled' (done)).
-const EVENT_RE = /^- AUTO \S+ — Proposal bundling: (bundled|un-bundling|un-bundled) (staged\/bundle-\d+\.md)(?=[ ;])/;
+// A human's `--unbundle` logs `un-bundling (override)` / `un-bundled (override)`; rollback and repair log the plain forms.
+const EVENT_RE = /^- AUTO \S+ — Proposal bundling: (bundled|un-bundling|un-bundled)( \(override\))? (staged\/bundle-\d+\.md)(?=[ ;])/;
+const OVERRIDE_MEMBERS_RE = /Proposal bundling: un-bundl(?:ing|ed) \(override\) staged\/bundle-\d+\.md → (.*?)\. Reversibility/;
 function bundleEvents(decisionsText) {
   const state = new Map();
+  const overridden = new Set();
   for (const line of String(decisionsText || '').split('\n')) {
     const m = EVENT_RE.exec(line);
-    if (m) state.set(m[2], m[1]);
+    if (!m) continue;
+    state.set(m[3], m[1]);
+    if (m[2]) overridden.add(m[3]); else overridden.delete(m[3]);
   }
-  return state;
+  return { state, overridden };
+}
+
+// Member keys a human un-bundled: a later bundle-mode pass leaves them as singletons.
+function overrideMembers(decisionsText) {
+  const keys = new Set();
+  for (const line of String(decisionsText || '').split('\n')) {
+    const m = OVERRIDE_MEMBERS_RE.exec(line);
+    if (m) for (const k of m[1].split(', ')) keys.add(k);
+  }
+  return keys;
 }
 
 // A repair that deletes a bundle or restores its members must not run past a bundled/ file it cannot read: that
@@ -349,7 +366,7 @@ function unbundle(o, target, deps) {
     // and its members stay in bundled/.
     deps.appendEntries({
       runDir: target.dir,
-      items: [{ section: SECTION, entry: auto(`un-bundling ${ref} → ${members.map((m) => relPath(m.dir, 'staged', m.name)).join(', ') || '(no members)'}`, deps) }],
+      items: [{ section: SECTION, entry: auto(`un-bundling (override) ${ref} → ${members.map((m) => relPath(m.dir, 'staged', m.name)).join(', ') || '(no members)'}`, deps) }],
     });
     deps.unlink(bundleFile);
     for (const m of members) {
@@ -357,7 +374,7 @@ function unbundle(o, target, deps) {
       paths.push(relPath(m.dir, 'staged', m.name));
     }
     deps.appendEntries({
-      runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${ref} → ${paths.join(', ')}`, deps) }],
+      runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled (override) ${ref} → ${paths.join(', ')}`, deps) }],
     });
   } catch (err) {
     if (err instanceof Fail) throw err;
@@ -371,7 +388,7 @@ function unbundle(o, target, deps) {
 // in use (committed bundles, including ones the console skipped), so a new bundle never takes a live number.
 function recover(target, dirs, deps, ledger) {
   const all = bundledMembers(dirs, deps);
-  const state = bundleEvents(readOptional(deps, path.join(target.dir, 'decisions.md')));
+  const { state, overridden } = bundleEvents(readOptional(deps, path.join(target.dir, 'decisions.md')));
   const stagedDir = path.join(target.dir, 'staged');
   const files = new Set(deps.readdir(stagedDir).filter((n) => BUNDLE_NAME_RE.test(n)).map((n) => `staged/${n}`));
   const refs = new Set([...files, ...all.members.map((m) => m.parsed.bundleRef), ...[...state].filter(([, s]) => s !== 'un-bundled').map(([r]) => r)]);
@@ -394,14 +411,15 @@ function recover(target, dirs, deps, ledger) {
     if (files.has(ref)) deps.unlink(path.join(target.dir, ref));
     if (st === 'un-bundling') {
       deps.appendEntries({
-        runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${ref} → ${paths.join(', ') || '(no members left)'}`, deps) }],
+        runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled${overridden.has(ref) ? ' (override)' : ''} ${ref} → ${paths.join(', ') || '(no members left)'}`, deps) }],
       });
     }
   }
   return Math.max(0, ...live.map((ref) => Number(/(\d+)\.md$/.exec(ref)[1])));
 }
 
-function enumerate(dirs, ledgerFinder, deps) {
+function enumerate(dirs, ledgerFinder, deps, target) {
+  const overridden = overrideMembers(readOptional(deps, path.join(target.dir, 'decisions.md')));
   const proposals = [];
   const skipped = [];
   const singletons = [];
@@ -428,6 +446,11 @@ function enumerate(dirs, ledgerFinder, deps) {
         skipped.push({ path: key, reason: 'unparseable: no Title: header' });
         continue;
       }
+      if (overridden.has(key)) {
+        singletons.push(key);
+        skipped.push({ path: key, reason: 'singleton: un-bundled by override' });
+        continue;
+      }
       const member = { ...parsed, key, dir, text };
       if (name.startsWith('ledger-record-')) {
         member.ledger = findLedgerRow(ledgerFinder.forDir(dir), dir, name, deps);
@@ -444,15 +467,16 @@ function enumerate(dirs, ledgerFinder, deps) {
 }
 
 function bundle(o, target, deps) {
-  const openRecords = loadOpenRecords(o, deps);
   const dirs = memberDirs(target.dir, deps);
   const ledgerFinder = { ...makeLedgerFinder(o, target, deps), runDir: target.dir };
   let highest;
   try { highest = recover(target, dirs, deps, ledgerFinder); } catch (err) {
     throw new Fail(3, `could not repair an interrupted bundling run (${err && err.message})`);
   }
+  // After the repair: an unreadable backlog (exit 4) still leaves a crashed run's state repaired.
+  const openRecords = loadOpenRecords(o, deps);
 
-  const input = enumerate(dirs, ledgerFinder, deps);
+  const input = enumerate(dirs, ledgerFinder, deps, target);
   const envelope = { bundles: [], singletons: [...input.singletons], skipped: [...input.skipped] };
   if (input.proposals.length === 0) {
     envelope.singletons.sort();

@@ -308,3 +308,34 @@ test('members and bundles keep manifest order when keys are not alphabetical', (
   const plan = planBundles(ps, { hubPaths: new Set() });
   assert.deepStrictEqual(plan.bundles.map((b) => keys(b.members)), [['z.md', 'a.md'], ['m.md', 'b.md']]);
 });
+
+test('bundle size rises one tier from the largest member at 5+ members or a 2x Key File union, capped at high', () => {
+  const sized = (n, size, files) => Array.from({ length: n }, (_, i) => prop(`m${i}.md`, { title: `M${i}`, files: files(i), size: i === 0 ? size : undefined }));
+  const shared = () => ['src/s.js'];
+  assert.ok(bundleOf(sized(4, 'low', shared)).labels.includes('size:low'), 'no raise below the thresholds');
+  assert.ok(bundleOf(sized(5, 'low', shared)).labels.includes('size:medium'), '5 members raise low to medium');
+  assert.ok(bundleOf(sized(5, 'medium', shared)).labels.includes('size:high'), '5 members raise medium to high');
+  assert.ok(bundleOf(sized(5, 'high', shared)).labels.includes('size:high'), 'high stays high');
+  // Largest member 2 files, union 4: 4 >= 2 * 2 raises; union 3 does not.
+  const wide = bundleOf(sized(3, 'low', (i) => (i === 0 ? ['src/s.js', 'src/a.js'] : ['src/s.js', `src/x${i}.js`])));
+  assert.ok(wide.labels.includes('size:medium'), 'union 4 >= 2 * largest 2 raises');
+  const narrow = bundleOf(sized(3, 'low', (i) => (i === 0 ? ['src/s.js', 'src/t.js'] : ['src/s.js'])));
+  assert.ok(narrow.labels.includes('size:low'), 'union 2 < 2 * largest 2 does not raise');
+  const none = bundleOf(sized(5, undefined, shared));
+  assert.ok(!none.labels.some((l) => l.startsWith('size:')), 'no member size label: none written even at 5 members');
+});
+
+test('Defer-reason is read from the header only: a body quoting one without a header line has none', () => {
+  const text = stage({ title: 'Q', files: ['src/s.js'] }).replace(/^Defer-reason: .*\n/m, '');
+  assert.ok(text.includes('Defer-reason: tangential'), 'the body still carries the provenance line');
+  assert.strictEqual(parseProposal('q.md', text).deferReason, null);
+  assert.strictEqual(parseProposal('q.md', stage({ title: 'Q' })).deferReason, 'tangential');
+});
+
+test('a fingerprint quoted earlier in the body is not the member\'s: only the trailing marker block counts', () => {
+  const quoted = stage({ title: 'Q', extraBody: '\n\n<!-- work-fingerprint: quoted-only -->\nwork-fingerprint: quoted-only\n' });
+  assert.ok(extractFingerprints(quoted).includes('quoted-only'));
+  assert.strictEqual(parseProposal('q.md', quoted).fingerprint, null);
+  const both = stage({ title: 'Q', fp: 'own', extraBody: '\n\n<!-- work-fingerprint: quoted-only -->\n' });
+  assert.strictEqual(parseProposal('b.md', both).fingerprint, 'own');
+});
