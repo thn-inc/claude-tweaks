@@ -45,7 +45,7 @@ const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = requi
 const { readDeclaration, generatedExemption, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
-  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
 const { checkoutImpactContext } = require('./lib/verify/impact');
@@ -729,133 +729,157 @@ async function main() {
         }
       }
 
-      // #4024: an impact declaration also needs each changed path's A/M/D status.
-      const statusCapture = {};
-      const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: statusCapture });
-      // Only without an impact declaration may the generated-path read below reuse it: impact.fetch (a shell command)
-      // and the impact-files.txt write run between the two reads otherwise and can change the tree (#5773).
-      if (!decl.impact) scopeStatusRead = statusCapture.status;
-      files = changed.files;
-      let statuses = changed.statuses || null;
-      const unnarrowed = { files, statuses };
-      // #3072: anchored on a full pass and asked about an integration branch the
-      // run has since merged — narrow to the branch's own delta. Only when the
-      // resolved base IS the usable anchor; with no anchor, resolveBase already
-      // returned the merge-base, which excludes merged-in files by construction.
-      if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
-        // Handed the working-tree read made just above: only git reads ran between the two (#5773).
-        narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: statusCapture.status });
-        if (narrowing) {
-          files = narrowing.files;
-          if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
-        }
+      // #5075: a delta since a clean passing non-full stamp (the scoped pass the run
+      // before this one wrote) that holds only bookkeeping paths (every one selecting no
+      // suite) needs no suite: it is classified from that pass's sha with no impact
+      // context, so an impact-rule path reads map-missing, selects its suite and never
+      // reads none. A `none` there takes the pass's sha as `base`; sel.base stays the
+      // anchor, so fullSha does not move. Any other delta falls through to the code below.
+      // The bookkeeping-only classification is measured from S while fullSha stays F, so an
+      // explicit --base equal to the anchor is replaced by S when this fires and the report's
+      // "since S" is intended. An empty delta (HEAD === S) is excluded: the prior pass already verified it, so callers read `--stamp-status` and skip, leaving #1923's repeat-run behaviour as it was.
+      let pass = null;
+      const passBase = scopedPassBase({ stamp: priorStamp, anchor: anchorSha });
+      if (passBase) {
+        const short = changedFiles({ base: passBase });
+        const passSel = selectScope({ decl, files: short.files, stamp: priorStamp });
+        if (passSel.mode === 'none' && short.files.length > 0) pass = { base: passBase, files: short.files, sel: passSel };
       }
-      // Test-impact selection (#4024): load the map (one impact.fetch when it
-      // has a problem) — lazily, only if selection reads it — select, and for a
-      // non-empty subset run impact.command with {files} = a list file in the
-      // log dir. A list that cannot be handed over re-selects with that reason,
-      // so the suite runs its full command. With no usable stamp anchor, the
-      // --integration-branch merge-base anchors; an explicit --base never does
-      // (it runs full, as before).
-      // anchorSha was proved an ancestor of HEAD above; only git reads (changedFiles, mergeNarrowing) run before the
-      // lazy first map read, so a map pinned to that same commit need not ask again (#5773).
-      if (decl.impact) impactCtx = checkoutImpactContext({
-        decl,
-        knownAncestor: anchorSha,
-        cwd: parsed.cwd || process.cwd(),
-        locate: ({ cwd }) => {
-          const l = reads.locations(cwd);
-          return l.toplevel && l.commonDir ? { repoRoot: l.toplevel, commonDir: l.commonDir } : null;
-        },
-      });
-      const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
-      const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
-      sel = select(impactCtx);
-      // #4638: narrowing never earns a zero-suite stamp. Re-select over the full set;
-      // a delta whose paths map to no suite still reads none (or static-only) there and still stamps.
-      if (narrowing && sel.suites.length === 0) {
-        ({ files, statuses } = unnarrowed);
-        narrowing = null;
+      if (pass) {
+        resolvedBase = pass.base;
+        files = pass.files;
+        sel = pass.sel;
+        cmds = [];
+        if (decl.impact) impactCtx = { loaded: false };
+      } else {
+        // #4024: an impact declaration also needs each changed path's A/M/D status.
+        const statusCapture = {};
+        const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: statusCapture });
+        // Only without an impact declaration may the generated-path read below reuse it: impact.fetch (a shell command)
+        // and the impact-files.txt write run between the two reads otherwise and can change the tree (#5773).
+        if (!decl.impact) scopeStatusRead = statusCapture.status;
+        files = changed.files;
+        let statuses = changed.statuses || null;
+        const unnarrowed = { files, statuses };
+        // #3072: anchored on a full pass and asked about an integration branch the
+        // run has since merged — narrow to the branch's own delta. Only when the
+        // resolved base IS the usable anchor; with no anchor, resolveBase already
+        // returned the merge-base, which excludes merged-in files by construction.
+        if (parsed.integrationBranch && anchorSha && resolvedBase === anchorSha) {
+          // Handed the working-tree read made just above: only git reads ran between the two (#5773).
+          narrowing = mergeNarrowing({ anchor: anchorSha, integrationBranch: parsed.integrationBranch, files, status: statusCapture.status });
+          if (narrowing) {
+            files = narrowing.files;
+            if (statuses) statuses = Object.fromEntries(files.map((f) => [f, statuses[f]]));
+          }
+        }
+        // Test-impact selection (#4024): load the map (one impact.fetch when it
+        // has a problem) — lazily, only if selection reads it — select, and for a
+        // non-empty subset run impact.command with {files} = a list file in the
+        // log dir. A list that cannot be handed over re-selects with that reason,
+        // so the suite runs its full command. With no usable stamp anchor, the
+        // --integration-branch merge-base anchors; an explicit --base never does
+        // (it runs full, as before).
+        // anchorSha was proved an ancestor of HEAD above; only git reads (changedFiles, mergeNarrowing) run before the
+        // lazy first map read, so a map pinned to that same commit need not ask again (#5773).
+        if (decl.impact) impactCtx = checkoutImpactContext({
+          decl,
+          knownAncestor: anchorSha,
+          cwd: parsed.cwd || process.cwd(),
+          locate: ({ cwd }) => {
+            const l = reads.locations(cwd);
+            return l.toplevel && l.commonDir ? { repoRoot: l.toplevel, commonDir: l.commonDir } : null;
+          },
+        });
+        const fallbackBase = !anchorSha && parsed.integrationBranch && !parsed.base ? resolvedBase : null;
+        const select = (impact) => selectScope({ decl, files, stamp: anchorSha ? priorStamp : null, statuses, impact, fallbackBase });
         sel = select(impactCtx);
-      }
-      if (sel.impact && sel.impact.files && sel.impact.files.length) {
-        const listPath = path.resolve(logDir, 'impact-files.txt');
-        const sub = substituteFile(decl.impact.command, listPath, { token: '{files}' });
-        const lineBreak = sel.impact.files.find((f) => /[\r\n]/.test(f));
-        let listProblem = null;
-        if (!sub.ok) listProblem = `files-list-unquotable: ${sub.reason}`;
-        else if (lineBreak !== undefined) listProblem = `files-list-unwritable: line break in ${describePath(lineBreak)}`;
-        if (listProblem) sel = select({ ...impactCtx, problem: listProblem });
-        else impactSubset = { suite: decl.impact.suite, command: sub.command, listPath, files: sel.impact.files };
-      }
-      // In subset mode the impact suite runs impact.command, whatever the
-      // --cmd or declared command for it says (those are its full command).
-      const subsetCommandFor = (name) => (impactSubset && name === impactSubset.suite ? impactSubset.command : null);
-      // #3022: a map-form checks.tests (and checks.types/checks.lint, same
-      // rule) declares its own per-suite command — a selected name now runs
-      // that command unless a --cmd of the same name overrides it (command-
-      // line always wins, so a one-off override never needs touching the
-      // file). The single-string tests form is untouched: declaredCommandFor
-      // only ever reads a map, so a non-map-form 'tests' suite still requires
-      // an explicit --cmd exactly as before (the tool-scoped {base} form below
-      // already covers that case its own way).
-      const declaredTestsMap = decl && decl.checks.tests && typeof decl.checks.tests === 'object' ? decl.checks.tests : null;
-      const declaredCommandFor = (name) => {
-        if (!decl) return null;
-        if (name === 'types' || name === 'lint') return decl.checks[name];
-        return declaredTestsMap ? (declaredTestsMap[name] || null) : null;
-      };
-      if (decl) {
-        const haveCmd = new Set(parsed.cmds.map((c) => c.name));
-        const requiredNames = [];
-        if (sel.static) requiredNames.push('types', 'lint');
-        if (sel.mode !== 'tool-scoped') requiredNames.push(...(sel.suites === '*' ? decl.suites : sel.suites));
-        cmds = requiredNames
-          .filter((n) => haveCmd.has(n) || subsetCommandFor(n) !== null || declaredCommandFor(n) !== null)
-          .map((n) => {
-            const subset = subsetCommandFor(n);
-            if (haveCmd.has(n)) {
-              const given = parsed.cmds.find((c) => c.name === n);
-              return subset === null ? given : { ...given, command: subset };
-            }
-            // Declared-only (no --cmd): build a fresh entry from the
-            // declaration's own command, picking up any --cmd-env bound to
-            // this name even though no --cmd named it (#3022 deliverable 3).
-            const envEntries = (parsed.cmdEnvs || []).filter((e) => e.name === n);
-            const env = envEntries.length ? Object.fromEntries(envEntries.map((e) => [e.key, e.value])) : null;
-            return { name: n, command: subset === null ? declaredCommandFor(n) : subset, ...(env ? { env } : {}) };
-          });
-        if (sel.mode === 'tool-scoped') {
-          const testsEnv = envOf('tests');
-          toolScopedCommand = decl.checks.tests.replace(/\{base\}/g, resolvedBase);
-          cmds = cmds.concat([{
-            name: 'tests', command: toolScopedCommand, ...(testsEnv ? { env: testsEnv } : {}),
-          }]);
+        // #4638: narrowing never earns a zero-suite stamp. Re-select over the full set;
+        // a delta whose paths map to no suite still reads none (or static-only) there and still stamps.
+        if (narrowing && sel.suites.length === 0) {
+          ({ files, statuses } = unnarrowed);
+          narrowing = null;
+          sel = select(impactCtx);
         }
-      }
+        if (sel.impact && sel.impact.files && sel.impact.files.length) {
+          const listPath = path.resolve(logDir, 'impact-files.txt');
+          const sub = substituteFile(decl.impact.command, listPath, { token: '{files}' });
+          const lineBreak = sel.impact.files.find((f) => /[\r\n]/.test(f));
+          let listProblem = null;
+          if (!sub.ok) listProblem = `files-list-unquotable: ${sub.reason}`;
+          else if (lineBreak !== undefined) listProblem = `files-list-unwritable: line break in ${describePath(lineBreak)}`;
+          if (listProblem) sel = select({ ...impactCtx, problem: listProblem });
+          else impactSubset = { suite: decl.impact.suite, command: sub.command, listPath, files: sel.impact.files };
+        }
+        // In subset mode the impact suite runs impact.command, whatever the
+        // --cmd or declared command for it says (those are its full command).
+        const subsetCommandFor = (name) => (impactSubset && name === impactSubset.suite ? impactSubset.command : null);
+        // #3022: a map-form checks.tests (and checks.types/checks.lint, same
+        // rule) declares its own per-suite command — a selected name now runs
+        // that command unless a --cmd of the same name overrides it (command-
+        // line always wins, so a one-off override never needs touching the
+        // file). The single-string tests form is untouched: declaredCommandFor
+        // only ever reads a map, so a non-map-form 'tests' suite still requires
+        // an explicit --cmd exactly as before (the tool-scoped {base} form below
+        // already covers that case its own way).
+        const declaredTestsMap = decl && decl.checks.tests && typeof decl.checks.tests === 'object' ? decl.checks.tests : null;
+        const declaredCommandFor = (name) => {
+          if (!decl) return null;
+          if (name === 'types' || name === 'lint') return decl.checks[name];
+          return declaredTestsMap ? (declaredTestsMap[name] || null) : null;
+        };
+        if (decl) {
+          const haveCmd = new Set(parsed.cmds.map((c) => c.name));
+          const requiredNames = [];
+          if (sel.static) requiredNames.push('types', 'lint');
+          if (sel.mode !== 'tool-scoped') requiredNames.push(...(sel.suites === '*' ? decl.suites : sel.suites));
+          cmds = requiredNames
+            .filter((n) => haveCmd.has(n) || subsetCommandFor(n) !== null || declaredCommandFor(n) !== null)
+            .map((n) => {
+              const subset = subsetCommandFor(n);
+              if (haveCmd.has(n)) {
+                const given = parsed.cmds.find((c) => c.name === n);
+                return subset === null ? given : { ...given, command: subset };
+              }
+              // Declared-only (no --cmd): build a fresh entry from the
+              // declaration's own command, picking up any --cmd-env bound to
+              // this name even though no --cmd named it (#3022 deliverable 3).
+              const envEntries = (parsed.cmdEnvs || []).filter((e) => e.name === n);
+              const env = envEntries.length ? Object.fromEntries(envEntries.map((e) => [e.key, e.value])) : null;
+              return { name: n, command: subset === null ? declaredCommandFor(n) : subset, ...(env ? { env } : {}) };
+            });
+          if (sel.mode === 'tool-scoped') {
+            const testsEnv = envOf('tests');
+            toolScopedCommand = decl.checks.tests.replace(/\{base\}/g, resolvedBase);
+            cmds = cmds.concat([{
+              name: 'tests', command: toolScopedCommand, ...(testsEnv ? { env: testsEnv } : {}),
+            }]);
+          }
+        }
 
-      // H2 (review, narrowed #3022): a check set that leaves out a name the
-      // selection itself requires is a usage error, not a silently-partial
-      // run — every suite/static check the selection says must run has to
-      // come from one source or the other: a declared command (map-form
-      // tests, or checks.types/checks.lint) or a --cmd of the same name
-      // (minus `tests` under tool-scoped, which is synthesized from
-      // decl.checks.tests rather than either source above). An impact subset
-      // (#4024) is satisfied by impact.command.
-      if (decl && sel.mode !== 'none') {
-        const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
-        // Unchanged from before #3022: types/lint are only ever required when
-        // the declaration itself declares a command for them — a project with
-        // no checks.types/checks.lint at all simply has no static check in
-        // its suite, --scope or not, regardless of sel.static.
-        const staticNames = sel.static ? ['types', 'lint'].filter((k) => decl.checks[k] !== null) : [];
-        let required = [...suiteNames, ...staticNames];
-        if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
-        const have = new Set(parsed.cmds.map((c) => c.name));
-        const missing = required.filter((n) => !have.has(n) && subsetCommandFor(n) === null && declaredCommandFor(n) === null);
-        if (missing.length) {
-          scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
-          return;
+        // H2 (review, narrowed #3022): a check set that leaves out a name the
+        // selection itself requires is a usage error, not a silently-partial
+        // run — every suite/static check the selection says must run has to
+        // come from one source or the other: a declared command (map-form
+        // tests, or checks.types/checks.lint) or a --cmd of the same name
+        // (minus `tests` under tool-scoped, which is synthesized from
+        // decl.checks.tests rather than either source above). An impact subset
+        // (#4024) is satisfied by impact.command.
+        if (decl && sel.mode !== 'none') {
+          const suiteNames = sel.suites === '*' ? decl.suites : sel.suites;
+          // Unchanged from before #3022: types/lint are only ever required when
+          // the declaration itself declares a command for them — a project with
+          // no checks.types/checks.lint at all simply has no static check in
+          // its suite, --scope or not, regardless of sel.static.
+          const staticNames = sel.static ? ['types', 'lint'].filter((k) => decl.checks[k] !== null) : [];
+          let required = [...suiteNames, ...staticNames];
+          if (sel.mode === 'tool-scoped') required = required.filter((n) => n !== 'tests');
+          const have = new Set(parsed.cmds.map((c) => c.name));
+          const missing = required.filter((n) => !have.has(n) && subsetCommandFor(n) === null && declaredCommandFor(n) === null);
+          if (missing.length) {
+            scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
+            return;
+          }
         }
       }
     }
@@ -863,9 +887,15 @@ async function main() {
     // usage error args.js couldn't rule out on its own (no fs access to
     // read the declaration) — now that decl is loaded, name it the same way
     // args.js already names the --cmd-only case.
-    const unboundCmdEnv = (parsed.cmdEnvs || []).find((e) => !cmds.some((c) => c.name === e.name));
+    // #5075: checked against every --cmd and declared name, not the selected set, so a run
+    // that selects nothing (a bookkeeping-only `none`) or deselects a suite still accepts it.
+    const knownCheckNames = new Set([
+      ...parsed.cmds.map((c) => c.name),
+      ...(decl ? [...decl.suites, ...['types', 'lint'].filter((k) => decl.checks[k] !== null && decl.checks[k] !== undefined)] : []),
+    ]);
+    const unboundCmdEnv = (parsed.cmdEnvs || []).find((e) => !knownCheckNames.has(e.name));
     if (unboundCmdEnv) {
-      scopeUsageExit(`--scope: --cmd-env "${unboundCmdEnv.name}" names no check (declared or --cmd: ${cmds.map((c) => c.name).join(', ') || 'none'})`);
+      scopeUsageExit(`--scope: --cmd-env "${unboundCmdEnv.name}" names no check (declared or --cmd: ${[...knownCheckNames].join(', ') || 'none'})`);
       return;
     }
     // #4024: the subset list, one path per line — written only once no usage
@@ -1473,7 +1503,8 @@ async function main() {
   // declaration that this --cmd set is deliberately partial. The write is
   // best-effort like the count stamp: a stamp failure never fails the run.
   // Under --scope the stamp's scope names exactly what ran; only a full run
-  // advances fullSha (#1922).
+  // advances fullSha (#1922); a `none` over a clean, passing non-full pass (scoped, none, static-only or tool-scoped)'s own delta takes
+  // that pass's sha as `base` (#5075), fullSha unmoved.
   const fullSet = results.every((c) => !c.skipped);
   // M6 (review): a --scope run at an unchanged HEAD (clean tree, same sha as
   // the prior FULL stamp) never downgrades that stamp. Its own selection

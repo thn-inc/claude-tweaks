@@ -72,7 +72,7 @@ A non-impact rule, or an unmatched path, that selects the impact suite supersede
 
 ## Anchoring
 
-Changed paths are diffed from the stamp's `fullSha`, as every scoped run is. With no usable stamp anchor (none yet, or one stranded by a rebase), an impact declaration anchors on the merge-base with `--integration-branch`. An explicit `--base` never anchors it: that run is full, as without `impact`. The first run of a branch is then impact-selected too, instead of full. The resulting stamp is `scoped`, with `fullSha` set to that base. It is never a full pass, but it does verify HEAD (`verifiedHead`).
+Changed paths are diffed from the stamp's `fullSha`, except that a delta since a clean, passing non-full stamp (`scoped`, `none`, `static-only` or `tool-scoped`) that is bookkeeping-only is measured from that stamp, resolves to `none` and keeps `fullSha`. With no usable stamp anchor (none yet, or one stranded by a rebase), an impact declaration anchors on the merge-base with `--integration-branch`. An explicit `--base` never anchors it: that run is full, as without `impact`. The first run of a branch is then impact-selected too, instead of full. The resulting stamp is `scoped`, with `fullSha` set to that base. It is never a full pass, but it does verify HEAD (`verifiedHead`).
 
 ## Report
 
