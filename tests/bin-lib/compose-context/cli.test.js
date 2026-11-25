@@ -212,6 +212,16 @@ test('--phase: an unknown phase, or --phase combined with --step or a positional
   assert.ok(!fs.existsSync(path.join(f.runDir, 'context')));
 });
 
+test('--phase: a section selector that does not resolve exits 2 with file: message on stderr and nothing on stdout (#5668)', () => {
+  const { SectionError } = require('../../../plugin/bin/lib/compose-context/sections');
+  const f = fixture();
+  const out = [];
+  const composePhase = () => { throw new SectionError('section selector "**Missing.**" not found', { file: 'skills/_shared/x.md', selector: '**Missing.**' }); };
+  assert.equal(run(['--run', f.runDir, '--phase', 'sdd-child'], deps(f.main, out, { composePhase })), 2);
+  assert.equal(streamOf(out, 'err'), 'compose-context.js: skills/_shared/x.md: section selector "**Missing.**" not found\n');
+  assert.equal(streamOf(out, 'out'), '');
+});
+
 test('--phase reads every source of every bundle before writing any: a failing later source leaves no bundle written', () => {
   const f = fixture();
   const failLast = (content) => ({

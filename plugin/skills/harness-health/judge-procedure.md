@@ -47,7 +47,7 @@ Run these mechanical checks first and treat their output as **evidence a later j
 
    ```bash
    wc -l "{target.path}"
-   cd "{root}" && node "{plugin-root}/bin/resolve-policy.js" harness-health-always-loaded-budget harness-health-scoped-rule-budget
+   node "{plugin-root}/bin/resolve-policy.js" harness-health-always-loaded-budget harness-health-scoped-rule-budget
    ```
 
    Classify the tier, resolve the budget, compare. Over budget is mechanical, high-confidence evidence for a `template-conformance` finding — content belongs in a skill instead (always-loaded tier), or needs tightening/splitting (scoped tier).

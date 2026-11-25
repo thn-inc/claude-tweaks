@@ -34,7 +34,7 @@ const ALLOWLIST = new Map([
   ['tests/design-wrapper-review-surface-gate-prose.test.js', 'a 35 KB check proving a fixture discriminates, not a ceiling on a real file'],
 ]);
 // The rail's own names (budgets.js) are the single source, never an unresolved operand.
-const RAIL_NAMES = new Set(['RAIL_BYTES', 'RAIL_LINES', 'RAIL_TOKENS', 'DESCRIPTION_MAX_CHARS']);
+const RAIL_NAMES = new Set(['RAIL_BYTES', 'RAIL_LINES', 'RAIL_TOKENS', 'DESCRIPTION_MAX_CHARS', 'CHILD_BUNDLE_SDD_BYTES']);
 
 const RULE_A = /\b(?:const|let|var)\s+([A-Z0-9_]*(?:CEILING|BUDGET)[A-Z0-9_]*_(?:BYTES|CHARS)|[A-Z0-9_]*_(?:BYTE|CHAR)S?_(?:CEILING|BUDGET)[A-Z0-9_]*)\s*=\s*([^;\n]*)/;
 const SKILL_PATH = /plugin\/skills\b|['"`]skills\/|['"]skills['"]/;

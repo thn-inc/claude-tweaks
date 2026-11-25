@@ -1,5 +1,6 @@
 ---
 files:
+  - plugin/bin/verify.js
   - plugin/skills/review/code-mode-steps.md
   - plugin/skills/test/SKILL.md
   - plugin/skills/test/verification.md
@@ -10,7 +11,7 @@ files:
 **Persona:** a maintainer running `/claude-tweaks:flow #N` or `/claude-tweaks:dispatch`, whose build commits a bookkeeping-only change (a run-ledger row recording AC results) after `/build` Common Step 5's full verify, so HEAD moves past `VERIFICATION_SHA` before `/test` and `/review` run.
 **Goal:** reach `/claude-tweaks:review` Step 2 without hand-running `verify.js` and without the test gate re-running `/test` in a loop — and, when the gate cannot pass, learn exactly why.
 **Entry point:** `/claude-tweaks:test` invoked by `/flow` with `VERIFICATION_PASSED=true VERIFICATION_SHA={sha}`, then `/claude-tweaks:review` Step 1.5's pipeline branch reading `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status`.
-**Success state:** a bookkeeping-only delta since the last full pass leaves a `scope: none` stamp at the new HEAD (after a scoped build pass, a `scoped` stamp instead — see step 1), so review Step 1.5 reads `verifiedHead: true` and proceeds; a project with no verification commands proceeds on one logged `AUTO` line; a stamp still unverified after one re-trigger stops the review with a named cause, never a second re-trigger.
+**Success state:** a bookkeeping-only delta since the last full pass or a clean, passing non-full build pass leaves a `scope: none` stamp at the new HEAD (see step 1), so review Step 1.5 reads `verifiedHead: true` and proceeds; a project with no verification commands proceeds on one logged `AUTO` line; a stamp still unverified after one re-trigger stops the review with a named cause, never a second re-trigger.
 
 ## Steps
 
@@ -18,7 +19,7 @@ files:
 - **URL:** `plugin/skills/test/SKILL.md` Pipeline Context Awareness (the paragraph above **Pipeline behavior:**); `plugin/skills/test/verification.md` Skip-if-recent **Mismatch** bullet
 - **Action:** `/test` compares `VERIFICATION_SHA` to `HEAD`. They differ, so it does not take the `VERIFICATION_PASSED=true` skip. It runs `verification.md`'s Mismatch branch instead: the scoped `verify.js` invocation classifies the delta against `.claude-tweaks/verify-scope.json`. A delta that is only bookkeeping paths (`docs/plans/*-ledger.md`, `.claude-tweaks/pipelines/**`) resolves to `none`: no suite runs, the runner prints `still-verified: bookkeeping-only delta ({paths})`, and it re-stamps HEAD. The rest of the bullet then applies as written (QA selection, `skip-qa`, `TEST_PASSED=true`).
 - **Should feel:** Fast — no suite re-run for a ledger row, and no prompt.
-- **Should understand:** The skip is honored only when the SHA matches. Any non-bookkeeping path in the delta runs the suites its paths map to (or the full procedure when the project has no scope declaration), with the note "Verification re-run — tree changed since build's pass", which then replaces a "passed in build" report. The delta is measured from the stamp's `fullSha` (the last full pass), not from `VERIFICATION_SHA`: when build's own verify was scoped, build's changes are still in that delta, so a ledger-only commit re-runs their mapped suites instead of resolving to `none`, and the resulting `scoped` stamp still verifies HEAD.
+- **Should understand:** The skip is honored only when the SHA matches. Any non-bookkeeping path in the delta runs the suites its paths map to (or the full procedure when the project has no scope declaration), with the note "Verification re-run — tree changed since build's pass", which then replaces a "passed in build" report. The delta is measured from the stamp's `fullSha` (the last full pass), except that when build's own verify left a clean, passing non-full stamp (`scoped`, `none`, `static-only` or `tool-scoped`) at an ancestor of HEAD, a bookkeeping-only delta since that pass is measured from it: a ledger-only commit resolves to `none` against the scoped pass and re-stamps HEAD, spawning no suite. A delta with a code path still re-selects from `fullSha`.
 - **Red flags:** `/test` reporting "passed in build" while HEAD differs from `VERIFICATION_SHA`; a moved HEAD that never reaches the runner, leaving the stamp at `VERIFICATION_SHA`; a code change in the delta skipped as bookkeeping.
 
 ### 2. Review Step 1.5 reads a stamp that verifies HEAD
@@ -44,4 +45,5 @@ files:
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #4395 (2026-11-03): `/test`'s `VERIFICATION_PASSED` skip now applies only when `VERIFICATION_SHA` equals `HEAD`, and review Step 1.5 gained a zero-test row and a terminal STOP naming the cause after one re-trigger.
+- Success state and step 4 updated at #5075: a ledger-only delta since a clean, passing non-full stamp resolves to `none` and re-stamps HEAD.
 - Related: `docs/journeys/run-a-deterministic-verification-check.md` (the runner and its stamp), `docs/journeys/stop-a-run-on-its-own-red-pr-check-3013.md` (the `pr-checks.js` read both passing paths run)
