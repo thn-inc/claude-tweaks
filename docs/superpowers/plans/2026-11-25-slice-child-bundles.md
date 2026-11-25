@@ -49,7 +49,7 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
 - Test: `tests/bin-lib/compose-context/sections.test.js`
 
 **Interfaces:**
-- Produces: `selectSections(content: string, selectors: string[], label: string) -> string` and `class SectionError extends Error { file, selector }` (`name = 'SectionError'`). The returned slices are joined by one blank line (`'\n\n'`), in selector order, and end with a trailing `'\n'`. Each slice has its trailing blank lines trimmed.
+- Produces: `selectSections(content: string, selectors: string[], label: string) -> string` and `class SectionError extends Error { file, selector }` (`name = 'SectionError'`). The message never names the file, because callers add the prefix (`compose-context.js: ${err.file}: ${err.message}` in the CLI, and `${err.file}: ${err.message}` in `measureComposed`). The exact messages are ``section selector "${selector}" not found``, ``section selector "${selector}" matches ${n} lines``, and ``unknown selector shape "${selector}" (expected a markdown heading or a **bold lead**)``. The returned slices are joined by one blank line (`'\n\n'`), in selector order, and end with a trailing `'\n'`. Each slice has its trailing blank lines trimmed.
 - Selector kinds: a selector matching `/^#{1,6} /` is a heading selector. It matches a non-fenced line whose `trimEnd()` equals the selector exactly, and runs to the line before the next non-fenced heading whose level is ≤ its own, or to EOF. A selector starting with `**` is a lead selector. It matches a non-fenced line whose text starts with the selector, and runs to the line before the next blank line (`/^\s*$/`), or to EOF. Any other selector shape throws a `SectionError` ("unknown selector shape").
 - Fence awareness: use `parseMarkers(content, label)` from `./compose`, whose tokens carry `fenced: true` on code-fence lines. Lines inside a fence never match a selector and never end a section.
 
@@ -59,7 +59,7 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
   - `slices join in selector order with one blank line`: `['**Other.**', '**Rule.**']` on the content above → `'**Other.** z\n\n**Rule.** one\ntwo\n'`.
   - `a heading inside a code fence neither matches nor ends a section`: `'## A\n```\n## B\n```\nafter\n## C\n'`, `['## A']` → `'## A\n```\n## B\n```\nafter\n'`. Also, `['## B']` on the same content throws `SectionError` with `/not found/`.
   - `a selector matching twice throws`: `'**R.** a\n\n**R.** b\n'`, `['**R.**']` → throws `SectionError`, message `/matches 2 lines/`, `err.file === label`, `err.selector === '**R.**'`.
-  - `a missing selector throws naming file and selector`: `/not found/`.
+  - `a missing selector throws naming file and selector`: `err.message === 'section selector "**Gone.**" not found'`, `err.file === label`.
   - `an unknown selector shape throws`: `['Rule']` → `/unknown selector shape/`.
   - `CRLF content selects the same section`: the heading case with `\r\n` line endings, normalized by the caller, gives the same result once `content.replace(/\r\n/g, '\n')` is passed in. Also, a trailing `\r` on a heading line still matches, because of `trimEnd`.
   - `a slice that opens a when-block without its close is a MarkerError at compose`: `'**R.** a\n<!-- when: mode=auto -->\nb\n\n<!-- /when -->\n'`, select `['**R.**']`, then `compose([{path:'x', content: slice}], allUnresolved)` throws `MarkerError` (`/unclosed/`).
@@ -85,7 +85,8 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
 - Modify: `plugin/bin/lib/compose-context/phases.js` (bundle gets optional `sections`; registry entries)
 - Modify: `plugin/bin/lib/compose-context/index.js` (`composeContext` applies sections; `composePhase` passes them through)
 - Modify: `plugin/bin/lib/skill-audit/context-cost.js` (`parsePhaseTokens`, `findComposeCallSites`, `measureComposed` carry and apply `sections`)
-- Test: `tests/bin-lib/compose-context/phases.test.js`, `tests/bin-lib/skill-audit/context-cost.test.js`, `tests/child-bundle-sections.test.js` (create)
+- Modify: `plugin/bin/compose-context.js` (a `SectionError` exits 2 with a `file:` prefix, like `MarkerError`)
+- Test: `tests/bin-lib/compose-context/phases.test.js`, `tests/bin-lib/skill-audit/context-cost.test.js`, `tests/bin-lib/compose-context/cli.test.js`, `tests/child-bundle-sections.test.js` (create)
 
 **Interfaces:**
 - Consumes: `selectSections`, `SectionError` from Task 1.
@@ -94,7 +95,8 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
   - `review-lens-child` phase:
     - `lens-child`: sources `['skills/_shared/subagent-output-contract.md']`, sections `{ 'skills/_shared/subagent-output-contract.md': ['**Scratch rule.**'] }`, `on-demand`.
     - `lens-depth` (new bundle): sources `['skills/_shared/criteria-architecture-depth.md']`, whole file, `on-demand`.
-  - `sdd-child` phase, bundle `sdd-child`: sources `['skills/_shared/subagent-dispatch-core.md']`, sections ``['**Never run `git stash` in any form.**', '**Never kill a process by image or name.**', '## Discrimination checks in a scratch checkout']``, `on-demand`.
+  - `sdd-child` phase, bundle `sdd-child`: sources `['skills/_shared/subagent-dispatch-core.md']`, sections ``{ 'skills/_shared/subagent-dispatch-core.md': ['**Never run `git stash` in any form.**', '**Never kill a process by image or name.**', '## Discrimination checks in a scratch checkout'] }``, `on-demand`.
+- All-or-none: `composePhase`'s pre-write loop, which runs before any bundle is written, applies `selectSections` to every sectioned source of every bundle and runs `parseMarkers` on each slice. A `SectionError`, or an unbalanced `when:` block inside a slice, therefore aborts the phase before the first write. `composeContext` re-applies the selection when it composes; this is idempotent and costs only a few KB of text.
 - Consumers of `phaseBundles` and `PHASES`, classified:
   - `context-cost.js` (list-all: measures every bundle, so it must apply sections).
   - `index.js` (list-all: composes every bundle).
@@ -114,19 +116,20 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
     - `AC2.1: sdd-child carries the three rules build/dispatch.md names`. The test asserts that `build/dispatch.md`'s sdd-child line names `the no-stash rule`, `the no-name-kill rule` and `Discrimination checks in a scratch checkout`, and that the bundle contains ``**Never run `git stash` in any form.**``, `**Never kill a process by image or name.**` and `## Discrimination checks in a scratch checkout`.
     - Factor the "cited rule present" assertions into one helper. A control test then runs that helper against the bundle text with `**Never kill a process by image or name.**`'s paragraph removed and expects it to throw.
   - `context-cost.test.js`: `AC3.1: a --phase sdd-child row measures the sliced bytes`. Run `findComposeCallSites` against `plugin/` to find the row whose `step` is `sdd-child`, then run `measureComposed`. The row's `max` equals `Buffer.byteLength` of the composed sliced bundle and is `< 15 * 1024`. Also assert `composedRailViolations('plugin')` deep-equals `[]` (AC3.1), if the file doesn't already assert that; grep first, and reuse the existing assertion if one exists.
+  - `phases.test.js` (or a new `tests/bin-lib/compose-context/compose-phase-sections.test.js`): `a phase whose second bundle fails section selection writes no bundle`. Call `composePhase` against an `fs.mkdtempSync` plugin root with a fake two-bundle phase. Because `PHASES` is frozen, give `composePhase` a `deps.phaseBundles` override, the only new seam, defaulting to the real `phaseBundles`. The first bundle is whole-file, and the second has a selector that is `**Missing.**`. Expect a `SectionError` and no file under `{run}/context/`. Add a second case where the second slice opens a `when:` block without closing it, and expect a `MarkerError` and no file written.
   - `context-cost.test.js`: `a --phase row whose selector no longer resolves is an error row, not a whole-file measurement`. Call `measureComposed` with a hand-built row `{ step, file, line, sources: [tmpFile], sections: [['**Missing.**']] }` → `error` matches `/not found/`, `combinations: []`.
 
 - [ ] **Step 2: Run to verify they fail**
   Run: `node --test tests/child-bundle-sections.test.js tests/bin-lib/compose-context/phases.test.js tests/bin-lib/skill-audit/context-cost.test.js`
   Expected: FAIL. The size assertions fail at roughly 34 KB for lens-child and roughly 38 KB for sdd-child, and `lens-depth` is not found.
 
-- [ ] **Step 3: Implement** the registry entries, the `bundle` fourth parameter, the `phaseBundles` passthrough, `composeContext` selection (apply `selectSections` to the read content before `compose`, inside the existing all-read-before-write path), `composePhase` passthrough, and the `context-cost.js` carry/apply. Update the `phases.js` and `index.js` header comments to state the `{ step, sources, load, sections? }` shape. Leave `SourceReadError` handling unchanged. A `SectionError` propagates, and `bin/compose-context.js` reports it on its existing exit-1 path with the message, which names the file and the selector.
+- [ ] **Step 3: Implement** the registry entries, the `bundle` fourth parameter, the `phaseBundles` passthrough, `composeContext` selection (apply `selectSections` to the read content before `compose`, inside the existing all-read-before-write path), `composePhase` passthrough, and the `context-cost.js` carry/apply. Update the `phases.js` and `index.js` header comments to state the `{ step, sources, load, sections? }` shape. Leave `SourceReadError` handling unchanged. In `bin/compose-context.js`, a `SectionError` gets the same branch as `MarkerError`, printing `compose-context.js: ${err.file}: ${err.message}` and exiting 2: a selector that does not resolve is a content error, like a malformed marker. Add one CLI test to `tests/bin-lib/compose-context/cli.test.js` that pins that exit and that stderr, using a `composePhase` dep that throws a `SectionError`.
 
 - [ ] **Step 4: Run to verify they pass**, same command. Expected: PASS. Then run `node --test tests/bin-lib/compose-context/ tests/dispatch-prompt-bundle-citations.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`. Expected: PASS.
 
 - [ ] **Step 5: Real-input probe (run right after this task, before Task 3).** Run `node plugin/bin/compose-context.js --run "{this run's worktree-local run dir, absolute}" --phase review-lens-child` and the same with `--phase sdd-child`. Record the three printed `bytes` values in the commit message body. Expected: lens-child about 2.6 KB, lens-depth about 8.3 KB, sdd-child about 5.5 KB.
 
-- [ ] **Step 6: Commit** the five files as `Compose child bundles from the sections their prompts cite — refs #5668`.
+- [ ] **Step 6: Commit** the eight files (the four source modules, including `bin/compose-context.js`, and the four test files) as `Compose child bundles from the sections their prompts cite — refs #5668`.
 
 ### Task 3: Prose citations and docs
 
@@ -173,7 +176,7 @@ Scope keywords: lens-child, sdd-child, review-lens-child, phaseBundles
 | Deliverable 2, AC1.1, AC1.2 | Task 2 (registry, size and citation tests), Task 3 (3e citation) |
 | Deliverable 3, AC2.1 | Task 2 |
 | Deliverable 4, AC3.1 | Task 2 (rail measures slices; `composedRailViolations` `[]`), Task 3 (prose `--phase` lines untouched) |
-| AC3.2 (existing conformance suites pass, no added skips) | Common Step 5's full verification |
+| AC3.2 (existing conformance suites pass, no added skips) | Not a plan task: `/claude-tweaks:build`'s Common Step 5 runs the whole suite through `verify.js` after the last task, and `/claude-tweaks:test` repeats it. No task adds a `skip`/`todo`, and the reviewer checks this per task. |
 
 Waived AC4.1: a `### Key Files` entry parsed as a criterion, not an AC; phases.js is modified in Task 2.
 Waived AC5.1: a Key Files entry; compose.js is unchanged because selection lives in the new sibling `sections.js` (compose.js stays the marker grammar); the named-section choice is implemented in Task 1.
