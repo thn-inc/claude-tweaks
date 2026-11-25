@@ -27,11 +27,10 @@ function parseNumstat(text) {
     if (!rec) continue;
     const i1 = rec.indexOf('\t');
     const i2 = i1 < 0 ? -1 : rec.indexOf('\t', i1 + 1);
-    if (i2 < 0) { out.push({ file: rec, lines: 0 }); continue; }
+    const file = i2 < 0 ? '' : rec.slice(i2 + 1);
+    if (!file) { out.push({ file: rec, lines: 0 }); continue; }
     const a = rec.slice(0, i1);
     const d = rec.slice(i1 + 1, i2);
-    const file = rec.slice(i2 + 1);
-    if (!file) { out.push({ file: rec, lines: 0 }); continue; }
     const lines = a === '-' && d === '-' ? 0 : Number(a) + Number(d);
     out.push({ file, lines: Number.isFinite(lines) ? lines : 0 });
   }

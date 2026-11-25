@@ -1,6 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { collectSizeProxy, parseNumstat, classifyPath, sizeTier, computeSizeProxy } = require('../../../plugin/bin/lib/review-context/size-proxy');
 
 const num = (rows) => rows.map(([p, n]) => `${n}\t0\t${p}`).join('\n');
@@ -111,7 +112,7 @@ test('collectSizeProxy with filesFrom reads the list relative to cwd and drops b
     readDecl: () => ({ ok: true, decl: null, missing: true }),
     readFile: (p) => { seen.push(p); return ' src/a.js \n\n'; },
   });
-  assert.equal(require('node:path').resolve('/work', 'list.txt'), seen[0]);
+  assert.equal(path.resolve('/work', 'list.txt'), seen[0]);
   assert.equal(r.files, 1);
   assert.equal(r.lines, 5);
 });
@@ -133,7 +134,7 @@ test('collectSizeProxy reads the declaration at <root>/.claude-tweaks/verify-sco
     base: 'main', branch: 'HEAD', git: fakeGit([]),
     readDecl: (p) => { seen.push(p); return { ok: true, decl: { rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }] } }; },
   });
-  assert.equal(seen[0], require('node:path').join('/repo', '.claude-tweaks', 'verify-scope.json'));
+  assert.equal(seen[0], path.join('/repo', '.claude-tweaks', 'verify-scope.json'));
   assert.equal(r.files, 3);
   assert.deepEqual(r.excluded, []);
 });
