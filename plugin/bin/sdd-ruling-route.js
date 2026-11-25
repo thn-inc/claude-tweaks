@@ -4,7 +4,7 @@
 // Prints exactly `audit` or `console` (one trailing newline), the verdict of
 // lib/console/sdd-ruling.js's sddRulingRoute. Read by build/dispatch.md's carry-forward.
 // Exit vocabulary is Payload-1/Invocation-2: 0 printed, 1 the --file path is
-// unreadable, 2 a malformed invocation. Nothing goes to stdout on a failure.
+// unreadable, 2 a malformed invocation (an empty or whitespace-only --file value included). Nothing goes to stdout on a failure.
 'use strict';
 
 const fs = require('fs');
@@ -21,7 +21,7 @@ const realDeps = {
 };
 
 function run(argv, deps) {
-  if (argv.length !== 2 || argv[0] !== '--file' || argv[1].startsWith('--')) {
+  if (argv.length !== 2 || argv[0] !== '--file' || argv[1].startsWith('--') || argv[1].trim() === '') {
     deps.stderr(USAGE);
     return 2;
   }

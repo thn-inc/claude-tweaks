@@ -142,12 +142,14 @@ test('AC4.1: CLI exits 1 on a missing --file path and 2 on a malformed call, pri
   }
 });
 
-test('an empty --file value exits 1 with nothing on stdout and a non-empty stderr', () => {
+test('an empty or whitespace-only --file value exits 2 with usage on stderr and nothing on stdout', () => {
   const dir = scratchDir('sdd-ruling-route-cli-');
-  const r = runCliSync(CLI, ['--file', ''], { cwd: dir });
-  assert.strictEqual(r.code, 1, r.stderr);
-  assert.strictEqual(r.stdout, '');
-  assert.ok(r.stderr.length > 0);
+  for (const v of ['', '   ']) {
+    const r = runCliSync(CLI, ['--file', v], { cwd: dir });
+    assert.strictEqual(r.code, 2, r.stderr);
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /usage:/);
+  }
 });
 
 test('spawn smoke: script entry exits 0 and prints console', () => {
