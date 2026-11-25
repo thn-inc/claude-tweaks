@@ -17,6 +17,7 @@ record/diff/failure content. Never invoked directly by a human — always a comp
 /claude-tweaks:dispatch Auto-merge                [ merge-check ]    -> VERDICT: auto-merge | needs-human
 /claude-tweaks:dispatch Settle                    [ failure-check ]  -> CLASSIFICATION + NOTIFY_NOW
 /claude-tweaks:specify Step 3                     [ ceremony-check ] -> CEREMONY: fast-lane | standard
+/claude-tweaks:capture Shaped-body                [ ceremony-check ] -> CEREMONY: fast-lane | standard
 ```
 
 Each mode's full Gather/Judge/Render procedure lives in its own sub-file — read only the one the
@@ -83,7 +84,7 @@ directly by a human, and never renders a `## Next Actions` block. Its only calle
 `/claude-tweaks:backlog` (`refine` Step 2 and `grant`'s gate 4, both `grant-check`),
 `/claude-tweaks:dispatch` (Auto-merge gate `merge-check`; Settle step `failure-check`),
 `/claude-tweaks:wrap-up` (Review Console's Auto-merge short-circuit, `merge-check`),
-`/claude-tweaks:specify` (Step 3, `ceremony-check`), and `/claude-tweaks:flow` (fallback, `ceremony-check`,
+`/claude-tweaks:specify` (Step 3, `ceremony-check`), `/claude-tweaks:capture` (Shaped-body branch step 3, `ceremony-check`), and `/claude-tweaks:flow` (fallback, `ceremony-check`,
 from the Manifesto, else at materialize only when no Manifesto verdict exists; only when a record carries no `ceremony:*` label) — each sub-file's own
 "Called from" line is the source of truth for the full detail behind each entry here.
 

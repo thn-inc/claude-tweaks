@@ -4,7 +4,7 @@ The canonical `ceremony-check` invocation pattern every call site in this codeba
 `facets.ceremony` when it's already stamped, else invoke `/claude-tweaks:assess-agent-autonomy`
 in `ceremony-check` mode and use (and, where the call site owns writeback, stamp) the verdict.
 Referenced by `specify/shaping-mode-stamping.md`, `specify/record-creation-subissues.md`
-(#1346's split of `shaping-mode.md`/`record-creation.md`), `flow/manifesto.md` (its Ceremony profile
+(#1346's split of `shaping-mode.md`/`record-creation.md`), `capture/SKILL.md` (Shaped-body branch, #4118), `flow/manifesto.md` (its Ceremony profile
 computation, #3160), and `flow/materialize.md`. Consumers reference this file; do not restate the invocation prose
 inline — mirrors `_shared/label-bootstrap.md`'s "canonical snippet cited by multiple skills"
 convention.

@@ -5,6 +5,11 @@ single-record path and decomposition mode's per-sub-issue loop (never the parent
 `risk:*`/`size:*` scoring either) — immediately alongside the existing `risk:*`/`size:*` label
 stamping. Every sub-issue/single record, every `/specify` run, no pre-filtering to "borderline" records — one `ceremony-check #{n}` invocation per record (bare `ceremony-check`, no trailing `#{n}`, only in decomposition mode's per-sub-issue loop, which has no issue number yet — `SKILL.md`'s Input section documents the exception in full).
 
+`/claude-tweaks:capture`'s Shaped-body branch (step 3) is the other primary caller: bare
+`ceremony-check` over the born-ready body composed in memory, immediately after its `risk`/`size`
+scoring — no fetch and no `#{n}` (the record is not filed yet), writeback of the verdict as the
+label.
+
 `/claude-tweaks:flow` calls this mode only as a **fallback**, for a record that reaches `/flow`
 carrying no `ceremony:*` label at all — a legacy hand-authored spec file, or a record created before
 this mode moved upstream. `flow/manifesto.md`'s Ceremony profile computation runs it once per such
@@ -14,7 +19,7 @@ only when no Manifesto verdict exists (a standalone `/claude-tweaks:build`, an `
 
 ## Step 1: Gather
 
-**Primary call, from `/specify`'s Step 3:** the record body (Current State/Deliverables/
+**Primary call, from `/specify`'s Step 3 or `/capture`'s Shaped-body step 3:** the record body (Current State/Deliverables/
 Acceptance Criteria) and its `risk:*`/`size:*` labels are already composed in memory for that
 step's own create/edit call — no fetch at all, more direct than a re-fetch. Read them straight from
 whatever local variable Step 3 already holds; there's nothing to shell out for.
@@ -67,6 +72,7 @@ conservative-on-ambiguity principle as this skill's other three modes (see `SKIL
 **Persisting the verdict:** `/specify`'s Step 3 (the primary caller) stamps this verdict as an
 explicit `ceremony:fast-lane`/`ceremony:standard` label — never omitted, unlike `risk:*`/
 `size:*`'s omit-when-unscored convention (this axis has no unscored state; every record gets a
-verdict the first time it's shaped). `/flow`'s fallback call — the Manifesto's, folded into that run's
+verdict the first time it's shaped). `/capture`'s Shaped-body branch stamps the label too; when its
+call yields no `CEREMONY:` line it files without one rather than defaulting to `standard`. `/flow`'s fallback call — the Manifesto's, folded into that run's
 `ceremony-profile`, or materialize's where no Manifesto verdict exists — uses the verdict only for that run's
 own header and never writes a label back to the record.
