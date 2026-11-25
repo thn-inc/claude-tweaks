@@ -105,7 +105,10 @@ procedure — no row is left unrouted:
     gate-withheld ruling files the record too. Ratifying it files the deferred work, so it never
     ends as a bare `accepted` row: it composes a born-ready record proposal exactly as `reverse`
     does below (`specShapedBody`; Current State = the ruling and the finding it deferred;
-    Deliverables = the deferred work; `Origin: SDD ruling ratified at Review Console`;
+    `keyFiles: [{ path, change }]` = the files the ruling's finding names, per
+    `_shared/ledger-format.md`'s Key Files path rule (repo-relative file paths, a
+    `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped, omitted when the
+    finding names no file); Deliverables = the deferred work; `Origin: SDD ruling ratified at Review Console`;
     `Defer-reason:` = the staged file's own `Defer-reason:` value when the header carries exactly
     one valid one (`needs-human-decision` included — the human's tick is the decision), else
     derived from `_shared/deferral-gate.md`'s Fix-now criteria exactly as `reverse` derives it
@@ -122,7 +125,10 @@ procedure — no row is left unrouted:
   `reverse` (the Override vocabulary for a ruling row, `review-console-interactive.md`)
   composes a born-ready record proposal exactly as
   `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
-  ruling and the finding it ruled on; Deliverables = the reversal;
+  ruling and the finding it ruled on; `keyFiles: [{ path, change }]` = the files the ruling's
+  finding names, per `_shared/ledger-format.md`'s Key Files path rule (repo-relative file paths,
+  a `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped, omitted when
+  the finding names no file); Deliverables = the reversal;
   `Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant:
   run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and
   stamp per that file's Deriving the value from the criteria — the closed fix wave is what

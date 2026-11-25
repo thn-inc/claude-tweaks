@@ -11,6 +11,12 @@ files:
   - plugin/skills/capture/SKILL.md
   - plugin/skills/reflect/SKILL.md
   - plugin/skills/wrap-up/leftover-routing.md
+  - plugin/skills/_shared/ledger-format.md
+  - plugin/skills/wrap-up/review-console-appendix.md
+  - plugin/skills/wrap-up/residue-sweep.md
+  - plugin/skills/visual-review/browser-review.md
+  - plugin/skills/reflect/full-mode.md
+  - plugin/skills/wrap-up/claude-md-curation.md
   - plugin/skills/build/micro-plan.md
   - plugin/bin/lib/issues/micro-plan-gate.js
   - plugin/bin/lib/issues/grouping.js
@@ -40,11 +46,11 @@ files:
 - **Red flags:** An absolute, machine-local path under `### Key Files`; a single malformed finding stopping `validate-findings` for the whole batch.
 
 ### 3. File from a prose producer that knows its files
-- **URL:** `plugin/skills/capture/SKILL.md` (shaped-body branch, steps 1 and 3), `plugin/skills/reflect/SKILL.md` (tangential staged finding), `plugin/skills/wrap-up/leftover-routing.md` (step 1 compose)
-- **Action:** Capture a shaped body whose `## Technical Approach` carries a `### Key Files` list, or let reflect/wrap-up stage a finding that names its files.
-- **Should feel:** The file list you already wrote survives filing instead of being dropped by the section split.
-- **Should understand:** Each producer passes `keyFiles: [{ path, change }]` only when it knows the affected files — repo-relative only, omitted when unknown. A record filed before #2975 keeps its old body; nothing is backfilled.
-- **Red flags:** A captured body whose Key Files bullets vanish from the filed record; a producer passing an absolute path and the compose throwing.
+- **URL:** `plugin/skills/capture/SKILL.md` (shaped-body branch, steps 1 and 3), `plugin/skills/reflect/SKILL.md` (tangential staged finding), `plugin/skills/wrap-up/leftover-routing.md` (step 1 compose), and since #6282 `plugin/skills/_shared/ledger-format.md` (Phase 3 `Defer`/`Keep`/direct create/`Acknowledge`), `plugin/skills/wrap-up/review-console-appendix.md` (SDD ruling `file-record` and `reverse`), `plugin/skills/wrap-up/residue-sweep.md`, `plugin/skills/visual-review/browser-review.md` (Defer), `plugin/skills/reflect/full-mode.md` (Defer), `plugin/skills/wrap-up/claude-md-curation.md` (over-budget queue write)
+- **Action:** Capture a shaped body whose `## Technical Approach` carries a `### Key Files` list, or let reflect/wrap-up/ledger resolve/visual review stage a finding or ruling that names its files.
+- **Should feel:** The file list you already wrote survives filing instead of being dropped by the section split; a run's follow-ups that touch the same file share a Key File and can be grouped.
+- **Should understand:** Each producer passes `keyFiles: [{ path, change }]` only when it knows the affected files — repo-relative only, taken from explicit file tokens, a trailing `:{digits}`/`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped (so `src/x.js:10` and `src/x.js` group together), no directories, omitted when unknown. A visual-review finding naming only a route or URL passes none. The CLAUDE.md budget fact carries absolute paths, which the producer makes repo-relative first. A record filed before #2975 keeps its old body; nothing is backfilled.
+- **Red flags:** A captured body whose Key Files bullets vanish from the filed record; a producer passing an absolute path and the compose throwing; a Key File still carrying its `:line` suffix.
 
 ### 4. See the fast path taken at build time
 - **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `plugin/bin/lib/issues/micro-plan-gate.js` (`countImplementationFiles`, `MAX_IMPLEMENTATION_FILES`), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
@@ -55,4 +61,5 @@ files:
 
 ## Origin
 - Created during build of #2975 (micro-plan gate unreachable for specShapedBody-composed records), the producer-side fix chosen over a gate fallback or materialize-time derivation.
+- Step 3 extended during build of #6282 (the remaining record-proposal producers pass `keyFiles`, so a run's follow-ups can be grouped by file).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane roster the micro-plan skip belongs to), `harness-health-premise-check.md` (the sibling body-metadata line harness-health composes).

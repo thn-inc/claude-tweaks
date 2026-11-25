@@ -21,11 +21,19 @@
 // --integration-branch merge-base (`fallbackBase`) anchors a declaration with
 // an impact or a ci block (one with neither runs full); an explicit --base
 // never does.
+//
+// inertDirtyPaths (#5234): the dirty paths no check can be affected by, so
+// verify.js may take a CI verdict despite them; any doubt returns null.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');
 const { anchorOf } = require('./stamp');
 const { selectImpactTests } = require('./impact');
+
+// Index of the first rule matching `file` in decl.rules, -1 when none.
+function firstRuleIndex(decl, file) {
+  return decl.rules.findIndex((r) => globToRegExp(r.match).test(file));
+}
 
 function impactResult(suite, fields = {}) {
   return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, supersedingPaths: [], ...fields };
@@ -76,7 +84,7 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   let all = false;
   let isStatic = false;
   for (const file of files) {
-    const idx = decl.rules.findIndex((r) => globToRegExp(r.match).test(file));
+    const idx = firstRuleIndex(decl, file);
     if (idx === -1) {
       unmatched.push(file);
       supersedingPaths.push(file);
@@ -126,4 +134,19 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   return result;
 }
 
-module.exports = { selectScope };
+// The sorted, de-duplicated `paths` when every one is inert, else null (an
+// empty/null list, an unmatched path, an impact or static rule all fail closed).
+function inertDirtyPaths(decl, paths) {
+  if (!decl || !Array.isArray(paths) || paths.length === 0) return null;
+  const generated = (decl.generated || []).map(globToRegExp);
+  const inert = (file) => {
+    if (generated.some((re) => re.test(file))) return true;
+    const idx = firstRuleIndex(decl, file);
+    if (idx === -1) return false;
+    const rule = decl.rules[idx];
+    return Array.isArray(rule.suites) && rule.suites.length === 0 && rule.static === false && !rule.impact;
+  };
+  return paths.every(inert) ? [...new Set(paths)].sort() : null;
+}
+
+module.exports = { selectScope, inertDirtyPaths, firstRuleIndex };

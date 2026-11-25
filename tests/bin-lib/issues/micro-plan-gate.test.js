@@ -14,10 +14,10 @@ const PASSING = () => ({
   body: '## Current State\n\nRisk-flags: none\n',
 });
 
-test('MICRO_PLAN_CONDITIONS is frozen and MAX_IMPLEMENTATION_FILES is 1', () => {
+test('MICRO_PLAN_CONDITIONS is frozen and MAX_IMPLEMENTATION_FILES is 3', () => {
   assert.deepStrictEqual([...MICRO_PLAN_CONDITIONS], ['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag']);
   assert.ok(Object.isFrozen(MICRO_PLAN_CONDITIONS));
-  assert.strictEqual(MAX_IMPLEMENTATION_FILES, 1);
+  assert.strictEqual(MAX_IMPLEMENTATION_FILES, 3);
 });
 
 test('countImplementationFiles counts code and prompt prose as 1 each', () => {
@@ -83,9 +83,28 @@ test('evaluateMicroPlanGate fails low-size for medium and null', () => {
   }
 });
 
-test('evaluateMicroPlanGate fails implementation-file-limit for two implementation entries', () => {
-  const r = evaluateMicroPlanGate({ ...PASSING(), keyFileEntries: keyFiles(entry('plugin/bin/x.js'), entry('plugin/bin/y.js')) });
+test('evaluateMicroPlanGate passes three implementation entries', () => {
+  const r = evaluateMicroPlanGate({
+    ...PASSING(),
+    keyFileEntries: keyFiles(entry('plugin/bin/x.js'), entry('plugin/bin/y.js'), entry('plugin/skills/z/SKILL.md'), entry('tests/x.test.js')),
+  });
+  assert.deepStrictEqual(r, { passes: true, failed: [], unreadable: null });
+});
+
+test('evaluateMicroPlanGate fails implementation-file-limit for four implementation entries', () => {
+  const r = evaluateMicroPlanGate({
+    ...PASSING(),
+    keyFileEntries: keyFiles(entry('plugin/bin/w.js'), entry('plugin/bin/x.js'), entry('plugin/bin/y.js'), entry('plugin/bin/z.js')),
+  });
   assert.deepStrictEqual(r, { passes: false, failed: ['implementation-file-limit'], unreadable: null });
+});
+
+test('evaluateMicroPlanGate passes the #5396 shape: a static config file plus its generator', () => {
+  const r = evaluateMicroPlanGate({
+    ...PASSING(),
+    keyFileEntries: keyFiles(entry('config/app.plist', '— add one key'), entry('plugin/bin/gen-plist.js', '— write the key')),
+  });
+  assert.deepStrictEqual(r, { passes: true, failed: [], unreadable: null });
 });
 
 test('evaluateMicroPlanGate fails no-risk-flag for a flagged body', () => {
@@ -100,7 +119,7 @@ test('a body with no Risk-flags line carries no risk flag', () => {
 test('failed lists every failing condition in MICRO_PLAN_CONDITIONS order', () => {
   const r = evaluateMicroPlanGate({
     ceremony: 'standard', size: 'high',
-    keyFileEntries: keyFiles(entry('plugin/bin/x.js'), entry('plugin/bin/y.js')),
+    keyFileEntries: keyFiles(entry('plugin/bin/w.js'), entry('plugin/bin/x.js'), entry('plugin/bin/y.js'), entry('plugin/bin/z.js')),
     body: 'Risk-flags: auth\n',
   });
   assert.deepStrictEqual(r.failed, [...MICRO_PLAN_CONDITIONS]);
