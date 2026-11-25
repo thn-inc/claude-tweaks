@@ -175,7 +175,7 @@ const ALLOWLIST = [
   ratchet('specify/shaping-mode-stamping.md', 'git-var-operand', 'git add "$RECORD_PATH"'),
   ratchet('tidy/decision-markers.md', 'gh-computed-input', 'gh issue comment "$ISSUE" --body-file "$COMMENT_FILE" \\'),
   ratchet('tidy/issue-claims-backstops.md', 'node-git-text', 'const { execFileSync } = require(\'child_process\');'),
-  ratchet('tidy/issue-claims-backstops.md', 'gh-computed-input', 'cd "{RUN_ROOT}" && find .claude-tweaks/pipelines -path "*/work/*-spec.md" 2>/dev/null | wh'),
+  ratchet('tidy/issue-claims-backstops.md', 'gh-computed-input', 'find "{RUN_ROOT}/.claude-tweaks/pipelines" -path "*/work/*-spec.md" 2>/dev/null | wh'),
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"'),
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" push origin {branch}'),
   ratchet('wrap-up/cleanup-procedures-execution.md', 'git-var-operand', 'PACK="${RUN_DIR}/wrap-up-pack.json"'),
