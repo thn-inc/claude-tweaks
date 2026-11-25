@@ -1750,4 +1750,5 @@ test('extractFingerprints returns every marker in body order, deduped', () => {
 test('extractFingerprints ignores defused markers', () => {
   const body = `${defuse('<!-- work-fingerprint: z -->\nwork-fingerprint: z')}\n<!-- work-fingerprint: y -->`;
   assert.deepStrictEqual(extractFingerprints(body), ['y']);
+  assert.deepStrictEqual(extractFingerprints(`${defuse('<!-- code-health-fingerprint: z -->')}\n<!-- work-fingerprint: y -->`), ['y']);
 });
