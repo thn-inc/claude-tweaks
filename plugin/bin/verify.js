@@ -729,7 +729,7 @@ async function main() {
       // anchor, so fullSha does not move. Any other delta falls through to the code below.
       // The bookkeeping-only classification is measured from S while fullSha stays F, so an
       // explicit --base equal to the anchor is replaced by S when this fires and the report's
-      // "since S" is intended.
+      // "since S" is intended. An empty delta (HEAD === S) is excluded: the prior pass already verified it, so callers read `--stamp-status` and skip, leaving #1923's repeat-run behaviour as it was.
       let pass = null;
       const passBase = scopedPassBase({ stamp: priorStamp, anchor: anchorSha });
       if (passBase) {
@@ -1485,7 +1485,7 @@ async function main() {
   // declaration that this --cmd set is deliberately partial. The write is
   // best-effort like the count stamp: a stamp failure never fails the run.
   // Under --scope the stamp's scope names exactly what ran; only a full run
-  // advances fullSha (#1922); a `none` over a clean scoped pass's own delta takes
+  // advances fullSha (#1922); a `none` over a clean, passing non-full pass (scoped, none, static-only or tool-scoped)'s own delta takes
   // that pass's sha as `base` (#5075), fullSha unmoved.
   const fullSet = results.every((c) => !c.skipped);
   // M6 (review): a --scope run at an unchanged HEAD (clean tree, same sha as

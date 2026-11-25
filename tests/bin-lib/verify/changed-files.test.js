@@ -268,6 +268,13 @@ test('scopedPassBase returns the canonical sha of a clean scoped stamp that is a
   assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: FULL, execImpl: exec }), CANON);
 });
 
+test('scopedPassBase anchors on a none or static-only stamp too, so bookkeeping-only stamps chain', () => {
+  const exec = fakeExec({ [PASS]: '', [PASS_CANON]: `${CANON}\n` });
+  for (const scope of ['none', 'static-only']) {
+    assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ scope }), anchor: FULL, execImpl: exec }), CANON, scope);
+  }
+});
+
 test('scopedPassBase returns null for a null stamp, a null anchor, a full stamp, a dirty stamp, or sha === anchor', () => {
   const exec = fakeExec({
     [PASS]: '', [PASS_CANON]: `${CANON}\n`,

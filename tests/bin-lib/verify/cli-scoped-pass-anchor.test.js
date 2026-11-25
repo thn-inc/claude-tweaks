@@ -47,6 +47,26 @@ test('AC1.1: a ledger-only delta since a passing scoped stamp runs no suite, pri
   assert.strictEqual(status.verifiedHead, true);
 });
 
+test('chain: a none stamp anchors the next bookkeeping-only delta, fullSha unmoved', async () => {
+  const r = scopedRepo(RULES);
+  const { F } = await scopedPassAt(r);
+  commitFile(r, LEDGER, '| row |');
+  const first = await runCli(args(r), { cwd: r.repo });
+  assert.strictEqual(first.code, 0, first.stderr);
+  const N1 = head(r);
+  assert.strictEqual(stampOf(r.gitDir).scope, 'none');
+  commitFile(r, LEDGER, '| row |\n| row 2 |');
+  const run = await runCli(args(r), { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.ok(!fs.existsSync(r.marker), 'no suite may spawn');
+  const s = stampOf(r.gitDir);
+  assert.strictEqual(s.scope, 'none');
+  assert.strictEqual(s.base, N1);
+  assert.strictEqual(s.fullSha, F);
+  const status = JSON.parse((await runCli(['--stamp-status'], { cwd: r.repo })).stdout);
+  assert.strictEqual(status.verifiedHead, true);
+});
+
 test('AC2.1: a delta since the scoped stamp holding one src path scopes over the delta since fullSha, as today', async () => {
   const r = scopedRepo(RULES);
   const { F } = await scopedPassAt(r);
