@@ -12,8 +12,16 @@ const { readText } = require('./helpers/read-skill');
 const DISPATCH = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'dispatch.md'));
 
 // The instruction paragraph: from its bold lead to the next bold-lead instruction.
-const START = DISPATCH.search(/\*\*[^*]*shell constraint[^*]*\*\*/i);
-const PARA = START < 0 ? '' : DISPATCH.slice(START).split(/ \*\*Forbid name-based process kills/)[0];
+// It ends at the next bold lead of any kind, so a renamed or moved neighbour cannot widen the slice.
+const LEAD = /\*\*[^*]*shell constraint[^*]*\*\*/i.exec(DISPATCH);
+const START = LEAD ? LEAD.index : -1;
+let PARA = '';
+if (START >= 0) {
+  const rest = DISPATCH.slice(START + LEAD[0].length);
+  const next = rest.search(/ \*\*[^*]*[.:]\*\*/); // an instruction lead ends in punctuation; the cited **One plain command per Bash call** does not
+  assert.ok(next >= 0, 'no bold lead follows the shell-constraint instruction; cannot bound its paragraph (#4243).');
+  PARA = rest.slice(0, next);
+}
 
 test('dispatch.md: carries a shell-constraint instruction paragraph', () => {
   assert.ok(START >= 0, 'dispatch.md must carry a bold-lead "shell constraint" instruction (#4243).');
