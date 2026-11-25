@@ -16,7 +16,7 @@ files:
 # Ship a Small Record on the Express Lane
 
 **Persona:** A maintainer of a GitHub-backed (`pr-first`) project whose backlog holds two-line fixes: a citation, a typo, a one-constant change. Each one currently costs a 50-minute `/claude-tweaks:flow` run of ledger, plan, SDD, review and wrap-up. They want those records merged in minutes without losing the CI gate or a review safety net.
-**Goal:** Turn on the express lane, watch an eligible record build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
+**Goal:** Run an eligible record through the express lane, watch it build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
 **Entry point:** `.claude-tweaks/policy.yml` in a repo with PR CI; a `ready` record labelled `risk:low`, `size:low`, `ceremony:fast-lane` and `type:*`, with one to three `### Key Files`.
 **Success state:**
 - The record's PR merged on green from one express call.
