@@ -19,7 +19,9 @@ Before calling a new rule kind or key done, confirm each of these:
    the parsed rule shape), `scope.js` (selection and mode), `plugin/bin/verify.js` (orchestration,
    the `report.json` fields, the stdout line, and the `verify` event's hand-listed `impact` subset
    that `plugin/bin/lib/timing/derive.js` copies into `timing.json`, pinned field-for-field by
-   `tests/bin-lib/verify/impact-cli.test.js`), `plugin/skills/test/impact-selection.md` or the
+   `tests/bin-lib/verify/impact-cli.test.js`; the `ci` subset, `ciEventEntries`, is hand-listed the
+   same way, so a new CI entry field also touches `tests/bin-lib/verify/ci-cli.test.js`'s event
+   `deepStrictEqual` pins and `impact-cli.test.js`'s `report.ci` pin), `plugin/skills/test/impact-selection.md` or the
    kind's own reference doc, `plugin/skills/test/verification.md`'s Re-verify scoping table with
    `tests/test-skill-affected-conformance.test.js`'s row pins, `plugin/bin/lib/init/verify-scope-starter.js`
    when `/init` should offer it, and `tests/verify-scope-declaration.test.js` for the committed file.
