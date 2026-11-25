@@ -37,6 +37,7 @@ Scope keywords: qa-stamp, decideQaSkip, covered-bookkeeping-delta
 ### Task 1: `decideQaSkip` accepts `bookkeepingDelta`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/verify/qa-stamp.js` (`decideQaSkip`, header comment)
@@ -85,7 +86,7 @@ git commit -m "Accept a bookkeeping delta in decideQaSkip — covered-bookkeepin
 - Produces:
   - `parseArgs` accepts `--scope <path>` → `o.scope` (default `null`); `--scope` with `--write` → `{ error: '--scope is valid with --check only' }`; `--scope` with no value → error.
   - `realDeps.exec` (default `execFileSync`) — the git runner; `check` wraps it so every git call carries `cwd: deps.cwd()`.
-  - `classifyBookkeepingDelta({ stampSha, scope, execImpl }) → boolean` (exported). True only when: the declaration path (absolute as given, else joined to `git rev-parse --show-toplevel`) reads `ok` with a non-null `decl`; `usableAnchor({ stamp: { sha: stampSha, fullSha: stampSha }, execImpl })` is non-null; `changedFiles({ base: anchor, execImpl })` succeeds; and `selectScope({ decl, files, stamp: { sha: stampSha, fullSha: stampSha } }).mode === 'none'`. Any thrown error or failed condition → `false`. No impact context is passed.
+  - `classifyBookkeepingDelta({ stampSha, scope, execImpl }) → boolean` (exported). True only when: the declaration path (absolute as given, else joined to `git rev-parse --show-toplevel`) reads `ok` with a non-null `decl` via `readDeclaration(resolved, undefined, { selfPath })`, where `selfPath` is the resolved path's repo-relative, forward-slash form (null when it lies outside the toplevel) — the option `verify.js` passes on every `--scope` read (plan-review clarification); `usableAnchor({ stamp: { sha: stampSha, fullSha: stampSha }, execImpl })` is non-null; `changedFiles({ base: anchor, execImpl })` succeeds; and `selectScope({ decl, files, stamp: { sha: stampSha, fullSha: stampSha } }).mode === 'none'`, where `files` first drops every path under `.claude-tweaks/artifacts/` — the same exclusion `computeDirty` applies, so a QA run's own untracked screenshots (in a project that does not gitignore them) neither read dirty nor count as an unmatched delta path. Any thrown error or failed condition → `false`. No impact context is passed.
   - `check` calls it only when `o.scope` is set, a stamp exists, `dirty === false`, and `stamp.sha !== head`; passes the result as `bookkeepingDelta`. It never writes the stamp.
 
 - [ ] **Step 1: Write the failing tests** in `tests/bin-lib/verify/qa-stamp-cli.test.js`. Add a real-git fixture helper `bookkeepingRepo()` modeled on the existing `real git:` test: `initRepo`, commit `stories/app.yaml`, `src/a.js`, and a declaration at `.claude-tweaks/verify-scope.json` = `{ checks: { tests: 'node --test' }, rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }] }` (probed: `readDeclaration` returns `ok`); write the stamp with `run(['--write', '--report', rp], realDeps)` at commit S; return `{ root, S, gitDirPath, stampPath, g, realDeps }` where `realDeps()` binds `cwd: () => root`, `exec: (c, a, o) => execFileSync(c, a, { ...o, cwd: root })`, `gitDir`, `dirty: () => computeDirty(execFileSync, root)`, and `gitInfo: () => ({ sha: <git rev-parse HEAD in root>, dirty: null })`. Each test commits its delta, then runs `--check --stories login=app.yaml`:
@@ -97,6 +98,8 @@ git commit -m "Accept a bookkeeping delta in decideQaSkip — covered-bookkeepin
   - `AC5.2: a missing or unparseable --scope path stays sha-mismatch, exit 0` — `--scope nope.json` and `--scope` pointing at a file containing `{`.
   - `AC6.1: a dirty tree with a bookkeeping-only delta reports dirty-tree` — commit the ledger, then leave an untracked `stray.txt`.
   - `--scope with no stamp reports no-stamp`.
+  - `untracked QA artifacts under .claude-tweaks/artifacts/ do not defeat the bookkeeping-delta skip` — the fixture repo has no `.gitignore`; after the ledger commit, write untracked `.claude-tweaks/artifacts/x.png` → `covered-bookkeeping-delta`.
+  - `every git call --check makes carries the cwd dep` — run the AC1.1 setup with `exec: (c, a, o) => { calls.push(o && o.cwd); return execFileSync(c, a, { ...o, cwd: root }); }` (the recorder captures the `cwd` `check` passed, before the fixture's own override); assert `calls.length > 0` and every recorded `cwd === root` (proves `check` binds `deps.cwd()` itself rather than relying on the fixture).
   - In the existing `malformed invocations exit 2` test, add `['--write', '--report', 'r.json', '--scope', 'x.json']` and `['--check', '--stories', 'a=b', '--scope']`.
 
 - [ ] **Step 2: Run to verify they fail**
