@@ -104,7 +104,10 @@ async function run(argv, deps = {}) {
     }
     stdout(`${JSON.stringify(pack[o.print], null, 2)}\n`);
   } else {
-    stdout(text);
+    // One summary line: the facts live in the file, not in the session's context.
+    const ok = {};
+    for (const [k, v] of Object.entries(pack)) if (v && typeof v === 'object' && 'ok' in v) ok[k] = v.ok;
+    stdout(`${JSON.stringify({ file, ok })}\n`);
   }
   return 0;
 }
