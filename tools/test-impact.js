@@ -16,8 +16,8 @@
 //     one). Skips the download when the cached map already holds that commit and is not dirty, or when it
 //     parses, passed (exit 0), is not dirty, descends from that commit and is an ancestor of HEAD (a
 //     fresher local trace is kept; any other cached map, a dirty one included, is replaced, and a git
-//     error on an ancestry check counts as "not kept"); validates the artifact (parseImpactMap, commit === the run's headSha,
-//     exitCode 0, not traced from a dirty tree) before replacing the cache.
+//     error on an ancestry check counts as "not kept"); validates the artifact (parseImpactMap, commit
+//     === the run's headSha, exitCode 0, not traced from a dirty tree) before replacing the cache.
 //
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
 // map is written atomically. The repo root is `git rev-parse --show-toplevel` of the cwd.
