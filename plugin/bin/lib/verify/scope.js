@@ -4,8 +4,8 @@
 // CLOSED to {suites: '*', static: true} ([IL-120]: a markdown edit tripped a
 // size-ceiling test in an unrelated suite — only declared paths get cheaper).
 // The anchoring invariant lives here: every non-full mode's base is the
-// stamp's fullSha (or, for an impact declaration with no stamp, the caller's
-// integration-branch merge-base, fallbackBase), never a prior scoped sha, so
+// stamp's fullSha (or, for a declaration with an impact or a ci block and no
+// stamp, the caller's integration-branch merge-base, fallbackBase), never a prior scoped sha, so
 // scoped runs never chain.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
@@ -15,8 +15,9 @@
 // cannot answer (impact.problem, an untraced path) runs that suite full with
 // the reason in `fallback`; a non-impact rule (or an unmatched path) that
 // selects the suite supersedes the subset. Without a stamp, the caller's
-// --integration-branch merge-base (`fallbackBase`) anchors an impact
-// declaration; an explicit --base never does.
+// --integration-branch merge-base (`fallbackBase`) anchors a declaration with
+// an impact or a ci block (one with neither runs full); an explicit --base
+// never does.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');
@@ -50,7 +51,7 @@ function resolveImpact(decl, paths, statuses, ctx) {
 
 function selectScope({ decl, files, stamp, statuses = null, impact = null, fallbackBase = null }) {
   let base = anchorOf(stamp);
-  if (base === null && decl && decl.impact) base = fallbackBase || null;
+  if (base === null && decl && (decl.impact || decl.ci)) base = fallbackBase || null;
   // No declaration: today's behavior byte-for-byte. No prior full pass: the
   // first run IS the anchor everything later diffs against, so it is full too.
   if (!decl || base === null) {
