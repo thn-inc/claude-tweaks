@@ -356,9 +356,31 @@ function listedFiles(body) {
   return files.length > 0 ? files : null;
 }
 
+// Files that failed at the head but passed on verify's isolated retry: the adjudicated
+// flakyPassed list, and the tests check's flakyRetried (a retry that clears every
+// failing file rewrites the check to exitCode 0, so adjudication never runs).
 function flakyPassedOf(report) {
   const ba = report.baselineAdjudicated;
-  return isPlainObject(ba) && Array.isArray(ba.flakyPassed) ? stringPaths(ba.flakyPassed) : [];
+  const tests = isPlainObject(report.checks) ? report.checks.tests : undefined;
+  return [
+    ...(isPlainObject(ba) && Array.isArray(ba.flakyPassed) ? stringPaths(ba.flakyPassed) : []),
+    ...(isPlainObject(tests) && Array.isArray(tests.flakyRetried) ? stringPaths(tests.flakyRetried) : []),
+  ];
+}
+
+// Every file a record has tracked: its body's list plus the list in each of the
+// workflow's own re-comments (a re-run on the same commit comments its whole body).
+// Null when the body has no parseable list.
+function trackedFilesOf(issue) {
+  const files = listedFiles(issue.body);
+  if (files === null) return null;
+  const comments = Array.isArray(issue.comments) ? issue.comments : [];
+  for (const c of comments) {
+    if (!isPlainObject(c) || !isPlainObject(c.author) || c.author.login !== WORKFLOW_LOGIN || typeof c.body !== 'string') continue;
+    if (!/^The post-merge Windows check failed on commit /.test(c.body)) continue;
+    for (const f of listedFiles(c.body) || []) if (!files.includes(f)) files.push(f);
+  }
+  return files;
 }
 
 // The sha a record's file list was last judged at: the latest workflow re-comment,
@@ -581,7 +603,7 @@ function closeFixedIssues({ report, repo, sha, runUrl }, deps) {
     if (!isPlainObject(r) || !Number.isInteger(r.number) || typeof r.title !== 'string'
       || !r.title.startsWith(TITLE_PREFIX) || typeof r.body !== 'string') continue;
     const n = r.number;
-    const files = listedFiles(r.body);
+    const files = trackedFilesOf(r);
     if (files === null) { err(`${TOOL}: #${n} left open — no parseable file list`); continue; }
     if (files.some((f) => failing.has(f))) continue;
     const flakyFile = files.find((f) => flaky.has(f));
@@ -664,4 +686,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf, FILES_PASS_MARKER };
+module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE, headFailingSet, closeSkipReason, listedFiles, trackedFilesOf, flakyPassedOf, recordShaOf, FILES_PASS_MARKER };

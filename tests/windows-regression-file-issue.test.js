@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { run, findMergedPr, classify, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf, FILES_PASS_MARKER } = require('../tools/windows-regression/file-issue');
+const { run, findMergedPr, classify, headFailingSet, closeSkipReason, listedFiles, trackedFilesOf, flakyPassedOf, recordShaOf, FILES_PASS_MARKER } = require('../tools/windows-regression/file-issue');
 const { readText } = require('./helpers/read-skill');
 
 const SHA = 'abcdef1234567';
@@ -1279,4 +1279,24 @@ test('#6222: a non-main ref and an unreadable report never list for closing', ()
   const deps = fakeDeps(undefined, { 'issue list': closeList(rec), api: compareAs('ahead') });
   run(argv(), deps);
   assert.equal(closeListed(deps), false);
+});
+
+test('#6222: a listed file that passed only on the isolated retry keeps its record open', () => {
+  const report = { pass: true, checks: { tests: { ...FULL, flakyRetried: ['tests/a.test.js'] } } };
+  assert.deepEqual(flakyPassedOf(report), ['tests/a.test.js']);
+  const { deps, code } = closeRun(report, [record(4, ['tests/a.test.js'])]);
+  assert.equal(code, 0);
+  assert.deepEqual(closedNums(deps), []);
+  assert.deepEqual(deps.calls.stderr, ['windows-regression: #4 left open — tests/a.test.js flaky-passed\n']);
+});
+
+test('#6222: files named in the workflow\'s own re-comments count as tracked by the record', () => {
+  const recomment = (login, files) => ({ author: { login }, body: `The post-merge Windows check failed on commit 222222222.\n\n### Newly failing test files\n${files.map((f) => `- \`${f}\``).join('\n')}\n` });
+  const rec = record(4, ['tests/a.test.js'], [], [recomment('github-actions', ['tests/a.test.js', 'tests/b.test.js']), recomment('someone', ['tests/c.test.js'])]);
+  assert.deepEqual(trackedFilesOf(rec), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.equal(trackedFilesOf({ body: 'no list', comments: [recomment('github-actions', ['tests/a.test.js'])] }), null);
+  const still = closeRun(adjudicatedPass(['tests/b.test.js']), [rec]);
+  assert.deepEqual(closedNums(still.deps), []);
+  const gone = closeRun(PASS_FULL, [rec]);
+  assert.deepEqual(closedNums(gone.deps), ['4']);
 });
