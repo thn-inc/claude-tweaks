@@ -41,7 +41,7 @@
 //      (a non-main ref files nothing); or the report is missing / unreadable /
 //      not a JSON object (on main, that also files a "no verify report" issue —
 //      the next push would otherwise take the unevaluated commit as its base);
-//      or `gh issue create` / `gh issue comment` failed
+//      or a `gh` failure while filing
 //   2  malformed invocation
 //
 // Fails closed: a failed run whose adjudication never ran or crashed
@@ -92,7 +92,7 @@ changes the exit code.
 exit codes:
   0  the verify outcome is a pass — nothing filed (fixed records may be closed)
   1  the verify outcome is a failure (filed on main only), the report is
-     unreadable, or \`gh issue create\` / \`gh issue comment\` failed
+     unreadable, or a \`gh\` failure while filing
   2  malformed invocation
 `;
 
@@ -565,7 +565,7 @@ function closeFixedIssues({ report, repo, sha, runUrl }, deps) {
   const set = headFailingSet(report);
   if (set.unknown) { err(`${TOOL}: not closing fixed records — head failing set unknown (${set.unknown})`); return; }
   const skip = closeSkipReason(report);
-  if (skip) { out(`${TOOL}: not closing fixed records — ${skip}`); return; }
+  if (skip) { err(`${TOOL}: not closing fixed records — ${skip}`); return; }
   let records;
   try {
     records = JSON.parse(deps.gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', LABEL,
@@ -575,7 +575,8 @@ function closeFixedIssues({ report, repo, sha, runUrl }, deps) {
     err(`${TOOL}: fixed-record lookup failed: ${e.message}`);
     return;
   }
-  const failing = new Set([...set.files, ...flakyPassedOf(report)]);
+  const failing = new Set(set.files);
+  const flaky = new Set(flakyPassedOf(report));
   for (const r of records) {
     if (!isPlainObject(r) || !Number.isInteger(r.number) || typeof r.title !== 'string'
       || !r.title.startsWith(TITLE_PREFIX) || typeof r.body !== 'string') continue;
@@ -583,6 +584,8 @@ function closeFixedIssues({ report, repo, sha, runUrl }, deps) {
     const files = listedFiles(r.body);
     if (files === null) { err(`${TOOL}: #${n} left open — no parseable file list`); continue; }
     if (files.some((f) => failing.has(f))) continue;
+    const flakyFile = files.find((f) => flaky.has(f));
+    if (flakyFile !== undefined) { err(`${TOOL}: #${n} left open — ${flakyFile} flaky-passed`); continue; }
     const recordSha = recordShaOf(r);
     if (recordSha === null) { err(`${TOOL}: #${n} left open — filing commit unknown`); continue; }
     try {

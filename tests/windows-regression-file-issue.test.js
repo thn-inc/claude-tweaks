@@ -625,7 +625,8 @@ test('L12: a not-adjudicated run whose sha search hits comments there without th
     { 'issue list': (args) => (flag({ args }, '--search') === SHA_SEARCH ? list : new Error('fallback search not expected')) });
   assert.equal(run(argv(), deps), 1);
   assert.equal(commented(deps).args[2], '5');
-  assert.deepEqual(deps.calls.stderr.filter((l) => !/head failing set unknown/.test(l)), []);
+  assert.equal(deps.calls.stderr.length, 1);
+  assert.match(deps.calls.stderr[0], /head failing set unknown/);
 });
 
 test('L11: an open issue that contains the sha (or the suffix) but is not titled "Windows regression: …" is never chosen', () => {
@@ -1162,6 +1163,7 @@ test('AC1.1: a pass run closes a record whose files are all absent from the fail
   const comment = flag(close, '--comment');
   assert.ok(comment.includes(RUN_URL) && comment.includes(SHA) && comment.includes('`tests/a.test.js`'));
   assert.equal(deps.calls.gh.find((c) => c.args[0] === 'api' && c.args[1].includes('/compare/')).args[1], `repos/o/r/compare/111111111...${SHA}`);
+  assert.equal(deps.calls.stdout.filter((l) => l === `windows-regression: closed #4 — its files pass at ${SHA.slice(0, 9)}\n`).length, 1);
 });
 
 test('AC1.2: a fail run closes a stale record while filing the new one', () => {
@@ -1189,6 +1191,10 @@ test('AC1.4: a timed-out, non---full, or flaky-passed run closes nothing', () =>
   for (const r of [a, b, c]) assert.deepEqual(closedNums(r.deps), []);
   assert.equal(closeListed(a.deps), false);
   assert.equal(closeListed(b.deps), false);
+  assert.deepEqual(a.deps.calls.stderr, ['windows-regression: not closing fixed records — a test file timed out\n']);
+  assert.deepEqual(b.deps.calls.stderr, ['windows-regression: not closing fixed records — not a full-suite run\n']);
+  assert.deepEqual(c.deps.calls.stderr, ['windows-regression: #4 left open — tests/a.test.js flaky-passed\n']);
+  assert.deepEqual(a.deps.calls.stdout.filter((l) => /not closing fixed records/.test(l)), []);
 });
 
 test('AC1.5: a (not adjudicated) record is never closed', () => {
@@ -1206,6 +1212,7 @@ test('AC1.6: a bot:in-progress record is commented on, not closed', () => {
   assert.equal(c.args[2], '7');
   assert.ok(c.input.startsWith(FILES_PASS_MARKER));
   assert.ok(c.input.includes(SHA) && c.input.includes('tests/a.test.js'));
+  assert.equal(deps.calls.stdout.filter((l) => l === `windows-regression: #7 files pass at ${SHA.slice(0, 9)} — commented (bot:in-progress)\n`).length, 1);
 });
 
 test('AC1.7: a throwing gh leaves the exit code unchanged', () => {
