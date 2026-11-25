@@ -54,6 +54,8 @@ const PUSH_FACTS = [
   [/and so does a `--local` call that ends on its timeout or a repeat that also does/, 'a --local call or a second timeout ends BLOCKED'],
   [/when a run dir is set \(the Standalone path has none\), log one entry/, 'the AUTO entry needs a run dir'],
   [/A call that times out is never exit 3 and never triggers `--local`/, 'a timeout is not exit 3'],
+  [/exits 3 on `head-not-pushed` under any declaration, and on every other reason CI cannot answer only under `localRuns: "on-request"`/, 'head-not-pushed exits 3 under any declaration'],
+  [/including a commit `\/test` itself makes \(flow's story step committing a story file\)/, 'a commit made inside /test needs its own push'],
   [/exits 3, which is never a test failure/, 'exit 3 is not a failure'],
   [/In a `pr-first` worktree run with a run dir set,/, 'push only in a pr-first worktree run'],
   [/on `head-not-pushed` push and re-run once/, 'head-not-pushed: push, re-run once'],
