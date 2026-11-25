@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { run, findMergedPr, classify } = require('../tools/windows-regression/file-issue');
+const { run, findMergedPr, classify, headFailingSet, closeSkipReason, listedFiles, trackedFilesOf, flakyPassedOf, recordShaOf, FILES_PASS_MARKER } = require('../tools/windows-regression/file-issue');
 const { readText } = require('./helpers/read-skill');
 
 const SHA = 'abcdef1234567';
@@ -24,7 +24,7 @@ const FAIL_ATTRIBUTABLE = { eligible: true, verdict: 'fail', attributable: ['tes
 // its result used the same way. `files` serves any other readFile path
 // (e.g. --log); an Error value throws. An unkeyed call gets an explicit default
 // (empty list / the issue URL / empty comment / empty api list); any other call throws.
-const GH_DEFAULTS = { 'issue list': '[]', 'issue create': 'https://github.com/o/r/issues/1\n', 'issue comment': '', api: '[]' };
+const GH_DEFAULTS = { 'issue list': '[]', 'issue create': 'https://github.com/o/r/issues/1\n', 'issue comment': '', 'issue close': '', api: '[]' };
 function fakeDeps(report, gh = {}, files = {}) {
   const calls = { gh: [], stdout: [], stderr: [], read: [] };
   const raw = typeof report === 'string' ? report : JSON.stringify(report);
@@ -625,7 +625,8 @@ test('L12: a not-adjudicated run whose sha search hits comments there without th
     { 'issue list': (args) => (flag({ args }, '--search') === SHA_SEARCH ? list : new Error('fallback search not expected')) });
   assert.equal(run(argv(), deps), 1);
   assert.equal(commented(deps).args[2], '5');
-  assert.equal(deps.calls.stderr.length, 0);
+  assert.equal(deps.calls.stderr.length, 1);
+  assert.match(deps.calls.stderr[0], /head failing set unknown/);
 });
 
 test('L11: an open issue that contains the sha (or the suffix) but is not titled "Windows regression: …" is never chosen', () => {
@@ -1086,4 +1087,216 @@ test('R7: verify bounds each tests run with a 40-minute --cmd-timeout inside the
 
 test('the workflow no longer claims linear history', () => {
   assert.doesNotMatch(WORKFLOW, /squashed|linear history/i);
+});
+
+test('#6222: headFailingSet — adjudicated failingFiles, a raw tests pass is empty, anything else unknown', () => {
+  assert.deepEqual(headFailingSet({ baselineAdjudicated: { eligible: true, failingFiles: ['tests/a.test.js', 3] } }), { files: ['tests/a.test.js'] });
+  assert.deepEqual(headFailingSet({ pass: true, checks: { tests: { exitCode: 0 } } }), { files: [] });
+  for (const r of [{ pass: true }, { baselineAdjudicated: { eligible: false }, checks: { tests: { exitCode: 1 } } }, { checks: { tests: { exitCode: null } } }]) {
+    assert.equal(typeof headFailingSet(r).unknown, 'string', JSON.stringify(r));
+  }
+});
+
+test('#6222: closeSkipReason — non --full command and timed-out files skip; a clean full run does not', () => {
+  const full = { checks: { tests: { command: 'npm test -- --full' } } };
+  assert.equal(closeSkipReason(full), null);
+  assert.equal(closeSkipReason({ checks: { tests: { command: 'npm test' } } }), 'not a full-suite run');
+  assert.equal(closeSkipReason({ checks: { tests: { command: 'npm test -- --fuller' } } }), 'not a full-suite run');
+  assert.equal(closeSkipReason({}), 'not a full-suite run');
+  assert.equal(closeSkipReason({ ...full, baselineAdjudicated: { timedOut: ['tests/a.test.js'] } }), 'a test file timed out');
+});
+
+test('#6222: listedFiles parses composeIssue bullets (suffixes, CRLF) and rejects every other shape', () => {
+  const body = 'lead\n\n### Newly failing test files\n- `tests/a.test.js`\n- `tests/b.test.js` (timed out — no evidence)\n\n### Failure excerpts';
+  assert.deepEqual(listedFiles(body), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.deepEqual(listedFiles(body.replace(/\n/g, '\r\n')), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.equal(listedFiles('### Failing output (baseline adjudication did not run)\n\n```\nx\n```'), null);
+  assert.equal(listedFiles('### Newly failing test files\n\n'), null);
+  assert.deepEqual(listedFiles('lead\n\n### Newly failing test files\n- `tests/a.test.js`\n- `tests/b.test.js`'), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.equal(listedFiles('### Newly failing test files\n- `tests/a.test.js`\nsee also tests/b'), null);
+});
+
+test('#6222: flakyPassedOf — string entries of baselineAdjudicated.flakyPassed, else empty', () => {
+  assert.deepEqual(flakyPassedOf({ baselineAdjudicated: { flakyPassed: ['tests\\a.test.js', 4] } }), ['tests/a.test.js']);
+  assert.deepEqual(flakyPassedOf({}), []);
+});
+
+test('#6222: recordShaOf — latest re-comment sha, else the title short sha, else null', () => {
+  const title = 'Windows regression: 1 test file(s) newly failing after 111111111';
+  assert.equal(recordShaOf({ title, comments: [] }), '111111111');
+  const bot = { login: 'github-actions' };
+  assert.equal(recordShaOf({ title, comments: [
+    { author: bot, body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222 (compared against x).' },
+    { author: bot, body: 'unrelated' },
+    { author: bot, body: 'The post-merge Windows check failed on commit 3333333333333333333333333333333333333333.' },
+    { author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' },
+  ] }), '3333333333333333333333333333333333333333');
+  assert.equal(recordShaOf({ title, comments: [{ author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' }] }), '111111111');
+  assert.equal(recordShaOf({ title: 'Windows regression: something else', comments: 'x' }), null);
+  assert.equal(recordShaOf({ title: 'Other record: 1 test file(s) newly failing after 111111111', comments: [] }), null);
+});
+
+// ---- closing fixed records (#6222) ----
+const FULL = { command: 'npm test -- --full', exitCode: 0 };
+const record = (number, files, labels = [], comments = []) => ({ number, title: `Windows regression: ${files.length} test file(s) newly failing after 111111111`,
+  body: `lead\n\n### Newly failing test files\n${files.map((f) => `- \`${f}\``).join('\n')}\n\n_Filed by …_`, labels: labels.map((name) => ({ name })), comments });
+const CLOSE_JSON = 'number,title,body,labels,comments';
+const closeList = (...records) => (args) => (flag({ args }, '--json') === CLOSE_JSON ? JSON.stringify(records) : '[]');
+const compareAs = (status) => (args) => (args[1].includes('/compare/') ? `${status}\n` : '[]');
+const closedNums = (deps) => deps.calls.gh.filter((c) => c.args[0] === 'issue' && c.args[1] === 'close').map((c) => c.args[2]);
+const closeListed = (deps) => deps.calls.gh.some((c) => c.args[1] === 'list' && flag(c, '--json') === CLOSE_JSON);
+const PASS_FULL = { pass: true, checks: { tests: FULL } };
+const closeRun = (report, records, over = {}, ref) => {
+  const deps = fakeDeps(report, { 'issue list': closeList(...records), api: compareAs('ahead'), ...over });
+  const code = run(argv(ref ? { '--ref': ref } : {}), deps);
+  return { deps, code };
+};
+const adjudicatedPass = (failingFiles, extra = {}) => ({ pass: false, effectivePass: true, checks: { tests: { ...FULL, exitCode: 1 } },
+  baselineAdjudicated: { eligible: true, verdict: 'pass', attributable: [], failingFiles, ...extra } });
+
+test('AC1.1: a pass run closes a record whose files are all absent from the failing set', () => {
+  const { deps, code } = closeRun(PASS_FULL, [record(4, ['tests/a.test.js'])]);
+  assert.equal(code, 0);
+  assert.deepEqual(closedNums(deps), ['4']);
+  const close = deps.calls.gh.find((c) => c.args[1] === 'close');
+  assert.ok(close.args.join(' ').includes('--reason completed'));
+  const comment = flag(close, '--comment');
+  assert.ok(comment.includes(RUN_URL) && comment.includes(SHA) && comment.includes('`tests/a.test.js`'));
+  assert.equal(deps.calls.gh.find((c) => c.args[0] === 'api' && c.args[1].includes('/compare/')).args[1], `repos/o/r/compare/111111111...${SHA}`);
+  assert.equal(deps.calls.stdout.filter((l) => l === `windows-regression: closed #4 — its files pass at ${SHA.slice(0, 9)}\n`).length, 1);
+});
+
+test('AC1.2: a fail run closes a stale record while filing the new one', () => {
+  const report = { pass: false, checks: { tests: { ...FULL, exitCode: 1 } }, baselineAdjudicated: { eligible: true, verdict: 'fail', attributable: ['tests/new.test.js'], failingFiles: ['tests/new.test.js', 'tests/old-still.test.js'] } };
+  const { deps, code } = closeRun(report, [record(4, ['tests/fixed.test.js']), record(5, ['tests/new.test.js'])]);
+  assert.equal(code, 1);
+  assert.ok(created(deps));
+  assert.deepEqual(closedNums(deps), ['4']);
+  const idx = (pred) => deps.calls.gh.findIndex(pred);
+  assert.ok(idx((c) => c.args[1] === 'create') < idx((c) => c.args[1] === 'close'));
+});
+
+test('AC1.3: a record with one still-failing file stays open', () => {
+  const { deps } = closeRun(adjudicatedPass(['tests/b.test.js']), [record(4, ['tests/a.test.js', 'tests/b.test.js'])]);
+  assert.deepEqual(closedNums(deps), []);
+  assert.equal(commented(deps), undefined);
+  assert.ok(!deps.calls.gh.some((c) => c.args[0] === 'api' && c.args[1].includes('/compare/')));
+});
+
+test('AC1.4: a timed-out, non---full, or flaky-passed run closes nothing', () => {
+  const rec = record(4, ['tests/a.test.js']);
+  const a = closeRun({ pass: false, effectivePass: true, checks: { tests: { ...FULL, exitCode: 1 } }, baselineAdjudicated: { eligible: true, failingFiles: [], timedOut: ['tests/x.test.js'] } }, [rec]);
+  const b = closeRun({ pass: true, checks: { tests: { command: 'npm test', exitCode: 0 } } }, [rec]);
+  const c = closeRun(adjudicatedPass([], { flakyPassed: ['tests/a.test.js'] }), [rec]);
+  for (const r of [a, b, c]) assert.deepEqual(closedNums(r.deps), []);
+  assert.equal(closeListed(a.deps), false);
+  assert.equal(closeListed(b.deps), false);
+  assert.deepEqual(a.deps.calls.stderr, ['windows-regression: not closing fixed records — a test file timed out\n']);
+  assert.deepEqual(b.deps.calls.stderr, ['windows-regression: not closing fixed records — not a full-suite run\n']);
+  assert.deepEqual(c.deps.calls.stderr, ['windows-regression: #4 left open — tests/a.test.js flaky-passed\n']);
+  assert.deepEqual(a.deps.calls.stdout.filter((l) => /not closing fixed records/.test(l)), []);
+});
+
+test('AC1.5: a (not adjudicated) record is never closed', () => {
+  const rec = { number: 6, title: 'Windows regression: tests failing after 111111111 (not adjudicated)', body: '### Failing output (x)\n\n```\ny\n```', labels: [], comments: [] };
+  const { deps } = closeRun(PASS_FULL, [rec]);
+  assert.deepEqual(closedNums(deps), []);
+  assert.equal(deps.calls.stderr.length, 1);
+  assert.match(deps.calls.stderr[0], /#6 left open — no parseable file list/);
+});
+
+test('AC1.6: a bot:in-progress record is commented on, not closed', () => {
+  const { deps } = closeRun(PASS_FULL, [record(7, ['tests/a.test.js'], ['bot:in-progress'])]);
+  assert.deepEqual(closedNums(deps), []);
+  const c = commented(deps);
+  assert.equal(c.args[2], '7');
+  assert.ok(c.input.startsWith(FILES_PASS_MARKER));
+  assert.ok(c.input.includes(SHA) && c.input.includes('tests/a.test.js'));
+  assert.equal(deps.calls.stdout.filter((l) => l === `windows-regression: #7 files pass at ${SHA.slice(0, 9)} — commented (bot:in-progress)\n`).length, 1);
+});
+
+test('AC1.7: a throwing gh leaves the exit code unchanged', () => {
+  const rec = record(4, ['tests/a.test.js']);
+  const t = closeRun(PASS_FULL, [rec], { 'issue list': new Error('boom') });
+  assert.equal(t.code, 0);
+  assert.equal(t.deps.calls.stderr.filter((l) => l.includes('fixed-record lookup failed')).length, 1);
+  const u = closeRun(PASS_FULL, [rec], { 'issue list': '{}' });
+  assert.equal(u.code, 0);
+  assert.equal(u.deps.calls.stderr.filter((l) => l.includes('fixed-record lookup failed')).length, 1);
+  const c = closeRun(PASS_FULL, [rec, record(5, ['tests/b.test.js'])], { 'issue close': new Error('nope') });
+  assert.equal(c.code, 0);
+  assert.equal(c.deps.calls.stderr.filter((l) => l.includes('gh issue close')).length, 2);
+  assert.deepEqual(closedNums(c.deps), ['4', '5']);
+  const failReport = { pass: false, checks: { tests: { ...FULL, exitCode: 1 } }, baselineAdjudicated: { eligible: true, verdict: 'fail', attributable: ['tests/new.test.js'], failingFiles: ['tests/new.test.js'] } };
+  const f = closeRun(failReport, [rec], { 'issue close': new Error('nope') });
+  assert.equal(f.code, 1);
+  assert.deepEqual(closedNums(f.deps), ['4']);
+});
+
+test('AC1.8: a record whose filing commit is not an ancestor of the head, or cannot be resolved, stays open with one stderr line', () => {
+  const rec = record(4, ['tests/a.test.js']);
+  const throwing = { api: (args) => { if (args[1].includes('/compare/')) throw new Error('404'); return '[]'; } };
+  const noSha = { ...rec, title: 'Windows regression: 1 test file(s) newly failing after somewhere' };
+  const runs = [
+    closeRun(PASS_FULL, [rec], { api: compareAs('behind') }),
+    closeRun(PASS_FULL, [rec], { api: compareAs('diverged') }),
+    closeRun(PASS_FULL, [rec], throwing),
+    closeRun(PASS_FULL, [noSha]),
+  ];
+  for (const r of runs) {
+    assert.deepEqual(closedNums(r.deps), []);
+    assert.equal(commented(r.deps), undefined);
+    assert.equal(r.deps.calls.stderr.length, 1);
+    assert.match(r.deps.calls.stderr[0], /#4 left open/);
+  }
+  assert.ok(!runs[3].deps.calls.gh.some((c) => c.args[0] === 'api' && c.args[1].includes('/compare/')));
+  const re = { ...rec, comments: [{ author: { login: 'github-actions' }, body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222.' }] };
+  const { deps } = closeRun(PASS_FULL, [re]);
+  assert.equal(deps.calls.gh.find((c) => c.args[0] === 'api' && c.args[1].includes('/compare/')).args[1], `repos/o/r/compare/2222222222222222222222222222222222222222...${SHA}`);
+  assert.deepEqual(closedNums(deps), ['4']);
+});
+
+test('AC1.9: a bot:in-progress record already carrying the files-pass marker gets no second comment', () => {
+  const { deps } = closeRun(PASS_FULL, [record(7, ['tests/a.test.js'], ['bot:in-progress'], [{ author: { login: 'someone' }, body: `${FILES_PASS_MARKER}\nearlier` }])]);
+  assert.equal(commented(deps), undefined);
+  assert.deepEqual(closedNums(deps), []);
+  assert.equal(deps.calls.stdout.filter((l) => /#7 files pass — already commented/.test(l)).length, 1);
+});
+
+test('AC1.10: an unknown failing set prints its stderr line even on a non---full run', () => {
+  for (const tests of [{ ...FULL, exitCode: 1 }, { command: 'npm test', exitCode: 1 }]) {
+    const { deps, code } = closeRun({ pass: false, effectivePass: true, checks: { tests } }, [record(4, ['tests/a.test.js'])]);
+    assert.equal(code, 0);
+    assert.equal(closeListed(deps), false);
+    assert.equal(deps.calls.stderr.length, 1);
+    assert.match(deps.calls.stderr[0], /head failing set unknown/);
+  }
+});
+
+test('#6222: a non-main ref and an unreadable report never list for closing', () => {
+  const rec = record(4, ['tests/a.test.js']);
+  assert.equal(closeListed(closeRun(PASS_FULL, [rec], {}, 'refs/heads/feature').deps), false);
+  const deps = fakeDeps(undefined, { 'issue list': closeList(rec), api: compareAs('ahead') });
+  run(argv(), deps);
+  assert.equal(closeListed(deps), false);
+});
+
+test('#6222: a listed file that passed only on the isolated retry keeps its record open', () => {
+  const report = { pass: true, checks: { tests: { ...FULL, flakyRetried: ['tests/a.test.js'] } } };
+  assert.deepEqual(flakyPassedOf(report), ['tests/a.test.js']);
+  const { deps, code } = closeRun(report, [record(4, ['tests/a.test.js'])]);
+  assert.equal(code, 0);
+  assert.deepEqual(closedNums(deps), []);
+  assert.deepEqual(deps.calls.stderr, ['windows-regression: #4 left open — tests/a.test.js flaky-passed\n']);
+});
+
+test('#6222: files named in the workflow\'s own re-comments count as tracked by the record', () => {
+  const recomment = (login, files) => ({ author: { login }, body: `The post-merge Windows check failed on commit 222222222.\n\n### Newly failing test files\n${files.map((f) => `- \`${f}\``).join('\n')}\n` });
+  const rec = record(4, ['tests/a.test.js'], [], [recomment('github-actions', ['tests/a.test.js', 'tests/b.test.js']), recomment('someone', ['tests/c.test.js'])]);
+  assert.deepEqual(trackedFilesOf(rec), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.equal(trackedFilesOf({ body: 'no list', comments: [recomment('github-actions', ['tests/a.test.js'])] }), null);
+  const still = closeRun(adjudicatedPass(['tests/b.test.js']), [rec]);
+  assert.deepEqual(closedNums(still.deps), []);
+  const gone = closeRun(PASS_FULL, [rec]);
+  assert.deepEqual(closedNums(gone.deps), ['4']);
 });

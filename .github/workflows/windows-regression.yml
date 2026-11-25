@@ -17,9 +17,12 @@
 # new on this commit count — and uploads its report and logs as an artifact.
 # `file` runs on ubuntu, never executes the suite, and is the only job granted
 # issue-write permission: the filer reads the artifact and files one type:bug issue on
-# main (or comments on the open one). The filer's exit code is the workflow's
-# result (0 = clean; 1 = new failures, an unreadable report, a non-main ref with
-# failures, or a gh failure while filing).
+# main (or comments on the open one). On main it also closes open regression
+# records whose files pass on the head (it runs on a passing verify too, via
+# its always-run condition; the job's existing issue-write grant covers the close
+# and its read-only contents grant covers the compare API). The filer's exit
+# code is the workflow's result (0 = clean; 1 = new failures, an unreadable
+# report, a non-main ref with failures, or a gh failure while filing).
 #
 # The concurrency group is keyed on the commit sha, not the ref: GitHub keeps at
 # most one pending run per group and replaces it with a newer one even when
