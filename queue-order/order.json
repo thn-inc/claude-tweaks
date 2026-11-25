@@ -1,8 +1,23 @@
 {
-  "computedAt": "2026-11-25T07:27:32.737Z",
+  "computedAt": "2026-11-25T07:49:46.182Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6284,
+        "updatedAt": "2026-11-25T07:48:26Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6283,
+        "updatedAt": "2026-11-25T07:48:20Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6282,
+        "updatedAt": "2026-11-25T07:48:14Z",
+        "state": "OPEN"
+      },
       {
         "number": 6222,
         "updatedAt": "2026-11-25T07:18:59Z",
@@ -34,11 +49,6 @@
         "state": "OPEN"
       },
       {
-        "number": 5929,
-        "updatedAt": "2026-11-25T07:23:49Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5833,
         "updatedAt": "2026-11-24T04:44:29Z",
         "state": "OPEN"
@@ -49,13 +59,8 @@
         "state": "OPEN"
       },
       {
-        "number": 5670,
-        "updatedAt": "2026-11-25T07:26:35Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5668,
-        "updatedAt": "2026-11-25T07:23:03Z",
+        "updatedAt": "2026-11-25T07:40:33Z",
         "state": "OPEN"
       },
       {
@@ -80,7 +85,7 @@
       },
       {
         "number": 5437,
-        "updatedAt": "2026-11-25T07:27:00Z",
+        "updatedAt": "2026-11-25T07:37:10Z",
         "state": "OPEN"
       },
       {
@@ -130,7 +135,7 @@
       },
       {
         "number": 5075,
-        "updatedAt": "2026-11-25T07:25:48Z",
+        "updatedAt": "2026-11-25T07:44:58Z",
         "state": "OPEN"
       },
       {
@@ -620,7 +625,7 @@
       },
       {
         "number": 4243,
-        "updatedAt": "2026-11-25T07:26:41Z",
+        "updatedAt": "2026-11-25T07:28:38Z",
         "state": "OPEN"
       },
       {
@@ -660,12 +665,12 @@
       },
       {
         "number": 4128,
-        "updatedAt": "2026-11-25T07:26:36Z",
+        "updatedAt": "2026-11-25T07:28:37Z",
         "state": "OPEN"
       },
       {
         "number": 4118,
-        "updatedAt": "2026-11-25T07:18:10Z",
+        "updatedAt": "2026-11-25T07:47:59Z",
         "state": "OPEN"
       },
       {
@@ -695,7 +700,7 @@
       },
       {
         "number": 3902,
-        "updatedAt": "2026-11-25T07:26:30Z",
+        "updatedAt": "2026-11-25T07:29:28Z",
         "state": "OPEN"
       },
       {
@@ -744,13 +749,13 @@
         "state": "CLOSED"
       },
       {
-        "number": 6268,
-        "updatedAt": "2026-11-25T07:21:21Z",
+        "number": 6269,
+        "updatedAt": "2026-11-25T07:21:22Z",
         "state": "OPEN"
       },
       {
-        "number": 6269,
-        "updatedAt": "2026-11-25T07:21:22Z",
+        "number": 6268,
+        "updatedAt": "2026-11-25T07:21:21Z",
         "state": "OPEN"
       },
       {
@@ -866,6 +871,84 @@
     ]
   },
   "groups": [
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #5866\n**Related:** #5822\nRisk-flags: public-contract\nRisk-flags-unconfirmed: true\n\n## Overview\n\nA run's Review Console files one record per deferred finding. This record adds a console-time bundler: one gh-free CLI that runs once per console, before anything is created, over every staged record proposal of the run (every `spec-{N}/staged/` plus the parent's in a multi-spec run). Proposals in one landing class that share a Key File land as one bundle record with a per-finding checklist; everything else files as today. Fingerprint extraction becomes multi-marker so a bundle still dedups against each member's `work-fingerprint`. Every real finding stays tracked — the bundle holds all of them — so the no-implicit-deferrals rule is untouched; only the per-record ceremony cost drops.\n\nEvidence (origin #5985): a 12-record multi-spec run filed 16 follow-ups and a follow-up run 8 more; the owner hand-consolidated 23 of the 24 into 5 bundles. Seven were `needs:definition`, one decision round each.\n\nThe bundler functions without the producers sub-issue (sibling in this decomposition: \"Pass Key Files from the remaining record-proposal producers…\") but bundles little until it and #5512 land, since a proposal without `### Key Files` is always a singleton.\n\n**Complexity:** High\n**Estimated tasks:** 8\n\n## Non-Goals\n\n- Changing which findings become records: `deferral-route.js`'s verdicts, the materiality floor, the run filing cap and its tally are unchanged (the cap counts per routed finding, before bundling).\n- Bundling can't-tell filings (`plugin/bin/console-filings.js` / `plugin/bin/lib/console/finding-filing.js`, created from a session-tmp out-dir with a per-item `filed as #N` residue contract) — they keep their path.\n- Bundling `parked` (trigger-gated) proposals — each carries its own wake trigger and always stays a singleton.\n- Absorbing into open records: a near-duplicate screen hit (`plugin/bin/lib/issues/near-duplicate.js`) only adds a `**Related:** #N` line (#5822 is why).\n- Directory-level grouping — exact shared file paths only.\n- A cross-run decision round, or adding fingerprints to producers that write none today.\n- The re-check of open follow-ups (the sibling re-check sub-issue, blocked by this one).\n- Making producers pass `keyFiles` (the sibling producers sub-issue and #5512).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none | — |\n\n## Current State\n\n- `plugin/bin/lib/issues/grouping.js` — `groupByFileOverlap(items, options)` (line 60) unions `[{ id, keyFiles }]` over shared paths; hubs come from the unexported `computeHubPaths(items, getFiles, minCount, fraction)` (line 37) over the **same** `items`, threshold `max(HUB_PATH_MIN_COUNT=3, ceil(n × HUB_PATH_FRACTION=0.1))`; bare directory entries never bridge. `partitionGroupsBySizeGuard(groups, { groupSizeGuard })` (line 125) only partitions into `withinGuard` / `oversized` (default `GROUP_SIZE_GUARD_DEFAULT = 10`, line 117) and never splits. `extractKeyFiles(issue)` (line 508) reads a record's `### Key Files`. Exports at line 637 (no `computeHubPaths`).\n- `plugin/bin/lib/issues/record-fingerprint.js` — `extractFingerprint(body)` (line 49) returns only the first match of the work marker, else the legacy marker, else the plain-text companion (`FP_RE_WORK_PLAIN`, #1700). Callers that build fingerprint maps or compare fingerprints today (`git grep -ln \"extractFingerprint(\" -- plugin/bin` at specify time): `plugin/bin/lib/console/finding-filing.js` (line 283), `plugin/bin/lib/console/backfill-dispose.js` (line 218), `plugin/bin/lib/preflight-records/preflight-records.js` (line 159), `plugin/bin/materialize.js` (line 631), plus the skill-prose Idempotency maps that call it through `bin/lib/issues/record.js`.\n- `plugin/bin/lib/console/resolve.js` — `SECTION_MAP` (line 68) routes staged ids by prefix to console sections (e.g. `[/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal']`, line 105); `CANONICAL_PREFIXES` (line 126) must list every non-`.patch` alternative (pinned by `resolve.test.js`); an unmapped prefix classifies `unmapped-prefix` and lands in Pending review.\n- `plugin/bin/stage-item.js` — the sanctioned staged-file writer; refuses an unmapped prefix (`unmappedPrefixRefusal`, line 126, #3370) naming the nearest canonical prefixes; `--allocate` (line 4) gives a `{kind}-{n}` id collision protection. `plugin/bin/lib/stage-item/write.js` holds no prefix map (only the allocate-mode logic, lines 67-90).\n- Queue-write proposal set: `plugin/skills/flow/multispec-review-console.md` step 2 (line 21) reads every `spec-{N}/staged/` (incl. `leftover-*`, `.shadow-dup` copies) plus the parent's `staged/`; `plugin/skills/wrap-up/review-console.md` step 7 creates `Q#` items after `plugin/skills/wrap-up/refused-proposals.md`'s check. `plugin/skills/wrap-up/ledger-narrowing-auto-file.md` runs before the console renders and, when `queueWriteAutoFile` is unlocked, creates every staged queue-write proposal directly — it identifies one by a `decisions.md` `STAGED`/`AUTO` entry phrased as a record proposal or a `leftover-`/`ledger-record-` staged file.\n- `plugin/skills/_shared/ledger-format.md` — a `ledger-record-*` row's Resolution names its staged path (`staged/ledger-record-{slug}.md`, spec-qualified in multi-spec); rows are written through `hooks.js ledger-row --run … --row <n> --status … --resolution …` (line 53); a refused or failed `ledger-record-*` item takes `--set-item {id} --resolution carried --ledger …` (line 213).\n- Sizes at specify time: `plugin/skills/flow/multispec-review-console.md` 52,479 B (Read rail 52,500 B); `plugin/skills/wrap-up/review-console.md` 44,448 B.\n- Tests to follow: `tests/bin-lib/issues/grouping.test.js`, `tests/bin-lib/console/resolve.test.js`, `tests/bin-lib/console/finding-filing.test.js`, `tests/bin-lib/console/staged-id-producers.test.js` (scans every staged-id producer in skills and bin and fails on an unmapped prefix), `tests/console-resolve-conformance.test.js`.\n\n## Deliverables\n\n- [ ] **Grouping accepts external hubs.** `groupByFileOverlap(items, { hubPaths })`: when `options.hubPaths` (a `Set`) is passed it replaces the hub set computed over `items`; absent, behavior is byte-for-byte today's. Export `backlogHubPaths(openRecords, options?) -> Set<string>` from `grouping.js`: hubs over the open records' `extractKeyFiles` paths with the same `max(HUB_PATH_MIN_COUNT, ceil(n × HUB_PATH_FRACTION))` threshold `groupByFileOverlap` uses. The sibling re-check sub-issue (#6284) reuses it, so both consumers share one threshold.\n- [ ] **Multi-marker fingerprints.** `extractFingerprints(body)` in `record-fingerprint.js` returns every marker in body order, deduped (work, legacy and plain-text forms); `extractFingerprint` keeps its first-wins contract. Rule: every map built to dedup against existing records before a create — `finding-filing.js`'s map (line 283), `backfill-dispose.js`'s check (line 218), and the skill-prose Idempotency maps that go through `bin/lib/issues/record.js` — maps **every** marker to the record number; identity reads that attach one fingerprint to one record (`preflight-records.js` line 159, `materialize.js` line 631) keep first-wins. A bundle carries no fingerprint of its own: its member markers sit in one trailing marker block in member order, so first-wins on a bundle returns its first member's marker.\n- [ ] **Bundler library** `plugin/bin/lib/console/bundle.js` (pure): classify each proposal's landing class from its `Labels:` header; group within class with `groupByFileOverlap(…, { hubPaths })`; chunk each oversized group into consecutive bundles of at most `groupSizeGuard` members (default `GROUP_SIZE_GUARD_DEFAULT`), in manifest order; compose one bundle per group of 2+ via `specShapedBody` (see Data / API Surface).\n- [ ] **Bundler CLI** `plugin/bin/bundle-proposals.js` (name and whether it is a mode of `console-filings.js` are the builder's call; it must not call `gh`): takes the run dir the console treats as the run (`--run`, the parent in multi-spec) and enumerates its own `staged/` plus every `spec-*/staged/` itself, applies the input-set exclusions itself (Refused items via `resolve.js`'s `refusedStagedNames` over each dir's `decisions.md`), reads the open-backlog records from a passed file, stages each bundle through `stage-item.js` as `staged/bundle-{n}.md` (`--allocate`) in the run dir the console treats as the run (the parent in multi-spec), retires each member in its own spec dir, rewrites each `ledger-record-*` member's ledger row Resolution (in that member's own ledger) to name the bundle, logs one `AUTO` line per bundle to `decisions.md`, and prints a JSON envelope.\n- [ ] **Console section.** `SECTION_MAP` gains a `bundle-` row routing to Queue writes, `CANONICAL_PREFIXES` gains `'bundle-'`, and every other site in the `review-console-section-addition` project skill's registration set lands in the same change.\n- [ ] **Console wiring.** A new cited sub-file `plugin/skills/wrap-up/proposal-bundling.md` holds the procedure; `plugin/skills/wrap-up/review-console.md` runs it once before `ledger-narrowing-auto-file.md` and before `console-resolve.js` writes `console.json`; `plugin/skills/flow/multispec-review-console.md` gains at most a one-line pointer (trimming elsewhere in that file so it stays under 52,500 B); `ledger-narrowing-auto-file.md` states it runs after bundling. A bundle renders as one `Q#` row naming its member count; Override offers un-bundle (human-present only), which restores the members, restores each member's original ledger Resolution, removes the bundle, and logs one `AUTO` line naming the un-bundle. `ledger-narrowing-auto-file.md` states that it skips a proposal carrying `Bundled-into:` and any `decisions.md` line whose staged path no longer resolves to a creatable proposal.\n- [ ] **Ledger rows.** `plugin/skills/_shared/ledger-format.md` states that a bundled `ledger-record-*` member's Resolution names the bundle, and that a bundle whose create fails or is carried settles every member's row (the `--set-item … --ledger` route, once per member).\n- [ ] **Failure path.** A non-zero bundler exit bundles nothing: every member files individually as today and the console logs one Degrade-trace `SKIP` line naming the exit.\n- [ ] Tests for every Acceptance Criterion below.\n\n## Acceptance Criteria\n\n1. A fixture run dir with 5 born-ready (`ready`) proposals, 3 of which share one Key File, yields exactly 1 bundle with 3 members and 2 untouched singletons.\n2. A `parked` proposal and a `needs:definition` proposal sharing a Key File with `ready` proposals never join the `ready` bundle; the `parked` one stays a singleton.\n3. Two `needs:definition` proposals sharing a Key File yield one bundle whose body has an `## Open Question` section listing both members' questions and no `ready` label.\n4. A 12-member group with `groupSizeGuard` 10 yields 2 bundles (10 + 2 members, in manifest order); no bundle has more than 10 members.\n5. A file cited by 3+ of the run's own proposals but by fewer than the hub threshold of a fixture open-backlog snapshot still bundles those proposals; the same file cited by enough fixture open records to be a hub does not bridge them.\n6. The bundle body carries every member's `work-fingerprint` marker, and `extractFingerprints(bundleBody)` returns all of them in member order; `extractFingerprint` on the same body still returns the first.\n7. The bundle's labels are the highest member `risk:*`, a `size:*` no lower than the largest member's, the members' shared `type:*` (else `type:task`), and its `Defer-reason:` header is the value most members share (tie: the first member's).\n8. After bundling, the current tree's Queue-writes aggregation — `classifyStagedItem` / `resolveAll` over the run dir, plus a scan for staged files with a `Title:`/`Type:`/`Labels:` header (`multispec-review-console.md` step 2) — sees the bundle and no retired member; an older `resolve.js` (the `bundle-` row removed, simulated in the test) routes the bundle to Pending review and still sees no member; and, for a fixture `decisions.md` still holding each member's original `STAGED` line, every staged path those lines name resolves to no creatable proposal file under `staged/` (the decisions.md reader of `ledger-narrowing-auto-file.md`).\n9. A forced bundler failure (non-zero exit) leaves every member in place for individual filing and the console procedure logs a `SKIP` line naming the bundler exit.\n10. Each bundled `ledger-record-*` member's ledger row Resolution names `staged/bundle-{n}.md` after bundling.\n11. Each bundling writes one `AUTO` line to `decisions.md` naming the bundle path and its members, with `Reversibility: high`.\n12. An empty proposal set exits 0, writes nothing and logs nothing; an unreadable or malformed member file is left as a singleton and named in the envelope's skipped list; an unreadable open-backlog file bundles nothing and the console logs a `SKIP` line.\n13. `wc -c < plugin/skills/flow/multispec-review-console.md` prints a value below 52,500 after the change.\n14. A second bundler run over the same run dir is a no-op: `bundle-*` files and members carrying `Bundled-into:` are excluded from the input set, so no bundle nests and nothing is re-staged.\n15. A fixture member body whose defused or fenced text quotes a `work-fingerprint` marker adds no extra entry to `extractFingerprints(bundleBody)`; `groupByFileOverlap` called without `hubPaths` returns the same groups as before the change on the existing `grouping.test.js` fixtures.\n16. A bundle whose create fails or is carried settles every member's ledger row (one `--set-item … --ledger` call per member); an Override un-bundle restores every member's staged file and its original ledger Resolution.\n17. A header with `parked` is a singleton; a header carrying both `ready` and `parked`, or both `ready` and `needs:definition`, is unrecognized and stays a singleton; a fresh-but-empty open-backlog array is treated as unreadable (bundle nothing, `SKIP` line).\n18. Each bundle's `AUTO` line in `decisions.md` names the shared path or paths that joined its members, so a false union over an under-detected hub is visible to whoever reads the console.\n\n## Release Note\n\nThe Review Console now files a run's follow-up findings that touch the same files as one record with a checklist per finding, instead of one record each.\n\n## Technical Approach\n\n**Input set:** every staged record-proposal file the console's Queue writes would create — `leftover-*`, `ledger-record-*`, `review-followup-*`, and any file with a `Title:`/`Type:`/`Labels:` header — excluding `.shadow-dup` copies, `ledger-record-sdd-ruling-*` (each writes its own ledger row once its record exists), Refused items (`wrap-up/refused-proposals.md`), `bundle-*` files and members already carrying `Bundled-into:`. Only `Keep`/`Acknowledge` ledger items and born-ready `/review` / leftover proposals can bundle; a ledger `Defer` always lands `parked`.\n\n**Landing class (Closed rule):** a proposal's `Labels:` header decides its class — contains `parked` (and not `ready`) → `parked` (always a singleton); contains `needs:definition` (and not `ready`) → `needs:definition`; contains `ready` (and neither of the other two) → `ready`. These three are the complete set; a header combining `ready` with `parked` or `needs:definition` is contradictory (`recordPayload` refuses ready+parked) and is unrecognized. Any other header (no `Labels:` line, an unparseable one, or none of the three) is refused bundling with one envelope line naming the file and \"singleton: unrecognized landing class\"; it files individually as today. A plan review that finds another unlisted state applies this rule as a plan amendment, never as a `needs-human` gap.\n\n**Hubs:** computed against the open-backlog snapshot (a path cited by at least `max(3, 10%)` open records' `### Key Files`), passed in as `hubPaths` — not against the run's own proposals, where the default would make any file cited by 3+ of one run's findings a hub, which is exactly the area signal (`grouping.js`'s thresholds were tuned on a 139-record pool). Under `work-backend: github-issues` the console passes the session record snapshot (`record-snapshot.js`'s `snapshotPath`, refreshed by `_shared/record-queue-fetch.md`'s read-fresh-or-fetch block); under `local-files` the CLI reads open records through `local-store.js`. An unreadable file, or a fresh-but-empty array, bundles nothing (`SKIP` line).\n\n**Bundle composition:** Current State lists each member's finding; Deliverables is a checklist, one `- [ ]` item per member carrying its title, its own `Defer-reason` and its source staged path; Acceptance Criteria is the union of members' criteria grouped per member (for `needs:definition`, `openQuestion` listing every member's question); Key Files is the union. Each member's full finding text is embedded in the bundle body; its source staged path is provenance only, since the run dir is archived after the run. Labels and `Defer-reason:` per AC 7, plus the class label (`ready`, or `needs:definition` with no scoring); a `by:*` origin label only when every member shares it; never an `auto:*` or `bot:*` label; a member missing `risk:*`/`size:*` is ignored for that maximum, and the label is omitted when no member has one. `size:*` is judged from the union's deliverables and Key Files (never lower than the largest member). Each member's `Risk-flags:` slugs are unioned through `bin/risk-flags.js`, never hand-typed. Every member's `work-fingerprint` marker is carried in the trailing marker block. The near-duplicate screen runs once, on the composed bundle body; a hit against an open record adds `**Related:** #N`. The run filing cap and its tally are unchanged (they count routed findings before bundling).\n\n**Member retirement (expand-contract):** each member is rewritten through a sanctioned writer with a `Bundled-into: staged/bundle-{n}.md` header line **and moved out of the Queue-writes set**, so an older console reading the run dir sees only the bundle as creatable. The mechanism is the builder's call (e.g. move members to a sibling `{run-dir}/bundled/` directory outside `staged/`); AC 8 is the proof.\n\n### Data / API Surface\n\n- `groupByFileOverlap(items, { hubPaths?: Set<string>, hubPathMinCount?, hubPathFraction? })`.\n- `extractFingerprints(body: string) -> string[]`.\n- `bundle.js`: `classifyLandingClass(proposalText) -> 'ready' | 'needs-definition' | 'parked' | null`; `planBundles(proposals: [{ path, text, keyFiles, labels }], { hubPaths, groupSizeGuard }) -> { bundles: [{ class, members }], singletons }`; `composeBundle(members) -> { header, body }` (names are the builder's call).\n- CLI (shape is the builder's call, following the `gh-api-module-pattern` project skill's CLI wrapper contract — `run(argv, deps)`, run-dir anchoring guard, exit-code vocabulary): e.g. `node plugin/bin/bundle-proposals.js --run <run-dir> --records-json <path> [--group-size-guard <n>]`, stdout one JSON envelope `{ bundles: [{ path, class, members }], singletons, skipped: [{ path, reason }] }`; exit 0 on success including nothing to bundle; non-zero means bundle nothing.\n- Staged id: `bundle-{n}` via `stage-item.js --allocate`, routed by a new `SECTION_MAP` row to Queue writes.\n\n### Key Files\n\n- `plugin/bin/bundle-proposals.js` — new gh-free bundler CLI (name is the builder's call)\n- `plugin/bin/lib/console/bundle.js` — new pure bundling library\n- `plugin/bin/lib/issues/grouping.js` — `groupByFileOverlap` accepts `hubPaths`; export a backlog hub helper\n- `plugin/bin/lib/issues/record-fingerprint.js` — `extractFingerprints` multi-marker reader\n- `plugin/bin/lib/console/finding-filing.js` — fingerprint map reads every marker\n- `plugin/bin/lib/console/resolve.js` — `bundle-` `SECTION_MAP` row and `CANONICAL_PREFIXES` entry\n- `plugin/skills/wrap-up/proposal-bundling.md` — new cited sub-file holding the bundling procedure\n- `plugin/skills/wrap-up/review-console.md` — run the bundler before ledger-narrowing auto-file and before `console.json`\n- `plugin/skills/flow/multispec-review-console.md` — one-line pointer only, trimmed to stay under the rail\n- `plugin/skills/wrap-up/ledger-narrowing-auto-file.md` — runs after bundling\n- `plugin/skills/_shared/ledger-format.md` — bundled member Resolution and carry settlement\n- `tests/bin-lib/console/bundle.test.js` — new bundler tests\n- `tests/bin-lib/console/resolve.test.js` — `bundle-` prefix routing\n\n## Gotchas\n\n- **Rail headroom:** `plugin/skills/flow/multispec-review-console.md` is 52,479 B, 21 B under the 52,500 B Read rail (`RAIL_BYTES`, `docs/decisions/0024-*`). The sibling re-check sub-issue also adds a pointer there. Put the multi-spec wiring in the cited sub-file and trim elsewhere in that file for any byte added.\n- **Older consoles find queue writes three ways:** by prefix (`resolve.js`), by a `Title:`/`Type:`/`Labels:` header in any `staged/` file (multi-spec step 2's prose), and by `decisions.md` `STAGED`/`AUTO` lines phrased as record proposals (`ledger-narrowing-auto-file.md`). A member's original `STAGED` line still names its old staged path after retirement. The retirement must defeat all three readers, and AC 8's proof should include the decisions.md reader.\n- `stage-item.js` refuses an id whose prefix no `SECTION_MAP` row maps (#3370), so the `bundle-` row must land before (or with) the first bundle write; `CANONICAL_PREFIXES` is pinned against `SECTION_MAP` by `resolve.test.js`.\n- Follow the `review-console-section-addition` project skill for the full registration set (code sites, interactive render, multi-spec render, PR render): #3926 missed the interactive render until whole-branch review.\n- `partitionGroupsBySizeGuard` never splits; the chunking into consecutive bundles is new code in `bundle.js`.\n- Under `work-backend: github-issues` the open-backlog snapshot may be fresh but empty (`isFresh` is mtime-only); treat an empty array from a fresh snapshot as unreadable for hub purposes and re-fetch or bundle nothing (project memory: record snapshot fresh-but-empty).\n- `queueWriteAutoFile` / `consoleAutoResolve` apply to a bundle as to any `Q#` item; bundling adds no stop in `auto` mode (`_shared/auto-mode-contract.md`'s strict rule against new mid-flow stops).\n- `extractFingerprint` takes the first marker in a proposal, which is why producer-supplied text is defused (`finding-filing.js` line 41); embed member text through the same `defuse`, so `extractFingerprints` reads only the trailing marker block's markers (AC 15).\n- Byte-pinned tests can make a green branch merge red when a sibling lands first: run `npm test -- --full` and update the branch before merge.\n- Verified at specify time: the Queue-write create path (`plugin/skills/wrap-up/review-console.md` step 7, `plugin/skills/flow/multispec-review-console.md`) carries no fingerprint check (`grep -n -i fingerprint` finds none in either), so bundling makes Queue-write dedup no worse and no better; the multi-marker reader matters for the dedup maps named in Deliverables.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n## Decision Rationale\n\nSee the parent record's `## Decisions (autonomous lane, 2026-11-25)` and `## Decision Rationale` sections — the console-time bundler (Approach A) was picked over producer-time accumulation and a periodic consolidation sweep; every decision there was made by the agent under the maintainer's authorization, not by the maintainer.\n\n\n<!-- work-fingerprint: deferral-bundling:bundle-a-run-s-to-be-filed-follow-up-proposals-that-share-fi -->\nwork-fingerprint: deferral-bundling:bundle-a-run-s-to-be-filed-follow-up-proposals-that-share-fi\n\n**Hub under-detection accepted (autonomous lane, 2026-11-25, red-team Open Question resolved by the agent).** Most open records carry no `### Key Files` today, so backlog-computed hubs are under-detected and a genuinely hot file can bridge unrelated findings into one bundle. A minimum-coverage check was rejected: at today's coverage it would bundle nothing almost everywhere, making the feature inert. The accepted risk is bounded — a bundle holds at most 10 members (the size guard), every member stays tracked in the checklist (no finding is lost), a human-present Override can un-bundle, and the worst case equals what `/dispatch`'s own file-overlap bundling already does at build time. Coverage rises as #5512 and #6282 land. The `AUTO` line naming the joining paths (Acceptance Criteria) makes a false union visible.\n",
+        "createdAt": "2026-11-25T07:38:56Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6283,
+        "state": "OPEN",
+        "title": "Bundle a run's to-be-filed follow-up proposals that share files into one record with a per-finding checklist",
+        "updatedAt": "2026-11-25T07:48:20Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
     [
       {
         "body": "**Related:** #4725, #4764, #5303, #5322, #5451, #5694, #4790, #4286, #6203, #6021\n\n## Current State\n\n`tools/windows-regression/file-issue.js` (run by `.github/workflows/windows-regression.yml`'s `file` job on every push to `main`) only ever opens or comments on `Windows regression: … newly failing after {sha}` records. On a passing verify outcome `run()` returns `0` straight after `classify(report)` (\"pass — nothing to file\"), and on a failing one `fileOrComment` files or comments. Nothing ever closes a record whose files have since been fixed, so fixed records stay open, and the ones `/specify` shaped stay `ready` + `auto:build` in the dispatch and driver queues.\n\nMeasured 2026-11-24: of 17 open Windows-regression records, 5 named only files that main's latest full Windows run (45372736400 at 88cdbe82, `npm test -- --full`, 36,338 tests, `flakyPassed: []`, `timedOut: []`) no longer listed in `baselineAdjudicated.failingFiles`. Those were #4725 (fixed by #5694), #4764 (#4286), and #5303, #5322 and #5451 (#4790), each fixed 1-3 weeks before. The pipeline driver claimed #4725 and built PR #6203 for a failure #5694 had already fixed eight days earlier. Its change weakened the test, and only the whole-branch review stopped it. All five were closed by hand with that run as evidence.\n\nThe report already carries everything the close decision needs: `baselineAdjudicated.failingFiles` (every file failing at head, pre-existing ones included), `timedOut`, `flakyPassed`, and `checks.tests.command`/`exitCode`. Each record body lists its files under `### Newly failing test files` as `` - `path` `` bullets, which `composeIssue` writes.\n\n## Deliverables\n\n1. On `refs/heads/main`, on every run whose report is readable, pass or fail, `file-issue.js` lists open `type:bug` issues whose title starts with `TITLE_PREFIX` and that carry a `### Newly failing test files` list. It closes (`--reason completed`) each one where none of its listed files is in the head's failing set, with a comment naming the run URL, the head sha, and the files. It runs after filing or commenting, so a file that fails at this head is never closed by the same run that reports it.\n\n2. The head's failing set is `baselineAdjudicated.failingFiles` when adjudication ran. It is empty only for a raw pass of the full suite (`checks.tests.exitCode === 0`). In every other case it is unknown: the run skips closing altogether and prints one stderr line.\n\n3. No close happens when the run is not a full-suite run (`checks.tests.command` lacks `--full`), when any test file timed out (`baselineAdjudicated.timedOut` non-empty), or when a listed file is in `flakyPassed`. A record with no parseable file list (the `(not adjudicated)` and `no verify report` shapes, or an edited body) is never closed. A record carrying `bot:in-progress` gets a comment saying its files now pass, not a close, so its claimant settles it.\n\n4. Any `gh` failure while listing, closing or commenting is one stderr line and never changes the CLI's exit code (still `0` on pass, `1` on fail).\n\n## Acceptance Criteria\n\n1. `tests/windows-regression-file-issue.test.js` covers, against an injected `gh` fake:\n   - a pass run closes a record whose files are all absent from the failing set;\n   - a fail run closes a stale record while filing the new one;\n   - a record with one still-failing file stays open;\n   - a timed-out, non-`--full`, or flaky-passed run closes nothing;\n   - a `(not adjudicated)` record is never closed;\n   - a `bot:in-progress` record is commented on, not closed;\n   - a throwing `gh` leaves the exit code unchanged.\n\n2. Reverting the close logic turns each close-asserting test red (revert proof).\n\n3. The CLI's header comment and exit-code block describe the close behaviour.\n\n4. `npm test` passes.\n\n## Release Note\n\nNo user-facing change. Maintainer-side: the post-merge Windows check now closes its own regression records once their test files pass again on main, so already-fixed records stop reaching the build queue.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/windows-regression/file-issue.js` — close stale records after filing; stale-set derivation from the report\n- `tests/windows-regression-file-issue.test.js` — close/skip/comment cases and gh-failure posture\n- `.github/workflows/windows-regression.yml` — confirm the file job runs on a passing verify too (issues: write already granted)\n\n_Filed by `capture` via specShapedBody._\n\nhttps://claude.ai/code/session_011SMTg7db2nRU6HiAa2j7kN\n",
@@ -1169,78 +1252,6 @@
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Defer-reason: genuinely-larger\n\n## Current State\n\n#4359 registered two child-facing phases in `plugin/bin/lib/compose-context/phases.js`: `review-lens-child` (bundle `lens-child`, composing `skills/_shared/subagent-output-contract.md` and `skills/_shared/criteria-architecture-depth.md`) and `sdd-child` (bundle `sdd-child`, composing `skills/_shared/subagent-dispatch-core.md`). Both compose whole files, because `compose-context.js` has only whole-file sources and `<!-- when: -->` condition fences (refs #4359, whole-branch review lens 3e).\n\n- A lens prompt cites only the Scratch rule of the output contract (`plugin/skills/review/step3-lens-dispatch.md`), and only lens 3e cites the depth criteria. A non-3e lens child that reads the bundle once, whole, takes about 38 KB where one rule is needed.\n- An SDD child's prompt (`plugin/skills/build/dispatch.md`) names three rules (no-stash, no-name-kill, discrimination checks) and reads the whole 38 KB dispatch core.\n- #4359's AC1 counts reads per run, so the bundle meets it. The cost the bundle still carries is bytes per child read, which is the context-overhead goal #4027 and #4359 share.\n- #4359 deliberately added no `<!-- when: -->` fences (its PR body, decision-rule choices): a fence added an all-`unresolved` composed row over the rail before Step 6.7's body moved out.\n\n## Deliverables\n\n1. Decide how a child bundle selects the sections its prompt cites: fence the source files with `when:` markers keyed to the dispatching phase, give `compose-context.js` a named-section source, or split the cited rules into small `_shared` files the registry composes whole.\n2. Apply it so the `lens-child` bundle carries the Scratch rule and the shared rules every lens prompt cites, and lens 3e's depth criteria reach only a 3e child (its own bundle or a second on-demand read).\n3. Apply it so the `sdd-child` bundle carries the rules its prompt cites.\n4. Keep `composedRailViolations(\"plugin\")` printing `[]` and the prose `--phase` lines in place.\n\n## Acceptance Criteria\n\n- The composed `lens-child` bundle for a non-3e lens is under 12 KB, and no cited rule is missing from it (a citation test names each rule the prompt cites).\n- The composed `sdd-child` bundle is under 15 KB with the three rules the prompt names.\n- `composedRailViolations(\"plugin\")` prints `[]` and the existing conformance suites pass with no added skips.\n\n### Key Files\n\n- `plugin/bin/lib/compose-context/phases.js` — modify (the two child phases)\n- `plugin/bin/lib/compose-context/compose.js` — modify only if named-section sources are chosen\n- `plugin/skills/review/step3-lens-dispatch.md` — modify (the lens-child citation)\n- `plugin/skills/build/dispatch.md` — modify (the sdd-child citation)\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/subagent-dispatch-core.md` — modify (fences or a split)\n\n_Filed by `review` via specShapedBody._\n\n## Release Note\n\nSlice the review lens and subagent composed bundles down to the sections their prompts cite, so each child loads less.\n",
-        "createdAt": "2026-11-16T06:45:05Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5668,
-        "state": "OPEN",
-        "title": "Slice the lens-child and sdd-child composed bundles down to the sections their prompts cite",
-        "updatedAt": "2026-11-25T07:23:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -2123,84 +2134,6 @@
           "risk": "low",
           "size": "medium",
           "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect hindsight from #4395\n\nDefer-reason: tangential\n\n## Current State\n\nA scoped re-verify classifies the delta since the stamp anchor `fullSha`, and a scoped pass does not advance that anchor (`anchorOf` in `plugin/bin/lib/verify/stamp.js` returns the `fullSha` field of the stamp, and a scoped pass writes its own base there, `plugin/bin/verify.js`). So after `/build` Common Step 5 passes scoped at S, a bookkeeping-only commit (a run-ledger row) followed by `/test` gets a delta of every file the branch changed since the merge-base, not just the ledger path.\n\nObserved on #4395's own run: build verified 4acac2138 (scoped, impact-selected, 12794 tests), a ledger-only commit moved HEAD to 55a8e9ef8, and `/test` re-ran the same 12794 tests for 140 s before stamping HEAD `scope: scoped` (`report.json`, `scope.base` = the merge-base `ebeb43749`). The stall #4395 fixes is gone, but the `scope: none` outcome its AC1 names only happens when the prior pass was a full one.\n\n## Deliverables\n\n- [ ] When the prior stamp is a passing scoped pass at a commit that is an ancestor of HEAD, classify the delta since that pass (not since `fullSha`) so a bookkeeping-only delta resolves to `none` and re-stamps HEAD without running a suite.\n\n- [ ] Keep `fullSha` as the base for every delta that contains a non-bookkeeping path, so the scoped set never narrows below the last full pass.\n\n## Acceptance Criteria\n\n1. With a passing scoped stamp at S and a HEAD whose delta from S is only `docs/plans/*-ledger.md`, `verify.js --scope` runs no suite, prints `still-verified: bookkeeping-only delta`, and `--stamp-status` reports `verifiedHead: true` at HEAD.\n\n2. With a passing scoped stamp at S and a delta from S that contains one `plugin/**` path, the scoped run selects the suites that path maps to, over the delta since `fullSha`, exactly as today.\n\n## Release Note\n\nA run-ledger commit after build's scoped verification no longer re-runs the impact-selected test suite: the test step re-stamps the new commit without running anything.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — let a scoped pass stamp anchor the next scoped delta\n- `plugin/skills/test/verification.md` — document the scoped-anchor rule in Re-verify scoping\n\n_Filed by `reflect`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
-        "createdAt": "2026-11-03T20:10:49Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 5075,
-        "state": "OPEN",
-        "title": "A bookkeeping-only commit after a scoped build verify re-runs the whole impact-selected suite",
-        "updatedAt": "2026-11-25T07:25:48Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -8416,7 +8349,7 @@
     ],
     [
       {
-        "body": "**Related:** #3160, #4117\n\nOrigin: /claude-tweaks:flow #3898,#4012,#4041 Manifesto stall (run 2026-10-24T103516-spec-3898-4012-4041)\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:capture`'s Shaped-body branch step 3 files a spec-shaped body as `ready` with `risk:*`/`size:*` labels. It deliberately never passes `ceremony` to `recordPayload` (`plugin/skills/capture/SKILL.md` ~line 305: \"this branch never passes those\"), because `/claude-tweaks:specify` is the sole owner of `ceremony:*`. So every born-ready capture reaches `/claude-tweaks:flow` unlabelled. `flow/manifesto.md`'s Ceremony profile computation then runs one inline `assess-agent-autonomy ceremony-check` per such record, and `materialize.md` falls back the same way when no Manifesto verdict exists.\n\nThis is the common case: release-gate, wrap-up and health-sweep findings filed through `/capture --source …` all take this branch. On 2026-10-24, #4012, #4041 and #4060-#4072 were all filed this way. In `/flow #3898,#4012,#4041` (run 2026-10-24T103516-spec-3898-4012-4041) both fallback calls were wasted. #3898 already carried `ceremony:standard`, so the run-wide AND fold was `standard` before either judgment ran. A per-record verdict only changes behaviour where `build/micro-plan.md`'s gate reads `ceremony: fast-lane` with `size: low`, and #4041 is `size:medium`. The inline call is also where the pipeline stalled (the sibling record on return-to-caller).\n\n## Deliverables\n\n1. Born-ready captures carry a `ceremony:*` label. Either the Shaped-body branch judges it through the canonical `_shared/ceremony-check-invocation.md` pattern and stamps it, which updates `_shared/work-record.md`'s permission matrix so `/capture` co-owns `ceremony:*` on that branch only, or the decision to keep `/specify` as sole owner is recorded with its reason and deliverable 2 alone carries the fix.\n2. `flow/manifesto.md`'s Ceremony profile computation skips the per-record judgment when its verdict cannot change anything: the run-wide fold is already `standard` from a labelled record, **and** the record is not `size:low` (the only case `build/micro-plan.md` reads a per-record `fast-lane`). It passes `--ceremony standard` to materialize for those records and logs the skip with its reason.\n\n## Acceptance Criteria\n\n- A record filed through `/capture`'s born-ready branch carries a `ceremony:*` label, or the recorded decision explains why it does not.\n- A conformance test pins manifesto.md's skip condition (fold already `standard` and record not `size:low`) and its `--ceremony standard` pass-through, and reverting the prose turns it red.\n- `npm test` passes.\n\n## Release Note\n\nRecords filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — Shaped-body branch: ceremony stamping (or recorded decision)\n- `plugin/skills/flow/manifesto.md` — Ceremony profile computation: skip judgment when the verdict cannot matter\n- `plugin/skills/_shared/work-record.md` — permission matrix: ceremony:* co-ownership, if chosen\n\n_Filed by `capture` via specShapedBody._",
+        "body": "**Related:** #3160, #4117\n\nOrigin: /claude-tweaks:flow #3898,#4012,#4041 Manifesto stall (run 2026-10-24T103516-spec-3898-4012-4041)\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:capture`'s Shaped-body branch step 3 files a spec-shaped body as `ready` with `risk:*`/`size:*` labels. It deliberately never passes `ceremony` to `recordPayload` (`plugin/skills/capture/SKILL.md` ~line 305: \"this branch never passes those\"), because `/claude-tweaks:specify` is the sole owner of `ceremony:*`. So every born-ready capture reaches `/claude-tweaks:flow` unlabelled. `flow/manifesto.md`'s Ceremony profile computation then runs one inline `assess-agent-autonomy ceremony-check` per such record, and `materialize.md` falls back the same way when no Manifesto verdict exists.\n\nThis is the common case: release-gate, wrap-up and health-sweep findings filed through `/capture --source …` all take this branch. On 2026-10-24, #4012, #4041 and #4060-#4072 were all filed this way. In `/flow #3898,#4012,#4041` (run 2026-10-24T103516-spec-3898-4012-4041) both fallback calls were wasted. #3898 already carried `ceremony:standard`, so the run-wide AND fold was `standard` before either judgment ran. A per-record verdict only changes behaviour where `build/micro-plan.md`'s gate reads `ceremony: fast-lane` with `size: low`, and #4041 is `size:medium`. The inline call is also where the pipeline stalled (the sibling record on return-to-caller).\n\n## Deliverables\n\n1. Born-ready captures carry a `ceremony:*` label. Either the Shaped-body branch judges it through the canonical `_shared/ceremony-check-invocation.md` pattern and stamps it, which updates `_shared/work-record.md`'s permission matrix so `/capture` co-owns `ceremony:*` on that branch only, or the decision to keep `/specify` as sole owner is recorded with its reason and deliverable 2 alone carries the fix.\n2. `flow/manifesto.md`'s Ceremony profile computation skips the per-record judgment when its verdict cannot change anything: the run-wide fold is already `standard` from a labelled record, **and** the record is not `size:low` (the only case `build/micro-plan.md` reads a per-record `fast-lane`). It passes `--ceremony standard` to materialize for those records and logs the skip with its reason.\n\n## Acceptance Criteria\n\n- A record filed through `/capture`'s born-ready branch carries a `ceremony:*` label, or the recorded decision explains why it does not.\n- A conformance test pins manifesto.md's skip condition (fold already `standard` and record not `size:low`) and its `--ceremony standard` pass-through, and reverting the prose turns it red.\n- `npm test` passes.\n\n## Release Note\n\nRecords filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — Shaped-body branch: ceremony stamping (or recorded decision)\n- `plugin/skills/flow/manifesto.md` — Ceremony profile computation: skip judgment when the verdict cannot matter\n- `plugin/skills/_shared/work-record-permission-matrix.md` — permission matrix: `/capture` co-owns `ceremony:*` on its born-ready branch\n- `plugin/skills/_shared/work-record.md` — Ceremony label-table row: stamped by `/specify` or `/capture` (born-ready)\n- `docs/decisions/0006-ceremony-tiering-owned-by-specify.md` — amendment note for `/capture` co-ownership\n- `tests/bin-lib/express/eligibility.test.js` — capture-stamped fast-lane eligible; standard refused by driver-lane options\n\n## Planning Decisions\n\nDecided 2026-11-25 in the maintainer-authorized autonomous lane, answering the plan-review question comment on this record.\n\n**Decision (Q1, driver and express lane eligibility): Reading A.** `/capture`'s born-ready branch judges and stamps `ceremony:*`, and the label becomes the single authority on ceremony for every lane. A capture judged `standard` leaves the driver lane by default: `allowAbsentCeremony` existed only because captures carried no label, and is not widened. A capture judged `fast-lane` becomes express-eligible, which is the outcome #5262 asked for. Amend `docs/decisions/0006-ceremony-tiering-owned-by-specify.md` with a note that `/capture` co-owns `ceremony:*` on its born-ready branch only. Add a row for that to `_shared/work-record-permission-matrix.md` (the matrix lives there, not in `_shared/work-record.md`), and update `_shared/work-record.md`'s Ceremony label-table row (\"stamped by `/specify`\"). State the lane change in the Release Note. Add an eligibility test in `tests/bin-lib/express/eligibility.test.js`: a capture-stamped `ceremony:fast-lane` record is eligible, and a capture-stamped `ceremony:standard` record is refused by the driver-lane options.\n\n**Decision (Q2, filings that bypass `/capture`): Reading A.** The Acceptance Criterion stays `/capture`-only. Health-sweep `issue-payload.js` filings and `/review` Step 3 Defer filings remain unlabelled and rely on Deliverable 2's Manifesto skip. Correct Current State's claim that health-sweep findings go through `/capture --source`. Route the remaining gap to the digest per this repo's out-of-diff convention, not into this diff.\n\n**Decision (remaining plan-review rows, blanket rule for this record).**\n- If the inline ceremony check fails, stalls or renders no verdict during a capture filing, file the record without a `ceremony:*` label (today's behavior), say so in capture's output, and never block or delay the filing on it.\n- Add the `Review risk: high` markers the reviewer asked for on Tasks 1 and 2.\n- Task 3's conformance assertion must go red when the prose edit is reverted; prove it with a revert check.\n- Any further plan-review question for this record of the same kind (an undecided failure-path behavior or a scope edge) takes the option that keeps today's behavior on the failure path. Log it as an AUTO decision; it never stops the build for a human again.\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-24T10:51:13Z",
         "labels": [
           {
@@ -8471,7 +8404,7 @@
         "number": 4118,
         "state": "OPEN",
         "title": "/capture's born-ready branch files `ready` records with no `ceremony:*` label, so every one pays /flow's ceremony-check fallback",
-        "updatedAt": "2026-11-25T07:18:10Z",
+        "updatedAt": "2026-11-25T07:47:59Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -9148,90 +9081,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #5396, #4765, #6076, #4118\nRisk-flags: none\n\n## Current State\n\nOn plugin 6.168.0, a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet reached 312,673 context tokens by the end of `/build`, so `/flow` handed test, review and polish to a fresh agent. That agent spent about 255k more tokens and 6.5 minutes. The record lists the procedure reads that filled the context: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), `flow/SKILL.md`, `build/SKILL.md`, and the subagent-driven-development skill with its reviewer template.\n\nThe build took the full planning path because `/build`'s micro-plan gate fell through. `plugin/bin/lib/issues/micro-plan-gate.js` sets `MAX_IMPLEMENTATION_FILES = 1`, and the record's Key Files counted four implementation files (three config files plus one prompt-prose skill file). A fall-through loads `/superpowers:writing-plans` (10,335 B), `build/plan-authoring-checks.md` (52,476 B on origin/main `68608178fa`) and its two cited sub-files (`plan-authoring-pairing-checks.md`, 2,999 B; `plan-authoring-boundary-checks.md`, 4,490 B). It also produces a multi-task plan, and a multi-task plan keeps SDD's whole-branch review, which the fast-lane profile skips only at `tasks: 1` (`_shared/ceremony-profile.md`'s `sdd-whole-branch-review` row). The micro-plan path loads `build/micro-plan.md` (8,125 B) instead and composes a one-task plan.\n\nThe gate's limit of one is stricter than the lanes beside it. The express lane (`plugin/bin/lib/express/eligibility.js`, `EXPRESS_MAX_KEY_FILES = 3`) builds a record with up to three Key Files of any kind, test files included, in one agent with no plan, no per-task review and a merge on green. The pipeline driver admits the same bound by default (`express-driver-max-key-files`, default 3). `/build`'s micro-plan path keeps more checks than either: it still runs an SDD task review and `/claude-tweaks:review`'s lenses. It still refuses every fast-lane record with two or more implementation files. #5396 records the same fall-through with two files: one key added to a static plist, plus the generator that writes it.\n\nThe gate is read in two places: `/build`'s Spec Step 3 (`build/micro-plan.md`'s Applicability gate) and `/claude-tweaks:specify`'s plan-lane predicate (`plugin/bin/lib/driver/plan-lane.js` `needsNoPlan`, #6053), which tries the driver lane, then the express lane, then the micro-plan lane.\n\nA fence survey at origin/main `68608178fa` (the `compose-context-fencing` procedure) ruled out the other reads as levers. `build/dispatch.md` (49,720 B) is two single lines of 27,006 B and 17,829 B plus small paragraphs. Fences are line-anchored, and the only prose that cannot apply to a fast-lane one-task build is the whole-branch-review block (about 4.4 KB: \"Whole-branch review model.\" and \"Persist SDD's final whole-branch review before Finish\"). That block keys on task count, not on `ceremony-profile`, which is not a `compose-context` condition key either (`resolve-conditions.js` resolves six). The worktree-setup sources already measured 0 B fenceable on their run-level axes (#1993). `test/verification.md` runs under every profile.\n\n## Deliverables\n\n- [ ] Raise `MAX_IMPLEMENTATION_FILES` in `plugin/bin/lib/issues/micro-plan-gate.js` from 1 to 3. Rewrite the header comment's \"the gate is \\\"at most one\\\", not \\\"exactly one\\\"\" sentence so it names the constant, not a number. Add one sentence giving the reason: the express lane builds up to `EXPRESS_MAX_KEY_FILES` Key Files with no plan at all, and the micro-plan path keeps the task review and the review lenses, so it needs no stricter bound. Keep it a separate constant, not an import of `EXPRESS_MAX_KEY_FILES`: the express lane counts every Key File, while this gate counts implementation files only.\n- [ ] Reword `plugin/skills/build/micro-plan.md`'s title (`single-file fast-lane records skip`) and its opening sentence (\"A one-file, one-task record\") so neither says one file. The composed plan stays one task, its `**Files:**` block one line per Key Files entry, as today. Keep conditions 3 and 4 citing the code, not restating the number (`tests/build-micro-plan-code-twin.test.js` fails on a restated limit).\n- [ ] Update `plugin/skills/_shared/ceremony-profile.md`'s exemption row that quotes the old title phrase (`single-file fast-lane records skip`) to quote the new title phrase, so `tests/ceremony-profile-roster.test.js` still matches it.\n- [ ] Update the tests that pin the old limit: `tests/bin-lib/issues/micro-plan-gate.test.js` (the constant-value assertion, and the `implementation-file-limit` failure case moved from two entries to four), and `tests/bin-lib/driver/plan-lane.test.js` (the AC2.1 case that expects two implementation Key Files outside every lane). `tests/build-micro-plan-conformance.test.js`'s AC5.1 case (one implementation file satisfies condition 3) stays true and needs no change.\n\n## Acceptance Criteria\n\n- [ ] `MAX_IMPLEMENTATION_FILES` is 3. `evaluateMicroPlanGate` returns `{ passes: true, failed: [], unreadable: null }` for a `fast-lane`, `low`, unflagged record whose Key Files name three implementation files (for example two `plugin/bin/*.js` modules and one `plugin/skills/**/*.md` file). It returns `failed: ['implementation-file-limit']` for four.\n- [ ] `needsNoPlan` (`plan-lane.js`) returns `{ lane: 'micro-plan', reason: 'passes-micro-plan-gate' }` for a fast-lane low record with three implementation Key Files when `express-lane` is `false` and `express-driver` is `off`, and `{ lane: null, reason: 'outside-every-lane' }` for four.\n- [ ] The two-implementation-file shape #5396 observed (a static config file plus the generator module that writes it, fast-lane, low, unflagged) passes the gate, pinned by a test case.\n- [ ] `plugin/skills/build/micro-plan.md` no longer describes the gate as single-file or one-file. `tests/build-micro-plan-code-twin.test.js` and `tests/ceremony-profile-roster.test.js` pass.\n- [ ] Every changed or added assertion goes red when `MAX_IMPLEMENTATION_FILES` is set back to 1, shown by running the affected test files against that revert.\n- [ ] `npm test -- --full` passes.\n\n## Release Note\n\nA fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.\n\n## Technical Approach\n\nOne constant change plus the prose and tests that pin it. `countImplementationFiles`'s counting rule (tests, non-prompt docs, `docs/plans/*.html` and read-only entries excluded) is unchanged, and so are the other three conditions, including the risk-flag condition that keeps a flagged record on the audited plan path. The plan-lane predicate reads the gate through `evaluateMicroPlanGate`, so it follows the new limit with no change to `plan-lane.js` itself. Only its tests move.\n\n### Key Files\n\n- `plugin/bin/lib/issues/micro-plan-gate.js` — modify (constant and header comment)\n- `plugin/skills/build/micro-plan.md` — modify (title and opening sentence)\n- `plugin/skills/_shared/ceremony-profile.md` — modify (the exemption row quoting the micro-plan title)\n- `tests/bin-lib/issues/micro-plan-gate.test.js` — modify (limit assertions, three-pass and four-fail cases, the #5396 shape)\n- `tests/bin-lib/driver/plan-lane.test.js` — modify (AC2.1 limit case)\n- `plugin/bin/lib/driver/plan-lane.js` — read only, no change\n\n## Gotchas\n\n- Decisions made while shaping this record in an autonomous lane (maintainer-authorized 2026-11-25), each the shaping agent's call:\n  - **Direction:** raise the gate's limit. The record's other two directions were not taken. A \"same-shape edits as one unit\" rule is a property of the diff, which does not exist yet when the gate reads Key Files at plan time. A lazy split of `plan-authoring-checks.md` only helps the full plan path, and #4765 already tracks that file's rail split.\n  - **Bound 3:** matches `EXPRESS_MAX_KEY_FILES`, the bound below which the shipped express lane already builds with no plan, so the micro-plan path is never stricter than a lane that does less checking.\n  - **Override of #5396's last line** (\"A record with two genuine source modules should still fall through\"): overridden for the reason above. The micro-plan path still gives such a record an SDD task review and `/claude-tweaks:review`'s lenses.\n  - **Ceremony fencing rejected:** the Current State survey measured under 10% of `build/dispatch.md` as fast-lane-only prose, keyed on task count and locked inside two long lines.\n- The 6.168.0 incident's own shape (three config files plus one skill file, four counted) still falls through after this change. It passes only once #5396's config-file exclusion also lands. This record does not change the counting rule.\n- More records now read as the `micro-plan` lane in `/claude-tweaks:specify`'s plan-lane predicate, so `plan-at-specify` skips writing a plan for them. That is intended: `/build` composes the same micro-plan for them.\n- #6076 (open, `ready`) adds a CLI that runs `evaluateMicroPlanGate` for `/build` and edits the same `micro-plan.md` and `micro-plan-gate.js`. One of its acceptance criteria expects two implementation files to print `\"passes\":false`. Whichever of the two lands second moves that fixture past the new limit (four implementation files), so the two records' tests agree.\n- Do not import `EXPRESS_MAX_KEY_FILES`. It counts every Key File, tests included, so coupling the two would make the express bound silently move this gate.\n- `tests/build-micro-plan-code-twin.test.js` refuses prose that restates the limit (for example \"names at most 1 implementation file\"), so the reworded title must not carry a number either.\n\n## Original request\n\nbuild: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test\n\n**Summary:** On a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet, the orchestrating agent reached 312,673 context tokens by the end of `build`, crossing the 200,000 cap and forcing a handoff of test/review/polish to a fresh agent.\n\n**Kind:** Gap\n\n**Affected component:** skills/build (procedure reads), skills/flow context cap\n\n**Use case:** Fast-lane exists to make small records cheap. Here the fixed cost of loading the procedure the orchestrator must follow exceeded the cap on its own, before any of the change's own complexity, so every fast-lane run of similar size hands off mid-pipeline (the handed-off agent spent another ~255k tokens and ~6.5 minutes). Most of the context was procedure reads: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), plus `flow/SKILL.md`, `build/SKILL.md`, the SDD skill and its reviewer template. The micro-plan gate also routed the record to the full writing-plans + plan-authoring-checks path because it counted the three one-line config edits as three implementation files (the config-file part is already tracked in #5396). Possible directions, not prescriptive: a fast-lane digest for `/build` like `/wrap-up`'s `_shared/fast-lane-digest.md`, so a fast-lane build loads only the rows it runs; counting small same-shape edits across files as one implementation unit; lazy-splitting `plan-authoring-checks.md` so a single-task plan reads only the checks that can apply.\n\n**Definition:** Needed — three viable directions (a build fast-lane digest, a same-shape-edit unit in the micro-plan gate, lazy-splitting plan-authoring-checks) with no preference stated.\n\n**Plugin version:** 6.168.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2e26818f -->\n",
-        "createdAt": "2026-11-14T22:14:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5463,
-        "state": "OPEN",
-        "title": "build: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test",
-        "updatedAt": "2026-11-25T07:23:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "## Current State\n\nFound by the #4792 review (lens 3a, tiebreak-confirmed, recommendation file). `tests/helpers/conformance-asserts.js` holds the shared prose-conformance predicates but no `requireOrder`, so each suite that pins marker order keeps its own copy: 13 copies across `tests/` as of d648f7bfb, with two different failure messages (`must come after {previous}` and `must come after the previous marker`) and two signatures.\n\nMigrating them is not localized: it touches every one of those suites, and the helper needs its own pin in `tests/helpers-conformance-asserts.test.js`.\n\n## Deliverables\n\n- Add `requireOrder(text, markers)` to `tests/helpers/conformance-asserts.js` (every marker must exist, then appear in order; messages `marker missing: {m}` and `{m} must come after {previous}`), pinned in `tests/helpers-conformance-asserts.test.js`.\n\n- Replace the local copies in every suite that declares one, keeping each suite's existing `/must come after/` and `/marker missing/` assertions green.\n\n- Add the helper to `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s list of shared helpers.\n\n## Acceptance Criteria\n\n- `grep -rn \"function requireOrder\" tests/` finds only the helper.\n\n- A reordered or missing marker still turns each migrated suite red; `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/conformance-asserts.js` — add requireOrder\n- `tests/helpers-conformance-asserts.test.js` — pin the new helper\n- `tests/settle-blocker-landing-stop-conformance.test.js` — use the shared helper\n\n_Filed by `review` via specShapedBody._\n",
         "createdAt": "2026-11-03T20:04:07Z",
         "labels": [
@@ -9407,6 +9256,166 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #5396, #4765, #6076, #4118\nRisk-flags: none\n\n## Current State\n\nOn plugin 6.168.0, a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet reached 312,673 context tokens by the end of `/build`, so `/flow` handed test, review and polish to a fresh agent. That agent spent about 255k more tokens and 6.5 minutes. The record lists the procedure reads that filled the context: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), `flow/SKILL.md`, `build/SKILL.md`, and the subagent-driven-development skill with its reviewer template.\n\nThe build took the full planning path because `/build`'s micro-plan gate fell through. `plugin/bin/lib/issues/micro-plan-gate.js` sets `MAX_IMPLEMENTATION_FILES = 1`, and the record's Key Files counted four implementation files (three config files plus one prompt-prose skill file). A fall-through loads `/superpowers:writing-plans` (10,335 B), `build/plan-authoring-checks.md` (52,476 B on origin/main `68608178fa`) and its two cited sub-files (`plan-authoring-pairing-checks.md`, 2,999 B; `plan-authoring-boundary-checks.md`, 4,490 B). It also produces a multi-task plan, and a multi-task plan keeps SDD's whole-branch review, which the fast-lane profile skips only at `tasks: 1` (`_shared/ceremony-profile.md`'s `sdd-whole-branch-review` row). The micro-plan path loads `build/micro-plan.md` (8,125 B) instead and composes a one-task plan.\n\nThe gate's limit of one is stricter than the lanes beside it. The express lane (`plugin/bin/lib/express/eligibility.js`, `EXPRESS_MAX_KEY_FILES = 3`) builds a record with up to three Key Files of any kind, test files included, in one agent with no plan, no per-task review and a merge on green. The pipeline driver admits the same bound by default (`express-driver-max-key-files`, default 3). `/build`'s micro-plan path keeps more checks than either: it still runs an SDD task review and `/claude-tweaks:review`'s lenses. It still refuses every fast-lane record with two or more implementation files. #5396 records the same fall-through with two files: one key added to a static plist, plus the generator that writes it.\n\nThe gate is read in two places: `/build`'s Spec Step 3 (`build/micro-plan.md`'s Applicability gate) and `/claude-tweaks:specify`'s plan-lane predicate (`plugin/bin/lib/driver/plan-lane.js` `needsNoPlan`, #6053), which tries the driver lane, then the express lane, then the micro-plan lane.\n\nA fence survey at origin/main `68608178fa` (the `compose-context-fencing` procedure) ruled out the other reads as levers. `build/dispatch.md` (49,720 B) is two single lines of 27,006 B and 17,829 B plus small paragraphs. Fences are line-anchored, and the only prose that cannot apply to a fast-lane one-task build is the whole-branch-review block (about 4.4 KB: \"Whole-branch review model.\" and \"Persist SDD's final whole-branch review before Finish\"). That block keys on task count, not on `ceremony-profile`, which is not a `compose-context` condition key either (`resolve-conditions.js` resolves six). The worktree-setup sources already measured 0 B fenceable on their run-level axes (#1993). `test/verification.md` runs under every profile.\n\n## Deliverables\n\n- [ ] Raise `MAX_IMPLEMENTATION_FILES` in `plugin/bin/lib/issues/micro-plan-gate.js` from 1 to 3. Rewrite the header comment's \"the gate is \\\"at most one\\\", not \\\"exactly one\\\"\" sentence so it names the constant, not a number. Add one sentence giving the reason: the express lane builds up to `EXPRESS_MAX_KEY_FILES` Key Files with no plan at all, and the micro-plan path keeps the task review and the review lenses, so it needs no stricter bound. Keep it a separate constant, not an import of `EXPRESS_MAX_KEY_FILES`: the express lane counts every Key File, while this gate counts implementation files only.\n- [ ] Reword `plugin/skills/build/micro-plan.md`'s title (`single-file fast-lane records skip`) and its opening sentence (\"A one-file, one-task record\") so neither says one file. The composed plan stays one task, its `**Files:**` block one line per Key Files entry, as today. Keep conditions 3 and 4 citing the code, not restating the number (`tests/build-micro-plan-code-twin.test.js` fails on a restated limit).\n- [ ] Update `plugin/skills/_shared/ceremony-profile.md`'s exemption row that quotes the old title phrase (`single-file fast-lane records skip`) to quote the new title phrase, so `tests/ceremony-profile-roster.test.js` still matches it.\n- [ ] Update the tests that pin the old limit: `tests/bin-lib/issues/micro-plan-gate.test.js` (the constant-value assertion, and the `implementation-file-limit` failure case moved from two entries to four), and `tests/bin-lib/driver/plan-lane.test.js` (the AC2.1 case that expects two implementation Key Files outside every lane). `tests/build-micro-plan-conformance.test.js`'s AC5.1 case (one implementation file satisfies condition 3) stays true and needs no change.\n\n## Acceptance Criteria\n\n- [ ] `MAX_IMPLEMENTATION_FILES` is 3. `evaluateMicroPlanGate` returns `{ passes: true, failed: [], unreadable: null }` for a `fast-lane`, `low`, unflagged record whose Key Files name three implementation files (for example two `plugin/bin/*.js` modules and one `plugin/skills/**/*.md` file). It returns `failed: ['implementation-file-limit']` for four.\n- [ ] `needsNoPlan` (`plan-lane.js`) returns `{ lane: 'micro-plan', reason: 'passes-micro-plan-gate' }` for a fast-lane low record with three implementation Key Files when `express-lane` is `false` and `express-driver` is `off`, and `{ lane: null, reason: 'outside-every-lane' }` for four.\n- [ ] The two-implementation-file shape #5396 observed (a static config file plus the generator module that writes it, fast-lane, low, unflagged) passes the gate, pinned by a test case.\n- [ ] `plugin/skills/build/micro-plan.md` no longer describes the gate as single-file or one-file. `tests/build-micro-plan-code-twin.test.js` and `tests/ceremony-profile-roster.test.js` pass.\n- [ ] Every changed or added assertion goes red when `MAX_IMPLEMENTATION_FILES` is set back to 1, shown by running the affected test files against that revert.\n- [ ] `npm test -- --full` passes.\n\n## Release Note\n\nA fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.\n\n## Technical Approach\n\nOne constant change plus the prose and tests that pin it. `countImplementationFiles`'s counting rule (tests, non-prompt docs, `docs/plans/*.html` and read-only entries excluded) is unchanged, and so are the other three conditions, including the risk-flag condition that keeps a flagged record on the audited plan path. The plan-lane predicate reads the gate through `evaluateMicroPlanGate`, so it follows the new limit with no change to `plan-lane.js` itself. Only its tests move.\n\n### Key Files\n\n- `plugin/bin/lib/issues/micro-plan-gate.js` — modify (constant and header comment)\n- `plugin/skills/build/micro-plan.md` — modify (title and opening sentence)\n- `plugin/skills/_shared/ceremony-profile.md` — modify (the exemption row quoting the micro-plan title)\n- `tests/bin-lib/issues/micro-plan-gate.test.js` — modify (limit assertions, three-pass and four-fail cases, the #5396 shape)\n- `tests/bin-lib/driver/plan-lane.test.js` — modify (AC2.1 limit case)\n- `plugin/bin/lib/driver/plan-lane.js` — read only, no change\n\n## Gotchas\n\n- Decisions made while shaping this record in an autonomous lane (maintainer-authorized 2026-11-25), each the shaping agent's call:\n  - **Direction:** raise the gate's limit. The record's other two directions were not taken. A \"same-shape edits as one unit\" rule is a property of the diff, which does not exist yet when the gate reads Key Files at plan time. A lazy split of `plan-authoring-checks.md` only helps the full plan path, and #4765 already tracks that file's rail split.\n  - **Bound 3:** matches `EXPRESS_MAX_KEY_FILES`, the bound below which the shipped express lane already builds with no plan, so the micro-plan path is never stricter than a lane that does less checking.\n  - **Override of #5396's last line** (\"A record with two genuine source modules should still fall through\"): overridden for the reason above. The micro-plan path still gives such a record an SDD task review and `/claude-tweaks:review`'s lenses.\n  - **Ceremony fencing rejected:** the Current State survey measured under 10% of `build/dispatch.md` as fast-lane-only prose, keyed on task count and locked inside two long lines.\n- The 6.168.0 incident's own shape (three config files plus one skill file, four counted) still falls through after this change. It passes only once #5396's config-file exclusion also lands. This record does not change the counting rule.\n- More records now read as the `micro-plan` lane in `/claude-tweaks:specify`'s plan-lane predicate, so `plan-at-specify` skips writing a plan for them. That is intended: `/build` composes the same micro-plan for them.\n- #6076 (open, `ready`) adds a CLI that runs `evaluateMicroPlanGate` for `/build` and edits the same `micro-plan.md` and `micro-plan-gate.js`. One of its acceptance criteria expects two implementation files to print `\"passes\":false`. Whichever of the two lands second moves that fixture past the new limit (four implementation files), so the two records' tests agree.\n- Do not import `EXPRESS_MAX_KEY_FILES`. It counts every Key File, tests included, so coupling the two would make the express bound silently move this gate.\n- `tests/build-micro-plan-code-twin.test.js` refuses prose that restates the limit (for example \"names at most 1 implementation file\"), so the reworded title must not carry a number either.\n\n## Original request\n\nbuild: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test\n\n**Summary:** On a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet, the orchestrating agent reached 312,673 context tokens by the end of `build`, crossing the 200,000 cap and forcing a handoff of test/review/polish to a fresh agent.\n\n**Kind:** Gap\n\n**Affected component:** skills/build (procedure reads), skills/flow context cap\n\n**Use case:** Fast-lane exists to make small records cheap. Here the fixed cost of loading the procedure the orchestrator must follow exceeded the cap on its own, before any of the change's own complexity, so every fast-lane run of similar size hands off mid-pipeline (the handed-off agent spent another ~255k tokens and ~6.5 minutes). Most of the context was procedure reads: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), plus `flow/SKILL.md`, `build/SKILL.md`, the SDD skill and its reviewer template. The micro-plan gate also routed the record to the full writing-plans + plan-authoring-checks path because it counted the three one-line config edits as three implementation files (the config-file part is already tracked in #5396). Possible directions, not prescriptive: a fast-lane digest for `/build` like `/wrap-up`'s `_shared/fast-lane-digest.md`, so a fast-lane build loads only the rows it runs; counting small same-shape edits across files as one implementation unit; lazy-splitting `plan-authoring-checks.md` so a single-task plan reads only the checks that can apply.\n\n**Definition:** Needed — three viable directions (a build fast-lane digest, a same-shape-edit unit in the micro-plan gate, lazy-splitting plan-authoring-checks) with no preference stated.\n\n**Plugin version:** 6.168.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2e26818f -->\n",
+        "createdAt": "2026-11-14T22:14:15Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5463,
+        "state": "OPEN",
+        "title": "build: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test",
+        "updatedAt": "2026-11-25T07:23:08Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: infra\n\n**Related:** #5512\nRisk-flags: none\n\n## Overview\n\nMake every remaining staged-record-proposal producer pass `keyFiles` to `specShapedBody`, so the records a run files carry a `### Key Files` section. The console-time bundler (sibling sub-issue, part of the same decomposition) groups a run's follow-up proposals by shared Key Files; a proposal with no Key Files can only ever be a singleton, so the bundler bundles little until the producers pass them. A Key Files list also lets `/build`'s micro-plan gate (condition 3) and `/dispatch`'s file-overlap grouping read the record.\n\n#5512 (open, ready) owns `/review`'s Defer bullet and staged follow-up in `plugin/skills/review/step3-routing.md`; this record never touches that file. `plugin/skills/wrap-up/leftover-routing.md` already passes `keyFiles` (#2975). This record covers the remaining producers named in #5512's own Gotchas list, plus `plugin/skills/wrap-up/claude-md-curation.md`'s over-budget queue write (found by a repo-wide `specShapedBody` sweep at specify time).\n\n**Complexity:** Low\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- `plugin/skills/review/step3-routing.md` (`/review`'s Defer and staged follow-up) — owned by #5512.\n- Can't-tell filings composed by `plugin/bin/lib/console/finding-filing.js` — they are not bundler input (the bundler sub-issue's Non-Goals) and keep their own path.\n- Any change to `specShapedBody` itself (`plugin/bin/lib/issues/record-payload.js`), to the bundler, or to grouping.\n- Inventing file paths: a producer with no file in hand passes no `keyFiles`, and its record stays a singleton.\n- `plugin/skills/release/disposition.md` (lines 58, 65): its Defer path composes \"per `review/step3-routing.md`'s Defer bullet\", so it inherits #5512's change and needs no edit here. The other `specShapedBody` mentions in `plugin/skills` (`_shared/autonomy-ceiling.md`, `_shared/deferral-gate.md`, `flow/materialize.md`, `wrap-up/review-console.md` line 123) are references, not producers (classified at specify time).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none | — |\n\n## Current State\n\n- `plugin/bin/lib/issues/record-payload.js` — `specShapedBody({ …, keyFiles })` (#2975): `keyFiles?: Array<{ path, change? }>` renders `## Technical Approach` / `### Key Files` after `## Release Note`, one `` - `{path}` — {change} `` bullet per entry. `keyFilePathProblem` throws on an absolute (posix or win32) path, a drive prefix, a `..` segment, a trailing slash, a backtick or a line break. It does **not** reject a `:line` suffix — `src/x.js:10` passes and becomes a Key File no other record shares (verified at specify time, lines 232-245).\n- `plugin/skills/reflect/SKILL.md` line 165 — the wording to copy: \"`keyFiles: [{ path, change }]` = the files the finding names, repo-relative file paths (no directories; drop any out-of-repo file) and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record\".\n- `plugin/skills/wrap-up/leftover-routing.md` line 55 — already lists `keyFiles?` in its compose args.\n- `plugin/skills/_shared/ledger-format.md` lines 271-275 — Phase 3's `Defer` (stages `staged/ledger-record-{slug}.md`; `currentState` = \"the ledger item's evidence and affected files\"), `Keep` (\"same composition, backlog landing\"), the no-run-dir direct create, and `Acknowledge` (ops items) all compose via `specShapedBody` with no `keyFiles`.\n- `plugin/skills/wrap-up/review-console-appendix.md` lines 100-130 — the SDD ruling `file-record` (ratify) composition (line 107) and `reverse` composition (line 124) use `specShapedBody` with no `keyFiles`; both stage `staged/ledger-record-sdd-ruling-{N}.md`.\n- `plugin/skills/wrap-up/residue-sweep.md` line 175 — \"composes exactly as ledger Phase 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`…\"; no `keyFiles` of its own.\n- `plugin/skills/visual-review/browser-review.md` line 247 — Defer \"Compose via `specShapedBody` exactly as review Step 3's Defer does (`review/step3-routing.md`)\"; no `keyFiles`.\n- `plugin/skills/wrap-up/claude-md-curation.md` lines 21-25 — the `claudeMdOverBudget` queue write composes via `specShapedBody` from `plugin/bin/lib/wrap-up/facts.js`'s `claudeMdBudgetTargets` (`[{path, lines, budget}]`); no `keyFiles`.\n- `plugin/skills/reflect/full-mode.md` line 397 — Defer composes via `specShapedBody` (insight → Current State, …, footer `_Filed by \\`reflect\\` via specShapedBody._`); no `keyFiles`.\n- Tests: `tests/build-micro-plan-conformance.test.js` lines 127-133 — the AC6.1 loop over `['plugin/skills/capture/SKILL.md', 'plugin/skills/reflect/SKILL.md', 'plugin/skills/wrap-up/leftover-routing.md']` asserts each file matches `/keyFiles: \\[\\{ path, change \\}\\]/` and `/repo-relative/`.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/ledger-format.md`: Phase 3's `Defer`, `Keep`, no-run-dir direct create and `Acknowledge` compositions each name `keyFiles: [{ path, change }]` in their own compose list = the ledger item's affected files. The path rules may live in one shared sentence each branch cites: repo-relative file paths only, taken from explicit file tokens the source names (never guessed from prose), with a trailing `:{digits}` or `:{digits}-{digits}` line suffix and a `#symbol` suffix stripped (the same strip #5512 uses), no directories, out-of-repo files dropped, and `keyFiles` omitted when the item names no file. \"Same path rules\" below means exactly this rule.\n- [ ] `plugin/skills/wrap-up/review-console-appendix.md`: the `file-record` (ratify) and `reverse` compositions pass `keyFiles: [{ path, change }]` = the files the ruling's finding names, same path rules.\n- [ ] `plugin/skills/wrap-up/residue-sweep.md`: the composition passes `keyFiles: [{ path, change }]` = the residue item's files, same path rules (stated in this file, not only inherited from `ledger-format.md`).\n- [ ] `plugin/skills/visual-review/browser-review.md`: the Defer composition passes `keyFiles: [{ path, change }]` = the source files the finding maps to, same path rules; omitted when the finding names only a route or URL.\n- [ ] `plugin/skills/reflect/full-mode.md`: the Defer composition passes `keyFiles: [{ path, change }]` = the files the insight names, same path rules.\n- [ ] `plugin/skills/wrap-up/claude-md-curation.md`: the `claudeMdOverBudget` composition passes `keyFiles: [{ path, change }]` = each over-budget target's `path` from `claudeMdBudgetTargets`, same path rules.\n- [ ] `tests/build-micro-plan-conformance.test.js`: the AC6.1 producer list gains the six paths above.\n\n## Acceptance Criteria\n\n1. For each of the six producer files above, `grep -F 'keyFiles: [{ path, change }]' {file}` prints at least one line, and the file text matches `/repo-relative/`. (Control: before this change none of the six matches the `grep -F`, checked at specify time.)\n2. `grep -cF 'keyFiles: [{ path, change }]' plugin/skills/_shared/ledger-format.md` prints at least 4 (one per branch: `Defer`, `Keep`, direct create, `Acknowledge`) and the same count on `plugin/skills/wrap-up/review-console-appendix.md` prints at least 2 (`file-record`, `reverse`). (Control: both print 0 at specify time.)\n3. Each producer's path rule (or the shared sentence it cites) names the `:{digits}` / `:{digits}-{digits}` / `#symbol` strip and the omit-when-no-file rule.\n4. `node --test tests/build-micro-plan-conformance.test.js` runs an `AC6.1:` case for each of the six new paths, in addition to the three existing ones, and every case passes.\n5. Reverting any one of the six producer edits while keeping the test edit makes that file's `AC6.1:` case fail — the builder runs this revert proof once per file and quotes the failing output.\n6. The build's diff (`git diff --name-only {base}...HEAD`) does not include `plugin/skills/review/step3-routing.md`.\n\n## Release Note\n\nFollow-up records filed from ledger rulings, residue sweeps, visual reviews, reflections and CLAUDE.md budget checks now list the files they touch, so related follow-ups can be grouped and built together.\n\n## Technical Approach\n\nCopy `plugin/skills/reflect/SKILL.md`'s wording into each producer, adding the suffix strip, with the per-producer source of the file list named in Deliverables. The AC6.1 loop's two regexes are whole-file matches, so the per-branch counts (AC 2) and the revert proof (AC 5) are what show each branch is covered and each new case discriminates.\n\n### Data / API Surface\n\nNo code change: `specShapedBody`'s existing `keyFiles?: Array<{ path, change? }>` parameter, `change` defaulting to \"modify\".\n\n### Key Files\n\n- `plugin/skills/_shared/ledger-format.md` — Phase 3 `Defer` / `Keep` / direct-create / `Acknowledge` pass `keyFiles`\n- `plugin/skills/wrap-up/review-console-appendix.md` — SDD ruling `file-record` and `reverse` compositions pass `keyFiles`\n- `plugin/skills/wrap-up/residue-sweep.md` — residue composition passes `keyFiles`\n- `plugin/skills/visual-review/browser-review.md` — Defer composition passes `keyFiles`\n- `plugin/skills/reflect/full-mode.md` — Defer composition passes `keyFiles`\n- `plugin/skills/wrap-up/claude-md-curation.md` — over-budget queue write passes `keyFiles`\n- `tests/build-micro-plan-conformance.test.js` — AC6.1 producer list gains the six paths\n\n## Gotchas\n\n- #5512 also appends to the same AC6.1 list (adding `plugin/skills/review/step3-routing.md`). Whichever lands second gets a one-line textual conflict on that array: keep both entries. This is why the two are Related, not Blocked-by (policy `overlap: companion`'s default would be Blocked-by; overridden deliberately at decomposition because the only shared file is that one list).\n- Keep the `ledger-format.md` addition small: one shared path-rule sentence plus a short `keyFiles` clause in each branch's compose list. The file is 45,152 B, 2,098 B under the 47,250 B headroom flag.\n- `specShapedBody` accepts `src/x.js:10` as a Key File path without throwing, but `groupByFileOverlap` (`plugin/bin/lib/issues/grouping.js`) then treats it as a different file from `src/x.js`, so the record never groups. The strip is the producer's job.\n- A bare directory entry (`plugin/skills/`) throws in `specShapedBody` (trailing slash) and contributes nothing to grouping anyway — pass file paths only.\n- Conformance tests pin prose: run the full suite (`npm test -- --full`) before merging, not only the impact-selected set (project memory: full suite for markdown PRs).\n- `plugin/skills/reflect/full-mode.md` is 39,949 B — under the 47,250 B headroom flag, so no rail trimming is expected.\n- The bundler that consumes these Key Files is a sibling sub-issue of this record's parent; this record has no dependency on it and can land first.\n\n\n<!-- work-fingerprint: deferral-bundling:pass-key-files-from-the-remaining-record-proposal-producers -->\nwork-fingerprint: deferral-bundling:pass-key-files-from-the-remaining-record-proposal-producers",
+        "createdAt": "2026-11-25T07:38:29Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6282,
+        "state": "OPEN",
+        "title": "Pass Key Files from the remaining record-proposal producers so a run's follow-ups can be grouped by file",
+        "updatedAt": "2026-11-25T07:48:14Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ],
@@ -10701,6 +10710,12 @@
   ],
   "excluded": [
     {
+      "number": 6284,
+      "blockedBy": [
+        6283
+      ]
+    },
+    {
       "number": 6120,
       "blockedBy": [
         6119,
@@ -10813,6 +10828,12 @@
   ],
   "grouping": "per-record+express+driver",
   "bundles": [
+    {
+      "records": [
+        5463,
+        6282
+      ]
+    },
     {
       "records": [
         3765,
