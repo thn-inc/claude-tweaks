@@ -32,6 +32,11 @@ const mode = process.env.FAKE_GH_MODE;
 const out = (v) => process.stdout.write(JSON.stringify(v));
 let m;
 if ((m = ep.match(/commits\\/([0-9a-f]{40})\\/pulls$/))) {
+  if (process.env.FAKE_GH_UNPUSHED_AFTER) {
+    const pulls = fs.readFileSync(process.env.FAKE_GH_CALLS, 'utf8').split('\\n').filter((l) => /\\/pulls$/.test(l)).length;
+    if (pulls > 1) { process.stderr.write('gh: No commit found for SHA: ' + m[1] + ' (HTTP 422)'); process.exit(1); }
+    out([]); process.exit(0);
+  }
   if (mode === 'unpushed') { process.stderr.write('gh: No commit found for SHA: ' + m[1] + ' (HTTP 422)'); process.exit(1); }
   out(mode === 'nopr' ? [] : [{ number: 7, state: 'open', head: { sha: m[1] } }]);
 }
@@ -373,6 +378,9 @@ const TWO_SUITES = (otherMarker) => ({
   ci: { tests: ciOf('test'), other: ciOf('other') },
 });
 const NO_VERDICT_FIRST = (suite, why) => `verify.js: no verdict yet for suite "${suite}" — CI could not answer (${why}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.`;
+const HNP_FIRST = (suite, sha) => `verify.js: no verdict yet for suite "${suite}" — CI could not answer (head-not-pushed): HEAD ${sha.slice(0, 9)} is not on the remote; no check ran and no pass stamp was written.`;
+const headOf = (r) => r.git('rev-parse', 'HEAD').trim();
+const PUSH_LINE = '  Push the branch (commit first if the tree is dirty), then re-run this command,';
 const callLines = (calls) => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n') : []);
 
 test('AC1.1: under the key an unpushed HEAD exits 3 before any check, prints head-not-pushed and both ways on, writes no stamp (#5369)', { skip: SKIP }, async () => {
@@ -386,8 +394,8 @@ test('AC1.1: under the key an unpushed HEAD exits 3 before any check, prints hea
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   assert.ok(!fs.existsSync(marker), 'no check may run');
   const [first, second, third] = res.stderr.split('\n');
-  assert.strictEqual(first, NO_VERDICT_FIRST('tests', 'head-not-pushed'));
-  assert.strictEqual(second, '  Either push the branch (commit first if the tree is dirty) so HEAD is the head of an open PR, then re-run this command,');
+  assert.strictEqual(first, HNP_FIRST('tests', headOf(r)));
+  assert.strictEqual(second, PUSH_LINE);
   assert.strictEqual(third, '  or re-run it with --local to run the suite on this machine.');
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 writes no report and removes the stale one');
@@ -415,16 +423,6 @@ test('AC2.1: under the key --local makes no gh call and runs the suite here (#53
   assert.match(res.stdout, /^CI: tests — ran locally \(local-requested\)$/m);
 });
 
-test('AC4.1: without the key an unpushed HEAD still runs the suite here and exits 0 (#5369)', { skip: SKIP }, async () => {
-  const r = repoWith();
-  const { env } = fakeGhEnv('unpushed', '');
-  const marker = path.join(tmpDir(), 'm');
-  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
-  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
-  assert.ok(fs.existsSync(marker), 'the suite must run here');
-  assert.strictEqual(reportOf(r).ci[0].fallback, 'head-not-pushed');
-});
-
 test('AC6.1: under the key a suite with no ci source runs here without --local (#5369)', { skip: SKIP }, async () => {
   const testsMarker = path.join(tmpDir(), 'tests-m');
   const otherMarker = path.join(tmpDir(), 'other-m');
@@ -446,7 +444,7 @@ test('two CI suites under the key, the first unanswered: exit 3 names it, the se
   const runDir = ciRunDir(r);
   const res = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
-  assert.strictEqual(res.stderr.split('\n')[0], NO_VERDICT_FIRST('tests', 'head-not-pushed'));
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('tests', headOf(r)));
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
   assert.deepStrictEqual(ev.ci, [
     { suite: 'tests', used: false, fallback: 'head-not-pushed' },
@@ -523,18 +521,20 @@ test('under the key a stale baseline worktree warning is printed after the no-ve
   const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   const lines = res.stderr.split('\n');
-  assert.strictEqual(lines[0], NO_VERDICT_FIRST('tests', 'head-not-pushed'));
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
   assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
-test('without the key the stale baseline worktree warning is still stderr line 1 of a CI-declared --scope run (#5369 AC4)', { skip: SKIP }, async () => {
+test('without the key a stale baseline worktree warning on an unpushed HEAD is printed after the no-verdict lines, never before (#5800)', { skip: SKIP }, async () => {
   const r = repoWith();
   const { env } = fakeGhEnv('unpushed', '');
   const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
   r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
   const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
-  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
-  assert.match(res.stderr.split('\n')[0], /^verify\.js: a stale baseline scratch worktree is registered at /);
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
+  assert.match(lines[3], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
 test('without the key the stale baseline warning precedes a --scope usage error and one from an unreadable declaration (#5369 AC4)', { skip: SKIP }, async () => {
@@ -555,6 +555,103 @@ test('without the key the stale baseline warning precedes a --scope usage error 
   const invalid = await runCli(['--scope', 'bad.json', '--integration-branch', r.branch, ...base], { cwd: r.repo, env });
   assert.strictEqual(invalid.code, 2, invalid.stdout + invalid.stderr);
   assert.match(invalid.stderr.split('\n')[0], stale);
+});
+
+test('AC1.1, AC1.2: without the key an unpushed HEAD exits 3, runs no check, leaves no report, and names the short sha (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('unpushed', '');
+  const marker = path.join(tmpDir(), 'm');
+  fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify'), { recursive: true });
+  fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), '{"pass":true}\n');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'no check may run');
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], HNP_FIRST('tests', headOf(r)));
+  assert.strictEqual(lines[1], PUSH_LINE);
+  assert.strictEqual(lines[2], '  or re-run it with --local to run the suite on this machine.');
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
+  assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 removes the stale report');
+});
+
+test('AC2.1: under the key an unpushed HEAD exits 3 with the same head-not-pushed first line naming the short sha (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('unpushed', '');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('tests', headOf(r)));
+});
+
+test('AC3.1-AC3.2: without the key a no-open-pr-at-head fallback still runs here, announces it before the check, and keeps the report row (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite must run locally');
+  assert.strictEqual(res.stderr.split('\n')[0], 'verify.js: CI could not answer suite "tests" (no-open-pr-at-head) — running it on this machine');
+  assert.match(res.stdout, /^CI: tests — ran locally \(no-open-pr-at-head\)$/m);
+});
+
+test('AC4.1: without the key two CI suites on an unpushed HEAD exit 3, the second not-consulted and never fetched (#5800)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const { localRuns, ...noKey } = TWO_SUITES(otherMarker);
+  const r = repoWith({ declExtra: noKey });
+  const { env, calls } = fakeGhEnv('unpushed', '');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.strictEqual(ev.noVerdict, true);
+  assert.deepStrictEqual(ev.ci, [
+    { suite: 'tests', used: false, fallback: 'head-not-pushed' },
+    { suite: 'other', used: false, fallback: 'not-consulted' },
+  ]);
+  assert.strictEqual(callLines(calls).length, 1, `only the first suite's one request was made: ${callLines(calls)}`);
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('AC5.1: --local on an unpushed HEAD without the key runs here, exits 0, calls no gh and prints no fallback notice (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env, calls } = fakeGhEnv('unpushed', '');
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--local', '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite runs here');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.ok(!res.stderr.includes('CI could not answer'), res.stderr);
+});
+
+test('without the key a dirty tree still runs here and announces dirty-tree (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('green', '');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok edited', () => {});\n");
+  const marker = path.join(tmpDir(), 'm');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker));
+  assert.ok(res.stderr.includes('verify.js: CI could not answer suite "tests" (dirty-tree) — running it on this machine'), res.stderr);
+});
+
+test('without the key a suite that fell back before an unpushed second suite prints no notice and keeps the no-verdict line first (#5800)', { skip: SKIP }, async () => {
+  const testsMarker = path.join(tmpDir(), 'tests-m');
+  const otherMarker = path.join(tmpDir(), 'other-m');
+  const { localRuns, ...noKey } = TWO_SUITES(otherMarker);
+  const r = repoWith({ declExtra: noKey });
+  const { env } = fakeGhEnv('green', '', { FAKE_GH_UNPUSHED_AFTER: '1' });
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(testsMarker)], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('other', headOf(r)));
+  assert.ok(!res.stderr.includes('— running it on this machine'), res.stderr);
+});
+
+test('under the key no fallback notice is printed (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: KEY });
+  const { env } = fakeGhEnv('nopr', '');
+  const res = await runCli([...SCOPE(r), '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 3, res.stdout + res.stderr);
+  assert.ok(!res.stderr.includes('— running it on this machine'), res.stderr);
 });
 
 test('a dirty tree under the key exits 3 with dirty-tree and calls no gh (#5369)', { skip: SKIP }, async () => {
