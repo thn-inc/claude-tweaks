@@ -95,7 +95,11 @@ Expected: PASS (all).
 - Modify: `plugin/skills/test/suite-slots.md` (Lanes table rows + one key line; file is 8,880 B, rail 52,500 B — ample headroom)
 - Modify: `docs/plugin-structure.md:103` (chooseLane parenthetical: add "or a declared suite listed in `subsetLaneSuites`" to the subset side)
 - Modify: `.claude-tweaks/verify-scope.json` (add `"subsetLaneSuites": ["journeys"]` at top level, after `"localRuns"`)
-- Test: `tests/bin-lib/verify/ci-cli.test.js` (AC1, AC3 — the fake-`gh` CI fixtures `repoWith`/`fakeGhEnv`/`withSlots` live only here), `tests/bin-lib/verify/impact-cli.test.js` (AC2 — `impactRepo`/`declOf` live only here), `tests/bin-lib/verify/cli-slot.test.js` (AC4). Deviation from the spec's test-file list: the spec named only `cli-slot.test.js`, but the CI and impact fixtures are file-local to the other two suites; the tests go beside the existing #5119 lane tests that use them rather than duplicating fixtures.
+- Test: `tests/bin-lib/verify/ci-cli.test.js` (AC1, AC3 — the fake-`gh` CI fixtures `repoWith`/`fakeGhEnv`/`withSlots` live only here)
+- Test: `tests/bin-lib/verify/impact-cli.test.js` (AC2 — `impactRepo`/`declOf` live only here)
+- Test: `tests/bin-lib/verify/cli-slot.test.js` (AC4)
+- Test: `tests/bin-lib/verify/slot.test.js` (regression run only, unchanged)
+- Deviation from the spec's test-file list: the spec named only `cli-slot.test.js`, but the CI and impact fixtures are file-local to the other two suites; the tests go beside the existing #5119 lane tests that use them rather than duplicating fixtures.
 - No-change (swept): `plugin/skills/test/impact-selection.md` and `plugin/bin/lib/verify/scope.js:104` say "runs its full command" about impact fallback, not lane choice; `verify.js:1161-1166` and `baseline.js:453` concern adjudication's own full-lane slot, unchanged.
 
 **Interfaces:**
@@ -137,7 +141,7 @@ test('AC4.1: --cmd under a listed name takes the full lane (#5368)', ...)
 - [ ] **Step 2: Run to verify failure**
 
 Run: `node --test tests/bin-lib/verify/ci-cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/bin-lib/verify/cli-slot.test.js`
-Expected: FAIL — AC1.1 and AC2.1 report `full`; AC3.x and AC4.1 pass already (controls).
+Expected: FAIL after Step 1 — AC1.1 and AC2.1 report `full`; AC3.x and AC4.1 pass already (controls).
 
 - [ ] **Step 3: Implement** in `verify.js`: build `const subsetLaneNames = new Set(decl ? decl.subsetLaneSuites : [])` and `const cmdNames = new Set(parsed.cmds.map((c) => c.name))`; add `&& !(subsetLaneNames.has(c.name) && !cmdNames.has(c.name))` to the `fullSuiteRuns` predicate. Update the comment above it to name the exclusion (#5368). Update `slot.js:44`'s comment.
 
