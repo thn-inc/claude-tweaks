@@ -71,6 +71,11 @@ test('detect-overlap matches the library result exactly', () => {
   const { code, stdout } = cli(['detect-overlap', p]);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(JSON.parse(stdout), c.detectCrossLensOverlap(byLens));
+  assert.ok(JSON.parse(stdout).length > 0, 'fixture must overlap so the loop below is not vacuous');
+  for (const pair of JSON.parse(stdout)) {
+    assert.ok('substanceScore' in pair, 'detect-overlap pair lacks substanceScore (#4747 AC1.1)');
+    assert.strictEqual(typeof pair.substanceMatch, 'boolean');
+  }
 });
 
 test('corroborate-cross-lens matches the library result exactly', () => {

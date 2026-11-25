@@ -12,7 +12,7 @@ files:
 **Persona:** A claude-tweaks maintainer, or a `/claude-tweaks:flow` build agent, who is fixing a test that only fails on a Windows checkout. They work on macOS. The record's acceptance criteria require a real `windows-latest` run on the feature branch before merge, and a `path.win32` or CRLF simulation does not count.
 **Goal:** Run the Windows guard against the feature branch and get a verdict that says whether the branch's tests pass on Windows. The verdict must not be skewed by the branch's own earlier commits.
 **Entry point:** `gh workflow run windows-regression.yml --ref {branch}`.
-**Success state:** The run's "Resolve the comparison base" step names the merge-base with `origin/main` as its base, so a test the branch fixed still fails at base and passes at HEAD. A green verdict then means the branch fixed it. A non-`main` ref never files an issue. On a failing run the filer prints `fail on {ref} — not filing (main only)` and exits 1.
+**Success state:** The run's "Resolve the comparison base" step names the merge-base with `origin/main` as its base, so a test the branch fixed still fails at base and passes at HEAD. A green verdict then means the branch fixed it. A non-`main` ref never files, comments on or closes an issue. On a failing run the filer prints `fail on {ref} — not filing (main only)` and exits 1.
 
 ## Steps
 
