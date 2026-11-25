@@ -13,15 +13,17 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/bundle-proposals.js" --run "{run-dir}" --records
 Pass `--ledger` whenever the run has a ledger, so a bundled `ledger-record-*` member's row is re-pointed (`_shared/ledger-format.md`). stdout is one JSON line, `{ bundles, singletons, skipped }`, paths relative to `--run`. Exit 0 is success, nothing-to-bundle included. Any non-zero exit (2 malformed call, 3 run dir not anchored or a write failed and rolled back, 4 open-backlog records unreadable or empty) bundles nothing: log one Degrade-trace line and carry on filing every proposal individually.
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status SKIP --step "Proposal bundling" --reversibility n/a --text "condition: bundle-proposals.js exited {code} → fallback: every proposal files individually"
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status SKIP --section "/wrap-up" --step "Proposal bundling" --reversibility n/a --text "condition: bundle-proposals.js exited {code} → fallback: every proposal files individually"
 ```
 
 **Rendering.** Members are retired from `staged/` into a sibling `bundled/` dir, so a bundle renders as one `Q#` row whose title names the member count, and the members render nowhere. A console Skip that deletes a bundle file keeps its members in `bundled/`; they are not resurrected.
 
 **Override.** `un-bundle {Q#}` (human-present only) runs `node "${CLAUDE_PLUGIN_ROOT}/bin/bundle-proposals.js" --run "{run-dir}" --unbundle bundle-{n}.md` (never with `--ledger`): every member returns to `staged/` with its ledger Resolution, the bundle goes, and the members render as ordinary `Q#` rows.
 
-**Failed create or carry.** A bundle whose create fails, or that control mode carries, settles every member's ledger row in one call:
+**Failed create or carry.** Under control mode (`console-resolve.js --ceiling` prints `control-mode on` and `consoleAutoResolve true`, `review-console.md`'s "Control mode (#4620)"), a bundle whose create fails, or that is carried, settles every member's ledger row in one call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --set-item bundle-{n}.md --resolution carried --reason '{why}' --ledger "{ledger}" --run "{run-dir}"
 ```
+
+Outside control mode `console-resolve.js` exits 2 for `carried` and `--ledger`, so do not call it: a failed bundle create follows `refused-proposals.md`'s failed-execution rewrite like any `Q#`. The bundle stays staged and its member rows keep naming `staged/bundle-{n}.md`, which still exists.

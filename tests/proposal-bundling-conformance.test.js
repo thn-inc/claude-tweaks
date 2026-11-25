@@ -25,6 +25,10 @@ const CLAIMS = [
   ['skip', BUNDLING, /log-decision\.js[^\n]*--status SKIP[^\n]*condition: bundle-proposals\.js exited \{code\}/, 'bundling file lacks the Degrade-trace SKIP command naming the bundler exit'],
   ['unbundle', BUNDLING, /un-bundle \{Q#\}[^\n]*--unbundle/, 'bundling file lacks the un-bundle Override route'],
   ['carry', BUNDLING, /--set-item bundle-\{n\}\.md --resolution carried/, 'bundling file lacks the carry route'],
+  ['control-gate', BUNDLING, /Under control mode \([^\n]*\), a bundle whose create fails, or that is carried, settles every member/, 'bundling file does not scope the carry route to control mode'],
+  ['outside-control', BUNDLING, /Outside control mode[^\n]*exits 2[^\n]*refused-proposals\.md`'s failed-execution rewrite[^\n]*stays staged[^\n]*staged\/bundle-\{n\}\.md/, 'bundling file lacks the outside-control-mode failed-create path'],
+  ['section', BUNDLING, /log-decision\.js[^\n]*--section "\/wrap-up"[^\n]*--status SKIP|log-decision\.js[^\n]*--status SKIP[^\n]*--section "\/wrap-up"/, 'bundling SKIP command lacks --section "/wrap-up"'],
+  ['dry-run', BUNDLING, /Skip it under `--dry-run`/, 'bundling file does not state it is skipped under --dry-run'],
   ['order', CONSOLE, /proposal-bundling\.md[\s\S]*ledger-narrowing-auto-file\.md/, 'review-console.md must cite proposal-bundling.md before ledger-narrowing-auto-file.md'],
   ['bundled-into', NARROWING, /Bundled-into:/, 'narrowing file lacks the Bundled-into: skip'],
   ['after', NARROWING, /runs after proposal bundling/, 'narrowing file does not state it runs after bundling'],
@@ -42,10 +46,9 @@ for (const [name, text, re, msg] of CLAIMS) {
 }
 
 test('multispec console stays under the Read rail', () => {
-  assert.ok(Buffer.byteLength(MULTISPEC) <= RAIL_BYTES, 'multispec-review-console.md is over the Read rail');
+  assert.ok(Buffer.byteLength(MULTISPEC) < RAIL_BYTES, 'multispec-review-console.md is over the Read rail');
 });
 
-test('bundling file runs before console.json and is skipped under --dry-run', () => {
-  assert.match(BUNDLING, /--dry-run/);
+test('bundling file runs before console.json', () => {
   assert.match(BUNDLING, /console\.json/);
 });
