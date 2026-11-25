@@ -252,7 +252,7 @@ test('parseArgs splits --stories into id/file pairs', () => {
 });
 
 const DECL_PATH = '.claude-tweaks/verify-scope.json';
-function bookkeepingRepo(extraRules = []) {
+function bookkeepingRepo(extraRules = [], extraFiles = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-qa-stamp-bk-'));
   created.push(root);
   const g = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
@@ -270,6 +270,10 @@ function bookkeepingRepo(extraRules = []) {
       { match: 'src/**', suites: '*', static: true },
     ],
   }));
+  for (const [f, c] of Object.entries(extraFiles)) {
+    fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+    fs.writeFileSync(path.join(root, f), c);
+  }
   g(['add', '.']);
   g(['commit', '-q', '-m', 'init']);
   const S = g(['rev-parse', 'HEAD']).trim();
@@ -388,4 +392,15 @@ test('every git call --check makes carries the cwd dep', () => {
   assert.equal(fx.check(['--scope', DECL_PATH], { exec }).res.reason, 'covered-bookkeeping-delta');
   assert.ok(calls.length > 0);
   assert.ok(calls.every((c) => c === fx.root), JSON.stringify(calls));
+});
+
+test('--scope declaration whose generated glob covers its own path is refused, as verify.js refuses it (plan-review clarification)', () => {
+  const rules = [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }];
+  const decl = JSON.stringify({ checks: { tests: 'node --test' }, rules, generated: ['config/**'] });
+  const fx = bookkeepingRepo([], { 'config/qa-scope.json': decl });
+  fx.commit(LEDGER);
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+  const { code, res } = fx.check(['--scope', 'config/qa-scope.json']);
+  assert.equal(code, 0);
+  assert.deepEqual(res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
 });
