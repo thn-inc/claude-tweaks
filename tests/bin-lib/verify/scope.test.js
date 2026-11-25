@@ -35,7 +35,7 @@ test('no declaration → full, byte-for-byte today (AC1)', () => {
   }
 });
 
-test('no prior stamp → full even with a declaration (the first run is always the anchor)', () => {
+test('no prior stamp and no fallbackBase → full even with a declaration', () => {
   const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null });
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');

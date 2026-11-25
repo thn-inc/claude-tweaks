@@ -5,8 +5,8 @@
 // size-ceiling test in an unrelated suite — only declared paths get cheaper).
 // The anchoring invariant lives here: every non-full mode's base is the
 // stamp's fullSha (or, for a declaration with an impact or a ci block and no
-// stamp, the caller's integration-branch merge-base, fallbackBase), never a prior scoped sha, so
-// scoped runs never chain.
+// stamp, the caller's integration-branch merge-base, fallbackBase), never a
+// prior scoped sha, so scoped runs never chain.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
 // impact rule goes to impact.js's selectImpactTests, so impact.suite runs only

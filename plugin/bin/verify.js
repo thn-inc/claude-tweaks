@@ -747,8 +747,9 @@ async function main() {
       // non-empty subset run impact.command with {files} = a list file in the
       // log dir. A list that cannot be handed over re-selects with that reason,
       // so the suite runs its full command. With no usable stamp anchor, the
-      // --integration-branch merge-base anchors; an explicit --base never does
-      // (it runs full, as before).
+      // --integration-branch merge-base anchors a declaration with an impact or
+      // a ci block (selectScope decides); an explicit --base never does (it
+      // runs full, as before).
       // anchorSha was proved an ancestor of HEAD above; only git reads (changedFiles, mergeNarrowing) run before the
       // lazy first map read, so a map pinned to that same commit need not ask again (#5773).
       if (decl.impact) impactCtx = checkoutImpactContext({
