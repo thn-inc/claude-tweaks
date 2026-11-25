@@ -10,8 +10,6 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-25T111524-record-6283/work/6283-spec.md` (record #6283)
 
-Scope keywords: extractFingerprint, groupByFileOverlap, CANONICAL_PREFIXES, ledger-narrowing-auto-file
-
 ## Global Constraints
 
 - The bundler CLI never calls `gh` (spec Deliverable "Bundler CLI").
