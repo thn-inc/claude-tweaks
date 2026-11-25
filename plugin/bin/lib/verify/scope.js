@@ -55,8 +55,9 @@ function resolveImpact(decl, paths, statuses, ctx) {
 function selectScope({ decl, files, stamp, statuses = null, impact = null, fallbackBase = null }) {
   let base = anchorOf(stamp);
   if (base === null && decl && (decl.impact || decl.ci)) base = fallbackBase || null;
-  // No declaration: today's behavior byte-for-byte. No prior full pass: the
-  // first run IS the anchor everything later diffs against, so it is full too.
+  // No declaration: today's behavior byte-for-byte. No anchor (no stamp, and
+  // no merge-base fallback for this declaration): the first run IS the anchor
+  // everything later diffs against, so it is full too.
   if (!decl || base === null) {
     const full = { mode: 'full', suites: '*', static: true, base, unmatched: [], matched: [] };
     // Unanchored, the impact suite runs full like every other suite: a

@@ -713,7 +713,9 @@ async function main() {
       // run with `base` pointing at today's merge-base but `fullSha` still
       // naming the stale anchor, breaking the base === fullSha invariant a
       // full run relies on. Passing `stamp: null` instead forces mode 'full'
-      // (#1922 review finding: stale anchor must force a full run).
+      // (#1922 review finding: stale anchor must force a full run) unless the
+      // declaration has an impact or a ci block and --integration-branch
+      // supplies a merge-base, which re-anchors the run on it.
       if (parsed.base) {
         if (anchorSha && resolvedBase !== anchorSha) {
           scopeUsageExit(`--scope: --base ${parsed.base} conflicts with the stamp anchor ${anchorSha.slice(0, 9)}; omit --base or clear the stamp (after an integration-branch merge, --integration-branch narrows the scoped set to this branch's own delta)`);
