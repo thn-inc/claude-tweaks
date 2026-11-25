@@ -104,7 +104,8 @@ Resolve cross-lens disagreement deterministically. When two reviewer lenses (sec
 The dispatcher scans findings across lenses. If two findings from different lenses share:
 
 - **Exact path** match, and
-- **Line within ±5** (looser than reproduction's ±2, and with no substance gate — "same region of code"), and
+- **Line within ±5** (looser than reproduction's ±2 — "same region of code"), and
+- **Same substance** — substance score at or above `SUBSTANCE_SIMILARITY_MIN` (0.2; `detect-overlap`'s `substanceMatch`), so nearby but unrelated findings are not debated, and
 - **Contradicting verdicts** (e.g., one says "issue", one says "no issue", or differing severities across bucket boundaries),
 
 then debate is dispatched on that pair.
@@ -146,9 +147,10 @@ from the general singleton-only rule; see `_shared/subagent-output-contract.md`.
 - AUTO {HH:MM:SS} — Debate: cross-lens disagreement on {path}:{line} converged positive after 1 round (lens "{lensA}" finding {pathA}:{lineA}; lens "{lensB}" finding {pathB}:{lineB} — both confirmed). Reversibility: high.
 - STAGED {HH:MM:SS} — Debate: lens "{lensA}" finding {path}:{line} — cross-lens disagreement converged negative after 1 round; unconfirmed. Reversibility: high.
 - STAGED {HH:MM:SS} — Debate: lens "{lensA}" cross-lens disagreement on {path}:{line} inconclusive ({verdicts}). Both verdicts staged. Stage path: staged/review-contested-{N}.md. Reversibility: high.
+- AUTO {HH:MM:SS} — Debate skipped: proximity coincidence — lens "{lensA}" finding {pathA}:{lineA} and lens "{lensB}" finding {pathB}:{lineB} (substance score {substanceScore, or "unknown" when null} below 0.2); both keep their own buckets (no debate). Reversibility: high.
 ```
 
-These are `review/step3-debate-and-refutation.md`'s three lines, byte for byte. `{lensA}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`). An older run may still hold a `staged/review-debate-{n}.md` file from this section's earlier shape: nothing writes one now, and the Review Console and `/release`'s disposition still read it. Remove that prefix from both, the sentence naming it in `docs/skill-graph.md`'s `## release` row for `review/step3-debate-and-refutation.md`, the `review-debate-*` mention in `review/step3-tiebreak.md`'s Resolve and act section (with its pin in `tests/review-tiebreak-step-conformance.test.js`), every remaining `review-debate-` mention that a repo-wide grep finds (code comments, test pins and fixtures), and this sentence, once `.claude-tweaks/pipelines/` and its `archive/` hold no such file.
+These are `review/step3-debate-and-refutation.md`'s four lines, byte for byte. `{lensA}` is the first position's lens — the key the tiebreak verdict carries for a contested finding. The `confirmed` line names every confirmed finding because the Review Console settles only the findings a line names (`bin/lib/console/resolve.js`'s `debateConvergedKeys`). An older run may still hold a `staged/review-debate-{n}.md` file from this section's earlier shape: nothing writes one now, and the Review Console and `/release`'s disposition still read it. Remove that prefix from both, the sentence naming it in `docs/skill-graph.md`'s `## release` row for `review/step3-debate-and-refutation.md`, the `review-debate-*` mention in `review/step3-tiebreak.md`'s Resolve and act section (with its pin in `tests/review-tiebreak-step-conformance.test.js`), every remaining `review-debate-` mention that a repo-wide grep finds (code comments, test pins and fixtures), and this sentence, once `.claude-tweaks/pipelines/` and its `archive/` hold no such file.
 
 ### Review Console staging format
 
