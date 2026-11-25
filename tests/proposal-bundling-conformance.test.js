@@ -8,13 +8,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { RAIL_BYTES } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
 
+const { readText } = require('./helpers/read-skill');
+
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
-const read = (p) => fs.readFileSync(path.join(SKILLS, p), 'utf8');
+const read = (p) => readText(path.join(SKILLS, p));
 
 const BUNDLING = read('wrap-up/proposal-bundling.md');
 const CONSOLE = read('wrap-up/review-console.md');
 const MULTISPEC_PATH = path.join(SKILLS, 'flow/multispec-review-console.md');
-const MULTISPEC = fs.readFileSync(MULTISPEC_PATH, 'utf8');
+const MULTISPEC = readText(MULTISPEC_PATH);
 const NARROWING = read('wrap-up/ledger-narrowing-auto-file.md');
 const LEDGER_FORMAT = read('_shared/ledger-format.md');
 
@@ -33,6 +35,8 @@ const CLAIMS = [
   ['bundled-into', NARROWING, /Bundled-into:/, 'narrowing file lacks the Bundled-into: skip'],
   ['after', NARROWING, /runs after proposal bundling/, 'narrowing file does not state it runs after bundling'],
   ['multispec', MULTISPEC, /proposal-bundling\.md/, 'multispec console does not cite proposal-bundling.md'],
+  ['ledger-control', LEDGER_FORMAT, /Under control mode a bundle whose create fails or is carried settles every member's row through `console-resolve\.js --set-item bundle-\{n\}\.md --resolution carried/, 'ledger-format.md lacks the control-mode carry sentence'],
+  ['console-control', CONSOLE, /A `bundle-\*` item[^\n]*--set-item bundle-\{n\}\.md --resolution carried[^\n]*settles every member row/, 'review-console.md control-mode paragraph lacks the bundle-* carry case'],
   ['ledger', LEDGER_FORMAT, /staged\/bundle-\{n\}\.md/, 'ledger-format.md does not name staged/bundle-{n}.md'],
 ];
 
