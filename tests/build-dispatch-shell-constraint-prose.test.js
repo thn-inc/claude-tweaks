@@ -11,8 +11,8 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const DISPATCH = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'dispatch.md'));
 
-// The instruction paragraph: from its bold lead to the next bold-lead instruction.
-// It ends at the next bold lead of any kind, so a renamed or moved neighbour cannot widen the slice.
+// The instruction paragraph: from its bold lead to the next bold lead of any kind, so a renamed or
+// moved neighbour cannot widen the slice.
 const LEAD = /\*\*[^*]*shell constraint[^*]*\*\*/i.exec(DISPATCH);
 const START = LEAD ? LEAD.index : -1;
 let PARA = '';

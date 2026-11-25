@@ -581,12 +581,9 @@ test('fetch replaces a descending cached map that is not an ancestor of HEAD', a
 
 test('fetch replaces a cached map whose ancestry check makes git error, without exiting non-zero', async () => {
   for (const failing of [(a) => a[a.length - 1] === SHA_B, (a) => a[a.length - 2] === SHA_B]) {
-    const wrapGit = (base) => {
-      const git = (args, opts) => {
-        if (args[0] === 'merge-base' && failing(args)) throw new Error('fatal: bad object');
-        return base(args, opts);
-      };
-      return git;
+    const wrapGit = (base) => (args, opts) => {
+      if (args[0] === 'merge-base' && failing(args)) throw new Error('fatal: bad object');
+      return base(args, opts);
     };
     const r = await fetchWithCached({ cached: mapText(SHA_B), wrapGit });
     assert.strictEqual(r.code, 0);
