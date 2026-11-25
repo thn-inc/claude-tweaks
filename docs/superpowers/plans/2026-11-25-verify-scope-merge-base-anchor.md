@@ -86,7 +86,7 @@ Add to `cli-scope-integration.test.js` `test('--scope --integration-branch: no s
 - Assert: exit 0; stdout matches `/still-verified: bookkeeping-only delta \(docs\/plans\/x-ledger\.md\)/`; `fs.existsSync(r.marker) === false`; `stampOf(r.gitDir).fullSha === r.git('merge-base', 'HEAD', r.branch).trim()`.
 - Then `runCli(['--stamp-status'], { cwd: r.repo })` → parsed stdout `verifiedHead === true`.
 
-In `ci-cli.test.js`'s `repoWith`: record `const branch = git('symbolic-ref', '--short', 'HEAD').trim()` after the base commit, then `git('checkout', '-q', '-b', 'feature')` before writing the declaration and `extraFiles`, and return that base `branch` (the integration branch). The `head` commit's diff (`.claude-tweaks/verify-scope.json` + `extraFiles`) then matches the `'**' → '*'` rule, so every CI case still reaches `full` by rule. `baseSha` is unchanged. Do not change assertions.
+In `ci-cli.test.js`'s `repoWith`: record `const branch = git('symbolic-ref', '--short', 'HEAD').trim()` after the base commit, then `git('checkout', '-q', '-b', 'feature')` before writing the declaration and `extraFiles`, and return that base `branch` (the integration branch). The `head` commit's diff (`.claude-tweaks/verify-scope.json` + `extraFiles`) then matches the `'**' → '*'` rule, so every CI case still reaches `full` by rule. `baseSha` is unchanged. Do not change assertions. Right after this fixture change, run `node --test tests/bin-lib/verify/ci-cli.test.js` and confirm the #4347 AC2 case (`--baseline r.baseSha`) still adjudicates `tests/env.test.js` as baseline — the merge-base and the `--baseline` tip now coincide, so re-confirm the fork-point premise rather than assume it.
 
 - [ ] **Step 6: Run to verify it passes**
 
