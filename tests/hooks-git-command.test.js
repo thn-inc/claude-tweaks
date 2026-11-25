@@ -775,8 +775,9 @@ test('#4245: gitTargets sees git after an && split by a backslash-newline', () =
 
 // bash 3.2 and 5 run `false |\<nl>| cd M && pwd` (and `… cd M ; pwd`) as `false || cd M …` and
 // print M, so the commit after the `||` may run in /M or, when the cd is skipped, in /r.
+// gitTargets returns the cwd as given, so `/r` stays a literal: path.resolve adds a drive on win32 (#6239).
 test('#4245: gitTargets reads `|` backslash-newline `|` as `||`', () => {
-  const both = [{ action: 'commit', dir: path.resolve('/M') }, { action: 'commit', dir: path.resolve('/r') }];
+  const both = [{ action: 'commit', dir: path.resolve('/M') }, { action: 'commit', dir: '/r' }];
   assert.deepStrictEqual(gitTargets('false |\\\n| cd /M && git commit -m x', '/r'), both);
   assert.deepStrictEqual(gitTargets('false |\\\n| cd /M ; git commit -m x', '/r'), both);
 });
