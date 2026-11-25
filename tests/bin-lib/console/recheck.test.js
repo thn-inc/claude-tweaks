@@ -117,7 +117,7 @@ test('parseJudgedItems falls back to Acceptance Criteria, else []', () => {
 const DIFF = [
   'diff --git a/src/a.js b/src/a.js', 'index 1..2 100644', '--- a/src/a.js', '+++ b/src/a.js',
   '@@ -1,3 +1,3 @@', ' keep', '-const old = 1;', '+const next = 2;',
-  '@@ -20,2 +20,3 @@', ' ctx', '+function  added() {}',
+  '@@ -20,2 +20,3 @@', '+function  added() {}',
   'diff --git a/src/gone.js b/src/gone.js', 'deleted file mode 100644', '--- a/src/gone.js', '+++ /dev/null',
   '@@ -1,1 +0,0 @@', '-bye();', '',
 ].join('\n');
@@ -139,6 +139,19 @@ test('Review Focus 1: a quote spanning two hunks is false; a quote with leading 
   assert.equal(quoteFound('', hunks), false);
   assert.equal(quoteFound('   ', hunks), false);
   assert.equal(quoteFound('@@ -1,3 +1,3 @@', hunks), false);
+});
+
+test('splitHunks registers a renamed file hunks under both old and new path; a pure rename yields none', () => {
+  const diff = [
+    'diff --git a/old/x.js b/new/x.js', 'similarity index 90%', 'rename from old/x.js', 'rename to new/x.js',
+    '--- a/old/x.js', '+++ b/new/x.js', '@@ -1 +1 @@', '-a', '+b',
+    'diff --git a/old/p.js b/new/p.js', 'similarity index 100%', 'rename from old/p.js', 'rename to new/p.js', '',
+  ].join('\n');
+  const m = splitHunks(diff);
+  assert.equal(m.get('new/x.js').length, 1);
+  assert.deepEqual(m.get('old/x.js'), m.get('new/x.js'));
+  assert.equal(m.has('old/p.js'), false);
+  assert.equal(m.has('new/p.js'), false);
 });
 
 const V = (deliverable, verdict, quote) => ({ deliverable, verdict, quote });

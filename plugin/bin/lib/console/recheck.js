@@ -121,9 +121,12 @@ function splitHunks(unifiedDiff) {
       target = null;
     } else if (line.startsWith('@@')) {
       if (target === null) continue;
-      if (!out.has(target)) out.set(target, []);
       current = [line];
-      out.get(target).push(current);
+      // A rename is a candidate through either path, so its hunks register under both.
+      for (const key of new Set([target, from].filter((k) => k !== null))) {
+        if (!out.has(key)) out.set(key, []);
+        out.get(key).push(current);
+      }
     } else if (current !== null) {
       current.push(line);
     }
