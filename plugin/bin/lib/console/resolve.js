@@ -103,6 +103,9 @@ const SECTION_MAP = [
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
   [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
+  // followup-recheck- (#6284): wrap-up stages a proposal to close or narrow an open follow-up record;
+  // closing and commenting are Never-reversible (auto-mode-contract.md), so it resolves pending at every tier.
+  [/^followup-recheck-/, SECTIONS.QUEUE, 'followup-recheck-human-call'],
   // bundle- (#6283): the proposal bundler stages one `bundle-{n}.md` per cluster of
   // related staged proposals; it carries no Category: line, so it stays Queue writes.
   [/^bundle-/, SECTIONS.QUEUE],
@@ -141,6 +144,7 @@ const CANONICAL_PREFIXES = [
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
   'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
   'premise-satisfied-',
+  'followup-recheck-',
   'bundle-',
   'wrap-up-memory-',
   'wrap-up-upstream-',

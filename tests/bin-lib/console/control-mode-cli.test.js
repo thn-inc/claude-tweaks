@@ -89,6 +89,16 @@ test('AC1.1: control mode resolves and logs the policy item, carries the contest
   assert.strictEqual(stored.decisionFacts, 1);
 });
 
+test('AC6.2: under control mode a staged followup-recheck-3.md resolves carried and its staged file is untouched', async () => {
+  const body = 'Title: close #3\n\nbody';
+  const fx = controlFixture({ staged: { 'followup-recheck-3.md': body } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(resolveArgs(fx), d), 0);
+  const item = cj(fx).items.find((i) => i.id === 'followup-recheck-3.md');
+  assert.strictEqual(item.resolution, 'carried');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'staged', 'followup-recheck-3.md'), 'utf8'), body);
+});
+
 test('AC2.1: a control-mode console.json with carried items passes the archival reconcile check as having no open items', async () => {
   const fx = controlFixture();
   assert.strictEqual(await run(resolveArgs(fx), baseDeps(fx, []).d), 0);
