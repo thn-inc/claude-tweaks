@@ -1032,10 +1032,16 @@ async function run(argv, deps = {}) {
   const consolePath = path.join(runDir, 'console.json');
   let existingRaw = null;
   try { existingRaw = fs.readFileSync(consolePath, 'utf8'); } catch { existingRaw = null; }
+  // #6284: approvals `recheck-followups.js approve` recorded before this resolve (an unresolved console it created),
+  // by item id; the fresh write below carries each onto the same id's pending item rather than dropping it.
+  const priorApprovals = new Map();
   if (existingRaw !== null) {
     let parsed;
     try { parsed = JSON.parse(existingRaw); } catch { parsed = undefined; }
     const existing = parsed && typeof parsed === 'object' ? parsed : null;
+    for (const it of (existing && Array.isArray(existing.items) ? existing.items : [])) {
+      if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object') priorApprovals.set(it.id, it.approval);
+    }
     const onPr = existing !== null
       && (existing.prNumber !== undefined || existing.commentIds !== undefined || existing.mergeCheckVerdict !== undefined);
     const pr = onPr && existing.prNumber !== undefined ? `PR #${existing.prNumber}` : 'the PR';
@@ -1085,6 +1091,9 @@ async function run(argv, deps = {}) {
     ...(deps.resolverDeps || {}),
   };
   const result = resolveAll({ runDir, policy: o.policy, deps: resolverDeps, controlMode: controlMode === true });
+  if (priorApprovals.size > 0) {
+    result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) ? { ...it, approval: priorApprovals.get(it.id) } : it));
+  }
   // The proposal text stays in-process (result.filings); console.json and --json carry only the summary.
   const { snapshot, table, filings, digests, decisionFacts, ...rest } = result;
   const filingSummaries = filings.map(({ item, fingerprint, title }) => ({ item, fingerprint, title }));

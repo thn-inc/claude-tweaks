@@ -718,6 +718,28 @@ test('AC16.1: that line carries the paste-ready execute command', () => {
   assert.ok(!lines.some((l) => l.includes('re-run ')), 'no console-filings re-run for this kind');
 });
 
+test('C1: an unapproved pending followup-recheck item (the unattended human-call) prints a paste-ready approve line, then its execute line', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [{ id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' }], { 'followup-recheck-5.md': recheckStaged(5) });
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  const approveAt = lines.indexOf(`    approve: node "/p/bin/recheck-followups.js" approve --run "${dir}" --id followup-recheck-5.md`);
+  const executeAt = lines.indexOf(`    then after the merge: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-5.md`);
+  assert.ok(approveAt !== -1, lines.join('\n'));
+  assert.ok(executeAt > approveAt, lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('--pr')), 'approve derives the PR from the run itself');
+  assert.ok(lines.some((l) => l.includes('--ack')), 'the ack line still prints');
+});
+
+test('I3: an approved PR-console q-N row reads its staged id from stagedFile for its reason and its execute line', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [{ id: 'q-2', kind: 'x', resolution: 'pending', stagedFile: 'followup-recheck-412.md', approval: { at: 'then', pr: '77' } }], { 'followup-recheck-412.md': recheckStaged(412, 'narrow') });
+  const r = readRunResidue(dir);
+  assert.deepStrictEqual(r.consoles[0].items.map((i) => [i.id, i.resolution, i.reason]), [['q-2', RECHECK_APPROVED_RESOLUTION, 'approved #412 narrow waits on PR #77']]);
+  const lines = formatResidueLines(r, { pluginRoot: '/p' });
+  assert.ok(lines.includes(`    cat "${path.join(dir, 'staged', 'followup-recheck-412.md')}"`), lines.join('\n'));
+  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-412.md`), lines.join('\n'));
+});
+
 test('an applied or dropped followup-recheck item is not residue', () => {
   const dir = tmpRun();
   recheckConsole(dir, [recheckItem(1, 'applied'), recheckItem(2, 'dropped'), { id: 'followup-recheck-3.md', section: 'Queue writes', resolution: 'pending', reason: 'other' }]);

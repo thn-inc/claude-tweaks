@@ -321,6 +321,28 @@ test('a console holding both a filing-pending and a digest-pending item names th
   assert.ok(!hint.includes('; or the same re-run'), `the digest continuation is an addition, not an alternative: ${hint}`);
   assert.ok(hint.includes(`; the same re-run also settles`) && hint.includes(`; or review them, then run console-residue.js --ack`), hint);
 });
+// #6284: an approved-unexecuted re-check proposal names its execute command and an unapproved one its approve command,
+// beside the filing/digest remedies and before the ack alternative.
+test('A9: the archive-block hint names an execute line for a recheck-approved item and an approve line for an unapproved re-check item', () => {
+  const runDir = scratchDir('archive-merged-residue-recheck-');
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  fs.writeFileSync(path.join(runDir, 'staged', 'followup-recheck-4.md'), 'Title: Close #4: t\n');
+  fs.writeFileSync(path.join(runDir, 'staged', 'followup-recheck-5.md'), 'Title: Close #5: t\n');
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [
+      { id: 'followup-recheck-4.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: 'then', pr: '12' } },
+      { id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' },
+    ],
+  }));
+  assert.strictEqual(readConsoleState(runDir), 'residue');
+  const hint = consoleResidueHint(runDir);
+  assert.ok(hint.includes(`execute the approved re-check proposal(s) after the merge: recheck-followups.js execute --run "${runDir}" --id followup-recheck-4.md`), hint);
+  assert.ok(hint.includes(`approve a staged re-check proposal, then execute it after the merge: recheck-followups.js approve --run "${runDir}" --id followup-recheck-5.md`), hint);
+  assert.ok(hint.indexOf('recheck-followups.js') < hint.indexOf('console-residue.js --ack'), hint);
+});
+
 test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
   assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
 });

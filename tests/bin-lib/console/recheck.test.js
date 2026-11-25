@@ -62,6 +62,11 @@ test('AC2.1: parent-issue, bot:in-progress, digest and own records are excluded 
   ]);
 });
 
+test('a record with an excluded label but no intersecting Key File is neither a candidate nor excluded', () => {
+  const out = sel({ openRecords: [rec(1, ['elsewhere.js'], { labels: ['parent-issue'] })], changedPaths: ['a.js'] });
+  assert.deepEqual(out, { candidates: [], overCap: [], excluded: [] });
+});
+
 test('AC2.2: a candidate whose only intersecting path is a hub is not a candidate', () => {
   const out = sel({ openRecords: [rec(5, ['hub.js'])], changedPaths: ['hub.js'], hubPaths: new Set(['hub.js']) });
   assert.deepEqual(out.candidates, []);
@@ -106,6 +111,15 @@ test('AC12.1: a record with no parseable Deliverables or Acceptance Criteria is 
 test('Review Focus 5: parseJudgedItems on a CRLF body with plain bullets returns the item texts', () => {
   const body = '## Deliverables\r\n- first item\r\n* second item\r\n- [x] third\r\n  continued here\r\n\r\n### Key Files\r\n- a.js\r\n';
   assert.deepEqual(parseJudgedItems(body), ['first item', 'second item', 'third continued here']);
+});
+
+test('parseJudgedItems: a bare checkbox with no text is not an item', () => {
+  assert.deepEqual(parseJudgedItems('## Deliverables\n- [ ]\n- [x]  \n- [ ] real one\n'), ['real one']);
+});
+
+test('parseJudgedItems: bullet lines inside a fenced code block in Deliverables are not items', () => {
+  const body = '## Deliverables\n- outside item\n\n```md\n- fenced example\n* another example\n```\n- after fence\n';
+  assert.deepEqual(parseJudgedItems(body), ['outside item', 'after fence']);
 });
 
 test('parseJudgedItems falls back to Acceptance Criteria, else []', () => {
@@ -154,6 +168,35 @@ test('splitHunks registers a renamed file hunks under both old and new path; a p
   assert.equal(m.has('new/p.js'), false);
 });
 
+test('quoteFound: a multi-line quote spanning a - line and a + line of one hunk matches with markers stripped', () => {
+  const hunks = splitHunks(DIFF).get('src/a.js');
+  assert.equal(quoteFound('const old = 1;\nconst next = 2;', hunks), true);
+  assert.equal(quoteFound('-const old = 1;\n+const next = 2;', hunks), true);
+});
+
+test('splitHunks registers a copy only under its new path, never its unchanged source', () => {
+  const diff = [
+    'diff --git a/src/orig.js b/src/copy.js', 'similarity index 90%', 'copy from src/orig.js', 'copy to src/copy.js',
+    '--- a/src/orig.js', '+++ b/src/copy.js', '@@ -1 +1 @@', '-a', '+b', '',
+  ].join('\n');
+  const m = splitHunks(diff);
+  assert.equal(m.get('src/copy.js').length, 1);
+  assert.equal(m.has('src/orig.js'), false);
+});
+
+test('judgeHunks dedupes intersecting paths and a renamed hunk registered under both paths before counting bytes', () => {
+  const diff = [
+    'diff --git a/old/x.js b/new/x.js', 'similarity index 90%', 'rename from old/x.js', 'rename to new/x.js',
+    '--- a/old/x.js', '+++ b/new/x.js', '@@ -1 +1 @@', '-a', '+b', '',
+  ].join('\n');
+  const m = splitHunks(diff);
+  const one = m.get('new/x.js')[0];
+  const both = judgeHunks(m, ['old/x.js', 'new/x.js', 'new/x.js']);
+  assert.deepEqual(both, { hunks: [one], overCap: false });
+  // Exactly at the cap counted once stays under it; counted twice it would be over.
+  assert.deepEqual(judgeHunks(m, ['old/x.js', 'new/x.js'], Buffer.byteLength(one)), { hunks: [one], overCap: false });
+});
+
 const V = (deliverable, verdict, quote) => ({ deliverable, verdict, quote });
 const HK = ['@@ -1 +1 @@\n+alpha beta\n+gamma'];
 const chk = (items, verdicts, hunks = HK) => checkVerdicts({ items, verdicts, hunks });
@@ -163,20 +206,30 @@ test('AC4.1: all satisfied stages close and the body quotes each hunk beside eac
   assert.equal(outcomeFor(checked), 'close');
   const text = composeProposal({ number: 12, title: 'T', outcome: 'close', checked, bodyHash: 'a'.repeat(64), updatedAt: 'u', runId: 'r' });
   assert.match(text, /^Title: Close #12: T\nTarget: #12\nAction: close\nBody-hash: a{64}\nUpdated-at: u\nRun: r\n\n## Comment\n/);
-  assert.match(text, /Item one/);
-  assert.match(text, /Item two/);
-  assert.match(text, /```\nalpha beta\n```/);
+  // Each satisfied item's line is followed directly by its own fenced quote, never another item's.
+  assert.ok(text.includes('- Item one — satisfied\n\n```\nalpha beta\n```\n'), text);
+  assert.ok(text.includes('- Item two — satisfied\n\n```\ngamma\n```'), text);
+  assert.equal(text.split('```\n').length - 1, 4, 'one opening and one closing fence per satisfied item');
+  assert.ok(text.indexOf('- Item one') < text.indexOf('alpha beta') && text.indexOf('alpha beta') < text.indexOf('- Item two'), text);
 });
 
-test('AC4.2/4.3: satisfied + not-satisfied or cant-tell -> narrow', () => {
+test('AC4.2: satisfied + not-satisfied → narrow', () => {
   assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'satisfied', 'alpha beta'), V('b', 'not-satisfied')])), 'narrow');
+});
+
+test('AC4.3: satisfied + cant-tell → narrow, not close', () => {
+  assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'satisfied', 'alpha beta'), V('b', 'cant-tell')])), 'narrow');
   assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'satisfied', 'alpha beta')])), 'narrow');
 });
 
-test('AC4.4/4.5: all cant-tell or all not-satisfied -> null; empty -> null', () => {
+test('AC4.4: all cant-tell → null', () => {
   assert.equal(outcomeFor(chk(['a', 'b'], [])), null);
-  assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'not-satisfied'), V('b', 'not-satisfied')])), null);
+  assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'cant-tell'), V('b', 'cant-tell')])), null);
   assert.equal(outcomeFor([]), null);
+});
+
+test('AC4.5: all not-satisfied → null', () => {
+  assert.equal(outcomeFor(chk(['a', 'b'], [V('a', 'not-satisfied'), V('b', 'not-satisfied')])), null);
 });
 
 test('AC5.1: a satisfied quote absent from the hunks is cant-tell, turning a would-be close into narrow', () => {
@@ -223,6 +276,16 @@ test('parseProposal round-trips composeProposal (also with CRLF); null on malfor
   assert.equal(parseProposal('garbage'), null);
 });
 
+test('parseProposal: a Title whose label or number disagrees with Action or Target, or no Title, is null', () => {
+  const checked = chk(['a'], [V('a', 'satisfied', 'alpha beta')]);
+  const text = composeProposal({ number: 7, title: 'T', outcome: 'narrow', checked, bodyHash: 'b'.repeat(64), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1' });
+  assert.ok(parseProposal(text));
+  assert.equal(parseProposal(text.replace('Action: narrow', 'Action: close')), null, 'Narrow title, close action');
+  assert.equal(parseProposal(text.replace('Title: Narrow #7:', 'Title: Close #7:')), null, 'Close title, narrow action');
+  assert.equal(parseProposal(text.replace('Title: Narrow #7:', 'Title: Narrow #8:')), null, 'title number differs from Target');
+  assert.equal(parseProposal(text.replace(/^Title: .*\n/, '')), null, 'no Title');
+});
+
 test('composeProposal fences a quote containing backticks with a longer fence', () => {
   const checked = chk(['a'], [V('a', 'satisfied', 'alpha beta')]);
   checked[0].quote = 'x ```` y';
@@ -233,13 +296,15 @@ test('composeProposal fences a quote containing backticks with a longer fence', 
 test('executionGuard: every hold/drop reason, in order, and execute only when all hold', () => {
   const body = 'record body';
   const proposal = { number: 7, action: 'close', bodyHash: crypto.createHash('sha256').update(body).digest('hex'), updatedAt: '2026-11-25T00:00:00Z', comment: 'c' };
-  const ok = { proposal, approval: { pr: '12' }, merge: { ok: true, state: 'MERGED' }, record: { ok: true, state: 'OPEN', labels: [], body } };
+  const ok = { proposal, approval: { pr: '12', stagedHash: 'h1' }, proposalHash: 'h1', merge: { ok: true, state: 'MERGED' }, record: { ok: true, state: 'OPEN', labels: [], body } };
   const g = (over) => executionGuard({ ...ok, ...over });
   assert.deepEqual(g({}), { action: 'execute', reason: 'ready' });
   assert.deepEqual(g({ proposal: null }), { action: 'hold', reason: 'malformed-proposal' });
   assert.deepEqual(g({ approval: { pr: 'abc' } }), { action: 'hold', reason: 'malformed-pr' });
   assert.deepEqual(g({ approval: null }), { action: 'hold', reason: 'malformed-pr' });
-  assert.deepEqual(g({ approval: { pr: 'local' }, merge: { ok: true, state: 'MERGED' } }).action, 'execute');
+  assert.deepEqual(g({ approval: { pr: 'local', stagedHash: 'h1' }, merge: { ok: true, state: 'MERGED' } }).action, 'execute');
+  assert.deepEqual(g({ proposalHash: 'h2' }), { action: 'hold', reason: 'proposal-changed' });
+  assert.deepEqual(g({ approval: { pr: '12' } }), { action: 'hold', reason: 'proposal-changed' });
   assert.deepEqual(g({ merge: { ok: false } }), { action: 'hold', reason: 'merge-read-failed' });
   assert.deepEqual(g({ merge: { ok: true, state: 'CLOSED' } }), { action: 'drop', reason: 'pr-closed-unmerged' });
   assert.deepEqual(g({ merge: { ok: true, state: 'OPEN' } }), { action: 'hold', reason: 'not-merged' });
@@ -255,6 +320,8 @@ test('executionGuard: merge and record may be thunks, called only when the earli
   assert.equal(executionGuard({ proposal: null, approval: { pr: '1' }, ...thunks }).reason, 'malformed-proposal');
   assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: 'zz' }, ...thunks }).reason, 'malformed-pr');
   assert.deepEqual(calls, []);
-  assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: '1' }, ...thunks }).reason, 'not-merged');
+  assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: '1', stagedHash: 'h' }, proposalHash: 'other', ...thunks }).reason, 'proposal-changed');
+  assert.deepEqual(calls, []);
+  assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: '1', stagedHash: 'h' }, proposalHash: 'h', ...thunks }).reason, 'not-merged');
   assert.deepEqual(calls, ['merge']);
 });

@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 
 const {
-  resolveConsoleExecution, REVERSE_FAILED_NOTE, DROPPED_NOTE, FILING_FAILED_NOTE, DIGESTED_NOTE,
+  resolveConsoleExecution, REVERSE_FAILED_NOTE, DROPPED_NOTE, FILING_FAILED_NOTE, DIGESTED_NOTE, RECHECK_APPROVAL_NOTE,
 } = require('../plugin/bin/lib/reconcile/console-execute');
 
 function makeRunDir() {
@@ -676,4 +676,30 @@ test('resolveConsoleExecution: a console.json write failure after both gh writes
   assert.equal(result.reason, 'console-write-failed');
   assert.match(result.error, /ENOSPC/);
   assert.equal(ghCalls.length, 3, 'both gh writes (reply, marker edit) must have already run before the write failure');
+});
+
+// #6284 I3: a PR-console q-N row that recheck-followups.js approve recorded an approval on is not declined: the human
+// already approved it, and execution waits for the merge. An explicit --decline drops the approval instead.
+test('resolve-console counts a row carrying a follow-up re-check approval as executed (approval recorded; executes after merge), never declined', async () => {
+  const approval = { at: 'then', pr: '42', stagedHash: 'h' };
+  const items = [{ id: 'q-1', kind: 'q', summary: 'Close #7', resolution: 'pending', stagedFile: 'followup-recheck-7.md', approval }];
+  const { result, markerBody, replyBody, written } = await runRuling(items, { approve: [], decline: [] });
+  const q1 = result.outcomes.find((o) => o.id === 'q-1');
+  assert.equal(q1.outcome, 'executed');
+  assert.equal(q1.note, RECHECK_APPROVAL_NOTE);
+  assert.equal(RECHECK_APPROVAL_NOTE, 'approval recorded; executes after merge');
+  assert.equal(result.resolved, true);
+  assert.match(markerBody, /<!--\s*console-item:\s*resolve\s*-->\s*\n-\s*\[x\]/i);
+  assert.ok(replyBody.includes(`\`q-1\`: executed — ${RECHECK_APPROVAL_NOTE}`), replyBody);
+  assert.deepEqual(written.items[0].approval, approval);
+  assert.equal(written.items[0].resolution, 'pending');
+  assert.equal(written.items[0].stagedFile, 'followup-recheck-7.md');
+});
+
+test('resolve-console --decline on a row carrying a re-check approval declines it and drops the approval', async () => {
+  const items = [{ id: 'q-1', kind: 'q', summary: 'Close #7', resolution: 'pending', stagedFile: 'followup-recheck-7.md', approval: { at: 'then', pr: '42', stagedHash: 'h' } }];
+  const { result, written } = await runRuling(items, { approve: [], decline: ['q-1'] });
+  assert.equal(result.outcomes[0].outcome, 'declined');
+  assert.equal(written.items[0].approval, undefined);
+  assert.equal(result.resolved, false);
 });

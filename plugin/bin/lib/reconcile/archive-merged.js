@@ -39,6 +39,7 @@ const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = 
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const {
   readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
+  RECHECK_APPROVED_RESOLUTION, recheckStagedId, recheckApproveCommand, recheckExecuteCommand,
 } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
@@ -612,6 +613,26 @@ function digestRemedyOf(consoles, alsoRerun) {
   return `re-run the planned digest entries: ${commands.join('; ')}${commands.length < dirs.length ? ' (the re-run above also settles the others)' : ''}, then ${logRemedy}`;
 }
 
+// #6284: the re-check remedies — an `execute` line per approved-unexecuted proposal, and an `approve` line per staged
+// proposal no human has approved (the unattended `followup-recheck-human-call` item). '' for either when none is open.
+function recheckRemediesOf(consoles) {
+  const execute = [];
+  const approve = [];
+  for (const c of consoles.filter((con) => !con.acknowledged)) {
+    const consoleDir = path.dirname(c.path);
+    for (const item of c.items) {
+      const id = recheckStagedId(item);
+      if (!id) continue;
+      if (item.resolution === RECHECK_APPROVED_RESOLUTION) execute.push(recheckExecuteCommand({ consoleDir, id }));
+      else if (item.resolution === 'pending' && !item.approval) approve.push(recheckApproveCommand({ consoleDir, id }));
+    }
+  }
+  return [
+    execute.length ? `execute the approved re-check proposal(s) after the merge: ${execute.join('; ')} (a local merge adds --local-merged once the push landed)` : '',
+    approve.length ? `approve a staged re-check proposal, then execute it after the merge: ${approve.join('; ')}` : '',
+  ].filter(Boolean);
+}
+
 // #4170: the remedy for a planned can't-tell filing that has no record — the paste-ready
 // `console-filings.js` re-run (default selection, no `--only`), one per unacknowledged console holding a
 // `filing-pending` item. '' when no such item is open.
@@ -631,7 +652,7 @@ function digestRerunRemedy(runDir, alsoRerun = []) {
 // leaves out the re-run of a console the filing remedy already names. One read of the run's consoles.
 function rerunRemedies(runDir) {
   const { consoles } = readRunResidue(runDir);
-  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION))].filter(Boolean);
+  return [filingRemedyOf(consoles), digestRemedyOf(consoles, pendingConsoleDirs(consoles, FILING_PENDING_RESOLUTION)), ...recheckRemediesOf(consoles)].filter(Boolean);
 }
 
 // The recovery line for a console-residue skip: name the open items, the

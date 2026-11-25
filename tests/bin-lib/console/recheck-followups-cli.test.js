@@ -57,6 +57,8 @@ const DIFF = [
 function fakeGit(calls = [], { nameStatus = NAME_STATUS, diff = DIFF } = {}) {
   return (args) => {
     calls.push(args);
+    // `merge-base --is-ancestor` exits 0 (an ancestor) unless a test injects otherwise.
+    if (args[0] === 'merge-base') return '';
     return args.includes('--name-status') ? nameStatus : diff;
   };
 }
@@ -394,11 +396,25 @@ function stageProposal(f, text = proposal()) {
 }
 const consolePath = (f) => path.join(f.runDir, 'console.json');
 const readConsole = (f) => JSON.parse(fs.readFileSync(consolePath(f), 'utf8'));
+const HEAD = 'a'.repeat(40);
+// The hash approve would record for the staged file as it reads now ('' when there is none).
+const stagedHashOf = (f, id = ID) => { try { return sha(fs.readFileSync(path.join(f.runDir, 'staged', id), 'utf8')); } catch { return sha(''); } };
 function seedApproved(f, pr = '12', extra = {}) {
   fs.writeFileSync(consolePath(f), JSON.stringify({
     resolved: true, mode: 'recheck-approval', at: 'then',
-    items: [{ id: ID, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: 'then', pr }, ...extra }],
+    items: [{
+      id: ID, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: 'then', pr, headSha: HEAD, stagedHash: stagedHashOf(f) }, ...extra,
+    }],
   }));
+}
+// run-state.json (and optionally config.yml's integration-model pin) for approve's derivation.
+function seedRunState(f, { pr = 12, model = null, dir = f.runDir, worktree, branch } = {}) {
+  const state = { status: 'active' };
+  if (pr !== null) state.pr = { number: pr, branch: branch || 'feature' };
+  if (worktree) state.worktree = worktree;
+  if (branch && pr === null) state.branch = branch;
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
+  if (model) fs.writeFileSync(path.join(dir, 'config.yml'), `mode: auto\nintegration-model: ${model}\n`);
 }
 
 // A fake gh: records every argv (and stdin) and answers from a per-test table.
@@ -421,17 +437,19 @@ function fakeGh({
 }
 const writesOf = (gh, what) => gh.calls.filter((a) => a.slice(0, 2).join(' ') === `issue ${what}`);
 
-const task5 = (f, argv, over = {}) => go(f, argv, { controlMode: () => false, workBackend: () => 'github-issues', ...over });
+const task5 = (f, argv, over = {}) => go(f, argv, {
+  controlMode: () => false, workBackend: () => 'github-issues', integrationBranch: () => 'main', ...over,
+});
 const exec = (f, gh, extra = [], over = {}) => task5(f, ['execute', '--run', f.runDir, ...extra], { gh, ...over });
 const skipLines = (f) => f.decisions().split('\n').filter((l) => /^- SKIP/.test(l));
 const autoLines = (f) => f.decisions().split('\n').filter((l) => /^- AUTO/.test(l));
 
-test('approve: creates console.json with resolved:true and one pending item carrying approval; logs one AUTO line', () => {
-  const f = fixture(); stageProposal(f);
-  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']);
+test('approve: creates console.json with resolved:false and one pending item carrying approval; logs one AUTO line', () => {
+  const f = fixture(); stageProposal(f); seedRunState(f);
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID]);
   assert.equal(r.code, 0, r.err);
   const c = readConsole(f);
-  assert.equal(c.resolved, true);
+  assert.equal(c.resolved, false);
   assert.equal(c.mode, 'recheck-approval');
   assert.equal(c.items.length, 1);
   const { approval, ...rest } = c.items[0];
@@ -439,21 +457,34 @@ test('approve: creates console.json with resolved:true and one pending item carr
     id: ID, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved',
   });
   assert.equal(approval.pr, '12');
+  assert.equal(approval.stagedHash, stagedHashOf(f));
   assert.ok(approval.at);
   assert.equal(autoLines(f).length, 1);
 });
 
-test('approve: into a PR-shaped console.json keeps prNumber, commentIds and existing items; re-approving replaces the same id', () => {
-  const f = fixture(); stageProposal(f);
-  fs.writeFileSync(consolePath(f), JSON.stringify({ commentIds: [5], prNumber: 99, items: [{ id: 'q-1', kind: 'x', summary: 's', stagedHash: 'h' }] }));
-  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 0);
-  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', 'local']).code, 0);
+test('approve: on a PR-rendered console.json the approval lands on the existing --item q-N row, never an appended item', () => {
+  const f = fixture(); stageProposal(f); seedRunState(f, { pr: 99 });
+  fs.writeFileSync(consolePath(f), JSON.stringify({ commentIds: [5], prNumber: 99, items: [{ id: 'q-1', kind: 'x', summary: 's', stagedHash: 'h' }, { id: 'q-2', kind: 'x' }] }));
+  const before = fs.readFileSync(consolePath(f), 'utf8');
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 2, 'a PR console needs --item');
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--item', 'q-9']).code, 2, 'an unknown row');
+  assert.equal(fs.readFileSync(consolePath(f), 'utf8'), before);
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID, '--item', 'q-1']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--item', 'q-1']).code, 0, 're-approving the same row');
   const c = readConsole(f);
   assert.equal(c.prNumber, 99);
   assert.deepEqual(c.commentIds, [5]);
-  assert.equal(c.items.length, 2);
-  assert.equal(c.items[0].id, 'q-1');
-  assert.equal(c.items[1].approval.pr, 'local');
+  assert.deepEqual(c.items.map((i) => i.id), ['q-1', 'q-2']);
+  assert.equal(c.items[0].stagedFile, ID);
+  assert.equal(c.items[0].resolution, 'pending');
+  assert.equal(c.items[0].kind, 'x');
+  assert.equal(c.items[0].approval.pr, '99');
+  assert.equal(c.items[0].approval.stagedHash, stagedHashOf(f));
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'followup-recheck-8.md'), proposal());
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', 'followup-recheck-8.md', '--item', 'q-1']).code, 2, 'a row already approved for another file');
+  const g = fixture(); stageProposal(g); seedRunState(g);
+  assert.equal(task5(g, ['approve', '--run', g.runDir, '--id', ID, '--item', 'q-1']).code, 2, '--item on a non-PR console');
 });
 
 test('approve: refuses (exit 5, nothing written) under control mode and when the item is carried', () => {
@@ -472,8 +503,8 @@ test('approve: malformed --id / --pr exit 2; a missing staged file exits 3', () 
   const f = fixture();
   assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', '../x.md', '--pr', '12']).code, 2);
   assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', 'abc']).code, 2);
-  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 2);
-  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 3);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--item', 'nope']).code, 2);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 3);
 });
 
 test('AC7.1: an approved close with the PR OPEN is not executed and stays pending with approval', () => {
@@ -521,8 +552,8 @@ test('AC11.1: a proposal approved at a multi-spec parent run dir executes from t
   const f = fixture();
   fs.writeFileSync(path.join(f.runDir, 'manifest.yml'), 'specs: [1]\n');
   fs.mkdirSync(path.join(f.runDir, 'spec-1'));
-  stageProposal(f);
-  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 0);
+  stageProposal(f); seedRunState(f);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 0);
   const open = fakeGh({ pr: { state: 'OPEN' } });
   assert.equal(exec(f, open).code, 0);
   assert.equal(open.writes().length, 0);
@@ -677,7 +708,7 @@ test('local-files: --local --local-merged closes via local-store and appends the
   const sid = `followup-recheck-${id}.md`;
   fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
   fs.writeFileSync(path.join(f.runDir, 'staged', sid), staged);
-  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local' } }] }));
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', headSha: HEAD, stagedHash: stagedHashOf(f, sid) } }] }));
   const gh = fakeGh();
   const r = exec(f, gh, ['--local', '--local-merged']);
   assert.equal(r.code, 0, r.err);
@@ -744,7 +775,7 @@ test('local-files partial failure: a close that failed after the append re-runs 
     number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
     bodyHash: sha(stored), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
   }));
-  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', commentedAt: 'then' } }] }));
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', headSha: HEAD, stagedHash: stagedHashOf(f, sid), commentedAt: 'then' } }] }));
   // State left by a first run: the comment is already appended, the close never happened.
   const file = path.join(specs, fs.readdirSync(specs).find((n) => n.endsWith('.md')));
   const rec = ls.readRecord(file);
@@ -805,10 +836,246 @@ test('local execute reads records from the run dir main-checkout root, not the c
     number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
     bodyHash: sha(ls.queryRecords(specs)[0].body), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
   }));
-  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local' } }] }));
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', headSha: HEAD, stagedHash: stagedHashOf(f, sid) } }] }));
   const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-cwd-'));
   fixtureRoots.push(elsewhere);
   const r = exec(f, fakeGh(), ['--local', '--local-merged'], { cwd: () => elsewhere, mainRoot: f.main });
   assert.equal(r.code, 0, r.err);
   assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+// ---- final-review fix wave (#6284) -----------------------------------------------------------------------------
+
+const realGitEnv = () => {
+  const env = { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  delete env.GIT_TEMPLATE_DIR;
+  return env;
+};
+
+// A real repository at f.main (replacing the fixture's bare .git dir): trunk 'main' with one commit, and a
+// 'feature' branch one commit ahead. Returns the feature head and a git helper.
+function realRepo(f) {
+  fs.rmSync(path.join(f.main, '.git'), { recursive: true, force: true });
+  const env = realGitEnv();
+  const g = (...args) => fixtureGit(['-c', 'user.name=T', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: f.main, env, encoding: 'utf8' }).trim();
+  initRepo(f.main, { branch: 'main', env });
+  fs.writeFileSync(path.join(f.main, 'base.txt'), 'base\n');
+  g('add', 'base.txt');
+  g('commit', '-q', '-m', 'base');
+  g('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(f.main, 'feature.txt'), 'feature\n');
+  g('add', 'feature.txt');
+  g('commit', '-q', '-m', 'feature');
+  const head = g('rev-parse', 'HEAD');
+  g('checkout', '-q', 'main');
+  return { env, g, head };
+}
+
+test('C2: a local approval whose recorded head is not on the integration branch holds not-merged even with --local-merged; once merged it executes', () => {
+  const f = fixture(); stageProposal(f);
+  const { env, g, head } = realRepo(f);
+  seedApproved(f, 'local', { approval: { at: 'then', pr: 'local', headSha: head, stagedHash: stagedHashOf(f) } });
+  const over = { git: realDeps.git, env };
+  const gh = fakeGh();
+  assert.equal(exec(f, gh, ['--local-merged'], over).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.match(skipLines(f)[0], /not-merged/);
+  g('merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
+  const merged = fakeGh();
+  assert.equal(exec(f, merged, ['--local-merged'], over).code, 0);
+  assert.equal(writesOf(merged, 'comment').length, 1);
+  assert.equal(writesOf(merged, 'close').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+test('C2: a local approval with no recorded head, or an unresolvable integration branch, holds not-merged', () => {
+  const f = fixture(); stageProposal(f);
+  seedApproved(f, 'local', { approval: { at: 'then', pr: 'local', stagedHash: stagedHashOf(f) } });
+  const gh = fakeGh();
+  assert.equal(exec(f, gh, ['--local-merged']).code, 0);
+  assert.equal(gh.calls.length, 0);
+  seedApproved(f, 'local');
+  assert.equal(exec(f, gh, ['--local-merged'], { integrationBranch: () => null }).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(exec(f, gh, ['--local-merged'], { integrationBranch: () => { throw new Error('no origin/HEAD'); } }).code, 0);
+  const failing = (args) => { if (args[0] === 'merge-base') throw new Error('exit 128'); return ''; };
+  assert.equal(exec(f, gh, ['--local-merged'], { git: failing }).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(skipLines(f).filter((l) => /not-merged/.test(l)).length, 4);
+});
+
+test('C2: approve records the run worktree head as approval.headSha, and a local approval without one exits 3', () => {
+  const f = fixture(); stageProposal(f);
+  const { env, head, g } = realRepo(f);
+  g('checkout', '-q', 'feature');
+  seedRunState(f, { pr: null, model: 'local-merge', worktree: f.main });
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID], { git: realDeps.git, env });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readConsole(f).items[0].approval.headSha, head);
+  assert.equal(readConsole(f).items[0].approval.pr, 'local');
+  const h = fixture(); stageProposal(h); seedRunState(h, { pr: null, model: 'local-merge' });
+  assert.equal(task5(h, ['approve', '--run', h.runDir, '--id', ID]).code, 3);
+  assert.equal(fs.existsSync(consolePath(h)), false);
+});
+
+test('I3: an approved PR-console q-N row executes through its stagedFile; --id names it by either id', () => {
+  const f = fixture(); stageProposal(f);
+  fs.writeFileSync(consolePath(f), JSON.stringify({
+    commentIds: [5], prNumber: 12, items: [{ id: 'q-1', kind: 'x', resolution: 'pending', stagedFile: ID, approval: { at: 'then', pr: '12', stagedHash: stagedHashOf(f) } }],
+  }));
+  const other = fakeGh();
+  assert.equal(exec(f, other, ['--id', 'q-2']).code, 0);
+  assert.equal(other.calls.length, 0);
+  const gh = fakeGh();
+  const r = exec(f, gh, ['--id', ID]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(writesOf(gh, 'close').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+  assert.match(autoLines(f)[0], /q-1 \(followup-recheck-7\.md\)/);
+});
+
+test('I3: a q-N row whose stagedFile is not a followup-recheck name holds as malformed-proposal with no gh call', () => {
+  const f = fixture(); stageProposal(f);
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'other.md'), proposal());
+  fs.writeFileSync(consolePath(f), JSON.stringify({
+    commentIds: [5], prNumber: 12, items: [{ id: 'q-1', resolution: 'pending', stagedFile: 'other.md', approval: { at: 'then', pr: '12', stagedHash: stagedHashOf(f, 'other.md') } }],
+  }));
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /malformed-proposal/);
+});
+
+test('I4: a staged file re-staged or edited after approval holds as proposal-changed with one SKIP line and no gh call', () => {
+  const f = fixture(); stageProposal(f, proposal('narrow')); seedRunState(f);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 0);
+  stageProposal(f, proposal('close'));
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /proposal-changed/);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+});
+
+test('I5: approve derives --pr from run-state.json; a disagreeing --pr exits 2 and writes nothing', () => {
+  const f = fixture(); stageProposal(f); seedRunState(f, { pr: 12 });
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '13']).code, 2);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', 'local']).code, 2);
+  assert.equal(fs.existsSync(consolePath(f)), false);
+  assert.equal(autoLines(f).length, 0);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 0);
+  assert.equal(readConsole(f).items[0].approval.pr, '12');
+});
+
+test('I5: a local-merge config pin, or a run with no PR, derives local', () => {
+  const head = (args) => (args[0] === 'rev-parse' ? `${HEAD}\n` : '');
+  const f = fixture(); stageProposal(f); seedRunState(f, { pr: 12, model: 'local-merge', worktree: '/wt' });
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID], { git: head }).code, 0);
+  assert.equal(readConsole(f).items[0].approval.pr, 'local');
+  assert.equal(readConsole(f).items[0].approval.headSha, HEAD);
+  const g = fixture(); stageProposal(g); seedRunState(g, { pr: null, worktree: '/wt' });
+  assert.equal(task5(g, ['approve', '--run', g.runDir, '--id', ID, '--pr', '12'], { git: head }).code, 2);
+  assert.equal(task5(g, ['approve', '--run', g.runDir, '--id', ID], { git: head }).code, 0);
+  assert.equal(readConsole(g).items[0].approval.pr, 'local');
+});
+
+test('I5: approve at a multi-spec spec dir derives the parent run PR', () => {
+  const f = fixture(); seedRunState(f, { pr: 44 });
+  const spec = path.join(f.runDir, 'spec-3');
+  fs.mkdirSync(path.join(spec, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(spec, 'staged', ID), proposal());
+  const r = task5(f, ['approve', '--run', spec, '--id', ID]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(spec, 'console.json'), 'utf8')).items[0].approval.pr, '44');
+});
+
+test('M8: a second execute attempted between the first one\'s console read and its write is refused by the lock', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const env = { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '50' };
+  const gh = fakeGh();
+  let consoleReads = 0;
+  let second = null;
+  const readFile = (p) => {
+    const text = realDeps.readFile(p);
+    if (path.basename(p) === 'console.json') {
+      consoleReads += 1;
+      // The second read is the in-lock re-read: the moment the lock exists to protect.
+      if (consoleReads === 2) {
+        try { second = exec(f, gh, [], { env, readFile: realDeps.readFile }); } catch (err) { second = { code: 'threw', err: String(err) }; }
+      }
+    }
+    return text;
+  };
+  const first = exec(f, gh, [], { env, readFile });
+  assert.equal(first.code, 0, first.err);
+  assert.equal(second.code, 3, JSON.stringify(second));
+  assert.match(second.err, /locked by another execute/);
+  assert.equal(writesOf(gh, 'comment').length, 1);
+  assert.equal(writesOf(gh, 'close').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+  const again = fakeGh();
+  assert.equal(exec(f, again, [], { env }).code, 0);
+  assert.equal(again.calls.length, 0);
+});
+
+test('M9: a failing AUTO log leaves the approve unwritten and the executed item unsettled', () => {
+  const f = fixture(); stageProposal(f); seedRunState(f);
+  const failAuto = (arg) => { if (arg.items.some((i) => /^- AUTO/.test(i.entry))) throw new Error('log down'); return realDeps.appendEntries(arg); };
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID], { appendEntries: failAuto }).code, 3);
+  assert.equal(fs.existsSync(consolePath(f)), false);
+  seedApproved(f);
+  const gh = fakeGh();
+  assert.equal(exec(f, gh, [], { appendEntries: failAuto }).code, 3);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.ok(readConsole(f).items[0].approval.commentedAt, 'the comment marker is kept, so a re-run does not repost');
+});
+
+test('A6: a staged write that fails partway still logs the SCANNED summary of what was staged before exit 3', () => {
+  const f = fixture();
+  seed(f, [rec(10, ['src/a.js']), rec(11, ['src/a.js'])]);
+  assert.equal(go(f, candidatesArgv(f)).code, 0);
+  const v = { status: 'DONE', verdicts: [{ deliverable: 1, verdict: 'satisfied', quote: 'const widget = makeWidget();' }] };
+  let n = 0;
+  const writeStaged = (arg) => { n += 1; if (n === 2) throw new Error('disk full'); return realDeps.writeStaged(arg); };
+  const r = go(f, writeVerdicts(f, { 10: v, 11: v }), { writeStaged });
+  assert.equal(r.code, 3);
+  const scanned = f.decisions().split('\n').filter((l) => /^- SCANNED/.test(l)).pop();
+  assert.match(scanned, /staged close #10/);
+  assert.match(scanned, /stopped: a write failed \(disk full\)/);
+});
+
+test('A7: execute --local on an already-closed local record holds as record-closed, not record-read-failed', () => {
+  const f = fixture();
+  const specs = path.join(f.main, 'specs');
+  const ls = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store'));
+  const { id } = createRecord(specs, {
+    slug: 'plain', title: 'Plain', body: RECORD_BODY, facets: defaultFacets(),
+  });
+  const stored = ls.queryRecords(specs)[0];
+  const sid = `followup-recheck-${id}.md`;
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', sid), composeProposal({
+    number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(stored.body), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
+  }));
+  ls.closeRecord(stored.path);
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', headSha: HEAD, stagedHash: stagedHashOf(f, sid) } }] }));
+  assert.equal(exec(f, fakeGh(), ['--local', '--local-merged']).code, 0);
+  assert.match(skipLines(f)[0], /record-closed/);
+});
+
+test('A8: a marker write that fails after the comment posted says so and holds the proposal', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh();
+  const writeAtomic = () => { throw new Error('disk full'); };
+  const r = exec(f, gh, [], { writeAtomic });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(writesOf(gh, 'comment').length, 1);
+  assert.equal(writesOf(gh, 'close').length, 0);
+  assert.match(skipLines(f)[0], /comment posted; marker write failed/);
+  assert.doesNotMatch(skipLines(f)[0], /the comment failed/);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.deepEqual(r.json.held, [{ id: ID, reason: 'marker-write-failed' }]);
 });

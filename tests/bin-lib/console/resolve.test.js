@@ -2174,7 +2174,7 @@ test('defers-yes-valid-reason-names-file-record: a deferral ruling resolves appl
   assert.notStrictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n')).reason, RATIFY_FILES_RECORD_REASON);
 });
 
-test('AC6.1: followup-recheck- resolves pending with reason followup-recheck-human-call under console-auto at unattended (#6284)', () => {
+test('AC6.1: followup-recheck- resolves pending with reason followup-recheck-human-call under console-auto — resolveAll applies no tier, so the stance is the same at every tier (#6284)', () => {
   const item = resolveStaged('followup-recheck-12.md', 'Title: close #12\n\nbody');
   assert.strictEqual(item.section, 'Queue writes');
   assert.strictEqual(item.resolution, 'pending');

@@ -9,7 +9,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { findSection } = require('../markdown-blocks');
+const { findSection, fencedLineMask } = require('../markdown-blocks');
 const { extractKeyFiles } = require('../issues/grouping');
 const { normalizeLabelNames } = require('../issues/record');
 const { parseAcceptanceCriteria } = require('../wrap-up/packet-gather');
@@ -18,7 +18,9 @@ const RECHECK_CAP = 5;
 const HUNK_BYTE_CAP = 24000;
 const EXCLUDED_LABELS = ['parent-issue', 'bot:in-progress', 'digest'];
 
-const ITEM_RE = /^[-*][ \t]+(?:\[[ xX]\][ \t]+)?(.*\S.*)$/;
+// A bullet, optionally a task checkbox, with text. A bare `- [ ]` is no item: the lookahead stops the text group
+// re-reading the empty box itself as the item's text.
+const ITEM_RE = /^[-*][ \t]+(?!\[[ xX]\][ \t]*$)(?:\[[ xX]\][ \t]+)?(.*\S.*)$/;
 
 function parseJudgedItems(body) {
   if (typeof body !== 'string' || body === '') return [];
@@ -27,7 +29,11 @@ function parseJudgedItems(body) {
   if (section !== null) {
     const items = [];
     let open = false;
-    for (const line of section.split('\n')) {
+    const lines = section.split('\n');
+    // A bullet inside a fenced code block is example text, not a deliverable.
+    const fenced = fencedLineMask(lines);
+    for (const [idx, line] of lines.entries()) {
+      if (fenced[idx]) { open = false; continue; }
       const m = ITEM_RE.exec(line);
       if (m) {
         items.push(m[1].trim());
@@ -110,8 +116,11 @@ function splitHunks(unifiedDiff) {
   let from = null;
   let target = null;
   let current = null;
+  let renamed = false;
   for (const line of String(unifiedDiff || '').split(/\r?\n/)) {
-    if (current === null && line.startsWith('--- ')) {
+    if (current === null && line.startsWith('rename from ')) {
+      renamed = true;
+    } else if (current === null && line.startsWith('--- ')) {
       from = diffPath(line, 'a/');
     } else if (current === null && line.startsWith('+++ ')) {
       target = diffPath(line, 'b/') || from;
@@ -119,11 +128,13 @@ function splitHunks(unifiedDiff) {
       current = null;
       from = null;
       target = null;
+      renamed = false;
     } else if (line.startsWith('@@')) {
       if (target === null) continue;
       current = [line];
-      // A rename is a candidate through either path, so its hunks register under both.
-      for (const key of new Set([target, from].filter((k) => k !== null))) {
+      // A rename is a candidate through either path, so its hunks register under both. A copy (`copy from`)
+      // left its source unchanged, so its hunks register under the new path only.
+      for (const key of new Set([target, renamed ? from : null].filter((k) => k !== null))) {
         if (!out.has(key)) out.set(key, []);
         out.get(key).push(current);
       }
@@ -208,6 +219,10 @@ function parseProposal(text) {
   const target = /^#(\d+)$/.exec(head.Target || '');
   if (!target) return null;
   if (head.Action !== 'close' && head.Action !== 'narrow') return null;
+  // The title is what the human approved: its label and number must agree with Action and Target, or the file was
+  // edited into a different proposal than the one rendered.
+  const title = /^(Close|Narrow) #(\d+):/.exec(head.Title || '');
+  if (!title || title[1].toLowerCase() !== head.Action || title[2] !== target[1]) return null;
   if (!/^[0-9a-f]{64}$/.test(head['Body-hash'] || '')) return null;
   if (!head['Updated-at'] || Number.isNaN(Date.parse(head['Updated-at']))) return null;
   const at = lines.findIndex((l, idx) => idx >= i && l.trim() === '## Comment');
@@ -224,8 +239,12 @@ function parseProposal(text) {
 function judgeHunks(hunksByPath, intersecting, cap = HUNK_BYTE_CAP) {
   const hunks = [];
   let bytes = 0;
-  for (const p of intersecting) {
+  // A rename registers one hunk under both of its paths: dedupe so a hunk is counted and sent once.
+  const seen = new Set();
+  for (const p of new Set(intersecting)) {
     for (const h of hunksByPath.get(p) || []) {
+      if (seen.has(h)) continue;
+      seen.add(h);
       bytes += Buffer.byteLength(h);
       hunks.push(h);
     }
@@ -236,12 +255,15 @@ function judgeHunks(hunksByPath, intersecting, cap = HUNK_BYTE_CAP) {
 // The execution guard: whether an approved proposal may touch the record now (#6284). Closing a record and
 // posting a comment are never-reversible by contract, so every doubt is a hold. `merge` ({ ok, state }) and
 // `record` ({ ok, state, labels, body }) may be thunks, called only once the checks before them pass — a
-// malformed approval makes no gh call. -> { action: 'execute' | 'hold' | 'drop', reason }.
-function executionGuard({ proposal, approval, merge, record }) {
+// malformed approval makes no gh call. `proposalHash` is the sha256 of the staged file as it reads now; an approval
+// whose `stagedHash` differs (or carries none) was given to other text, so it holds as `proposal-changed`.
+// -> { action: 'execute' | 'hold' | 'drop', reason }.
+function executionGuard({ proposal, approval, proposalHash, merge, record }) {
   const hold = (reason) => ({ action: 'hold', reason });
   if (!proposal) return hold('malformed-proposal');
   const pr = approval && typeof approval.pr === 'string' ? approval.pr : null;
   if (pr === null || (pr !== 'local' && !/^\d+$/.test(pr))) return hold('malformed-pr');
+  if (typeof approval.stagedHash !== 'string' || approval.stagedHash !== proposalHash) return hold('proposal-changed');
   const m = typeof merge === 'function' ? merge() : merge;
   if (!m || m.ok !== true) return hold('merge-read-failed');
   if (m.state === 'CLOSED') return { action: 'drop', reason: 'pr-closed-unmerged' };
