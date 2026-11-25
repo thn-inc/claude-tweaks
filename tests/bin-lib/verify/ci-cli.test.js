@@ -967,7 +967,6 @@ test('an impact declaration with only an inert dirty path takes the CI verdict (
   const rules = [{ match: 'notes.md', suites: [], static: false }, { match: 'tests/**', impact: true, static: false }, { match: '**', suites: '*', static: false }];
   const r = repoWith({ declExtra: { impact, rules }, extraFiles: { 'notes.md': 'a\n' } });
   const mapCommit = r.git('rev-parse', 'HEAD').trim();
-  r.git('checkout', '-q', '-b', 'feature');
   fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {}); // changed\n");
   r.git('add', 'tests/ok.test.js');
   r.git('commit', '-q', '-m', 'edit test');
