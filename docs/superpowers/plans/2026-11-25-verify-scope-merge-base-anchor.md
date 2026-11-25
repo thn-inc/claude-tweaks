@@ -19,6 +19,7 @@ Scope keywords: fallbackBase
 - An `impact` declaration's unanchored `no-anchor` fallback reason is unchanged.
 - `verify.js` changes are comment-only (lane ct-verify-ci is editing its CI-source code concurrently).
 - `plugin/skills/test/verification.md` is 51934 bytes against the 52500-byte `RAIL_BYTES` rail: its edit must not grow the file (measure `wc -c` before and after; net delta ≤ 0). `plugin/skills/test/impact-selection.md`'s `no-anchor` row stays as is.
+- `tools/run-tests.js:577` also calls `selectScope` with `fallbackBase`, but `selectChangedTests` returns before it for a declaration without `impact` (line 571), so it needs no change (plan audit Check B, reviewed).
 - Intermediate commits reference the record as `refs #6102`, never `closes`/`fixes`.
 
 ## Review Focus
