@@ -88,7 +88,7 @@ procedure — no row is left unrouted:
   never editing `DESIGN.md` by hand — `DESIGN.md` stays upstream-owned.
 - `apply` on an `sdd-ruling-*` item — ratify. It executes no code change, and what it writes
   depends on the staged header, classified by `bin/lib/console/sdd-ruling.js`'s
-  `sddRulingRatifyAction` (#3942):
+  `sddRulingRatifyAction` (#3942). A staged ruling's header may also carry `Class: behaviour`; a ruling the carry-forward labels `Class: procedural` (with `Defers: no` and no `Defer-reason:`) is never staged, so procedural rulings never reach the console — they are logged in `decisions.md` as an `AUTO` line and an `observation` ledger row (#5449, `sddRulingRoute`):
   - `accept` — a settled design decision (`Defers: no` with no `Defer-reason:` header line,
     or several `Defers:` lines, every one `no`, with no `Defer-reason:` line — agreeing lines
     ratify as one does, though the console-auto gate below holds them for a human).
