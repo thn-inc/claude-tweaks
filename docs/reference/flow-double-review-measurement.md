@@ -14,6 +14,15 @@ Outcome 3 on purpose: the two reviews catch different defects.
 This file is maintainer-side: `docs/` is not part of the plugin payload and does not ship
 (`docs/decisions/0015-plugin-payload-boundary-is-the-plugin-subtree.md`).
 
+## Evidence
+
+The raw inputs are kept in this run's own directory, `.claude-tweaks/pipelines/2026-11-25T100136-record-3381/evidence/`. Wrap-up later archives that directory to `.claude-tweaks/pipelines/archive/2026-11-25T100136-record-3381/evidence/`. Neither location is committed.
+
+- `cost-shares.txt`: the per-run and pooled cost lines, as printed by the derivation script.
+- `review-rerun-{record}.txt`, one per run: the verbatim report of the `/review` Step 3 re-run against that run's reviewed commit. Each report gives the tier, every lens dispatched, every finding with its final disposition and severity, the counts, and every departure from the procedure.
+
+The SDD side is each run's own `sdd-final-review.md` and `timing.json`, in the run directories listed below.
+
 ## Qualifying runs
 
 A run qualifies when all of the following hold:
