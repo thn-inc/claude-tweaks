@@ -23,6 +23,7 @@ const LOCAL_FINISH = read('_shared/local-merge-auto-finish.md');
 const MULTISPEC = read('flow/multispec-review-console.md');
 const MERGE_MODE = read('wrap-up/merge-mode.md');
 const CLOSE_OUT = read('dispatch/close-out.md');
+const WORKTREE_MERGE = read('flow/worktree-merge.md');
 const USAGE_SRC = readText(path.join(ROOT, 'plugin', 'bin', 'recheck-followups.js'));
 
 // The text between a start marker and the next end marker (or the end of the text); '' when the start is absent.
@@ -37,6 +38,8 @@ const consoleStep7 = (t) => slice(t, '\n7. `Q#` queue writes', '\n8. ');
 const localStep7 = (t) => slice(t, '\n7. **Push**', '\n8. ');
 const step40c = (t) => slice(t, '### Step 4.0c', '\n### ');
 const multispecWhen1 = (t) => slice(t, '\n1. Read `manifest.yml`', '\n2. ');
+const multispecApproval2 = (t) => slice(t, '\n2. For each `Q#` queue write', '\n3. ');
+const worktreeStep6 = (t) => slice(t, '\n6. **Push the base branch once', '\n### ');
 
 // The judge output template, inlined verbatim in followup-recheck.md's dispatch prompt.
 const JUDGE_TEMPLATE = [
@@ -68,6 +71,10 @@ const CLAIMS = [
   ['post-merge-4.0b-next', POST_MERGE, (t) => slice(t, '### Step 4.0b', '\n### '), /Then continue to Step 4\.0c\./, 'Step 4.0b does not continue to Step 4.0c'],
   ['merge-mode-4.0c', MERGE_MODE, (t) => slice(t, '3. On `merged`:', '\n'), /then Step 4\.0b \(`\{pr-number\}` = `\{pr\}`\), then Step 4\.0c, then Step 4\.1\./, 'merge-mode step 3 does not run Step 4.0c between Step 4.0b and Step 4.1'],
   ['close-out-4.0c', CLOSE_OUT, (t) => slice(t, '7. **On `merged`', '\n## '), /then Step 4\.0b \(`\{pr-number\}` = `\{number\}`\), then Step 4\.0c,/, 'dispatch close-out step 7 does not run Step 4.0c after Step 4.0b'],
+  ['worktree-merge-6', WORKTREE_MERGE, worktreeStep6, /once per step 1 `\{run-dir\}` \(a multi-spec run's is its parent dir\), run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/recheck-followups\.js" execute --run "\{run-dir\}" --local-merged`/, 'worktree-merge.md step 6 lacks the per-run-dir execute --local-merged call'],
+  ['multispec-step2', MULTISPEC, multispecApproval2, /create the record \(a `followup-recheck-\*` item: `approve`, see step 1\) — `gh issue create`/, 'multispec On-approval step 2 lacks the followup-recheck- approve exception'],
+  ['recheck-multispec-pr', RECHECK, (t) => t, /`\{pr\}` is the bundle PR's number from the parent `run-state\.json`'s `pr\.number` under `pr-first`[^\n]*`local` under `local-merge`/, 'followup-recheck.md does not define the multi-spec {pr}'],
+  ['recheck-residue-by-design', RECHECK, (t) => t, /hands off to `\/superpowers:finishing-a-development-branch` with no post-merge step[^\n]*runs none: its approvals stay residue by design/, 'followup-recheck.md does not state the finishing-branch local-merge path is residue by design'],
   ['local-finish', LOCAL_FINISH, localStep7, /bin\/recheck-followups\.js" execute --run "\$RUN_DIR" --local-merged/, 'local-merge-auto-finish.md step 7 lacks execute --local-merged'],
   ['multispec', MULTISPEC, multispecWhen1, /`wrap-up\/followup-recheck\.md`[^\n]*parent `Q#` row[^\n]*step 2[^\n]*approve/, 'multispec step 1 lacks the followup-recheck.md pointer naming the parent Q# row and the step-2 approve branch'],
 ];
@@ -134,7 +141,7 @@ function badFlags(texts) {
   return bad;
 }
 test('every prose recheck-followups.js call passes only flags its verb accepts', () => {
-  const texts = [RECHECK, CONSOLE, EXECUTION, POST_MERGE, LOCAL_FINISH];
+  const texts = [RECHECK, CONSOLE, EXECUTION, POST_MERGE, LOCAL_FINISH, WORKTREE_MERGE];
   const calls = texts.join('\n').match(/recheck-followups\.js" (candidates|stage|approve|execute)/g) || [];
   assert.ok(calls.length >= 6, `expected at least 6 prose calls, found ${calls.length}`);
   assert.deepStrictEqual(badFlags(texts), []);
