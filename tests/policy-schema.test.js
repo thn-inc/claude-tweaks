@@ -48,9 +48,13 @@ test('POLICY_KEYS entries are unique', () => {
   assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 125);
 });
 
-test('express-lane keys resolve their defaults (#4025)', () => {
+test('AC1.1, AC2.1: express-lane defaults on and a project opts out (#4025, #4591)', () => {
   const resolved = resolvePolicyKeys(['express-lane', 'express-review-sample-every'], { policyRaw: '', runConfigRaw: null });
-  assert.deepStrictEqual(resolved['express-lane'], { value: false, source: 'default' });
+  assert.deepStrictEqual(resolved['express-lane'], { value: true, source: 'default' });
+  const optOut = resolvePolicyKeys(['express-lane'], { policyRaw: 'express-lane: false\n', runConfigRaw: null });
+  assert.deepStrictEqual(optOut['express-lane'], { value: false, source: 'policy' });
+  const typo = resolvePolicyKeys(['express-lane'], { policyRaw: 'express-lane: off\n', runConfigRaw: null });
+  assert.strictEqual(typo['express-lane'].invalid, true, 'the generic fallback is unchanged; the gate acts on invalid');
   assert.deepStrictEqual(resolved['express-review-sample-every'], { value: 5, source: 'default' });
   const zero = resolvePolicyKeys(['express-review-sample-every'], { policyRaw: 'express-review-sample-every: 0\n', runConfigRaw: null });
   assert.strictEqual(zero['express-review-sample-every'].invalid, true, 'min: 1 — a sample cadence of 0 is schema-invalid');

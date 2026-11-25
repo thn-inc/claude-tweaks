@@ -45,7 +45,9 @@ function protectedPathGlobsOf(entry) {
 // (driver/plan-lane.js) read the express bounds from here, so a new bound reaches both.
 function expressGateOptions(policy) {
   return {
-    enabled: policy['express-lane'].value === true,
+    // An invalid value falls back to the default (true) in the resolver; the lane is then refused, not run (#4591).
+    enabled: policy['express-lane'].value === true && policy['express-lane'].invalid !== true,
+    laneValueInvalid: policy['express-lane'].invalid === true,
     integrationModel: policy['integration-model'].value,
     sensitivePaths: sensitivePathsOf(policy['merge-sensitive-paths']),
     protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']),
