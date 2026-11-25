@@ -175,6 +175,8 @@ git commit -m "Skip a Manifesto ceremony-check whose verdict cannot matter — r
 
 ### Task 3: `/capture`'s Shaped-body branch judges and stamps `ceremony:*`
 
+**Review risk:** high (decision logic: the stamped ceremony label now decides lane eligibility; failure-path branching)
+
 **Files:**
 - Modify: `plugin/skills/capture/SKILL.md` (Shaped-body branch step 3 ~lines 343-362, its presentation line ~line 368)
 - Modify: `plugin/skills/_shared/work-record-permission-matrix.md:25` (`/capture` row)
@@ -200,7 +202,7 @@ test('capture Shaped-body step 3 judges ceremony through the canonical pattern a
   const branch = c.slice(c.indexOf('## Shaped-body branch'), c.indexOf('## Entry Format'));
   assert.ok(branch.includes('`_shared/ceremony-check-invocation.md`'));
   assert.ok(branch.includes('"ceremony": "<fast-lane|standard>"'));
-  assert.ok(!/never passes those[^.]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
+  assert.ok(!/accepted keys are wider[^)]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
   assert.ok(branch.includes('never defaulted to `standard`'), 'missing-verdict clause');
 });
 test('the permission matrix grants /capture ceremony:* on the Shaped-body branch only', () => {
@@ -255,7 +257,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Sweep.** Run `git grep -n -F "sole owner"` and `git grep -n -F "stamped by \`/specify\`"` under `plugin/` and `docs/` (excluding `docs/decisions/` bodies and `CHANGELOG`). Expected: no remaining claim that only `/specify` writes `ceremony:*`.
 
-- [ ] **Step 6b: Revert check (record Planning Decisions).** Prove the conformance assertions go red on reverted prose: extract the base's `plugin/skills/capture/SKILL.md` and `plugin/skills/_shared/work-record-permission-matrix.md` with `git show 68608178fa:{path}` into a scratch copy of the repo tree (never edit the worktree's files in place), point the test at it (or run the first two tests' assertions against the base text in a scratch script), and confirm they fail. Quote the failing output in the task report.
+- [ ] **Step 6b: Revert check (record Planning Decisions).** Prove the conformance assertions go red on reverted prose: extract the base's `plugin/skills/capture/SKILL.md` and `plugin/skills/_shared/work-record-permission-matrix.md` with `git show 68608178fa:{path}` into a scratch copy of the repo tree (never edit the worktree's files in place), point the test at it (or run the first two tests' assertions against the base text in a scratch script), and confirm each assertion fails on its own against the base text (one scratch check per assertion, so an assertion that cannot fail is not hidden behind a sibling that does). Quote the failing output in the task report.
 
 - [ ] **Step 7: Commit**
 
@@ -294,7 +296,7 @@ test('#4118: a capture-stamped ceremony:standard record is refused by the defaul
 });
 ```
 
-`driverDefaults()` returns `eligibilityOptions(policy)`, `policy` being `resolvePolicyKeys` over every key `eligibilityOptions` reads with an empty `policyRaw` (schema defaults; `express-driver-review` default is not `on`). If `resolvePolicyKeys` needs a different call shape, read `plan-lane.test.js` and `budget.test.js`'s `POLICY_RESOLVED` and match them.
+`driverDefaults()` returns `eligibilityOptions(policy)`, `policy` built the way `tests/bin-lib/driver/plan-lane.test.js`'s `policy()` builds it (its `POLICY_DEFAULTS`, lines ~36-52): resolve-policy's `{ key: { value, source } }` shape, `express-driver-review` not `on`, and `integration-model` set explicitly to `pr-first`. `integration-model` has no static schema default (it is computed by `bin/resolve-policy.js`'s `detectIntegrationModel`), so a bare `resolvePolicyKeys` with an empty `policyRaw` yields `integrationModel: null` and an extra `REASONS.notPrFirst`; never build it that way.
 
 - [ ] **Step 2: Run** `node --test tests/bin-lib/express/eligibility.test.js`. Expected: PASS.
 
