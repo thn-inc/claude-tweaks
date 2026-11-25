@@ -63,7 +63,7 @@ Without `localRuns`, every other outcome runs the suite locally, exactly as sele
 | `ci-run-cancelled` | The job was cancelled, for example by a newer push. |
 | `ci-job-{conclusion}` | The job ended `skipped`, `timed_out`, or anything else that is neither success nor failure. |
 | `ci-log-unavailable` | A red job's log could not be downloaded, so nothing names its failures (without `localRuns`). |
-| `gh-unavailable` / `gh-error: …` | `gh` is not installed, or a read failed. |
+| `gh-unavailable` / `gh-error: …` | `gh` is not installed, or a read failed. A timed-out read is retried up to 3 attempts first (1 s, then 2 s backoff); the reason then reads `gh-error after {k} attempts: …`. |
 | `local-requested` | `--local` was passed, so CI was not consulted. |
 | `not-consulted` | Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one. |
 
