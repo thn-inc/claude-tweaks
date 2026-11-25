@@ -1,0 +1,4 @@
+# Frozen fixture — a mistyped express-lane opt-out. The generic invalid-value
+# fallback still prints the default "true", but express-lane.js gate fails
+# closed on it (#4591), so resolve-policy's warning must say so.
+express-lane: off
