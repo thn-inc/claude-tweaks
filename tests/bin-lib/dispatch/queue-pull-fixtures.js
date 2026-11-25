@@ -230,13 +230,15 @@ const writeInput = (dir, name, content) => {
   return file;
 };
 
+// Every scenario policy pins `express-lane: false` (#4591): the lane is on by default, and its
+// integration-model probe would add a `gh repo view` call these scenarios do not model.
 // S0: one spec-shaped auto:build record, #9001, on a body-text repo with no integration-branch
 // key (so the fence resolves the branch through `git remote show origin`). Built by running the
 // oracle over an empty table and answering each UNHANDLED argv in turn.
 function S0() {
   return {
     name: 'S0',
-    policy: { 'work-links': 'body-text' },
+    policy: { 'express-lane': false, 'work-links': 'body-text' },
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify([ghRecord(9001)]) + '\n' },
@@ -409,7 +411,7 @@ function S1({ full = false, pipeline = false, parity = false } = {}) {
   const openNumbers = [...records.map((r) => r.number), 8000].map((number) => ({ number }));
   return {
     name: 'S1',
-    policy: { 'work-links': 'body-text', ...(parity ? { 'dispatch-group-size-guard': '2' } : {}) },
+    policy: { 'express-lane': false, 'work-links': 'body-text', ...(parity ? { 'dispatch-group-size-guard': '2' } : {}) },
     origin: pipeline
       ? { branches: { main: { 'docs/present.md': 'present\n' }, 'claims-registry': { 'claims/issue-7001.json': LIVE_CLAIM } } }
       : { branches: { main: {} } },
@@ -447,7 +449,7 @@ function S2() {
   const nativeNode = (number, blockers) => ({ number, repository: repo, blockedBy: { nodes: blockers.map((n) => ({ number: n, state: 'OPEN', repository: repo })) } });
   return {
     name: 'S2',
-    policy: { 'work-links': 'native' },
+    policy: { 'express-lane': false, 'work-links': 'native' },
     origin: { branches: { main: {} } },
     foreign: { 'acme-corp/other#12': 'OPEN' },
     gh: [
@@ -467,7 +469,7 @@ function S2() {
 function SEmpty() {
   return {
     name: 'SEmpty',
-    policy: { 'work-links': 'body-text' },
+    policy: { 'express-lane': false, 'work-links': 'body-text' },
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: '[]\n' },
@@ -493,7 +495,7 @@ function SMalformed(only = null) {
   const numbers = records.map((r) => r.number);
   return {
     name: only ? `SMalformed-${only}` : 'SMalformed',
-    policy: { 'work-links': 'body-text' },
+    policy: { 'express-lane': false, 'work-links': 'body-text' },
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
@@ -524,7 +526,7 @@ function SPortable() {
   const tail = tailGh([9040, 9041, 9042]).map((e) => (e.argv && e.argv[0] === 'repo' ? { ...e, stdout: `${PORTABLE_SLUG}\n` } : e));
   return {
     name: 'SPortable',
-    policy: { 'work-links': 'body-text', 'integration-branch': 'release/next' },
+    policy: { 'express-lane': false, 'work-links': 'body-text', 'integration-branch': 'release/next' },
     remoteUrl: `https://github.com/${PORTABLE_SLUG}.git`,
     headBranch: 'trunk',
     origin: { branches: { main: {}, trunk: { ...ignore, 'docs/gone.md': 'on trunk only\n' }, 'release/next': { ...ignore, 'docs/kept.md': 'on release/next only\n' } } },
@@ -547,7 +549,7 @@ function SFast() {
   const records = [9101, 9102, 9103].map((n) => ghRecord(n, { body: withBody(n), labels }));
   return {
     name: 'SFast',
-    policy: { 'work-links': 'body-text', 'dispatch-group-size-guard': '2', 'dispatch-fastlane-bundle-cap': '3' },
+    policy: { 'express-lane': false, 'work-links': 'body-text', 'dispatch-group-size-guard': '2', 'dispatch-fastlane-bundle-cap': '3' },
     origin: { branches: { main: {} } },
     gh: [
       { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },

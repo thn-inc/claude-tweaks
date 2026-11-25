@@ -11,12 +11,13 @@ files:
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/flow/express-entry.md
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/resolve-policy.js
 ---
 
 # Ship a Small Record on the Express Lane
 
 **Persona:** A maintainer of a GitHub-backed (`pr-first`) project whose backlog holds two-line fixes: a citation, a typo, a one-constant change. Each one currently costs a 50-minute `/claude-tweaks:flow` run of ledger, plan, SDD, review and wrap-up. They want those records merged in minutes without losing the CI gate or a review safety net.
-**Goal:** Turn on the express lane, watch an eligible record build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
+**Goal:** Run an eligible record through the express lane, watch it build, test and merge in one agent, see an unsuitable one fall back to the full pipeline untouched, and know that a share of express merges still gets a real review afterwards.
 **Entry point:** `.claude-tweaks/policy.yml` in a repo with PR CI; a `ready` record labelled `risk:low`, `size:low`, `ceremony:fast-lane` and `type:*`, with one to three `### Key Files`.
 **Success state:**
 - The record's PR merged on green from one express call.
@@ -26,14 +27,15 @@ files:
 
 ## Steps
 
-### 1. Opt in
+### 1. Check the project can run it
 - **URL:** `.claude-tweaks/policy.yml`
-- **Action:** Add `express-lane: true`. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
-- **Should feel:** One deliberate switch. Off, nothing about `/dispatch` or `/flow` changes. Not one extra call, read or fetch.
+- **Action:** Confirm `.claude-tweaks/policy.yml` resolves `integration-model: pr-first` and the repo has PR CI. Set `express-lane: false` to turn the lane off. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
+- **Should feel:** No switch to flip on a pr-first repo with PR CI; one line to turn it off.
 - **Should understand:**
-  - The lane is off by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - The lane is on by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - A malformed value such as `express-lane: off` never turns it on: the gate refuses every record with `express-lane value invalid — treated as off`.
   - It needs PR CI. An empty check rollup reads pending, never green, so a repo without CI parks every express merge.
-- **Red flags:** An express routing note in a run on a repo that never opted in; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane off.
+- **Red flags:** An express routing note in a run on a repo that set `express-lane: false` or a malformed value; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane set `false`.
 
 ### 2. Ask the gate why a record is (or isn't) eligible
 - **URL:** `node plugin/bin/express-lane.js gate --issue {n}`
@@ -91,4 +93,5 @@ files:
 - Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
 - Step 3's `spec: {n}` clause and red flag added during build of #5347 (express runs record their record; see `merge-a-parked-unattended-pr-3784.md` for the merge it unblocks and `gather-the-wrap-up-fact-pack-1930.md` for the pack's `config` rung).
 - Updated during the build of #6020: the protected list is the protected-paths policy value
+- Updated during the build of #4591: the lane is on by default (`express-lane: false` opts out), so step 1 became a pr-first/PR-CI check; a malformed value fails closed at the gate (`express-lane value invalid — treated as off`) and `resolve-policy.js --values` notes it (decision record 0041).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).

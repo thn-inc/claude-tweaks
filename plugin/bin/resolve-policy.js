@@ -21,7 +21,8 @@
 // captures; empty line for unset-no-default and error entries; not valid for
 // model-profiles or risk-path-globs). --values also writes one stderr warning per requested key
 // holding a present-but-invalid value (`resolve-policy: warning: {key} has
-// invalid value "{raw}" — using default "{value}"`); stdout and the exit code
+// invalid value "{raw}" — using default "{value}"`, plus a parenthesised note for
+// express-lane only — INVALID_VALUE_NOTES); stdout and the exit code
 // are unchanged, and JSON and --all modes write no warning. --all emits
 // every POLICY_KEYS entry, each decorated with its schema metadata
 // (summary/category/tier/type/default); mutually exclusive with --values and
@@ -82,6 +83,12 @@ const { pickInjected } = require('./lib/repo-resolve');
 const { modelProfilesEntry } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
 const sharedPrimitives = require('./lib/shared-primitives');
+
+// #4591: express-lane's gate fails closed on an invalid value while the generic
+// fallback below still prints the default "true" — say so, or a mistyped opt-out
+// reads as "the lane is on". Local literal on purpose: importing the express
+// lib's REASONS here would pull that module into every policy resolve.
+const INVALID_VALUE_NOTES = { 'express-lane': 'express-lane.js gate treats an invalid value as off' };
 
 const EXIT_OK = 0;
 const EXIT_INVOCATION = 1;
@@ -250,7 +257,8 @@ function warningLines({ keys, result, invalidRaw, invalidFrom = new Map(), degra
       if (!entry || !entry.invalid) continue;
       const shownDefault = entry.value ?? '(none)';
       const where = invalidFrom.get(key) === 'factory' ? ' in the factory layer' : '';
-      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}"${where} — using default "${shownDefault}"\n`);
+      const note = INVALID_VALUE_NOTES[key] ? ` (${INVALID_VALUE_NOTES[key]})` : '';
+      lines.push(`resolve-policy: warning: ${key} has invalid value "${invalidRaw.get(key)}"${where} — using default "${shownDefault}"${note}\n`);
     }
   }
   return lines;

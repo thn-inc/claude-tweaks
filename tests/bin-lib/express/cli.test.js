@@ -13,7 +13,7 @@ const {
 const { REASONS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { expressMarker, REVIEW_COMMENT_MARKER } = require(path.join(LIB, 'express', 'sampling.js'));
 const { resolveProtectedPathsEntry } = require(path.join(LIB, 'express', 'policy.js'));
-const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf, fixtureGit, cleanGitEnv } = require('../../helpers/git-fixtures');
 const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'blast-radius-cli.js'));
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
@@ -1101,4 +1101,58 @@ test('AC8.1 (check half): a worktree edit removing package.json from the list do
   const withEdit = verdict(true);
   assert.deepStrictEqual(withEdit, without);
   assert.ok(withEdit.detail.includes('protected path: package.json'), withEdit.detail);
+});
+
+// --- express-lane default on (#4591): the gate reads a real policy.yml through the real resolver ---
+
+const { resolvePolicyConfig } = require(path.join(LIB, 'policy-schema.js'));
+
+// The fake for every key but express-lane, which resolves through the real resolver over the fixture repo's
+// policy.yml. A hermetic env and homeDir keep a user-wide factory policy from supplying a value, and the git
+// child ignores the host's system and global git config and any GIT_DIR-style location variables (git-ground-truth-test-env rule 2).
+const HERMETIC_GIT_ENV = { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+function policyHarness(fx, policyText) {
+  writeMainPolicy(fx.main, policyText);
+  const h = harness(fx);
+  const fakeResolve = h.deps.resolvePolicy;
+  h.deps.resolvePolicy = (keys, opts) => {
+    const out = fakeResolve(keys, opts);
+    if (keys.includes('express-lane')) {
+      out['express-lane'] = resolvePolicyConfig({
+        git: (args) => fixtureGit(args, { cwd: fx.main, env: HERMETIC_GIT_ENV, encoding: 'utf8' }),
+        readFile: h.deps.readFile, keys: ['express-lane'], cwd: fx.main, homeDir: fx.root, env: {},
+      }).result['express-lane'];
+    }
+    return out;
+  };
+  return h;
+}
+
+function gateRecord7(fx, h) {
+  const file = fx.file('records.json', JSON.stringify([record(7)]));
+  assert.strictEqual(run(['gate', '--records-json', file], h.deps), 0);
+  const res = h.json();
+  return { enabled: res.enabled, verdict: res.verdicts[0] };
+}
+
+test('AC2.1 (gate half): express-lane: false in a real policy.yml reports express-lane disabled', () => {
+  const fx = realFixture();
+  const { enabled, verdict } = gateRecord7(fx, policyHarness(fx, 'express-lane: false\n'));
+  assert.strictEqual(enabled, false);
+  assert.deepStrictEqual(verdict.reasons, [REASONS.disabled]);
+});
+
+test('#4591 Planning Decision Q1: express-lane: off in a real policy.yml refuses with the invalid-value reason', () => {
+  const fx = realFixture();
+  const { enabled, verdict } = gateRecord7(fx, policyHarness(fx, 'express-lane: off\n'));
+  assert.strictEqual(enabled, false);
+  assert.strictEqual(verdict.eligible, false);
+  assert.deepStrictEqual(verdict.reasons, [REASONS.invalidValue]);
+});
+
+test('AC1.1 (gate half): a real policy.yml with no express-lane key leaves the lane on', () => {
+  const fx = realFixture();
+  const { enabled, verdict } = gateRecord7(fx, policyHarness(fx, 'work-backend: github-issues\n'));
+  assert.strictEqual(enabled, true);
+  assert.strictEqual(verdict.eligible, true);
 });

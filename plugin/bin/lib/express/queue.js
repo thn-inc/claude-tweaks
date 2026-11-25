@@ -64,7 +64,7 @@ const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
 // values read, since queue-pull still uses `work-links` and the bundle cap in those states.
 // Two resolver calls, project policy only (no run dir exists at queue-pull time).
 // The first reads `express-lane`, `express-driver`, `dispatch-fastlane-bundle-cap` and `work-links`; the second, made only when
-// either half is on, reads the keys the halves need: the lanes are opt-in, and an
+// either half is on, reads the keys the halves need: the driver lane is opt-in, the express lane is on unless a project sets it `false`, and an
 // unpinned `integration-model` costs a `gh repo view` probe that a queue pull (up
 // to three of these per pull) should not pay for a disabled feature. `enabled` is
 // the express half's flag; the driver half is on for `express-driver` `on` or
