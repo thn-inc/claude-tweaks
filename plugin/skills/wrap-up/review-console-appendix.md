@@ -163,6 +163,7 @@ procedure — no row is left unrouted:
   filing follows `refused-proposals.md`'s failed-execution rewrite with `{name}` = the ruling
   item `sdd-ruling-{N}.md` — `console.json`'s item, never the derived
   `ledger-record-sdd-ruling-{N}.md` proposal — so the row stays `open`.
+  A staged ruling's header may also carry `Class: behaviour`. A ruling the carry-forward labels `Class: procedural` (with `Defers: no` and no `Defer-reason:`) is never staged unless the route or an audit command fails — then it is staged with that header and ratifies like any other; otherwise procedural rulings never reach the console, and are logged in `decisions.md` as an `AUTO` line and an `observation` ledger row (#5449, `sddRulingRoute`).
 - `apply` on a `Q#` item — step 7 (record creation), whose `refused-proposals.md` check still
   runs first (a `.shadow-dup` copy is composed by `shadow-dup-proposal.js` before that, as that step states); on an `M#` item — step 8 (the `_shared/learning-routing.md` memory write plus its
   `MEMORY.md` index line).
