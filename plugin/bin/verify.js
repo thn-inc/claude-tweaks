@@ -42,7 +42,9 @@ const {
 } = require('./lib/verify/count-stamp');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = require('./lib/verify/stamp');
-const { readDeclaration, generatedExemption, DECLARATION_PATH } = require('./lib/verify/declaration');
+const {
+  readDeclaration, generatedExemption, DECLARATION_PATH, resolveScopePath: sharedResolveScopePath, scopeSelfPath: sharedScopeSelfPath,
+} = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
   changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
@@ -139,7 +141,7 @@ function statusOf(check) {
 // --stamp-status's own --scope (#3002/#2987).
 function resolveScopePath(scope, scopeCwd) {
   if (path.isAbsolute(scope)) return scope;
-  return path.join(checkoutRoot(scopeCwd), scope);
+  return sharedResolveScopePath(scope, reads.locations(scopeCwd).toplevel, scopeCwd);
 }
 
 // The git toplevel from scopeCwd — or, outside a git work tree, scopeCwd
@@ -148,19 +150,10 @@ function checkoutRoot(scopeCwd) {
   return reads.locations(scopeCwd).toplevel ?? scopeCwd;
 }
 
-// #2987: the repo-relative form of a resolved --scope path, so
-// readDeclaration can refuse a `generated` glob covering the declaration
-// actually read, not only the default location. null when it can't be
-// proven inside this checkout — a file outside it never shows in this
-// tree's dirty set anyway.
+// #2987: the repo-relative form of a resolved --scope path (the pure part is
+// declaration.js's scopeSelfPath, shared with qa-stamp.js).
 function scopeSelfPath(resolvedPath, scopeCwd) {
-  const root = reads.locations(scopeCwd).toplevel;
-  if (root === null) return null;
-  const leaf = resolveWithin(resolvedPath, root);
-  if (leaf === null) return null;
-  const rootReal = canonicalRealpath(root);
-  if (rootReal === null) return null;
-  return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
+  return sharedScopeSelfPath(resolvedPath, reads.locations(scopeCwd).toplevel);
 }
 
 // The default `.claude-tweaks/verify-scope.json` at the checkout root (#4006),
@@ -1114,11 +1107,17 @@ async function main() {
   // The lane follows the commands that run: any local suite running a full
   // command (anything but the impact subset or tool-scoped's tests command)
   // takes the full lane; types/lint and narrowed suites queue as subset.
+  // #5368: a declared suite listed in subsetLaneSuites runs its own small
+  // command, so it queues as subset too — unless a --cmd of that name replaced
+  // the declared command.
+  const subsetLaneNames = new Set(decl ? decl.subsetLaneSuites : []);
+  const cmdNames = new Set(parsed.cmds.map((c) => c.name));
   let checksHold = null;
   let ranChecks = [];
   if (!(sel && sel.mode === 'none') && (localCmds.length || !ciResults.length)) {
     const fullSuiteRuns = localCmds.some((c) => c.name !== 'types' && c.name !== 'lint'
-      && !(impactSubset && c.command === impactSubset.command) && c.command !== toolScopedCommand);
+      && !(impactSubset && c.command === impactSubset.command) && c.command !== toolScopedCommand
+      && !(subsetLaneNames.has(c.name) && !cmdNames.has(c.name)));
     checksHold = holdFor(chooseLane({ localCheckCount: localCmds.length, fullSuiteRuns }));
     try {
       ranChecks = await runChecks({

@@ -135,7 +135,7 @@ function insideDriverBounds(issue, policy) {
 }
 
 // The express gate's own options (express/policy.js's expressGateOptions, as runGate reads them);
-// needsNoPlan calls this only when express-lane is true, so `enabled` is true here.
+// needsNoPlan calls this only when express-lane is true, so `enabled` is true here (only a valid `true` value: policyReadable refuses an invalid entry).
 function insideExpressBounds(issue, policy) {
   return evaluateRecordEligibility(issue, { ...expressGateOptions(policy), escalated: false }).eligible;
 }

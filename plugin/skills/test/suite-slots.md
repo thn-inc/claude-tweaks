@@ -8,9 +8,10 @@ Several sessions on one machine each running a full suite at once is the cost th
 
 | Lane | A run queues in it when |
 |------|-------------------------|
-| full | any local suite runs its full command: a `--cmd`, or a declared suite command |
-| subset | every local suite runs an impact-subset or tool-scoped command, or only `types`/`lint` run |
+| full | any local suite runs its full command: a `--cmd`, or a declared suite command not listed in `subsetLaneSuites` |
+| subset | every local suite runs an impact-subset or tool-scoped command, or only `types`/`lint` run, or a declared suite listed in `subsetLaneSuites` runs its own command |
 
+- `subsetLaneSuites` (a top-level declaration key: an array of declared suite names, never `impact.suite`) marks small declared suites that should not queue behind whole-suite runs; a `--cmd` under a listed name still takes the full lane; `report.json`'s `slot.lane` reports the lane chosen.
 - A CI-answered suite (`ci-source.md`) takes no slot while CI answers it. If it fails, its local flaky retry takes a subset-lane slot, and only when a retry actually spawns. A run whose every suite CI answers, with no local retry, takes no slot, and neither does a run with no local check.
 - Under `localRuns: "on-request"` (`ci-source.md`) a CI-declared suite runs here only with `--local`. A run that exits 3 has taken no slot.
 - `--baseline` adjudication always takes its own full-lane slot, after the checks' slot is released, and only once a rerun will actually spawn: an adjudication refused before any rerun (no `--baseline-cmd` for a failing check, an unparseable log, no failing file present at base) takes none. Its reruns and its base-side full run queue behind every other full-lane holder.

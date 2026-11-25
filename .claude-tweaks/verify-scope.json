@@ -12,6 +12,7 @@
   },
   "ci": { "tests": { "workflow": "test.yml", "job": "test" } },
   "localRuns": "on-request",
+  "subsetLaneSuites": ["journeys"],
   "impact": {
     "suite": "tests",
     "command": "node tools/run-tests.js --files-from {files}",

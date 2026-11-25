@@ -41,7 +41,8 @@ function resolveSuiteSlots({ declared, flag }) {
 // The lane follows the commands that run, not the selection mode: no local
 // check means nothing to queue for (null); a run whose local checks include a
 // full-suite command takes the 'full' lane; any other run queues as 'subset'.
-// The caller computes fullSuiteRuns.
+// The caller computes fullSuiteRuns (excluding declared suites listed in
+// subsetLaneSuites, #5368).
 function chooseLane({ localCheckCount, fullSuiteRuns }) {
   if (localCheckCount === 0) return null;
   return fullSuiteRuns ? 'full' : 'subset';

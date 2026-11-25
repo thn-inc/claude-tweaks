@@ -365,6 +365,23 @@ test('--values: an invalid derived-default key names the derived default, not th
   assert.strictEqual(res.stderr, 'resolve-policy: warning: housekeeping-auto-merge has invalid value "maybe" — using default "true"\n');
 });
 
+test('--values: an invalid express-lane warning says the gate treats it as off; stdout and exit unchanged (#4591)', () => {
+  const { tmp } = makeFixtureRepo({ policy: 'policy-invalid-express-lane.yml' });
+  const res = runPolicy(['--values', 'express-lane'], tmp);
+  assert.strictEqual(res.status, 0);
+  assert.strictEqual(res.stdout, 'true\n');
+  assert.strictEqual(
+    res.stderr,
+    'resolve-policy: warning: express-lane has invalid value "off" — using default "true" (express-lane.js gate treats an invalid value as off)\n',
+  );
+});
+
+test('--values: a non-express-lane invalid warning carries no gate suffix (#4591 control)', () => {
+  const { tmp } = makeFixtureRepo({ policy: 'policy-invalid.yml' });
+  const res = runPolicy(['--values', 'trust-revert-window-days'], tmp);
+  assert.doesNotMatch(res.stderr, /gate treats/);
+});
+
 test('--all with an invalid value writes nothing to stderr (the flag carries it)', () => {
   const { tmp } = makeFixtureRepo({ policy: 'policy-invalid.yml' });
   const res = runPolicy(['--all'], tmp);

@@ -123,6 +123,7 @@ test('REASONS is frozen and EXPRESS_MAX_KEY_FILES is 3', () => {
   const { protectedPath, sensitivePath, ...literals } = REASONS;
   assert.deepStrictEqual(literals, {
     disabled: 'express-lane disabled',
+    invalidValue: 'express-lane value invalid — treated as off',
     notPrFirst: 'integration-model is not pr-first',
     risk: 'risk is not low',
     size: 'size is not low',
@@ -138,6 +139,14 @@ test('REASONS is frozen and EXPRESS_MAX_KEY_FILES is 3', () => {
   });
   assert.strictEqual(protectedPath('a/b'), 'protected path: a/b');
   assert.strictEqual(sensitivePath('a/b'), 'merge-sensitive path: a/b');
+});
+
+test('#4591: an invalid express-lane value refuses with its own reason, never disabled', () => {
+  const invalid = evaluateRecordEligibility(record(), { ...OPTS, enabled: false, laneValueInvalid: true });
+  assert.deepStrictEqual(invalid.reasons, [REASONS.invalidValue]);
+  const off = evaluateRecordEligibility(record(), { ...OPTS, enabled: false });
+  assert.deepStrictEqual(off.reasons, [REASONS.disabled]);
+  assert.strictEqual(evaluateRecordEligibility(record(), { ...OPTS, enabled: true }).eligible, true);
 });
 
 // #4618: a record carrying a kept risk flag has no audited proof step on the lane, so it
