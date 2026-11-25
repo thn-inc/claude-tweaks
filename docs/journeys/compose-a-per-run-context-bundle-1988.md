@@ -5,6 +5,7 @@ files:
   - plugin/bin/lib/compose-context/resolve-conditions.js
   - plugin/bin/lib/compose-context/index.js
   - plugin/bin/lib/compose-context/phases.js
+  - plugin/bin/lib/compose-context/sections.js
   - tests/bin-lib/compose-context/phases.test.js
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/build/dispatch.md
@@ -164,4 +165,5 @@ files:
 - Step 12 added and step 10 revised during build of #4027 (the phase registry `plugin/bin/lib/compose-context/phases.js` and `compose-context.js --phase`; `dispatch/task-prompt.md` composes a call's bundles with one `--phase` line, and `review/step3-lens-dispatch.md` composes `review-lens`). Hand-off at the context cap, the other half of #4027, is `hand-a-phase-to-a-fresh-agent-at-the-context-cap-4027.md`.
 - Step 10 revised during build of #4589 (`bin/dispatch-prompt.js` renders each call from `task-prompt.md`; the `--phase` compose line is still a dispatching-session step, now run before the render, so `{minted-run-dir}/context/` exists when the rendered citations are read).
 - Step 12 updated during build of #4359 (the `review-lens-child` and `sdd-child` phases: on-demand bundles a dispatched lens agent or SDD child reads where its prompt cites them, composed by `review/step3-lens-dispatch.md`'s second `--phase` line and by `build/dispatch.md`).
+- Step 12 updated during build of #5668 (named-section sources: a registry bundle may name per-source `sections` selectors, `bin/lib/compose-context/sections.js` slices them fence-aware and `composePhase` validates every slice before the first write; `lens-child` now carries only the Scratch rule, the new `lens-depth` bundle carries the depth criteria for lens 3e, and `sdd-child` carries three named sections of the dispatch core; an unresolved selector exits 2)
 - Related specs: #1987 (parent design), #1990 (composed-bytes measurement, imports `stripMarkers`/`compose`; carries the merge bundle's byte budget), #1991-#1994 (the remaining records that fence real `_shared/*.md` files), #1995-#1997, #2002 (this journey's step 6 restructure).
