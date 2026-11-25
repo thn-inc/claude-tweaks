@@ -11,6 +11,7 @@ files:
   - plugin/skills/dispatch/SKILL.md
   - plugin/skills/flow/express-entry.md
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/resolve-policy.js
 ---
 
 # Ship a Small Record on the Express Lane
@@ -92,4 +93,5 @@ files:
 - Step 2's risk-flag ineligibility clause and red flag added during build of #4618 (risk flags at intent time; see `flag-invisible-risk-when-shaping-4618.md`).
 - Step 3's `spec: {n}` clause and red flag added during build of #5347 (express runs record their record; see `merge-a-parked-unattended-pr-3784.md` for the merge it unblocks and `gather-the-wrap-up-fact-pack-1930.md` for the pack's `config` rung).
 - Updated during the build of #6020: the protected list is the protected-paths policy value
+- Updated during the build of #4591: the lane is on by default (`express-lane: false` opts out), so step 1 became a pr-first/PR-CI check; a malformed value fails closed at the gate (`express-lane value invalid — treated as off`) and `resolve-policy.js --values` notes it (decision record 0041).
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane ceremony an express-eligible record carries), `pre-authorize-a-flow-runs-merge.md` (the typed merge authorization the `/flow` entry honours), `recover-from-a-dispatch-config-deny-3225.md` (the config gate the express bind avoids by ordering).
