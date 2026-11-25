@@ -50,7 +50,9 @@ function scan(root) {
   return { files: files.length, hits };
 }
 
-const covered = (h) => ALLOWLIST.some((a) => a.file === h.file && h.text.includes(a.anchor));
+function covered(hit) {
+  return ALLOWLIST.some((a) => a.file === hit.file && hit.text.includes(a.anchor));
+}
 
 function withTempTree(name, body, fn) {
   const dir = scratchDir('ct-nocd-');
