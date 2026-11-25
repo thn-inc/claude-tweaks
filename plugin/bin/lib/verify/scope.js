@@ -4,10 +4,11 @@
 // CLOSED to {suites: '*', static: true} ([IL-120]: a markdown edit tripped a
 // size-ceiling test in an unrelated suite — only declared paths get cheaper).
 // The anchoring invariant lives here: every non-full mode's base is the
-// stamp's fullSha (or, for an impact declaration with no stamp, the caller's
-// integration-branch merge-base, fallbackBase), never a prior scoped sha, so
-// scoped runs never chain. One exception (#5075), made by verify.js, not here:
-// a delta since a clean, passing non-full pass (scoped, none, static-only or tool-scoped) that selects `none` is stamped with that
+// stamp's fullSha (or, for a declaration with an impact or a ci block and no
+// stamp, the caller's integration-branch merge-base, fallbackBase), never a
+// prior scoped sha, so scoped runs never chain. One exception (#5075), made by
+// verify.js, not here: a delta since a clean, passing non-full pass (scoped,
+// none, static-only or tool-scoped) that selects `none` is stamped with that
 // pass's sha as `base`; fullSha, and so this base, still never moves.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
@@ -17,13 +18,22 @@
 // cannot answer (impact.problem, an untraced path) runs that suite full with
 // the reason in `fallback`; a non-impact rule (or an unmatched path) that
 // selects the suite supersedes the subset. Without a stamp, the caller's
-// --integration-branch merge-base (`fallbackBase`) anchors an impact
-// declaration; an explicit --base never does.
+// --integration-branch merge-base (`fallbackBase`) anchors a declaration with
+// an impact or a ci block (one with neither runs full); an explicit --base
+// never does.
+//
+// inertDirtyPaths (#5234): the dirty paths no check can be affected by, so
+// verify.js may take a CI verdict despite them; any doubt returns null.
 'use strict';
 
 const { globToRegExp } = require('../issues/blast-radius');
 const { anchorOf } = require('./stamp');
 const { selectImpactTests } = require('./impact');
+
+// Index of the first rule matching `file` in decl.rules, -1 when none.
+function firstRuleIndex(decl, file) {
+  return decl.rules.findIndex((r) => globToRegExp(r.match).test(file));
+}
 
 function impactResult(suite, fields = {}) {
   return { suite, files: null, fallback: null, selected: null, changedTests: [], untracedTests: [], driftTests: [], driftSelected: null, superseded: false, supersedingPaths: [], ...fields };
@@ -52,9 +62,10 @@ function resolveImpact(decl, paths, statuses, ctx) {
 
 function selectScope({ decl, files, stamp, statuses = null, impact = null, fallbackBase = null }) {
   let base = anchorOf(stamp);
-  if (base === null && decl && decl.impact) base = fallbackBase || null;
-  // No declaration: today's behavior byte-for-byte. No prior full pass: the
-  // first run IS the anchor everything later diffs against, so it is full too.
+  if (base === null && decl && (decl.impact || decl.ci)) base = fallbackBase || null;
+  // No declaration: today's behavior byte-for-byte. No anchor (no stamp, and
+  // no merge-base fallback for this declaration): the first run IS the anchor
+  // everything later diffs against, so it is full too.
   if (!decl || base === null) {
     const full = { mode: 'full', suites: '*', static: true, base, unmatched: [], matched: [] };
     // Unanchored, the impact suite runs full like every other suite: a
@@ -73,7 +84,7 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   let all = false;
   let isStatic = false;
   for (const file of files) {
-    const idx = decl.rules.findIndex((r) => globToRegExp(r.match).test(file));
+    const idx = firstRuleIndex(decl, file);
     if (idx === -1) {
       unmatched.push(file);
       supersedingPaths.push(file);
@@ -123,4 +134,19 @@ function selectScope({ decl, files, stamp, statuses = null, impact = null, fallb
   return result;
 }
 
-module.exports = { selectScope };
+// The sorted, de-duplicated `paths` when every one is inert, else null (an
+// empty/null list, an unmatched path, an impact or static rule all fail closed).
+function inertDirtyPaths(decl, paths) {
+  if (!decl || !Array.isArray(paths) || paths.length === 0) return null;
+  const generated = (decl.generated || []).map(globToRegExp);
+  const inert = (file) => {
+    if (generated.some((re) => re.test(file))) return true;
+    const idx = firstRuleIndex(decl, file);
+    if (idx === -1) return false;
+    const rule = decl.rules[idx];
+    return Array.isArray(rule.suites) && rule.suites.length === 0 && rule.static === false && !rule.impact;
+  };
+  return paths.every(inert) ? [...new Set(paths)].sort() : null;
+}
+
+module.exports = { selectScope, inertDirtyPaths, firstRuleIndex };

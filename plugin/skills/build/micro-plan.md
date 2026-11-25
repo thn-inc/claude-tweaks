@@ -1,6 +1,6 @@
-# Micro-Plan — single-file fast-lane records skip `/superpowers:writing-plans` (#1911)
+# Micro-Plan — small fast-lane records skip `/superpowers:writing-plans` (#1911)
 
-Read from Spec Step 3, before invoking `/superpowers:writing-plans`. A one-file, one-task record
+Read from Spec Step 3, before invoking `/superpowers:writing-plans`. A one-task record whose implementation files fit the gate below
 has no cross-task structure for a full plan to capture — no task ordering, no shared-file
 conflicts, no pre-execution conflict scan for SDD to run over task pairs. This procedure composes
 that single task directly from the already-materialized spec instead.
@@ -80,7 +80,7 @@ or implied by the Acceptance Criteria is its own `Test:` line; a read-only entry
 This is deliberately not a copy of `/superpowers:writing-plans`'s full task-authoring machinery
 (no Global Constraints block, no per-step `Probe`/mutation-probe scaffolding) — those exist to
 coordinate multiple tasks and multiple reviewers across a plan large enough to need them. A
-one-task, one-file plan has nothing for that scaffolding to coordinate; SDD's `task-brief` script
+one-task plan has nothing for that scaffolding to coordinate; SDD's `task-brief` script
 only requires a heading matching `^#+\s+Task\s+{n}` to extract the section, which the template
 above satisfies.
 

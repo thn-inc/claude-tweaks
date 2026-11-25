@@ -173,7 +173,10 @@ routed this run, per `_shared/materiality-floor.md`'s "Digest URL and count surf
 For an item whose reason the drill itself picks (the "anything else" case above), run the command
 once that value is chosen, before the record is composed. Otherwise it composes exactly as ledger Phase
 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`, the #621 mapping above supplying
-its `Defer-reason:`, landing born-ready, parked, or `needs:definition` by the same rules.
+its `Defer-reason:`, with `keyFiles: [{ path, change }]` = the residue item's files — repo-relative
+file paths taken from explicit file tokens the item names, a trailing `:{digits}` or
+`:{digits}-{digits}` line suffix and a `#symbol` suffix stripped, no directories, out-of-repo
+files dropped, omitted when the item names no file — landing born-ready, parked, or `needs:definition` by the same rules.
 
 **Not on the ledger-narrowing path.** `_shared/ledger-format.md`'s Phase 2 narrowing step
 (`ledgerNarrowing` at `trusted`+, `ledgerRouteRemainder` at `unattended`) removes an item whose

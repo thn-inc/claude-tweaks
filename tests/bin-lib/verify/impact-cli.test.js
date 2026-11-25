@@ -627,7 +627,7 @@ test('AC2.1: under the key --local runs the impact subset here and never consult
   assert.strictEqual(r.marker(), 'tests/a.test.js\n');
   assert.deepStrictEqual(r.report().ci, [{
     suite: 'tests', workflow: 'test.yml', job: 'test', used: false, fallback: 'local-requested',
-    prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
+    prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0, dirtyExempt: null,
   }]);
 });
 
