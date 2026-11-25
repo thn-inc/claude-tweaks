@@ -24,9 +24,19 @@
 // number of tests here and none of the attributed ones exists at base, the
 // bullet carries a possible-rename note.
 //
+// Closing fixed records (#6222): on main, on every readable report, after
+// filing, the CLI closes open regression records whose listed files are all
+// absent from the head's failing set and whose filing commit is an ancestor of
+// or identical to the head. It closes nothing when the failing set is unknown,
+// the run is not `--full`, a test file timed out, or a listed file is
+// flaky-passed; a record with no parseable file list, an unknown filing commit,
+// or a filing commit that is not an ancestor stays open. A `bot:in-progress`
+// record gets one comment (marked, so later runs skip it) instead of a close. A
+// `gh` failure there never changes the exit code.
+//
 // Exit codes (a CLI-local vocabulary; the only caller is the workflow):
 //   0  the verify outcome is a pass (raw pass, or a baseline-adjudicated pass)
-//      — nothing filed
+//      — nothing filed (fixed records may still be closed, see above)
 //   1  the verify outcome is a failure, whether or not an issue was filed
 //      (a non-main ref files nothing); or the report is missing / unreadable /
 //      not a JSON object (on main, that also files a "no verify report" issue —
@@ -66,12 +76,21 @@ Reads verify.js's report.json and, when the verify outcome is a failure on
 ${MAIN_REF}, files one ${LABEL} issue naming the newly failing test files — or
 comments on the open issue already covering this commit.
 
+On ${MAIN_REF}, on every readable report, after filing, it also closes open
+regression records whose listed files are all absent from the head's failing
+set and whose filing commit is an ancestor of or identical to the head. It
+closes nothing when the failing set is unknown, the run is not --full, a test
+file timed out, or a listed file is flaky-passed; a record with no parseable
+file list, an unknown filing commit, or a non-ancestor one stays open. A
+bot:in-progress record gets one comment, not a close. A gh failure there never
+changes the exit code.
+
   --log <path>   the uncapped verify log of the tests check; the excerpt source
                  when readable, else the report's capped failingRegion
   --base <sha>   the commit verify compared against, named in the issue
 
 exit codes:
-  0  the verify outcome is a pass — nothing filed
+  0  the verify outcome is a pass — nothing filed (fixed records may be closed)
   1  the verify outcome is a failure (filed on main only), the report is
      unreadable, or \`gh issue create\` / \`gh issue comment\` failed
   2  malformed invocation
@@ -300,13 +319,13 @@ function timedOutOf(report) {
 // naming a sha is only trusted when this author wrote it.
 const WORKFLOW_LOGIN = 'github-actions';
 
-const strings = (a) => a.filter((x) => typeof x === 'string').map(slashes);
+const stringPaths = (a) => a.filter((x) => typeof x === 'string').map(slashes);
 
 // The files failing at this run's head (#6222): the adjudicated failingFiles, an
 // empty set when the raw tests check passed, else unknown (never guessed).
 function headFailingSet(report) {
   const ba = report.baselineAdjudicated;
-  if (isPlainObject(ba) && ba.eligible === true && Array.isArray(ba.failingFiles)) return { files: strings(ba.failingFiles) };
+  if (isPlainObject(ba) && ba.eligible === true && Array.isArray(ba.failingFiles)) return { files: stringPaths(ba.failingFiles) };
   const tests = isPlainObject(report.checks) ? report.checks.tests : undefined;
   if (isPlainObject(tests) && tests.exitCode === 0) return { files: [] };
   return { unknown: 'baseline adjudication did not run and the tests check did not pass' };
@@ -339,7 +358,7 @@ function listedFiles(body) {
 
 function flakyPassedOf(report) {
   const ba = report.baselineAdjudicated;
-  return isPlainObject(ba) && Array.isArray(ba.flakyPassed) ? strings(ba.flakyPassed) : [];
+  return isPlainObject(ba) && Array.isArray(ba.flakyPassed) ? stringPaths(ba.flakyPassed) : [];
 }
 
 // The sha a record's file list was last judged at: the latest workflow re-comment,
@@ -352,7 +371,7 @@ function recordShaOf(issue) {
     const m = /^The post-merge Windows check failed on commit ([0-9a-f]{7,40})\b/.exec(c.body);
     if (m) return m[1];
   }
-  const t = typeof issue.title === 'string' ? / after ([0-9a-f]{7,40})\b/.exec(issue.title) : null;
+  const t = typeof issue.title === 'string' && issue.title.startsWith(TITLE_PREFIX) ? / after ([0-9a-f]{7,40})\b/.exec(issue.title) : null;
   return t ? t[1] : null;
 }
 
@@ -508,7 +527,12 @@ function run(argv, deps) {
   }
 
   const verdict = classify(report);
-  if (verdict.outcome === 'pass') { out(`${TOOL}: pass — nothing to file`); return 0; }
+  const closeCtx = { report, repo, sha, runUrl };
+  if (verdict.outcome === 'pass') {
+    out(`${TOOL}: pass — nothing to file`);
+    if (ref === MAIN_REF) closeFixedIssues(closeCtx, deps);
+    return 0;
+  }
   if (ref !== MAIN_REF) { out(`${TOOL}: fail on ${ref} — not filing (main only)`); return 1; }
 
   let logText;
@@ -522,7 +546,80 @@ function run(argv, deps) {
 
   const issue = composeIssue({ report, verdict, sha, base, pr: lookupMergedPr(repo, sha, deps), runUrl, logText });
   fileOrComment(issue, { repo, sha, adjudicated: verdict.adjudicated }, deps);
+  closeFixedIssues(closeCtx, deps);
   return 1;
+}
+
+// Written first in the comment on a bot:in-progress record, so a later run sees it
+// and does not comment twice.
+const FILES_PASS_MARKER = '<!-- windows-regression-files-pass -->';
+
+// Close (or, for a bot:in-progress record, comment once on) every open regression
+// record whose listed files all pass at this head and whose filing commit is an
+// ancestor of it (#6222). Every gh failure is a stderr line; the exit code is the
+// caller's.
+function closeFixedIssues({ report, repo, sha, runUrl }, deps) {
+  const out = (s) => deps.stdout(`${s}\n`);
+  const err = (s) => deps.stderr(`${s}\n`);
+  const short = sha.slice(0, 9);
+  const set = headFailingSet(report);
+  if (set.unknown) { err(`${TOOL}: not closing fixed records — head failing set unknown (${set.unknown})`); return; }
+  const skip = closeSkipReason(report);
+  if (skip) { out(`${TOOL}: not closing fixed records — ${skip}`); return; }
+  let records;
+  try {
+    records = JSON.parse(deps.gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', LABEL,
+      '--search', 'Windows regression in:title', '--json', 'number,title,body,labels,comments', '--limit', '200']));
+    if (!Array.isArray(records)) throw new Error('listing is not an array');
+  } catch (e) {
+    err(`${TOOL}: fixed-record lookup failed: ${e.message}`);
+    return;
+  }
+  const failing = new Set([...set.files, ...flakyPassedOf(report)]);
+  for (const r of records) {
+    if (!isPlainObject(r) || !Number.isInteger(r.number) || typeof r.title !== 'string'
+      || !r.title.startsWith(TITLE_PREFIX) || typeof r.body !== 'string') continue;
+    const n = r.number;
+    const files = listedFiles(r.body);
+    if (files === null) { err(`${TOOL}: #${n} left open — no parseable file list`); continue; }
+    if (files.some((f) => failing.has(f))) continue;
+    const recordSha = recordShaOf(r);
+    if (recordSha === null) { err(`${TOOL}: #${n} left open — filing commit unknown`); continue; }
+    try {
+      const status = String(deps.gh(['api', `repos/${repo}/compare/${recordSha}...${sha}`, '--jq', '.status'])).trim();
+      if (status !== 'ahead' && status !== 'identical') {
+        err(`${TOOL}: #${n} left open — ${recordSha} is ${status} relative to ${short}`);
+        continue;
+      }
+    } catch (e) {
+      err(`${TOOL}: #${n} left open — compare ${recordSha}...${short} failed: ${e.message}`);
+      continue;
+    }
+    const bullets = files.map((f) => `- \`${f}\``).join('\n');
+    const lead = `The post-merge Windows check passed these files at ${sha} (${runUrl}):\n\n${bullets}\n`;
+    const inProgress = Array.isArray(r.labels) && r.labels.some((l) => isPlainObject(l) && l.name === 'bot:in-progress');
+    if (inProgress) {
+      const comments = Array.isArray(r.comments) ? r.comments : [];
+      if (comments.some((c) => isPlainObject(c) && typeof c.body === 'string' && c.body.includes(FILES_PASS_MARKER))) {
+        out(`${TOOL}: #${n} files pass — already commented (bot:in-progress)`);
+        continue;
+      }
+      try {
+        deps.gh(['issue', 'comment', String(n), '--repo', repo, '--body-file', '-'],
+          `${FILES_PASS_MARKER}\n${lead}\nThis record is in progress, so it is left open for its claimant to settle.`);
+        out(`${TOOL}: #${n} files pass at ${short} — commented (bot:in-progress)`);
+      } catch (e) {
+        err(`${TOOL}: gh issue comment #${n} failed: ${e.message}`);
+      }
+      continue;
+    }
+    try {
+      deps.gh(['issue', 'close', String(n), '--repo', repo, '--reason', 'completed', '--comment', `${lead}\nClosing: nothing listed here fails any more.`]);
+      out(`${TOOL}: closed #${n} — its files pass at ${short}`);
+    } catch (e) {
+      err(`${TOOL}: gh issue close #${n} failed: ${e.message}`);
+    }
+  }
 }
 
 // Comment on the open issue already covering this commit, else file a new one.
@@ -564,4 +661,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf };
+module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf, FILES_PASS_MARKER };
