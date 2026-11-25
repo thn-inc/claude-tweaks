@@ -1032,10 +1032,16 @@ async function run(argv, deps = {}) {
   const consolePath = path.join(runDir, 'console.json');
   let existingRaw = null;
   try { existingRaw = fs.readFileSync(consolePath, 'utf8'); } catch { existingRaw = null; }
+  // #6284: approvals `recheck-followups.js approve` recorded before this resolve (an unresolved console it created),
+  // by item id; the fresh write below carries each onto the same id's pending item rather than dropping it.
+  const priorApprovals = new Map();
   if (existingRaw !== null) {
     let parsed;
     try { parsed = JSON.parse(existingRaw); } catch { parsed = undefined; }
     const existing = parsed && typeof parsed === 'object' ? parsed : null;
+    for (const it of (existing && Array.isArray(existing.items) ? existing.items : [])) {
+      if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object') priorApprovals.set(it.id, it.approval);
+    }
     const onPr = existing !== null
       && (existing.prNumber !== undefined || existing.commentIds !== undefined || existing.mergeCheckVerdict !== undefined);
     const pr = onPr && existing.prNumber !== undefined ? `PR #${existing.prNumber}` : 'the PR';
@@ -1085,6 +1091,9 @@ async function run(argv, deps = {}) {
     ...(deps.resolverDeps || {}),
   };
   const result = resolveAll({ runDir, policy: o.policy, deps: resolverDeps, controlMode: controlMode === true });
+  if (priorApprovals.size > 0) {
+    result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) ? { ...it, approval: priorApprovals.get(it.id) } : it));
+  }
   // The proposal text stays in-process (result.filings); console.json and --json carry only the summary.
   const { snapshot, table, filings, digests, decisionFacts, ...rest } = result;
   const filingSummaries = filings.map(({ item, fingerprint, title }) => ({ item, fingerprint, title }));
@@ -1120,7 +1129,17 @@ async function run(argv, deps = {}) {
     // A degrade, logged `SKIP` in _shared/auto-decision-log.md's Degrade-trace shape: what the ownership read could not do.
     const ownershipNotes = (upstreamRead === null ? [] : upstreamRead.notes).map((note) => formatEntry({ status: 'SKIP', now: now(), step: 'Upstream ownership', text: `condition: ${note}`, reversibility: 'n/a' }));
     appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines, ...ownershipNotes].join('\n') });
-    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+    // #6284: under the same lock `recheck-followups.js approve`/`execute` take, so an approval written since the early read
+    // above is carried onto its pending item instead of being overwritten.
+    withLock(path.join(runDir, '.console.lock'), () => {
+      let fresh = null;
+      try { fresh = JSON.parse(fs.readFileSync(consolePath, 'utf8')); } catch { fresh = null; }
+      for (const it of (fresh && Array.isArray(fresh.items) ? fresh.items : [])) {
+        if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object' && !priorApprovals.has(it.id)) priorApprovals.set(it.id, it.approval);
+      }
+      result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) && !it.approval ? { ...it, approval: priorApprovals.get(it.id) } : it));
+      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+    }, { failClosed: true, env: process.env });
   }
   // #3370: items this console deliberately left pending/keep-staged must survive
   // the run's own final stop. Read-only: nothing here applies or resolves them.
@@ -1139,4 +1158,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };
+module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, controlModeOn, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

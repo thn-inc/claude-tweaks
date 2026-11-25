@@ -150,6 +150,22 @@ The reconciler's `post-merge` check reads this line as the marker that the step 
 does not run Steps 4.0 and 4.0b a second time for this run. On the no-`closingSet[]` path above, the
 `(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and
 "0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.
+Then continue to Step 4.0c.
+
+### Step 4.0c: Execute approved follow-up re-checks (#6284)
+
+`$PIPELINE_RUN_DIR` still exists here (Step 4.0); the cwd may be the main checkout — the CLI resolves
+the anchored run dir itself. Multi-spec: pass the parent dir.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/recheck-followups.js" execute --run "$PIPELINE_RUN_DIR"
+```
+
+It executes every `followup-recheck-*` approval the Review Console recorded (`wrap-up/followup-recheck.md`)
+once the PR is `MERGED` and the record is unchanged — the comment, and for a close the close — drops
+the approval on a closed-unmerged PR, and holds it otherwise; it logs its own lines and exits 0 whatever
+the item outcomes. A non-zero exit names the gap in the closing summary, never anything but `merged`.
+Then continue to Step 4.1.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 

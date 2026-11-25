@@ -74,6 +74,9 @@ const FILING_FAILED_NOTE = 'filing failed — see decisions.md';
 // #4679: a can't-tell finding row whose drop was logged to the materiality digest
 // instead of filed — named in `--digested`, a settled (cleared) outcome.
 const DIGESTED_NOTE = 'digested — logged to the materiality digest, nothing filed';
+// #6284: a q-N row `recheck-followups.js approve --item` recorded an approval on. The human approved it; the close or
+// comment itself runs only at the post-merge execute step, so the row counts as executed here, never declined.
+const RECHECK_APPROVAL_NOTE = 'approval recorded; executes after merge';
 
 const isFindingRow = (item) => typeof item.findingItem === 'string' && item.findingItem.length > 0;
 
@@ -642,6 +645,11 @@ async function resolveConsoleExecution(runDir, {
         id: item.id, kind: item.kind, outcome: 'digested', note: DIGESTED_NOTE, isMergeRow: item.isMergeRow === true, findingItem: item.findingItem,
       };
     }
+    if (!declineSet.has(item.id) && item.approval && typeof item.approval === 'object') {
+      return {
+        id: item.id, kind: item.kind, outcome: 'executed', note: RECHECK_APPROVAL_NOTE, isMergeRow: item.isMergeRow === true,
+      };
+    }
     if (!declineSet.has(item.id) && (approveSet.has(item.id) || ticks[item.id] === true)) {
       return { id: item.id, kind: item.kind, outcome: 'executed', isMergeRow: item.isMergeRow === true };
     }
@@ -726,11 +734,15 @@ async function resolveConsoleExecution(runDir, {
   const nextConsoleJson = {
     ...consoleJson,
     ...(Array.isArray(consoleJson.items) ? {
-      items: consoleJson.items.map((item, i) => ({
-        ...item,
-        outcome: outcomes[i].outcome,
-        ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
-      })),
+      items: consoleJson.items.map((item, i) => {
+        // An explicitly declined row drops any re-check approval it carried, so execute never acts on it (#6284).
+        const kept = declineSet.has(item.id) ? Object.fromEntries(Object.entries(item).filter(([k]) => k !== 'approval')) : item;
+        return {
+          ...kept,
+          outcome: outcomes[i].outcome,
+          ...(outcomes[i].note ? { note: outcomes[i].note } : {}),
+        };
+      }),
     } : {}),
     executedAt: new Date(now).toISOString(),
     resolved: allCleared,
@@ -774,7 +786,7 @@ function errorText(err) {
 // sees exactly what this verb decided.
 function buildExecutedReplyBody(outcomes) {
   const lines = outcomes.map((o) => (o.outcome === 'executed'
-    ? `- \`${o.id}\`: executed`
+    ? `- \`${o.id}\`: executed${o.note ? ` — ${o.note}` : ''}`
     : `- \`${o.id}\`: ${o.note}`));
   return `${EXECUTED_REPLY_MARKER}\n${lines.join('\n')}`;
 }
@@ -819,4 +831,5 @@ module.exports = {
   DROPPED_NOTE,
   FILING_FAILED_NOTE,
   DIGESTED_NOTE,
+  RECHECK_APPROVAL_NOTE,
 };

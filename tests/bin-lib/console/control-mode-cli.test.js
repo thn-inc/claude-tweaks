@@ -89,6 +89,33 @@ test('AC1.1: control mode resolves and logs the policy item, carries the contest
   assert.strictEqual(stored.decisionFacts, 1);
 });
 
+test('AC6.2: control mode on — a staged followup-recheck-3.md resolves carried and its staged file is untouched (control-mode case only; the pending case outside control mode is resolve.test.js AC6.1)', async () => {
+  const body = 'Title: close #3\n\nbody';
+  const fx = controlFixture({ staged: { 'followup-recheck-3.md': body } });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(resolveArgs(fx), d), 0);
+  const item = cj(fx).items.find((i) => i.id === 'followup-recheck-3.md');
+  assert.strictEqual(item.resolution, 'carried');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'staged', 'followup-recheck-3.md'), 'utf8'), body);
+});
+
+test('M6: console-resolve at unattended over an approve-created console.json resolves the other staged items and keeps the approval', async () => {
+  const approval = { at: '2026-09-06T11:00:00.000Z', pr: '12', headSha: null, stagedHash: 'h' };
+  const approved = { id: 'followup-recheck-3.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval };
+  const fx = mainCheckoutWithRun({
+    staged: { 'followup-recheck-3.md': 'Title: Close #3: t\n\nbody', 'skills-1.md': 'x' },
+    consoleJson: JSON.stringify({ resolved: false, mode: 'recheck-approval', at: approval.at, items: [approved] }),
+  });
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(resolveArgs(fx), d), 0);
+  const stored = cj(fx);
+  assert.strictEqual(stored.resolved, true);
+  const items = Object.fromEntries(stored.items.map((i) => [i.id, i]));
+  assert.strictEqual(items['skills-1.md'].resolution, 'approve');
+  assert.strictEqual(items['followup-recheck-3.md'].resolution, 'pending');
+  assert.deepStrictEqual(items['followup-recheck-3.md'].approval, approval);
+});
+
 test('AC2.1: a control-mode console.json with carried items passes the archival reconcile check as having no open items', async () => {
   const fx = controlFixture();
   assert.strictEqual(await run(resolveArgs(fx), baseDeps(fx, []).d), 0);

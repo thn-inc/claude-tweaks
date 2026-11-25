@@ -32,6 +32,8 @@ const FILING_PENDING_RESOLUTION = 'filing-pending';
 // #4679: the digest twin of `filing-pending` — a planned can't-tell digest entry (`console.json#digests`) with no
 // digested line in decisions.md has not reached the materiality digest. Derived at read time, never stored.
 const DIGEST_PENDING_RESOLUTION = 'digest-pending';
+// #6284: an approved `followup-recheck-{n}.md` proposal whose merge never landed — read-time only, never stored.
+const RECHECK_APPROVED_RESOLUTION = 'recheck-approved';
 
 // The one spelling of a can't-tell finding fingerprint (`consolefinding-{8 hex}`, finding-filing.js's
 // findingFingerprint): the two AUTO-line patterns below and finding-filing.js's marker reader all build on it. It
@@ -127,8 +129,76 @@ function pendingDigests(consoleJson, decisions) {
   });
 }
 
-function consoleResidueItems(consoleJson, decisions = '') {
-  return [...unresolvedItems(consoleJson), ...pendingFilings(consoleJson, decisions), ...pendingDigests(consoleJson, decisions)];
+const RECHECK_ID_RE = /^followup-recheck-(\d+)\.md$/;
+// A PR-rendered console's row id (`q-{n}`, or `{spec-slug}-q-{n}`), whose approval names its staged file in `stagedFile`.
+const PR_QUEUE_ITEM_RE = /^(?:[A-Za-z0-9._-]+-)?q-\d+$/;
+
+// #6284: the `followup-recheck-{n}.md` staged file an item stands for — its own id, or a PR-rendered `q-{n}` row's
+// `stagedFile` (recheck-followups.js approve --item). null for any other item.
+function recheckStagedId(item) {
+  if (!item || typeof item !== 'object') return null;
+  if (RECHECK_ID_RE.test(String(item.id))) return item.id;
+  if (PR_QUEUE_ITEM_RE.test(String(item.id)) && typeof item.stagedFile === 'string' && RECHECK_ID_RE.test(item.stagedFile)) return item.stagedFile;
+  return null;
+}
+
+// The run's own facts the re-check derives its PR from (#6284), the one reader recheck-followups.js approve uses too:
+// run-state.json and config.yml's `integration-model` pin, read from `dir` or a multi-spec spec dir's parent (the
+// parent owns the PR). `pr` is `local` under a `local-merge` pin or when the run records no PR number.
+function recheckRunFacts(dir, readFile = defaultReadFile) {
+  const factsDir = /^spec-/.test(path.basename(dir)) ? path.dirname(dir) : dir;
+  let state = null;
+  try { state = JSON.parse(readFile(path.join(factsDir, 'run-state.json'))); } catch { state = null; }
+  if (!state || typeof state !== 'object' || Array.isArray(state)) state = {};
+  let model = null;
+  try {
+    const m = /^integration-model:[ \t]*([A-Za-z-]+)[ \t]*(?:#.*)?$/m.exec(readFile(path.join(factsDir, 'config.yml')));
+    model = m ? m[1] : null;
+  } catch { model = null; }
+  const prNumber = state.pr && /^\d+$/.test(String(state.pr.number)) ? String(state.pr.number) : null;
+  const branch = typeof state.branch === 'string' ? state.branch : (state.pr && typeof state.pr.branch === 'string' ? state.pr.branch : null);
+  return {
+    pr: model === 'local-merge' || prNumber === null ? 'local' : prNumber,
+    worktree: typeof state.worktree === 'string' ? state.worktree : null,
+    branch,
+  };
+}
+
+// The paste-ready re-check verbs (#6284). `approve` takes no --pr: the CLI derives it from the run itself. A local
+// merge's `execute` carries --local-merged, which the CLI still checks by ancestry of the approved head commit. Each
+// returns a bare, runnable command: the local-merge note is RECHECK_LOCAL_NOTE, printed on its own line, never inside.
+const recheckBin = (pluginRoot) => (pluginRoot ? `node "${pluginRoot}/bin/recheck-followups.js"` : 'recheck-followups.js');
+function recheckApproveCommand({ consoleDir, pluginRoot, id }) {
+  return `${recheckBin(pluginRoot)} approve --run "${consoleDir}" --id ${id}`;
+}
+function recheckExecuteCommand({ consoleDir, pluginRoot, id, localMerged = false }) {
+  return `${recheckBin(pluginRoot)} execute --run "${consoleDir}" --id ${id}${localMerged ? ' --local-merged' : ''}`;
+}
+const RECHECK_LOCAL_NOTE = 'local merge: run it only after the push landed';
+
+// #6284: a `followup-recheck-{n}.md` item `recheck-followups.js approve` left `pending` with an `approval` field is
+// approved but unexecuted (its merge never landed or `execute` was never run). Re-worded `recheck-approved` at read
+// time only; `execute` rewrites a settled one to `applied`/`dropped`, which `unresolvedItems` never yields.
+// `readStaged(id)` (optional) supplies the proposal text so the reason can name `close` or `narrow`.
+function rewordRecheckApproved(item, readStaged) {
+  const stagedId = recheckStagedId(item);
+  const m = stagedId && RECHECK_ID_RE.exec(stagedId);
+  if (!m || item.resolution !== 'pending' || !item.approval || typeof item.approval !== 'object') return item;
+  let action = 're-check proposal';
+  try {
+    const head = String((readStaged && readStaged(stagedId)) || '').replace(/\r\n/g, '\n').split('\n\n')[0];
+    const a = /^Action:[ \t]*(close|narrow)[ \t]*$/m.exec(head);
+    if (a) action = a[1];
+  } catch { /* the staged file is gone: the generic wording stands */ }
+  const pr = item.approval.pr === 'local' ? 'local merge' : `PR #${item.approval.pr}`;
+  return { ...item, resolution: RECHECK_APPROVED_RESOLUTION, reason: `approved #${m[1]} ${action} waits on ${pr}` };
+}
+
+function consoleResidueItems(consoleJson, decisions = '', readStaged) {
+  return [
+    ...unresolvedItems(consoleJson).map((i) => rewordRecheckApproved(i, readStaged)),
+    ...pendingFilings(consoleJson, decisions), ...pendingDigests(consoleJson, decisions),
+  ];
 }
 
 // Partition unresolved items into those a human can still review and those
@@ -146,7 +216,7 @@ function splitMissing(items, consoleDir, exists = fs.existsSync) {
     const id = item && item.id;
     const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id
       && !FAILED_OUTCOMES.has(item.resolution) && item.resolution !== FILING_PENDING_RESOLUTION
-      && item.resolution !== DIGEST_PENDING_RESOLUTION;
+      && item.resolution !== DIGEST_PENDING_RESOLUTION && item.resolution !== RECHECK_APPROVED_RESOLUTION;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
     } else {
@@ -186,7 +256,8 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
     if ([parsed.filings, parsed.digests].some((list) => Array.isArray(list) && list.length > 0)) {
       try { decisions = readFile(path.join(path.dirname(p), 'decisions.md')); } catch { decisions = ''; }
     }
-    const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions), path.dirname(p), exists);
+    const readStaged = (id) => readFile(path.join(path.dirname(p), 'staged', id));
+    const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions, readStaged), path.dirname(p), exists);
     const acknowledged = typeof parsed.residueAcknowledgedAt === 'string';
     if (items.length === 0) {
       // Not residue (nothing a human can open), but its missing items are still
@@ -248,8 +319,24 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
     if (fs.existsSync(decisions)) lines.push(`    see "${decisions}"`);
     return lines;
   }
-  const staged = path.join(consoleDir, 'staged', item.id);
+  const recheckId = recheckStagedId(item);
+  const staged = path.join(consoleDir, 'staged', recheckId || item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
+  if (item.resolution === RECHECK_APPROVED_RESOLUTION && recheckId) {
+    const localMerged = Boolean(item.approval) && item.approval.pr === 'local';
+    lines.push(`    execute: ${recheckExecuteCommand({ consoleDir, pluginRoot, id: recheckId, localMerged })}`);
+    if (localMerged) lines.push(`    # ${RECHECK_LOCAL_NOTE}`);
+    return lines;
+  }
+  // C1: an unapproved re-check proposal (the unattended `followup-recheck-human-call` pending item) — without an
+  // approve line, `--ack` would archive the run and the proposal with it.
+  if (recheckId && item.resolution === 'pending' && !item.approval) {
+    lines.push(`    approve: ${recheckApproveCommand({ consoleDir, pluginRoot, id: recheckId })}`);
+    const localMerged = recheckRunFacts(consoleDir).pr === 'local';
+    lines.push(`    then after the merge: ${recheckExecuteCommand({ consoleDir, pluginRoot, id: recheckId, localMerged })}`);
+    if (localMerged) lines.push(`    # ${RECHECK_LOCAL_NOTE}`);
+    return lines;
+  }
   const kind = pendingKindOf(item.resolution);
   if (kind) {
     const first = !printed.rerun;
@@ -298,8 +385,8 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 }
 
 module.exports = {
-  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
-  FILING_LOG_REMEDY, digestLogRemedy,
+  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, RECHECK_APPROVED_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
+  FILING_LOG_REMEDY, digestLogRemedy, recheckStagedId, recheckRunFacts, recheckApproveCommand, recheckExecuteCommand, RECHECK_LOCAL_NOTE,
   filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, consoleRerunCommand,
   readRunResidue, formatResidueLines,
 };

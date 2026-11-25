@@ -140,7 +140,9 @@ it literally into the next call; never carry it in a shell variable across calls
 7. **Push** — `_shared/local-merge-sequence.md` Step 4, from inside the worktree step 2 read.
 
    After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b against the pushed
-   merge commit (no PR, so `$MERGING_PR` is empty), logging to `$RUN_DIR/decisions.md`.
+   merge commit (no PR, so `$MERGING_PR` is empty), logging to `$RUN_DIR/decisions.md`. Then run
+   `node "${CLAUDE_PLUGIN_ROOT}/bin/recheck-followups.js" execute --run "$RUN_DIR" --local-merged`, which
+   executes the run's approved follow-up re-checks (`wrap-up/followup-recheck.md`) and logs its own lines.
 
    **On push failure** (non-zero exit — a rejected fast-forward, network failure, or permission
    error): the merge already landed locally in the main checkout, but nothing reached `origin` — do

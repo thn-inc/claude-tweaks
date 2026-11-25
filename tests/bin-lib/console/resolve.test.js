@@ -2174,6 +2174,13 @@ test('defers-yes-valid-reason-names-file-record: a deferral ruling resolves appl
   assert.notStrictEqual(resolveStaged('sdd-ruling-1.md', RULING('Defers: no\n')).reason, RATIFY_FILES_RECORD_REASON);
 });
 
+test('AC6.1: followup-recheck- resolves pending with reason followup-recheck-human-call under console-auto — resolveAll applies no tier, so the stance is the same at every tier (#6284)', () => {
+  const item = resolveStaged('followup-recheck-12.md', 'Title: close #12\n\nbody');
+  assert.strictEqual(item.section, 'Queue writes');
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'followup-recheck-human-call');
+});
+
 test('defers-yes-no-reason-pending: Defers: yes with no Defer-reason resolves pending (#3880 AC3)', () => {
   const item = resolveStaged('sdd-ruling-1.md', RULING('Defers: yes\n'));
   assert.strictEqual(item.resolution, 'pending');
@@ -2364,6 +2371,7 @@ test('stagingExemption matches with or without the extension and returns null ot
 test('#3488 newly mapped producer prefixes classify to their section and reason', () => {
   assert.deepStrictEqual(classifyStagedItem('upstream-draft-1.md'), { section: 'Upstream feedback', reason: 'hand-off-draft' });
   assert.deepStrictEqual(classifyStagedItem('premise-satisfied-7.md'), { section: 'Queue writes', reason: 'premise-satisfied-close-proposal' });
+  assert.deepStrictEqual(classifyStagedItem('followup-recheck-12.md'), { section: 'Queue writes', reason: 'followup-recheck-human-call' });
   assert.deepStrictEqual(classifyStagedItem('sibling-premise-disproof-7.md'), { section: 'Pending review', reason: 'sibling-premise-disproof-note' });
   // #3926 owns this id: its own Reflection insights section, executed by
   // review-console.md "On approval" step 10, so no pending reason.
