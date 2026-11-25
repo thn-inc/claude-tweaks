@@ -296,6 +296,66 @@ function timedOutOf(report) {
   return isPlainObject(ba) && Array.isArray(ba.timedOut) ? ba.timedOut : [];
 }
 
+// The login the post-merge workflow's own comments carry (#6222): a re-comment
+// naming a sha is only trusted when this author wrote it.
+const WORKFLOW_LOGIN = 'github-actions';
+
+const strings = (a) => a.filter((x) => typeof x === 'string').map(slashes);
+
+// The files failing at this run's head (#6222): the adjudicated failingFiles, an
+// empty set when the raw tests check passed, else unknown (never guessed).
+function headFailingSet(report) {
+  const ba = report.baselineAdjudicated;
+  if (isPlainObject(ba) && ba.eligible === true && Array.isArray(ba.failingFiles)) return { files: strings(ba.failingFiles) };
+  const tests = isPlainObject(report.checks) ? report.checks.tests : undefined;
+  if (isPlainObject(tests) && tests.exitCode === 0) return { files: [] };
+  return { unknown: 'baseline adjudication did not run and the tests check did not pass' };
+}
+
+// Why this run's evidence cannot close records, or null when it can.
+function closeSkipReason(report) {
+  const tests = isPlainObject(report.checks) ? report.checks.tests : undefined;
+  const command = isPlainObject(tests) ? tests.command : undefined;
+  if (typeof command !== 'string' || !/(^|\s)--full(\s|$)/.test(command)) return 'not a full-suite run';
+  if (timedOutOf(report).length > 0) return 'a test file timed out';
+  return null;
+}
+
+// The files composeIssue's "Newly failing test files" list names, or null when
+// the body has no such list or the list holds anything but bullets.
+function listedFiles(body) {
+  const lines = String(body).split(/\r?\n/);
+  const at = lines.indexOf('### Newly failing test files');
+  if (at === -1) return null;
+  const files = [];
+  for (const line of lines.slice(at + 1)) {
+    if (line === '') break;
+    const m = /^- `([^`]+)`/.exec(line);
+    if (!m) return null;
+    files.push(slashes(m[1]));
+  }
+  return files.length > 0 ? files : null;
+}
+
+function flakyPassedOf(report) {
+  const ba = report.baselineAdjudicated;
+  return isPlainObject(ba) && Array.isArray(ba.flakyPassed) ? strings(ba.flakyPassed) : [];
+}
+
+// The sha a record's file list was last judged at: the latest workflow re-comment,
+// else the short sha in the title, else null.
+function recordShaOf(issue) {
+  const comments = Array.isArray(issue.comments) ? issue.comments : [];
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i];
+    if (!isPlainObject(c) || !isPlainObject(c.author) || c.author.login !== WORKFLOW_LOGIN || typeof c.body !== 'string') continue;
+    const m = /^The post-merge Windows check failed on commit ([0-9a-f]{7,40})\b/.exec(c.body);
+    if (m) return m[1];
+  }
+  const t = typeof issue.title === 'string' ? / after ([0-9a-f]{7,40})\b/.exec(issue.title) : null;
+  return t ? t[1] : null;
+}
+
 // The adjudication's attributed-test entry for `file`, or null when it is
 // missing or malformed (anything but a non-empty array of non-empty string
 // arrays under `tests`): the caller falls back to the first-match excerpt.
@@ -504,4 +564,4 @@ function main(argv) {
 
 if (require.main === module) main(process.argv.slice(2));
 
-module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE };
+module.exports = { run, classify, findMergedPr, composeIssue, parseArgs, defaultDeps, USAGE, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf };

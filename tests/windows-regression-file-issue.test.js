@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { run, findMergedPr, classify } = require('../tools/windows-regression/file-issue');
+const { run, findMergedPr, classify, headFailingSet, closeSkipReason, listedFiles, flakyPassedOf, recordShaOf } = require('../tools/windows-regression/file-issue');
 const { readText } = require('./helpers/read-skill');
 
 const SHA = 'abcdef1234567';
@@ -1086,4 +1086,49 @@ test('R7: verify bounds each tests run with a 40-minute --cmd-timeout inside the
 
 test('the workflow no longer claims linear history', () => {
   assert.doesNotMatch(WORKFLOW, /squashed|linear history/i);
+});
+
+test('#6222: headFailingSet — adjudicated failingFiles, a raw tests pass is empty, anything else unknown', () => {
+  assert.deepEqual(headFailingSet({ baselineAdjudicated: { eligible: true, failingFiles: ['tests/a.test.js', 3] } }), { files: ['tests/a.test.js'] });
+  assert.deepEqual(headFailingSet({ pass: true, checks: { tests: { exitCode: 0 } } }), { files: [] });
+  for (const r of [{ pass: true }, { baselineAdjudicated: { eligible: false }, checks: { tests: { exitCode: 1 } } }, { checks: { tests: { exitCode: null } } }]) {
+    assert.equal(typeof headFailingSet(r).unknown, 'string', JSON.stringify(r));
+  }
+});
+
+test('#6222: closeSkipReason — non --full command and timed-out files skip; a clean full run does not', () => {
+  const full = { checks: { tests: { command: 'npm test -- --full' } } };
+  assert.equal(closeSkipReason(full), null);
+  assert.equal(closeSkipReason({ checks: { tests: { command: 'npm test' } } }), 'not a full-suite run');
+  assert.equal(closeSkipReason({ checks: { tests: { command: 'npm test -- --fuller' } } }), 'not a full-suite run');
+  assert.equal(closeSkipReason({}), 'not a full-suite run');
+  assert.equal(closeSkipReason({ ...full, baselineAdjudicated: { timedOut: ['tests/a.test.js'] } }), 'a test file timed out');
+});
+
+test('#6222: listedFiles parses composeIssue bullets (suffixes, CRLF) and rejects every other shape', () => {
+  const body = 'lead\n\n### Newly failing test files\n- `tests/a.test.js`\n- `tests/b.test.js` (timed out — no evidence)\n\n### Failure excerpts';
+  assert.deepEqual(listedFiles(body), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.deepEqual(listedFiles(body.replace(/\n/g, '\r\n')), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.equal(listedFiles('### Failing output (baseline adjudication did not run)\n\n```\nx\n```'), null);
+  assert.equal(listedFiles('### Newly failing test files\n\n'), null);
+  assert.equal(listedFiles('### Newly failing test files\n- `tests/a.test.js`\nsee also tests/b'), null);
+});
+
+test('#6222: flakyPassedOf — string entries of baselineAdjudicated.flakyPassed, else empty', () => {
+  assert.deepEqual(flakyPassedOf({ baselineAdjudicated: { flakyPassed: ['tests\\a.test.js', 4] } }), ['tests/a.test.js']);
+  assert.deepEqual(flakyPassedOf({}), []);
+});
+
+test('#6222: recordShaOf — latest re-comment sha, else the title short sha, else null', () => {
+  const title = 'Windows regression: 1 test file(s) newly failing after 111111111';
+  assert.equal(recordShaOf({ title, comments: [] }), '111111111');
+  const bot = { login: 'github-actions' };
+  assert.equal(recordShaOf({ title, comments: [
+    { author: bot, body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222 (compared against x).' },
+    { author: bot, body: 'unrelated' },
+    { author: bot, body: 'The post-merge Windows check failed on commit 3333333333333333333333333333333333333333.' },
+    { author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' },
+  ] }), '3333333333333333333333333333333333333333');
+  assert.equal(recordShaOf({ title, comments: [{ author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' }] }), '111111111');
+  assert.equal(recordShaOf({ title: 'Windows regression: something else', comments: 'x' }), null);
 });
