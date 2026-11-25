@@ -454,3 +454,43 @@ test('AC5.2: any localRuns value other than "on-request" fails validation, namin
   // A wrong value beside no ci block reports only the value error.
   assert.deepStrictEqual(readJson({ ...EXAMPLE, localRuns: 'always' }).errors, ['localRuns: must be "on-request" when present, got "always"']);
 });
+
+test('AC6.1: a declaration without subsetLaneSuites parses with subsetLaneSuites [] (#5368)', () => {
+  const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify(EXAMPLE) }));
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.subsetLaneSuites, []);
+});
+
+test('subsetLaneSuites naming declared suites is returned as given (#5368)', () => {
+  const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, subsetLaneSuites: ['web'] }) }));
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.decl.subsetLaneSuites, ['web']);
+});
+
+test('AC5.1: subsetLaneSuites that is not an array of strings is rejected naming the key (#5368)', () => {
+  const a = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, subsetLaneSuites: 'web' }) }));
+  assert.strictEqual(a.ok, false);
+  assert.ok(a.errors.includes('subsetLaneSuites: must be an array of declared suite names'), a.errors.join('\n'));
+  const b = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, subsetLaneSuites: ['web', 3] }) }));
+  assert.strictEqual(b.ok, false);
+  assert.ok(b.errors.includes('subsetLaneSuites: entries must be strings, got number'), b.errors.join('\n'));
+});
+
+test('AC5.2: subsetLaneSuites naming an undeclared suite is rejected (#5368)', () => {
+  const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, subsetLaneSuites: ['e2e'] }) }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.includes('subsetLaneSuites: unknown suite "e2e" (declared: api, web)'), r.errors.join('\n'));
+});
+
+test('AC5.3: subsetLaneSuites repeating a name is rejected (#5368)', () => {
+  const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, subsetLaneSuites: ['web', 'web'] }) }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.includes('subsetLaneSuites: "web" is listed more than once'), r.errors.join('\n'));
+});
+
+test('AC5.4: subsetLaneSuites naming impact.suite is rejected (#5368)', () => {
+  const impact = { suite: 'api', command: 'x {files}', tests: ['**/*.test.ts'] };
+  const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, impact, subsetLaneSuites: ['api'] }) }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.errors.includes('subsetLaneSuites: "api" is impact.suite — its full command is the whole-suite run the full lane exists for'), r.errors.join('\n'));
+});
