@@ -23,6 +23,8 @@ Scope keywords: fallbackBase
 - `tools/run-tests.js:577` also calls `selectScope` with `fallbackBase`, but `selectChangedTests` returns before it for a declaration without `impact` (line 571), so it needs no change (plan audit Check B, reviewed).
 - Intermediate commits reference the record as `refs #6102`, never `closes`/`fixes`.
 
+Waived tests/bin-lib/verify/impact-cli.test.js: read only, for the existing merge-base-anchor CLI pattern; its declarations carry `impact`, which already anchored, so no change.
+
 ## Review Focus
 
 - **Fixtures whose integration branch is HEAD's own branch.** `tests/bin-lib/verify/ci-cli.test.js`'s `repoWith` declares `ci` (by default) and passes `--integration-branch r.branch` where `r.branch` is the branch HEAD is on, with no stamp. After this change the merge-base equals HEAD, the changed set is empty, the selection is `none`, and CI is never consulted — every CI-answer case would break. Task 1 Step 5 moves the `head` commit onto a feature branch so the diff (the declaration + `extraFiles`, matched by the `'**' → '*'` rule) reaches `full` by rule.
@@ -49,6 +51,8 @@ Scope keywords: fallbackBase
 - Produces: same return shape; only the anchoring rule widens to `decl.impact || decl.ci`.
 
 - [ ] **Step 1: Write the failing tests in `tests/bin-lib/verify/scope.test.js`**
+
+Covers AC1.1, AC1.2, AC2.1, AC2.2, AC3.1, AC3.2.
 
 `const MB = 'fedcba9876543210fedcba9876543210fedcba98'`; `EXAMPLE_WITH_CI` = `decl(...)` over the same JSON as `EXAMPLE` plus `ci: { api: { workflow: 'test.yml', job: 'api' } }` (parsed through `readDeclaration`, like `EXAMPLE`; hoist the JSON into a const both share). Replace the `no impact block is unchanged: no impact key, fallbackBase ignored` test with:
 - `test('no impact block: no impact key in any result', …)` keeping the existing `decl: null` + `STAMP` deepStrictEqual and the `'impact' in …` loop.
@@ -85,6 +89,8 @@ Add to `cli-scope-integration.test.js` `test('--scope --integration-branch: no s
 In `ci-cli.test.js`'s `repoWith`: record `const branch = git('symbolic-ref', '--short', 'HEAD').trim()` after the base commit, then `git('checkout', '-q', '-b', 'feature')` before writing the declaration and `extraFiles`, and return that base `branch` (the integration branch). The `head` commit's diff (`.claude-tweaks/verify-scope.json` + `extraFiles`) then matches the `'**' → '*'` rule, so every CI case still reaches `full` by rule. `baseSha` is unchanged. Do not change assertions.
 
 - [ ] **Step 6: Run to verify it passes**
+
+Covers AC4.1 (Step 5's CLI case), AC5.1 (Step 4's #3511 fixture), AC5.2 (every other existing test).
 
 Run: `node --test tests/bin-lib/verify/`
 Expected: PASS, 0 failures. For any other failure caused by the widened anchor (a `ci` declaration expecting a no-stamp `full` with `--integration-branch`), make the fixture reach that result by its own diff or by `--base {trunk}` (which never anchors), and correct any comment that says the first run is always full. Then run `node --test tests/bin-lib/init/ci-workflow-review.test.js tests/bin-lib/dispatch/artifact-verdict.test.js tests/bin-lib/residue/cli.test.js` (the other `ci`-declaring suites) → PASS.
