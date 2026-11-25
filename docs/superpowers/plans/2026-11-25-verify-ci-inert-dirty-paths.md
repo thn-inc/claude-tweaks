@@ -38,6 +38,7 @@ Scope keywords: skipCi, ciEventEntries, inertDirtyPaths
 ### Task 1: `inertDirtyPaths` in scope.js
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/verify/scope.js` (add `firstRuleIndex`, use it in `selectScope`'s loop at the `decl.rules.findIndex(...)` line, add and export `inertDirtyPaths`)
@@ -112,7 +113,8 @@ Expected: FAIL — the new tests (CI not consulted, `fallback: 'dirty-tree'`) an
 - [ ] **Step 3: Implement** in `plugin/bin/verify.js`:
   - Import `inertDirtyPaths` with `selectScope`.
   - `ciEventEntries`: add `dirtyExempt: a.dirtyExempt ?? null`.
-  - Inside `if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none')`, before the loop: `const ciDirtyExempt = startGit.dirty === true ? inertDirtyPaths(decl, dirtyFilePaths(undefined, scopeStatusRead)) : null;` and, when non-null and `!parsed.local`, `process.stdout.write(\`CI: tree dirty only in inert paths (${ciDirtyExempt.join(', ')}) — taking CI verdicts on HEAD\n\`)`.
+  - Inside `if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none')`, before the loop: `const ciDirtyExempt = startGit.dirty === true ? inertDirtyPaths(decl, startDirtyPaths && startDirtyPaths.length ? startDirtyPaths : dirtyFilePaths(undefined, scopeStatusRead)) : null;` — reusing `startDirtyPaths` (L910) when that read already ran, so no second `git status`. Under an `impact` declaration `scopeStatusRead` is `null` and this is a fresh read after `impact.fetch`, exactly as L910's generated-path read already is (#5773); it fails closed, since any non-inert path present at that read keeps `dirty-tree`. State that in a one-line comment.
+  - The inert line is printed lazily, once, immediately before the first `fetchCiVerdict` call the exemption let through (a `let announced = false` flag), never before the loop — so a selection with no CI-declared suite in `cmds`, a `--local` run, or a `stopped` run prints nothing: `process.stdout.write(\`CI: tree dirty only in inert paths (${ciDirtyExempt.join(', ')}) — taking CI verdicts on HEAD\n\`)`.
   - `skipCi`'s entry gains `dirtyExempt: null`.
   - Guard becomes `if (startGit.dirty !== false && ciDirtyExempt === null)` (body unchanged).
   - After `fetchCiVerdict`: `verdict.ci.dirtyExempt = ciDirtyExempt;` before `ciAttempts.push(verdict.ci)`.
