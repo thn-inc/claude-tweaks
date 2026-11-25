@@ -19,7 +19,7 @@ Scope keywords: windows-regression/file-issue
 - Close with `gh issue close <n> --repo <repo> --reason completed --comment <body>`. The comment names the run URL, the head sha and the record's files.
 - Exit codes are unchanged: `0` on a pass, `1` on a fail. A `gh` failure while listing, comparing, closing or commenting is one stderr line, and the run continues with the next record.
 - Close only after filing or commenting, so a file failing at this head is never closed by the run that reports it.
-- Ancestry (spec Decision 1): close or comment only when `gh api repos/{repo}/compare/{record-sha}...{head} --jq .status` prints `ahead` or `identical`. `{record-sha}` is the sha from the record's latest re-comment when one exists, else the short sha in its title. Unparseable, unresolvable, a failing compare, or `behind`/`diverged` → left open with one stderr line naming the record.
+- Ancestry (spec Decision 1): close or comment only when `gh api repos/{repo}/compare/{record-sha}...{head} --jq .status` prints `ahead` or `identical`. `{record-sha}` is the sha from the record's latest re-comment authored by `github-actions` when one exists (spec Plan Review Clarifications), else the short sha in its title. Unparseable, unresolvable, a failing compare, or `behind`/`diverged` → left open with one stderr line naming the record.
 - `bot:in-progress` (spec Decision 2): the "files now pass" comment starts with the literal marker `<!-- windows-regression-files-pass -->`; a record that already has a comment containing it gets no further comment. The listing requests `comments` in `--json`.
 - Unknown failing set (spec Decision 3): its one stderr line prints whatever else holds, including on a non-`--full` run.
 - Family rule (spec Decision 4): any further ambiguity resolves fail-closed (fewer closes/comments, record left open), each skip one stderr line, exit code unchanged.
@@ -46,6 +46,7 @@ Scope keywords: windows-regression/file-issue
 ### Task 1: Pure close-input helpers
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tools/windows-regression/file-issue.js` (new helpers next to `timedOutOf`; extend `module.exports`)
@@ -57,7 +58,7 @@ Scope keywords: windows-regression/file-issue
   - `closeSkipReason(report: object) -> string | null`. `'not a full-suite run'` when `checks.tests.command` is not a string or has no whitespace-delimited `--full` token (`/(^|\s)--full(\s|$)/`). `'a test file timed out'` when `timedOutOf(report)` is non-empty. Otherwise `null`.
   - `listedFiles(body: string) -> string[] | null`. Splits on `/\r?\n/`, finds the line `### Newly failing test files`, collects every following line up to the first empty line or end of body. Each collected line must match `` /^- `([^`]+)`/ ``; any other line, zero bullets, or no heading returns `null`. Paths come back through `slashes()`.
   - `flakyPassedOf(report) -> string[]`: `baselineAdjudicated.flakyPassed` string entries through `slashes()`, else `[]`.
-  - `recordShaOf(issue: { title, comments }) -> string | null`. The latest entry of `comments` (array of `{ body }`, in listing order — oldest first) whose `body` matches `/^The post-merge Windows check failed on commit ([0-9a-f]{7,40})\b/` gives its group 1. Else `issue.title` matching `/ after ([0-9a-f]{7,40})\b/` gives its group 1. Else `null`. Non-array `comments` or non-string bodies count as no re-comment.
+  - `recordShaOf(issue: { title, comments }) -> string | null`. The latest entry of `comments` (array of `{ author: { login }, body }`, in listing order — oldest first) whose `author.login === 'github-actions'` (constant `WORKFLOW_LOGIN`; spec Plan Review Clarifications — any other author's comment is ignored) and whose `body` matches `/^The post-merge Windows check failed on commit ([0-9a-f]{7,40})\b/` gives its group 1. Else `issue.title` matching `/ after ([0-9a-f]{7,40})\b/` gives its group 1. Else `null`. Non-array `comments` or non-string bodies count as no re-comment.
 
 - [ ] **Step 1: Append the failing tests**
 
@@ -93,11 +94,14 @@ test('#6222: listedFiles parses composeIssue bullets (suffixes, CRLF) and reject
 test('#6222: recordShaOf — latest re-comment sha, else the title short sha, else null', () => {
   const title = 'Windows regression: 1 test file(s) newly failing after 111111111';
   assert.equal(recordShaOf({ title, comments: [] }), '111111111');
+  const bot = { login: 'github-actions' };
   assert.equal(recordShaOf({ title, comments: [
-    { body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222 (compared against x).' },
-    { body: 'unrelated' },
-    { body: 'The post-merge Windows check failed on commit 3333333333333333333333333333333333333333.' },
+    { author: bot, body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222 (compared against x).' },
+    { author: bot, body: 'unrelated' },
+    { author: bot, body: 'The post-merge Windows check failed on commit 3333333333333333333333333333333333333333.' },
+    { author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' },
   ] }), '3333333333333333333333333333333333333333');
+  assert.equal(recordShaOf({ title, comments: [{ author: { login: 'someone' }, body: 'The post-merge Windows check failed on commit 4444444444444444444444444444444444444444.' }] }), '111111111');
   assert.equal(recordShaOf({ title: 'Windows regression: something else', comments: 'x' }), null);
 });
 ```
@@ -145,10 +149,10 @@ The journeys that list this file in `files:` (`docs/journeys/learn-of-a-windows-
 Behaviour of `closeFixedIssues`, in order:
 1. `headFailingSet(report).unknown` → stderr `windows-regression: not closing fixed records — head failing set unknown ({reason})`, return. (Checked first, so it prints on a non-`--full` run too.)
 2. `closeSkipReason(report)` non-null → stdout `windows-regression: not closing fixed records — {reason}`, return.
-3. List: `deps.gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', LABEL, '--search', 'Windows regression in:title', '--json', 'number,title,body,labels,comments', '--limit', '200'])`. A throw, unparseable JSON or a non-array → stderr `windows-regression: fixed-record lookup failed: {message}`, return.
+3. List: `deps.gh(['issue', 'list', '--repo', repo, '--state', 'open', '--label', LABEL, '--search', 'Windows regression in:title', '--json', 'number,title,body,labels,comments', '--limit', '200'])` (`comments` entries carry `author.login` and `body`). A throw, unparseable JSON or a non-array → stderr `windows-regression: fixed-record lookup failed: {message}`, return.
 4. For each entry with an integer `number`, a string `title` starting with `TITLE_PREFIX`, and a string `body`: `files = listedFiles(body)`. `null` → stderr `windows-regression: #{n} left open — no parseable file list`, next. Any file in the failing set or in `flakyPassedOf(report)` → next, silently (normal case).
 5. `recordSha = recordShaOf(entry)`. `null` → stderr `windows-regression: #{n} left open — filing commit unknown`, next. Else `status = String(deps.gh(['api', `repos/${repo}/compare/${recordSha}...${sha}`, '--jq', '.status'])).trim()` in try/catch; a throw → stderr `windows-regression: #{n} left open — compare {recordSha}...{short} failed: {message}`; a status other than `ahead`/`identical` → stderr `windows-regression: #{n} left open — {recordSha} is {status} relative to {short}`; either way next.
-6. `labels` (array of `{name}`) contains `bot:in-progress`: when any `comments[].body` (string) includes `FILES_PASS_MARKER` → stdout `windows-regression: #{n} files pass — already commented (bot:in-progress)`, next. Else `deps.gh(['issue', 'comment', String(n), '--repo', repo, '--body-file', '-'], text)` and stdout `windows-regression: #{n} files pass at {short} — commented (bot:in-progress)`. Otherwise `deps.gh(['issue', 'close', String(n), '--repo', repo, '--reason', 'completed', '--comment', text])` and stdout `windows-regression: closed #{n} — its files pass at {short}`. Each call in its own try/catch; a throw → stderr `windows-regression: gh issue {close|comment} #{n} failed: {message}`, loop continues.
+6. `labels` (array of `{name}`) contains `bot:in-progress`: when any `comments[].body` (string, any author — spec Plan Review Clarifications) includes `FILES_PASS_MARKER` → stdout `windows-regression: #{n} files pass — already commented (bot:in-progress)`, next. Else `deps.gh(['issue', 'comment', String(n), '--repo', repo, '--body-file', '-'], text)` and stdout `windows-regression: #{n} files pass at {short} — commented (bot:in-progress)`. Otherwise `deps.gh(['issue', 'close', String(n), '--repo', repo, '--reason', 'completed', '--comment', text])` and stdout `windows-regression: closed #{n} — its files pass at {short}`. Each call in its own try/catch; a throw → stderr `windows-regression: gh issue {close|comment} #{n} failed: {message}`, loop continues.
 7. Comment text names `runUrl`, the full `sha`, and a `` - `file` `` bullet per file. The in-progress variant starts with `FILES_PASS_MARKER` on its own line and adds that the record is left open for its claimant to settle.
 
 Header comment and `USAGE`: the exit-code `0` line no longer says "nothing filed" alone. Add a paragraph: on main, on every readable report, after filing, the CLI closes open regression records whose listed files are all absent from the head's failing set and whose filing commit is an ancestor of or identical to the head. Name the skip conditions (failing set unknown, not `--full`, a timed-out file, a flaky-passed listed file, no parseable list, filing commit unknown or not an ancestor) and the once-only `bot:in-progress` comment. Say a `gh` failure there never changes the exit code.
@@ -176,8 +180,8 @@ Tests (each passes `{ 'issue list': closeList(...), api: compareAs('ahead') }` u
 - `AC1.5: a (not adjudicated) record is never closed`. List `{ number: 6, title: 'Windows regression: tests failing after 111111111 (not adjudicated)', body: '### Failing output (x)\n\n```\ny\n```', labels: [], comments: [] }` → `closedNums` empty, one stderr line matching `/#6 left open — no parseable file list/`.
 - `AC1.6: a bot:in-progress record is commented on, not closed`. `record(7, ['tests/a.test.js'], ['bot:in-progress'])` → `closedNums` empty, `commented(deps).args[2] === '7'`, its input starts with `FILES_PASS_MARKER` and names `SHA` and `tests/a.test.js`.
 - `AC1.7: a throwing gh leaves the exit code unchanged`. Pass report: the listing throws → exit `0`, one stderr `fixed-record lookup failed` line; the listing returns `'{}'` → exit `0`, one such line. `issue close` throws for two records → exit `0`, two stderr `gh issue close` lines, both close calls attempted. Fail report with a throwing close → exit `1`.
-- `AC1.8: a record whose filing commit is not an ancestor of the head, or cannot be resolved, stays open with one stderr line`. Four runs with `record(4, ['tests/a.test.js'])`: `compareAs('behind')`, `compareAs('diverged')`, an `api` handler throwing for `/compare/`, and a record titled `Windows regression: 1 test file(s) newly failing after somewhere` (no sha; no compare call made). Each: `closedNums` empty, no comment, exactly one stderr line naming `#4` and `left open`. Plus: a record with a re-comment `{ body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222.' }` compares `2222222222222222222222222222222222222222...${SHA}`.
-- `AC1.9: a bot:in-progress record already carrying the files-pass marker gets no second comment`. `record(7, ['tests/a.test.js'], ['bot:in-progress'], [{ body: `${FILES_PASS_MARKER}\nearlier` }])` → no comment call, `closedNums` empty, one stdout line matching `/#7 files pass — already commented/`.
+- `AC1.8: a record whose filing commit is not an ancestor of the head, or cannot be resolved, stays open with one stderr line`. Four runs with `record(4, ['tests/a.test.js'])`: `compareAs('behind')`, `compareAs('diverged')`, an `api` handler throwing for `/compare/`, and a record titled `Windows regression: 1 test file(s) newly failing after somewhere` (no sha; no compare call made). Each: `closedNums` empty, no comment, exactly one stderr line naming `#4` and `left open`. Plus: a record with a re-comment `{ author: { login: 'github-actions' }, body: 'The post-merge Windows check failed on commit 2222222222222222222222222222222222222222.' }` compares `2222222222222222222222222222222222222222...${SHA}`.
+- `AC1.9: a bot:in-progress record already carrying the files-pass marker gets no second comment`. `record(7, ['tests/a.test.js'], ['bot:in-progress'], [{ author: { login: 'someone' }, body: `${FILES_PASS_MARKER}\nearlier` }])` → no comment call, `closedNums` empty, one stdout line matching `/#7 files pass — already commented/`.
 - `AC1.10: an unknown failing set prints its stderr line even on a non---full run`. Two reports: `{ pass: false, effectivePass: true, checks: { tests: { ...FULL, exitCode: 1 } } }` and `{ pass: false, effectivePass: true, checks: { tests: { command: 'npm test', exitCode: 1 } } }` → each exit `0`, `closeListed(deps)` false, exactly one stderr line matching `/head failing set unknown/`.
 - `#6222: a non-main ref and an unreadable report never list for closing`. Neither run has `closeListed(deps)` true.
 
