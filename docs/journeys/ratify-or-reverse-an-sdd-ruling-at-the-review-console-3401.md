@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/stage-item/ledger.js
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/console/sdd-ruling.js
+  - plugin/bin/sdd-ruling-route.js
   - plugin/bin/lib/reconcile/console-execute.js
   - plugin/bin/wrap-up-engine.js
   - plugin/skills/wrap-up/review-console-appendix.md
@@ -87,4 +88,5 @@ files:
 - The unattended `pending` classes in step 2's Should understand gain `sdd-ruling-unreadable` (#4049, run `2026-10-24T110929-spec-4049`): a ruling row whose staged file cannot be read no longer reads as `sdd-ruling-unclassified`.
 - The unattended `pending` classes in step 2 gain `sdd-ruling-needs-human-decision` (#4587, run `2026-10-30T090414-record-4587`): a deferral whose one `Defer-reason:` is `needs-human-decision` is held for a human, not ratified; every other valid reason still ratifies.
 - Updated during the resumed build of #3942, run `2026-11-03T114019-record-3942` (the maintainer's Reading B and header-shape decisions): a human ratify of a gate-withheld ruling files a record while the unattended gate still holds it; agreeing `Defers: no` lines accept; an empty, blank, or unreadable staged ruling is not ratifiable and stays `open`; `finish-console` refuses an `accepted` ratify of a non-settled ruling (success state, steps 2, 4, 6, 7).
+- Updated during the build of #5449, run `2026-11-25T092637-record-5449`: a ruling the carry-forward labels `Class: procedural` (with `Defers: no`, no `Defer-reason:`) is routed by `bin/sdd-ruling-route.js` to an `AUTO` audit line in `decisions.md` plus an `observation` ledger row and never reaches the console; the Goal and step 1's red flag carve it out (goal, step 1).
 - Related: `docs/journeys/measure-sdd-final-review-value-3386.md` (reads the same rulings as evidence); `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md` (the `consoleAutoResolve` path that ratifies a ruling with zero clicks only when its staged header shows it safe, #3880).
