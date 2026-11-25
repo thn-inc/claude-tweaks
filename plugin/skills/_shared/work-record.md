@@ -98,7 +98,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 | Origin (7) | `by:code-health`, `by:harness-health`, `by:journey-health`, `by:docs-health`, `by:capture`, `by:dispatch`, `by:ci-health` | `BFD4F2` | Origin |
 | Risk (3) | `risk:low`, `risk:medium`, `risk:high` | `0E8A16` / `FBCA04` / `D93F0B` | Scoring |
 | Size (3) | `size:low`, `size:medium`, `size:high` | `D4C5F9` / `8B5CF6` / `5319E7` | Scoring |
-| Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | `FEF2C0` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, always explicit (no unscored state) |
+| Ceremony (2) | `ceremony:fast-lane`, `ceremony:standard` | `FEF2C0` | Ceremony depth — cross-cutting, not one of the axes; stamped by `/specify` alongside Scoring, and by `/capture`'s Shaped-body branch, always explicit (no unscored state) |
 | Stage (2) | `parked`, `ready` | `2EA44F` | Stage |
 | Grants (3) | `auto:build`, `auto:merge`, `auto:merge-pending` | `1D76DB` | Authorization |
 | Bot state (3) | `bot:in-progress`, `bot:blocked`, `bot:parked` | `6A737D` | Bot state |

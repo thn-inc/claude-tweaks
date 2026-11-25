@@ -531,6 +531,6 @@ test('#5369: --local is a usage error in the read-only modes', () => {
 
 test('#5369: USAGE names --local and EXIT_NO_VERDICT is 3', () => {
   assert.ok(USAGE.includes('[--local]'));
-  assert.ok(USAGE.includes('note: --local runs every selected suite on this machine and never consults a declared ci source; under a declaration with localRuns "on-request" a CI-declared suite runs here only with it, a --scope run CI cannot answer exits 3 (no verdict yet, never a test failure), and a run naming a CI-declared suite with neither --scope nor --local exits 2 (#5369).'));
+  assert.ok(USAGE.includes('note: --local runs every selected suite on this machine and never consults a declared ci source; under a declaration with localRuns "on-request" a CI-declared suite runs here only with it, a --scope run CI cannot answer exits 3 (no verdict yet, never a test failure), under any declaration a --scope run whose HEAD GitHub does not know (head-not-pushed) exits 3 too (#5800), and a run naming a CI-declared suite with neither --scope nor --local exits 2 (#5369).'));
   assert.strictEqual(EXIT_NO_VERDICT, 3);
 });

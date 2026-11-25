@@ -2796,13 +2796,13 @@ test('AC12.1: a regular verify-scope.json runs the scoped invocation', async () 
   assert.equal(h.lines().find((l) => l.step === 'test').status, 'ok');
 });
 
-const NO_VERDICT = 'verify.js: no verdict yet for suite "tests" — CI could not answer (head-not-pushed), and the declaration\'s localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.';
+const NO_VERDICT = 'verify.js: no verdict yet for suite "tests" — CI could not answer (head-not-pushed): HEAD 0123456ab is not on the remote; no check ran and no pass stamp was written.';
 
 test('AC8.1: under the key the test step passes --local, so a verify that exits 3 without it never fails the run (#5370)', async () => {
   const h = harness({ script: [scopeIs('file'), scopeSame(),
     [on('node', /verify\.js$/), (c) => (c.args.includes('--local')
       ? { code: 0, stdout: '', stderr: '' }
-      : { code: 3, stdout: '', stderr: `${NO_VERDICT}\n  Either push the branch …\n  or re-run it with --local …\n` })]] });
+      : { code: 3, stdout: '', stderr: `${NO_VERDICT}\n  Push the branch (commit first if the tree is dirty), then re-run this command,\n  or re-run it with --local to run the suite on this machine.\n` })]] });
   await run(['#7'], h.deps);
   const calls = verifyCalls(h);
   assert.equal(calls.length, 1, 'one verify call, carrying --local');

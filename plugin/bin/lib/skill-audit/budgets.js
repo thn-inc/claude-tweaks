@@ -56,6 +56,9 @@ const RAIL_BYTES = Math.floor(RAIL_TOKENS * BYTES_PER_TOKEN);
 const DESCRIPTION_MAX_CHARS = 1536;
 const LISTING_BUDGET_FRACTION = 0.01; // skillListingBudgetFraction default
 const LISTING_CHARS_PER_TOKEN = 4;
+// #5668 acceptance criteria: the composed child bundles' byte ceilings.
+const CHILD_BUNDLE_LENS_BYTES = 12 * 1024;
+const CHILD_BUNDLE_SDD_BYTES = 15 * 1024;
 
 function listingBudgetChars(contextTokens) {
   return Math.floor(contextTokens * LISTING_CHARS_PER_TOKEN * LISTING_BUDGET_FRACTION);
@@ -83,6 +86,8 @@ module.exports = {
   DESCRIPTION_MAX_CHARS,
   LISTING_BUDGET_FRACTION,
   LISTING_CHARS_PER_TOKEN,
+  CHILD_BUNDLE_LENS_BYTES,
+  CHILD_BUNDLE_SDD_BYTES,
   listingBudgetChars,
   overRail,
 };

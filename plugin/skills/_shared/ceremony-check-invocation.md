@@ -4,7 +4,7 @@ The canonical `ceremony-check` invocation pattern every call site in this codeba
 `facets.ceremony` when it's already stamped, else invoke `/claude-tweaks:assess-agent-autonomy`
 in `ceremony-check` mode and use (and, where the call site owns writeback, stamp) the verdict.
 Referenced by `specify/shaping-mode-stamping.md`, `specify/record-creation-subissues.md`
-(#1346's split of `shaping-mode.md`/`record-creation.md`), `flow/manifesto.md` (its Ceremony profile
+(#1346's split of `shaping-mode.md`/`record-creation.md`), `capture/SKILL.md` (Shaped-body branch, #4118), `flow/manifesto.md` (its Ceremony profile
 computation, #3160), and `flow/materialize.md`. Consumers reference this file; do not restate the invocation prose
 inline — mirrors `_shared/label-bootstrap.md`'s "canonical snippet cited by multiple skills"
 convention.
@@ -43,6 +43,8 @@ existing failure reporting (shaping mode: the record's failure row in Actions Pe
 write; `record-creation-subissues.md`: the sub-issue is not created, reported with the same
 per-sub-issue isolation as a write-path failure (the rest of the decomposition continues) —
 the local-store fallback does not apply, since there is no verdict to write;
+`capture/SKILL.md`'s Shaped-body branch: the record is still filed, without a ceremony label, and
+the presentation line says so — the filing is never blocked on the check;
 `flow/manifesto.md`: the pipeline stops before Step 4 with the generic failure card, gate
 `ceremony-check`; `materialize.md`, where no Manifesto verdict exists: the run stops for that record with the
 same stop semantics as a Materialization hard-gate failure) — and is never treated as `standard`: the conservative default

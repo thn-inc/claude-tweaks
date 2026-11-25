@@ -294,12 +294,23 @@ function retiredSites(raw) {
 
 const emitterFiles = (files, read) => files.filter((rel) => rel.startsWith(STATION_EVENTS_DIR) || retiredSites(read(rel)).requires);
 
+// Named exemptions: a file's exact source line (trimmed, as retiredSites reports it) that spells a
+// retired word for a reason unrelated to a station outcome. A second literal on any other line, or
+// on the same line, changes the line text and is still an offender.
+const RETIRED_EXEMPT_LINES = {
+  // manifesto-write's `skipped` ceremony source (#4118, flow/manifesto.md's skip rule), not an outcome.
+  'lib/flow/manifesto-write.js': ["const SKIPPED = 'skipped';"],
+};
+
 function retiredOffendersIn(files, read) {
   const offenders = [];
   for (const rel of emitterFiles(files, read)) {
     const { sites, verdict } = retiredSites(read(rel));
     if (verdict !== 'ok') offenders.push(`${rel}: ${STRIPPER_VERDICT_MESSAGES[verdict]}`);
-    for (const s of sites) offenders.push(`${rel}:${s.line}: ${s.text}`);
+    for (const s of sites) {
+      if ((RETIRED_EXEMPT_LINES[rel] || []).includes(s.text)) continue;
+      offenders.push(`${rel}:${s.line}: ${s.text}`);
+    }
   }
   return offenders;
 }
@@ -350,6 +361,19 @@ test('AC1.2: no emitter under plugin/bin spells a retired outcome', () => {
   assert.ok(emitters.length >= EMITTER_FLOOR, `expected at least ${EMITTER_FLOOR} emitter files, saw ${emitters.length}: the emitter detection stopped matching`);
   assert.ok(emitters.includes(HOME_REL), `${HOME_REL} must be in the emitter set`);
   assert.deepEqual(retiredOffendersIn(files, read), [], 'name an outcome through OUTCOME.* (stations.js); returned, skipped and abandoned are retired');
+});
+
+test('the manifesto-write exemption covers its one ceremony-source line and hides no other retired literal (#4118)', () => {
+  const rel = 'lib/flow/manifesto-write.js';
+  const exempt = "const SKIPPED = 'skipped';";
+  const req = "const { appendStationEvent } = require('../station-events/emit');";
+  const files = [rel];
+  const offendersFor = (src) => retiredOffendersIn(files, () => src);
+  assert.deepEqual(offendersFor(`${req}\n${exempt}\n`), []);
+  assert.deepEqual(offendersFor(`${req}\n${exempt}\nconst o = 'skipped';\n`), [`${rel}:3: const o = 'skipped';`]);
+  assert.deepEqual(offendersFor(`${req}\n${exempt} const p = 'skipped';\n`), Array(2).fill(`${rel}:2: ${exempt} const p = 'skipped';`));
+  // the exemption is keyed to this file: the same line elsewhere is an offender
+  assert.deepEqual(retiredOffendersIn(['other.js'], () => `${req}\n${exempt}\n`), [`other.js:2: ${exempt}`]);
 });
 
 test('the retired-outcome walk goes red when an emitter spells one', () => {

@@ -49,12 +49,12 @@ Under it, a `--scope` run takes each selected CI-declared suite from CI. The fir
 
 ## Fallback reasons
 
-Without `localRuns`, every other outcome runs the suite locally, exactly as selected (its impact subset included), and `report.json`'s `ci` entry for that suite names why in `fallback`; under it, the run exits 3 (`## Local runs on request`):
+Without `localRuns`, every other reason except `head-not-pushed` runs the suite locally, exactly as selected (its impact subset included), and says so on stderr when it is decided (`verify.js: CI could not answer suite "{suite}" ({reason}) — running it on this machine`); `report.json`'s `ci` entry for that suite names why in `fallback`. `head-not-pushed` exits 3 in both modes, and under `localRuns` every reason does (`## Local runs on request`):
 
 | Reason | Cause |
 |--------|-------|
 | `dirty-tree` / `tree-state-unreadable` | The tree was dirty at the start, or its state could not be read. |
-| `head-not-pushed` | GitHub does not know HEAD's commit. |
+| `head-not-pushed` | GitHub does not know HEAD's commit. Exits 3 with or without `localRuns`, and never runs the suite here. |
 | `no-open-pr-at-head` | No open PR has HEAD as its head. |
 | `pr-conflicted` | The PR has conflicts (`mergeable_state: dirty`), so it gets no `pull_request` runs. |
 | `no-ci-run-within-wait` | No run of `workflow` for HEAD appeared within `waitSeconds`. Typical causes: the workflow did not trigger, or Actions is down. |
@@ -65,7 +65,7 @@ Without `localRuns`, every other outcome runs the suite locally, exactly as sele
 | `ci-log-unavailable` | A red job's log could not be downloaded, so nothing names its failures (without `localRuns`). |
 | `gh-unavailable` / `gh-error: …` | `gh` is not installed, or a read failed. A timed-out read is retried up to 3 attempts first (1 s, then 2 s backoff); the reason then reads `gh-error after {k} attempts: …`. |
 | `local-requested` | `--local` was passed, so CI was not consulted. |
-| `not-consulted` | Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one. |
+| `not-consulted` | An earlier suite already left the run with no verdict (under `localRuns`, or on `head-not-pushed`), so CI was not asked about this one. |
 
 stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`. Under `localRuns`, a red job with no downloadable log prints `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url}; its log could not be downloaded — pass --local to reproduce the failure here)`.
 
