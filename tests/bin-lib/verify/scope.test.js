@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 
-const { selectScope } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
+const { selectScope, inertDirtyPaths } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'scope.js'));
 const { readDeclaration } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js'));
 
 const FULL = '0123456789abcdef0123456789abcdef01234567';
@@ -335,4 +335,76 @@ test('no stamp: a declaration with neither impact nor ci, decl null, or no fallb
   r = selectScope({ decl: EXAMPLE_WITH_CI, files: ['docs/x.md'], stamp: null, fallbackBase: null });
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.base, null);
+});
+
+// ── inertDirtyPaths (#5234) ───────────────────────────────────────────────
+const INERT = decl({
+  checks: { tests: 'npm test' },
+  generated: ['gen/**'],
+  rules: [
+    { match: 'src/**', suites: '*', static: true },
+    { match: 'docs/plans/*-ledger.md', suites: [], static: false },
+    { match: 'lintme/**', suites: [], static: true },
+    { match: 'docs/**', suites: [], static: false },
+  ],
+});
+
+test('AC1.1: a single path whose first matching rule is suites [] static false is inert', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['docs/plans/x-ledger.md']), ['docs/plans/x-ledger.md']);
+});
+
+test('AC1.2: a path matching a generated glob is inert', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['gen/out.json']), ['gen/out.json']);
+});
+
+test('AC1.3: one inert path and one selecting path is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['docs/plans/x-ledger.md', 'src/a.js']), null);
+});
+
+test('AC1.4: an unmatched path is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['other/x.js']), null);
+});
+
+test('AC1.5: the first matching rule decides, not a later inert one', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    rules: [
+      { match: 'docs/special.md', suites: '*', static: false },
+      { match: 'docs/**', suites: [], static: false },
+    ],
+  });
+  assert.strictEqual(inertDirtyPaths(d, ['docs/special.md']), null);
+});
+
+test('AC1.6: a static true rule with suites [] is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, ['lintme/a.js']), null);
+});
+
+test('AC1.7: an empty or null list is not inert', () => {
+  assert.strictEqual(inertDirtyPaths(INERT, []), null);
+  assert.strictEqual(inertDirtyPaths(INERT, null), null);
+});
+
+test('a parsed impact rule (suites null, impact true) is not inert', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    impact: { suite: 'tests', command: 'node --test {files}', tests: ['tests/**/*.test.js'] },
+    rules: [{ match: 'lib/**', impact: true, static: false }],
+  });
+  assert.strictEqual(d.rules[0].suites, null);
+  assert.strictEqual(d.rules[0].impact, true);
+  assert.strictEqual(inertDirtyPaths(d, ['lib/a.js']), null);
+});
+
+test('generated glob wins over a selecting rule', () => {
+  const d = decl({
+    checks: { tests: 'npm test' },
+    generated: ['gen/**'],
+    rules: [{ match: '**', suites: '*', static: true }],
+  });
+  assert.deepStrictEqual(inertDirtyPaths(d, ['gen/x.js']), ['gen/x.js']);
+});
+
+test('result is sorted and de-duplicated', () => {
+  assert.deepStrictEqual(inertDirtyPaths(INERT, ['docs/b.md', 'docs/a.md', 'docs/b.md']), ['docs/a.md', 'docs/b.md']);
 });
