@@ -32,6 +32,8 @@ const FILING_PENDING_RESOLUTION = 'filing-pending';
 // #4679: the digest twin of `filing-pending` — a planned can't-tell digest entry (`console.json#digests`) with no
 // digested line in decisions.md has not reached the materiality digest. Derived at read time, never stored.
 const DIGEST_PENDING_RESOLUTION = 'digest-pending';
+// #6284: an approved `followup-recheck-{n}.md` proposal whose merge never landed — read-time only, never stored.
+const RECHECK_APPROVED_RESOLUTION = 'recheck-approved';
 
 // The one spelling of a can't-tell finding fingerprint (`consolefinding-{8 hex}`, finding-filing.js's
 // findingFingerprint): the two AUTO-line patterns below and finding-filing.js's marker reader all build on it. It
@@ -127,8 +129,28 @@ function pendingDigests(consoleJson, decisions) {
   });
 }
 
-function consoleResidueItems(consoleJson, decisions = '') {
-  return [...unresolvedItems(consoleJson), ...pendingFilings(consoleJson, decisions), ...pendingDigests(consoleJson, decisions)];
+// #6284: a `followup-recheck-{n}.md` item `recheck-followups.js approve` left `pending` with an `approval` field is
+// approved but unexecuted (its merge never landed or `execute` was never run). Re-worded `recheck-approved` at read
+// time only; `execute` rewrites a settled one to `applied`/`dropped`, which `unresolvedItems` never yields.
+// `readStaged(id)` (optional) supplies the proposal text so the reason can name `close` or `narrow`.
+function rewordRecheckApproved(item, readStaged) {
+  const m = /^followup-recheck-(\d+)\.md$/.exec(String(item && item.id));
+  if (!m || item.resolution !== 'pending' || !item.approval || typeof item.approval !== 'object') return item;
+  let action = 're-check proposal';
+  try {
+    const head = String((readStaged && readStaged(item.id)) || '').replace(/\r\n/g, '\n').split('\n\n')[0];
+    const a = /^Action:[ \t]*(close|narrow)[ \t]*$/m.exec(head);
+    if (a) action = a[1];
+  } catch { /* the staged file is gone: the generic wording stands */ }
+  const pr = item.approval.pr === 'local' ? 'local merge' : `PR #${item.approval.pr}`;
+  return { ...item, resolution: RECHECK_APPROVED_RESOLUTION, reason: `approved #${m[1]} ${action} waits on ${pr}` };
+}
+
+function consoleResidueItems(consoleJson, decisions = '', readStaged) {
+  return [
+    ...unresolvedItems(consoleJson).map((i) => rewordRecheckApproved(i, readStaged)),
+    ...pendingFilings(consoleJson, decisions), ...pendingDigests(consoleJson, decisions),
+  ];
 }
 
 // Partition unresolved items into those a human can still review and those
@@ -146,7 +168,7 @@ function splitMissing(items, consoleDir, exists = fs.existsSync) {
     const id = item && item.id;
     const checkable = typeof id === 'string' && id !== '' && !id.includes(':') && path.basename(id) === id
       && !FAILED_OUTCOMES.has(item.resolution) && item.resolution !== FILING_PENDING_RESOLUTION
-      && item.resolution !== DIGEST_PENDING_RESOLUTION;
+      && item.resolution !== DIGEST_PENDING_RESOLUTION && item.resolution !== RECHECK_APPROVED_RESOLUTION;
     if (checkable && !exists(path.join(consoleDir, 'staged', id))) {
       missing.push({ ...item, resolution: MISSING_RESOLUTION, reason: `staged file absent (was ${item.resolution})` });
     } else {
@@ -186,7 +208,8 @@ function readRunResidue(runDir, { readFile = defaultReadFile, readdir = defaultR
     if ([parsed.filings, parsed.digests].some((list) => Array.isArray(list) && list.length > 0)) {
       try { decisions = readFile(path.join(path.dirname(p), 'decisions.md')); } catch { decisions = ''; }
     }
-    const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions), path.dirname(p), exists);
+    const readStaged = (id) => readFile(path.join(path.dirname(p), 'staged', id));
+    const { items, missing } = splitMissing(consoleResidueItems(parsed, decisions, readStaged), path.dirname(p), exists);
     const acknowledged = typeof parsed.residueAcknowledgedAt === 'string';
     if (items.length === 0) {
       // Not residue (nothing a human can open), but its missing items are still
@@ -250,6 +273,12 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
   }
   const staged = path.join(consoleDir, 'staged', item.id);
   if (fs.existsSync(staged)) lines.push(`    cat "${staged}"`);
+  if (item.resolution === RECHECK_APPROVED_RESOLUTION) {
+    const bin = pluginRoot ? `node "${pluginRoot}/bin/recheck-followups.js"` : 'recheck-followups.js';
+    const local = item.approval && item.approval.pr === 'local';
+    lines.push(`    execute: ${bin} execute --run "${consoleDir}" --id ${item.id}${local ? '   (local merge: add --local-merged only after the push landed)' : ''}`);
+    return lines;
+  }
   const kind = pendingKindOf(item.resolution);
   if (kind) {
     const first = !printed.rerun;
@@ -298,7 +327,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 }
 
 module.exports = {
-  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
+  CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, RECHECK_APPROVED_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
   FILING_LOG_REMEDY, digestLogRemedy,
   filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, consoleRerunCommand,
   readRunResidue, formatResidueLines,

@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'residue');
-const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, consoleRerunCommand, DIGESTED_LINE_RE, digestLogRemedy, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION } = require(MOD);
+const { UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, unresolvedItems, splitMissing, readRunResidue, formatResidueLines, consoleResidueItems, consoleRerunCommand, DIGESTED_LINE_RE, digestLogRemedy, digestedFindings, pendingDigests, DIGEST_PENDING_RESOLUTION, RECHECK_APPROVED_RESOLUTION } = require(MOD);
 
 // The items of the real archived #2821 console.json (#3370): 9 items, four of
 // them unresolved — copied verbatim, including the `skills:undefined` ids.
@@ -679,4 +679,47 @@ test('a console with both a pending filing and a pending digest reports both (#4
   cj.digests = [{ item: 'tiebreak:bbbbbbbbbbbb', fingerprint: 'consolefinding-4567ef01' }];
   fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify(cj));
   assert.deepStrictEqual(readRunResidue(dir).consoles.map((c) => c.items.map((i) => [i.id, i.resolution])), [[['tiebreak:aaaaaaaaaaaa', 'filing-pending'], ['tiebreak:bbbbbbbbbbbb', 'digest-pending']]]);
+});
+
+// Approved-but-unexecuted re-check proposal (#6284): read-time residue, never stored.
+function recheckConsole(dir, items, staged = {}) {
+  fs.mkdirSync(path.join(dir, 'staged'), { recursive: true });
+  for (const [name, text] of Object.entries(staged)) fs.writeFileSync(path.join(dir, 'staged', name), text);
+  fs.writeFileSync(path.join(dir, 'console.json'), JSON.stringify({ resolved: true, mode: 'confirm', items }));
+}
+const recheckItem = (n, resolution, pr = '77') => ({
+  id: `followup-recheck-${n}.md`, section: 'Queue writes', resolution, reason: 'followup-recheck-approved', approval: { at: '2026-11-25T10:00:00.000Z', pr },
+});
+const recheckStaged = (n, action = 'close') => `Target: #${n}\nAction: ${action}\nBody-hash: ${'a'.repeat(64)}\nUpdated-at: 2026-11-25T09:00:00Z\n\n## Comment\nDone.\n`;
+
+test('AC7.2: console-residue.js --run lists an approved unexecuted followup-recheck item naming #n and PR #p', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [recheckItem(412, 'pending')], { 'followup-recheck-412.md': recheckStaged(412, 'narrow') });
+  const r = readRunResidue(dir);
+  assert.deepStrictEqual(r.consoles[0].items.map((i) => [i.id, i.resolution, i.reason]), [['followup-recheck-412.md', RECHECK_APPROVED_RESOLUTION, 'approved #412 narrow waits on PR #77']]);
+  assert.strictEqual(RECHECK_APPROVED_RESOLUTION, 'recheck-approved');
+  assert.deepStrictEqual(r.consoles[0].missing, []);
+});
+
+test('an approved followup-recheck item whose staged file is gone is still residue, never missing, and a local merge is named so', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [recheckItem(9, 'pending', 'local')]);
+  const r = readRunResidue(dir);
+  assert.deepStrictEqual(r.consoles[0].items.map((i) => [i.resolution, i.reason]), [[RECHECK_APPROVED_RESOLUTION, 'approved #9 re-check proposal waits on local merge']]);
+  assert.deepStrictEqual(r.consoles[0].missing, []);
+});
+
+test('AC16.1: that line carries the paste-ready execute command', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [recheckItem(412, 'pending'), recheckItem(9, 'pending', 'local')], { 'followup-recheck-412.md': recheckStaged(412) });
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-412.md`), lines.join('\n'));
+  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-9.md   (local merge: add --local-merged only after the push landed)`), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('re-run ')), 'no console-filings re-run for this kind');
+});
+
+test('an applied or dropped followup-recheck item is not residue', () => {
+  const dir = tmpRun();
+  recheckConsole(dir, [recheckItem(1, 'applied'), recheckItem(2, 'dropped'), { id: 'followup-recheck-3.md', section: 'Queue writes', resolution: 'pending', reason: 'other' }]);
+  assert.deepStrictEqual(consoleResidueItems(JSON.parse(fs.readFileSync(path.join(dir, 'console.json'), 'utf8'))).map((i) => i.id), ['followup-recheck-3.md']);
 });

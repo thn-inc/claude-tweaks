@@ -92,6 +92,21 @@ test('console-residue.js --run names the missing items of a spec console that ha
   assert.ok(notCounted[0].includes(path.join('spec-2', 'staged', 'wrap-up-docs-2.md')), notCounted[0]);
 });
 
+test('AC7.2 / AC16.1: --run lists an approved unexecuted followup-recheck item with PR #p and its execute command (#6284)', () => {
+  const f = fixture();
+  const cj = JSON.parse(fs.readFileSync(f.consolePath, 'utf8'));
+  cj.items.push({ id: 'followup-recheck-412.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: '2026-10-16T10:00:00.000Z', pr: '77' } });
+  cj.items.push({ id: 'followup-recheck-413.md', section: 'Queue writes', resolution: 'applied', reason: 'followup-recheck-approved', approval: { at: '2026-10-16T10:00:00.000Z', pr: '77' } });
+  fs.writeFileSync(f.consolePath, JSON.stringify(cj));
+  const h = harness(f.main);
+  assert.strictEqual(run(['--run', f.runDir], h.deps), 0);
+  const lines = h.out().split('\n');
+  assert.ok(lines.includes('  - followup-recheck-412.md — Queue writes: recheck-approved (approved #412 re-check proposal waits on PR #77)'), h.out());
+  assert.ok(lines.includes(`    execute: node "/plug/bin/recheck-followups.js" execute --run "${fs.realpathSync(f.runDir)}" --id followup-recheck-412.md`), h.out());
+  assert.ok(!h.out().includes('followup-recheck-413'), 'an applied item is not residue');
+  assert.ok(!h.out().includes('not counted — staged file(s) no longer on disk: followup'), 'never missing');
+});
+
 test('--ack writes residueAcknowledgedAt and keeps every other field', () => {
   const f = fixture();
   const h = harness(f.main);
