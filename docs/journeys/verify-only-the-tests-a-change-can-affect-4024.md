@@ -24,7 +24,7 @@ files:
 
 ### 1. Get a map without tracing locally
 - **URL:** `.github/workflows/test-impact-map.yml`'s post-merge run on main, and `{git-common-dir}/claude-tweaks-test-impact.json`.
-- **Action:** Do nothing. When the scoped run finds no usable map, it runs the declaration's `fetch` command (`node tools/test-impact.js fetch`) once. That downloads the newest successful main map whose commit is an ancestor of HEAD. `node tools/test-impact.js trace` builds one by hand: it runs the full suite under the read tracer.
+- **Action:** Do nothing. When the scoped run finds no usable map, it runs the declaration's `fetch` command (`node tools/test-impact.js fetch`) once. That downloads the newest successful main map whose commit is an ancestor of HEAD, unless a clean, passing cached map that descends from that CI commit and is an ancestor of HEAD is already present, which is kept. `node tools/test-impact.js trace` builds one by hand: it runs the full suite under the read tracer.
 - **Should feel:** Invisible. The map refreshes off the hot path, and no build ever traces.
 - **Should understand:**
   - The map is stamped with its commit and the traced run's exit code.

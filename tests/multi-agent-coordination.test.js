@@ -5,6 +5,7 @@ const { readText, crlfCheckoutRead } = require('./helpers/read-skill');
 
 const c = require('../plugin/bin/lib/coordination');
 const rl = require('../plugin/bin/lib/reproduction-log');
+const { DEBATE_CONVERGED_RE } = require('../plugin/bin/lib/console/resolve');
 const { pairEntries } = rl;
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 
@@ -876,6 +877,39 @@ test('debate: triggers only on cross-lens Path:Line overlap within ±5 lines wit
   assert.strictEqual(noOverlap.length, 0);
 });
 
+// #4747 AC1.1 / AC1.2: a same-location, different-substance pair is marked and excluded from debate.
+test('detectCrossLensOverlap: AC1.1 AC1.2 a same-location different-substance pair carries its score and substanceMatch false', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked' }],
+    architecture: [{ path: 'src/auth.ts', line: 44, severity: 'low', text: 'variable name shadows the outer loop counter' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.strictEqual(typeof overlaps[0].substanceScore, 'number');
+  assert.ok(overlaps[0].substanceScore < c.SUBSTANCE_SIMILARITY_MIN);
+  assert.strictEqual(overlaps[0].substanceMatch, false);
+});
+
+// #4747 AC2.1: a paraphrased same-defect pair still enters debate.
+test('detectCrossLensOverlap: AC2.1 a paraphrased same-defect pair has substanceMatch true', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked before the session is reused' }],
+    architecture: [{ path: 'src/auth.ts', line: 43, severity: 'low', text: 'session reuse skips the token expiry check' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.ok(overlaps[0].substanceScore >= c.SUBSTANCE_SIMILARITY_MIN);
+  assert.strictEqual(overlaps[0].substanceMatch, true);
+});
+
+test('detectCrossLensOverlap: a pair with a missing text scores null and never matches', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked' }],
+    architecture: [{ path: 'src/auth.ts', line: 42, severity: 'low' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.strictEqual(overlaps[0].substanceScore, null);
+  assert.strictEqual(overlaps[0].substanceMatch, false);
+});
+
 // #3604: corroborateCrossLens — cross-lens corroboration of single-read findings.
 const CORROB_A = 'superseded failed run marks real PR failure inherited';
 const CORROB_B = 'superseded failed run at base marks PR failure as inherited';
@@ -1115,12 +1149,39 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['inconclusive ({verdicts})']));
 });
 
-test('debate: Mode 2 restates the three lines /review writes, so the guide cannot drift from them', () => {
-  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial']) {
+test('debate: Mode 2 restates the lines /review writes, so the guide cannot drift from them', () => {
+  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial', 'Debate skipped: proximity coincidence']) {
     const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes(marker));
     const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
     assert.ok(PRIMITIVE_DOC.split('\n').includes(`- ${template}`), `Mode 2 does not carry: ${template}`);
   }
+});
+
+// #4747 AC3.1 / AC3.2: Step 3.5 item 2 names the substance threshold.
+test('/review Step 3.5: AC3.1 AC3.2 item 2 filters contradictions on substanceMatch at SUBSTANCE_SIMILARITY_MIN (0.2)', () => {
+  const item2 = REVIEW_SKILL.split('\n').find((line) => line.startsWith('2. **Filter to contradictions.**'));
+  assert.ok(item2, 'step3-debate-and-refutation.md lost its item 2 "Filter to contradictions." line');
+  for (const needle of ['substanceMatch', '`SUBSTANCE_SIMILARITY_MIN`', '0.2', 'proximity coincidence', 'Step 3.7']) {
+    assert.ok(item2.includes(needle), `item 2 does not name ${needle}`);
+  }
+  assert.ok(!REVIEW_SKILL.includes('Avoid running debate on every `Path:Line`'), 'item 5 still carries the judgment-call warning item 2 replaced');
+});
+
+test('/review Step 3.5: the proximity-coincidence line is never read as a converged debate', () => {
+  const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes('Debate skipped: proximity coincidence'));
+  const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
+  const line = `- ${template.replace('{HH:MM:SS}', '14:41:05')}`;
+  assert.strictEqual(DEBATE_CONVERGED_RE.test(line), false);
+  // resolve.js's second settling branch (#3772) settles findings on an AUTO line containing "Confirmed"
+  assert.ok(!/\bConfirmed\b/.test(line), `coincidence line would settle findings via the Confirmed branch: ${line}`);
+  const positive = REVIEW_SKILL.split('\n').find((l) => l.includes('Both `agree`')).match(/`(AUTO [^`]*Debate: cross-lens disagreement[^`]*)`/)[1];
+  const filled = `- ${positive.replace('{HH:MM:SS}', '14:41:05').replace(/\{path\}/g, 'src/a.ts').replace(/\{line\}/g, '4')}`;
+  assert.strictEqual(DEBATE_CONVERGED_RE.test(filled), true, `positive control did not match: ${filled}`);
+});
+
+test('Mode 2 trigger states the substance gate', () => {
+  assert.ok(!PRIMITIVE_DOC.includes('with no substance gate'), 'Mode 2 Trigger still says debate has no substance gate');
+  assert.ok(PRIMITIVE_DOC.includes('SUBSTANCE_SIMILARITY_MIN'), 'Mode 2 Trigger does not name SUBSTANCE_SIMILARITY_MIN');
 });
 
 // ============================================================
