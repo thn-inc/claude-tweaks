@@ -142,6 +142,7 @@ const SIZE_PROXY_CLAIMS = [
   ['--stat fallback with notice', (t) => /non-zero exit or unparseable output falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice/.test(t), "falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice"],
   ['never lower', (t) => t.includes('never lower than the filtered count'), 'never lower than the filtered count'],
   ['comment-only schema exception', (t) => t.includes('`git diff -w {base}...{branch} -- {file}`') && /neither blank nor a comment/.test(t), 'neither blank nor a comment'],
+  ['lockfile is not itself a dependency trigger', (t) => t.includes('a lockfile excluded from the size count is still visible to this check') && !/lockfile change included/.test(t), 'a lockfile excluded from the size count is still visible to this check'],
   ['unclassifiable hunks fire', (t) => /hunks you cannot classify fire the trigger/.test(t), 'hunks you cannot classify fire the trigger'],
 ];
 const missingSizeProxyClaims = (text) => SIZE_PROXY_CLAIMS.filter(([, ok]) => !ok(collapse(text))).map(([n]) => n);
