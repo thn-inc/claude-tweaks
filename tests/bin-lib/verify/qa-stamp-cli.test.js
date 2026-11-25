@@ -239,7 +239,8 @@ test('real git: --write is not blocked by an untracked file under .claude-tweaks
 
 test('malformed invocations exit 2 with usage on stderr', () => {
   const fx = fixture();
-  for (const argv of [[], ['--write', '--check'], ['--write'], ['--check'], ['--check', '--stories', 'login'], ['--bogus']]) {
+  for (const argv of [[], ['--write', '--check'], ['--write'], ['--check'], ['--check', '--stories', 'login'], ['--bogus'],
+    ['--write', '--report', 'r.json', '--scope', 'x.json'], ['--check', '--stories', 'a=b', '--scope']]) {
     const x = deps(fx);
     assert.equal(run(argv, x.d), 2, JSON.stringify(argv));
     assert.match(x.err.join(''), /usage: qa-stamp\.js/);
@@ -248,4 +249,171 @@ test('malformed invocations exit 2 with usage on stderr', () => {
 
 test('parseArgs splits --stories into id/file pairs', () => {
   assert.deepEqual(parseArgs(['--check', '--stories', 'a=x.yaml,b=y.yaml']).stories, [{ id: 'a', file: 'x.yaml' }, { id: 'b', file: 'y.yaml' }]);
+});
+
+const DECL_PATH = '.claude-tweaks/verify-scope.json';
+function bookkeepingRepo(extraRules = [], extraFiles = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-qa-stamp-bk-'));
+  created.push(root);
+  const g = (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  initRepo(root, { name: 'T', email: 'a@b.c', cwd: root, encoding: 'utf8' });
+  fs.mkdirSync(path.join(root, 'stories'));
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.mkdirSync(path.join(root, '.claude-tweaks'));
+  fs.writeFileSync(path.join(root, 'stories', 'app.yaml'), 'stories:\n  - id: login\n');
+  fs.writeFileSync(path.join(root, 'src', 'a.js'), 'a\n');
+  fs.writeFileSync(path.join(root, DECL_PATH), JSON.stringify({
+    checks: { tests: 'node --test' },
+    rules: [
+      { match: 'docs/plans/*-ledger.md', suites: [], static: false },
+      ...extraRules,
+      { match: 'src/**', suites: '*', static: true },
+    ],
+  }));
+  for (const [f, c] of Object.entries(extraFiles)) {
+    fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+    fs.writeFileSync(path.join(root, f), c);
+  }
+  g(['add', '.']);
+  g(['commit', '-q', '-m', 'init']);
+  const S = g(['rev-parse', 'HEAD']).trim();
+  const gitDirPath = path.resolve(root, g(['rev-parse', '--git-dir']).trim());
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-qa-stamp-bk-run-'));
+  created.push(runDir);
+  const rp = path.join(runDir, 'report.json');
+  fs.writeFileSync(rp, JSON.stringify({ stories_dir: 'stories', summary: CLEAN, stories: GREEN }));
+  const realDeps = (over = {}) => ({
+    cwd: () => root,
+    exec: (c, a, o) => execFileSync(c, a, { ...o, cwd: root }),
+    gitInfo: () => ({ sha: g(['rev-parse', 'HEAD']).trim(), dirty: null }),
+    gitDir: () => gitDirPath,
+    dirty: () => computeDirty(execFileSync, root),
+    now: () => '2026-10-16T00:00:00.000Z',
+    stderr: () => {},
+    ...over,
+  });
+  const w = [];
+  run(['--write', '--report', rp], { ...realDeps(), stdout: (s) => w.push(s) });
+  assert.equal(JSON.parse(w.join('')).written, true);
+  const stampPath = path.join(gitDirPath, 'claude-tweaks-qa-pass.json');
+  const commit = (files, msg = 'delta') => {
+    for (const [f, c] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      fs.writeFileSync(path.join(root, f), c);
+    }
+    g(['add', '.']);
+    g(['commit', '-q', '-m', msg]);
+  };
+  const check = (extra = [], over = {}) => {
+    const out = [];
+    const code = run(['--check', '--stories', 'login=app.yaml', ...extra], { ...realDeps(over), stdout: (s) => out.push(s) });
+    return { code, res: JSON.parse(out.join('')) };
+  };
+  return { root, S, g, stampPath, realDeps, commit, check };
+}
+const LEDGER = { 'docs/plans/x-ledger.md': 'row\n' };
+
+test('AC1.1/AC1.2: a ledger-only commit past S with --scope skips as covered-bookkeeping-delta, and the stamp is byte-identical', () => {
+  const fx = bookkeepingRepo();
+  const before = fs.readFileSync(fx.stampPath);
+  fx.commit(LEDGER);
+  const { code, res } = fx.check(['--scope', DECL_PATH]);
+  assert.equal(code, 0);
+  assert.deepEqual(res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+  assert.deepEqual(fs.readFileSync(fx.stampPath), before);
+});
+
+test('AC2.1: a delta that also touches a suite-mapped path stays sha-mismatch', () => {
+  const fx = bookkeepingRepo();
+  fx.commit({ ...LEDGER, 'src/a.js': 'b\n' });
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+});
+
+test('AC3.1: the same ledger-only delta without --scope stays sha-mismatch', () => {
+  const fx = bookkeepingRepo();
+  fx.commit(LEDGER);
+  assert.deepEqual(fx.check().res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+});
+
+test('AC4.1: a selected story file changed since the stamp reports story-changed', () => {
+  const fx = bookkeepingRepo([{ match: 'stories/**', suites: [], static: false }]);
+  fx.commit({ ...LEDGER, 'stories/app.yaml': 'stories:\n  - id: login\n    edited: true\n' });
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'story-changed: login', sha: fx.S });
+});
+
+test('AC5.1: a stamp sha that is not an ancestor of HEAD stays sha-mismatch', () => {
+  const fx = bookkeepingRepo();
+  fx.g(['checkout', '-q', '--orphan', 'other']);
+  fx.commit(LEDGER, 'unrelated');
+  const { code, res } = fx.check(['--scope', DECL_PATH]);
+  assert.equal(code, 0);
+  assert.deepEqual(res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+});
+
+test('AC5.2: a missing or unparseable --scope path stays sha-mismatch, exit 0', () => {
+  const fx = bookkeepingRepo();
+  fx.commit(LEDGER);
+  fs.mkdirSync(path.join(fx.root, '.claude-tweaks', 'artifacts'), { recursive: true });
+  const bad = path.join(fx.root, '.claude-tweaks', 'artifacts', 'bad.json');
+  fs.writeFileSync(bad, '{');
+  for (const scope of ['nope.json', '.claude-tweaks/artifacts/bad.json']) {
+    const { code, res } = fx.check(['--scope', scope]);
+    assert.equal(code, 0);
+    assert.deepEqual(res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+  }
+});
+
+test('AC6.1: a dirty tree with a bookkeeping-only delta reports dirty-tree', () => {
+  const fx = bookkeepingRepo();
+  fx.commit(LEDGER);
+  fs.writeFileSync(path.join(fx.root, 'stray.txt'), 'x');
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'dirty-tree', sha: fx.S });
+});
+
+test('--scope with no stamp reports no-stamp', () => {
+  const fx = bookkeepingRepo();
+  fs.rmSync(fx.stampPath);
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'no-stamp', sha: null });
+});
+
+test('untracked QA artifacts under .claude-tweaks/artifacts/ do not defeat the bookkeeping-delta skip', () => {
+  const fx = bookkeepingRepo();
+  fx.commit(LEDGER);
+  fs.mkdirSync(path.join(fx.root, '.claude-tweaks', 'artifacts'), { recursive: true });
+  fs.writeFileSync(path.join(fx.root, '.claude-tweaks', 'artifacts', 'x.png'), 'x');
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+});
+
+test('a committed .claude-tweaks/artifacts/ file is a real delta: sha-mismatch, as verify.js selectScope reads it as full', () => {
+  const fx = bookkeepingRepo();
+  fx.commit({ '.claude-tweaks/artifacts/a.png': 'x' });
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+});
+
+// Intended difference: an empty delta changed nothing, so it is covered here; verify.js's #5075 shortcut excludes it for its own reasons.
+test('an empty commit past S is a bookkeeping delta', () => {
+  const fx = bookkeepingRepo();
+  fx.g(['commit', '-q', '--allow-empty', '-m', 'empty']);
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+});
+
+test('every git call --check makes carries the cwd dep', () => {
+  const fx = bookkeepingRepo();
+  fx.commit(LEDGER);
+  const calls = [];
+  const exec = (c, a, o) => { calls.push(o && o.cwd); return execFileSync(c, a, { ...o, cwd: fx.root }); };
+  assert.equal(fx.check(['--scope', DECL_PATH], { exec }).res.reason, 'covered-bookkeeping-delta');
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((c) => c === fx.root), JSON.stringify(calls));
+});
+
+test('--scope declaration whose generated glob covers its own path is refused, as verify.js refuses it (plan-review clarification)', () => {
+  const rules = [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }, { match: 'src/**', suites: '*', static: true }];
+  const decl = JSON.stringify({ checks: { tests: 'node --test' }, rules, generated: ['config/**'] });
+  const fx = bookkeepingRepo([], { 'config/qa-scope.json': decl });
+  fx.commit(LEDGER);
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+  const { code, res } = fx.check(['--scope', 'config/qa-scope.json']);
+  assert.equal(code, 0);
+  assert.deepEqual(res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
 });
