@@ -8,7 +8,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { run, realDeps, USAGE } = require(path.join(ROOT, 'plugin', 'bin', 'bundle-proposals'));
 const { specShapedBody, recordPayload } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
-const { readSnapshot, classifyStagedItem, SECTION_MAP } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
+const { readSnapshot, classifyStagedItem, SECTION_MAP, SECTIONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 
 const fixtureRoots = [];
 after(() => { for (const r of fixtureRoots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -128,10 +128,14 @@ test('AC8: the console sees the bundle and no member; an older SECTION_MAP leave
   const names = snap.staged.map((s) => s.name);
   assert.deepEqual(names, ['bundle-1.md', 'leftover-z.md']);
   assert.equal(classifyStagedItem('bundle-1.md', f.read(f.staged('bundle-1.md'))).section, SECTION_MAP.find(([re]) => re.test('bundle-1.md'))[1]);
-  // An older resolve.js has no `bundle-` row: the same name falls through to the unmapped-prefix arm.
-  const older = SECTION_MAP.filter(([re]) => !re.test('bundle-1.md'));
-  assert.equal(older.some(([re]) => re.test('bundle-1.md')), false);
-  assert.equal(older.length, SECTION_MAP.length - 1);
+  // An older resolve.js has no `bundle-` row: take the row out of the live map (in memory, resolve.js untouched),
+  // run the same classification path, and the bundle must land in Pending review as an unmapped prefix.
+  const at = SECTION_MAP.findIndex(([re]) => re.test('bundle-1.md'));
+  const [removed] = SECTION_MAP.splice(at, 1);
+  let older;
+  try { older = classifyStagedItem('bundle-1.md', f.read(f.staged('bundle-1.md'))); } finally { SECTION_MAP.splice(at, 0, removed); }
+  assert.deepEqual(older, { section: SECTIONS.PENDING, reason: 'unmapped-prefix' });
+  assert.notEqual(classifyStagedItem('bundle-1.md', 'x').section, SECTIONS.PENDING, 'the row is back');
   // Every path a member's original STAGED line names is gone from staged/.
   for (const line of originalStagedLines) {
     const m = /staged\/(\S+?\.md)/.exec(line);
@@ -185,6 +189,24 @@ test('AC12: a malformed member stays in staged/ and is reported in skipped', () 
   assert.equal(r.json.bundles.length, 1);
   assert.ok(r.json.skipped.some((s) => s.path === 'staged/leftover-bad.md' && /unparseable|no Title/.test(s.reason)), JSON.stringify(r.json.skipped));
   assert.ok(fs.existsSync(f.staged('leftover-bad.md')));
+  assert.ok(r.json.singletons.includes('staged/leftover-bad.md'), 'a skipped member is also a singleton');
+});
+
+test('AC12: an unreadable member is a singleton and skipped whatever its name (a symlink reads as unreadable)', () => {
+  const f = fixture();
+  seed(f);
+  const real = path.join(f.root, 'outside.md');
+  fs.writeFileSync(real, proposal({ title: 'Outside', files: ['src/a.js'] }));
+  fs.symlinkSync(real, f.staged('leftover-link.md'));
+  fs.symlinkSync(real, f.staged('custom-note.md'));
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  for (const n of ['leftover-link.md', 'custom-note.md']) {
+    assert.ok(r.json.singletons.includes(`staged/${n}`), n);
+    assert.ok(r.json.skipped.some((s) => s.path === `staged/${n}` && /^unreadable/.test(s.reason)), n);
+    assert.ok(fs.existsSync(f.staged(n)), n);
+  }
+  assert.equal(r.json.bundles[0].members.length, 3);
 });
 
 test('input set: shadow-dup copies, sdd-ruling ledger records, bundle- files, Bundled-into files and Refused items are never members', () => {
@@ -305,7 +327,9 @@ test('AC9: bundling is all-or-nothing per invocation — a second bundle failing
   for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, name);
   assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), []);
   assert.equal(f.read(f.ledger), ledger);
-  assert.equal(f.decisions().includes('AUTO'), false);
+  // The first bundle had committed (its AUTO line is its marker), so its roll-back is logged and is the last word.
+  const events = f.decisions().split('\n').filter((l) => /Proposal bundling: (un-)?bundled/.test(l)).map((l) => /Proposal bundling: ((?:un-)?bundled) (\S+)/.exec(l).slice(1).join(' '));
+  assert.deepEqual(events, ['bundled staged/bundle-1.md', 'un-bundled staged/bundle-1.md']);
 });
 
 test('crash recovery: a stray staged/bundle-1.md with no bundled/ members is removed on the next run', () => {
@@ -402,7 +426,8 @@ test('multi-spec: members in spec-1/staged and spec-2/staged bundle into {run}/s
   assert.deepEqual(f.ls(path.join(s1, 'bundled')), ['leftover-a.md']);
   assert.deepEqual(f.ls(path.join(s2, 'bundled')), ['ledger-record-c.md', 'leftover-b.md']);
   assert.ok(f.read(f.ledger).includes('| 1 | review | gamma | deferred | staged/bundle-1.md |'));
-  assert.equal(go(f, ['--ledger', f.ledger, '--unbundle', 'bundle-1.md']).code, 0);
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md', '--ledger', f.ledger]).code, 2, '--unbundle refuses --ledger');
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 0);
   assert.ok(f.read(f.ledger).includes('| 1 | review | gamma | deferred | spec-2/staged/ledger-record-c.md |'));
   assert.deepEqual(f.ls(path.join(s2, 'staged')), ['ledger-record-c.md', 'leftover-b.md']);
 });
@@ -460,4 +485,170 @@ test('--group-size-guard splits an oversized overlap group', () => {
   assert.equal(r.code, 0, r.err);
   assert.ok(r.json.bundles.every((b) => b.members.length <= 2));
   assert.equal(r.json.bundles.length, 2);
+});
+
+// Three open records citing src/a.js make it a hub, so restored members do not bundle again on the next run.
+function hubRecords() {
+  const body = specShapedBody({
+    currentState: 'x', deliverables: '- [ ] x', acceptanceCriteria: 'x', releaseNote: 'x', filedBy: 't', provenance: { origin: 'o', deferReason: 'tangential' },
+    keyFiles: [{ path: 'src/a.js', change: 'modify' }],
+  });
+  return JSON.stringify([1, 2, 3].map((n) => ({ number: n, title: `c${n}`, body, labels: [], state: 'OPEN' })));
+}
+
+const events = (f) => f.decisions().split('\n').map((l) => /Proposal bundling: ((?:un-)?bundled) (\S+)/.exec(l)).filter(Boolean).map((m) => `${m[1]} ${m[2]}`);
+
+test('spec-qualified ledger match: a run-level and a spec member of one name each bind to their own row', () => {
+  const f = fixture();
+  const s1 = path.join(f.runDir, 'spec-1');
+  put(f, 'ledger-record-c.md', { title: 'Spec gamma', files: ['src/a.js'], fp: 'fp-s' }, s1);
+  put(f, 'ledger-record-c.md', { title: 'Run gamma', files: ['src/a.js'], fp: 'fp-r' });
+  fs.writeFileSync(f.ledger, `${LEDGER_HEAD}| 1 | review | spec | deferred | spec-1/staged/ledger-record-c.md |\n| 2 | review | run | deferred | staged/ledger-record-c.md |\n`);
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json.bundles.length, 1);
+  assert.match(f.read(path.join(s1, 'bundled', 'ledger-record-c.md')), /^Ledger-row: .*#1$/m);
+  assert.match(f.read(path.join(f.runDir, 'bundled', 'ledger-record-c.md')), /^Ledger-row: .*#2$/m);
+  assert.match(f.read(path.join(s1, 'bundled', 'ledger-record-c.md')), /^Ledger-resolution-was: spec-1\/staged\/ledger-record-c\.md$/m);
+  assert.match(f.read(path.join(f.runDir, 'bundled', 'ledger-record-c.md')), /^Ledger-resolution-was: staged\/ledger-record-c\.md$/m);
+});
+
+test('spec-qualified ledger match: a spec member never binds to a bare staged/ row', () => {
+  const f = fixture();
+  put(f, 'ledger-record-c.md', { title: 'Spec gamma', files: ['src/a.js'], fp: 'fp-s' }, path.join(f.runDir, 'spec-1'));
+  put(f, 'leftover-a.md', { title: 'Alpha gap', files: ['src/a.js'], fp: 'fp-a' });
+  put(f, 'leftover-b.md', { title: 'Beta gap', files: ['src/a.js'], fp: 'fp-b' });
+  fs.writeFileSync(f.ledger, `${LEDGER_HEAD}| 1 | review | run | deferred | staged/ledger-record-c.md |\n`);
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.ok(r.json.skipped.some((s) => s.path === 'spec-1/staged/ledger-record-c.md' && s.reason === 'singleton: ledger row not found'));
+  assert.ok(fs.existsSync(path.join(f.runDir, 'spec-1', 'staged', 'ledger-record-c.md')));
+  assert.ok(f.read(f.ledger).includes('| deferred | staged/ledger-record-c.md |'));
+});
+
+test('re-pointing replaces every occurrence of the member path in the Resolution, and un-bundle restores it', () => {
+  const f = fixture();
+  seed(f);
+  const twice = `${LEDGER_HEAD}| 1 | review | gamma finding | deferred | staged/ledger-record-c.md, see also staged/ledger-record-c.md |\n`;
+  fs.writeFileSync(f.ledger, twice);
+  assert.equal(go(f).code, 0);
+  assert.ok(f.read(f.ledger).includes('| deferred | staged/bundle-1.md, see also staged/bundle-1.md |'), f.read(f.ledger));
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 0);
+  assert.equal(f.read(f.ledger), twice);
+});
+
+const CRASH_POINTS = {
+  'mid step 2': () => {
+    let n = 0;
+    return { writeFile: (p, s) => { n += 1; if (n === 2) throw new Error('died'); return realDeps.writeFile(p, s); } };
+  },
+  'between steps 2 and 3': () => ({ settleRow: () => { throw new Error('died'); } }),
+  'after step 3, before step 4': () => ({ appendEntries: () => { throw new Error('died'); } }),
+};
+
+test('crash recovery: after a simulated death at each step the next run leaves no member both bundled and staged', () => {
+  for (const [label, makeOverrides] of Object.entries(CRASH_POINTS)) {
+    for (const mode of ['restores every member', 'commits a whole bundle']) {
+      const f = fixture();
+      const texts = seed(f);
+      const ledger = f.read(f.ledger);
+      const crashed = go(f, [], { ...makeOverrides(), inProcessRollback: false });
+      assert.equal(crashed.code, 3, `${label}: ${crashed.err}`);
+      assert.ok(fs.existsSync(f.staged('bundle-1.md')), `${label}: the crash left a half-finished bundle behind`);
+      if (mode === 'restores every member') fs.writeFileSync(f.records, hubRecords());
+      const r = go(f);
+      assert.equal(r.code, 0, `${label}/${mode}: ${r.err}`);
+      const staged = f.ls(path.join(f.runDir, 'staged'));
+      const bundledDir = f.ls(path.join(f.runDir, 'bundled'));
+      for (const name of Object.keys(texts)) assert.ok(!(staged.includes(name) && bundledDir.includes(name)), `${label}/${mode}: ${name} is both staged and bundled`);
+      if (mode === 'restores every member') {
+        assert.deepEqual(staged, Object.keys(texts).sort(), `${label}/${mode}`);
+        for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, `${label}/${mode} ${name}`);
+        assert.deepEqual(bundledDir, [], `${label}/${mode}`);
+        assert.equal(f.read(f.ledger), ledger, `${label}/${mode}`);
+        assert.deepEqual(events(f), [], `${label}/${mode}: an uncommitted bundle logs nothing`);
+      } else {
+        assert.deepEqual(staged, ['bundle-1.md', 'leftover-z.md'], `${label}/${mode}`);
+        assert.deepEqual(bundledDir, ['ledger-record-c.md', 'leftover-a.md', 'leftover-b.md'], `${label}/${mode}`);
+        assert.ok(f.read(f.ledger).includes('| deferred | staged/bundle-1.md |'), `${label}/${mode}`);
+        assert.deepEqual(events(f), ['bundled staged/bundle-1.md'], `${label}/${mode}`);
+      }
+    }
+  }
+});
+
+test('crash recovery: a committed bundle survives the next run untouched', () => {
+  const f = fixture();
+  seed(f);
+  assert.equal(go(f).code, 0);
+  const bundle = f.read(f.staged('bundle-1.md'));
+  const ledger = f.read(f.ledger);
+  fs.writeFileSync(f.records, hubRecords());
+  assert.equal(go(f).code, 0);
+  assert.equal(f.read(f.staged('bundle-1.md')), bundle);
+  assert.equal(f.read(f.ledger), ledger);
+  assert.deepEqual(events(f), ['bundled staged/bundle-1.md']);
+});
+
+test('partial un-bundle: the bundle file goes first, and the next bundle-mode run finishes the restore', () => {
+  const f = fixture();
+  const texts = seed(f);
+  const ledger = f.read(f.ledger);
+  assert.equal(go(f).code, 0);
+  let n = 0;
+  const died = go(f, ['--unbundle', 'bundle-1.md'], { writeFile: (p, s) => { n += 1; if (n === 2) throw new Error('died'); return realDeps.writeFile(p, s); } });
+  assert.equal(died.code, 3);
+  assert.equal(fs.existsSync(f.staged('bundle-1.md')), false, 'the commit point of an un-bundle is the bundle file going');
+  assert.ok(f.ls(path.join(f.runDir, 'bundled')).length > 0, 'members are still partly bundled');
+  fs.writeFileSync(f.records, hubRecords());
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), Object.keys(texts).sort());
+  for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, name);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), []);
+  assert.equal(f.read(f.ledger), ledger);
+  assert.deepEqual(events(f), ['bundled staged/bundle-1.md', 'un-bundled staged/bundle-1.md']);
+});
+
+test('recovery refuses to delete a bundle while a bundled/ file cannot be read or parsed (exit 3, nothing changed)', () => {
+  const f = fixture();
+  seed(f);
+  assert.equal(go(f).code, 0);
+  fs.writeFileSync(path.join(f.runDir, 'bundled', 'junk.md'), 'not a bundled member\n');
+  fs.rmSync(f.staged('bundle-1.md'));
+  const before = f.ls(path.join(f.runDir, 'bundled'));
+  const r = go(f);
+  assert.equal(r.code, 3);
+  assert.match(r.err, /junk\.md/);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), before);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), ['leftover-z.md']);
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 3, 'un-bundle refuses too');
+});
+
+test('a readdir error other than ENOENT exits 3 and writes nothing; only ENOENT reads as an empty dir', () => {
+  const f = fixture();
+  seed(f);
+  const before = f.ls(path.join(f.runDir, 'staged'));
+  const denied = (p) => {
+    if (p === path.join(fs.realpathSync(f.runDir), 'staged')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return realDeps.readdir(p);
+  };
+  const r = go(f, [], { readdir: denied });
+  assert.equal(r.code, 3);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), before);
+  assert.equal(f.decisions().includes('Proposal bundling'), false);
+  assert.deepEqual(realDeps.readdir(path.join(f.root, 'nope')), []);
+  assert.throws(() => realDeps.readdir(f.ledger), (e) => e.code === 'ENOTDIR');
+});
+
+test('--local reads specs/ from the git root, not the cwd', () => {
+  const f = fixture();
+  seed(f);
+  fs.mkdirSync(path.join(f.main, 'specs'));
+  fs.writeFileSync(path.join(f.main, 'specs', '01-unrelated.md'), '# Unrelated\n\nbody\n');
+  const sub = path.join(f.main, 'sub', 'dir');
+  fs.mkdirSync(sub, { recursive: true });
+  const r = go(f, ['--local'], { cwd: () => sub }, { records: false });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json.bundles.length, 1);
 });

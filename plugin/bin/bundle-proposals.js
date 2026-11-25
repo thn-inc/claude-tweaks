@@ -4,7 +4,7 @@
 // proposal, and each member is retired out of staged/ so the console files one record, not N.
 //   node bin/bundle-proposals.js --run <run-dir> (--records-json <path> | --local)
 //     [--ledger <path>] [--group-size-guard <n>]
-//   node bin/bundle-proposals.js --run <run-dir> --unbundle bundle-{n}.md [--ledger <path>]
+//   node bin/bundle-proposals.js --run <run-dir> --unbundle bundle-{n}.md
 // stdout, one JSON line: { bundles: [{ path, class, members, sharedPaths }], singletons: [..], skipped: [{ path, reason }] }
 // (every path relative to --run). The pure planning is bin/lib/console/bundle.js's; this file owns the
 // filesystem, the ledger rows and the audit log. It never calls `gh`: the open backlog is read from
@@ -16,10 +16,13 @@
 // Retirement: a member moves to {its dir}/bundled/ — outside staged/, so an older console reading the run
 // dir sees only the bundle as creatable — with `Bundled-into:` (and for a ledger member `Ledger-row:` /
 // `Ledger-resolution-was:`) header lines prepended to its original bytes; --unbundle strips them again.
-// Atomicity: every bundle of one invocation is staged, retired and re-pointed before the audit lines are
-// written in one append; a failure anywhere undoes all of it (exit 3), so a non-zero exit bundles nothing.
-// A crashed run is repaired on the next start: a staged/bundle-* no bundled/ member names is deleted, and a
-// bundled/ member whose bundle is gone goes back to staged/ with its ledger Resolution.
+// Commit marker: a bundle's `bundled staged/bundle-{n}.md` AUTO line in decisions.md, written last (step 4).
+// A failure anywhere undoes every bundle of the invocation, committed ones included (each logs an
+// `un-bundled` line), so a non-zero exit bundles nothing.
+// A crashed run is repaired on the next bundle-mode start: a bundle that is not committed (no marker, or the
+// last marker for it is `un-bundled`), or is committed but whose file is gone (a partial --unbundle, which
+// deletes the bundle file first), is rolled back — its bundled/ members return to staged/ with their ledger
+// Resolutions and the bundle file goes. A bundled/ file that cannot be read or parsed blocks that repair (exit 3).
 'use strict';
 
 const fs = require('fs');
@@ -36,7 +39,7 @@ const { parseProposal, planBundles, composeBundle } = require('./lib/console/bun
 const { refusedStagedNames } = require('./lib/console/resolve');
 
 const USAGE = 'usage: bundle-proposals.js --run <run-dir> (--records-json <path> | --local) [--ledger <path>] [--group-size-guard <n>]\n'
-  + '       bundle-proposals.js --run <run-dir> --unbundle bundle-<n>.md [--ledger <path>]\n'
+  + '       bundle-proposals.js --run <run-dir> --unbundle bundle-<n>.md\n'
   + '  exit 0 done (nothing to bundle included); 2 malformed invocation; 3 run dir missing/not anchored, or a write failed (nothing bundled); 4 open-backlog records unreadable, not an array, or empty\n';
 
 const GLOB_RE = /^(leftover|ledger-record|review-followup)-/;
@@ -54,7 +57,15 @@ const realDeps = {
     if (!fs.lstatSync(p).isFile()) throw new Error(`${p} is not a regular file`);
     return fs.readFileSync(p, 'utf8');
   },
-  readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
+  // Only a missing dir reads as empty; any other error (EACCES, ENOTDIR, ...) surfaces and the run exits 3.
+  readdir: (p) => {
+    try { return fs.readdirSync(p); } catch (err) {
+      if (err && err.code === 'ENOENT') return [];
+      throw err;
+    }
+  },
+  // A test seam: false simulates process death mid-run (a failed write leaves its partial state for the next start).
+  inProcessRollback: true,
   writeFile: (p, text) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); },
   unlink: (p) => fs.rmSync(p, { force: true }),
   writeStaged: writeStagedItem,
@@ -116,7 +127,8 @@ function loadOpenRecords(o, deps) {
   let raw;
   if (o.local) {
     try {
-      raw = queryRecords(path.resolve(deps.cwd(), DEFAULT_DIR))
+      const root = findGitRoot(deps.cwd());
+      raw = queryRecords(path.resolve(root ? root.dir : deps.cwd(), DEFAULT_DIR))
         .map((r) => ({ number: r.id, title: r.title, body: r.body, labels: [], state: 'OPEN' }));
     } catch (err) { throw new Fail(4, `could not read local records (${err && err.message})`); }
   } else {
@@ -159,12 +171,14 @@ function makeLedgerFinder(o, target, deps) {
   return { forDir, forPath };
 }
 
-function pathToken(dir, name) {
-  const qualified = dir.rel ? `(?:${esc(dir.rel)}/)?` : '';
-  return new RegExp(`(?<![\\w/.-])${qualified}staged/${esc(name)}(?![\\w-]|\\.\\w)`);
+// A spec dir's member is named `spec-{N}/staged/{name}`; the run dir's own `staged/{name}` — never preceded by a
+// path segment, so a run-level item and a same-named spec item bind to their own rows.
+function pathToken(dir, name, flags = '') {
+  const qualified = dir.rel ? `${esc(dir.rel)}/` : '';
+  return new RegExp(`(?<![\\w/.-])${qualified}staged/${esc(name)}(?![\\w-]|\\.\\w)`, flags);
 }
 
-// The ledger row whose Resolution names the member's staged path: { ledgerPath, row, status, resolution, token } or null.
+// The ledger row whose Resolution names the member's staged path: { ledgerPath, row, status, resolution } or null.
 function findLedgerRow(ledgerPath, dir, name, deps) {
   if (!ledgerPath) return null;
   let table;
@@ -176,7 +190,7 @@ function findLedgerRow(ledgerPath, dir, name, deps) {
     const resolution = cells[4];
     const status = String(cells[3] || '').toLowerCase();
     if ((status === 'deferred' || status === 'open') && token.test(resolution)) {
-      return { ledgerPath, row: Number(number), status, resolution, token };
+      return { ledgerPath, row: Number(number), status, resolution };
     }
   }
   return null;
@@ -216,7 +230,7 @@ function run(argv, deps = realDeps) {
   if (!o.run) return usage('--run <run-dir> is required');
   if (o.unbundle !== null) {
     if (!BUNDLE_NAME_RE.test(o.unbundle)) return usage(`--unbundle needs a bundle file name like bundle-1.md, got ${JSON.stringify(o.unbundle)}`);
-    if (o.recordsJson || o.local || o.guard !== null) return usage('--unbundle cannot be combined with --records-json, --local or --group-size-guard');
+    if (o.recordsJson || o.local || o.guard !== null || o.ledger !== null) return usage('--unbundle cannot be combined with --records-json, --local, --group-size-guard or --ledger (restoration uses each member\'s recorded Ledger-row)');
   } else {
     if (Boolean(o.recordsJson) === o.local) return usage('exactly one of --records-json <path> or --local is required');
     if (o.guard !== null && !(/^\d+$/.test(o.guard) && Number(o.guard) >= 2)) return usage(`--group-size-guard must be an integer >= 2, got ${JSON.stringify(o.guard)}`);
@@ -265,17 +279,42 @@ function restoreMember(dir, name, parsed, deps, ledger) {
   deps.unlink(path.join(dir.abs, 'bundled', name));
 }
 
-// Every bundled/ file across the run's dirs, parsed: [{ dir, name, parsed }].
+// Every bundled/ file across the run's dirs: { members: [{ dir, name, parsed }], unreadable: [path] }. A file that
+// cannot be read or parsed is reported, never dropped — a caller that deletes a bundle must refuse on it.
 function bundledMembers(dirs, deps) {
-  const out = [];
+  const members = [];
+  const unreadable = [];
   for (const dir of dirs) {
     for (const name of deps.readdir(path.join(dir.abs, 'bundled')).filter((n) => n.endsWith('.md')).sort()) {
       let parsed = null;
       try { parsed = parseBundled(deps.readFile(path.join(dir.abs, 'bundled', name))); } catch { parsed = null; }
-      if (parsed) out.push({ dir, name, parsed });
+      if (parsed) members.push({ dir, name, parsed });
+      else unreadable.push(relPath(dir, 'bundled', name));
     }
   }
-  return out;
+  return { members, unreadable };
+}
+
+function readOptional(deps, file) {
+  try { return deps.readFile(file); } catch (err) {
+    if (err && err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+// decisions.md -> Map(bundle ref -> true when its last Proposal bundling event is `bundled`, false when `un-bundled`).
+const EVENT_RE = /^- AUTO \S+ — Proposal bundling: (bundled|un-bundled) (staged\/bundle-\d+\.md)(?=[ ;])/;
+function bundleEvents(decisionsText) {
+  const state = new Map();
+  for (const line of String(decisionsText || '').split('\n')) {
+    const m = EVENT_RE.exec(line);
+    if (m) state.set(m[2], m[1] === 'bundled');
+  }
+  return state;
+}
+
+function refuseUnreadable(unreadable) {
+  if (unreadable.length > 0) throw new Error(`bundled/ file(s) cannot be read or parsed (${unreadable.join(', ')}) — refusing to delete a bundle; fix or remove them first`);
 }
 
 function auto(text, deps) {
@@ -288,40 +327,54 @@ function unbundle(o, target, deps) {
   const dirs = memberDirs(target.dir, deps);
   const ledger = { ...makeLedgerFinder(o, target, deps), runDir: target.dir };
   const ref = `staged/${o.unbundle}`;
-  const members = bundledMembers(dirs, deps).filter((m) => m.parsed.bundleRef === ref);
   const bundleFile = path.join(target.dir, 'staged', o.unbundle);
-  let bundleExists = true;
-  try { deps.readFile(bundleFile); } catch { bundleExists = false; }
-  if (!bundleExists && members.length === 0) throw new Fail(2, `${ref} is not a bundle of this run: no such file and no bundled/ member names it`);
   const paths = [];
   try {
+    const all = bundledMembers(dirs, deps);
+    refuseUnreadable(all.unreadable);
+    const members = all.members.filter((m) => m.parsed.bundleRef === ref);
+    const bundleExists = readOptional(deps, bundleFile) !== null;
+    if (!bundleExists && members.length === 0) throw new Fail(2, `${ref} is not a bundle of this run: no such file and no bundled/ member names it`);
+    // The bundle file goes first: it is the un-bundle's commit point, so a crash leaves "committed, file gone",
+    // which the next bundle-mode start finishes (recover) instead of treating the half-restored members as fresh.
+    deps.unlink(bundleFile);
     for (const m of members) {
       restoreMember(m.dir, m.name, m.parsed, deps, ledger);
       paths.push(relPath(m.dir, 'staged', m.name));
     }
-    deps.unlink(bundleFile);
     deps.appendEntries({
       runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${ref} → ${paths.join(', ')}`, deps) }],
     });
   } catch (err) {
-    throw new Fail(3, `un-bundle failed (${err && err.message}) — re-run --unbundle ${o.unbundle} to finish`);
+    if (err instanceof Fail) throw err;
+    throw new Fail(3, `un-bundle failed (${err && err.message}) — re-run --unbundle ${o.unbundle}, or any bundle-mode run, to finish`);
   }
   deps.stdout(`${JSON.stringify({ unbundled: ref, members: paths })}\n`);
   return 0;
 }
 
-// Crash repair (see the header): returns nothing, throws Fail(3) when a repair write fails.
-function recover(o, target, dirs, deps, ledger) {
-  const bundled = bundledMembers(dirs, deps);
-  const named = new Set(bundled.map((m) => m.parsed.bundleRef));
+// Crash repair (see the header). Throws on any failure; the caller exits 3.
+function recover(target, dirs, deps, ledger) {
+  const all = bundledMembers(dirs, deps);
+  refuseUnreadable(all.unreadable);
+  const state = bundleEvents(readOptional(deps, path.join(target.dir, 'decisions.md')));
   const stagedDir = path.join(target.dir, 'staged');
-  for (const name of deps.readdir(stagedDir).filter((n) => BUNDLE_NAME_RE.test(n))) {
-    if (!named.has(`staged/${name}`)) deps.unlink(path.join(stagedDir, name));
-  }
-  for (const m of bundled) {
-    let present = true;
-    try { deps.readFile(path.join(target.dir, m.parsed.bundleRef)); } catch { present = false; }
-    if (!present) restoreMember(m.dir, m.name, m.parsed, deps, ledger);
+  const files = new Set(deps.readdir(stagedDir).filter((n) => BUNDLE_NAME_RE.test(n)).map((n) => `staged/${n}`));
+  const refs = new Set([...files, ...all.members.map((m) => m.parsed.bundleRef), ...[...state].filter(([, c]) => c).map(([r]) => r)]);
+  for (const ref of [...refs].sort()) {
+    const committed = state.get(ref) === true;
+    if (committed && files.has(ref)) continue;
+    const paths = [];
+    for (const m of all.members.filter((x) => x.parsed.bundleRef === ref)) {
+      restoreMember(m.dir, m.name, m.parsed, deps, ledger);
+      paths.push(relPath(m.dir, 'staged', m.name));
+    }
+    if (files.has(ref)) deps.unlink(path.join(target.dir, ref));
+    if (committed) {
+      deps.appendEntries({
+        runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${ref} → ${paths.join(', ') || '(no members left)'}`, deps) }],
+      });
+    }
   }
 }
 
@@ -330,14 +383,15 @@ function enumerate(dirs, ledgerFinder, deps) {
   const skipped = [];
   const singletons = [];
   for (const dir of dirs) {
-    let refused = new Set();
-    try { refused = refusedStagedNames(deps.readFile(path.join(dir.abs, 'decisions.md'))); } catch { refused = new Set(); }
+    const refused = refusedStagedNames(readOptional(deps, path.join(dir.abs, 'decisions.md')) || '');
     for (const name of deps.readdir(path.join(dir.abs, 'staged')).filter((n) => n.endsWith('.md') && !n.startsWith('.')).sort()) {
       if (/\.shadow-dup/.test(name) || /^ledger-record-sdd-ruling-/.test(name) || /^bundle-/.test(name) || refused.has(name)) continue;
       const key = relPath(dir, 'staged', name);
       let text;
       try { text = deps.readFile(path.join(dir.abs, 'staged', name)); } catch (err) {
-        if (GLOB_RE.test(name)) skipped.push({ path: key, reason: `unreadable: ${err && err.message}` });
+        // An unreadable file cannot be classified, so it is reported whatever its name: left in place, a singleton.
+        singletons.push(key);
+        skipped.push({ path: key, reason: `unreadable: ${err && err.message}` });
         continue;
       }
       const head = headerOf(text);
@@ -345,7 +399,11 @@ function enumerate(dirs, ledgerFinder, deps) {
       const hasHeader = /^Title:/m.test(head) && (/^Type:/m.test(head) || /^Labels:/m.test(head));
       if (!GLOB_RE.test(name) && !hasHeader) continue;
       const parsed = parseProposal(name, text);
-      if (!parsed) { skipped.push({ path: key, reason: 'unparseable: no Title: header' }); continue; }
+      if (!parsed) {
+        singletons.push(key);
+        skipped.push({ path: key, reason: 'unparseable: no Title: header' });
+        continue;
+      }
       const member = { ...parsed, key, dir, text };
       if (name.startsWith('ledger-record-')) {
         member.ledger = findLedgerRow(ledgerFinder.forDir(dir), dir, name, deps);
@@ -365,7 +423,7 @@ function bundle(o, target, deps) {
   const openRecords = loadOpenRecords(o, deps);
   const dirs = memberDirs(target.dir, deps);
   const ledgerFinder = { ...makeLedgerFinder(o, target, deps), runDir: target.dir };
-  try { recover(o, target, dirs, deps, ledgerFinder); } catch (err) {
+  try { recover(target, dirs, deps, ledgerFinder); } catch (err) {
     throw new Fail(3, `could not repair an interrupted bundling run (${err && err.message})`);
   }
 
@@ -384,16 +442,19 @@ function bundle(o, target, deps) {
   envelope.singletons.push(...plan.singletons.map((p) => p.key));
   envelope.skipped.push(...plan.skipped.map((s) => ({ path: s.key, reason: s.reason })));
 
-  const undo = [];
-  const lines = [];
+  // One journal entry per bundle: its undo steps, and whether its AUTO line (the commit marker) is written.
+  const journal = [];
   try {
     for (const b of plan.bundles) {
       const composed = composeBundle(b, { openRecords });
       const staged = deps.writeStaged({
         runDir: target.dir, id: 'bundle-1', sourcePath: 'bundle-1.md', content: composed.text, allocate: true,
       });
-      undo.push(() => deps.unlink(staged.file));
       const bundleRef = `staged/${staged.id}.md`;
+      const memberKeys = b.members.map((m) => m.key);
+      const entry = { ref: bundleRef, members: memberKeys, committed: false, undo: [() => deps.unlink(staged.file)] };
+      journal.push(entry);
+      const undo = entry.undo;
       for (const m of b.members) {
         const stagedFile = path.join(m.dir.abs, 'staged', m.name);
         const bundledFile = path.join(m.dir.abs, 'bundled', m.name);
@@ -407,7 +468,7 @@ function bundle(o, target, deps) {
         deps.unlink(stagedFile);
       }
       for (const m of b.members.filter((x) => x.ledger)) {
-        const { ledgerPath, row, status, resolution, token } = m.ledger;
+        const { ledgerPath, row, status, resolution } = m.ledger;
         undo.push(() => {
           if (rowNow(ledgerPath, row, deps).resolution === resolution) return;
           deps.settleRow({
@@ -415,25 +476,35 @@ function bundle(o, target, deps) {
           });
         });
         deps.settleRow({
-          runDir: target.dir, ledgerPath, row, status, resolution: resolution.replace(token, bundleRef), env: deps.env,
+          runDir: target.dir, ledgerPath, row, status, resolution: resolution.replace(pathToken(m.dir, m.name, 'g'), bundleRef), env: deps.env,
         });
       }
-      envelope.bundles.push({
-        path: bundleRef, class: b.class, members: b.members.map((m) => m.key), sharedPaths: b.sharedPaths,
-      });
-      lines.push(`bundled ${bundleRef} (${b.class}) from ${b.members.map((m) => m.key).join(', ')}; shared: ${b.sharedPaths.join(', ')}`);
-    }
-    if (lines.length > 0) {
+      // Step 4, the commit marker: from here a next start treats this bundle as done.
       deps.appendEntries({
-        runDir: target.dir, items: lines.map((text) => ({ section: SECTION, entry: auto(text, deps) })),
+        runDir: target.dir,
+        items: [{ section: SECTION, entry: auto(`bundled ${bundleRef} (${b.class}) from ${memberKeys.join(', ')}; shared: ${b.sharedPaths.join(', ')}`, deps) }],
+      });
+      entry.committed = true;
+      envelope.bundles.push({
+        path: bundleRef, class: b.class, members: memberKeys, sharedPaths: b.sharedPaths,
       });
     }
   } catch (err) {
+    if (deps.inProcessRollback === false) throw new Fail(3, `a write failed (${err && err.message}) — rollback skipped, the next run repairs it`);
     const failures = [];
-    for (const step of undo.reverse()) {
-      try { step(); } catch (undoErr) { failures.push(undoErr && undoErr.message); }
+    for (const entry of journal.reverse()) {
+      for (const step of entry.undo.reverse()) {
+        try { step(); } catch (undoErr) { failures.push(undoErr && undoErr.message); }
+      }
+      if (entry.committed) {
+        try {
+          deps.appendEntries({
+            runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${entry.ref} → ${entry.members.join(', ')}`, deps) }],
+          });
+        } catch (logErr) { failures.push(logErr && logErr.message); }
+      }
     }
-    const left = failures.length > 0 ? ` — ROLLBACK INCOMPLETE (${failures.join('; ')}): inspect bundled/ and staged/bundle-*` : ' — rolled back, nothing bundled';
+    const left = failures.length > 0 ? ` — ROLLBACK INCOMPLETE (${failures.join('; ')}): the next run repairs it` : ' — rolled back, nothing bundled';
     throw new Fail(3, `a write failed (${err && err.message})${left}`);
   }
 
