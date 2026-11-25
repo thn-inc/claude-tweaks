@@ -1,8 +1,28 @@
 {
-  "computedAt": "2026-11-25T06:50:18.073Z",
+  "computedAt": "2026-11-25T07:16:59.144Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6120,
+        "updatedAt": "2026-11-25T07:15:16Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6119,
+        "updatedAt": "2026-11-25T07:15:11Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6118,
+        "updatedAt": "2026-11-25T07:15:04Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6117,
+        "updatedAt": "2026-11-25T07:14:58Z",
+        "state": "OPEN"
+      },
       {
         "number": 5833,
         "updatedAt": "2026-11-24T04:44:29Z",
@@ -9428,6 +9448,39 @@
     ]
   ],
   "excluded": [
+    {
+      "number": 6120,
+      "blockedBy": [
+        6119,
+        6118,
+        6117,
+        5571,
+        6021
+      ]
+    },
+    {
+      "number": 6119,
+      "blockedBy": [
+        6117,
+        5571,
+        6021
+      ]
+    },
+    {
+      "number": 6118,
+      "blockedBy": [
+        6117,
+        5571,
+        6021
+      ]
+    },
+    {
+      "number": 6117,
+      "blockedBy": [
+        5571,
+        6021
+      ]
+    },
     {
       "number": 4627,
       "blockedBy": [
