@@ -38,6 +38,7 @@ function selectSections(content, selectors, label) {
   const lines = String(content).split('\n');
   const tokens = parseMarkers(content, label);
   const fail = (message, selector) => { throw new SectionError(message, { file: label, selector }); };
+  if (!Array.isArray(selectors) || selectors.length === 0) fail('no section selectors given', null);
   const slices = selectors.map((selector) => {
     const isHeading = HEADING_SELECTOR_RE.test(selector);
     if (!isHeading && !selector.startsWith('**')) {
@@ -61,6 +62,7 @@ function selectSections(content, selectors, label) {
       }
     } else {
       for (let i = start + 1; i < lines.length; i++) {
+        if (tokens[i].fenced) continue;
         if (/^\s*$/.test(lines[i])) { end = i; break; }
       }
     }

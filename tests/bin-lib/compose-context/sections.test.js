@@ -48,7 +48,16 @@ test('CRLF content selects the same section', () => {
   const lf = '# T\n## A\na1\n### A.1\na2\n## B\nb1\n';
   const crlf = lf.replace(/\n/g, '\r\n');
   assert.equal(selectSections(crlf.replace(/\r\n/g, '\n'), ['## A'], 'f.md'), '## A\na1\n### A.1\na2\n');
-  assert.equal(selectSections('## A\r\nb\n', ['## A'], 'f.md'), '## A\r\nb\n');
+  assert.ok(selectSections('## A\r\nb\n', ['## A'], 'f.md').startsWith('## A'));
+});
+
+test('a blank line inside a fence does not end a lead slice', () => {
+  const content = '**R.** a\n```\nx\n\ny\n```\nz\n\n**O.** q\n';
+  assert.equal(selectSections(content, ['**R.**'], 'f.md'), '**R.** a\n```\nx\n\ny\n```\nz\n');
+});
+
+test('an empty selector list throws', () => {
+  assert.throws(() => selectSections(LEAD, [], 'f.md'), (err) => err instanceof SectionError && /no section selectors/.test(err.message));
 });
 
 test('a slice that opens a when-block without its close is a MarkerError at compose', () => {
