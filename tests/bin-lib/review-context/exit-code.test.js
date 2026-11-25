@@ -92,3 +92,23 @@ test('a throw inside build maps to exit 1 with a build-review-context.js: stderr
   assert.equal(result.code, 1);
   assert.equal(result.stderr, 'build-review-context.js: boom\n');
 });
+
+test('AC7.1: size-proxy with no --base exits 2 and prints usage', () => {
+  const result = runCliSync(CLI, ['size-proxy', '--branch', 'HEAD']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /size-proxy requires --base and --branch/);
+});
+
+test('size-proxy with --print-dir exits 2 (mint-only)', () => {
+  const result = runCliSync(CLI, ['size-proxy', '--base', 'a', '--branch', 'b', '--print-dir']);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /--print-dir is mint-only/);
+});
+
+test('AC7.2: size-proxy with an unknown ref exits 1 and prints nothing on stdout', () => {
+  // real process: proves the git failure path end to end
+  const result = spawnCli(CLI, ['size-proxy', '--base', 'no-such-ref-5148', '--branch', 'HEAD']);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^build-review-context\.js:/);
+});
