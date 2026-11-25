@@ -13,7 +13,7 @@
 
 const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, extractKeyFilesSection } = require('../issues/grouping');
 const {
-  specShapedBody, extractFingerprint, defuse, DEFER_REASONS, TIERS, TYPES, LABELS,
+  specShapedBody, extractFingerprints, defuse, DEFER_REASONS, TIERS, TYPES, LABELS,
 } = require('../issues/record');
 const { parseRiskFlags, addRiskFlags } = require('../issues/record-risk-flags');
 const { extractSection, fencedBlock } = require('../markdown-blocks');
@@ -49,7 +49,8 @@ function parseProposal(name, text) {
     deferReason,
     body,
     keyFiles: extractKeyFilesSection(body),
-    fingerprint: extractFingerprint(body) || null,
+    // The member's own marker is the trailing one a producer appends; an earlier one is quoted text.
+    fingerprint: extractFingerprints(body).at(-1) || null,
   };
 }
 
@@ -70,6 +71,7 @@ function classifyLandingClass(labels) {
 function planBundles(proposals, options = {}) {
   const hubPaths = options.hubPaths instanceof Set ? options.hubPaths : new Set();
   const guard = options.groupSizeGuard ?? GROUP_SIZE_GUARD_DEFAULT;
+  if (!Number.isInteger(guard) || guard < 2) throw new TypeError(`planBundles: groupSizeGuard must be an integer >= 2 (got ${guard})`);
   const bundles = [];
   const singletons = [];
   const skipped = [];
@@ -96,8 +98,17 @@ function planBundles(proposals, options = {}) {
       const members = group.map((key) => byKey.get(key));
       for (let i = 0; i < members.length; i += guard) {
         const slice = members.slice(i, i + guard);
-        if (slice.length === 1) singletons.push(slice[0]);
-        else found.push({ class: cls, members: slice, sharedPaths: sharedPathsOf(slice, hubPaths) });
+        // A slice cut from a transitively-joined group can hold members that no longer overlap:
+        // regroup inside the slice so only members that share a path stay together.
+        const sliceByKey = new Map(slice.map((p) => [p.key, p]));
+        const subGroups = slice.length === 1
+          ? [[slice[0].key]]
+          : groupByFileOverlap(slice.map((p) => ({ id: p.key, keyFiles: p.keyFiles })), { hubPaths });
+        for (const sub of subGroups) {
+          const subMembers = sub.map((key) => sliceByKey.get(key));
+          if (subMembers.length === 1) singletons.push(subMembers[0]);
+          else found.push({ class: cls, members: subMembers, sharedPaths: sharedPathsOf(subMembers, hubPaths) });
+        }
       }
     }
   }
@@ -140,7 +151,7 @@ function majority(values) {
 }
 
 function sectionOf(body, heading) {
-  return defuse(extractSection(body, heading, { trim: true })).trim();
+  return defuse(extractSection(body, heading, { trim: true, stopPattern: '1,2' })).trim();
 }
 
 function perMember(members, render) {
@@ -173,7 +184,12 @@ function composeBundle(bundle, options = {}) {
   const notes = [...new Set(members.map(note).filter((s) => s && s !== NO_CHANGE_NOTE))];
   const fallback = (m) => `See the embedded finding for ${defuse(m.title)}.`;
   const keyFiles = [...new Set(members.flatMap((m) => m.keyFiles || []))].map((path) => ({ path, change: 'modify' }));
-  const flags = [...new Set(members.flatMap((m) => parseRiskFlags(m.body).flags))];
+  // Union through the reader and writer. A member that is unconfirmed, or unclassified beside a
+  // classified one, makes the union unconfirmed; every member reading `none` writes `none`.
+  const reads = members.map((m) => parseRiskFlags(m.body));
+  const classified = reads.filter((r) => r.status !== 'unclassified');
+  const flags = [...new Set(classified.flatMap((r) => r.flags))];
+  const unconfirmed = reads.some((r) => r.unconfirmed) || (classified.length > 0 && classified.length < reads.length);
 
   const compose = (header) => {
     const body = specShapedBody({
@@ -189,7 +205,7 @@ function composeBundle(bundle, options = {}) {
       footer: `_Filed by \`${FILED_BY}\` via specShapedBody._`,
       keyFiles,
     });
-    return flags.length > 0 ? addRiskFlags(body, flags) : body;
+    return classified.length > 0 ? addRiskFlags(body, flags, { unconfirmed }) : body;
   };
 
   // The near-duplicate screen runs once, on the composed body; a hit adds a Related line.

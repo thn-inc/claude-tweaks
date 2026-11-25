@@ -8,7 +8,7 @@ const { parseProposal, classifyLandingClass, planBundles, composeBundle } = requ
 const { specShapedBody, recordPayload, extractFingerprint, extractFingerprints, parseRiskFlags } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
 // A staged proposal text shaped like wrap-up/leftover-routing.md writes it.
-function stage({ title, files = [], labels = ['ready'], type = 'task', deferReason = 'tangential', fp, risk, size, extraBody = '', needs = false, noLabels = false, crlf = false, riskFlags }) {
+function stage({ title, files = [], labels = ['ready'], type = 'task', deferReason = 'tangential', fp, risk, size, extraBody = '', needs = false, noLabels = false, crlf = false, riskFlags, riskUnconfirmed = false }) {
   const allLabels = [...(risk ? [`risk:${risk}`] : []), ...(size ? [`size:${size}`] : []), ...labels];
   const body = specShapedBody({
     currentState: `Finding for ${title}.${extraBody}`,
@@ -21,7 +21,7 @@ function stage({ title, files = [], labels = ['ready'], type = 'task', deferReas
   });
   const payload = recordPayload({ title, body, type, fingerprint: fp });
   let text = `Title: ${payload.title}\nType: ${payload.type}\n${noLabels ? '' : `Labels: ${allLabels.join(', ') || 'none'}\n`}Defer-reason: ${deferReason}\n\n${payload.body}`;
-  if (riskFlags) text = text.replace('## Current State', `Risk-flags: ${riskFlags}\n\n## Current State`);
+  if (riskFlags) text = text.replace('## Current State', `Risk-flags: ${riskFlags}\n${riskUnconfirmed ? 'Risk-flags-unconfirmed: true\n' : ''}\n## Current State`);
   return crlf ? text.replace(/\n/g, '\r\n') : text;
 }
 const prop = (name, opts) => ({ ...parseProposal(name, stage(opts)), key: name });
@@ -138,8 +138,8 @@ test('AC5: a file cited by 3 run proposals bundles them; the same file in hubPat
 test('AC6/AC15: every member marker is carried in member order; quoted markers (raw, defused, fenced) add nothing', () => {
   const rawFence = '\n\n```\n<!-- work-fingerprint: fenced-raw -->\nwork-fingerprint: fenced-raw\n```\n\n<!-- work-fingerprint: loose-raw -->\n';
   const ps = [
-    // A member's own marker is the producer's; the raw quoted ones sit in its body text.
-    { ...prop('a.md', { title: 'A', files: ['src/s.js'], fp: 'fp-a', extraBody: rawFence }), fingerprint: 'fp-a' },
+    // The raw quoted markers precede the member's own trailing one.
+    prop('a.md', { title: 'A', files: ['src/s.js'], fp: 'fp-a', extraBody: rawFence }),
     prop('b.md', { title: 'B', files: ['src/s.js'], fp: 'fp-b' }),
     prop('c.md', { title: 'C', files: ['src/s.js'] }),
     prop('d.md', { title: 'D', files: ['src/s.js'], fp: 'fp-d', extraBody: '\n\nwork-fingerprint : already-defused' }),
@@ -155,7 +155,7 @@ test('AC6/AC15: every member marker is carried in member order; quoted markers (
 
 test('AC7: highest risk, size >= largest member, shared Type else task, Defer-reason majority (tie -> first)', () => {
   const ps = [
-    prop('a.md', { title: 'A', files: ['src/s.js'], risk: 'low', size: 'small'.replace('small', 'low'), type: 'bug', deferReason: 'tangential' }),
+    prop('a.md', { title: 'A', files: ['src/s.js'], risk: 'low', size: 'low', type: 'bug', deferReason: 'tangential' }),
     prop('b.md', { title: 'B', files: ['src/s.js'], risk: 'high', size: 'medium', type: 'bug', deferReason: 'genuinely-larger' }),
     prop('c.md', { title: 'C', files: ['src/s.js'], type: 'bug', deferReason: 'genuinely-larger' }),
   ];
@@ -224,4 +224,73 @@ test('a member with no valid Defer-reason is a singleton, not a bundle member', 
   const plan = planBundles(ps, { hubPaths: new Set() });
   assert.deepStrictEqual(keys(plan.bundles[0].members), ['a.md', 'c.md']);
   assert.deepStrictEqual(plan.skipped, [{ key: 'b.md', reason: 'singleton: no valid Defer-reason' }]);
+});
+
+const bundleOf = (ps) => composeBundle(planBundles(ps, { hubPaths: new Set() }).bundles[0]);
+const riskRead = (out) => parseRiskFlags(out.text.slice(out.text.indexOf('\n\n') + 2));
+
+test('risk flags: an unconfirmed member makes the union unconfirmed', () => {
+  const out = bundleOf([
+    prop('a.md', { title: 'A', files: ['src/s.js'], riskFlags: 'auth' }),
+    prop('b.md', { title: 'B', files: ['src/s.js'], riskFlags: 'migrations', riskUnconfirmed: true }),
+  ]);
+  assert.strictEqual(riskRead(out).unconfirmed, true);
+  assert.deepStrictEqual(riskRead(out).flags, ['migrations', 'auth']);
+});
+
+test('risk flags: an unclassified member beside a classified one writes the union unconfirmed', () => {
+  const out = bundleOf([
+    prop('a.md', { title: 'A', files: ['src/s.js'], riskFlags: 'auth' }),
+    prop('b.md', { title: 'B', files: ['src/s.js'] }),
+  ]);
+  assert.deepStrictEqual(riskRead(out).flags, ['auth']);
+  assert.strictEqual(riskRead(out).unconfirmed, true);
+});
+
+test('risk flags: all members none writes a confirmed none; all unclassified writes no line', () => {
+  const none = bundleOf([
+    prop('a.md', { title: 'A', files: ['src/s.js'], riskFlags: 'none' }),
+    prop('b.md', { title: 'B', files: ['src/s.js'], riskFlags: 'none' }),
+  ]);
+  assert.match(none.text, /^Risk-flags: none$/m);
+  assert.strictEqual(riskRead(none).status, 'ok');
+  assert.strictEqual(riskRead(none).unconfirmed, false);
+  const bare = bundleOf([prop('a.md', { title: 'A', files: ['src/s.js'] }), prop('b.md', { title: 'B', files: ['src/s.js'] })]);
+  assert.doesNotMatch(bare.text, /^Risk-flags/m);
+});
+
+test('a member AC with a ### subsection keeps the whole section', () => {
+  const mk = (name, title) => {
+    const p = prop(name, { title, files: ['src/s.js'] });
+    return { ...p, body: p.body.replace(`${title} is fixed.`, `${title} is fixed.\n\n### Part two\n\n${title} second part.`) };
+  };
+  const out = bundleOf([mk('a.md', 'A'), mk('b.md', 'B')]);
+  assert.match(out.text, /^### Part two\n\nA second part\.$/m);
+  assert.match(out.text, /B second part\./);
+});
+
+test('chunking regroups: no bundle holds members that share no path (11 distinct files + one citing all)', () => {
+  const ps = Array.from({ length: 11 }, (_, i) => prop(`s${String(i).padStart(2, '0')}.md`, { title: `S${i}`, files: [`src/f${i}.js`] }));
+  ps.push(prop('s11.md', { title: 'Joiner', files: ps.flatMap((p) => p.keyFiles) }));
+  const plan = planBundles(ps, { hubPaths: new Set() });
+  assert.ok(plan.bundles.length >= 1);
+  for (const b of plan.bundles) assert.ok(b.sharedPaths.length > 0, 'no bundle without a shared path');
+  assert.strictEqual(plan.bundles.reduce((n, b) => n + b.members.length, 0) + plan.singletons.length, 12);
+});
+
+test('groupSizeGuard below 2 or non-integer throws', () => {
+  const ps = [prop('a.md', { title: 'A', files: ['src/s.js'] })];
+  for (const bad of [0, 1, -3, 2.5, NaN, '10']) assert.throws(() => planBundles(ps, { hubPaths: new Set(), groupSizeGuard: bad }), TypeError);
+  assert.doesNotThrow(() => planBundles(ps, { hubPaths: new Set(), groupSizeGuard: 2 }));
+});
+
+test('members and bundles keep manifest order when keys are not alphabetical', () => {
+  const ps = [
+    prop('z.md', { title: 'Z', files: ['src/s.js'] }),
+    prop('m.md', { title: 'M', files: ['src/t.js'] }),
+    prop('a.md', { title: 'A', files: ['src/s.js'] }),
+    prop('b.md', { title: 'B', files: ['src/t.js'] }),
+  ];
+  const plan = planBundles(ps, { hubPaths: new Set() });
+  assert.deepStrictEqual(plan.bundles.map((b) => keys(b.members)), [['z.md', 'a.md'], ['m.md', 'b.md']]);
 });
