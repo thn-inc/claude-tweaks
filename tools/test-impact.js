@@ -13,8 +13,10 @@
 //   fetch [--repo owner/name] [--out <path>]
 //     Downloads the map CI built: of the last 30 successful `test-impact-map.yml` runs on main, the
 //     newest whose head commit is an ancestor of HEAD (a branch behind main could never use a newer
-//     one). Skips the download when the cached map already holds that commit and is not dirty (a dirty
-//     cached map is replaced); validates the artifact (parseImpactMap, commit === the run's headSha,
+//     one). Skips the download when the cached map already holds that commit and is not dirty, or when it
+//     parses, passed (exit 0), is not dirty, descends from that commit and is an ancestor of HEAD (a
+//     fresher local trace is kept; any other cached map, a dirty one included, is replaced, and a git
+//     error on an ancestry check counts as "not kept"); validates the artifact (parseImpactMap, commit === the run's headSha,
 //     exitCode 0, not traced from a dirty tree) before replacing the cache.
 //
 // --out defaults to `{git-common-dir}/claude-tweaks-test-impact.json` (shared by every worktree); the
@@ -285,6 +287,32 @@ function fetch(args, deps) {
   if (cached && cached.ok && cached.map.commit === sha && !cached.map.dirty) {
     deps.log(`fetch: map at ${sha} already current → ${out}`);
     return 0;
+  }
+  // A clean, passing map traced at a commit that descends from the chosen CI commit and is itself an
+  // ancestor of HEAD is fresher than the CI map and as trustworthy as the one verify.js already reads
+  // as-is: keep it. A git error (an unknown commit) counts as "not kept".
+  if (cached && cached.ok && cached.map.exitCode === 0 && !cached.map.dirty && cached.map.commit !== sha) {
+    const cachedCommit = cached.map.commit;
+    let descends = false;
+    try {
+      deps.git(['merge-base', '--is-ancestor', '--end-of-options', sha, cachedCommit], { cwd: root });
+      descends = true;
+    } catch (_) {
+      // diverged, or a commit this clone does not have: take the CI map
+    }
+    let onHead = false;
+    if (descends) {
+      try {
+        deps.git(['merge-base', '--is-ancestor', '--end-of-options', cachedCommit, 'HEAD'], { cwd: root });
+        onHead = true;
+      } catch (_) {
+        // not an ancestor of HEAD (another branch's map), or unknown: take the CI map
+      }
+    }
+    if (onHead) {
+      deps.log(`fetch: cached map at ${cachedCommit} descends from CI map ${sha}, kept → ${out}`);
+      return 0;
+    }
   }
 
   let dir = null;
