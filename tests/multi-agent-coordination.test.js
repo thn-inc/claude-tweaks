@@ -1148,12 +1148,34 @@ test('debate: mixed/partial verdicts → contested with STAGED entry matching th
   assert.match(entry, decisionLogPattern(PRIMITIVE_DOC, ['inconclusive ({verdicts})']));
 });
 
-test('debate: Mode 2 restates the three lines /review writes, so the guide cannot drift from them', () => {
-  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial']) {
+test('debate: Mode 2 restates the lines /review writes, so the guide cannot drift from them', () => {
+  for (const marker of ['Both `agree`', 'Both `disagree`', 'Mixed / partial', 'Debate skipped: proximity coincidence']) {
     const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes(marker));
     const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
     assert.ok(PRIMITIVE_DOC.split('\n').includes(`- ${template}`), `Mode 2 does not carry: ${template}`);
   }
+});
+
+// #4747 AC3.1 / AC3.2: Step 3.5 item 2 names the substance threshold.
+test('/review Step 3.5: AC3.1 AC3.2 item 2 filters contradictions on substanceMatch at SUBSTANCE_SIMILARITY_MIN (0.2)', () => {
+  const item2 = REVIEW_SKILL.split('\n').find((line) => line.startsWith('2. **Filter to contradictions.**'));
+  assert.ok(item2, 'step3-debate-and-refutation.md lost its item 2 "Filter to contradictions." line');
+  for (const needle of ['substanceMatch', '`SUBSTANCE_SIMILARITY_MIN`', '0.2', 'proximity coincidence', 'Step 3.7']) {
+    assert.ok(item2.includes(needle), `item 2 does not name ${needle}`);
+  }
+  assert.ok(!REVIEW_SKILL.includes('Avoid running debate on every `Path:Line`'), 'item 5 still carries the judgment-call warning item 2 replaced');
+});
+
+test('/review Step 3.5: the proximity-coincidence line is never read as a converged debate', () => {
+  const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes('Debate skipped: proximity coincidence'));
+  const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
+  const line = `- ${template.replace('{HH:MM:SS}', '14:41:05')}`;
+  assert.doesNotMatch(line, /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on /);
+});
+
+test('Mode 2 trigger states the substance gate', () => {
+  assert.ok(!PRIMITIVE_DOC.includes('with no substance gate'), 'Mode 2 Trigger still says debate has no substance gate');
+  assert.ok(PRIMITIVE_DOC.includes('SUBSTANCE_SIMILARITY_MIN'), 'Mode 2 Trigger does not name SUBSTANCE_SIMILARITY_MIN');
 });
 
 // ============================================================

@@ -425,7 +425,8 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
 
 // #4747: each pair also carries substanceScore and substanceMatch so review
 // Step 3.5 sends only same-defect pairs to debate. A pair with missing text
-// scores null and never matches (as corroborateCrossLens).
+// scores null and never matches (as corroborateCrossLens). An exact or
+// prefix/suffix text match scores 1 (substanceSimilarity), so it always matches.
 function detectCrossLensOverlap(findingsByLens) {
   const lenses = Object.keys(findingsByLens);
   const overlaps = [];
