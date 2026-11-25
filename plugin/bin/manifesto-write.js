@@ -5,14 +5,15 @@
 //
 //   node bin/manifesto-write.js --run <run-dir> --mode auto
 //     --mode-source <arg|dispatch|policy|default>
-//     --ceremony <n>=<fast-lane|standard>[:judged][,...] [--pre-authorize-merge] [--help]
+//     --ceremony <n>=<fast-lane|standard>[:judged|:skipped][,...] [--pre-authorize-merge] [--help]
 //
 // --mode/--mode-source are flow/SKILL.md Step 1's resolved mode and deciding
 // rung; only `auto` runs here — confirm/hybrid gate on an approval and keep
 // manifesto.md's hand procedure, and interactive runs no Manifesto.
 // --ceremony carries one entry per record: its ceremony:* label, or —
 // suffixed `:judged` — the ceremony-check verdict for an unlabeled record
-// (logged as a `Manifesto ceremony-check` line). --pre-authorize-merge is the
+// (logged as a `Manifesto ceremony-check` line); `:skipped` is flow/manifesto.md's
+// skip rule (#4118) — a standard verdict reached without judging. --pre-authorize-merge is the
 // typed `pre-authorize-merge` token: lever 13 becomes `pre-authorized`
 // (source `arg`) on a single-record run that is not dispatch-bound (run-state.json
 // `dispatched: true`, flow/SKILL.md Step 1 rung 2's read); otherwise it stays
@@ -63,7 +64,7 @@ const {
 } = require('./lib/flow/manifesto-write');
 
 const USAGE = 'usage: manifesto-write.js --run <run-dir> --mode auto --mode-source <arg|dispatch|policy|default>\n'
-  + '         --ceremony <n>=<fast-lane|standard>[:judged][,...] [--pre-authorize-merge] [--help]\n'
+  + '         --ceremony <n>=<fast-lane|standard>[:judged|:skipped][,...] [--pre-authorize-merge] [--help]\n'
   + '  writes a fresh auto run\'s config.yml, decisions.md snapshot header, staged/ and Manifesto lines; prints the FYI table\n'
   + '  exit 0 written\n'
   + '       3 config.yml already present (case-1 adoption: read preflight.levers) — nothing written\n'
@@ -93,11 +94,11 @@ function parseArgs(argv) {
 function parseCeremony(raw) {
   const records = [];
   for (const item of raw.split(',')) {
-    const m = /^#?([1-9]\d*)=(fast-lane|standard)(?::(judged))?$/.exec(item.trim());
-    if (!m) return { error: `--ceremony entry ${JSON.stringify(item)} is not <n>=<fast-lane|standard>[:judged]` };
+    const m = /^#?([1-9]\d*)=(fast-lane|standard)(?::(judged|skipped))?$/.exec(item.trim());
+    if (!m) return { error: `--ceremony entry ${JSON.stringify(item)} is not <n>=<fast-lane|standard>[:judged|:skipped]` };
     const n = Number(m[1]);
     if (records.some((r) => r.n === n)) return { error: `--ceremony names #${n} more than once` };
-    records.push({ n, ceremony: m[2], ceremonySource: m[3] ? 'judged' : 'label' });
+    records.push({ n, ceremony: m[2], ceremonySource: m[3] || 'label' });
   }
   return { records };
 }

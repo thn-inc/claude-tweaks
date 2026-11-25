@@ -116,3 +116,31 @@ test('flow-manifesto: the paragraph search still finds its break under CRLF line
   assert.match(para, /\*\*Ceremony profile computation\.\*\*/);
   assert.ok(para.length < collapse(text).length);
 });
+
+// --- #4118: skip the judgment when its verdict cannot matter ---
+// FROZEN_PRE_4118 is plugin/skills/flow/manifesto.md's Ceremony profile computation paragraph
+// as it stands at this plan's base (`git show 68608178fa:plugin/skills/flow/manifesto.md`, line 35),
+// copied verbatim and collapsed: the control proving the pins go red on reverted prose.
+const FROZEN_PRE_4118 = collapse("**Ceremony profile computation.** Unlike the other levers (policy preferences resolved via the precedence chain above), `ceremony-profile`'s value is computed by folding every record's ceremony value with a logical AND — its `ceremony:*` label (`facets.ceremony`, from Step 1's resolution fetch), or, for a record with no label, the verdict judged below, which stands in for the label: `fast-lane` only when every record in this run has `ceremony:fast-lane`; any record carrying an explicit `standard` sends the whole run's `ceremony-profile` to `standard` — mirrors the auto-merge gate's existing \"every member of the group must carry `auto:merge`\" rule (`dispatch/SKILL.md`'s Auto-merge gate). A record that carries no `ceremony:*` label is judged here, before the fold: run the canonical pattern (`_shared/ceremony-check-invocation.md`) with `#{n}`, using Step 1's fetched body and labels, and hold each verdict in memory. The run directory and `decisions.md` may not exist yet, so log once per record only after the Approval flow section's write has created them (`config.yml` written, `decisions.md` initialized): `node \"${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js\" --run \"$PIPELINE_RUN_DIR\" --section \"/flow\" --status AUTO --step \"Manifesto ceremony-check\" --text \"#{n} carries no ceremony:* label -> CEREMONY: {verdict}\" --reversibility n/a`. On a case-1 adoption (`preflight.adoption.value.case === 1`) omit this judgment and its log line: the call that wrote `config.yml` already logged the verdict, and the lever value comes from `preflight.levers`. This is the run's only verdict for that record: Step 4's materialize passes it through as `--ceremony` (cite `materialize.md`'s `ceremony` bullet). Why here: the materialized header this lever used to read does not exist at Step 3, so `standard` was the only possible outcome for an unlabeled record (#3160). Output with no `CEREMONY:` line stops the pipeline before Step 4 with the generic failure card (`failure-cards.md`, gate `ceremony-check`); it is never defaulted to `standard`. Source is always `header`. The computed value still becomes this lever's Recommended value, overridable via the normal `9=value` mechanism below — unlike Design intent (locked in from `/specify`), `ceremony-check`'s verdict is a fresh automated judgment call, and this Manifesto is the first point a human sees it.");
+const skipPinsMissing = (p) => [
+  ['fold already standard from a labelled record', 'already carries a `ceremony:standard` label'],
+  ['not size:low condition', 'is not `size:low`'],
+  ['micro-plan reason', '`build/micro-plan.md`'],
+  ['--ceremony standard pass-through', 'pass `--ceremony standard` to materialize'],
+  ['skip log step', 'Manifesto ceremony-check (skipped)'],
+  ['skip log text', '#{n} carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #{n} is not size:low)'],
+  ['auto path suffix', '`{n}=standard:skipped`'],
+].filter(([, needle]) => !p.includes(needle)).map(([name]) => name);
+
+test('#4118: the Manifesto skips a ceremony-check whose verdict cannot matter, and passes --ceremony standard', () => {
+  const p = paragraph(MANIFESTO, LEAD);
+  assert.deepStrictEqual(skipPinsMissing(p), []);
+  const flowSkill = collapse(read('plugin/skills/flow/SKILL.md'));
+  assert.ok(flowSkill.includes('[:judged|:skipped]'), 'flow Step 3 auto command must name :skipped');
+  assert.ok(flowSkill.includes('`:skipped` when skipped'), 'flow Step 3 must explain the :skipped source');
+  assert.ok(flowSkill.includes("skip it as `:skipped` under `manifesto.md`'s skip rule"), "flow Step 3 must route the skip through manifesto.md's skip rule");
+});
+
+test('control: the frozen pre-#4118 paragraph fails every skip pin', () => {
+  assert.strictEqual(skipPinsMissing(FROZEN_PRE_4118).length, 7);
+});
