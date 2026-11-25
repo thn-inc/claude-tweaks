@@ -976,7 +976,8 @@ async function main() {
   // --local skips CI for all of them. #5800: a HEAD that is not on the remote
   // stops the run the same way under any declaration; every other fallback
   // without the key runs the suite here and is announced on stderr first. A red
-  // answer's flaky retry is deferred until every suite answered, so "no verdict yet" is decided before any retry.
+  // answer's flaky retry is deferred until every suite answered, so "no
+  // verdict yet" is decided before any retry.
   const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];
