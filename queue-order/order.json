@@ -1,8 +1,13 @@
 {
-  "computedAt": "2026-11-25T07:16:59.144Z",
+  "computedAt": "2026-11-25T07:21:18.560Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 6222,
+        "updatedAt": "2026-11-25T07:18:59Z",
+        "state": "OPEN"
+      },
       {
         "number": 6120,
         "updatedAt": "2026-11-25T07:15:16Z",
@@ -24,8 +29,23 @@
         "state": "OPEN"
       },
       {
+        "number": 5929,
+        "updatedAt": "2026-11-25T07:19:16Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5833,
         "updatedAt": "2026-11-24T04:44:29Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5512,
+        "updatedAt": "2026-11-25T07:18:16Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5449,
+        "updatedAt": "2026-11-25T07:18:53Z",
         "state": "OPEN"
       },
       {
@@ -41,6 +61,26 @@
       {
         "number": 5430,
         "updatedAt": "2026-11-15T13:35:14Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5335,
+        "updatedAt": "2026-11-25T07:19:33Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5262,
+        "updatedAt": "2026-11-25T07:18:03Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5257,
+        "updatedAt": "2026-11-25T07:18:47Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5148,
+        "updatedAt": "2026-11-25T07:19:29Z",
         "state": "OPEN"
       },
       {
@@ -96,6 +136,11 @@
       {
         "number": 4786,
         "updatedAt": "2026-11-02T06:57:09Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4747,
+        "updatedAt": "2026-11-25T07:19:22Z",
         "state": "OPEN"
       },
       {
@@ -160,7 +205,7 @@
       },
       {
         "number": 4591,
-        "updatedAt": "2026-11-01T18:33:39Z",
+        "updatedAt": "2026-11-25T07:18:23Z",
         "state": "OPEN"
       },
       {
@@ -310,7 +355,7 @@
       },
       {
         "number": 4442,
-        "updatedAt": "2026-11-24T05:57:59Z",
+        "updatedAt": "2026-11-25T07:18:42Z",
         "state": "OPEN"
       },
       {
@@ -525,7 +570,7 @@
       },
       {
         "number": 4243,
-        "updatedAt": "2026-11-24T14:21:51Z",
+        "updatedAt": "2026-11-25T07:19:31Z",
         "state": "OPEN"
       },
       {
@@ -566,6 +611,11 @@
       {
         "number": 4128,
         "updatedAt": "2026-10-30T13:46:37Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4118,
+        "updatedAt": "2026-11-25T07:18:10Z",
         "state": "OPEN"
       },
       {
@@ -629,6 +679,11 @@
         "state": "OPEN"
       },
       {
+        "number": 3381,
+        "updatedAt": "2026-11-25T07:19:35Z",
+        "state": "OPEN"
+      },
+      {
         "number": 2724,
         "updatedAt": "2026-11-24T18:48:53Z",
         "state": "OPEN"
@@ -637,6 +692,11 @@
         "number": 4365,
         "updatedAt": "2026-11-24T22:03:55Z",
         "state": "CLOSED"
+      },
+      {
+        "number": 6256,
+        "updatedAt": "2026-11-25T07:20:47Z",
+        "state": "OPEN"
       },
       {
         "number": 6194,
@@ -748,6 +808,156 @@
   "groups": [
     [
       {
+        "body": "**Related:** #4725, #4764, #5303, #5322, #5451, #5694, #4790, #4286, #6203, #6021\n\n## Current State\n\n`tools/windows-regression/file-issue.js` (run by `.github/workflows/windows-regression.yml`'s `file` job on every push to `main`) only ever opens or comments on `Windows regression: … newly failing after {sha}` records. On a passing verify outcome `run()` returns `0` straight after `classify(report)` (\"pass — nothing to file\"), and on a failing one `fileOrComment` files or comments. Nothing ever closes a record whose files have since been fixed, so fixed records stay open, and the ones `/specify` shaped stay `ready` + `auto:build` in the dispatch and driver queues.\n\nMeasured 2026-11-24: of 17 open Windows-regression records, 5 named only files that main's latest full Windows run (45372736400 at 88cdbe82, `npm test -- --full`, 36,338 tests, `flakyPassed: []`, `timedOut: []`) no longer listed in `baselineAdjudicated.failingFiles`. Those were #4725 (fixed by #5694), #4764 (#4286), and #5303, #5322 and #5451 (#4790), each fixed 1-3 weeks before. The pipeline driver claimed #4725 and built PR #6203 for a failure #5694 had already fixed eight days earlier. Its change weakened the test, and only the whole-branch review stopped it. All five were closed by hand with that run as evidence.\n\nThe report already carries everything the close decision needs: `baselineAdjudicated.failingFiles` (every file failing at head, pre-existing ones included), `timedOut`, `flakyPassed`, and `checks.tests.command`/`exitCode`. Each record body lists its files under `### Newly failing test files` as `` - `path` `` bullets, which `composeIssue` writes.\n\n## Deliverables\n\n1. On `refs/heads/main`, on every run whose report is readable, pass or fail, `file-issue.js` lists open `type:bug` issues whose title starts with `TITLE_PREFIX` and that carry a `### Newly failing test files` list. It closes (`--reason completed`) each one where none of its listed files is in the head's failing set, with a comment naming the run URL, the head sha, and the files. It runs after filing or commenting, so a file that fails at this head is never closed by the same run that reports it.\n\n2. The head's failing set is `baselineAdjudicated.failingFiles` when adjudication ran. It is empty only for a raw pass of the full suite (`checks.tests.exitCode === 0`). In every other case it is unknown: the run skips closing altogether and prints one stderr line.\n\n3. No close happens when the run is not a full-suite run (`checks.tests.command` lacks `--full`), when any test file timed out (`baselineAdjudicated.timedOut` non-empty), or when a listed file is in `flakyPassed`. A record with no parseable file list (the `(not adjudicated)` and `no verify report` shapes, or an edited body) is never closed. A record carrying `bot:in-progress` gets a comment saying its files now pass, not a close, so its claimant settles it.\n\n4. Any `gh` failure while listing, closing or commenting is one stderr line and never changes the CLI's exit code (still `0` on pass, `1` on fail).\n\n## Acceptance Criteria\n\n1. `tests/windows-regression-file-issue.test.js` covers, against an injected `gh` fake:\n   - a pass run closes a record whose files are all absent from the failing set;\n   - a fail run closes a stale record while filing the new one;\n   - a record with one still-failing file stays open;\n   - a timed-out, non-`--full`, or flaky-passed run closes nothing;\n   - a `(not adjudicated)` record is never closed;\n   - a `bot:in-progress` record is commented on, not closed;\n   - a throwing `gh` leaves the exit code unchanged.\n\n2. Reverting the close logic turns each close-asserting test red (revert proof).\n\n3. The CLI's header comment and exit-code block describe the close behaviour.\n\n4. `npm test` passes.\n\n## Release Note\n\nNo user-facing change. Maintainer-side: the post-merge Windows check now closes its own regression records once their test files pass again on main, so already-fixed records stop reaching the build queue.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/windows-regression/file-issue.js` — close stale records after filing; stale-set derivation from the report\n- `tests/windows-regression-file-issue.test.js` — close/skip/comment cases and gh-failure posture\n- `.github/workflows/windows-regression.yml` — confirm the file job runs on a passing verify too (issues: write already granted)\n\n_Filed by `capture` via specShapedBody._\n\nhttps://claude.ai/code/session_011SMTg7db2nRU6HiAa2j7kN\n",
+        "createdAt": "2026-11-24T14:37:45Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 6222,
+        "state": "OPEN",
+        "title": "Close a Windows-regression record once main's full Windows run no longer fails its files",
+        "updatedAt": "2026-11-25T07:18:59Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect light from #5918\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build`'s Spec Step 2.5 already recognizes a wholly-operational record (every Deliverable a live action, no code change, #2554) and collapses its code-oriented steps into one consolidated SKIP. `/claude-tweaks:review` has no matching shortcut: `plugin/skills/review/code-mode-steps.md`'s Ceremony-Aware Step Selection still runs Step 2.5's effort derivation and the Step 3 lens fan-out on such a run, whose whole branch diff is bookkeeping (the materialized `work/{n}-spec.md` and the `docs/plans/*-ledger.md` ledger).\n\nEvidence (#5918, run 2026-11-19T054801-spec-5918): the build triaged all four Deliverables as auto-executable live dispatches; `verify.js --scope` resolved `none` (`still-verified: bookkeeping-only delta`). The test+review+polish handoff agent then spent ~566 s and ~248k subagent tokens, and review's lenses produced two low findings about the materialized spec's command wording, both accepted-not-fixed because the spec is a verbatim snapshot of the issue (ledger row 2).\n\nProbe: `git grep -n -i 'bookkeeping\\|operational' origin/main -- plugin/skills/review/code-mode-steps.md` exited 1 with no output — no such skip exists on the integration branch.\n\n## Deliverables\n\n- [ ] In `/claude-tweaks:review` code/full mode, detect a run whose branch diff from the integration base is bookkeeping-only (the same `.claude-tweaks/verify-scope.json` bookkeeping rules `verify.js --scope` already resolves to `none`), and skip Step 2.5 and the Step 3 lens fan-out with one `SKIP` line naming the condition\n- [ ] Keep the Step 1.5 test gate and Step 7 summary so the PR still gets a review verdict comment\n\n## Acceptance Criteria\n\n- [ ] A review over a branch whose only changes are `work/{n}-spec.md` and a `docs/plans/*-ledger.md` ledger dispatches no lens agent and logs one `SKIP` naming the bookkeeping-only condition\n- [ ] A review over a branch with any non-bookkeeping path runs Step 3 unchanged\n\n## Release Note\n\nReview no longer runs its lens reviewers on a pipeline run that changed only its own bookkeeping files.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — add a bookkeeping-only skip to Ceremony-Aware Step Selection\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-19T06:28:59Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5929,
+        "state": "OPEN",
+        "title": "Skip review lenses on a bookkeeping-only (wholly operational) pipeline diff",
+        "updatedAt": "2026-11-25T07:19:16Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "## Current State\n\nUnder `consoleAutoResolve`, `console-resolve.js --policy console-auto` computes the merge half once and persists it to `{run-dir}/console.json` as `merge.resolution`. `mergeResolution()` in `plugin/bin/lib/console/resolve.js` honours a needs-human verdict only through `needsHumanVerdict(decisions)`, which reads `decisions.md` at that moment.\n\n`wrap-up/execution-and-verification.md`'s Branch finish then routes the pr-first merge on `console.json`'s `merge.resolution` directly, and `_shared/pr-first-merge.md` never re-reads a needs-human verdict. `review-console.md` orders the Auto-merge short-circuit (which logs the `assess-agent-autonomy` merge-check verdict) before the Auto-resolution short-circuit, but nothing mechanical enforces that order.\n\nObserved in run `2026-11-16T183913-record-5770` (#5770, PR #5780): `console-resolve.js` ran at 20:12:39Z and recorded `merge.resolution: merge`; the short-circuit's `needs-human` verdict was logged at 20:13:22Z, 43 seconds later. Only the dispatched agent's manual hold kept the PR from merging.\n\n## Deliverables\n\n1. At Branch finish, before acting on `merge.resolution: merge`, re-evaluate `needsHumanVerdict` against the current `decisions.md`. On a hit, resolve leave-open (`pending-review`) and log one decision line naming the late verdict.\n2. Have `console-resolve.js` refuse to resolve the merge half, or mark it stale, when the Auto-merge short-circuit applies to the run (live `auto:build` + `auto:merge`/`auto:merge-pending`) but no merge-check verdict line exists yet.\n\n## Acceptance Criteria\n\n- A test where `decisions.md` gains a needs-human merge-check line after `console.json` records `merge.resolution: merge` shows Branch finish leaving the PR open, never merging.\n- A test where `console-resolve.js` runs with the short-circuit applicable and no verdict line yet shows it not resolving `merge`.\n- The in-order path (verdict logged before the resolve) is unchanged: existing `console-resolve` tests stay green.\n\n## Release Note\n\nAn unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — needsHumanVerdict / mergeResolution: refuse or mark stale before a verdict exists\n- `plugin/bin/console-resolve.js` — surface the stale merge half\n- `plugin/skills/wrap-up/execution-and-verification.md` — Branch finish re-checks the verdict before merging\n- `plugin/skills/wrap-up/review-console.md` — state the ordering requirement as enforced\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-17T05:57:57Z",
         "labels": [
@@ -811,6 +1021,168 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\nRisk-flags: none\n\n## Current State\n\n`/claude-tweaks:review`'s Step 3 routes a confirmed finding that cannot be fixed now into a new work record, by one of two paths. The Defer bullet in `plugin/skills/review/step3-routing.md` creates the record directly. The \"Staging a record proposal\" paragraph in the same file writes `staged/review-followup-{n}.md`, which `wrap-up/review-console.md`'s \"On approval\" step 7 then files as written, never recomposed (`release/disposition.md` follows the same rule). Both paths compose the body \"exactly as the Defer bullet does\": a `specShapedBody` call whose argument list names `filedBy`, `provenance` and `footer` but never `keyFiles`.\n\n`specShapedBody` (`plugin/bin/lib/issues/record-payload.js`) renders `## Technical Approach` / `### Key Files` only when `keyFiles` is passed. #2975 (shipped v6.145.0) added that argument and wired it into `/capture`'s born-ready compose, `/reflect`'s staged findings, `wrap-up/leftover-routing.md` and the health sweeps' `issue-payload.js` composers, but not into `/review`. `tests/build-micro-plan-conformance.test.js`'s AC6.1 loop pins the instruction for those three prose producers and does not list `review/step3-routing.md`.\n\nThe result: a review follow-up record carries no `### Key Files` section even though the finding's own `--at '{file:line}'` anchor names the file. `build/micro-plan.md`'s applicability gate condition 3 (\"missing entirely → falls through\") sends a one-file `ceremony:fast-lane`/`size:low` record through the full `/superpowers:writing-plans` path. Dispatch's file-overlap grouping (`extractKeyFilesSection` in `plugin/bin/lib/issues/grouping.js`) also can't see the record. Observed on plugin v6.169.0: a one-file test-fixture sync filed this way paid a full plan-authoring pass, which contributed to the context-cap trip #5463 tracks.\n\n## Deliverables\n\n- [ ] In `plugin/skills/review/step3-routing.md`'s Defer bullet, add `keyFiles: [{ path, change }]` to the `specShapedBody` argument list. Its value is the files the finding names: the finding's own `{file:line}` anchor with the `:line` suffix stripped, plus any other file the stated fix must touch. Use repo-relative file paths, no directories, and drop any out-of-repo file. Omit the argument when the finding names no file. Follow the wording `/reflect`'s SKILL.md uses for the same argument, so the staged `review-followup-{n}.md` proposal (which composes \"exactly as the Defer bullet does\") inherits it with no second edit.\n- [ ] Add `plugin/skills/review/step3-routing.md` to the AC6.1 producer list in `tests/build-micro-plan-conformance.test.js`, so the instruction is pinned the same way #2975 pinned the other three prose producers.\n\n## Acceptance Criteria\n\n- [ ] `plugin/skills/review/step3-routing.md`'s Defer bullet contains the literal `keyFiles: [{ path, change }]` and the word `repo-relative`, and states that the `:line` suffix of the finding's anchor is stripped.\n- [ ] `node --test tests/build-micro-plan-conformance.test.js` passes, and its AC6.1 test now runs for `plugin/skills/review/step3-routing.md` (the test name lists that path).\n- [ ] Reverting the Defer bullet edit while keeping the test edit makes the new AC6.1 case fail, which proves the test discriminates.\n- [ ] The staging paragraph (\"Staging a record proposal\") still composes through the Defer bullet. It gains no separate `keyFiles` instruction that could drift from the bullet's.\n\n## Release Note\n\nRecords filed from a review follow-up now list the files the finding names under Key Files, so a one-file fix takes the micro-plan fast path and shows up in dispatch's file-overlap checks.\n\n## Technical Approach\n\nA prose-only change to the one composer instruction both review filing paths share, plus a one-line addition to the existing conformance loop. `specShapedBody` already validates each path (`keyFilePathProblem` throws on absolute, `..`-segment, directory and multi-line paths), so the skill text needs only to say which paths to pass and to strip the line suffix before passing them. The `{file:line}` anchor is already in hand at this point: the same value goes to `review-routing-line.js --at`.\n\n### Key Files\n\n- `plugin/skills/review/step3-routing.md` — add the `keyFiles` argument to the Defer bullet's `specShapedBody` call\n- `tests/build-micro-plan-conformance.test.js` — add the review routing file to the AC6.1 producer list\n\n## Gotchas\n\n- Strip only a trailing `:{digits}` (or `:{digits}-{digits}`) suffix from the anchor. A `#symbol` suffix, when a lens writes one, is stripped the same way the code-health composer strips it (`plugin/bin/lib/code-health/issue-payload.js`'s anchor handling). A path with a stray line suffix makes `specShapedBody` render an entry `grouping.js` can't match to a real file.\n- Scope decision (made while shaping on 2026-11-25, autonomous lane): other `specShapedBody` producers have the same missing-argument gap: `_shared/ledger-format.md`'s Phase 3 Keep, `wrap-up/review-console-appendix.md`'s ruling and ledger filings, `wrap-up/residue-sweep.md`, `visual-review/browser-review.md` and `reflect/full-mode.md`'s Defer. This record covers only the review follow-up path it names. A builder that finds a second producer whose filed records the same symptom reaches routes it to the digest, not into this diff.\n- The Capture route in the same file hands a shaped body to `/claude-tweaks:capture`, whose compose already documents `keyFiles`. It needs no change here.\n\n## Original request\n\nwrap-up: records filed from staged review follow-ups carry no ### Key Files, so build's micro-plan gate falls through\n\n**Summary:** Records the wrap-up Review Console files from a staged review follow-up (`staged/review-followup-{n}.md`) carry no `### Key Files` section, so `/build`'s micro-plan gate falls through for one-file fast-lane records filed this way.\n\n**Kind:** Gap\n\n**Affected component:** wrap-up Review Console — review follow-up record filing (`staged/review-followup-*.md` → record); consumer: `skills/build/micro-plan.md` applicability gate condition 3\n\n**Use case:**\nA `/claude-tweaks:review` finding outside the diff was staged as a review follow-up and filed by the Review Console as a `ceremony:fast-lane`, `size:low` record whose whole deliverable was syncing one test-fixture file with a byte-identical upstream copy. The finding's own Origin line named that single file (with a line number). When `/claude-tweaks:flow` built the record, the materialized spec had Current State / Deliverables / Acceptance Criteria / Release Note but no `## Technical Approach` / `### Key Files`, so micro-plan condition 3 (\"missing entirely → falls through\") sent a one-file copy through the full `/superpowers:writing-plans` path. The same missing section also leaves the record invisible to dispatch's file-overlap grouping (`extractKeyFilesSection`).\n\n#2975 (closed, shipped v6.145.0) fixed this for the `specShapedBody` producers it listed — `/capture`'s born-ready compose, `/reflect`'s staged findings, the health sweeps' `issue-payload.js`, and `wrap-up/leftover-routing.md` — but the review follow-up filing path was not among them. The record here was filed on a plugin version after v6.145.0 and still had no Key Files section.\n\nSuggested fix: have the review follow-up filer pass `keyFiles` to `specShapedBody` from the finding's own file reference (path, line number stripped), as the producers #2975 covered already do.\n\nRelated: #2975 (same gap, other producers), #5463 (fast-lane builds crossing flow's 200k context cap — the extra plan-authoring pass here contributed to the same cap trip).\n\n**Definition:** Clear\n\n**Plugin version:** 6.169.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b566d9cd -->\n\n",
+        "createdAt": "2026-11-15T16:56:34Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5512,
+        "state": "OPEN",
+        "title": "wrap-up: records filed from staged review follow-ups carry no ### Key Files, so build's micro-plan gate falls through",
+        "updatedAt": "2026-11-25T07:18:16Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\nVerified against `origin/main` 68608178fa on 2026-11-25.\n\n`plugin/skills/build/dispatch.md`'s SDD carry-forward (the **Carry-forward commands (#3510)** paragraph) stages every load-bearing `Ruling:` line from the SDD `progress.md` with one `bin/stage-item.js --id \"sdd-ruling-{N}\" --allocate --ledger … --item 'SDD ruling — {one-liner}: ratify or reverse at the Review Console'` call. Each becomes a ratify-or-reverse Review Console row. The staged file's header carries `Title:`, `Kind: sdd-ruling`, `Ruling:`, `Defers: yes|no`, `Staged-at:` and `Ledger:`; `plugin/bin/lib/console/sdd-ruling.js`'s `readHeader` parses `Defers:`/`Defer-reason:` from that header (the lines before the first blank line) and nothing else. The carry-forward cannot tell a controller sequencing note from a decision that changed what shipped.\n\nRun 2026-11-12T102742-spec-5160-5161-5162 (#5160, #5161, #5162) staged 71 ruling rows. Its archive is still on the maintainer's machine at `.claude-tweaks/pipelines/archive/2026-11-12T102742-spec-5160-5161-5162/spec-516{0,1,2}/staged/sdd-ruling-*.md` (71 files; gitignored local data, not in the repo). Many record controller procedure, not a product or design decision: spec-5162 sdd-ruling-9 (round 4 goes to a fresh implementer), sdd-ruling-16 (a comment fix rides in Task 3's commit), sdd-ruling-31 (a wording fix rides in Task 7's commit), spec-5161 sdd-ruling-3 (five Minors fixed in an immediate round). A human clearing the console has to read and settle every one. An open-issue search (#5060, #5061, #5097, #5433) found no record covering ruling volume.\n\n**Related:** #5060, #5335, #5433, #5061, #5097, #5165, #5257, #5434, #5439\n\n## Deliverables\n\n- [ ] **Classification at carry-forward.** `dispatch.md`'s carry-forward has the controller write one `Class:` header line into every ruling's temp file before staging it, from a closed rubric stated in that paragraph: `Class: procedural` for dispatch sequencing, commit packing, fix-round placement, and implementer handoff or model choice, when the ruling changes nothing that ships and defers nothing; `Class: behaviour` for anything else. When in doubt, the controller writes `behaviour`.\n- [ ] **Fail-closed route function.** `plugin/bin/lib/console/sdd-ruling.js` exports `sddRulingRoute(text)`, re-exported from `console/resolve.js` like the module's other names. It returns `'audit'` only when the header has exactly one `Class:` line whose value is `procedural`, exactly one `Defers:` line whose value is `no`, and no `Defer-reason:` line. Every other header returns `'console'`: no `Class:` line, a duplicate or unknown `Class:` value, `Defers: yes`, a missing or duplicate `Defers:` line, any `Defer-reason:` line, or empty text. It reuses `readHeader`, extended to collect `Class:` lines the same way it collects `Defers:` lines.\n- [ ] **Route CLI.** New `plugin/bin/sdd-ruling-route.js --file <path>` prints exactly `audit` or `console` and exits 0. It exits 1 when the file is unreadable and 2 on a malformed call, following the `run(argv, deps)` CLI wrapper contract (the `gh-api-module-pattern` skill's `cli-wrapper-contract.md`).\n- [ ] **Routing in the carry-forward.** `dispatch.md` runs the route CLI on each ruling's temp file before staging. On `console`, or on any non-zero exit, it runs today's `stage-item.js` call unchanged. On `audit`, it stages nothing and instead logs one line through `node \"${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js\" --run \"$PIPELINE_RUN_DIR\" --status AUTO --section \"/build\" --text-file {line file}` reading `AUTO {time} — SDD ruling (procedural) carried as audit, not staged: {one-liner}. Reversibility: n/a.`, and adds one `observation` row for the ruling to the build's active open items ledger.\n- [ ] **Console prose twin.** `plugin/skills/wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet says that a staged ruling's header may carry `Class: behaviour`, and that procedural rulings never reach the console because they are logged in `decisions.md`.\n- [ ] **Tests.** A unit suite for `sddRulingRoute` and the CLI, plus a prose conformance pin on `dispatch.md`'s carry-forward naming the route CLI and both branches.\n\n## Acceptance Criteria\n\n1. Fixtures copied verbatim from the archive (spec-5162 `sdd-ruling-9.md`, `sdd-ruling-16.md`, `sdd-ruling-31.md`, and spec-5161 `sdd-ruling-3.md`), each with a `Class: procedural` line added to its header, route `audit`. The same four files without the added line route `console`.\n2. A fixture with `Class: procedural` and `Defers: yes` routes `console`. So do fixtures with `Class: procedural` plus any `Defer-reason:` line, two `Class:` lines, an unknown value such as `Class: maybe`, or no header at all.\n3. The route CLI prints `console` and exits 0 for each of the 71 unmodified archived rulings, which carry no `Class:` line. With a `Class: procedural` line injected into a copy of all 71, every `Defers: yes` ruling still prints `console`. This is a one-time check against the maintainer's local archive, quoted in the PR body, not a committed test (the archive is gitignored).\n4. The CLI exits 1 on a missing `--file` path and 2 on a call with no `--file`, printing nothing to stdout in either case.\n5. A conformance test fails when `dispatch.md`'s carry-forward stops naming `sdd-ruling-route.js`, the `console` branch's `stage-item.js` call, or the `audit` branch's `log-decision.js --status AUTO` call.\n6. `npm test -- --full` passes.\n\n## Release Note\n\nThe Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.\n\n## Technical Approach\n\nThe controller (an LLM with the ruling's context) does the classification. Code only checks the controller's label and fails closed. A keyword classifier over free-text `Ruling:` prose would misroute without anyone noticing, and a procedural ruling wrongly kept on the console only costs a click, while a behaviour-changing ruling wrongly routed to audit hides a decision from the human. So everything except a clean, explicit `Class: procedural` + `Defers: no` header stays a console row.\n\n`Class:` is a new header key, distinct from the existing `Kind: sdd-ruling`. `readHeader` already stops at the first blank line, and the new key rides the same parse.\n\nThe audit line uses status `AUTO` because it records an applied routing that writes no staged artifact, so `STAGED` would be wrong (`_shared/auto-decision-log.md`'s Status semantics).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — modify: the Carry-forward commands paragraph gets the `Class:` rubric, the route CLI call and both branches\n- `plugin/bin/lib/console/sdd-ruling.js` — modify: `readHeader` collects `Class:` lines; new `sddRulingRoute` export\n- `plugin/bin/lib/console/resolve.js` — modify: re-export `sddRulingRoute`\n- `plugin/bin/sdd-ruling-route.js` — new: route CLI\n- `plugin/skills/wrap-up/review-console-appendix.md` — modify: the `sdd-ruling-*` bullet names the `Class:` header\n- `tests/bin-lib/console/sdd-ruling-route.test.js` — new: route function and CLI tests, with the four archived rulings as fixtures\n- `tests/bin-lib/console/fixtures/sdd-ruling-route/` — new: fixture files\n- `tests/build-sdd-ruling-route-carryforward.test.js` — new: prose pin on `dispatch.md`\n- `docs/plugin-structure.md` — modify: list the new CLI\n\n## Gotchas\n\n- **Decisions made during autonomous shaping (2026-11-25), recorded here because the maintainer authorized deciding open questions without asking:**\n  1. Classification is the controller's judgment, written as a header line, not a mechanical text classifier. Code enforces only the fail-closed gate (Technical Approach).\n  2. The original \"replay the 71 rulings through the classifier\" check is restated as AC 3. The archived rulings predate the `Class:` line, so a faithful replay shows they all fail closed to `console`, and the four cited examples are proven as committed fixtures instead (AC 1).\n  3. Procedural rulings are logged with status `AUTO`, not `STAGED`, because no staged artifact is written.\n  4. The ledger row for an audit-routed ruling is an `observation` (terminal and non-blocking per `_shared/ledger-format.md`), so it never holds the pipeline.\n- `stage-item.js --ledger` is today's only ledger writer on this path. The audit branch needs its own write of an `observation` row. Use the ledger skill's documented append procedure, or an existing `hooks.js` ledger verb if one fits, and never hand-format a row that skips the ledger's format check.\n- Check that no consumer of staged `sdd-ruling-*` headers (`console/resolve.js`'s `stagedItems`, `reconcile/console-execute.js`, `wrap-up/pack.js`, `reference-repair.js`) rejects an unknown header key before adding `Class:`. If one does, extend it in the same change.\n- A behaviour-changing ruling that the controller mislabels `procedural` is the residual risk. The `Defers: yes` override covers every deferral, which is the costliest misroute.\n\n## Original request\n\nRoute procedural SDD rulings to an audit line instead of a ratify/reverse Review Console row\n\nVerified-as-of: 940cee7b913b16c8b101f126103ec1d1499fe2fb\n\nOrigin: batch reflect pass, Review Console Approve all (run 2026-11-12T102742-spec-5160-5161-5162, insight 3)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`plugin/skills/build/dispatch.md`'s SDD carry-forward stages every load-bearing `Ruling:` line from the SDD `progress.md` as `staged/sdd-ruling-{N}.md`, each a \"ratify or reverse at the Review Console\" row. It has no way to tell a controller sequencing note from a decision that changed what shipped.\n\nRun 2026-11-12T102742-spec-5160-5161-5162 (#5160, #5161, #5162) staged 71 ruling rows. Many record controller procedure, not a product or design decision: spec-5162 sdd-ruling-9 (round 4 goes to a fresh implementer), sdd-ruling-16 (a comment fix rides in Task 3's commit), sdd-ruling-31 (a wording fix rides in Task 7's commit), spec-5161 sdd-ruling-3 (five Minors fixed in an immediate round). A human clearing the console has to read and settle every one. An open-issue search (#5060, #5061, #5097, #5433) found no record covering ruling volume.\n\n## Deliverables\n\n- [ ] The carry-forward classifies each ruling as procedural (dispatch sequencing, commit packing, fix-round placement, implementer handoff) or behaviour-changing (changes what ships, or defers work), with the classification written into the staged header so the console can read it.\n- [ ] Procedural rulings are logged as an audit line in `decisions.md` (and the ledger, as an observation) rather than staged as ratify/reverse rows; behaviour-changing rulings and every deferral keep today's row.\n- [ ] A ruling that cannot be classified stays a console row (fail closed toward the human).\n- [ ] Tests pin the classification and the routing, including the unclassifiable case.\n\n## Acceptance Criteria\n\nReplaying this run's 71 staged rulings through the new classifier routes the four examples above to audit lines and keeps every `Defers: yes` ruling as a console row.\n\nA ruling the classifier cannot read is staged as a console row, never dropped.\n\n`npm test` passes.\n\n## Release Note\n\nThe Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — modify\n\n_Filed by `flow` (multi-spec Review Console, batch reflect insight) via specShapedBody._\n",
+        "createdAt": "2026-11-14T15:40:48Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5449,
+        "state": "OPEN",
+        "title": "Route procedural SDD rulings to an audit line instead of a ratify/reverse Review Console row",
+        "updatedAt": "2026-11-25T07:18:53Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -1045,6 +1417,312 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect full from #5293\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build`'s SDD invocation instruction (`plugin/skills/build/dispatch.md`) forwards working-directory discipline, the no-stash rule, the stash guard and affected-set testing to every implementer and reviewer it composes, but not the worktree shell constraint (no heredoc, no `for`/`while` loop, no `cd ... &&` chain, no `$(...)`, one plain command per Bash call).\n\nThe two other dispatch sites already carry it: `plugin/skills/dispatch/task-prompt.md` item 6 (\"Worktree shell constraint\") and `plugin/skills/flow/context-handoff.md`'s continuation template. Probe on `origin/main` (2026-11-13): `git grep -n -F -e 'Worktree shell constraint' origin/main -- plugin/skills/build/dispatch.md` returns nothing, while the same probe matches both other files.\n\nOn #5293's build (run `2026-11-13T003948-spec-5293`), dispatched implementers and reviewers hit 9 `wd-guard-refusal` events (`harness-worktree-isolation`): heredoc appends to a test file, `cd \"...\" && ...` chains, a `for f in ...` loop, and a redirected `node --test` run. Each was a refused call followed by a retry in another shape.\n\n## Deliverables\n\n- `plugin/skills/build/dispatch.md`'s SDD invocation instruction also directs SDD to include the worktree shell constraint in every per-task implementer, fix-round, fix-wave, whole-branch-fix and reviewer dispatch, by citing the same wording `dispatch/task-prompt.md` item 6 uses (or `_shared/scratch-worktree.md` §7) rather than a third copy.\n- The addition keeps `plugin/skills/build/dispatch.md` under the 52,500-byte `RAIL_BYTES` rail (43,677 B on origin/main at eac494770, 2026-11-13).\n\n## Acceptance Criteria\n\n- [ ] `git grep -n -i -e 'shell constraint' -- plugin/skills/build/dispatch.md` matches the SDD invocation instruction's new sentence (run against a tree where it is absent first, to confirm the probe matches nothing there).\n- [ ] The sentence names heredocs, loops, `cd ... &&` chains and the one-plain-command-per-call rule, or cites the file that does.\n- [ ] `wc -c plugin/skills/build/dispatch.md` stays below 52,500.\n\n## Release Note\n\nImplementers and reviewers dispatched by /build now get the worktree shell rules up front, so fewer of their commands are refused and retried.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — forward the worktree shell constraint in the SDD invocation instruction\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-13T04:14:12Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5335,
+        "state": "OPEN",
+        "title": "Forward the worktree shell constraint to /build's SDD dispatches",
+        "updatedAt": "2026-11-25T07:19:33Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\nOrigin: reflect light from #5249\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/express/eligibility.js:110` refuses any record whose labels do not parse to `ceremony: fast-lane` (`REASONS.ceremony`, \"ceremony is not fast-lane\"). Only `/claude-tweaks:specify` Step 3 stamps a `ceremony:*` label. `/claude-tweaks:capture` files born-ready records (`ready`, `risk:*`, `size:*`, `type:*`) with no `ceremony:*` label at all — `git grep -n -i ceremony -- plugin/skills/capture/SKILL.md` finds one incidental mention and no stamping step.\n\n`/claude-tweaks:flow` Step 2.9 runs the express gate before Step 3, where the Manifesto judges an unlabeled record's ceremony (`_shared/ceremony-check-invocation.md`). So a capture-born `ready` record is never express-eligible, even when the Manifesto then judges it `fast-lane` moments later.\n\nObserved 2026-11-12 on #5249 (a three-line citation retarget, `risk:low`, `size:low`, filed by `capture`): `express-lane.js gate --issue 5249` returned `eligible: false` with reasons `ceremony is not fast-lane` and `no Key Files`; the Manifesto judged it `fast-lane`; the run then took the full pipeline — a `/superpowers:writing-plans` plan, an SDD implementer and task review, a context-cap handoff to a fresh agent for test/review/polish (281k subagent tokens), and a full wrap-up.\n\n## Deliverables\n\n- [ ] A capture-born record the express gate would otherwise accept can take the express lane: either `/claude-tweaks:capture` judges and stamps a `ceremony:*` label when it files born-ready (the same `ceremony-check` `/specify` runs), or `/claude-tweaks:flow` Step 2.9 runs the ceremony judgment for an unlabeled record before the gate and passes the verdict in.\n- [ ] The chosen site's prose and a test pin the behavior.\n\n## Acceptance Criteria\n\n1. A `ready`, `risk:low`, `size:low`, `type:*` record filed by `/claude-tweaks:capture` with a `### Key Files` list naming one non-protected file, and no `ceremony:*` label, reaches an express-gate verdict that does not list `ceremony is not fast-lane` when its ceremony judgment is `fast-lane`.\n2. A record judged `standard` still gets `ceremony is not fast-lane`.\n3. `npm test` passes.\n\n## Release Note\n\nSmall records filed with /claude-tweaks:capture can now take the express lane instead of always running the full pipeline.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/express/eligibility.js` — the ceremony reason, or the verdict it reads\n- `plugin/skills/capture/SKILL.md` — stamp a ceremony label at born-ready filing, if that site is chosen\n- `plugin/skills/flow/express-entry.md` — judge ceremony before the gate, if that site is chosen\n\n_Filed by `reflect` via specShapedBody._",
+        "createdAt": "2026-11-12T14:38:45Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5262,
+        "state": "OPEN",
+        "title": "The express lane never admits a /capture-born record — no ceremony label until /specify",
+        "updatedAt": "2026-11-25T07:18:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect light from #5253\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/build/dispatch.md`'s **Affected-set testing (#5117)** rule tells every per-task implementer, fix-wave and whole-branch-fix dispatch to run `verify.js --scope … --no-stamp` before committing. It names a fallback set only for `Scope: full` / `Impact: full` or exit 2. It says nothing about a run that queues for the machine-wide suite slot (`test/suite-slots.md`) behind a sibling session's suite.\n\nIn one session on 2026-11-12, three per-task implementers hit exactly that and returned `BLOCKED` with their work uncommitted: #5216 Task 2 and Task 4, and #5253 Task 1. The #5253 implementer had launched the run in the background and was holding it, pid 18379's slot ahead of it. Each one cost a controller ruling (`sdd-ruling-1`/`sdd-ruling-3` on #5216, `sdd-ruling-1` on #5253), a resume round, and a Review Console item. All three rulings said the same thing: commit on the focused tests, because Common Step 5's verification is the branch's suite run.\n\nProbe: `git grep -n -o -E -e \".{0,120}(queued|waiting for a test-suite slot|slot is held|held slot).{0,120}\" origin/main -- plugin/skills/build/dispatch.md` exits 1 (no match).\n\n## Deliverables\n\n- [ ] `dispatch.md`'s Affected-set testing rule gives a queued slot its own branch: when `verify.js` prints `waiting for a test-suite slot` (or is still queued after a stated bound), the dispatched agent stops it (its own PID only), runs the fallback focused set instead, says so in its reply, and commits. It never returns `BLOCKED` for slot contention alone.\n- [ ] The rule's wording keeps Common Step 5's verification as the branch's one suite run, so the fallback loses no coverage.\n- [ ] A prose conformance test pins the new branch's sentence in `dispatch.md`.\n\n## Acceptance Criteria\n\n1. `dispatch.md`'s Affected-set testing paragraph names the queued-slot case and its fallback (focused set, commit, report), in addition to the existing `Scope: full`/`Impact: full`/exit-2 case.\n2. The paragraph states that slot contention alone is not a `BLOCKED` status.\n3. A conformance test fails when that sentence is removed.\n4. `npm test` passes.\n\n## Release Note\n\nA build's per-task implementers no longer stop and wait for a human ruling when another session's test run holds the machine's test slot; they run their focused tests and carry on.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — the Affected-set testing (#5117) rule's queued-slot branch\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-12T14:11:56Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5257,
+        "state": "OPEN",
+        "title": "A per-task implementer blocks on a verify.js slot a sibling session holds, with no fallback",
+        "updatedAt": "2026-11-25T07:18:47Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`/claude-tweaks:review` Step 2.5 derives `review-effort` from the record's `risk:*` × `size:*` labels, cross-checked against a diff heuristic, and takes the higher of the two (`plugin/skills/review/review-effort-derivation.md`, steps 3-4). The heuristic's record-size proxy reads Step 2's `git diff {base}...{branch} --stat` totals: **high** at 10+ files or 300+ lines, **medium** at 3-9 files or 50-299 lines (`plugin/skills/review/code-mode-steps.md`, Step 2). Nothing is excluded from those totals. A pipeline run's own committed artifacts therefore count as code size. These are the materialized spec under `.claude-tweaks/pipelines/**/work/{n}-spec.md`, the plan under `docs/superpowers/plans/**`, the run ledger `docs/plans/*-ledger.md`, and package-manager lockfiles. The result is a heuristic tier that is pushed up and overrides a low label tier.\n\nThree measured cases from consumer runs, all reported on this record:\n\n- plugin 6.164.0: `risk:low` × `size:low`, 10 files / 412 lines, mostly spec, plan, ledger and prose. The diff tier was `medium` over a label tier of `low`, which dispatched 8 lens agents.\n- plugin 6.164.0: 13 files / 350 lines, about 245 of them flow artifacts and about 60 lines of production change in 3 files. A one-line comment-only edit to the schema file also fired the risk proxy's \"schema/migration file\" trigger, so high × high resolved `max`: 19 dispatches, every confirmed finding low or info.\n- plugin 6.165.0: 23 files / 462 lines, about 300 of them plan (172), lockfile churn (274) and materialized spec (61). An infra/CI risk proxy of `high` resolved `max` over a label tier of `medium`, which dispatched about 35 agents for a code delta under 100 lines.\n\nThe \"bookkeeping\" path class is already defined in two places. One is `plugin/bin/lib/init/verify-scope-starter.js`'s `BOOKKEEPING_RULES`: `docs/plans/*-ledger.md`, `.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**` and `docs/superpowers/specs/**`. The other is a project's `.claude-tweaks/verify-scope.json`, where these rules are declared as `{ \"suites\": [], \"static\": false }`, first match wins (`plugin/bin/lib/verify/scope.js`'s `selectScope`, matched with `globToRegExp` from `plugin/bin/lib/issues/blast-radius.js`). Lockfiles are already named in `plugin/bin/lib/review-context/build.js`'s `ALWAYS_STUB_BASENAMES`, which the review-context bundle stubs.\n\nThe record's Step 3.7 tiebreak half is settled and out of scope: #5540 batches tiebreak findings 8 per judge with one settle call per chunk, and #5541 moved `info` findings to the Standard tier. Resolving `info` findings as `drop` with no judge was measured and rejected (19.0% agreement).\n\n**Related:** #5929, #5569, #5076, #5213, #5475, #5972, #4937, #6008\n\n## Deliverables\n\n- [ ] A pure size-proxy module `plugin/bin/lib/review-context/size-proxy.js`. It takes `git diff --numstat` output, the parsed verify-scope declaration (or `null`) and an optional own-work file list. It returns `{ files, lines, size, excluded: [{ file, lines, reason }] }`, where `size` is `low|medium|high` under the unchanged 10/300 and 3/50 thresholds and `reason` is `bookkeeping` or `lockfile`.\n- [ ] Bookkeeping exclusion: a path is excluded when the first declared rule it matches is `suites: []` with `static: false` and no `impact` (the shape `selectScope` resolves to `none`). With no declaration, or an unreadable one, the module falls back to `BOOKKEEPING_RULES` from `verify-scope-starter.js`. A path that matches no rule is counted.\n- [ ] Lockfile exclusion: a path whose basename is one of the lockfile names in `build.js`'s `ALWAYS_STUB_BASENAMES` is excluded. Export that set (or a lockfile-only subset of it) so the two sites share one list. `*.jsonl` fixtures stay counted.\n- [ ] A `size-proxy` verb on `plugin/bin/build-review-context.js`: `size-proxy --base <ref> --branch <ref> [--files-from <path>]`. It runs `git diff --numstat {base}...{branch}`, reads the declaration through `readDeclaration`, prints the module's result as one JSON line, and exits 0 ok, 2 on a malformed invocation, 1 on a git failure. Add the verb to the file header, `USAGE`, and `docs/plugin-structure.md`'s CLI list.\n- [ ] `review-effort-derivation.md` step 3: the record-size proxy comes from `size-proxy`'s `size`, passing the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits. A non-zero exit or unparseable output falls back to today's unfiltered `--stat` totals, with a one-line notice. That fallback is never lower than the filtered count.\n- [ ] `review-effort-derivation.md` step 3, risk proxy: the \"schema/migration file\" trigger fires only when that file's targeted diff (`git diff -w {base}...{branch} -- {file}`, the same bounded read Step 2 already allows for dependency manifests) changes at least one line that is neither blank nor a comment. If the hunks cannot be classified, the trigger fires. The other risk triggers (`merge-sensitive-paths`, infra/CI-CD, new dependency) are unchanged, and a lockfile still counts toward the new-dependency check.\n- [ ] `review-effort-derivation.md` states that the `{reasoning}` filling Step 2.5's existing `diff heuristic: {reasoning}` slot names the filtered counts and the exclusions, for example `size low (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)`. `code-mode-steps.md`'s template line already carries `{reasoning}` and is not edited. Update step 4's #4028 worked-example wording if it no longer matches.\n- [ ] Unit tests in `tests/bin-lib/review-context/size-proxy.test.js` and CLI coverage beside the existing `exit-code.test.js`.\n\n## Acceptance Criteria\n\n- [ ] For numstat input of 13 files / 350 lines where 10 files / 290 lines sit under `.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**` and `docs/plans/*-ledger.md`, the module returns `files: 3`, `lines: 60`, `size: 'medium'` and lists the 10 excluded paths with reason `bookkeeping`.\n- [ ] A `package-lock.json` with 274 changed lines is excluded with reason `lockfile`, and a `tests/fixtures/x.jsonl` file is counted.\n- [ ] With a declaration whose rules send `docs/plans/*-ledger.md` to `suites: []` but have no rule for `docs/superpowers/plans/**`, a plan file is counted, because the declaration replaces the fallback list. With `decl: null`, the same plan file is excluded through `BOOKKEEPING_RULES`.\n- [ ] A path whose first matching rule selects a suite (for example `*.md` → `suites: \"*\"`) is counted even when a later rule would mark it bookkeeping.\n- [ ] A binary file (numstat `-\\t-\\t{path}`) counts as one file with 0 lines.\n- [ ] `--files-from` restricts the count to the listed paths.\n- [ ] `build-review-context.js size-proxy` with a missing `--base` exits 2. With an unknown ref it exits 1 and prints nothing on stdout.\n- [ ] `review-effort-derivation.md` names the `size-proxy` call, the fallback to unfiltered `--stat` totals on failure, and the comment-only exception to the schema/migration trigger, which fires when the hunks are unclassifiable.\n- [ ] Each new test fails when its exclusion rule is reverted.\n\n## Release Note\n\nReview sizes a change by its code, not by the pipeline's own spec, plan, ledger and lockfile files, so small changes no longer get the heaviest reviews.\n\n## Technical Approach\n\nThe core is a pure function, so tests feed it numstat text and a declaration object with no git. The CLI verb only gathers inputs. It reuses `readDeclaration` (`plugin/bin/lib/verify/declaration.js`) and the first-match `globToRegExp` loop `selectScope` uses. Do not re-implement glob matching. A rule counts as bookkeeping by its shape (`suites` an empty array, `static` false, no `impact`), not by a hard-coded path list, so a consumer's own declaration decides what counts. Thresholds stay the stated constants in `review-effort-derivation.md`: the size check lives in the module and the prose cites it.\n\nThe schema comment-only check stays in prose, as a targeted read the model already does for dependency manifests. Comment markers are `--`, `#`, `//`, `/*`, `*` and `*/` at the start of a changed line after leading whitespace. A hunk the reader cannot classify fires the trigger.\n\n### Key Files\n\n- `plugin/bin/lib/review-context/size-proxy.js` — new: numstat parse, exclusion classification, size tier\n- `plugin/bin/lib/review-context/build.js` — export the lockfile basename set for reuse\n- `plugin/bin/build-review-context.js` — new `size-proxy` verb, header and `USAGE`\n- `plugin/bin/lib/init/verify-scope-starter.js` — `BOOKKEEPING_RULES` consumed as the no-declaration fallback (already exported, read-only)\n- `plugin/bin/lib/verify/declaration.js` — `readDeclaration` consumed (read-only)\n- `plugin/skills/review/review-effort-derivation.md` — step 3 size proxy and schema trigger, step 4 worked example\n- `docs/plugin-structure.md` — CLI list entry for the new verb\n- `tests/bin-lib/review-context/size-proxy.test.js` — new unit suite\n- `tests/bin-lib/review-context/exit-code.test.js` — `size-proxy` exit codes\n\n## Gotchas\n\n- Decision (specify, 2026-11-25): `*.md` is **not** excluded in general, although the original report suggested it. In this plugin, skill markdown is executable behavior, and in this repo's own declaration `*.md` selects every suite. Only declared bookkeeping paths and lockfiles are excluded.\n- Decision (specify, 2026-11-25): the size proxy fails toward the higher count. If the CLI fails, use the unfiltered totals, never a guessed lower tier, matching Step 2.5's \"ambiguity never resolves toward less scrutiny\" rule.\n- Decision (specify, 2026-11-25): the schema comment-only refinement from the 2026-11-11 comment is in scope. It is the same Step 2.5 proxy and the same over-scrutiny symptom, and the record had no other home for it. The lockfile exclusion applies only to the size count; lockfiles keep feeding the new-dependency risk check, per the 2026-11-12 comment.\n- Decision (specify, 2026-11-25): `*.jsonl` stays counted, even though `isAlwaysStub` stubs it in the context bundle. Fixtures can carry behavior-relevant test data, so reuse only the lockfile names, not `isAlwaysStub` as a whole.\n- The Step 3.7 tiebreak half of the original request is settled by #5540 and #5541. Do not reopen it here.\n- #5929 (review skip on a bookkeeping-only diff) classifies the same paths. Whichever lands second should reuse the other's classifier rather than adding a second one.\n- Do not add text to `plugin/skills/review/code-mode-steps.md`. It sits at its read rail (#5076), so every prose change goes in `review-effort-derivation.md`, which Step 2.5 already lazy-loads.\n- Under a worktree-local run, the materialized spec is committed under `.claude-tweaks/pipelines/{run}/work/{n}-spec.md`, so the `.claude-tweaks/pipelines/**` rule covers it. There is no top-level `work/` path to add.\n\n## Original request\n\nreview: effort size proxy counts prose, plan and run-dir files, and every info finding gets a Capable tiebreak\n\n**Summary:** review-effort's diff heuristic counts prose, plan and run-dir files as size, and Step 3.7 sends every info finding through a Capable tiebreak plus two hand-written input files.\n\n**Kind:** Gap\n\n**Affected component:** skills/review (Step 2.5 review-effort derivation, Step 3.7 tiebreak)\n\n**Use case:**\nA small Python-script-and-docs record (labels `risk:low`, `size:low`, fast-lane ceremony) was reviewed. Step 2.5's diff heuristic read `git diff --stat` as 10 files and 412 lines, which is size `high` under its 10-files-or-300-lines rule, and combined with risk `low` resolved review-effort `medium` over the label tier `low`. Most of that \"size\" was a materialized spec, a plan document, a ledger and journey and architecture prose, none of which carries the code-review risk the proxy stands for. At `medium` the review dispatched 8 lens agents (4 reproduction pairs), then 13 findings (6 of them info or low and dropped as not worth acting on) each went to an independent Capable tiebreak agent. Resolving the 13 verdicts meant writing two scratch files per finding by hand (the finding JSON and the agent reply) and running `resolve-tiebreak` 13 times, i.e. 26 file writes plus 13 CLI calls, before any fix.\n\n**Suggested fix:**\nHave the size proxy in `review-effort-derivation.md` count only files that can hold executable or configuration behavior, excluding `*.md` prose, the run directory's materialized spec, plan and ledger files; or cap the upgrade from the label tier to one step when every changed non-prose file is under a small threshold. Separately, let Step 3.7 skip the independent agent for a finding the lens itself rated `info`, resolving it as `drop` with a logged line, and have `review-coordination.js` accept the reply text and entry on stdin or in one batch file so a wave of tiebreak verdicts resolves in one call instead of two writes and a call per finding.\n\n**Definition:** Clear\n\n**Plugin version:** 6.164.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2b4035ff -->\n\n",
+        "createdAt": "2026-11-10T13:51:56Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5148,
+        "state": "OPEN",
+        "title": "review: effort size proxy counts prose, plan and run-dir files, and every info finding gets a Capable tiebreak",
+        "updatedAt": "2026-11-25T07:19:29Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -1810,6 +2488,84 @@
     ],
     [
       {
+        "body": "Origin: reflect full from #4549/#4550/#4556 (multi-spec batch)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/review/step3-debate-and-refutation.md` Step 3.5 item 1 runs `detect-overlap` (same path, ±5 lines, different lenses), and item 2 keeps every pair whose severities differ. It never checks that the two findings describe the same defect. Item 5 only warns: \"Avoid running debate on every `Path:Line` where any two lenses touched\".\n\nOn #4556's high-tier review of a 40-line prose recipe, `detect-overlap` returned 32 pairs and 17 severity mismatches. Only 2 were the same defect; 15 were unrelated findings that happened to be near each other. Dispatching all 17 would have meant 34 Frontier/Capable judges. The reviewer had to make an ad-hoc ruling (decisions.md, 16:03:15) to debate only the 2.\n\n`categoriseReproduction` already scores substance similarity (`SUBSTANCE_SIMILARITY_MIN` 0.2) for reproduction pairs. Debate filtering does not use it.\n\n## Deliverables\n\nFilter `detect-overlap`'s contradiction pairs by the same substance score `categoriseReproduction` uses: only pairs at or above `SUBSTANCE_SIMILARITY_MIN` enter debate.\n\nPairs below the threshold keep their own buckets and go to Step 3.7, each logged once as a proximity coincidence.\n\nStep 3.5 item 2 states the filter, replacing the item-5 warning's judgment call.\n\n## Acceptance Criteria\n\n`review-coordination.js detect-overlap` output (or a new `filter-contradictions` subcommand) marks each pair with its substance score, and a unit test shows a same-location, different-substance pair excluded from debate.\n\nA same-defect pair (paraphrased claims about one line) still enters debate (unit test).\n\n`step3-debate-and-refutation.md` item 2 names the substance threshold; a conformance test pins it.\n\n## Release Note\n\nHigh-effort reviews no longer dispatch debate judges for unrelated findings that only sit near each other.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-debate-and-refutation.md` — modify\n- `plugin/bin/lib/coordination.js` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-10-31T15:41:26Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADAM5AEA",
+            "name": "size:small",
+            "description": "",
+            "color": "ededed"
+          }
+        ],
+        "number": 4747,
+        "state": "OPEN",
+        "title": "review: Step 3.5 debates every nearby severity mismatch, not only same-defect contradictions",
+        "updatedAt": "2026-11-25T07:19:22Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": null,
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: backend\n\n**Related:** #4359, #4429, #3974, #4358, #4366, #4395, #4553, #4593, #4708, #4718\n\n## Current State\n\nIn a multi-spec `/claude-tweaks:flow` run every record shares one worktree and branch, so a later record's `/claude-tweaks:review` must review only its own commits. `review/code-mode-steps.md` Step 2 derives `{base}` from the integration branch and has no rule for a record's own range inside the shared branch. Nothing records it either: `flow/multispec-run-dir-layout.md`'s `manifest.yml` keeps per-spec status and phase timestamps, with no base sha.\n\nIn run 2026-10-31T101111 (8 records) the controller supplied the range by hand as the parent of each record's materialize commit. It built the review context from the wrong base twice (#4070, #4090) before correcting it, each time re-running `build-review-context.js`.\n\nThe filer's probe, `git grep -n -i -e \"multi-spec\" -e \"MULTISPEC\" -e \"materialize commit\" origin/main -- plugin/skills/review/code-mode-steps.md plugin/skills/review/step3-lens-dispatch.md plugin/bin/lib/review-context`, matched only the verdict-marker, worktree-entry and prior-review-reuse paragraphs, and no per-record base rule.\n\n## Deliverables\n\n1. Define a record's own review range in a multi-spec shared worktree: `{base}` is the parent of that record's materialize commit (`Materialize spec #{N}`), `{branch}` is `HEAD`.\n2. Give review Step 2 that rule under `$MULTISPEC_PARENT_DIR`, and have `/claude-tweaks:flow`'s per-spec review invocation pass the range, or a sha the review reads, instead of leaving it to the controller.\n\n## Acceptance Criteria\n\n1. Under `$MULTISPEC_PARENT_DIR`, review Step 2 names the per-record base without the controller computing it.\n2. A conformance pin fails if the rule is removed.\n3. A single-spec review still derives `{base}` from the integration branch.\n\n## Release Note\n\nMulti-spec `/flow` runs review each record against its own commits automatically.\n\n## Technical Approach\n\nPrefer resolving the sha mechanically from the materialize commit's subject over asking the controller to carry it.\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — Step 2: per-record base under MULTISPEC_PARENT_DIR\n- `plugin/skills/flow/multi-spec.md` — pass the per-record range to the per-spec review\n\n## Gotchas\n\n- A resumed series, or a record re-materialized on the same branch, can have more than one matching commit, so the rule must say which one wins.\n\n## Original request\n\nReview a multi-spec record against its own commit range\n\nDefer-reason: tangential\n\n# Reflect — staged finding 2\n\n**Category:** tangential\n\nOrigin: reflect full from #4070\n\nDefer-reason: tangential\n\n## Current State\n\nIn a multi-spec `/claude-tweaks:flow` run every record shares one worktree and branch, so a later record's `/claude-tweaks:review` must review only its own commits. `review/code-mode-steps.md` Step 2 derives `{base}` from the integration branch and has no rule for a record's own range inside the shared branch; nothing records it either (`flow/multispec-run-dir-layout.md`: `manifest.yml` keeps per-spec status and phase timestamps, no base sha).\n\nIn run 2026-10-31T101111 (8 records) the controller supplied the range by hand as the parent of each record's materialize commit, and built the review context from the wrong base twice (#4070, #4090) before correcting it — each a re-run of `build-review-context.js`.\n\nProbe: `git grep -n -i -e \"multi-spec\" -e \"MULTISPEC\" -e \"materialize commit\" origin/main -- plugin/skills/review/code-mode-steps.md plugin/skills/review/step3-lens-dispatch.md plugin/bin/lib/review-context` — matched only the verdict-marker, worktree-entry and prior-review-reuse paragraphs, no per-record base rule.\n\n## Deliverables\n\n1. Define a record's own review range in a multi-spec shared worktree: `{base}` = the parent of that record's materialize commit (`Materialize spec #{N}`), `{branch}` = `HEAD`.\n2. Give review Step 2 that rule under `$MULTISPEC_PARENT_DIR`, and have `/claude-tweaks:flow`'s per-spec review invocation pass the range (or a sha the review reads) instead of leaving it to the controller.\n\n## Acceptance Criteria\n\n1. Under `$MULTISPEC_PARENT_DIR`, review Step 2 names the per-record base without the controller computing it.\n2. A conformance pin fails if the rule is removed.\n\n## Release Note\n\nMulti-spec `/flow` runs review each record against its own commits automatically.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — Step 2: per-record base under MULTISPEC_PARENT_DIR\n- `plugin/skills/flow/multi-spec.md` — pass the per-record range to the per-spec review\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-31T14:50:06Z",
         "labels": [
@@ -2378,6 +3134,12 @@
             "color": "F9D0C4"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
             "name": "priority:medium",
             "description": "Priority: dispatch picks after priority:high",
@@ -2393,7 +3155,7 @@
         "number": 4591,
         "state": "OPEN",
         "title": "Ship the express lane on by default — express-lane defaults to true, a project opts out",
-        "updatedAt": "2026-11-01T18:33:39Z",
+        "updatedAt": "2026-11-25T07:18:23Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -2406,7 +3168,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -7168,6 +7930,90 @@
     ],
     [
       {
+        "body": "**Related:** #3160, #4117\n\nOrigin: /claude-tweaks:flow #3898,#4012,#4041 Manifesto stall (run 2026-10-24T103516-spec-3898-4012-4041)\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:capture`'s Shaped-body branch step 3 files a spec-shaped body as `ready` with `risk:*`/`size:*` labels. It deliberately never passes `ceremony` to `recordPayload` (`plugin/skills/capture/SKILL.md` ~line 305: \"this branch never passes those\"), because `/claude-tweaks:specify` is the sole owner of `ceremony:*`. So every born-ready capture reaches `/claude-tweaks:flow` unlabelled. `flow/manifesto.md`'s Ceremony profile computation then runs one inline `assess-agent-autonomy ceremony-check` per such record, and `materialize.md` falls back the same way when no Manifesto verdict exists.\n\nThis is the common case: release-gate, wrap-up and health-sweep findings filed through `/capture --source …` all take this branch. On 2026-10-24, #4012, #4041 and #4060-#4072 were all filed this way. In `/flow #3898,#4012,#4041` (run 2026-10-24T103516-spec-3898-4012-4041) both fallback calls were wasted. #3898 already carried `ceremony:standard`, so the run-wide AND fold was `standard` before either judgment ran. A per-record verdict only changes behaviour where `build/micro-plan.md`'s gate reads `ceremony: fast-lane` with `size: low`, and #4041 is `size:medium`. The inline call is also where the pipeline stalled (the sibling record on return-to-caller).\n\n## Deliverables\n\n1. Born-ready captures carry a `ceremony:*` label. Either the Shaped-body branch judges it through the canonical `_shared/ceremony-check-invocation.md` pattern and stamps it, which updates `_shared/work-record.md`'s permission matrix so `/capture` co-owns `ceremony:*` on that branch only, or the decision to keep `/specify` as sole owner is recorded with its reason and deliverable 2 alone carries the fix.\n2. `flow/manifesto.md`'s Ceremony profile computation skips the per-record judgment when its verdict cannot change anything: the run-wide fold is already `standard` from a labelled record, **and** the record is not `size:low` (the only case `build/micro-plan.md` reads a per-record `fast-lane`). It passes `--ceremony standard` to materialize for those records and logs the skip with its reason.\n\n## Acceptance Criteria\n\n- A record filed through `/capture`'s born-ready branch carries a `ceremony:*` label, or the recorded decision explains why it does not.\n- A conformance test pins manifesto.md's skip condition (fold already `standard` and record not `size:low`) and its `--ceremony standard` pass-through, and reverting the prose turns it red.\n- `npm test` passes.\n\n## Release Note\n\nRecords filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — Shaped-body branch: ceremony stamping (or recorded decision)\n- `plugin/skills/flow/manifesto.md` — Ceremony profile computation: skip judgment when the verdict cannot matter\n- `plugin/skills/_shared/work-record.md` — permission matrix: ceremony:* co-ownership, if chosen\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-10-24T10:51:13Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 4118,
+        "state": "OPEN",
+        "title": "/capture's born-ready branch files `ready` records with no `ceremony:*` label, so every one pays /flow's ceremony-check fallback",
+        "updatedAt": "2026-11-25T07:18:10Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n**Related:** #3823, #3953, #3982, #3983, #3993\n\n## Current State\n\nThe post-merge Windows check on commit 6c660b23c (merged PR #3916, run 40029571772) reported `tests/bin-lib/issues/comment-trust.test.js` newly failing. The failing test is \"untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\" (line 66). Its actual output ends every line with `\\r\\n`, where the expected value is `\\n`-joined.\n\nRoot cause, reproduced on macOS against `main` at d02483933: native `jq` on Windows writes stdout in text mode, so every output newline becomes CRLF. The tests compare `spawnSync('jq', …).stdout` byte-for-byte against `\\n`-joined text. Running the files with a `jq` shim on `PATH` that converts output `\\n` to `\\r\\n` reproduces exactly four failures, and a CRLF file-read simulation adds none. This is not the `readText` CRLF-read class:\n\n- `tests/bin-lib/issues/comment-trust.test.js` (8 tests: 6 pass, 2 fail):\n  - \"untrustedJqNote prints the same text…\" (jq call at line 80)\n  - \"AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)\" (jq call at line 119; `split('\\n')` leaves a trailing `\\r` on each kept value)\n- `tests/comment-trust-conformance.test.js` (37 tests: 35 pass, 2 fail):\n  - \"AC5.2: grant-lane-decision.md's jq lines run…\"\n  - \"AC5.2: shaping-mode-stamping.md's jq lines run…\"\n  - Both go through the `runJq` helper's jq call at line 449.\n\n`tests/comment-trust-conformance.test.js` was never filed. The latest Windows run's `verify-report` artifact (run 40030935846, head d02483933) lists both files in `baselineAdjudicated.failingFiles`. The conformance file has been red since it was introduced, so the per-push baseline diff never reports it as newly failing. These three `spawnSync('jq', …)` calls are the only non-probe jq invocations under `tests/`. Shipped plugin code is unaffected: `comment-trust.js` only builds the filter strings.\n\n## Deliverables\n\n1. Normalize jq's stdout to `\\n` line endings at each of the three call sites (`tests/bin-lib/issues/comment-trust.test.js` lines 80 and 119, `tests/comment-trust-conformance.test.js` line 449) before any assertion reads it. Do this through one shared test helper rather than three hand-written replacements.\n2. Fix both test files in this record, since they share the root cause.\n\n## Acceptance Criteria\n\n1. No assertion in either file reads raw `jq` stdout. Every one of the three non-probe `spawnSync('jq', …)` results is EOL-normalized first.\n2. With a CRLF-emitting `jq` shim first on `PATH` (a wrapper that pipes real `jq` output through `perl -pe 's/\\n/\\r\\n/'`), both files pass every test. Before the fix this reports 2 failures in each file.\n3. Both files are green on Linux/macOS with the real `jq`. The `jq not found` skip path is unchanged.\n4. The next post-merge `windows-regression.yml` run's `verify-report` artifact lists neither file in `baselineAdjudicated.failingFiles`.\n\n## Release Note\n\nFix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.\n\n## Technical Approach\n\nAdd a small `runJq(args, input)` helper next to `readText` under `tests/helpers/`. It wraps `spawnSync('jq', args, { input, encoding: 'utf8' })` and returns the result with `stdout` normalized via `.replace(/\\r\\n/g, '\\n')`. Route the three call sites through it, keeping each `status`/`stderr` assertion as-is. Normalizing at the read mirrors the house rule for the CRLF-read class (#3776, #3953): fix the input once instead of loosening every assertion.\n\n### Key Files\n\n- `tests/bin-lib/issues/comment-trust.test.js` — two jq calls routed through the helper\n- `tests/comment-trust-conformance.test.js` — `runJq`'s jq call routed through the helper\n- `tests/helpers/` — new shared jq-run helper (or extend an existing helper module)\n\n## Gotchas\n\n- Do not pass `jq --binary` / `-b` instead. That flag is documented for native Windows builds, and its behavior on the Linux/macOS jq versions CI and maintainers run is not established here. Normalizing in the test is platform-independent.\n- The `--version` probes need no change: they only check `status`.\n- CI runs on ubuntu only. AC2's shim is the pre-merge stand-in, and only the post-merge `windows-regression.yml` run proves the fix on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 6c660b23c\n\nThe post-merge Windows check failed on commit 6c660b23cb7b054f4908afabd7a30949e220e57c (compared against 2b943d781).\n\n**Merged PR:** #3916 (https://github.com/thn-inc/claude-tweaks/pull/3916)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/40029571772\n\n### Newly failing test files\n- `tests/bin-lib/issues/comment-trust.test.js`\n\n### Failure excerpts\n\n#### `tests/bin-lib/issues/comment-trust.test.js`\n\n```\nnot ok 3668 - untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\n  ---\n  duration_ms: 1095.4188\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\bin-lib\\\\issues\\\\comment-trust.test.js:66:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator\\r\\n' +\n    +   'skipped marker comment https://x/c2 by unknown (NONE) — not an owner, member, or collaborator\\r\\n' +\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
         "createdAt": "2026-10-23T22:05:46Z",
         "labels": [
@@ -7732,6 +8578,174 @@
     ],
     [
       {
+        "body": "Surface: backend\n\n**Trigger:** the per-dispatch cost telemetry record (#3375) and the SDD final-review capture record (#3386) have both merged AND at least three multi-task `/flow` runs made after both merged have completed with per-dispatch telemetry and `sdd-final-review.md` in their run directories.\n\n**Related:** #4395, #3818, #3835, #4004, #4534, #4826, #4828, #4359, #4708, #4741, #4935\n\n## Overview\n\nPart of the \"Build dispatch cost shape\" decomposition (origin #3229). `/flow` reviews the same branch twice: SDD's whole-branch review (on the Capable tier, with a fix wave and a scoped re-review) runs inside `/build`, then `/claude-tweaks:review`'s lens fan-out runs on the same diff. `/review` reads nothing from SDD's final review, and its lenses run on Fast (lenses 3a and 3f), Standard (3b-3e, 3g) and — only for the UX lens 3h — Capable, so making `/review` the only whole-branch review is not safe as-is, and removing it from SDD is not safe without data. Decided with the user (2026-10-17): measure first.\n\nThis record is parked until the per-dispatch cost telemetry record has merged and at least three multi-task `/flow` runs exist with its telemetry. It then compares, on the same branches, SDD's final stage (final review plus fix wave plus re-review) against `/review` — cost per the telemetry, and which Important and Critical findings each produced — and applies a pre-decided rule, below, to choose among three outcomes.\n\n**Complexity:** Medium\n**Estimated tasks:** 4-6\n\n## Non-Goals\n\n- Starting before the trigger fires. Without per-dispatch telemetry and real runs, the thresholds below cannot be evaluated.\n- Changing SDD's per-task loop, per-task reviews or re-reviews, or filing anything upstream with superpowers.\n- Changing `dispatch.md`'s single-task fast-lane skip condition or the drift pin on SDD's `## Final Review`, except where Outcome 1 below explicitly requires touching the final-review instruction (and then only as that outcome states).\n- Adding more than one whole-branch lens to `/review`, or changing the other lenses' tiers.\n\n## Prerequisites\n\n| Record | Title | Status |\n|--------|-------|--------|\n| #3375 | Attribute agent cost to individual subagent dispatches in phase-timing and the /wrap-up run summary | must be merged, with its recorded baseline in `docs/reference/dispatch-cost-baseline.md` |\n| (runs) | At least three multi-task `/flow` runs with per-dispatch telemetry | the measurement set; produced by ordinary use after the telemetry ships, not by this record |\n\n## Current State\n\n- `plugin/skills/build/dispatch.md` — instructs SDD to dispatch its own final whole-branch review on a model resolved through `resolve-profile.js capable` (with `--diff-facts`), skips that review only for a `fast-lane`, single-task, non-batched plan (roster tag `sdd-whole-branch-review`), and logs `AUTO` when it dispatches. SDD's `## Final Review` is pinned in `tools/upstream-drift/manifest.yml`.\n- `plugin/skills/review/step3-lens-dispatch.md` — `/review`'s lens fan-out: Fast (3a, 3f), Standard (3b-3e, 3g) and Capable only for 3h UX, with reproduction pairs.\n- `plugin/skills/review/code-mode-steps.md` — `/review`'s Steps 1-6; Step 3 is the lens review, which never skips under any ceremony profile.\n- `plugin/skills/_shared/ceremony-profile.md` — the roster of what each profile skips, including the `sdd-whole-branch-review` row, and the \"Never skipped\" table (review Step 3 among them).\n- After the telemetry record ships: `phase-timing.js --markdown` prints per-dispatch rows by tier and role; roles include whole-branch review, task review, re-review and lens reviewer where the dispatch description identifies them.\n- The measured run that motivated this decomposition: SDD's final stage was about 20% of agent time (about 30 of 150 minutes) and found 5 Important findings, 3 of them spec- or plan-level gaps (which the new plan-review record is meant to catch earlier).\n\n## Deliverables\n\n- [ ] A measurement write-up (a new maintainer-side file under `docs/reference/`, for example `docs/reference/flow-double-review-measurement.md`) covering at least three qualifying runs. A qualifying run is a `/flow` run on one machine and repository with at least two tasks per `plan-audit.js --count-tasks`, the `standard` ceremony profile, made after #3386 merged (so its run directory holds `sdd-final-review.md`), and after the plan-review and per-task-tier records have merged (or all three before, stated in the write-up). For each run: SDD's final stage cost, defined as the dispatches from the whole-branch review's start to the last SDD dispatch (taken from per-dispatch timestamps, not from a role) as agent-seconds and tokens, divided by the build phase's total agent-seconds; the Important and Critical findings SDD's final review produced (from `sdd-final-review.md`); the Important and Critical findings `/review`'s lenses produce when run against the commit SDD's final review saw (the reviewed commit SHA in `sdd-final-review.md`), so `/review` judges the same pre-fix-wave state and can find what SDD's fix wave later fixed; and which findings overlap (same defect: fixing one fixes the other, judged per finding from the findings text and recorded so a reader can re-check it). The write-up states this measurement basis.\n- [ ] Inputs come only from each qualifying run's `$PIPELINE_RUN_DIR/sdd-final-review.md` (written by #3386) and its per-dispatch telemetry (#3375); a run missing either does not qualify, and no finding is reconstructed from memory or narration.\n\n- [ ] The decision, computed from the write-up with the rule below, recorded in the write-up with the numbers that selected it. The rule: aggregate over all qualifying runs by pooling (summed final-stage agent-seconds over summed build agent-seconds; summed overlapping findings over summed SDD Important/Critical findings); SDD \"Important\" and \"Critical\" map to `/review`'s `high` and `critical`; a run with zero SDD Important/Critical findings stays in the cost total, is excluded from the overlap fraction and is listed; if the pooled SDD Important/Critical count is below 4 the data is insufficient and the outcome is 3 until more runs exist; a cost share of exactly 15% counts as not exceeding 15%.\n- [ ] The selected outcome implemented:\n  - Outcome 1 (pooled cost share exceeds 15% AND pooled overlap is at least half): skip SDD's final review under `/flow` and add one Capable whole-branch lens to `/review`.\n  - Outcome 2 (pooled overlap at least half but cost share 15% or under): keep SDD's final review and have `/review` consume its findings as prior coverage.\n  - Outcome 3 (pooled overlap under half, or insufficient data): keep both unchanged; record only the write-up. A high cost share with low overlap is deliberately Outcome 3: the two reviews are catching different things.\n- [ ] Outcome 1 specifics, decided when it is selected and written into the write-up first: the new lens gets the next free lens ID in `plugin/skills/review/step3-lens-dispatch.md` and a checklist distinct from lenses 3e (Architecture) and 3g (Ownability); it runs at every review-effort tier (so no tier loses its only whole-branch review when SDD's is skipped) as a single agent, not a reproduction pair; per-lens model profile Capable via `resolve-profile.js`; \"under `/flow`\" is told apart from standalone `/build` by a signal the builder verifies does not misfire on a standalone build that has a run directory; the roster change is a new row with a new tag in `plugin/skills/_shared/ceremony-profile.md`, not an edit of the existing `sdd-whole-branch-review` row, and its decision-log SKIP literal is pinned like the existing rows.\n- [ ] Outcome 2 specifics: `dispatch.md` gains one forwarded instruction to copy SDD's final-review output to `$PIPELINE_RUN_DIR/sdd-final-review.md` before SDD's Finish step (SDD's text and loop are unchanged); `/review` uses it only in the main thread to dedupe and annotate lens findings after they return, and the lens agents do not receive it, so reproduction pairs stay independent evidence.\n- [ ] For Outcomes 1 and 2, the roster in `plugin/skills/_shared/ceremony-profile.md` (and its pin test), `docs/skill-graph.md` edges, and every consumer of the changed behavior updated in the same change.\n- [ ] Tests and prose pins appropriate to the selected outcome; none for Outcome 3.\n\n## Acceptance Criteria\n\n1. The measurement write-up exists, names at least three distinct qualifying runs, and for each run states SDD's final-stage share of total agent time (from per-dispatch telemetry, not estimated) and the finding counts for SDD's final review and for `/review`.\n2. The write-up states the overlap as a fraction (overlapping Important/Critical findings over SDD's Important/Critical findings) per run and pooled, with each overlap judged from finding text and recorded per finding, states how the comparison basis handles defects SDD already fixed (see the open ambiguity markers), and states the decision with both pooled numbers (cost share and overlap) that selected it under the rule above.\n3. If Outcome 1 is selected: `dispatch.md` instructs SDD to skip its final whole-branch review (and the fix wave and re-review after it) under `/flow`, with a decision-log line, while standalone `/build` behavior and the single-task fast-lane skip are unchanged; `review/step3-lens-dispatch.md` gains exactly one Capable whole-branch lens (next free ID, every review-effort tier, single agent) resolved through `resolve-profile.js capable`; `_shared/ceremony-profile.md` gains a new row and tag and its pin test is updated.\n4. If Outcome 2 is selected: `dispatch.md` forwards one copy instruction (SDD's text and loop unchanged) that writes SDD's final-review output to `$PIPELINE_RUN_DIR/sdd-final-review.md`; `/review` reads that file in the main thread only, to dedupe and annotate lens findings, and does nothing when it is absent; the lens agents' briefs do not mention it.\n5. If Outcome 3 is selected: no skill, roster or `dispatch.md` text changes; the write-up records why (including the insufficient-data case).\n6. In every outcome, `npm test` passes and every grown `plugin/skills/**/*.md` stays under its binding byte ceiling.\n\n## Release Note\n\nDecided from measured data whether the build's final branch review and the review step overlap enough to merge them, and recorded the result.\n\n## Technical Approach\n\nTreat this as measurement first, change second. Use the per-dispatch telemetry to compute the cost share, and read the findings of both reviews from the run's own artifacts: SDD's final review output and fix wave live in the SDD scratch workspace, which is swept at SDD's Finish step, so the measurement needs them captured before that sweep (the AC-forwarding verification in `dispatch.md` shows the pattern: copy to a durable location under the run directory). Judge overlap per finding from text, not from counts alone, and keep the thresholds exactly as decided; adjust them only with a recorded reason in the write-up.\n\n### Key Files\n\n- `docs/reference/flow-double-review-measurement.md` — new file: the measurement write-up and decision (maintainer-side; `docs/` does not ship)\n- `plugin/skills/build/dispatch.md` — Outcome 1: skip instruction for the whole-branch review under `/flow`; Outcome 2: durable copy of SDD's final-review output\n- `plugin/skills/review/step3-lens-dispatch.md` — Outcome 1: one Capable whole-branch lens; Outcome 2: prior-coverage input\n- `plugin/skills/review/code-mode-steps.md` — Outcome 2: read prior coverage at Step 3\n- `plugin/skills/_shared/ceremony-profile.md` — roster update if the skip changes\n- `tests/ceremony-profile-roster.test.js` — roster pin\n- `docs/skill-graph.md` — any new `/build` to `/review` edge, stated once\n\n## Gotchas\n\n- This record cannot start until the telemetry record (#3375) and the SDD final-review capture record (#3386) have merged and the runs exist. It is created parked, with a `**Trigger:**` line at the top of its body, so it does not enter the ready queue. If a builder reaches it before three qualifying runs exist, stop and report the shortfall; do not estimate from a single run or from the pre-telemetry per-phase table.\n- Steering principle for the whole decomposition: claude-tweaks never files upstream with superpowers and never contradicts SDD's text. Outcome 1 is a forwarded instruction that chooses within SDD's rules the way `dispatch.md` already forwards the final-review model and the single-task skip; it must not be framed as SDD behavior change.\n- `/review` does not run on SDD's tier: its lenses are Fast and Standard except UX. That is why Outcome 1 adds a Capable whole-branch lens rather than just deleting SDD's review.\n- Do not touch `dispatch.md`'s single-task fast-lane skip condition or the drift pin on SDD's `## Final Review` beyond what Outcome 1 requires; the drift assertion's `file:` is `plugin/skills/build/dispatch.md`, so changing the final-review paragraph there must keep the pinned heading claim true.\n- Overlap is judged on defects, not wording: two findings describe the same defect if fixing one fixes the other. Record the judgment per finding so a reader can re-check it.\n- Thresholds (15% cost share, half of Important/Critical findings overlapping, at least three runs) were the design's own call, flagged for adjustment while shaping this record. Shaping them added aggregation (pooled), boundary (exactly 15% is not \"exceeds\"), severity mapping (SDD Important/Critical to `/review` high/critical), a minimum of 4 pooled SDD findings, and the qualifying-run definition; the 15%, half and three-run values stand unless the write-up records a reason to change them.\n- Telemetry does not give \"SDD's final stage\" a role of its own (the dispatch descriptions come from SDD): derive it from per-dispatch timestamps as the Deliverables say.\n- `/review`'s lens set varies by review-effort tier (the `low` tier runs only a few lenses), which is why Outcome 1's lens must run at every tier: skipping SDD's final review must not leave a tier with no whole-branch review.\n- Outcome 2 passes SDD's findings only to the `/review` main thread; handing them to the lens agents would cost the independence that makes reproduction pairs evidence.\n- Findings from the new plan-review step (a sibling record) will reduce SDD's final-review spec-level findings; take the measurement runs after that step's effect is known if possible, or state in the write-up whether the runs predate it, since the overlap and the cost share both depend on it.\n- Shares `plugin/skills/build/dispatch.md` with ready records #3118, #3004 and #2869; shares `docs/skill-graph.md` with #3033. Re-read before editing.\n- Expand-contract: any skip or consumption added here is conditional on `/flow` with a recorded decision; standalone `/build` and plans run outside `/flow` behave as today.\n\n\n<!-- work-fingerprint: build-dispatch-cost-shape:decide-flow-s-double-whole-branch-review-from-measured-per-d -->\nwork-fingerprint: build-dispatch-cost-shape:decide-flow-s-double-whole-branch-review-from-measured-per-d",
+        "createdAt": "2026-10-17T10:06:11Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 3381,
+        "state": "OPEN",
+        "title": "Decide /flow's double whole-branch review from measured per-dispatch cost",
+        "updatedAt": "2026-11-25T07:19:35Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "## Current State\n\nFound by the #4792 review (lens 3a, tiebreak-confirmed, recommendation file). `tests/helpers/conformance-asserts.js` holds the shared prose-conformance predicates but no `requireOrder`, so each suite that pins marker order keeps its own copy: 13 copies across `tests/` as of d648f7bfb, with two different failure messages (`must come after {previous}` and `must come after the previous marker`) and two signatures.\n\nMigrating them is not localized: it touches every one of those suites, and the helper needs its own pin in `tests/helpers-conformance-asserts.test.js`.\n\n## Deliverables\n\n- Add `requireOrder(text, markers)` to `tests/helpers/conformance-asserts.js` (every marker must exist, then appear in order; messages `marker missing: {m}` and `{m} must come after {previous}`), pinned in `tests/helpers-conformance-asserts.test.js`.\n\n- Replace the local copies in every suite that declares one, keeping each suite's existing `/must come after/` and `/marker missing/` assertions green.\n\n- Add the helper to `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s list of shared helpers.\n\n## Acceptance Criteria\n\n- `grep -rn \"function requireOrder\" tests/` finds only the helper.\n\n- A reordered or missing marker still turns each migrated suite red; `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/conformance-asserts.js` — add requireOrder\n- `tests/helpers-conformance-asserts.test.js` — pin the new helper\n- `tests/settle-blocker-landing-stop-conformance.test.js` — use the shared helper\n\n_Filed by `review` via specShapedBody._\n",
+        "createdAt": "2026-11-03T20:04:07Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 5070,
+        "state": "OPEN",
+        "title": "Share one requireOrder helper across the prose-conformance suites",
+        "updatedAt": "2026-11-15T15:09:46Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n**Related:** #4429, #4243, #3737, #3822, #3758, #3818, #3819, #3875, #3975, #4217, #4244, #4245, #4248, #4259, #4301, #4328, #4439, #4450, #4454, #4460, #4468, #4486, #4487\n\n## Current State\n\nThe canonical rule in `plugin/skills/_shared/subagent-dispatch-core.md:16-27` (Working Directory Discipline) already forbids `cd`: use `git -C \"<abs path>\"` for git, pass the absolute path as an argument for other commands, and never precede a path-sensitive command with `cd`, even in a `&&` chain. `_shared/worktree-setup.md`'s post-creation catch-up and `_shared/scratch-worktree.md` §7 state the same one-plain-command-per-call constraint.\n\nFour places still tell dispatched agents to do the opposite:\n\n- `plugin/skills/build/SKILL.md:214` — \"When dispatching subagents, require them to use `cd \"$WORKTREE\" && …` or `git -C \"$WORKTREE\" …`\", then cites the shared section that forbids the first form.\n- `plugin/skills/test/qa-prompts.md:98` and `:162` — the QA agent prompt: \"Start every shell command with `cd \"{ABSOLUTE_WORKTREE_PATH}\" && ...`\".\n- `plugin/skills/tidy/scan-procedures.md:185` — \"Anchor with `cd \"{REPO_ROOT}\" &&` / `cd \"{RUN_ROOT}\" &&` at the start of each command.\"\n- `plugin/skills/tidy/scan-procedures.md:75` — \"(or run after `cd \"{REPO_ROOT}\"`)\".\n\nObserved 2026-10-26 (6.156.1, Windows, Git Bash): `friction-events.js` reported 36 `wd-guard-refusal` events in one `/claude-tweaks:flow` run under `worktree-always`. 25 of them were `cd <worktree> && …` commands that SDD implementers and reviewers issued while following `build/SKILL.md:214`, and each cost the agent a turn to re-issue as plain calls.\n\n## Deliverables\n\n1. Rewrite `build/SKILL.md:214`'s dispatch sentence to match the shared rule: subagents use `git -C \"<abs worktree path>\"` and absolute path arguments, one plain command per Bash call, with the path substituted before dispatch. Drop the `cd \"$WORKTREE\" && …` form.\n2. Rewrite the QA agent prompt's working-directory line at `test/qa-prompts.md:98` and `:162` the same way (absolute paths and argument-anchored commands, no `cd … &&` prefix). Keep whatever the `playwright-cli` session actually needs as cwd expressed through absolute paths or the tool's own flags.\n3. Rewrite `tidy/scan-procedures.md:75` and `:185` to anchor with `git -C \"{REPO_ROOT}\"` and absolute-path arguments (e.g. `find \"{RUN_ROOT}/.claude-tweaks/pipelines/...\"`) instead of a `cd` prefix. Keep the loud-failure rationale at :185.\n4. Add a conformance test that fails if any `plugin/skills/**/*.md` instructs a dispatched agent to prefix commands with `cd \"…\" &&`. Allow-list the shared core's own \"never `cd \"...\" && git ...`\" counter-example.\n\n## Acceptance Criteria\n\n- `grep -rn 'cd \"\\$WORKTREE\" &&\\|cd \"{ABSOLUTE_WORKTREE_PATH}\" &&\\|cd \"{REPO_ROOT}\" &&\\|cd \"{RUN_ROOT}\" &&' plugin/skills` returns no instruction text. Quoted counter-examples labelled as forbidden are allowed.\n- The new conformance test fails when the old `build/SKILL.md:214` sentence is restored (verified by reverting deliverable 1), and passes with all four sites fixed.\n- `tests/subagent-contract-clauses.test.js` and `tests/review-dispatch-composition.test.js` still pass.\n\n## Release Note\n\nBuild, test and tidy no longer tell their helper agents to use a `cd … &&` command form that the worktree guard refuses, which removes repeated refused-and-retried commands in worktree runs.\n\n## Technical Approach\n\nThis is prose alignment to an existing canonical rule. No new rule is invented: each site either cites `_shared/subagent-dispatch-core.md`'s Working Directory Discipline or restates its two forms. Prefer citing over restating, so the next change to the rule lands in one place. The conformance test is a plain `fs` walk with a regex over `plugin/skills/**/*.md`, sized like the neighboring prose-pin tests.\n\n### Key Files\n\n- `plugin/skills/build/SKILL.md` — :214 dispatch sentence\n- `plugin/skills/test/qa-prompts.md` — :98 and :162 working-directory lines\n- `plugin/skills/tidy/scan-procedures.md` — :75 and :185 anchoring instructions\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only: the canonical rule\n- `tests/subagent-contract-clauses.test.js` — existing contract-clause pins\n- `tests/review-dispatch-composition.test.js` — existing dispatch-composition pins\n\n## Gotchas\n\n- The QA agent is a Bash-only agent (`claude-tweaks:qa-agent`) running `playwright-cli`. Check whether any QA command relies on cwd, such as a relative screenshot output dir, before dropping the `cd` prefix, and make that path absolute.\n- Two ready records touch the same rule from other sites. #3737 (in flight) adds the one-plain-command rule to `review/step3-lens-dispatch.md` and may fold it into `_shared/subagent-dispatch-core.md`. #3822 rewords that rule's justification in `dispatch/task-prompt.md`. Rebase on whichever lands first and cite the shared section as it then reads. Do not restate a second copy.\n- The report also notes that the guard refuses a heredoc fed to an interpreter when its text merely mentions git. That is harness guard behavior, not plugin prose, and is out of scope here. The shared core already steers agents to Write-then-run.\n\n## Original request\n\nbuild: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses\n\n**Summary:** `/claude-tweaks:build`'s Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …` in subagent commands, a form the harness's worktree-isolation guard refuses in a worktree session.\n\n**Kind:** Defect\n\n**Affected component:** `skills/build/SKILL.md` (Common Step 2's Working Directory Discipline note) and `skills/_shared/subagent-dispatch-core.md`'s Working Directory Discipline section\n\n**Repro steps:**\n1. Run `/claude-tweaks:flow #N` in a project with `worktree-always`, so the session is isolated in a worktree.\n2. Let `/build` dispatch SDD implementers and reviewers with the Working Directory Discipline instruction (\"require them to use `cd \\\"$WORKTREE\\\" && …` or `git -C \\\"$WORKTREE\\\" …`\").\n3. Read `friction-events.js --run <run-dir>` afterwards.\n\n**Expected vs. actual:**\nExpected: subagents follow an instruction the guard accepts — one plain command per Bash call from the worktree (they inherit it as cwd), absolute paths or `git -C \"$WORKTREE\"`, never `cd X && …`; `_shared/worktree-setup.md`'s Post-creation catch-up (\"default to one plain command per call\") and `_shared/scratch-worktree.md` §7 already state that constraint.\nActual: in one run on 2026-10-26, `friction-events.js` reported 36 `wd-guard-refusal` events; 25 were `cd <worktree> && …` commands issued by dispatched implementers and reviewers following the instruction, each costing the subagent a turn to re-issue the command as separate plain calls. The guard also refuses a heredoc fed to an interpreter when the heredoc text merely mentions git.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1 (Claude Code on Windows, Git Bash)\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-4fbefad6 -->\n\n",
         "createdAt": "2026-10-26T20:18:24Z",
         "labels": [
@@ -7772,6 +8786,12 @@
             "color": "F9D0C4"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
             "name": "priority:medium",
             "description": "Priority: dispatch picks after priority:high",
@@ -7793,7 +8813,7 @@
         "number": 4442,
         "state": "OPEN",
         "title": "build: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses",
-        "updatedAt": "2026-11-24T05:57:59Z",
+        "updatedAt": "2026-11-25T07:18:42Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -7806,7 +8826,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -7974,90 +8994,6 @@
         }
       },
       {
-        "body": "Surface: infra\n\n**Related:** #3737, #3822, #3819, #3818\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7 (\"Shell constraint\", `scratch-worktree.md:235`). `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it.\n\nNo `plugin/skills/build/*.md` file carries the mandate (probed at HEAD). `build/dispatch.md` cites `subagent-dispatch-core.md` only for its Model Selection section (`:12`) and its no-stash rule (`:19`). `adopted-branch-collision-check.md:32` cites §7 for one `$(...)` shape.\n\nRun #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms, and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\nThe precedent for the fix shape is already in `build/dispatch.md:19`: \"**Forbid `git stash` in every per-task implementer dispatch:** in the same invocation instruction, also direct `/superpowers:subagent-driven-development` to instruct each per-task implementer to never run `git stash`…\". That paragraph carries a dispatch-core rule into SDD's templates through the controller's invocation instruction, citing rather than restating it.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review, and final-review dispatch it composes. Word it as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes: implementer, task-review, re-review, and final-review.\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n- `npm test` passes.\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\nMirror the `git stash` paragraph at `build/dispatch.md:19`. In the same invocation instruction, direct `/superpowers:subagent-driven-development` to include the shell-constraint paragraph in every dispatch it composes, citing `subagent-dispatch-core.md`'s \"One plain command per Bash call\" and `scratch-worktree.md` §7 rather than restating the refusal table. Add the conformance test beside the existing build-dispatch prose tests (`tests/build-dispatch-status-token-and-tree-immutability.test.js` is the nearest neighbour).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n- `plugin/skills/_shared/scratch-worktree.md` — reference only (§7)\n- `tests/build-dispatch-shell-constraint-prose.test.js` — new conformance test\n\n## Gotchas\n\n- #3822 is still open and may change the wording of the mandate it settles against the §7 table. Cite the shared files by section rather than copying their text, so this record's paragraph follows #3822 without a second edit.\n- The final-review dispatch is composed by the whole-branch review step, not by SDD's per-task loop. Check that the paragraph reaches it too, because the acceptance criteria name all four dispatch kinds.\n- #3737 covers the same gap for `/review` lens prompts, a different skill. Do not fold it in here.\n\n## Original request\n\nCarry the worktree shell constraint into /build's SDD implementer and reviewer dispatches\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7. `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it, and no `plugin/skills/build/*.md` file cites the rule. Run #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Related: #3737 (the same gap for review lens prompts), #3822 (settling the mandate against the §7 table) and #3819 (counting subagent refusals). Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review and final-review dispatch it composes. It should be worded as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes.\n\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n\n- `npm test` passes.\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-25T10:25:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4243,
-        "state": "OPEN",
-        "title": "Carry the worktree shell constraint into /build's SDD implementer and reviewer dispatches",
-        "updatedAt": "2026-11-24T14:21:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: terminal\n\nOrigin: ledger resolve gate (#4152 wrap-up)\n\nDefer-reason: needs-human-decision\n\n**Related:** #4152, #4267, #3758, #3835, #3963, #4004, #4102, #4252, #4345, #4580\n\n## Current State\n\nAn interactive `Proceed` on an arrived-commit major (`plugin/skills/release/execute.md` Step 5, step 2) is not written anywhere. `plugin/bin/release-tip-check.js` reports `arrived` per delta and holds no acceptance state. So a release resumed after the `Proceed` but before the next delta verdict line asks the Gates question again for the same delta. Nothing merges on the way. Found by the #4152 fix-wave re-review (ledger row 18).\n\n`execute.md`'s step 5 text says step 2 \"re-gates a major once per delta, never again for an earlier delta already accepted\". That is not true on such a resume.\n\n**Decision (human-approved 2026-10-30):**\n\n- Ledger row 20 of #4152, \"arrived-major is informational per delta\", is ratified. It was listed as awaiting ratification in PR #4267, and the shipped code already behaves this way (`plugin/bin/lib/release-tip/check.js:119`, \"never as a hold\").\n- The acceptance is **not persisted**, and a mid-delta resume asks again.\n\nThe trigger needs an interactive run, a major commit landing after the console, a `Proceed`, and a session dying before the next delta verdict line. A wrong re-ask then costs one click. A misread acceptance ships a major nobody approved. The rejected options both add a way for this gate to fail silently:\n\n- a `decisions.md` line the CLI reads would make `check.js` hold approval state rather than only report;\n- an `--accept-major` input could be carried over and reused on a later resume.\n\n## Deliverables\n\n1. Correct the `execute.md` sentence: a major is re-gated once per delta in an uninterrupted run, and a resume before the next delta verdict line asks again, deliberately, because the acceptance is not persisted.\n2. Add a short note beside the `arrived` comment in `check.js` saying the CLI holds no acceptance state by design, citing this record.\n3. Update the existing pin of this sentence at `tests/release-reviewed-tip-conformance.test.js:158-159` to the new wording, including its row label, which repeats the old claim.\n\n## Acceptance Criteria\n\n1. `execute.md` no longer states that an accepted major is never asked about again without qualification. It states that a resume before the next delta verdict line asks again and that this is deliberate.\n2. `check.js` carries the note, and its behaviour is unchanged: `git diff` for the file shows comment lines only.\n3. The conformance test fails when the new sentence is removed. Show this.\n4. No `--accept-major` flag and no new `decisions.md` line shape are added.\n5. `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\nA prose correction plus a code comment and one pin. No behaviour changes: this records the decision and removes a claim the code does not meet.\n\n### Key Files\n\n- `plugin/skills/release/execute.md` — Step 5, step 5's re-entry sentence\n- `plugin/bin/lib/release-tip/check.js` — comment beside `arrived`\n- `tests/release-reviewed-tip-conformance.test.js` — the updated pin at lines 158-159\n\n## Gotchas\n\n- The same `execute.md` paragraph carries other pinned wording. Change only this sentence.\n- Revisit this decision if the `arrived` check ever becomes a CLI-level hold.\n\n## Original request\n\nOrigin: ledger resolve gate (#4152 wrap-up)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\nAn interactive `Proceed` on an arrived-commit major (`plugin/skills/release/execute.md` Step 5, step 2) is not written anywhere. `plugin/bin/release-tip-check.js` reports `arrived` per delta and holds no acceptance state, so a release resumed after the `Proceed` but before the next delta verdict line re-asks the Gates question for the same delta. Re-asking is safe (nothing merges on the way) but costs an operator a repeated decision. Found by the #4152 fix-wave re-review (ledger row 18).\n\n## Deliverables\n\n- Decide how an accepted arrived-commit major persists across a resume.\n- Implement the chosen mechanism in `plugin/bin/lib/release-tip/check.js` and `plugin/skills/release/execute.md`, with a test per branch.\n\n## Open Question\n\nPersist the acceptance as a `decisions.md` line the CLI reads (so `arrived` reports it accepted), or as an `--accept-major` input, or accept the re-ask on a mid-delta resume? The answer depends on the ruling at the Review Console for #4152 ledger row 20 (arrived-major is informational per delta): a reversal to a CLI-level hold needs the persisted acceptance, a ratification may not.\n\n## Release Note\n\nNo user-visible change: an interactive release resumed after accepting an arrived major would not ask the same question twice.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/release-tip/check.js` — persist or read an accepted arrived major\n- `plugin/skills/release/execute.md` — log the Proceed and skip the re-gate\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-10-25T14:13:24Z",
         "labels": [
@@ -8132,7 +9068,9 @@
           "notPlanned": false,
           "shapedHeadless": false
         }
-      },
+      }
+    ],
+    [
       {
         "body": "## Current State\n\nDigest #1426 holds 3 below-materiality-floor findings in `tidy`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [tidy] `_shared/github-pr-scan.md` classifies a PR as housekeeping when its body carries `<! -- tidy-housekeeping-pr -->` / `<! -- wrap-up-residue-pr -->` before it looks at the `claude-tweaks-run:` marker,  — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] the suite pins the vocabulary \"is held, not armed\" and never \"staged\", so the prose uses two words for one outcome. Behavior is the same (reported, logged, not armed). — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] No claim recoverable (claim-empty): lens \"3f\" finding plugin/skills/tidy/actions-github-issues.md:97 not reproduced. — plugin/skills/tidy/actions-github-issues.md:97 — Defer-reason: console-backfill-no-claim — 2026-10-24T105021-spec-4045\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `tidy`; no user-facing change.\n",
         "createdAt": "2026-10-26T11:41:36Z",
@@ -8308,9 +9246,7 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      }
-    ],
-    [
+      },
       {
         "body": "Surface: infra\n\n**Related:** #4548, #3737, #4672, #4243, #4708, #3986, #4242, #4826, #4828, #3758, #3822, #4442, #4663, #4959\n\nOrigin: reflect hindsight from #4548\n\n## Current State\n\nOn #4548, `/claude-tweaks:review` Step 3.7 dispatched eighteen read-only tiebreak agents, and two of them ran `git stash` by accident. Each put a backtick-quoted token (a code span such as `git stash`) inside a double-quoted `git grep` argument, and the shell executed it as a command substitution. The worktree was clean, so nothing was stashed. In a dirty worktree, the stash would have swept a sibling's edit into the shared, repo-wide stash stack.\n\nSince this record was filed, the tiebreak template (`plugin/skills/review/step3-tiebreak.md:62-63`) no longer carries shell rules of its own. It inlines two lines verbatim from the composed review-dispatch bundle, via placeholders:\n\n- the `READ-ONLY REVIEW:` line (`plugin/skills/_shared/subagent-dispatch-core.md:151`), which is about not running suites, builds or servers\n- the `SHELL DISCIPLINE:` line (`subagent-dispatch-core.md:43`)\n\nThe same `SHELL DISCIPLINE:` placeholder sits in the lens, debate, refutation, and gap-sweep templates (`plugin/skills/review/step3-lens-dispatch.md:56`, `plugin/skills/review/step3-debate-and-refutation.md:38`, `:104`, `:138`) and in `/tidy`'s console backfill (`plugin/skills/tidy/console-backfill.md:113`). So that one line is the single copy every read-only reviewer prompt receives.\n\nThe line says one plain command per call, literal absolute paths, no shell-variable paths, no `cd … &&`, and no heredoc in a compound command, and it says to read files with the Read and Grep tools. It never warns that a backtick inside a double-quoted shell argument is executed. `tests/review-lens-shell-discipline-conformance.test.js` (`assertShellLine`, lines 44-55) pins the line's existing clauses one regex each, with a go-red case (lines 61-67).\n\n## Deliverables\n\n1. Add one clause to the `SHELL DISCIPLINE:` line in `plugin/skills/_shared/subagent-dispatch-core.md`. It should say: never put a backtick inside a double-quoted shell argument, because the shell runs it as a command; pass a search pattern containing a backtick in single quotes, or search with the Grep tool. Keep the line a single backtick-delimited prompt line, as the conformance test's `^`SHELL DISCIPLINE: [^`]+`$` shape requires. Spell the backtick out in words rather than writing a literal backtick inside the code span.\n2. Extend `assertShellLine` in `tests/review-lens-shell-discipline-conformance.test.js` with one regex for the new clause, so a bundle that drops it goes red.\n\n## Acceptance Criteria\n\n- The `SHELL DISCIPLINE:` line in `subagent-dispatch-core.md` carries the backtick-in-double-quotes warning and still matches `^`SHELL DISCIPLINE: [^`]+`$`.\n- The composed review-dispatch bundle (`compose` over `subagent-dispatch-core.md` + `run-dir-resolution.md`, as the test builds it) carries the clause.\n- `assertShellLine` asserts the clause. Deleting the clause from `subagent-dispatch-core.md` turns `node --test tests/review-lens-shell-discipline-conformance.test.js` red, and restoring it turns it green.\n- `npm test` passes.\n\n## Release Note\n\nStop read-only review agents from running commands by accident when a search pattern contains a backtick.\n\n## Technical Approach\n\nA single-copy prose edit plus one test assertion. The tiebreak template and every other review dispatch inline the bundle's `SHELL DISCIPLINE:` line verbatim through placeholders, so editing that line reaches all of them. No template needs its own copy; adding one would create a second copy to drift. The warning belongs in the shell-discipline line rather than the `READ-ONLY REVIEW:` line, because it is a shell-quoting rule, not a what-may-run rule.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — add the backtick-in-double-quotes clause to the `SHELL DISCIPLINE:` line (line 43)\n- `tests/review-lens-shell-discipline-conformance.test.js` — one new regex in `assertShellLine`\n\n## Gotchas\n\n- The original Deliverables named the tiebreak template and the `READ-ONLY REVIEW:` line's neighbours as two places to add the sentence. Since then the tiebreak template switched to verbatim placeholders (`step3-tiebreak.md:62-63`), so a second hand-written copy there would bypass the bundle and drift. One edit to the bundle line covers every review dispatch.\n- The `SHELL DISCIPLINE:` line is itself an inline code span. A literal backtick inside it would end the span early and break the `^`SHELL DISCIPLINE: [^`]+`$` assertion. Describe the character in words (\"a backtick\").\n- Implementer dispatches state the shell rule in their own prompts (`subagent-dispatch-core.md:41`, \"an implementer or other dispatch states the rule above in its own prompt\") and do not receive this line. They are outside this record's read-only-reviewer scope.\n- #4243 (ready) carries the worktree shell constraint into `/build`'s dispatch prompts and also lists `subagent-dispatch-core.md` among its files. If it is in flight, rebase onto it before editing line 43. Neither record depends on the other's change.\n- The prompt line must stay outside any byte-pinned Calibration/Output block. The test's `doesNotMatch` check on the Calibration region (around line 78) keeps that true.\n\n## Original request\n\nWarn dispatched read-only reviewers that a backtick inside a double-quoted shell argument runs as a command\n\n# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect hindsight from #4548\n\nDefer-reason: tangential\n\n## Current State\n\nTwo of the eighteen read-only tiebreak agents dispatched by `/claude-tweaks:review` Step 3.7 on #4548 ran `git stash` by accident: each put a backtick-quoted token (a code-span like `git stash`) inside a double-quoted `git grep` argument, and the shell executed it as a command substitution. The worktree was clean at the time so nothing was stashed, but a dirty worktree would have swept a sibling edit into the shared stash stack.\n\n`plugin/skills/review/step3-tiebreak.md`'s dispatch template and `step3-lens-dispatch.md`'s lens prompt notes restate the one-plain-command-per-Bash-call and no-`git stash` rules but never warn that a backtick inside a double-quoted shell argument is executed.\n\n## Deliverables\n\nAdd one sentence to the read-only reviewer prompts (the `READ-ONLY REVIEW:` line's neighbours in `_shared/subagent-dispatch-core.md` and the tiebreak template in `review/step3-tiebreak.md`) telling a dispatched reviewer to pass search patterns containing backticks in single quotes or read the file with the Read tool, never inside double quotes.\n\nPin the sentence in the existing dispatch-prompt conformance tests so a dropped copy goes red.\n\n## Acceptance Criteria\n\n`_shared/subagent-dispatch-core.md` and the tiebreak template in `review/step3-tiebreak.md` each carry the backtick-in-double-quotes warning.\n\nA conformance test fails when either copy drops it (delete the sentence from one copy and watch the test go red).\n\n## Release Note\n\nStop read-only review agents from running commands by accident when a search pattern contains a backtick.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — add the warning beside the Read-only Reviewer Discipline line\n- `plugin/skills/review/step3-tiebreak.md` — add it to the tiebreak dispatch template\n\n_Filed by `reflect` via specShapedBody._\n\n",
         "createdAt": "2026-11-02T06:47:24Z",
@@ -8372,88 +9308,6 @@
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "## Current State\n\nFound by the #4792 review (lens 3a, tiebreak-confirmed, recommendation file). `tests/helpers/conformance-asserts.js` holds the shared prose-conformance predicates but no `requireOrder`, so each suite that pins marker order keeps its own copy: 13 copies across `tests/` as of d648f7bfb, with two different failure messages (`must come after {previous}` and `must come after the previous marker`) and two signatures.\n\nMigrating them is not localized: it touches every one of those suites, and the helper needs its own pin in `tests/helpers-conformance-asserts.test.js`.\n\n## Deliverables\n\n- Add `requireOrder(text, markers)` to `tests/helpers/conformance-asserts.js` (every marker must exist, then appear in order; messages `marker missing: {m}` and `{m} must come after {previous}`), pinned in `tests/helpers-conformance-asserts.test.js`.\n\n- Replace the local copies in every suite that declares one, keeping each suite's existing `/must come after/` and `/marker missing/` assertions green.\n\n- Add the helper to `.claude/skills/skill-prose-conformance-tests/SKILL.md`'s list of shared helpers.\n\n## Acceptance Criteria\n\n- `grep -rn \"function requireOrder\" tests/` finds only the helper.\n\n- A reordered or missing marker still turns each migrated suite red; `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/conformance-asserts.js` — add requireOrder\n- `tests/helpers-conformance-asserts.test.js` — pin the new helper\n- `tests/settle-blocker-landing-stop-conformance.test.js` — use the shared helper\n\n_Filed by `review` via specShapedBody._\n",
-        "createdAt": "2026-11-03T20:04:07Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 5070,
-        "state": "OPEN",
-        "title": "Share one requireOrder helper across the prose-conformance suites",
-        "updatedAt": "2026-11-15T15:09:46Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
@@ -8902,8 +9756,8 @@
         }
       },
       {
-        "body": "Surface: backend\n\nOrigin: ledger resolve gate (wrap-up of #4178)\n\nDefer-reason: needs-human-decision\n\n**Related:** #4178, #4493\n\n## Current State\n\n`plugin/bin/lib/staged-patch/stack-check.js`'s `gitEnv` deletes `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` by hand (lines 29-32). `plugin/bin/lib/hooks/git-exec.js`'s `repoPinnedEnv()` (added in #4178) drops the same four (line 200). The only link between the two is a comment in `git-exec.js`, which says the list \"deliberately matches\" and that widening it toward git's fuller `git rev-parse --local-env-vars` list \"is a separate decision\". `stack-check.js` has no matching note.\n\n`gitEnv` also switches git's config off and scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so it cannot be replaced by `repoPinnedEnv()`. It can only start from it.\n\n**Decision (human-approved 2026-10-30):** `gitEnv` builds on `repoPinnedEnv`, giving one list of repo-locating variables.\n\n- Nothing requires `stack-check.js` to be standalone. Its header promises \"pure checking\", meaning it never writes to the worktree. It does not promise few dependencies.\n- The list is likely to change, and with two copies linked by a one-sided comment, a widening could reach only one of them.\n- The cost is that `stack-check.js` also loads `shared-primitives` and `reconcile/timing` through `git-exec.js`. `git-exec.js` imports nothing from `staged-patch`, so this adds no direct cycle. The load time was not measured, but `stack-check.js` serves a CLI that spawns git repeatedly.\n\nWidening the list itself is out of scope and stays a separate decision.\n\n## Deliverables\n\n1. `stack-check.js`'s `gitEnv` starts from `repoPinnedEnv(env)` instead of `{ ...env }`, sets `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` on that copy, and drops its four `delete` lines. Its other scrubbing is unchanged.\n2. `git-exec.js`'s comment above `repoPinnedEnv` says `gitEnv` builds on this function, so widening the list here widens both. It keeps the note that widening is a separate decision.\n3. A test in `tests/bin-lib/staged-patch/stack-check.test.js` proves `gitEnv` uses `repoPinnedEnv` rather than merely dropping the same four names.\n\n## Acceptance Criteria\n\n1. `gitEnv({ env })` still drops all four repo-locating variables, and the existing `stack-check.test.js` cases pass unchanged.\n2. `gitEnv` still scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, and still sets `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`.\n3. With `repoPinnedEnv` stubbed to drop an extra sentinel variable, `gitEnv` also drops that variable. Stub by replacing `git-exec.js`'s entry in `require.cache` and requiring a fresh `stack-check.js`, restoring both afterwards.\n4. Reverting `gitEnv` to its hand-written `delete` lines makes the AC3 test fail. Show this.\n5. `plugin/bin/check-staged-stack.js` still loads and runs: its existing tests pass.\n6. `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n`const { repoPinnedEnv } = require('../hooks/git-exec');` at the top of `stack-check.js`, then a one-line change to `gitEnv`'s first statement plus the removal of the four `delete` lines. `gitEnv` keeps its `{ platform, devNull, env }` signature, and its `env` default still flows through.\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — `gitEnv`\n- `plugin/bin/lib/hooks/git-exec.js` — the comment above `repoPinnedEnv`\n- `tests/bin-lib/staged-patch/stack-check.test.js` — the sentinel test\n\n## Gotchas\n\n- `repoPinnedEnv` returns a copy, so `gitEnv` still never mutates the caller's `env`. Keep that property.\n- Destructuring `repoPinnedEnv` at require time is why the stub in AC3 needs a fresh require of `stack-check.js`.\n\n## Original request\n\nOrigin: ledger resolve gate (wrap-up of #4178)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/bin/lib/staged-patch/stack-check.js`'s `gitEnv` deletes `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` by hand, and `plugin/bin/lib/hooks/git-exec.js`'s `repoPinnedEnv()` (added in #4178) drops the same four. The two lists match on purpose, and `git-exec.js` says so in a comment.\n\n`gitEnv` additionally switches git's config off and scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so it cannot simply be replaced by `repoPinnedEnv()`; it could only start from it. `stack-check.js` currently requires only `fs`, `os`, `path` and `child_process`; `git-exec.js` pulls in `shared-primitives` and `reconcile/timing`.\n\n## Deliverables\n\n- [ ] Decide whether `stack-check.js` should build `gitEnv` on `repoPinnedEnv(env)` (one list of the four repo-locating variables, one new dependency edge for a currently standalone module) or stay self-contained (two lists to keep in step).\n\n- [ ] If it builds on `repoPinnedEnv`: change `gitEnv`, keep `tests/bin-lib/staged-patch/stack-check.test.js` green, and update the `git-exec.js` comment that says the lists match on purpose.\n\n- [ ] If it stays self-contained: record the reason beside `gitEnv` so the next reader does not reopen the question.\n\n## Open Question\n\nWhich of the two: a shared helper with a new dependency edge into a standalone module, or two small lists kept in step? The overlap is four variable names, so the cost either way is low.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — modify or annotate\n- `plugin/bin/lib/hooks/git-exec.js` — read\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-10-25T13:21:35Z",
+        "body": "Surface: infra\n\n**Related:** #3737, #3822, #3819, #3818\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7 (\"Shell constraint\", `scratch-worktree.md:235`). `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it.\n\nNo `plugin/skills/build/*.md` file carries the mandate (probed at HEAD). `build/dispatch.md` cites `subagent-dispatch-core.md` only for its Model Selection section (`:12`) and its no-stash rule (`:19`). `adopted-branch-collision-check.md:32` cites §7 for one `$(...)` shape.\n\nRun #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms, and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\nThe precedent for the fix shape is already in `build/dispatch.md:19`: \"**Forbid `git stash` in every per-task implementer dispatch:** in the same invocation instruction, also direct `/superpowers:subagent-driven-development` to instruct each per-task implementer to never run `git stash`…\". That paragraph carries a dispatch-core rule into SDD's templates through the controller's invocation instruction, citing rather than restating it.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review, and final-review dispatch it composes. Word it as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n3. Absorbs #5335 (same goal, decided 2026-11-25): the roster also covers every fix-round (a resumed or a fresh implementer), fix-wave, whole-branch-fix and NEEDS_CONTEXT/BLOCKED re-dispatch, and the sentence names heredocs, `for`/`while` loops, `cd ... &&` chains and the one-plain-command-per-call rule (or cites the file that does — `dispatch/task-prompt.md` item 6 / `_shared/scratch-worktree.md` §7), never a third copy.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes: implementer, task-review, re-review, and final-review.\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n- `npm test` passes.\n- `wc -c plugin/skills/build/dispatch.md` stays below the 52,500-byte `RAIL_BYTES` rail (from #5335).\n- `git grep -n -i -e 'shell constraint' -- plugin/skills/build/dispatch.md` matches the new sentence, and the sentence names fix-round, fix-wave and whole-branch-fix dispatches (from #5335).\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\nMirror the `git stash` paragraph at `build/dispatch.md:19`. In the same invocation instruction, direct `/superpowers:subagent-driven-development` to include the shell-constraint paragraph in every dispatch it composes, citing `subagent-dispatch-core.md`'s \"One plain command per Bash call\" and `scratch-worktree.md` §7 rather than restating the refusal table. Add the conformance test beside the existing build-dispatch prose tests (`tests/build-dispatch-status-token-and-tree-immutability.test.js` is the nearest neighbour).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n- `plugin/skills/_shared/scratch-worktree.md` — reference only (§7)\n- `tests/build-dispatch-shell-constraint-prose.test.js` — new conformance test\n\n## Gotchas\n\n- #3822 is still open and may change the wording of the mandate it settles against the §7 table. Cite the shared files by section rather than copying their text, so this record's paragraph follows #3822 without a second edit.\n- The final-review dispatch is composed by the whole-branch review step, not by SDD's per-task loop. Check that the paragraph reaches it too, because the acceptance criteria name all four dispatch kinds.\n- #3737 covers the same gap for `/review` lens prompts, a different skill. Do not fold it in here.\n\n## Original request\n\nCarry the worktree shell constraint into /build's SDD implementer and reviewer dispatches\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7. `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it, and no `plugin/skills/build/*.md` file cites the rule. Run #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Related: #3737 (the same gap for review lens prompts), #3822 (settling the mandate against the §7 table) and #3819 (counting subagent refusals). Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review and final-review dispatch it composes. It should be worded as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes.\n\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n\n- `npm test` passes.\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n\n_Filed by `reflect` via specShapedBody._\n\n",
+        "createdAt": "2026-10-25T10:25:02Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -8952,12 +9806,18 @@
             "name": "ceremony:fast-lane",
             "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
             "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
           }
         ],
-        "number": 4271,
+        "number": 4243,
         "state": "OPEN",
-        "title": "stack-check.js gitEnv and git-exec.js repoPinnedEnv list the same four repo-locating variables twice",
-        "updatedAt": "2026-10-30T13:46:47Z",
+        "title": "Carry the worktree shell constraint into /build's SDD implementer and reviewer dispatches",
+        "updatedAt": "2026-11-25T07:19:31Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -8980,7 +9840,7 @@
           "acceptance": null,
           "isParentIssue": false,
           "notPlanned": false,
-          "shapedHeadless": false
+          "shapedHeadless": true
         }
       }
     ],
@@ -9045,6 +9905,88 @@
         "facets": {
           "origin": null,
           "risk": "medium",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      },
+      {
+        "body": "Surface: backend\n\nOrigin: ledger resolve gate (wrap-up of #4178)\n\nDefer-reason: needs-human-decision\n\n**Related:** #4178, #4493\n\n## Current State\n\n`plugin/bin/lib/staged-patch/stack-check.js`'s `gitEnv` deletes `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` by hand (lines 29-32). `plugin/bin/lib/hooks/git-exec.js`'s `repoPinnedEnv()` (added in #4178) drops the same four (line 200). The only link between the two is a comment in `git-exec.js`, which says the list \"deliberately matches\" and that widening it toward git's fuller `git rev-parse --local-env-vars` list \"is a separate decision\". `stack-check.js` has no matching note.\n\n`gitEnv` also switches git's config off and scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so it cannot be replaced by `repoPinnedEnv()`. It can only start from it.\n\n**Decision (human-approved 2026-10-30):** `gitEnv` builds on `repoPinnedEnv`, giving one list of repo-locating variables.\n\n- Nothing requires `stack-check.js` to be standalone. Its header promises \"pure checking\", meaning it never writes to the worktree. It does not promise few dependencies.\n- The list is likely to change, and with two copies linked by a one-sided comment, a widening could reach only one of them.\n- The cost is that `stack-check.js` also loads `shared-primitives` and `reconcile/timing` through `git-exec.js`. `git-exec.js` imports nothing from `staged-patch`, so this adds no direct cycle. The load time was not measured, but `stack-check.js` serves a CLI that spawns git repeatedly.\n\nWidening the list itself is out of scope and stays a separate decision.\n\n## Deliverables\n\n1. `stack-check.js`'s `gitEnv` starts from `repoPinnedEnv(env)` instead of `{ ...env }`, sets `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` on that copy, and drops its four `delete` lines. Its other scrubbing is unchanged.\n2. `git-exec.js`'s comment above `repoPinnedEnv` says `gitEnv` builds on this function, so widening the list here widens both. It keeps the note that widening is a separate decision.\n3. A test in `tests/bin-lib/staged-patch/stack-check.test.js` proves `gitEnv` uses `repoPinnedEnv` rather than merely dropping the same four names.\n\n## Acceptance Criteria\n\n1. `gitEnv({ env })` still drops all four repo-locating variables, and the existing `stack-check.test.js` cases pass unchanged.\n2. `gitEnv` still scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, and still sets `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`.\n3. With `repoPinnedEnv` stubbed to drop an extra sentinel variable, `gitEnv` also drops that variable. Stub by replacing `git-exec.js`'s entry in `require.cache` and requiring a fresh `stack-check.js`, restoring both afterwards.\n4. Reverting `gitEnv` to its hand-written `delete` lines makes the AC3 test fail. Show this.\n5. `plugin/bin/check-staged-stack.js` still loads and runs: its existing tests pass.\n6. `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n`const { repoPinnedEnv } = require('../hooks/git-exec');` at the top of `stack-check.js`, then a one-line change to `gitEnv`'s first statement plus the removal of the four `delete` lines. `gitEnv` keeps its `{ platform, devNull, env }` signature, and its `env` default still flows through.\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — `gitEnv`\n- `plugin/bin/lib/hooks/git-exec.js` — the comment above `repoPinnedEnv`\n- `tests/bin-lib/staged-patch/stack-check.test.js` — the sentinel test\n\n## Gotchas\n\n- `repoPinnedEnv` returns a copy, so `gitEnv` still never mutates the caller's `env`. Keep that property.\n- Destructuring `repoPinnedEnv` at require time is why the stub in AC3 needs a fresh require of `stack-check.js`.\n\n## Original request\n\nOrigin: ledger resolve gate (wrap-up of #4178)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/bin/lib/staged-patch/stack-check.js`'s `gitEnv` deletes `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` by hand, and `plugin/bin/lib/hooks/git-exec.js`'s `repoPinnedEnv()` (added in #4178) drops the same four. The two lists match on purpose, and `git-exec.js` says so in a comment.\n\n`gitEnv` additionally switches git's config off and scrubs `GIT_DIFF_OPTS`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, so it cannot simply be replaced by `repoPinnedEnv()`; it could only start from it. `stack-check.js` currently requires only `fs`, `os`, `path` and `child_process`; `git-exec.js` pulls in `shared-primitives` and `reconcile/timing`.\n\n## Deliverables\n\n- [ ] Decide whether `stack-check.js` should build `gitEnv` on `repoPinnedEnv(env)` (one list of the four repo-locating variables, one new dependency edge for a currently standalone module) or stay self-contained (two lists to keep in step).\n\n- [ ] If it builds on `repoPinnedEnv`: change `gitEnv`, keep `tests/bin-lib/staged-patch/stack-check.test.js` green, and update the `git-exec.js` comment that says the lists match on purpose.\n\n- [ ] If it stays self-contained: record the reason beside `gitEnv` so the next reader does not reopen the question.\n\n## Open Question\n\nWhich of the two: a shared helper with a new dependency edge into a standalone module, or two small lists kept in step? The overlap is four variable names, so the cost either way is low.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/staged-patch/stack-check.js` — modify or annotate\n- `plugin/bin/lib/hooks/git-exec.js` — read\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-10-25T13:21:35Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4271,
+        "state": "OPEN",
+        "title": "stack-check.js gitEnv and git-exec.js repoPinnedEnv list the same four repo-locating variables twice",
+        "updatedAt": "2026-10-30T13:46:47Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
           "size": "low",
           "ceremony": "fast-lane",
           "solutionUnjustified": false,
@@ -9160,7 +10102,9 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      },
+      }
+    ],
+    [
       {
         "body": "## Current State\n\nDigest #1426 holds 4 below-materiality-floor findings in `tiebreak`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [tiebreak] SEVERITIES duplicates coordination.js SEVERITY_RANK (unexported); a severity added there never reaches the tiebreak reply parser (review-7) — plugin/bin/lib/tiebreak.js:53 — Defer-reason: pre-existing-outside-diff — 2026-10-21T194624-release-standalone\n- [tiebreak] checkTiebreakCoverage maps every decisions.md read error (EACCES/EISDIR/EIO) to \"no lines\", so archival refuses as tiebreak-coverage-missing and tells the user to re-run a tiebreak that cannot fix an unreadable file; split ENOENT like readFindingsArtifact (review-8) — plugin/bin/lib/tiebreak.js:399 — Defer-reason: pre-existing-outside-diff — 2026-10-21T194624-release-standalone\n- [tiebreak] checkTiebreakCoverage builds verdictLineRe per finding per decisions.md line and runs eagerly for every run dir each reconcile pass; hoist the regex, evaluate lazily (review-9) — plugin/bin/lib/tiebreak.js:402 — Defer-reason: pre-existing-outside-diff — 2026-10-21T194624-release-standalone\n- [tiebreak] confirmed verdict takes lower(reporterSev, tiebreakSev) while drop and cannot-tell take the higher; rationale only in #3945, needs a why-comment (review-10) — plugin/bin/lib/tiebreak.js:303 — Defer-reason: pre-existing-outside-diff — 2026-10-21T194624-release-standalone\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `tiebreak`; no user-facing change.\n",
         "createdAt": "2026-10-26T11:41:29Z",
@@ -9254,9 +10198,7 @@
           "notPlanned": false,
           "shapedHeadless": true
         }
-      }
-    ],
-    [
+      },
       {
         "body": "## Current State\n\nDigest #1426 holds 3 below-materiality-floor findings in `engine-verify.js`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [engine-verify.js] (low: no test pairs a gated/resolved parent disposition label with open siblings) across the pair. Covered by ledger item 9's follow-up record, which owns the gated/resolved behavior and its tests. — engine-verify.js:875 — Defer-reason: tiebreak-cant-tell — 2026-10-17T202735-record-3222\n- [engine-verify.js] (low: resolveRiskFloor re-implements the policy.yml read that policy-schema resolvePolicyConfig / pack.js already share), :706 (low: git remote failure reported as gh api sub_issues failed), :18 (low: — engine-verify.js:731 — Defer-reason: tiebreak-cant-tell — 2026-10-17T202735-record-3222\n- [engine-verify.js] (low: enumerateSubIssues owner/repo-unresolved and JSON.parse-catch branches untested) and — engine-verify.js:703 — Defer-reason: tiebreak-cant-tell — 2026-10-17T202735-record-3222\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `engine-verify.js`; no user-facing change.\n",
         "createdAt": "2026-10-26T11:41:40Z",
@@ -9565,20 +10507,14 @@
       "records": [
         3765,
         4229,
-        4243
+        4300
       ]
     },
     {
       "records": [
-        4300,
         4414,
-        4671
-      ]
-    },
-    {
-      "records": [
-        4946,
-        5070
+        4671,
+        4946
       ]
     },
     {
@@ -9592,18 +10528,19 @@
       "records": [
         3902,
         4128,
-        4271
+        4243
       ]
     },
     {
       "records": [
         4130,
-        4411,
-        4412
+        4271,
+        4411
       ]
     },
     {
       "records": [
+        4412,
         4415,
         4416
       ]
