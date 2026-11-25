@@ -22,14 +22,18 @@ const matrixRow = (actor) => {
   return collapse(line);
 };
 
-const FROZEN_PRE_4118_ROW = "| **`/capture`** | `by:capture`, Type (`type:*` only when `work-types: labels`), `needs:definition` (content judgment at filing time — see Judging Definition in `capture/SKILL.md`); `risk:*`, `size:*`, `ready` (**only** on the Shaped-body branch — structural check passed, `needs:definition` false, `via specShapedBody` footer present — see `capture/SKILL.md`); `size:*` on an **absorb target** record — a different, pre-existing record, raise-only, never lowered, on any branch (see Absorb mechanics in `capture/SKILL.md`) | nothing | `parked`, `auto:*`, `bot:*` — always; scoring and `ready` on the **new record** of any **stub** filing, at every ceiling (the Shaped-body branch is the sole exception, per Adds; the absorb-target `size:` raise is a write to a different record, not a scoring of the filing). Under `autonomy: trusted`+ with a `clean` `producer:capture` verdict the filing chains into `/claude-tweaks:specify --chained`, and *specify* stamps scoring and `ready` under its own row's authority (see `_shared/autonomy-ceiling.md`); the chain never fires alongside `needs:definition` — an undecided record cannot be born-ready |";
-
-test('capture Shaped-body step 3 judges ceremony through the canonical pattern and passes it to recordPayload', () => {
+const shapedBodyBranch = () => {
   const c = collapse(read('plugin/skills/capture/SKILL.md'));
   const start = c.indexOf('## Shaped-body branch');
   const end = c.indexOf('## Entry Format');
   assert.ok(start >= 0 && end > start, 'Shaped-body branch and Entry Format headings both present');
-  const branch = c.slice(start, end);
+  return c.slice(start, end);
+};
+
+const FROZEN_PRE_4118_ROW = "| **`/capture`** | `by:capture`, Type (`type:*` only when `work-types: labels`), `needs:definition` (content judgment at filing time — see Judging Definition in `capture/SKILL.md`); `risk:*`, `size:*`, `ready` (**only** on the Shaped-body branch — structural check passed, `needs:definition` false, `via specShapedBody` footer present — see `capture/SKILL.md`); `size:*` on an **absorb target** record — a different, pre-existing record, raise-only, never lowered, on any branch (see Absorb mechanics in `capture/SKILL.md`) | nothing | `parked`, `auto:*`, `bot:*` — always; scoring and `ready` on the **new record** of any **stub** filing, at every ceiling (the Shaped-body branch is the sole exception, per Adds; the absorb-target `size:` raise is a write to a different record, not a scoring of the filing). Under `autonomy: trusted`+ with a `clean` `producer:capture` verdict the filing chains into `/claude-tweaks:specify --chained`, and *specify* stamps scoring and `ready` under its own row's authority (see `_shared/autonomy-ceiling.md`); the chain never fires alongside `needs:definition` — an undecided record cannot be born-ready |";
+
+test('capture Shaped-body step 3 judges ceremony through the canonical pattern and passes it to recordPayload', () => {
+  const branch = shapedBodyBranch();
   assert.ok(branch.includes('`_shared/ceremony-check-invocation.md`'));
   assert.ok(branch.includes('"ceremony": "<fast-lane|standard>, present only when'));
   assert.ok(!/accepted keys are wider[^)]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
@@ -55,11 +59,7 @@ test('no file still calls /specify the sole owner of ceremony:*, and the shared 
 });
 
 test('the presentation line carries ceremony:{c} and the no-verdict wording', () => {
-  const c = collapse(read('plugin/skills/capture/SKILL.md'));
-  const start = c.indexOf('## Shaped-body branch');
-  const end = c.indexOf('## Entry Format');
-  assert.ok(start >= 0 && end > start, 'Shaped-body branch and Entry Format headings both present');
-  const branch = c.slice(start, end);
+  const branch = shapedBodyBranch();
   assert.ok(branch.includes('risk:{r} size:{s}, ceremony:{c}, ready)'), 'presentation line');
   assert.ok(branch.includes('ceremony check failed — filed without a ceremony label'), 'no-verdict wording');
 });
