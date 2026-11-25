@@ -1174,8 +1174,8 @@ test('/review Step 3.5: the proximity-coincidence line is never read as a conver
   assert.strictEqual(DEBATE_CONVERGED_RE.test(line), false);
   // resolve.js's second settling branch (#3772) settles findings on an AUTO line containing "Confirmed"
   assert.ok(!/\bConfirmed\b/.test(line), `coincidence line would settle findings via the Confirmed branch: ${line}`);
-  const positive = REVIEW_SKILL.split("\n").find((l) => l.includes("Both `agree`")).match(/`(AUTO [^`]*Debate: cross-lens disagreement[^`]*)`/)[1];
-  const filled = `- ${positive.replace("{HH:MM:SS}", "14:41:05").replace(/\{path\}/g, "src/a.ts").replace(/\{line\}/g, "4")}`;
+  const positive = REVIEW_SKILL.split('\n').find((l) => l.includes('Both `agree`')).match(/`(AUTO [^`]*Debate: cross-lens disagreement[^`]*)`/)[1];
+  const filled = `- ${positive.replace('{HH:MM:SS}', '14:41:05').replace(/\{path\}/g, 'src/a.ts').replace(/\{line\}/g, '4')}`;
   assert.strictEqual(DEBATE_CONVERGED_RE.test(filled), true, `positive control did not match: ${filled}`);
 });
 

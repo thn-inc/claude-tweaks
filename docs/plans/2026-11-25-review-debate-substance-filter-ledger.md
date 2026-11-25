@@ -2,3 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — contract-beats-spec: coincidence findings route by bucket, not all to Step 3.7: apply or decline at the Review Console (staged/build-deviation-1.md) | open | — |
