@@ -122,3 +122,40 @@ test('carry-forward: a none written on a scoped-pass base keeps the anchor\'s ba
   assert.strictEqual(status.baselineAdjudicated, true);
   assert.strictEqual(status.verifiedHead, true);
 });
+
+// Characterization (#5075 fix round): --cmd-env is checked against the declared and --cmd'd names, not the selected set.
+test('characterization: --cmd-env naming a --cmd that a scoped run selects exits 0; one naming no check exits 2', async () => {
+  const r = scopedRepo(RULES);
+  await scopedPassAt(r);
+  commitFile(r, 'src/b.js', 'module.exports = 2;');
+  const ok = await runCli([...args(r), '--cmd-env', 'unit=X=1'], { cwd: r.repo });
+  assert.strictEqual(ok.code, 0, ok.stderr);
+  assert.match(ok.stdout, /^Scope: scoped/m);
+  const bad = await runCli([...args(r), '--cmd-env', 'nothing=X=1'], { cwd: r.repo });
+  assert.strictEqual(bad.code, 2);
+});
+
+test('cmd-env: a scoped-pass shortcut run that also passes --cmd-env for a deselected suite exits 0 and still-verifies', async () => {
+  const r = scopedRepo(RULES);
+  await scopedPassAt(r);
+  commitFile(r, LEDGER, '| row |');
+  const run = await runCli([...args(r), '--cmd-env', 'unit=X=1'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.match(run.stdout, /still-verified: bookkeeping-only delta/);
+  assert.ok(!fs.existsSync(r.marker), 'no suite may spawn');
+});
+
+test('impact-rule safety: an impact-rule path in the delta since the scoped pass defeats the shortcut', async () => {
+  const impact = { suite: 'unit', command: 'node -e 0 {files}', tests: ['tests/**/*.test.js'], maxAgeCommits: 200, fetch: 'node -e 0' };
+  const rules = [...RULES, { match: 'lib/**', impact: true, suites: '*', static: true }];
+  const r = scopedRepo(rules, { impact });
+  const { F } = await scopedPassAt(r);
+  commitFile(r, 'lib/x.js', 'module.exports = 3;');
+  const run = await runCli(args(r), { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  assert.doesNotMatch(run.stdout, /still-verified/);
+  const s = stampOf(r.gitDir);
+  assert.notStrictEqual(s.scope, 'none');
+  assert.strictEqual(s.base, F);
+  assert.strictEqual(s.fullSha, F);
+});
