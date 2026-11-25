@@ -107,8 +107,8 @@ const POLICY_KEYS = [
   // every record stays its own group, no bundling (bundleFastLaneSingletons's
   // own doc comment, bin/lib/issues/grouping.js).
   { key: 'dispatch-fastlane-bundle-cap', type: 'integer', default: 3, summary: "Caps how many non-overlapping ceremony:fast-lane singleton groups dispatch merges into one multi-spec run; 0 disables bundling.", category: 'merge-safety', tier: 'advanced' },
-  // #4025: the express lane — opt-in, plus the post-merge review sampling cadence (skills/_shared/express-lane.md).
-  { key: 'express-lane', type: 'boolean', default: false, summary: "Opts into the express lane: a small, low-risk singleton record builds, tests and merges-on-green in one agent, not the full /flow frame.", category: 'merge-safety', tier: 'advanced' },
+  // #4025: the express lane, plus the post-merge review sampling cadence (skills/_shared/express-lane.md). On by default; a project opts out with `false` (#4591). An invalid value is refused at the gate (express/policy.js), not read as the default.
+  { key: 'express-lane', type: 'boolean', default: true, summary: "Runs the express lane unless false: a small, low-risk singleton record builds, tests and merges-on-green in one agent.", category: 'merge-safety', tier: 'advanced' },
   { key: 'express-review-sample-every', type: 'integer', min: 1, default: 5, summary: "Sends every Nth express-lane merge through the normal review lenses after merge, filing what they find as records.", category: 'merge-safety', tier: 'advanced' },
   // #5216: the pipeline driver's admission lane (express-lane's driver design). policyOnly: the ceilings bound autonomous spend and express-driver routes records to autonomous machinery, so a --run config must never loosen them.
   // #5222: express-driver-review — whether the driver runs its read-only evidence reviewer; policyOnly for the same reason.

@@ -84,6 +84,8 @@ const BOUND_REASONS = Object.freeze({
 // Wire contract: callers and reports match these verbatim — never paraphrase.
 const REASONS = Object.freeze({
   disabled: 'express-lane disabled',
+  // #4591: the lane is on by default, so a malformed express-lane value fails closed rather than reading as the default.
+  invalidValue: 'express-lane value invalid — treated as off',
   notPrFirst: 'integration-model is not pr-first',
   risk: BOUND_REASONS.risk('low'),
   size: BOUND_REASONS.size('low'),
@@ -203,11 +205,13 @@ function isFrontend(body, keyFiles) {
 // protectedPathsNeedReviewer (#6019) is driver-only: only a literal true stops refusing a protected
 // Key File that is not build-time (isBuildTimeProtectedPath) and not merge-sensitive; a protected
 // and merge-sensitive Key File keeps both reasons, as in evaluateDiffBounds.
+// laneValueInvalid (#4591): when enabled is not true and the express-lane value was malformed, the refusal
+// is REASONS.invalidValue rather than REASONS.disabled.
 function evaluateRecordEligibility(issue, opts) {
   const {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
     sizeCeiling, maxKeyFiles, riskCeiling, allowAnyCeremony = false, protectedPathsNeedReviewer = false,
-    protectedPathGlobs = SHIPPED_PROTECTED_PATHS,
+    protectedPathGlobs = SHIPPED_PROTECTED_PATHS, laneValueInvalid = false,
   } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
@@ -215,7 +219,7 @@ function evaluateRecordEligibility(issue, opts) {
   const keyFiles = extractKeyFiles({ body, labels });
   const reasons = [];
 
-  if (enabled !== true) reasons.push(REASONS.disabled);
+  if (enabled !== true) reasons.push(laneValueInvalid === true ? REASONS.invalidValue : REASONS.disabled);
   if (integrationModel !== 'pr-first') reasons.push(REASONS.notPrFirst);
   if (riskCeiling === undefined) {
     if (facets.risk !== 'low') reasons.push(REASONS.risk);
