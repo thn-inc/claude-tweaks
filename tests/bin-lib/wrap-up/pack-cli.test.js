@@ -53,15 +53,17 @@ test('run: --only , exits 2 with the usage text and writes nothing (#2325 AC)', 
   assert.ok(!fs.existsSync(path.join(runDir, 'wrap-up-pack.json')));
 });
 
-test('run: an anchored run dir → exit 0, the pack on stdout, wrap-up-pack.json written with the eight probe keys (#1930 AC2)', async () => {
+test('run: an anchored run dir → exit 0, one summary line on stdout, wrap-up-pack.json written with the eight probe keys (#1930 AC2)', async () => {
   const { root, runDir } = mainCheckoutWithRun();
   let out = '';
   const code = await run(['--run', runDir], { cwd: () => root, mainRoot: root, stdout: (s) => { out += s; }, stderr: () => {}, packDeps: okProbeDeps });
   assert.strictEqual(code, 0);
-  const pack = JSON.parse(out);
+  assert.strictEqual(out.trimEnd().split('\n').length, 1, 'exactly one line');
+  const line = JSON.parse(out);
   const file = JSON.parse(fs.readFileSync(path.join(runDir, 'wrap-up-pack.json'), 'utf8'));
-  assert.deepStrictEqual(Object.keys(pack).sort(), ['blastRadius', 'claim', 'durationMs', 'generatedAt', 'inputs', 'ledger', 'pr', 'recordLabels', 'residue', 'state', 'unblocked']);
-  assert.deepStrictEqual(Object.keys(file).sort(), Object.keys(pack).sort());
+  assert.strictEqual(line.file, path.join(runDir, 'wrap-up-pack.json'));
+  assert.deepStrictEqual(Object.keys(line.ok).sort(), ['blastRadius', 'claim', 'ledger', 'pr', 'recordLabels', 'residue', 'state', 'unblocked']);
+  assert.deepStrictEqual(Object.keys(file).sort(), ['blastRadius', 'claim', 'durationMs', 'generatedAt', 'inputs', 'ledger', 'pr', 'recordLabels', 'residue', 'state', 'unblocked']);
 });
 
 test('run: --json inside the anchored target writes there instead of the run dir (#1930 review M3)', async () => {
@@ -111,9 +113,10 @@ test('run: every probe failing still exits 0 — the pack was produced (#1930)',
   let out = '';
   const code = await run(['--run', runDir], { cwd: () => root, mainRoot: root, stdout: (s) => { out += s; }, stderr: () => {}, packDeps: failing });
   assert.strictEqual(code, 0);
-  const pack = JSON.parse(out);
+  const pack = JSON.parse(fs.readFileSync(path.join(runDir, 'wrap-up-pack.json'), 'utf8'));
+  assert.strictEqual(JSON.parse(out).ok.residue, false);
   assert.strictEqual(pack.residue.ok, false);
-  assert.strictEqual(pack.ledger.ok, true, 'a pure fs probe still succeeds');
+  assert.strictEqual(pack.ledger.ok, true,'a pure fs probe still succeeds');
 });
 
 test('run: a --run outside the main checkout exits 3 with a stderr message and writes nothing (#1930 AC3)', async () => {
@@ -147,7 +150,7 @@ test('run: --print residue prints only that probe\'s value, matching the shape i
   let out = '';
   const full = await run(['--run', runDir], { cwd: () => root, mainRoot: root, stdout: (s) => { out = s; }, stderr: () => {}, packDeps: okProbeDeps });
   assert.strictEqual(full, 0);
-  const fullPack = JSON.parse(out);
+  const fullPack = JSON.parse(fs.readFileSync(path.join(runDir, 'wrap-up-pack.json'), 'utf8'));
 
   let printed = '';
   const code = await run(['--run', runDir, '--print', 'residue'], { cwd: () => root, mainRoot: root, stdout: (s) => { printed = s; }, stderr: () => {}, packDeps: okProbeDeps });
