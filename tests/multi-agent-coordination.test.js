@@ -876,6 +876,39 @@ test('debate: triggers only on cross-lens Path:Line overlap within ±5 lines wit
   assert.strictEqual(noOverlap.length, 0);
 });
 
+// #4747 AC1.1 / AC1.2: a same-location, different-substance pair is marked and excluded from debate.
+test('detectCrossLensOverlap: AC1.1 AC1.2 a same-location different-substance pair carries its score and substanceMatch false', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked' }],
+    architecture: [{ path: 'src/auth.ts', line: 44, severity: 'low', text: 'variable name shadows the outer loop counter' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.strictEqual(typeof overlaps[0].substanceScore, 'number');
+  assert.ok(overlaps[0].substanceScore < c.SUBSTANCE_SIMILARITY_MIN);
+  assert.strictEqual(overlaps[0].substanceMatch, false);
+});
+
+// #4747 AC2.1: a paraphrased same-defect pair still enters debate.
+test('detectCrossLensOverlap: AC2.1 a paraphrased same-defect pair has substanceMatch true', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked before the session is reused' }],
+    architecture: [{ path: 'src/auth.ts', line: 43, severity: 'low', text: 'session reuse skips the token expiry check' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.ok(overlaps[0].substanceScore >= c.SUBSTANCE_SIMILARITY_MIN);
+  assert.strictEqual(overlaps[0].substanceMatch, true);
+});
+
+test('detectCrossLensOverlap: a pair with a missing text scores null and never matches', () => {
+  const overlaps = c.detectCrossLensOverlap({
+    security: [{ path: 'src/auth.ts', line: 42, severity: 'high', text: 'token expiry is never checked' }],
+    architecture: [{ path: 'src/auth.ts', line: 42, severity: 'low' }],
+  });
+  assert.strictEqual(overlaps.length, 1);
+  assert.strictEqual(overlaps[0].substanceScore, null);
+  assert.strictEqual(overlaps[0].substanceMatch, false);
+});
+
 // #3604: corroborateCrossLens — cross-lens corroboration of single-read findings.
 const CORROB_A = 'superseded failed run marks real PR failure inherited';
 const CORROB_B = 'superseded failed run at base marks PR failure as inherited';
