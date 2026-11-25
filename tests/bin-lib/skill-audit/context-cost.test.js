@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const { scratchDir } = require('../../helpers/tmp-dir');
 const os = require('node:os');
 const path = require('node:path');
+const { CHILD_BUNDLE_SDD_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
 
 const {
   measuredBytes,
@@ -627,9 +628,9 @@ test('AC3.1: a --phase sdd-child row measures the sliced bytes', () => {
     return { path: label, content: row.sections[i] ? selectSections(content, row.sections[i], label) : content };
   });
   const conditions = Object.fromEntries(KEYS.map((k) => [k, VOCAB[k][0]]));
-  // The < 15 KB bound is tests/child-bundle-sections.test.js's AC2.1 on these same composed bytes;
-  // tests/skill-size-single-source.test.js forbids restating a size number in this file.
+  // The bound is budgets.js's CHILD_BUNDLE_SDD_BYTES (also tests/child-bundle-sections.test.js's AC2.1).
   assert.strictEqual(measured.max, Buffer.byteLength(compose(sources, conditions), 'utf8'));
+  assert.ok(measured.max < CHILD_BUNDLE_SDD_BYTES, `sdd-child measures ${measured.max} B`);
   assert.ok(measured.max < measuredBytes(row.sources[0]).bytes, 'the sliced bundle measures less than its whole source');
 });
 

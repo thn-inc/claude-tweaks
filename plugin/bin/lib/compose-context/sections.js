@@ -7,7 +7,7 @@
 //   "## Heading"   a markdown heading; the slice runs to the line before the
 //                  next heading of the same or higher level, or to EOF
 //   "**Lead.**"    a bold lead; the slice runs to the line before the next
-//                  blank line, or to EOF
+//                  blank line or heading line, or to EOF
 // Each selector must match exactly one line. Lines inside a fenced code block
 // never match and never end a slice (fence state comes from parseMarkers).
 // Slices come back in selector order, joined by one blank line. Callers pass
@@ -39,6 +39,15 @@ function selectSections(content, selectors, label) {
   const tokens = parseMarkers(content, label);
   const fail = (message, selector) => { throw new SectionError(message, { file: label, selector }); };
   if (!Array.isArray(selectors) || selectors.length === 0) fail('no section selectors given', null);
+  // depthAt[i]: open when-blocks around line i (an open line itself counts as outside).
+  const depthAt = [];
+  let depth = 0;
+  tokens.forEach((t, i) => {
+    if (t.type === 'close') depth--;
+    depthAt[i] = depth;
+    if (t.type === 'open') depth++;
+  });
+  const taken = [];
   const slices = selectors.map((selector) => {
     const isHeading = HEADING_SELECTOR_RE.test(selector);
     if (!isHeading && !selector.startsWith('**')) {
@@ -63,10 +72,15 @@ function selectSections(content, selectors, label) {
     } else {
       for (let i = start + 1; i < lines.length; i++) {
         if (tokens[i].fenced) continue;
-        if (/^\s*$/.test(lines[i])) { end = i; break; }
+        if (/^\s*$/.test(lines[i]) || HEADING_LINE_RE.test(lines[i])) { end = i; break; }
       }
     }
-    return trimTrailingBlank(lines.slice(start, end)).join('\n');
+    if (depthAt[start] > 0) fail(`section selector "${selector}" starts inside a when: block`, selector);
+    const kept = trimTrailingBlank(lines.slice(start, end));
+    const stop = start + kept.length;
+    if (taken.some(([s, e]) => start < e && s < stop)) fail(`section selector "${selector}" overlaps an earlier selector`, selector);
+    taken.push([start, stop]);
+    return kept.join('\n');
   });
   return `${slices.join('\n\n')}\n`;
 }

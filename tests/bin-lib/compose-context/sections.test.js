@@ -65,3 +65,25 @@ test('a slice that opens a when-block without its close is a MarkerError at comp
   const allUnresolved = Object.fromEntries(KEYS.map((k) => [k, UNRESOLVED]));
   assert.throws(() => compose([{ path: 'x', content: slice }], allUnresolved), (err) => err instanceof MarkerError && /unclosed/.test(err.message));
 });
+
+test('a lead slice ends at a heading line, not only at a blank line', () => {
+  assert.equal(selectSections('**R.** a\n## Next\nbody\n\n', ['**R.**'], 'f.md'), '**R.** a\n');
+});
+
+test('a selected start line inside a when-block is a SectionError', () => {
+  const content = '<!-- when: mode=auto -->\n**R.** x\n\n<!-- /when -->\n';
+  assert.throws(
+    () => selectSections(content, ['**R.**'], 'f.md'),
+    (err) => err instanceof SectionError && err.selector === '**R.**' && err.file === 'f.md'
+      && err.message === 'section selector "**R.**" starts inside a when: block',
+  );
+});
+
+test('overlapping selectors are a SectionError naming the later selector', () => {
+  const content = '## A\n**R.** x\n\nmore\n';
+  assert.throws(
+    () => selectSections(content, ['## A', '**R.**'], 'f.md'),
+    (err) => err instanceof SectionError && err.selector === '**R.**'
+      && err.message === 'section selector "**R.**" overlaps an earlier selector',
+  );
+});
