@@ -423,6 +423,10 @@ function categoriseReproduction(agentAFindings, agentBFindings) {
   return { confirmed, unconfirmed };
 }
 
+// #4747: each pair also carries substanceScore and substanceMatch so review
+// Step 3.5 sends only same-defect pairs to debate. A pair with missing text
+// scores null and never matches (as corroborateCrossLens). An exact or
+// prefix/suffix text match scores 1 (substanceSimilarity), so it always matches.
 function detectCrossLensOverlap(findingsByLens) {
   const lenses = Object.keys(findingsByLens);
   const overlaps = [];
@@ -436,7 +440,11 @@ function detectCrossLensOverlap(findingsByLens) {
           const fa = normalizeFinding(rawFa);
           const fb = normalizeFinding(rawFb);
           if (sameLocation(fa, fb, LINE_TOLERANCE_DEBATE)) {
-            overlaps.push({ lensA, lensB, findingA: fa, findingB: fb });
+            const substanceScore = substanceSimilarity(fa, fb);
+            overlaps.push({
+              lensA, lensB, findingA: fa, findingB: fb, substanceScore,
+              substanceMatch: substanceScore !== null && substanceScore >= SUBSTANCE_SIMILARITY_MIN,
+            });
           }
         }
       }

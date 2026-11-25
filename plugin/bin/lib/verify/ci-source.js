@@ -90,6 +90,19 @@ class CiFallback extends Error {
   constructor(reason) { super(reason); this.reason = reason; }
 }
 
+const GH_MAX_ATTEMPTS = 3;
+const GH_RETRY_BACKOFF_MS = [1000, 2000];
+
+function isTimeout(err) {
+  return !!err && (err.code === 'ETIMEDOUT' || err.signal != null);
+}
+
+function ghErrorReason(err) {
+  return err && err.ciAttempts > 1
+    ? `gh-error after ${err.ciAttempts} attempts: ${errText(err)}`
+    : `gh-error: ${errText(err)}`;
+}
+
 async function fetchCiVerdict({
   suite, source, headSha, logDir, localRoot, cwd = null, localRuns = null,
   runner = defaultRunner, sleep = defaultSleep, now = Date.now,
@@ -104,16 +117,23 @@ async function fetchCiVerdict({
     ci.waitedMs = now() - startedMs;
     return { used: false, ci };
   };
-  const gh = (args, timeout = GH_TIMEOUT_MS) => {
-    try {
-      return runner(args, { cwd, timeout });
-    } catch (err) {
-      if (err && err.code === 'ENOENT') throw new CiFallback('gh-unavailable');
-      throw err;
+  const gh = async (args, timeout = GH_TIMEOUT_MS) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return runner(args, { cwd, timeout });
+      } catch (err) {
+        if (err && err.code === 'ENOENT') throw new CiFallback('gh-unavailable');
+        if (isTimeout(err) && attempt < GH_MAX_ATTEMPTS) {
+          await sleep(GH_RETRY_BACKOFF_MS[attempt - 1]);
+          continue;
+        }
+        if (err && typeof err === 'object') err.ciAttempts = attempt;
+        throw err;
+      }
     }
   };
-  const ghJson = (args) => {
-    const out = gh(args);
+  const ghJson = async (args) => {
+    const out = await gh(args);
     try { return JSON.parse(out); } catch { throw new CiFallback(`gh-error: unparseable response from gh ${args[1]}`); }
   };
 
@@ -124,11 +144,11 @@ async function fetchCiVerdict({
     // vouch for a tree this checkout is not.
     let pulls;
     try {
-      pulls = ghJson(['api', `repos/{owner}/{repo}/commits/${headSha}/pulls`]);
+      pulls = await ghJson(['api', `repos/{owner}/{repo}/commits/${headSha}/pulls`]);
     } catch (err) {
       if (err instanceof CiFallback) throw err;
       if (isMissingCommit(err)) return fallback('head-not-pushed');
-      throw new CiFallback(`gh-error: ${errText(err)}`);
+      throw new CiFallback(ghErrorReason(err));
     }
     const pr = Array.isArray(pulls)
       ? pulls.find((p) => p && p.state === 'open' && p.head && p.head.sha === headSha)
@@ -139,7 +159,7 @@ async function fetchCiVerdict({
     // waiting out the whole budget. A failed read here is not evidence either
     // way; the wait below still bounds it.
     try {
-      const full = ghJson(['api', `repos/{owner}/{repo}/pulls/${Number(pr.number)}`]);
+      const full = await ghJson(['api', `repos/{owner}/{repo}/pulls/${Number(pr.number)}`]);
       if (full && full.mergeable_state === 'dirty') return fallback('pr-conflicted');
     } catch (err) {
       if (err instanceof CiFallback && err.reason === 'gh-unavailable') throw err;
@@ -150,7 +170,7 @@ async function fetchCiVerdict({
     let job = null;
     let run = null;
     for (;;) {
-      const runs = ghJson(['api', `repos/{owner}/{repo}/actions/workflows/${workflowSeg}/runs?head_sha=${headSha}&per_page=20`]);
+      const runs = await ghJson(['api', `repos/{owner}/{repo}/actions/workflows/${workflowSeg}/runs?head_sha=${headSha}&per_page=20`]);
       const list = runs && Array.isArray(runs.workflow_runs)
         ? runs.workflow_runs.filter((r) => r && r.head_sha === headSha)
         : [];
@@ -158,7 +178,7 @@ async function fetchCiVerdict({
       if (run) {
         ci.runId = run.id;
         ci.runUrl = run.html_url || null;
-        const jobs = ghJson(['api', `repos/{owner}/{repo}/actions/runs/${Number(run.id)}/jobs?per_page=100`]);
+        const jobs = await ghJson(['api', `repos/{owner}/{repo}/actions/runs/${Number(run.id)}/jobs?per_page=100`]);
         job = jobs && Array.isArray(jobs.jobs) ? jobs.jobs.find((j) => j && j.name === source.job) || null : null;
         if (job && job.status === 'completed') break;
         if (!job && run.status === 'completed') return fallback('ci-job-not-found');
@@ -178,11 +198,11 @@ async function fetchCiVerdict({
     const logArgs = ['api', `repos/{owner}/{repo}/actions/jobs/${Number(job.id)}/logs`];
     try {
       try {
-        logText = gh([...logArgs, LOG_ESCAPE_FLAG], LOG_TIMEOUT_MS);
+        logText = await gh([...logArgs, LOG_ESCAPE_FLAG], LOG_TIMEOUT_MS);
       } catch (err) {
         // A gh older than the flag rejects it as unknown: one retry without it.
         if (!(err instanceof CiFallback) && UNKNOWN_ESCAPE_FLAG_RE.test(String((err && (err.stderr || err.message)) || ''))) {
-          logText = gh(logArgs, LOG_TIMEOUT_MS);
+          logText = await gh(logArgs, LOG_TIMEOUT_MS);
         } else {
           throw err;
         }
@@ -222,10 +242,11 @@ async function fetchCiVerdict({
     };
   } catch (err) {
     if (err instanceof CiFallback) return fallback(err.reason);
-    return fallback(`gh-error: ${errText(err)}`);
+    return fallback(ghErrorReason(err));
   }
 }
 
 module.exports = {
   fetchCiVerdict, normalizeCiLog, defaultRunner, LOG_TIMEOUT_MS, LOG_ESCAPE_FLAG, LOCAL_REQUESTED, NOT_CONSULTED,
+  GH_MAX_ATTEMPTS, GH_RETRY_BACKOFF_MS,
 };

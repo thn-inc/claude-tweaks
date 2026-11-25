@@ -222,7 +222,7 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/bin/phase-timing.js" --run "$PIPELINE_RUN_DIR" 
 
 ### Nothing left behind (formerly Step 8.5, gate)
 
-**Fact pack first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR"` (#1930) once — it writes `{run-dir}/wrap-up-pack.json`: eight probes (`residue`, `state`, `blastRadius`, `pr`, `recordLabels`, `claim`, `ledger`, `unblocked`), each `{ok, value | error}`. Each sub-step below reads its field: `ok: false` or a missing key takes that sub-step's own failure path, never a silent clean result; only an absent file lets it run its probe itself. Then run `residue-sweep.md` in this skill's directory (`pack.residue`) so this gate has ledger items to enforce on a standalone run.
+**Fact pack first.** Run `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR"` (#1930) once — it writes `{run-dir}/wrap-up-pack.json`: eight probes (`residue`, `state`, `blastRadius`, `pr`, `recordLabels`, `claim`, `ledger`, `unblocked`), each `{ok, value | error}`. It prints one JSON line, `{file, ok: {probe: bool, …}}`, not the pack — read facts from the file (or `--print <probe>`). Each sub-step below reads its field: `ok: false` or a missing key takes that sub-step's own failure path, never a silent clean result; only an absent file lets it run its probe itself. Then run `residue-sweep.md` in this skill's directory (`pack.residue`) so this gate has ledger items to enforce on a standalone run.
 
 Run the resolve gate from `/claude-tweaks:ledger` (see ledger skill for the three-phase procedure: Phase 1 fix-exhaust silently → Phase 2 present remainder for per-item user decision → Phase 3 apply).
 
