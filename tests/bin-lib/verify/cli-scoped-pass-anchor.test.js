@@ -147,7 +147,7 @@ test('cmd-env: a scoped-pass shortcut run that also passes --cmd-env for a desel
 
 test('impact-rule safety: an impact-rule path in the delta since the scoped pass defeats the shortcut', async () => {
   const impact = { suite: 'unit', command: 'node -e 0 {files}', tests: ['tests/**/*.test.js'], maxAgeCommits: 200, fetch: 'node -e 0' };
-  const rules = [...RULES, { match: 'lib/**', impact: true, suites: '*', static: true }];
+  const rules = [...RULES, { match: 'lib/**', impact: true, suites: '*', static: false }];
   const r = scopedRepo(rules, { impact });
   const { F } = await scopedPassAt(r);
   commitFile(r, 'lib/x.js', 'module.exports = 3;');

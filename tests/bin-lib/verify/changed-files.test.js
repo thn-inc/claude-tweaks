@@ -269,7 +269,10 @@ test('scopedPassBase returns the canonical sha of a clean scoped stamp that is a
 });
 
 test('scopedPassBase returns null for a null stamp, a null anchor, a full stamp, a dirty stamp, or sha === anchor', () => {
-  const exec = fakeExec({ [PASS]: '', [PASS_CANON]: `${CANON}\n` });
+  const exec = fakeExec({
+    [PASS]: '', [PASS_CANON]: `${CANON}\n`,
+    [`merge-base --is-ancestor --end-of-options ${FULL} HEAD`]: '', [`rev-parse --verify --end-of-options ${FULL}^{commit}`]: `${CANON}\n`,
+  });
   assert.strictEqual(scopedPassBase({ stamp: null, anchor: FULL, execImpl: exec }), null);
   assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: null, execImpl: exec }), null);
   assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ scope: 'full' }), anchor: FULL, execImpl: exec }), null);
@@ -279,8 +282,9 @@ test('scopedPassBase returns null for a null stamp, a null anchor, a full stamp,
 });
 
 test('scopedPassBase returns null for a non-string sha and for a sha that is not an ancestor of HEAD', () => {
+  const probesPass = fakeExec({ 'merge-base --is-ancestor --end-of-options 42 HEAD': '', 'rev-parse --verify --end-of-options 42^{commit}': `${CANON}\n` });
+  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ sha: 42 }), anchor: FULL, execImpl: probesPass }), null);
   const exec = fakeExec({ [PASS]: new Error('exit 1'), [PASS_CANON]: `${CANON}\n` });
-  assert.strictEqual(scopedPassBase({ stamp: scopedStamp({ sha: 42 }), anchor: FULL, execImpl: exec }), null);
   assert.strictEqual(scopedPassBase({ stamp: scopedStamp(), anchor: FULL, execImpl: exec }), null);
 });
 
