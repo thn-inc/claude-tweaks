@@ -5,8 +5,10 @@ files:
   - plugin/bin/lib/verify/run.js
   - plugin/bin/lib/verify/baseline.js
   - plugin/bin/verify.js
+  - plugin/bin/lib/verify/declaration.js
   - plugin/skills/test/suite-slots.md
   - plugin/skills/test/verification.md
+  - .claude-tweaks/verify-scope.json
 ---
 
 # Queue Verify Runs Behind a Machine-Wide Slot
@@ -23,7 +25,7 @@ files:
 - **Action:** The verification procedure resolves `verify-suite-slots` with `resolve-policy.js`, then runs `verify.js … --default-suite-slots {slots}`.
 - **Should feel:** Unchanged on the happy path. No prompt and no extra output.
 - **Should understand:**
-  - The run took a slot in the **full lane**, because a local suite ran its full command. Had every local suite run an impact-subset or tool-scoped command, or only `types`/`lint`, it would have taken the **subset lane**.
+  - The run took a slot in the **full lane**, because a local suite ran its full command. Had every local suite run an impact-subset or tool-scoped command, a declared suite listed in `subsetLaneSuites` (step 6), or only `types`/`lint`, it would have taken the **subset lane**.
   - `report.json`'s `slot` records `lane`, `index`, `waitedMs`, `slots` and `source` (`declaration`, `flag` or `default`).
   - While the slot is held, every check sees `CT_TEST_SUITE_SLOT_HELD=1` and `CT_TEST_WORKERS` (about half the cores divided across the slots). A project that wires `CT_TEST_WORKERS` into its test command caps its own workers.
 - **Red flags:**
@@ -88,8 +90,23 @@ files:
 - **Red flags:**
   - Raising the count to make waits disappear while the shared resource is what the waits protected.
 
+### 6. Keep a small declared suite out of the full lane
+- **URL:** `.claude-tweaks/verify-scope.json`; `report.json`'s `slot.lane`.
+- **Action:** List the small declared suite at the top level: `"subsetLaneSuites": ["journeys"]`. Then run the scoped verification on a change that selects it, for example one whose `tests` suite CI answers.
+- **Should feel:** A one-second suite runs in about a second, not after minutes in the full-lane queue behind other projects' whole-suite runs.
+- **Should understand:**
+  - A listed suite running its declaration's own command does not count toward the full lane. A run whose only full-command local suites are listed takes the subset lane, and `slot.lane` says `subset`.
+  - The exclusion is per suite. An unlisted declared suite in the same run still takes the full lane, and so does a `--cmd` under a listed name, because that command is the caller's, not the declaration's.
+  - The key is an array of declared suite names. It can never name `impact.suite`, whose full command is the whole-suite run the full lane exists for. Each other mistake (not an array of strings, an undeclared suite, a repeated name) fails validation with its own error starting `subsetLaneSuites:`.
+  - The key is top level, not in `concurrency`: a reader older than the key ignores it and keeps today's lane, so committing it never breaks a run in flight on the previous release.
+- **Red flags:**
+  - A CI-answered run whose only local suite is listed still waiting for a full-lane slot.
+  - A listed suite beside an unlisted declared suite taking the subset lane.
+  - Listing a large suite to dodge the queue: the list is the project vouching that each suite is small.
+
 ## Origin
 - Created during build of #5119. A consumer project's parallel sessions starved a shared database server: every session's suites and baseline reruns ran at once, and timeouts amplified the reruns.
 - Updated after #5119's review fixes: adjudication queues only once a rerun will spawn, the signal grace ends early and announces itself, slot waits no longer count toward the verify-minutes budget, a queued dispatched subagent ends `STATUS: BLOCKED`, and an other-user lock dir names `CT_TEST_SUITE_SLOT_DIR`.
 - Step 4 extended by #5150: on a signal during adjudication the slot is freed only after the per-slot scratch is removed (`holdSlot` releases in-handler only as the last signal listener). The same `concurrency` block also takes `reruns` and `timeoutPatterns`, walked in `run-a-deterministic-verification-check.md` Step 11.
+- Step 6 added during build of #5368: CI-answered runs waited 447 to 954 s in the full lane to run the one-second `journeys` suite, so a declaration can now list small suites under `subsetLaneSuites`.
 - Related: `run-the-suite-alongside-sibling-sessions-3969.md` (the same lock as `tools/run-tests.js` holds it in this repo) and `run-parallel-pipelines-without-per-task-full-suites-5117.md` (fewer full-suite runs per pipeline, the other half of the load problem).

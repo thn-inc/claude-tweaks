@@ -196,6 +196,34 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     else localRuns = raw.localRuns;
   }
 
+  // subsetLaneSuites (#5368): declared suites whose own command is small enough
+  // to run in the subset lane. Top-level so a reader that predates the key
+  // ignores it (no unknown-top-level-key check above, same note as ci and
+  // localRuns). Always present on a parsed declaration: the list, or [].
+  let subsetLaneSuites = [];
+  if (raw.subsetLaneSuites !== undefined) {
+    if (!Array.isArray(raw.subsetLaneSuites)) {
+      errors.push('subsetLaneSuites: must be an array of declared suite names');
+    } else {
+      const seen = new Set();
+      const dupes = new Set();
+      const impactSuite = raw.impact && raw.impact.suite;
+      for (const name of raw.subsetLaneSuites) {
+        if (typeof name !== 'string') { errors.push(`subsetLaneSuites: entries must be strings, got ${typeof name}`); continue; }
+        // Judge each name once; its repeats only produce the one duplicate error.
+        if (seen.has(name)) {
+          if (!dupes.has(name)) errors.push(`subsetLaneSuites: "${name}" is listed more than once`);
+          dupes.add(name);
+          continue;
+        }
+        seen.add(name);
+        if (!declared.has(name)) errors.push(`subsetLaneSuites: unknown suite "${name}" (declared: ${suites.join(', ') || 'none'})`);
+        else if (name === impactSuite) errors.push(`subsetLaneSuites: "${name}" is impact.suite — its full command is the whole-suite run the full lane exists for`);
+      }
+      subsetLaneSuites = raw.subsetLaneSuites.filter((n) => typeof n === 'string');
+    }
+  }
+
   // concurrency (#5119): how many machine-wide suite slots this project's runs
   // may hold at once. A reader that predates the key ignores it. Always present
   // on a parsed declaration; suiteSlots null means "not declared".
@@ -337,7 +365,7 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
     ok: true,
     decl: {
       checks: { types: typeof checks.types === 'string' ? checks.types : null, lint: typeof checks.lint === 'string' ? checks.lint : null, tests },
-      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, localRuns, concurrency,
+      suites, toolScoped, retry, rules, flaky, preExisting, generated, impact, ci, localRuns, subsetLaneSuites, concurrency,
     },
   };
 }
