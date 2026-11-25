@@ -24,7 +24,7 @@ With no `ci` block nothing changes: no `gh` call, and `report.json`, the pass st
 
 Only a `--scope` run (not `--stamp-suite`, and not a `none` run) consults it, for every CI-declared suite the run selected. The CI job ran the whole suite, so it also stands in for an impact subset (`impact-selection.md`), and the stamp then covers the full suite. `report.json`'s `scope.impact` still records what selection chose. The runner then requires:
 
-1. A clean tree at the start: CI never saw uncommitted edits.
+1. A clean tree at the start: CI never saw uncommitted edits. A tree dirty only in inert paths counts as clean: every dirty path (tracked, untracked, both sides of a rename) matches a declared `generated` glob, or its first matching rule has `suites: []`, `static: false` and no `impact`. A path no rule matches is never inert, and one non-inert path disqualifies the whole tree.
 2. HEAD is the head commit of an open PR on GitHub (`repos/{owner}/{repo}/commits/{sha}/pulls`). So the caller pushes before running verify.js.
 3. The declared job of the newest `workflow` run for exactly that sha has completed. While it has not, the runner polls in the foreground, up to `waitSeconds`.
 
@@ -53,7 +53,7 @@ Without `localRuns`, every other reason except `head-not-pushed` runs the suite 
 
 | Reason | Cause |
 |--------|-------|
-| `dirty-tree` / `tree-state-unreadable` | The tree was dirty at the start, or its state could not be read. |
+| `dirty-tree` / `tree-state-unreadable` | The tree was dirty at the start in a path that is not inert (requirement 1), or its state could not be read. |
 | `head-not-pushed` | GitHub does not know HEAD's commit. Exits 3 with or without `localRuns`, and never runs the suite here. |
 | `no-open-pr-at-head` | No open PR has HEAD as its head. |
 | `pr-conflicted` | The PR has conflicts (`mergeable_state: dirty`), so it gets no `pull_request` runs. |
@@ -66,6 +66,8 @@ Without `localRuns`, every other reason except `head-not-pushed` runs the suite 
 | `gh-unavailable` / `gh-error: …` | `gh` is not installed, or a read failed. A timed-out read is retried up to 3 attempts first (1 s, then 2 s backoff); the reason then reads `gh-error after {k} attempts: …`. |
 | `local-requested` | `--local` was passed, so CI was not consulted. |
 | `not-consulted` | An earlier suite already left the run with no verdict (under `localRuns`, or on `head-not-pushed`), so CI was not asked about this one. |
+
+When the exemption applies, stdout prints `CI: tree dirty only in inert paths ({paths}) — taking CI verdicts on HEAD` once, before the first CI fetch (never under `--local`). Each `ci` entry in `report.json` and the verify event carries `dirtyExempt`: the inert paths when the exemption applied, else `null`. The pass stamp still records the tree as dirty.
 
 stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`. Under `localRuns`, a red job with no downloadable log prints `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url}; its log could not be downloaded — pass --local to reproduce the failure here)`.
 
