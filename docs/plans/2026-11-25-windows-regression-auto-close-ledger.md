@@ -2,3 +2,4 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | ops | Review the .github/workflows/windows-regression.yml change (header comment only: the file job now also closes fixed regression records on main) (reason-not-auto: requires-signoff) | open | — |
