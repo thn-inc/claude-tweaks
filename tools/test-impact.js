@@ -293,23 +293,16 @@ function fetch(args, deps) {
   // as-is: keep it. A git error (an unknown commit) counts as "not kept".
   if (cached && cached.ok && cached.map.exitCode === 0 && !cached.map.dirty && cached.map.commit !== sha) {
     const cachedCommit = cached.map.commit;
-    let descends = false;
-    try {
-      deps.git(['merge-base', '--is-ancestor', '--end-of-options', sha, cachedCommit], { cwd: root });
-      descends = true;
-    } catch (_) {
-      // diverged, or a commit this clone does not have: take the CI map
-    }
-    let onHead = false;
-    if (descends) {
+    // Diverged, not on HEAD's line, or a commit this clone does not have: take the CI map.
+    const isAncestor = (older, newer) => {
       try {
-        deps.git(['merge-base', '--is-ancestor', '--end-of-options', cachedCommit, 'HEAD'], { cwd: root });
-        onHead = true;
+        deps.git(['merge-base', '--is-ancestor', '--end-of-options', older, newer], { cwd: root });
+        return true;
       } catch (_) {
-        // not an ancestor of HEAD (another branch's map), or unknown: take the CI map
+        return false;
       }
-    }
-    if (onHead) {
+    };
+    if (isAncestor(sha, cachedCommit) && isAncestor(cachedCommit, 'HEAD')) {
       deps.log(`fetch: cached map at ${cachedCommit} descends from CI map ${sha}, kept → ${out}`);
       return 0;
     }
