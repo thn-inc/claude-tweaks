@@ -95,7 +95,7 @@ Use `resolved_url` everywhere below — the `**URL:**` field and the `open` comm
 ```
 Execute this user story and report results using the playwright-cli CLI.
 
-**Working directory:** {ABSOLUTE_WORKTREE_PATH}. Start every shell command with `cd "{ABSOLUTE_WORKTREE_PATH}" && ...` so screenshots, traces, and git operations land in the correct checkout.
+**Working directory:** {ABSOLUTE_WORKTREE_PATH}. Run one plain command per Bash call, never a `cd … &&` prefix: give every file argument (screenshots, traces) as an absolute path under {ABSOLUTE_WORKTREE_PATH}, and use `git -C "{ABSOLUTE_WORKTREE_PATH}"` for git. First run `pwd` on its own: `playwright-cli` writes traces to `.playwright-cli/traces/` under the cwd, so a cwd other than {ABSOLUTE_WORKTREE_PATH} is `BLOCKED`.
 
 **ID:** {story.id}
 **Story:** {story.name}
@@ -159,7 +159,7 @@ Instructions:
 ```
 Execute this user story and report results using the playwright-cli CLI.
 
-**Working directory:** {ABSOLUTE_WORKTREE_PATH}. Start every shell command with `cd "{ABSOLUTE_WORKTREE_PATH}" && ...` so screenshots, traces, and git operations land in the correct checkout.
+**Working directory:** {ABSOLUTE_WORKTREE_PATH}. Run one plain command per Bash call, never a `cd … &&` prefix: give every file argument (screenshots, traces) as an absolute path under {ABSOLUTE_WORKTREE_PATH}, and use `git -C "{ABSOLUTE_WORKTREE_PATH}"` for git. First run `pwd` on its own: `playwright-cli` writes traces to `.playwright-cli/traces/` under the cwd, so a cwd other than {ABSOLUTE_WORKTREE_PATH} is `BLOCKED`.
 
 **ID:** {story.id or "legacy-" + slugified-name}
 **Story:** {story.name}
