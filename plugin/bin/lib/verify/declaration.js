@@ -210,12 +210,15 @@ function readDeclaration(filePath, fsImpl = fs, { selfPath = null } = {}) {
       const impactSuite = raw.impact && raw.impact.suite;
       for (const name of raw.subsetLaneSuites) {
         if (typeof name !== 'string') { errors.push(`subsetLaneSuites: entries must be strings, got ${typeof name}`); continue; }
-        if (!declared.has(name)) errors.push(`subsetLaneSuites: unknown suite "${name}" (declared: ${suites.join(', ') || 'none'})`);
-        else if (seen.has(name)) {
+        // Judge each name once; its repeats only produce the one duplicate error.
+        if (seen.has(name)) {
           if (!dupes.has(name)) errors.push(`subsetLaneSuites: "${name}" is listed more than once`);
           dupes.add(name);
-        } else if (name === impactSuite) errors.push(`subsetLaneSuites: "${name}" is impact.suite — its full command is the whole-suite run the full lane exists for`);
+          continue;
+        }
         seen.add(name);
+        if (!declared.has(name)) errors.push(`subsetLaneSuites: unknown suite "${name}" (declared: ${suites.join(', ') || 'none'})`);
+        else if (name === impactSuite) errors.push(`subsetLaneSuites: "${name}" is impact.suite — its full command is the whole-suite run the full lane exists for`);
       }
       subsetLaneSuites = raw.subsetLaneSuites.filter((n) => typeof n === 'string');
     }

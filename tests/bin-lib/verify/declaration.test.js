@@ -488,6 +488,21 @@ test('AC5.3: subsetLaneSuites repeating a name is rejected (#5368)', () => {
   assert.ok(r.errors.includes('subsetLaneSuites: "web" is listed more than once'), r.errors.join('\n'));
 });
 
+test('subsetLaneSuites reports each repeated name once, declared or not (#5368)', () => {
+  const errs = (extra) => readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, ...extra }) })).errors;
+  const count = (errors, msg) => errors.filter((e) => e === msg).length;
+  const dup = (n) => `subsetLaneSuites: "${n}" is listed more than once`;
+  assert.strictEqual(count(errs({ subsetLaneSuites: ['web', 'web', 'web'] }), dup('web')), 1);
+  const u = errs({ subsetLaneSuites: ['e2e', 'e2e'] });
+  assert.strictEqual(count(u, 'subsetLaneSuites: unknown suite "e2e" (declared: api, web)'), 1, u.join('\n'));
+  assert.strictEqual(count(u, dup('e2e')), 1, u.join('\n'));
+  const impact = { suite: 'api', command: 'x {files}', tests: ['**/*.test.ts'] };
+  const i = errs({ impact, subsetLaneSuites: ['api', 'api'] });
+  const imsg = 'subsetLaneSuites: "api" is impact.suite — its full command is the whole-suite run the full lane exists for';
+  assert.strictEqual(count(i, imsg), 1, i.join('\n'));
+  assert.strictEqual(count(i, dup('api')), 1, i.join('\n'));
+});
+
 test('AC5.4: subsetLaneSuites naming impact.suite is rejected (#5368)', () => {
   const impact = { suite: 'api', command: 'x {files}', tests: ['**/*.test.ts'] };
   const r = readDeclaration('/d.json', fakeFs({ '/d.json': JSON.stringify({ ...EXAMPLE, impact, subsetLaneSuites: ['api'] }) }));
