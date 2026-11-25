@@ -29,8 +29,9 @@ apply to the type of change" rule and the severity-floor table.
 > re-composed per step. **Standalone** (no run directory, or the compose command is unavailable or
 > exits non-zero): read `_shared/subagent-dispatch-core.md` and `_shared/run-dir-resolution.md`
 > directly instead — the two files this bundle composes. The second line composes the lens agents'
-> own on-demand bundle, `{run}/context/lens-child.md` (the output contract and the architecture-depth
-> criteria) — this thread does not read it; the citations below send each agent there, `{run}` filled in literally.
+> two on-demand bundles: `{run}/context/lens-child.md` (the output contract's Scratch rule, which every
+> lens cites) and `{run}/context/lens-depth.md` (the architecture-depth criteria, which only lens 3e cites) —
+> this thread reads neither; the citations below send each agent there, `{run}` filled in literally.
 
 ## Lens scope and dispatch
 
@@ -234,7 +235,7 @@ Never kill anything here. The check is report-only, like the untracked-file diff
 - Dependencies flow in the right direction?
 - No circular dependencies introduced?
 - Changes consistent with existing architecture?
-- **Shallow modules?** Does any new module have an interface nearly as complex as its implementation (a pass-through wrapper, a module whose interface mirrors its single dependency)? Flag at most the 1-2 most leverage-worthy at medium severity — and when shallow abstractions or wrong boundaries are the theme, recommend `/claude-tweaks:deepen` for a dedicated depth pass rather than trying to resolve module-level restructuring inline here. (module-level depth criteria: with the bundle composed, `{run}/context/lens-child.md`'s architecture-depth criteria, `{run}` filled in literally, read on demand, never piecewise (if that bundle is absent, read `_shared/criteria-architecture-depth.md` directly); standalone, `_shared/criteria-architecture-depth.md`, read directly)
+- **Shallow modules?** Does any new module have an interface nearly as complex as its implementation (a pass-through wrapper, a module whose interface mirrors its single dependency)? Flag at most the 1-2 most leverage-worthy at medium severity — and when shallow abstractions or wrong boundaries are the theme, recommend `/claude-tweaks:deepen` for a dedicated depth pass rather than trying to resolve module-level restructuring inline here. (module-level depth criteria: with the bundle composed, `{run}/context/lens-depth.md`, `{run}` filled in literally, read on demand, never piecewise (if that bundle is absent, read `_shared/criteria-architecture-depth.md` directly); standalone, `_shared/criteria-architecture-depth.md`, read directly)
 
 ### 3f: Test Quality
 

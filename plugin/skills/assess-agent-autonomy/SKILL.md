@@ -9,7 +9,7 @@ argument-hint: "<grant-check|merge-check|failure-check|ceremony-check> [#{n}] [-
 Four-mode inline helper that replaces mechanical label lookups with judgment read from actual
 record/diff/failure content. Never invoked directly by a human — always a component step inside
 `/claude-tweaks:backlog refine` (human-present or headless posture), `/claude-tweaks:dispatch`,
-`/claude-tweaks:specify`, or (fallback only) `/claude-tweaks:flow`:
+`/claude-tweaks:specify`, `/claude-tweaks:capture`, `/claude-tweaks:wrap-up`, or (fallback only) `/claude-tweaks:flow`:
 
 ```
 /claude-tweaks:backlog refine (human-present)     [ grant-check ]    -> RECOMMEND_BUILD / RECOMMEND_MERGE
@@ -17,6 +17,7 @@ record/diff/failure content. Never invoked directly by a human — always a comp
 /claude-tweaks:dispatch Auto-merge                [ merge-check ]    -> VERDICT: auto-merge | needs-human
 /claude-tweaks:dispatch Settle                    [ failure-check ]  -> CLASSIFICATION + NOTIFY_NOW
 /claude-tweaks:specify Step 3                     [ ceremony-check ] -> CEREMONY: fast-lane | standard
+/claude-tweaks:capture Shaped-body                [ ceremony-check ] -> CEREMONY: fast-lane | standard
 ```
 
 Each mode's full Gather/Judge/Render procedure lives in its own sub-file — read only the one the
@@ -45,10 +46,10 @@ mode needs one. Each mode's own Step 1 ("Gather") is the source of truth for exa
 fetches and how — they differ enough (some key off `#{n}`, `merge-check` doesn't consume it at
 all) that this router doesn't restate it.
 
-`#{n}` is omitted only from `ceremony-check`'s primary call in `/specify`'s Step 3
-decomposition-mode per-sub-issue loop — the sub-issue has no issue number yet at that point in the
-procedure (it's assigned only after the record is created, later in the same step), so that call
-site invokes this skill as bare `ceremony-check` with no trailing `#{n}` at all. Every other mode,
+`#{n}` is omitted only from `ceremony-check`'s primary calls in `/specify`'s Step 3
+decomposition-mode per-sub-issue loop and `/capture`'s Shaped-body branch step 3 — the record has
+no issue number yet at either point in the procedure (it's assigned only after the record is
+created), so those call sites invoke this skill as bare `ceremony-check` with no trailing `#{n}` at all. Every other mode,
 and `ceremony-check`'s own Shaping-mode and `/flow`-fallback calls, always pass `#{n}`.
 
 `--base <ref>` is `merge-check`-only — an optional pre-known merge-base commit or ref the caller
@@ -83,7 +84,7 @@ directly by a human, and never renders a `## Next Actions` block. Its only calle
 `/claude-tweaks:backlog` (`refine` Step 2 and `grant`'s gate 4, both `grant-check`),
 `/claude-tweaks:dispatch` (Auto-merge gate `merge-check`; Settle step `failure-check`),
 `/claude-tweaks:wrap-up` (Review Console's Auto-merge short-circuit, `merge-check`),
-`/claude-tweaks:specify` (Step 3, `ceremony-check`), and `/claude-tweaks:flow` (fallback, `ceremony-check`,
+`/claude-tweaks:specify` (Step 3, `ceremony-check`), `/claude-tweaks:capture` (Shaped-body branch step 3, `ceremony-check`), and `/claude-tweaks:flow` (fallback, `ceremony-check`,
 from the Manifesto, else at materialize only when no Manifesto verdict exists; only when a record carries no `ceremony:*` label) — each sub-file's own
 "Called from" line is the source of truth for the full detail behind each entry here.
 

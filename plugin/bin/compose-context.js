@@ -12,7 +12,8 @@
 // prints one JSON line {phase, bundles: [{step, load, path, bytes, sources, unresolved}]}.
 // An unknown phase is a malformed invocation.
 // Exit 0 success; 2 malformed invocation (usage on stderr) OR malformed marker
-// (offending file:line on stderr) OR a --run dir that is missing or resolves
+// (offending file:line on stderr) OR a section selector that does not resolve
+// (offending file on stderr) OR a --run dir that is missing or resolves
 // inside a checkout other than the main one (bin/lib/run-dir-guard.js's
 // anchored-or-outside rule, #1065/[IL-127] — a path outside any checkout is
 // accepted, a worktree-local shadow is refused) — on every exit-2 case nothing
@@ -99,6 +100,11 @@ function run(argv, deps = {}) {
   } catch (err) {
     if (err && err.name === 'MarkerError') {
       d.stderr(`compose-context.js: ${err.file}:${err.line}: ${err.message}\n`);
+      return 2;
+    }
+    if (err && err.name === 'SectionError') {
+      // A selector that no longer resolves is a content error, like a malformed marker.
+      d.stderr(`compose-context.js: ${err.file}: ${err.message}\n`);
       return 2;
     }
     d.stderr(`compose-context.js: ${err && err.message}\n`);

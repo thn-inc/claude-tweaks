@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/flow/manifesto.md
+  - plugin/bin/lib/flow/manifesto-write.js
   - plugin/skills/flow/materialize.md
   - plugin/skills/flow/failure-cards.md
   - plugin/skills/_shared/ceremony-check-invocation.md
@@ -42,6 +43,18 @@ files:
   - The line written before the snapshot header.
   - A missing line on a `local-files` run, which suggests the old log-during-compute ordering.
 
+### 2b. In a multi-record run, see a judgment skipped
+- **URL:** the same `{run-dir}/decisions.md`, under `## /flow`
+- **Action:** When another record in the run carries a `ceremony:standard` label and this unlabeled record is not `size:low`, look for `- AUTO {time} — Manifesto ceremony-check (skipped): #{n} carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #{n} is not size:low). Reversibility: n/a.` in place of a judged line.
+- **Should feel:** Economical. No `ceremony-check` call is spent on a verdict that cannot change the run.
+- **Should understand:**
+  - The run-wide fold is already `standard`, and `build/micro-plan.md` reads a per-record `fast-lane` only with `size:low`, so a verdict here could change nothing.
+  - `manifesto-write.js` takes the record as `{n}=standard:skipped` and refuses it (exit 2) when no record in the run carries a `ceremony:standard` label, or when the ceremony is `fast-lane`.
+  - The line starts with the same text as a judged line, so materialize reuses `standard` and does not judge again.
+- **Red flags:**
+  - A skipped line in a single-record run, or in a run where only a *judged* record was `standard`.
+  - A skipped line for a `size:low` record, which must always be judged.
+
 ### 3. Confirm materialize reused the verdict
 - **URL:** the committed `.claude-tweaks/pipelines/{run-id}/work/{n}-spec.md` header on the run's branch
 - **Action:** Check that `ceremony:` matches the verdict line. Step 4 passed it to `bin/materialize.js --ceremony` and did not invoke `ceremony-check` a second time.
@@ -60,4 +73,5 @@ files:
 - Created during build of #3160 (the flow Manifesto's ceremony-profile fold defaulted to `standard` for health-sweep-filed records with no `ceremony:*` label).
 - Updated during build of #4117 (inline component renders now carry a return-to-caller line; before it, a `/flow` Manifesto turn ended after `ceremony-check #4041` printed its verdict). Live example: run `2026-10-25T220014-record-4117` judged its own unlabeled record `standard` and continued to write `config.yml` in the same turn.
 - Live example: run `2026-10-17T212804-record-3160` judged its own unlabeled record before the Manifesto (`standard`, `risk:medium`, a two-fix-site design choice).
-- Related: `docs/journeys/adopt-a-run-directory-from-one-preflight-pack-1931.md` (case-1 adoption, which skips the judgment); `docs/decisions/0006-ceremony-tiering-owned-by-specify.md`.
+- Updated during build of #4118 (the Manifesto now skips a judgment whose verdict cannot matter, step 2b).
+- Related: `docs/journeys/file-a-born-ready-capture-with-its-ceremony-label-4118.md` (born-ready captures now arrive labelled); `docs/journeys/adopt-a-run-directory-from-one-preflight-pack-1931.md` (case-1 adoption, which skips the judgment); `docs/decisions/0006-ceremony-tiering-owned-by-specify.md`.
