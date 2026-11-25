@@ -276,14 +276,14 @@ function stage(o, target, deps) {
   // The summary is logged even when a write failed partway, so what was staged before it is on record.
   for (const n of envelope.nothing) summary.push(`nothing for #${n} (no satisfied)`);
   for (const n of envelope.judgeFailed) summary.push(`judge-failed #${n}`);
-  if (failed) summary.push(`stopped: a write failed (${failed && failed.message})`);
+  if (failed) summary.push(`stopped: a write failed (${failed.message})`);
   try {
     deps.appendEntries({
       runDir: target.dir,
       items: [{ section: SECTION, entry: logLine('SCANNED', summary.length ? summary.join('; ') : 'no candidates to stage', deps, 'n/a') }],
     });
   } catch (err) { failed = failed || err; }
-  if (failed) throw new Fail(3, `a write failed (${failed && failed.message})`);
+  if (failed) throw new Fail(3, `a write failed (${failed.message})`);
 
   deps.stdout(`${JSON.stringify(envelope)}\n`);
   return 0;
