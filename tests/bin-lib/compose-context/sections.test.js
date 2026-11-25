@@ -47,8 +47,7 @@ test('an unknown selector shape throws', () => {
 test('CRLF content selects the same section', () => {
   const lf = '# T\n## A\na1\n### A.1\na2\n## B\nb1\n';
   const crlf = lf.replace(/\n/g, '\r\n');
-  assert.equal(selectSections(crlf.replace(/\r\n/g, '\n'), ['## A'], 'f.md'), '## A\na1\n### A.1\na2\n');
-  assert.ok(selectSections('## A\r\nb\n', ['## A'], 'f.md').startsWith('## A'));
+  assert.equal(selectSections(crlf, ['## A'], 'f.md'), '## A\r\na1\r\n### A.1\r\na2\r\n');
 });
 
 test('a blank line inside a fence does not end a lead slice', () => {

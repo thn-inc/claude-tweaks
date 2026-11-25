@@ -52,6 +52,8 @@ test('AC1.1: the non-3e lens-child bundle is under 12 KB', () => {
 
 test('AC1.2: lens-child carries every rule a lens prompt cites, and no depth criteria', () => {
   const { 'lens-child': lens } = composeReal('review-lens-child');
+  const prompt = readText(path.join(PLUGIN, 'skills/review/step3-lens-dispatch.md'));
+  assert.ok(prompt.includes('context/lens-child.md') && prompt.includes('Scratch rule'), 'the lens prompt cites the Scratch rule through lens-child.md');
   assertCitedRulesPresent(lens.text, ['**Scratch rule.**']);
   assert.ok(lens.text.includes('SCRATCH:'), 'the Scratch rule names the SCRATCH: line');
   const depthHeading = readText(path.join(PLUGIN, 'skills/_shared/criteria-architecture-depth.md')).split('\n')[0];
