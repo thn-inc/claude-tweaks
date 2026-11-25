@@ -129,6 +129,7 @@ test('decideQaSkip: characterization — a moved HEAD without bookkeepingDelta s
   assert.deepEqual(d({}), { skip: false, reason: 'sha-mismatch' });
   assert.deepEqual(d({ bookkeepingDelta: false }), { skip: false, reason: 'sha-mismatch' });
   assert.deepEqual(d({ bookkeepingDelta: 'yes' }), { skip: false, reason: 'sha-mismatch' });
+  assert.deepEqual(d({ head: null, bookkeepingDelta: true }), { skip: false, reason: 'sha-mismatch' });
 });
 
 test('decideQaSkip: bookkeepingDelta satisfies the sha check and reports covered-bookkeeping-delta (AC1.1)', () => {

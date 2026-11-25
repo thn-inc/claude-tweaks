@@ -192,7 +192,7 @@ function classifyBookkeepingDelta({ stampSha, scope, execImpl }) {
     let selfPath = null;
     if (topReal !== null && leafReal !== null) {
       const rel = path.relative(topReal, leafReal);
-      if (rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)) selfPath = toPosix(rel);
+      if (rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) selfPath = toPosix(rel);
     }
     const read = readDeclaration(resolved, undefined, { selfPath });
     if (!read.ok || !read.decl) return false;
