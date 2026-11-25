@@ -246,6 +246,15 @@ function fetch(args, deps) {
   const root = loc.repoRoot;
   const repoArgs = parsed.opts['--repo'] ? ['--repo', parsed.opts['--repo']] : [];
   const out = resolveOut(parsed.opts['--out'], loc, deps);
+  // Not an ancestor, or a commit this clone does not have, both read as false.
+  const isAncestor = (older, newer) => {
+    try {
+      deps.git(['merge-base', '--is-ancestor', '--end-of-options', older, newer], { cwd: root });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
 
   let runs;
   try {
@@ -265,12 +274,7 @@ function fetch(args, deps) {
     // `main` would list here too — and its artifact is built by that PR's own code. Only the runs
     // the workflow makes from this repo's main (push, dispatch) are trusted.
     if (r.event !== 'push' && r.event !== 'workflow_dispatch') return false;
-    try {
-      deps.git(['merge-base', '--is-ancestor', '--end-of-options', r.headSha, 'HEAD'], { cwd: root });
-      return true;
-    } catch (_) {
-      return false; // not an ancestor, or a commit this clone does not have
-    }
+    return isAncestor(r.headSha, 'HEAD');
   });
   if (!chosen) {
     deps.err(`test-impact.js fetch: no successful main ${WORKFLOW} map (of ${runs.length} run(s)) is an ancestor of HEAD`);
@@ -294,14 +298,6 @@ function fetch(args, deps) {
   if (cached && cached.ok && cached.map.exitCode === 0 && !cached.map.dirty && cached.map.commit !== sha) {
     const cachedCommit = cached.map.commit;
     // Diverged, not on HEAD's line, or a commit this clone does not have: take the CI map.
-    const isAncestor = (older, newer) => {
-      try {
-        deps.git(['merge-base', '--is-ancestor', '--end-of-options', older, newer], { cwd: root });
-        return true;
-      } catch (_) {
-        return false;
-      }
-    };
     if (isAncestor(sha, cachedCommit) && isAncestor(cachedCommit, 'HEAD')) {
       deps.log(`fetch: cached map at ${cachedCommit} descends from CI map ${sha}, kept → ${out}`);
       return 0;

@@ -558,6 +558,13 @@ test('fetch replaces a descending cached map from a failing suite', async () => 
   assert.strictEqual(r.text, mapText(SHA_A));
 });
 
+test('fetch replaces an unparseable cached map instead of throwing on its missing map', async () => {
+  const r = await fetchWithCached({ cached: 'not a map' });
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(downloads(r), 1);
+  assert.strictEqual(r.text, mapText(SHA_A));
+});
+
 test('fetch replaces a cached map on a diverged line (the CI commit is not its ancestor)', async () => {
   const r = await fetchWithCached({ cached: mapText(SHA_B), pairs: [] });
   assert.strictEqual(r.code, 0);

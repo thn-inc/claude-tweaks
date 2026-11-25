@@ -16,20 +16,22 @@ const DISPATCH = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build'
 const LEAD = /\*\*[^*]*shell constraint[^*]*\*\*/i.exec(DISPATCH);
 const START = LEAD ? LEAD.index : -1;
 let PARA = '';
+let BOUNDED = false;
 if (START >= 0) {
   const rest = DISPATCH.slice(START + LEAD[0].length);
   const next = rest.search(/ \*\*[^*]*[.:]\*\*/); // an instruction lead ends in punctuation; the cited **One plain command per Bash call** does not
-  assert.ok(next >= 0, 'no bold lead follows the shell-constraint instruction; cannot bound its paragraph (#4243).');
-  PARA = rest.slice(0, next);
+  BOUNDED = next >= 0;
+  if (BOUNDED) PARA = rest.slice(0, next);
 }
 
 test('dispatch.md: carries a shell-constraint instruction paragraph', () => {
   assert.ok(START >= 0, 'dispatch.md must carry a bold-lead "shell constraint" instruction (#4243).');
+  assert.ok(BOUNDED, 'no bold lead follows the shell-constraint instruction; cannot bound its paragraph (#4243).');
   assert.match(PARA, /in the same invocation instruction, also direct `\/superpowers:subagent-driven-development`/i);
 });
 
 test('dispatch.md: the shell-constraint instruction names every dispatch SDD composes', () => {
-  for (const d of ['implementer', 'task-review', 're-review', 'final-review', 'fix-round', 'fix-wave', 'whole-branch-fix', 'NEEDS_CONTEXT/BLOCKED']) {
+  for (const d of ['each implementer,', 'task-review', 're-review', 'final-review', 'fix-round', 'fix-wave', 'whole-branch-fix', 'NEEDS_CONTEXT/BLOCKED']) {
     assert.ok(PARA.includes(d), `the shell-constraint instruction must name the ${d} dispatch (#4243).`);
   }
 });
