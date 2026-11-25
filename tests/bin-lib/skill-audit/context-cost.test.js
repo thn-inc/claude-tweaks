@@ -630,7 +630,7 @@ test('AC3.1: a --phase sdd-child row measures the sliced bytes', () => {
   // The < 15 KB bound is tests/child-bundle-sections.test.js's AC2.1 on these same composed bytes;
   // tests/skill-size-single-source.test.js forbids restating a size number in this file.
   assert.strictEqual(measured.max, Buffer.byteLength(compose(sources, conditions), 'utf8'));
-  assert.ok(measured.max < measuredBytes(row.sources[0]).bytes,'the sliced bundle measures less than its whole source');
+  assert.ok(measured.max < measuredBytes(row.sources[0]).bytes, 'the sliced bundle measures less than its whole source');
 });
 
 test('a --phase row whose selector no longer resolves is an error row, not a whole-file measurement', () => {

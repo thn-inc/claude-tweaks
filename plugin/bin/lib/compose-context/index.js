@@ -17,8 +17,10 @@ const { PHASES, phaseBundles } = require('./phases');
 const { selectSections, SectionError } = require('./sections');
 
 // A sectioned source contributes only its selected slices (#5668); a
-// whole-file source passes through. Throws SectionError (err.file = label).
-const sliceOf = (content, { label, sections }) => (sections ? selectSections(content, sections, label) : content);
+// whole-file source passes through. selectSections wants LF content, so a
+// sectioned source is LF-normalized first. Throws SectionError (err.file = label).
+const sliceOf = (content, { label, sections }) => (
+  sections ? selectSections(String(content).replace(/\r\n/g, '\n'), sections, label) : content);
 
 class SourceReadError extends Error {
   constructor(file, cause) {

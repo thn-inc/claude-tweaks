@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const { scratchDir } = require('./helpers/tmp-dir');
 const { readText } = require('./helpers/read-skill');
+const { CHILD_BUNDLE_LENS_BYTES, CHILD_BUNDLE_SDD_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 const { composePhase } = require('../plugin/bin/lib/compose-context');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
@@ -26,8 +27,15 @@ function assertCitedRulesPresent(text, rules) {
   for (const rule of rules) {
     const at = text.indexOf(rule);
     assert.ok(at !== -1, `cited rule missing from the bundle: ${rule}`);
-    const [sameLine, nextLine = ''] = text.slice(at + rule.length).split('\n');
-    assert.ok(sameLine.trim() || nextLine.trim() || text.slice(at + rule.length).split('\n')[2], `cited rule has no body: ${rule}`);
+    const [sameLine, ...after] = text.slice(at + rule.length).split('\n');
+    if (rule.startsWith('#')) {
+      // A heading rule: its first non-blank line after the heading is body, not another rule's anchor.
+      const body = after.find((l) => l.trim() !== '');
+      assert.ok(body && !rules.some((r) => body.startsWith(r)) && !/^#{1,6} /.test(body), `cited rule has no body: ${rule}`);
+    } else {
+      // A bold-lead rule: its body continues on the anchor's own line.
+      assert.ok(sameLine.trim(), `cited rule has no body: ${rule}`);
+    }
   }
 }
 
@@ -39,7 +47,7 @@ const SDD_RULES = [
 
 test('AC1.1: the non-3e lens-child bundle is under 12 KB', () => {
   const { 'lens-child': lens } = composeReal('review-lens-child');
-  assert.ok(lens.bytes < 12 * 1024, `lens-child is ${lens.bytes} B`);
+  assert.ok(lens.bytes < CHILD_BUNDLE_LENS_BYTES, `lens-child is ${lens.bytes} B`);
 });
 
 test('AC1.2: lens-child carries every rule a lens prompt cites, and no depth criteria', () => {
@@ -62,7 +70,7 @@ test('AC1.2: lens-depth carries the architecture-depth criteria for lens 3e', ()
 
 test('AC2.1: sdd-child is under 15 KB', () => {
   const { 'sdd-child': sdd } = composeReal('sdd-child');
-  assert.ok(sdd.bytes < 15 * 1024, `sdd-child is ${sdd.bytes} B`);
+  assert.ok(sdd.bytes < CHILD_BUNDLE_SDD_BYTES, `sdd-child is ${sdd.bytes} B`);
 });
 
 test('AC2.1: sdd-child carries the three rules build/dispatch.md names', () => {

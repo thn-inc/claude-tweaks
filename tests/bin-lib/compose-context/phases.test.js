@@ -34,6 +34,11 @@ test('the registry is frozen all the way down — phase, bundle list, bundle and
 
 // Every sectioned source of every bundle: each key is one of the bundle's
 // sources, each value a non-empty selector list, and selection succeeds on `content(label)`.
+// The prompt files that cite each sectioned bundle's rules (lens-depth is whole-file).
+const CITERS = {
+  'lens-child': 'plugin/skills/review/step3-lens-dispatch.md',
+  'sdd-child': 'plugin/skills/build/dispatch.md',
+};
 function checkSectionedSources(content) {
   for (const [phase, { bundles }] of Object.entries(PHASES)) {
     for (const bundle of bundles) {
@@ -41,7 +46,12 @@ function checkSectionedSources(content) {
       for (const [label, selectors] of Object.entries(bundle.sections)) {
         assert.ok(bundle.sources.includes(label), `${phase}/${bundle.step}: sections key ${label} is one of its sources`);
         assert.ok(Array.isArray(selectors) && selectors.length > 0, `${phase}/${bundle.step}: ${label} has selectors`);
-        selectSections(content(label), selectors, label);
+        try {
+          selectSections(content(label), selectors, label);
+        } catch (err) {
+          if (!(err instanceof SectionError)) throw err;
+          assert.fail(`${phase}/${bundle.step}: ${label}: ${err.message} — a rule cited by ${CITERS[bundle.step] || '(no citer recorded)'} no longer resolves; update the selector and its citers together`);
+        }
       }
     }
   }
@@ -60,7 +70,8 @@ test('a reworded lead is caught (discrimination proof)', () => {
   };
   assert.throws(
     () => checkSectionedSources(reworded),
-    (err) => err instanceof SectionError && /not found/.test(err.message),
+    (err) => err instanceof assert.AssertionError && /not found/.test(err.message)
+      && /review-lens-child\/lens-child/.test(err.message) && err.message.includes('plugin/skills/review/step3-lens-dispatch.md'),
     'lens-child selects **Scratch rule.**, the lead plugin/skills/review/step3-lens-dispatch.md cites: a reworded lead must fail selection',
   );
 });
@@ -168,4 +179,17 @@ test('a phase whose second slice opens a when: block without closing it writes n
     (err) => err instanceof MarkerError,
   );
   assert.ok(!fs.existsSync(path.join(f.runDir, 'context')), 'no bundle written');
+});
+
+test('a CRLF sectioned source composes the same slice as its LF twin', () => {
+  const { composePhase } = require('../../../plugin/bin/lib/compose-context');
+  const lf = '# Two\n\n## Sliced\nkept body\n\n## Next\ndropped\n';
+  const read = (content) => {
+    const f = twoBundlePhase(content, ['## Sliced']);
+    const { bundles } = composePhase({ runDir: f.runDir, phase: 'sdd-child', pluginRoot: f.root, repoRoot: f.root }, f.deps);
+    return readText(bundles[1].path);
+  };
+  const lfText = read(lf);
+  assert.ok(lfText.includes('kept body') && !lfText.includes('dropped'));
+  assert.equal(read(lf.replace(/\n/g, '\r\n')), lfText);
 });
