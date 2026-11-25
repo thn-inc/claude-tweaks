@@ -47,7 +47,7 @@ const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./l
 const {
   changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
-const { selectScope } = require('./lib/verify/scope');
+const { selectScope, inertDirtyPaths } = require('./lib/verify/scope');
 const { checkoutImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
 const { fetchCiVerdict, LOCAL_REQUESTED, NOT_CONSULTED, HEAD_NOT_PUSHED } = require('./lib/verify/ci-source');
@@ -220,7 +220,7 @@ function slotReport(hold) {
 
 // The verify event's `ci` (#5369): one entry per CI-declared suite this run considered.
 function ciEventEntries(ciAttempts) {
-  return ciAttempts.map((a) => ({ suite: a.suite, used: a.used, fallback: a.fallback }));
+  return ciAttempts.map((a) => ({ suite: a.suite, used: a.used, fallback: a.fallback, dirtyExempt: a.dirtyExempt ?? null }));
 }
 
 // The verify event's `impact` subset — absent unless the selection consulted an impact map.
@@ -1007,7 +1007,9 @@ async function main() {
   // stops the run the same way under any declaration; every other fallback
   // without the key runs the suite here and is announced on stderr first. A red
   // answer's flaky retry is deferred until every suite answered, so "no
-  // verdict yet" is decided before any retry.
+  // verdict yet" is decided before any retry. A tree dirty only in inert paths
+  // (inertDirtyPaths, #5234) counts as clean for CI sourcing; the stamp still
+  // records the real dirty state.
   const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];
@@ -1017,22 +1019,32 @@ async function main() {
   };
   if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
     let stopped = false;
+    let announced = false;
+    // Under an impact declaration scopeStatusRead is null, so this is a fresh status read after impact.fetch (as for startDirtyPaths); it fails closed.
+    const ciDirtyExempt = startGit.dirty === true
+      ? inertDirtyPaths(decl, startDirtyPaths && startDirtyPaths.length ? startDirtyPaths : dirtyFilePaths(undefined, scopeStatusRead))
+      : null;
     for (const [suite, source] of Object.entries(decl.ci)) {
       if (!cmds.some((c) => c.name === suite)) continue;
       const skipCi = (reason) => ciAttempts.push({
         suite, workflow: source.workflow, job: source.job, used: false, fallback: reason,
-        prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0,
+        prNumber: null, runId: null, runUrl: null, jobId: null, conclusion: null, waitedMs: 0, dirtyExempt: null,
       });
       if (parsed.local) { skipCi(LOCAL_REQUESTED); continue; }
       if (stopped) { skipCi(NOT_CONSULTED); continue; }
-      if (startGit.dirty !== false) {
+      if (startGit.dirty !== false && ciDirtyExempt === null) {
         skipCi(startGit.dirty === null ? 'tree-state-unreadable' : 'dirty-tree');
         stopped = onRequest;
         continue;
       }
+      if (ciDirtyExempt !== null && !announced) {
+        announced = true;
+        process.stdout.write(`CI: tree dirty only in inert paths (${ciDirtyExempt.join(', ')}) — taking CI verdicts on HEAD\n`);
+      }
       const verdict = await fetchCiVerdict({
         suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(), localRuns: decl.localRuns,
       });
+      verdict.ci.dirtyExempt = ciDirtyExempt;
       ciAttempts.push(verdict.ci);
       if (!verdict.used) { stopped = onRequest || verdict.ci.fallback === HEAD_NOT_PUSHED; continue; }
       const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };

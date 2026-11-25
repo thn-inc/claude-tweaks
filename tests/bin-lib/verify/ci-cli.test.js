@@ -235,7 +235,7 @@ test('AC7: a CI-answered run\'s verify event and timing entry carry ci and local
   const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
-  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null }]);
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null, dirtyExempt: null }]);
   assert.strictEqual(ev.local, false);
   assert.strictEqual(Object.hasOwn(ev, 'noVerdict'), false);
   const entry = timingEntry(runDir);
@@ -250,7 +250,7 @@ test('AC7: a suite that fell back to a local run records used: false and the nam
   const res = await runCli(['--run', runDir, '--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
-  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: false, fallback: 'no-open-pr-at-head' }]);
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: false, fallback: 'no-open-pr-at-head', dirtyExempt: null }]);
 });
 
 test('AC7: a run with no ci block carries local but no ci key (#5369)', async () => {
@@ -447,8 +447,8 @@ test('two CI suites under the key, the first unanswered: exit 3 names it, the se
   assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('tests', headOf(r)));
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
   assert.deepStrictEqual(ev.ci, [
-    { suite: 'tests', used: false, fallback: 'head-not-pushed' },
-    { suite: 'other', used: false, fallback: 'not-consulted' },
+    { suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
   ]);
   assert.strictEqual(callLines(calls).length, 1, `only the first suite's one request was made: ${callLines(calls)}`);
   assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
@@ -608,8 +608,8 @@ test('AC4.1: without the key two CI suites on an unpushed HEAD exit 3, the secon
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
   assert.strictEqual(ev.noVerdict, true);
   assert.deepStrictEqual(ev.ci, [
-    { suite: 'tests', used: false, fallback: 'head-not-pushed' },
-    { suite: 'other', used: false, fallback: 'not-consulted' },
+    { suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
   ]);
   assert.strictEqual(callLines(calls).length, 1, `only the first suite's one request was made: ${callLines(calls)}`);
   assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
@@ -691,8 +691,8 @@ test('a dirty tree under the key with two CI suites names the first and leaves t
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
   assert.deepStrictEqual(ev.ci, [
-    { suite: 'tests', used: false, fallback: 'dirty-tree' },
-    { suite: 'other', used: false, fallback: 'not-consulted' },
+    { suite: 'tests', used: false, fallback: 'dirty-tree', dirtyExempt: null },
+    { suite: 'other', used: false, fallback: 'not-consulted', dirtyExempt: null },
   ]);
   assert.ok(!fs.existsSync(calls), 'gh must not be called');
 });
@@ -741,10 +741,10 @@ test('AC7: an exit-3 run writes a verify event with noVerdict and pass null; a -
   assert.strictEqual(noVerdict.noVerdict, true);
   assert.strictEqual(noVerdict.pass, null);
   assert.deepStrictEqual(noVerdict.suitesRun, []);
-  assert.deepStrictEqual(noVerdict.ci, [{ suite: 'tests', used: false, fallback: 'head-not-pushed' }]);
+  assert.deepStrictEqual(noVerdict.ci, [{ suite: 'tests', used: false, fallback: 'head-not-pushed', dirtyExempt: null }]);
   assert.strictEqual(noVerdict.local, false);
   assert.strictEqual(local.local, true);
-  assert.deepStrictEqual(local.ci, [{ suite: 'tests', used: false, fallback: 'local-requested' }]);
+  assert.deepStrictEqual(local.ci, [{ suite: 'tests', used: false, fallback: 'local-requested', dirtyExempt: null }]);
 });
 
 test('an exit-3 run takes no suite slot (#5369)', { skip: SKIP }, async () => {
@@ -873,4 +873,64 @@ test('an invalid default declaration prints its concurrency-ignored line exactly
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   assert.strictEqual((res.stderr.match(/verify\.js: concurrency ignored — /g) || []).length, 1, res.stderr);
   assert.ok(res.stderr.includes('localRuns: needs a ci block'), res.stderr);
+});
+
+const INERT_RULES = [{ match: 'notes.md', suites: [], static: false }, { match: '**', suites: '*', static: false }];
+const INERT_LINE = /^CI: tree dirty only in inert paths \(notes\.md\) — taking CI verdicts on HEAD$/m;
+
+async function inertRun(r, extraArgs = []) {
+  const { env, calls } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const marker = path.join(tmpDir(), 'ran-locally');
+  const runDir = ciRunDir(r);
+  const res = await runCli(['--run', runDir, ...SCOPE(r), ...extraArgs, '--cmd', localMarkerCmd(marker)], { cwd: r.repo, env });
+  return { res, marker, calls, runDir };
+}
+
+test('AC2.1/AC2.2: a tree dirty only in an inert tracked path takes the CI verdict; the entry and event carry dirtyExempt (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls, runDir } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker), 'the local suite must not run when CI answered');
+  assert.ok(fs.existsSync(calls), 'the fake gh was consulted');
+  assert.match(res.stdout, INERT_LINE);
+  assert.match(res.stdout, /^CI: tests — taken from test\.yml/m);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
+  const [ev] = eventsOf(runDir).filter((e) => e.type === 'verify');
+  assert.deepStrictEqual(ev.ci, [{ suite: 'tests', used: true, fallback: null, dirtyExempt: ['notes.md'] }]);
+});
+
+test('AC3.1: an untracked inert path behaves the same (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'new\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls));
+  assert.match(res.stdout, INERT_LINE);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
+});
+
+test('AC4.1: an inert path plus a dirty source file still records dirty-tree and runs locally (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {}); // edited\n");
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite ran locally');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'dirty-tree');
+  assert.strictEqual(reportOf(r).ci[0].dirtyExempt, null);
+  assert.doesNotMatch(res.stdout, /tree dirty only in inert paths/);
+});
+
+test('AC5.1: under localRuns on-request an inert-only dirty tree does not exit 3 (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES, ...KEY }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.ok(!fs.existsSync(marker));
 });
