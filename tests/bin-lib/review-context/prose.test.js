@@ -130,3 +130,51 @@ test('4220: step3-lens-dispatch.md names the total budget in KB and the per-path
     'step3-lens-dispatch.md must tell lens agents to read an elided hunk per path',
   );
 });
+
+// #5148: size proxy + schema comment-only exception in step 3. Whitespace-collapsed matching.
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const CODE_MODE_STEPS = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'code-mode-steps.md'));
+
+// [name, check, clause the go-red control strips]
+const SIZE_PROXY_CLAIMS = [
+  ['size-proxy call', (t) => t.includes('build-review-context.js" size-proxy --base'), 'build-review-context.js" size-proxy --base'],
+  ['--files-from tied to Merge-Provenance Check', (t) => /Pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits/.test(t), "Pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits"],
+  ['--stat fallback with notice', (t) => /non-zero exit or unparseable output falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice/.test(t), "falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice"],
+  ['never lower', (t) => t.includes('never lower than the filtered count'), 'never lower than the filtered count'],
+  ['comment-only schema exception', (t) => t.includes('`git diff -w {base}...{branch} -- {file}`') && /neither blank nor a comment/.test(t), 'neither blank nor a comment'],
+  ['unclassifiable hunks fire', (t) => /hunks you cannot classify fire the trigger/.test(t), 'hunks you cannot classify fire the trigger'],
+];
+const missingSizeProxyClaims = (text) => SIZE_PROXY_CLAIMS.filter(([, ok]) => !ok(collapse(text))).map(([n]) => n);
+
+test('AC8.1: review-effort-derivation.md names the size-proxy call, its --stat fallback, and the comment-only schema exception', () => {
+  assert.deepEqual(missingSizeProxyClaims(EFFORT_DERIVATION), []);
+});
+
+test('AC8.1 go-red: stripping each clause reports exactly that claim missing', () => {
+  const live = collapse(EFFORT_DERIVATION);
+  for (const [name, , clause] of SIZE_PROXY_CLAIMS) {
+    const mutated = live.replace(clause, 'X');
+    assert.notEqual(mutated, live, `${name}: strip matched nothing`);
+    assert.deepEqual(missingSizeProxyClaims(mutated), [name]);
+  }
+});
+
+test('the {reasoning} slot names the filtered counts and the exclusions', () => {
+  assert.ok(
+    collapse(EFFORT_DERIVATION).includes('size medium (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)'),
+  );
+});
+
+test('the own-work list for --files-from is written to the session temp dir', () => {
+  assert.match(collapse(EFFORT_DERIVATION), /--files-from[\s\S]*session-tmp-resolve\.js" --value review-own-work-[\s\S]*`_shared\/session-tmp-root\.md`/);
+});
+
+test('the record-size counts no longer claim to come only from --stat', () => {
+  const t = collapse(EFFORT_DERIVATION);
+  assert.ok(!t.includes("Both counts come from Step 2's `git diff --stat` totals"));
+  assert.match(t, /falls back to Step 2's unfiltered `git diff --stat` totals/);
+});
+
+test('code-mode-steps.md does not name size-proxy (read-rail constraint)', () => {
+  assert.ok(!CODE_MODE_STEPS.includes('size-proxy'));
+});
