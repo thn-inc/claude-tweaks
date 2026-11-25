@@ -27,7 +27,7 @@ function scopedBaselineRepo(opts = {}) {
     checks: { tests: { unit: SUITE.slice('tests='.length), other: 'node -e 0' } },
     retry,
     rules: [
-      { match: 'src/**', suites: ['unit'], static: false },
+      { match: 'src/**', suites: '*', static: true },
       { match: '.claude-tweaks/**', suites: [], static: false },
     ],
   }));
@@ -41,7 +41,9 @@ test('AC1.1: --scope + --baseline with no --baseline-cmd adjudicates via the dec
   assert.notStrictEqual(code, 2, stderr);
   assert.strictEqual(code, 0, stdout + stderr);
   const report = JSON.parse(fs.readFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), 'utf8'));
-  // No prior stamp anchor → selectScope forces mode full (scope.js), exactly #3401's incident shape.
+  // No prior stamp anchor, and this declaration has neither a ci nor an impact block, so the merge-base never
+  // anchors it: the run stays unanchored and full (scope.js), exactly #3401's incident shape. The src/** rule
+  // also selects both suites by itself (#6102).
   assert.strictEqual(report.scope.mode, 'full');
   assert.deepStrictEqual(report.scope.suites, ['unit', 'other']);
   assert.strictEqual(report.baselineAdjudicated.verdict, 'pass');
@@ -372,4 +374,17 @@ test('--scope --integration-branch: merge narrowing reuses the changed-file set\
   const gitArgs = readGitCalls(traceDir).flatMap((p) => p.events).filter((e) => e.kind === 'git').map((e) => e.args);
   const zStatus = gitArgs.filter((a) => a.includes('status') && a.includes('-z'));
   assert.strictEqual(zStatus.length, 1, JSON.stringify(zStatus));
+});
+
+test('--scope --integration-branch: no stamp, a ci declaration without impact, a bookkeeping-only branch diff runs no suite and stamps the merge-base (#6102 AC4)', async () => {
+  const r = scopedRepo([{ match: 'src/**', suites: ['unit'], static: false }, { match: 'docs/plans/*-ledger.md', suites: [], static: false }], { ci: { unit: { workflow: 'test.yml', job: 'unit' } } });
+  r.git('checkout', '-q', '-b', 'feat');
+  commitFile(r, 'docs/plans/x-ledger.md', 'x');
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stdout + run.stderr);
+  assert.match(run.stdout, /still-verified: bookkeeping-only delta \(docs\/plans\/x-ledger\.md\)/);
+  assert.strictEqual(fs.existsSync(r.marker), false);
+  assert.strictEqual(stampOf(r.gitDir).fullSha, r.git('merge-base', 'HEAD', r.branch).trim());
+  const status = await runCli(['--stamp-status'], { cwd: r.repo });
+  assert.strictEqual(JSON.parse(status.stdout).verifiedHead, true);
 });
