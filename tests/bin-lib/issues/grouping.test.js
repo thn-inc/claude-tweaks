@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
+const { groupByFileOverlap, backlogHubPaths, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, detectCrossPRFileOverlap, directOverlaps, findInFlightNeighbours, buildDispatchGroups } = require('../../../plugin/bin/lib/issues/grouping');
 const { readText } = require('../../helpers/read-skill');
 
 // ── groupByFileOverlap ──────────────────────────────────────────────────────
@@ -1329,4 +1329,24 @@ test('buildDispatchGroups passes keepSingleton through to fast-lane bundling', (
   assert.deepStrictEqual(bundles, [{ records: [2, 3] }]);
   assert.deepStrictEqual(groups.map((g) => g.map((i) => i.number)), [[1], [2, 3]]);
   assert.deepStrictEqual(buildDispatchGroups(issues).bundles, [{ records: [1, 2, 3] }]);
+});
+
+test('groupByFileOverlap with hubPaths: a path in hubPaths never bridges, a path not in it bridges even when 3 items share it', () => {
+  const items = [
+    { id: 'a', keyFiles: ['x.js'] },
+    { id: 'b', keyFiles: ['x.js'] },
+    { id: 'c', keyFiles: ['x.js'] },
+  ];
+  assert.deepStrictEqual(groupByFileOverlap(items, { hubPaths: new Set() }).map((g) => g.sort()), [['a', 'b', 'c']]);
+  assert.strictEqual(groupByFileOverlap(items).length, 3);
+  assert.strictEqual(groupByFileOverlap(items, { hubPaths: new Set(['x.js']) }).length, 3);
+});
+
+test('backlogHubPaths: a path cited by >= max(3, ceil(n*0.1)) open records is a hub', () => {
+  const rec = (...files) => ({ body: `### Key Files\n\n${files.map((f) => `- \`${f}\``).join('\n')}\n`, labels: [] });
+  const four = [rec('hot.js', 'cold.js'), rec('hot.js', 'cold.js'), rec('hot.js'), rec('other.js')];
+  assert.deepStrictEqual(backlogHubPaths(four), new Set(['hot.js']));
+  const forty = [rec('hot.js'), rec('hot.js'), rec('hot.js')];
+  while (forty.length < 40) forty.push(rec(`f${forty.length}.js`));
+  assert.deepStrictEqual(backlogHubPaths(forty), new Set());
 });
