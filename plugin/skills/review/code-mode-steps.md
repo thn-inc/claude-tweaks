@@ -16,6 +16,8 @@ finding at any severity still triggers the existing ceremony escape hatch
 the runnable invocation lives in that hatch, refs #1376) — unchanged. Full rationale was in
 `docs/superpowers/specs/2026-07-20-lifecycle-ceremony-tiering-design.md`, deleted `70849915`.
 
+**Bookkeeping-only diff skip (code and full mode, #5929).** When every path in the branch diff from `{base}` to `{branch}` is bookkeeping — a materialized `work/{n}-spec.md` or an open-items ledger under `docs/plans/`, the paths `.claude-tweaks/verify-scope.json`'s `rules` map to no suite — and `verify.js --scope` resolves `none` (`still-verified: bookkeeping-only delta`), skip Step 2.5 and the Step 3 lens fan-out (with Steps 3.5-3.7, which act only on lens findings). Log one line instead: `SKIP {time} — review: bookkeeping-only diff ({file list}); Step 2.5 and Step 3 lens fan-out skipped. Reversibility: high.` This is the one step skip that applies to standalone review too, because the condition is the diff, not the ceremony. Step 1.5 (test gate) and Step 7 (summary and verdict comment) still run, so the PR still gets a review verdict. Any path outside the bookkeeping set runs Step 2.5 and Step 3 unchanged.
+
 ## Step 1: Spec Compliance Check (spec-based only)
 
 Skip this step entirely under `ceremony-profile: fast-lane` (roster tag `review-step-1`,
