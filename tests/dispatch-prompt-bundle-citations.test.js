@@ -249,6 +249,10 @@ test('step3-lens-dispatch.md cites lens-child.md with its fallback', () => {
   assertChildBundleCited(LENS_DISPATCH, 'review-lens-child', 'context/lens-child.md', '_shared/subagent-output-contract.md');
 });
 
+test('step3-lens-dispatch.md cites lens-depth.md with its fallback', () => {
+  assertChildBundleCited(LENS_DISPATCH, 'review-lens-child', 'context/lens-depth.md', '_shared/criteria-architecture-depth.md');
+});
+
 test('build/dispatch.md composes and cites sdd-child', () => {
   assertChildBundleCited(BUILD_DISPATCH, 'sdd-child', 'context/sdd-child.md', '_shared/subagent-dispatch-core.md');
 });
