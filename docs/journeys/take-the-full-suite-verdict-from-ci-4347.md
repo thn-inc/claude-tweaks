@@ -13,7 +13,7 @@ files:
 **Persona:** a maintainer running `/claude-tweaks:flow #N` (or a dispatched `build,test` call) on a machine where several pipeline sessions share the CPU, in a project whose `.claude-tweaks/verify-scope.json` declares a `ci` source for its suite.
 **Goal:** Common Step 5's full-suite verdict comes from the PR's CI job, which finishes in minutes, instead of a local run that takes an hour under load.
 **Entry point:** `/claude-tweaks:build` Common Step 5, after the journeys and docs-sync commits.
-**Success state:** `verify.js` prints (after `CI: tree dirty only in inert paths (…)` when the tree is dirty only there) `CI: tests — taken from test.yml / test run {id} on HEAD (success, {url})`, no local suite ran, and the pass stamp reads `scope: "full"`, `source: "ci"`, so `/claude-tweaks:test` and the second call's `--stamp-status` read `verifiedHead: true`.
+**Success state:** `verify.js` prints (after `CI: tree dirty only in inert paths (…)` when the tree is dirty only there) `CI: tests — taken from test.yml / test run {id} on HEAD (success, {url})`, no local suite ran, and the pass stamp reads `scope: "full"`, `source: "ci"`, so `/claude-tweaks:test` and the second call's `--stamp-status` read `verifiedHead: true` on a clean tree. On a tree dirty in a non-`generated` inert path the stamp still records `dirty: true`, so `verifiedHead` stays `false` until that path is committed.
 
 ## Steps
 
