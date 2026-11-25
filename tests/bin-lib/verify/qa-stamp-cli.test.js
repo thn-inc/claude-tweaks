@@ -384,6 +384,19 @@ test('untracked QA artifacts under .claude-tweaks/artifacts/ do not defeat the b
   assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
 });
 
+test('a committed .claude-tweaks/artifacts/ file is a real delta: sha-mismatch, as verify.js selectScope reads it as full', () => {
+  const fx = bookkeepingRepo();
+  fx.commit({ '.claude-tweaks/artifacts/a.png': 'x' });
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: false, reason: 'sha-mismatch', sha: fx.S });
+});
+
+// Intended difference: an empty delta changed nothing, so it is covered here; verify.js's #5075 shortcut excludes it for its own reasons.
+test('an empty commit past S is a bookkeeping delta', () => {
+  const fx = bookkeepingRepo();
+  fx.g(['commit', '-q', '--allow-empty', '-m', 'empty']);
+  assert.deepEqual(fx.check(['--scope', DECL_PATH]).res, { skip: true, reason: 'covered-bookkeeping-delta', sha: fx.S });
+});
+
 test('every git call --check makes carries the cwd dep', () => {
   const fx = bookkeepingRepo();
   fx.commit(LEDGER);

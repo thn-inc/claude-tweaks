@@ -46,10 +46,10 @@ const {
 } = require('./lib/verify/qa-stamp');
 const { gitInfo, gitDir } = require('./lib/verify/report');
 const { toPosix } = require('./lib/shared-primitives');
-const { readDeclaration } = require('./lib/verify/declaration');
+const { readDeclaration, resolveScopePath, scopeSelfPath } = require('./lib/verify/declaration');
 const { usableAnchor, changedFiles } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
+const { splitNul } = require('./lib/git-z');
 
 const USAGE = 'usage: qa-stamp.js --write --report <RUN_DIR/report.json> [--stories-dir <dir>]\n'
   + '       qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>] [--scope <verify-scope.json>]\n'
@@ -186,18 +186,17 @@ const ARTIFACTS_PREFIX = '.claude-tweaks/artifacts/';
 function classifyBookkeepingDelta({ stampSha, scope, execImpl }) {
   try {
     const top = String(execImpl('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true })).trim(); // git-path-read: single path
-    const resolved = path.isAbsolute(scope) ? scope : path.join(top, scope);
-    const topReal = canonicalRealpath(top);
-    const leaf = resolveWithin(resolved, top);
-    let selfPath = null;
-    if (topReal !== null && leaf !== null) selfPath = toPosix(path.relative(topReal, leaf)) || null;
-    const read = readDeclaration(resolved, undefined, { selfPath });
+    const resolved = resolveScopePath(scope, top, top);
+    const read = readDeclaration(resolved, undefined, { selfPath: scopeSelfPath(resolved, top) });
     if (!read.ok || !read.decl) return false;
     const stamp = { sha: stampSha, fullSha: stampSha };
     const anchor = usableAnchor({ stamp, execImpl });
     if (!anchor) return false;
     const { files } = changedFiles({ base: anchor, execImpl });
-    const rest = files.filter((f) => !f.startsWith(ARTIFACTS_PREFIX));
+    // QA's own artifacts are exempt only as working-tree entries; a committed one is a real delta, which
+    // verify.js's selectScope reads as an unmatched path (mode full) — so the two stamps agree on the commit.
+    const committed = new Set(splitNul(String(execImpl('git', ['diff', '--name-only', '-z', '--no-renames', '--end-of-options', `${anchor}..HEAD`], { encoding: 'utf8', windowsHide: true })))); // git-path-read: -z list
+    const rest = files.filter((f) => !f.startsWith(ARTIFACTS_PREFIX) || committed.has(f));
     return selectScope({ decl: read.decl, files: rest, stamp }).mode === 'none';
   } catch {
     return false;

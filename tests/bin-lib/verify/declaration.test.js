@@ -509,3 +509,30 @@ test('AC5.4: subsetLaneSuites naming impact.suite is rejected (#5368)', () => {
   assert.strictEqual(r.ok, false);
   assert.ok(r.errors.includes('subsetLaneSuites: "api" is impact.suite — its full command is the whole-suite run the full lane exists for'), r.errors.join('\n'));
 });
+
+// #5643: the scope-path helpers verify.js and qa-stamp.js share.
+const SCOPE_HELPERS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'verify', 'declaration.js');
+
+test('resolveScopePath: absolute as given, relative joined to the toplevel, else the fallback dir', () => {
+  const { resolveScopePath } = require(SCOPE_HELPERS);
+  const abs = path.resolve('/x/abs.json');
+  assert.strictEqual(resolveScopePath(abs, '/top', '/fb'), abs);
+  assert.strictEqual(resolveScopePath('a/b.json', '/top', '/fb'), path.join('/top', 'a/b.json'));
+  assert.strictEqual(resolveScopePath('a/b.json', null, '/fb'), path.join('/fb', 'a/b.json'));
+});
+
+test('scopeSelfPath: forward-slash repo-relative path inside the toplevel, null for no toplevel, outside, or the root itself', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const { scopeSelfPath } = require(SCOPE_HELPERS);
+  const top = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-scope-self-'));
+  try {
+    fs.mkdirSync(path.join(top, '.claude-tweaks'));
+    const decl = path.join(top, '.claude-tweaks', 'verify-scope.json');
+    fs.writeFileSync(decl, '{}');
+    assert.strictEqual(scopeSelfPath(decl, top), '.claude-tweaks/verify-scope.json');
+    assert.strictEqual(scopeSelfPath(decl, null), null);
+    assert.strictEqual(scopeSelfPath(path.join(os.tmpdir(), 'elsewhere.json'), top), null);
+    assert.strictEqual(scopeSelfPath(top, top), null);
+  } finally { fs.rmSync(top, { recursive: true, force: true }); }
+});

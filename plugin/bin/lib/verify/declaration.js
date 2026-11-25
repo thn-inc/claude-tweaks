@@ -13,6 +13,8 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
+const { canonicalRealpath, resolveWithin } = require('../path-guard');
 const { globToRegExp } = require('../issues/blast-radius');
 
 const DECLARATION_PATH = '.claude-tweaks/verify-scope.json';
@@ -381,7 +383,25 @@ function generatedExemption(dirtyPaths, generated) {
   return allGenerated ? [...new Set(dirtyPaths)].sort() : null;
 }
 
+// #3017: a relative --scope path resolves against the checkout root (`toplevel`), never the bare cwd; outside a git
+// work tree (`toplevel` null) it resolves against `fallbackDir`, as every other git call the caller makes fails the same way.
+function resolveScopePath(scope, toplevel, fallbackDir) {
+  if (path.isAbsolute(scope)) return scope;
+  return path.join(toplevel ?? fallbackDir, scope);
+}
+
+// #2987: the repo-relative form of a resolved --scope path, so readDeclaration can refuse a `generated` glob covering
+// the declaration actually read. null when it can't be proven inside `toplevel` (a file outside never shows in its dirty set).
+function scopeSelfPath(resolvedPath, toplevel) {
+  if (toplevel === null) return null;
+  const leaf = resolveWithin(resolvedPath, toplevel);
+  if (leaf === null) return null;
+  const rootReal = canonicalRealpath(toplevel);
+  if (rootReal === null) return null;
+  return path.relative(rootReal, leaf).split(path.sep).join('/') || null;
+}
+
 module.exports = {
-  readDeclaration, generatedExemption, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
+  readDeclaration, generatedExemption, resolveScopePath, scopeSelfPath, DECLARATION_PATH, DEFAULT_MAX_RETRIES, MAX_RETRIES_CEILING, DEFAULT_MAX_AGE_COMMITS, GIT_COMMON_DIR_TOKEN,
   DEFAULT_CI_WAIT_SECONDS, DEFAULT_CI_POLL_SECONDS, CONCURRENCY_KEYS,
 };
