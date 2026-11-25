@@ -20,7 +20,11 @@
 // (markdown under `skills/`, `agents/`, or `commands/` counts as implementation), or a top-level
 // `docs/plans/*.html` diagram — the same test/docs exclusion computeDiffFacts applies to a
 // diff, read here against the spec's own file list. Zero implementation files still qualifies
-// (a docs-only or test-only record): the gate is "at most one", not "exactly one".
+// (a docs-only or test-only record): the gate is "at most MAX_IMPLEMENTATION_FILES", not "exactly".
+// The express lane already builds up to EXPRESS_MAX_KEY_FILES Key Files with no plan at all, and
+// the micro-plan path keeps the SDD task review and /claude-tweaks:review's lenses, so it needs no
+// stricter bound. It stays a separate constant because the express bound counts every Key File,
+// tests included, while this gate counts implementation files only.
 //
 // Read-only entries (#3696). An entry whose own note marks it read-only is not counted: the
 // build reads it and changes nothing, so it adds no task structure. A note marks it read-only,
@@ -39,7 +43,7 @@ const { computeDiffFacts } = require('../dispatch/ceremony-derive');
 const { parseRiskFlags } = require('./record-risk-flags');
 
 const MICRO_PLAN_CONDITIONS = Object.freeze(['fast-lane-ceremony', 'low-size', 'implementation-file-limit', 'no-risk-flag']);
-const MAX_IMPLEMENTATION_FILES = 1;
+const MAX_IMPLEMENTATION_FILES = 3;
 // The header's read-only rule; it fails closed, so a phrasing it does not name counts the entry.
 const READ_ONLY_NOTE_RE = /\bread[ -]only\b|\bno changes?\b\s*(?:[),.;]|$)/i;
 
