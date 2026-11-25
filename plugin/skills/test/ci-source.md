@@ -67,7 +67,7 @@ Without `localRuns`, every other reason except `head-not-pushed` runs the suite 
 | `local-requested` | `--local` was passed, so CI was not consulted. |
 | `not-consulted` | An earlier suite already left the run with no verdict (under `localRuns`, or on `head-not-pushed`), so CI was not asked about this one. |
 
-When the exemption applies, stdout prints `CI: tree dirty only in inert paths ({paths}) — taking CI verdicts on HEAD` once, before the first CI fetch (never under `--local`). Each `ci` entry in `report.json` and the verify event carries `dirtyExempt`: the inert paths when the exemption applied, else `null`. The pass stamp still records the tree as dirty.
+When the exemption applies, stdout prints `CI: tree dirty only in inert paths ({paths}) — taking CI verdicts on HEAD` once, before the first CI fetch (never under `--local`). Each `ci` entry in `report.json` and the verify event carries `dirtyExempt`: the inert paths on entries CI was consulted for under the exemption, else `null`. The pass stamp still records the tree as dirty.
 
 stdout prints one line per CI-declared suite before the table: `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url})`, or `CI: {suite} — ran locally ({reason})`. Under `localRuns`, a red job with no downloadable log prints `CI: {suite} — taken from {workflow} / {job} run {id} on HEAD ({conclusion}, {url}; its log could not be downloaded — pass --local to reproduce the failure here)`.
 
