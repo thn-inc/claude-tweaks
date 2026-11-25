@@ -1350,3 +1350,13 @@ test('backlogHubPaths: a path cited by >= max(3, ceil(n*0.1)) open records is a 
   while (forty.length < 40) forty.push(rec(`f${forty.length}.js`));
   assert.deepStrictEqual(backlogHubPaths(forty), new Set());
 });
+
+test('groupByFileOverlap with a non-Set hubPaths falls back to the computed hubs', () => {
+  const items = [
+    { id: 'a', keyFiles: ['x.js'] },
+    { id: 'b', keyFiles: ['x.js'] },
+    { id: 'c', keyFiles: ['x.js'] },
+  ];
+  assert.deepStrictEqual(groupByFileOverlap(items, { hubPaths: [] }), groupByFileOverlap(items));
+  assert.strictEqual(groupByFileOverlap(items, { hubPaths: [] }).length, 3);
+});

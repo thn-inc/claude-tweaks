@@ -57,6 +57,8 @@ function computeHubPaths(items, getFiles, minCount, fraction) {
 // union-find step entirely — as is any bare directory-level entry, regardless
 // of count. Such a path can never bridge two items together, though each
 // item's other files still can.
+// `options.hubPaths` (a Set) replaces the batch-computed hub set entirely; any
+// other value is ignored and the batch computes its own hubs.
 function groupByFileOverlap(items, options = {}) {
   const hubPathMinCount = options.hubPathMinCount ?? HUB_PATH_MIN_COUNT;
   const hubPathFraction = options.hubPathFraction ?? HUB_PATH_FRACTION;
