@@ -50,7 +50,7 @@ const {
 const { selectScope } = require('./lib/verify/scope');
 const { checkoutImpactContext } = require('./lib/verify/impact');
 const { substituteFile, describePath } = require('./lib/verify/file-template');
-const { fetchCiVerdict, LOCAL_REQUESTED, NOT_CONSULTED } = require('./lib/verify/ci-source');
+const { fetchCiVerdict, LOCAL_REQUESTED, NOT_CONSULTED, HEAD_NOT_PUSHED } = require('./lib/verify/ci-source');
 const { resolveTarget, writeStagedItem } = require('./lib/stage-item/write');
 const { appendEvent } = require('./lib/hooks/context');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -231,9 +231,18 @@ function impactEventFields(sel) {
   } } : {};
 }
 
-// The stderr text of a run that ended with no verdict (#5369): CI could not
-// answer a suite the declaration keeps off this machine, and --local was not passed.
-function noVerdictLines(attempt) {
+// The stderr text of a run that ended with no verdict (exit 3): CI could not
+// answer a suite and --local was not passed — either the declaration keeps the
+// suite off this machine (localRuns "on-request", #5369), or HEAD is not on the
+// remote, which stops the run under any declaration (#5800).
+function noVerdictLines(attempt, sha) {
+  if (attempt.fallback === HEAD_NOT_PUSHED) {
+    return [
+      `verify.js: no verdict yet for suite "${attempt.suite}" — CI could not answer (head-not-pushed): HEAD ${String(sha).slice(0, 9)} is not on the remote; no check ran and no pass stamp was written.`,
+      '  Push the branch (commit first if the tree is dirty), then re-run this command,',
+      '  or re-run it with --local to run the suite on this machine.',
+    ];
+  }
   return [
     `verify.js: no verdict yet for suite "${attempt.suite}" — CI could not answer (${attempt.fallback}), and the declaration's localRuns "on-request" keeps it off this machine; no check ran and no pass stamp was written.`,
     '  Either push the branch (commit first if the tree is dirty) so HEAD is the head of an open PR, then re-run this command,',
@@ -528,13 +537,13 @@ async function main() {
       return;
     }
     // Named, never swept — see findStaleBaselineWorktrees (#3064).
-    // #5369: held until the no-verdict decision so an exit-3 run's stderr line 1
+    // #5369/#5800: held until the no-verdict decision so an exit-3 run's stderr line 1
     // is the no-verdict line; a run that ends earlier flushes them at exit.
     for (const dir of findStaleBaselineWorktrees(bgit.listWorktrees)) {
       staleWarnings.push(`verify.js: a stale baseline scratch worktree is registered at ${dir} from an earlier interrupted run — remove it manually: git worktree remove --force ${dir}\n`);
     }
-    // Held only when a --scope declaration may turn out to carry localRuns
-    // "on-request"; any other run prints them now, or right after the
+    // Held only when a --scope declaration may turn out to carry a ci block
+    // (a run that can end with no verdict, #5800); any other run prints them now, or right after the
     // declaration is read, exactly as before.
     if (!parsed.scope) flushStaleWarnings();
     else if (staleWarnings.length) process.once('exit', flushStaleWarnings);
@@ -589,6 +598,7 @@ async function main() {
     // USAGE, then exit code 2); pulled into one helper so the five sites
     // differ only in their message.
     function scopeUsageExit(message) {
+      flushStaleWarnings();
       process.stderr.write(`${message}\n${USAGE}\n`);
       process.exitCode = 2;
     }
@@ -599,12 +609,10 @@ async function main() {
       selfPath: scopeSelfPath(resolvedScopePath, parsed.cwd || process.cwd()),
     });
     if (!read.ok) {
-      flushStaleWarnings();
       scopeUsageExit(read.errors.join('\n'));
       return;
     }
     if (read.missing) {
-      flushStaleWarnings();
       // #3017: a --scope path that still does not exist after resolving
       // against the checkout root is a usage error, not "no declaration" —
       // the prior silent full-run fallback is exactly how a cwd/typo
@@ -613,7 +621,7 @@ async function main() {
       return;
     }
     decl = read.decl;
-    if (!(decl && decl.localRuns === 'on-request')) flushStaleWarnings();
+    if (!(decl && decl.ci)) flushStaleWarnings();
 
     // AC5 (review L13): the --cmd-name-vs-declaration check only needs decl,
     // so it runs immediately after the declaration is read — before any
@@ -998,8 +1006,11 @@ async function main() {
   // #5369: under a declaration with localRuns "on-request" a CI-declared suite
   // never falls back to a local run — the first one CI cannot answer stops the
   // run with no verdict (exit 3, below), the later ones are not consulted, and
-  // --local skips CI for all of them. A red answer's flaky retry is deferred
-  // until every suite answered, so "no verdict yet" is decided before any retry.
+  // --local skips CI for all of them. #5800: a HEAD that is not on the remote
+  // stops the run the same way under any declaration; every other fallback
+  // without the key runs the suite here and is announced on stderr first. A red
+  // answer's flaky retry is deferred until every suite answered, so "no
+  // verdict yet" is decided before any retry.
   const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];
@@ -1026,7 +1037,7 @@ async function main() {
         suite, source, headSha: startSha, logDir, localRoot: logCwd, cwd: parsed.cwd || process.cwd(), localRuns: decl.localRuns,
       });
       ciAttempts.push(verdict.ci);
-      if (!verdict.used) { stopped = onRequest; continue; }
+      if (!verdict.used) { stopped = onRequest || verdict.ci.fallback === HEAD_NOT_PUSHED; continue; }
       const ciResult = { ...verdict.result, ci: { runId: verdict.ci.runId, runUrl: verdict.ci.runUrl, jobId: verdict.ci.jobId } };
       if (ciResult.exitCode === 0) ciResults.push(ciResult);
       else if (verdict.ci.logUnavailable) ciResults.push({ ...ciResult, retryDecision: { retry: false, reason: 'ci-log-unavailable' } });
@@ -1034,13 +1045,13 @@ async function main() {
       else ciResults.push(await retryHook(ciResult, retryCtx));
     }
   }
-  const noVerdict = onRequest
-    ? ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED)
-    : undefined;
+  // A CI attempt CI could not answer (not skipped by --local, not left unconsulted).
+  const isCiNoAnswer = (a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED;
+  const noVerdict = ciAttempts.find((a) => isCiNoAnswer(a) && (onRequest || a.fallback === HEAD_NOT_PUSHED));
   if (noVerdict) {
     // No check ran, so no report, no stamp and no slot: a report left by an
     // earlier run would read as this run's answer.
-    process.stderr.write(`${noVerdictLines(noVerdict).join('\n')}\n`);
+    process.stderr.write(`${noVerdictLines(noVerdict, startSha).join('\n')}\n`);
     flushStaleWarnings();
     fs.rmSync(jsonPath, { force: true });
     if (parsed.run) {
@@ -1063,6 +1074,13 @@ async function main() {
     }
     process.exitCode = EXIT_NO_VERDICT;
     return;
+  }
+  // #5800: a suite CI could not answer runs here without the key — say so before
+  // any check starts. Held to this point so an exit-3 run never prints one.
+  if (!onRequest) {
+    for (const a of ciAttempts.filter(isCiNoAnswer)) {
+      process.stderr.write(`verify.js: CI could not answer suite "${a.suite}" (${a.fallback}) — running it on this machine\n`);
+    }
   }
   flushStaleWarnings();
   for (let i = 0; i < ciResults.length; i += 1) {

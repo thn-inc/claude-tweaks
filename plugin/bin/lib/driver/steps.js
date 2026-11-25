@@ -1183,8 +1183,9 @@ function scopeEqualIgnoringEol(deps, wt, baseBlob, scopeRel) {
 // verify.js, run in the worktree. A regular verify-scope.json scopes the run; an absent one
 // runs the full suite; anything else (a symlink, a directory) is refused, never followed.
 // The step runs before the push and before any PR exists (STEPS order), so CI cannot answer;
-// the scoped call passes `--local` so verify.js never exits 3 ("no verdict yet") under a
-// declaration's localRuns, and it is harmless without one (#5370). express-lane.md step 4 says the same.
+// the scoped call passes `--local`, which is load-bearing for any declaration with a ci block:
+// verify.js exits 3 ("no verdict yet") on an unpushed HEAD under any declaration (#5800) and, under
+// localRuns "on-request", on every CI no-answer (#5370). express-lane.md step 4 says the same.
 // After the run, a newly set index flag stops the step, then red tests do, then, for any other run, a
 // worktree that differs from HEAD, all before the remaining verdicts are read (#5415, #5454).
 const testStep = defineStep(STEP.test, STOP_CLASSES.PRE_PUSH, async (ctx, deps) => {

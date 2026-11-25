@@ -174,6 +174,8 @@ test('#5437: ENOENT, a missing commit and a non-timeout error are never retried'
     [Object.assign(new Error('spawn gh ENOENT'), { code: 'ENOENT' }), 'gh-unavailable'],
     [Object.assign(new Error('x'), { stderr: 'gh: No commit found for SHA (HTTP 422)' }), 'head-not-pushed'],
     [Object.assign(new Error('x'), { stderr: 'HTTP 500 boom' }), 'gh-error: HTTP 500 boom'],
+    // 404 is a repo gh cannot see, not an unpushed sha (422): never head-not-pushed (#5800)
+    [Object.assign(new Error('x'), { stderr: 'gh: Not Found (HTTP 404)' }), 'gh-error: gh: Not Found (HTTP 404)'],
   ];
   for (const [err, want] of cases) {
     let n = 0;

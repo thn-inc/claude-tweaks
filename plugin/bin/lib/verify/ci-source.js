@@ -34,6 +34,7 @@ const UNKNOWN_ESCAPE_FLAG_RE = /unknown flag: --allow-escape-sequences/;
 // `localRuns: "on-request"` (#5369).
 const LOCAL_REQUESTED = 'local-requested';
 const NOT_CONSULTED = 'not-consulted';
+const HEAD_NOT_PUSHED = 'head-not-pushed';
 
 // LOG_ESCAPE_FLAG hands over the job log's raw bytes, and a PR's test output is
 // text this tool did not write: every terminal control sequence except SGR
@@ -82,7 +83,7 @@ function errText(err) {
 }
 
 function isMissingCommit(err) {
-  return /HTTP 4(04|22)\b|No commit found/i.test(String((err && (err.stderr || err.message)) || ''));
+  return /HTTP 422\b|No commit found/i.test(String((err && (err.stderr || err.message)) || ''));
 }
 
 // Distinguishes "gh is not installed" from a gh call that ran and failed.
@@ -147,7 +148,7 @@ async function fetchCiVerdict({
       pulls = await ghJson(['api', `repos/{owner}/{repo}/commits/${headSha}/pulls`]);
     } catch (err) {
       if (err instanceof CiFallback) throw err;
-      if (isMissingCommit(err)) return fallback('head-not-pushed');
+      if (isMissingCommit(err)) return fallback(HEAD_NOT_PUSHED);
       throw new CiFallback(ghErrorReason(err));
     }
     const pr = Array.isArray(pulls)
@@ -247,6 +248,6 @@ async function fetchCiVerdict({
 }
 
 module.exports = {
-  fetchCiVerdict, normalizeCiLog, defaultRunner, LOG_TIMEOUT_MS, LOG_ESCAPE_FLAG, LOCAL_REQUESTED, NOT_CONSULTED,
+  fetchCiVerdict, normalizeCiLog, defaultRunner, LOG_TIMEOUT_MS, LOG_ESCAPE_FLAG, LOCAL_REQUESTED, NOT_CONSULTED, HEAD_NOT_PUSHED,
   GH_MAX_ATTEMPTS, GH_RETRY_BACKOFF_MS,
 };

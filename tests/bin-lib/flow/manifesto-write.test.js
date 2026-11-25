@@ -5,9 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  computeLevers, writeManifesto, renderFyi, mergeAuthorizationRefusal, AdoptedRunError, ManifestoInputError, POLICY_REQUEST_KEYS,
+  computeLevers, writeManifesto, renderFyi, mergeAuthorizationRefusal, AdoptedRunError, ManifestoInputError, POLICY_REQUEST_KEYS, checkRecords,
 } = require('../../../plugin/bin/lib/flow/manifesto-write');
-const { run } = require('../../../plugin/bin/manifesto-write');
+const { run, parseCeremony } = require('../../../plugin/bin/manifesto-write');
 const { MANIFESTO_LEVERS } = require('../../../plugin/bin/lib/set-config/write');
 const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { classifyDecisions } = require('../../../plugin/bin/lib/log-decision/claim-log');
@@ -266,6 +266,28 @@ test('an existing config.yml -> AdoptedRunError and nothing in the run dir chang
   const before = snapshot(fx.runDir);
   assert.throws(() => write(fx), (e) => e instanceof AdoptedRunError);
   assert.deepStrictEqual(snapshot(fx.runDir), before);
+});
+
+test('a skipped record logs the skip line, whose prefix materialize.md reads as the verdict (#4118)', () => {
+  const fx = fixture({ decisions: CLAIM });
+  const records = [{ n: 4027, ceremony: 'standard', ceremonySource: 'label' }, { n: 4031, ceremony: 'standard', ceremonySource: 'skipped' }];
+  write(fx, { records });
+  const flow = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  const text = '#4031 carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #4031 is not size:low)';
+  assert.ok(flow.includes(formatEntry({ status: 'AUTO', now: NOW, step: 'Manifesto ceremony-check (skipped)', spec: null, text, reversibility: 'n/a', lever: null })));
+  assert.ok(flow.includes('#4031 carries no ceremony:* label -> CEREMONY: standard'));
+});
+
+test('a skipped record is refused without a labelled standard record, or with fast-lane (#4118)', () => {
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'judged' }, { n: 2, ceremony: 'standard', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.throws(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'label' }, { n: 2, ceremony: 'fast-lane', ceremonySource: 'skipped' }]), ManifestoInputError);
+  assert.doesNotThrow(() => checkRecords([{ n: 1, ceremony: 'standard', ceremonySource: 'label' }, { n: 2, ceremony: 'standard', ceremonySource: 'skipped' }]));
+});
+
+test('parseCeremony reads :skipped (#4118)', () => {
+  assert.deepStrictEqual(parseCeremony('7=standard,8=standard:skipped').records,
+    [{ n: 7, ceremony: 'standard', ceremonySource: 'label' }, { n: 8, ceremony: 'standard', ceremonySource: 'skipped' }]);
 });
 
 test('a judged record logs the ceremony-check line; a label record logs none; then the levers line names the absolute config.yml path', () => {
@@ -548,6 +570,19 @@ test('CLI: an existing config.yml exits 3 and nothing changes', () => {
   assert.strictEqual(out.join(''), '');
   assert.match(err.join(''), /config\.yml already present/);
   assert.strictEqual(resolveCalls, 0, 'refused before resolving policy');
+});
+
+test('CLI: --ceremony :skipped on a fast-lane record, or without a labelled standard record, exits 2 (#4118)', () => {
+  for (const ceremony of ['4027=standard,8=fast-lane:skipped', '8=standard:skipped', '4027=standard:judged,8=standard:skipped']) {
+    const fx = fixture({ decisions: CLAIM });
+    const { err, deps } = cliDeps(fx);
+    assert.strictEqual(run(['--run', fx.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', ceremony], deps), 2, ceremony);
+    assert.match(err.join(''), /skipped ceremony judgment/, ceremony);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'config.yml')), `${ceremony}: nothing written`);
+  }
+  const ok = fixture({ decisions: CLAIM });
+  const { err, deps } = cliDeps(ok);
+  assert.strictEqual(run(['--run', ok.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', '4027=standard,8=standard:skipped'], deps), 0, err.join(''));
 });
 
 test('CLI: --ceremony :judged marks a judged record; several records parse', () => {
