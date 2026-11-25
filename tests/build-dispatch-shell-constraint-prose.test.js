@@ -28,6 +28,7 @@ test('dispatch.md: carries a shell-constraint instruction paragraph', () => {
   assert.ok(START >= 0, 'dispatch.md must carry a bold-lead "shell constraint" instruction (#4243).');
   assert.ok(BOUNDED, 'no bold lead follows the shell-constraint instruction; cannot bound its paragraph (#4243).');
   assert.match(PARA, /in the same invocation instruction, also direct `\/superpowers:subagent-driven-development`/i);
+  assert.ok(PARA.includes('no heredocs, `for`/`while` loops or `cd … &&` chains'), 'must name the refused shapes it carries into each dispatch (#4243).');
 });
 
 test('dispatch.md: the shell-constraint instruction names every dispatch SDD composes', () => {
