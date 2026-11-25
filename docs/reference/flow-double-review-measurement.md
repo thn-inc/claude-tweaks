@@ -48,7 +48,7 @@ never on `/review`'s, so it cannot steer the overlap. Three runs were skipped on
 | Run | Why it did not qualify |
 |---|---|
 | `2026-11-25T091622-record-5463` (`spec-5463`) | `ceremony-profile: fast-lane` |
-| `2026-11-25T090555-record-6102` | no `timing.json` (the run had not reached wrap-up when measured) |
+| `2026-11-25T090555-record-6102` | no `timing.json` when selection ran (about 11:06 local time on 2026-11-25). Its `timing.json` appeared at 11:13. Its SDD review has no Important/Critical finding, so including it could move only the cost share. |
 | `2026-11-25T075109-record-4747` | `ceremony-profile: fast-lane` |
 
 | # | Run directory | Record | Plan tasks | Reviewed commit (SDD) | Package base |
@@ -61,8 +61,9 @@ never on `/review`'s, so it cannot steer the overlap. Three runs were skipped on
 | 6 | `archive/2026-11-25T073550-record-5668` | #5668 | 3 | `d56be5bbf2c6e01d65b7a311cf709f4d3a08cc44` | `3ecfb9509c852c68a95fd5e782dae2bfc0cbd624` |
 | 7 | `archive/2026-11-24T144947-record-6152` | #6152 | 5 | `fdd52ed2a5730a3adfcc464f36165560d295d989` | `c6f7915151a818b6e2da31342c1af57fd6f99988` |
 
-Each run is a dispatched two-call run: a `build,test` Task call, then a `review,polish,wrap-up` Task
-call. The plan-review and per-task-tier records had both merged before every run, so their effect is
+Each run is a dispatched run: a `build,test` Task call, then the test and `review,polish,wrap-up`
+calls, plus continuation calls in some runs. The cost numbers count only the `build,test` call's
+children. The plan-review and per-task-tier records had both merged before every run, so their effect is
 already in these numbers. The plan review in particular should already have removed some spec-level
 findings from SDD's final review.
 
@@ -109,6 +110,16 @@ SDD's reviewed commit:
 - **Not run.** Steps 3.5 (debate) and 3.6 (gap sweep) were not run. The record compares the findings
   `/review`'s lenses produce, so these numbers are a lens-only reading. A gap sweep can add findings
   that no lens reported, so the full `/review` could find somewhat more than measured here.
+- **Re-run degradations.** The evidence files record where a re-run fell short of a full lens pass.
+  All of these push the measured overlap down. In run 7 (#6152), five of the six lenses that
+  returned "No findings." were shallow reads: the re-run itself flags 3b, 3d, 3e and 3g as
+  low-coverage. 3e and 3g are the lenses most likely to catch a contract-doc gap like SDD's #6152
+  finding. In run 5 (#5075), one lens 3f finding was lost: the agent's reply was truncated, and a
+  re-prompt did not recover it. In runs 1 (#5148) and 2 (#6222), Step 3.5's debate was in scope at
+  the derived tier but was not run. Under the defect-only reading, one more overlap would make
+  2/4, which is "at least half". The severity-mapped reading, which is the rule's, would still be
+  0/4: `/review` reported no `high` or `critical` finding in any run. So these gaps weaken how
+  strongly the overlap result can be stated. They do not change the outcome.
 - **Independence.** The re-run agents never saw SDD's review, any PR comment, or any decisions log.
   One agent per run orchestrated the lens fan-out under the installed `step3-lens-dispatch.md`. Its
   report is the source of each `/review` finding below.
@@ -150,8 +161,9 @@ These are the final-stage dispatches each run counted, in its own descriptions:
 | 6 | `Final whole-branch review`, `Fix wave for final review findings`, `Re-review final fix wave` |
 | 7 | `Final whole-branch review #6152`, `Fix wave for final review findings`, `Re-review final-review fix wave` |
 
-Runs 2 and 6 show the cost does not depend on findings. Run 2's final review found no Important
-finding, only five Minor ones, yet its fix wave and re-review took 316 of the 483 agent-seconds.
+SDD's final stage is not driven by Important findings. Runs 2 and 6 had no SDD Important or
+Critical finding, yet both paid for a fix wave and a re-review. In run 2 those took 316 of the 483
+final-stage agent-seconds, fixing five Minor findings. In run 6 they took 233 of 481, fixing six.
 
 ### Findings
 
@@ -206,11 +218,14 @@ The rule from #3381, applied to the pooled numbers:
 - Outcome 1 needs a cost share over 15% **and** an overlap of at least half. The cost condition is
   met; the overlap condition is not.
 - Outcome 2 needs an overlap of at least half. That is not met.
-- **Outcome 3 applies: keep both reviews unchanged.** The data is not the limit here; it is
-  sufficient. SDD's final stage costs about a fifth of the build's dispatched agent time, but
-  `/review` independently found none of SDD's four Important findings at a matching severity, and
-  only one at any severity. Removing SDD's final review under `/flow` would have shipped three of
-  those four defects past `/review`. The share in output and total tokens is about a quarter (25.1%
+- **Outcome 3 applies: keep both reviews unchanged.** The data is sufficient by the rule's
+  floor: the pooled SDD count is exactly 4, the minimum the rule accepts, because selection stops
+  there by design. SDD's final stage costs about a fifth of the build's dispatched agent time, but
+  `/review`'s lenses, run independently, found none of SDD's four Important findings at a matching
+  severity, and only one at any severity, subject to the re-run degradations under Measurement
+  basis. In this measurement, `/review`'s lenses missed three of the four defects at any severity
+  and all four at a matching severity. Production `/review` passes were weaker still (see
+  Observations). The share in output and total tokens is about a quarter (25.1%
   and 25.4%). That makes the cost condition stronger, not the overlap, and does not change the
   outcome.
 
