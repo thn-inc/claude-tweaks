@@ -5,6 +5,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { parseProposal, classifyLandingClass, planBundles, composeBundle } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'bundle'));
+const { extractSection } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'markdown-blocks'));
 const { specShapedBody, recordPayload, extractFingerprint, extractFingerprints, parseRiskFlags } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
 // A staged proposal text shaped like wrap-up/leftover-routing.md writes it.
@@ -265,8 +266,21 @@ test('a member AC with a ### subsection keeps the whole section', () => {
     return { ...p, body: p.body.replace(`${title} is fixed.`, `${title} is fixed.\n\n### Part two\n\n${title} second part.`) };
   };
   const out = bundleOf([mk('a.md', 'A'), mk('b.md', 'B')]);
-  assert.match(out.text, /^### Part two\n\nA second part\.$/m);
-  assert.match(out.text, /B second part\./);
+  // Read only the bundle's own section: the member body is also embedded verbatim in Current State.
+  const ac = extractSection(out.text, 'Acceptance Criteria', { stopPattern: '1,2' });
+  assert.match(ac, /^### Part two\n\nA second part\.$/m);
+  assert.match(ac, /B second part\./);
+});
+
+test('a member Open Question with a ### subsection keeps the whole section', () => {
+  const mk = (name, title) => {
+    const p = prop(name, { title, files: ['src/s.js'], labels: ['needs:definition'], needs: true });
+    return { ...p, body: p.body.replace(`Should ${title} change?`, `Should ${title} change?\n\n### Detail\n\n${title} detail text.`) };
+  };
+  const out = bundleOf([mk('a.md', 'A'), mk('b.md', 'B')]);
+  const oq = extractSection(out.text, 'Open Question', { stopPattern: '1,2' });
+  assert.match(oq, /^### Detail\n\nA detail text\.$/m);
+  assert.match(oq, /B detail text\./);
 });
 
 test('chunking regroups: no bundle holds members that share no path (11 distinct files + one citing all)', () => {
