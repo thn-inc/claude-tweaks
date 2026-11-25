@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-25T07:24:25.824Z",
+  "computedAt": "2026-11-25T07:27:32.737Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -29,6 +29,11 @@
         "state": "OPEN"
       },
       {
+        "number": 6102,
+        "updatedAt": "2026-11-25T07:25:55Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5929,
         "updatedAt": "2026-11-25T07:23:49Z",
         "state": "OPEN"
@@ -45,12 +50,17 @@
       },
       {
         "number": 5670,
-        "updatedAt": "2026-11-25T07:22:56Z",
+        "updatedAt": "2026-11-25T07:26:35Z",
         "state": "OPEN"
       },
       {
         "number": 5668,
         "updatedAt": "2026-11-25T07:23:03Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5643,
+        "updatedAt": "2026-11-25T07:26:07Z",
         "state": "OPEN"
       },
       {
@@ -70,7 +80,7 @@
       },
       {
         "number": 5437,
-        "updatedAt": "2026-11-25T07:23:11Z",
+        "updatedAt": "2026-11-25T07:27:00Z",
         "state": "OPEN"
       },
       {
@@ -89,13 +99,18 @@
         "state": "OPEN"
       },
       {
+        "number": 5368,
+        "updatedAt": "2026-11-25T07:26:01Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5335,
         "updatedAt": "2026-11-25T07:19:33Z",
         "state": "OPEN"
       },
       {
         "number": 5262,
-        "updatedAt": "2026-11-25T07:23:34Z",
+        "updatedAt": "2026-11-25T07:26:36Z",
         "state": "OPEN"
       },
       {
@@ -111,6 +126,11 @@
       {
         "number": 5148,
         "updatedAt": "2026-11-25T07:19:29Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5075,
+        "updatedAt": "2026-11-25T07:25:48Z",
         "state": "OPEN"
       },
       {
@@ -600,7 +620,7 @@
       },
       {
         "number": 4243,
-        "updatedAt": "2026-11-25T07:19:31Z",
+        "updatedAt": "2026-11-25T07:26:41Z",
         "state": "OPEN"
       },
       {
@@ -640,7 +660,7 @@
       },
       {
         "number": 4128,
-        "updatedAt": "2026-10-30T13:46:37Z",
+        "updatedAt": "2026-11-25T07:26:36Z",
         "state": "OPEN"
       },
       {
@@ -675,7 +695,7 @@
       },
       {
         "number": 3902,
-        "updatedAt": "2026-11-24T10:53:50Z",
+        "updatedAt": "2026-11-25T07:26:30Z",
         "state": "OPEN"
       },
       {
@@ -724,13 +744,13 @@
         "state": "CLOSED"
       },
       {
-        "number": 6269,
-        "updatedAt": "2026-11-25T07:21:22Z",
+        "number": 6268,
+        "updatedAt": "2026-11-25T07:21:21Z",
         "state": "OPEN"
       },
       {
-        "number": 6268,
-        "updatedAt": "2026-11-25T07:21:21Z",
+        "number": 6269,
+        "updatedAt": "2026-11-25T07:21:22Z",
         "state": "OPEN"
       },
       {
@@ -830,7 +850,7 @@
       },
       {
         "number": 5046,
-        "updatedAt": "2026-11-24T21:52:40Z",
+        "updatedAt": "2026-11-25T07:25:37Z",
         "state": "OPEN"
       },
       {
@@ -903,6 +923,90 @@
           "risk": "medium",
           "size": "low",
           "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #5075, #5093, #5210, #5929\nRisk-flags: none\n\n## Current State\n\nA scoped `verify.js --scope … --integration-branch {ref}` run with no usable stamp anchor anchors on the integration-branch merge-base only when the declaration has an `impact` block. `selectScope` (`plugin/bin/lib/verify/scope.js:53`) reads `if (base === null && decl && decl.impact) base = fallbackBase || null;`, and every other declaration falls to the `base === null` branch and returns `{ mode: 'full', suites: '*' }` with `matched: []`. `plugin/bin/verify.js:763` already computes `fallbackBase` (the merge-base that `resolveBase` returned) for any declaration whenever `--integration-branch` is passed with no anchor and no `--base`. The gate is only in `selectScope`. `tests/bin-lib/verify/scope.test.js`'s `no impact block is unchanged: no impact key, fallbackBase ignored` pins today's behavior for a non-impact declaration (`EXAMPLE`, `stamp: null`, `fallbackBase: MB` gives `mode: 'full'`, `base: null`).\n\nThe first verification in a fresh worktree (build Common Step 5) never has a stamp, so a consumer project whose declaration has no `impact` block runs every suite there, even when the branch's whole diff since the merge-base maps to `suites: []`. The filed occurrence (claude-tweaks 6.176.0, a wholly operational record) ran about 4.5 minutes of suites plus a slot wait for a diff of `work/{n}-spec.md` and `docs/plans/*-ledger.md`. `report.json` showed `scope.mode: \"full\"`, `matched: []`. A second occurrence (comment on this record) ran the full suite three times, and a known flaky test failed the gate each time on a branch with no code.\n\nThis repo's own declaration has `impact`, so it already anchors on the merge-base (#4024). The gap is in every consumer declaration without it.\n\n## Deliverables\n\n- [ ] `selectScope` anchors on `fallbackBase` for every declaration (with or without `impact`) when there is no stamp anchor: drop the `decl.impact` condition from the fallback line. Mode selection over the branch's own diff then runs unchanged: `none` / `static-only` / `scoped`, and `full` when a path is unmatched or a rule selects every suite.\n- [ ] Unchanged: no declaration (`decl` null) stays full; an explicit `--base` never anchors (`verify.js` already passes `fallbackBase: null` then); no `--integration-branch` and no stamp stays full; an `impact` declaration's `no-anchor` fallback reason is unchanged.\n- [ ] Update `scope.js`'s header comment and the comment at `verify.js:748-751` so they no longer say the fallback anchors only an impact declaration.\n- [ ] `plugin/skills/test/verification.md`'s Re-verify scoping: state that a scoped run with no stamp anchor diffs against the `--integration-branch` merge-base for any declaration, and correct the Build Common Step 5 row accordingly. `plugin/skills/test/impact-selection.md`'s `no-anchor` row stays as is (it describes the impact suite's fallback reason).\n- [ ] `tests/bin-lib/verify/cli-scope-integration.test.js`'s #3511 `--scope + --baseline` cases rely on the no-stamp full fallback (`scopedBaselineRepo` with `--integration-branch`; the AC1.1 case asserts `report.scope.mode === 'full'` and both suites). Change that fixture so its diff selects both suites by its own rules (for example `src/**` maps to `['unit', 'other']`), so those cases keep testing baseline adjudication and later-suite continuation instead of the fallback. Correct the AC1.1 comment, and update every other test the full suite shows relying on the old fallback in the same way.\n- [ ] `docs/journeys/run-a-deterministic-verification-check.md` (line 90, \"The first run has no prior stamp, so it is `full`\"): state that a first run given `--integration-branch` diffs against the merge-base, and one without it is `full`.\n- [ ] Tests: replace the `fallbackBase ignored` assertion in `tests/bin-lib/verify/scope.test.js` with the cases in the Acceptance Criteria, and add one CLI case (no stamp, a declaration without `impact`, a bookkeeping-only branch diff, `--integration-branch`) to `cli-scope-integration.test.js`.\n\n## Acceptance Criteria\n\n1. `selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB })`, where `docs/**` maps to `suites: []` with no static check, returns `mode: 'none'` and `base: MB`.\n2. With a declaration without `impact`, no stamp and `fallbackBase: MB`, a changed path that maps to one suite returns `mode: 'scoped'`, that suite alone, `base: MB`. An unmatched path returns `mode: 'full'`, `suites: '*'`.\n3. `selectScope` with `decl: null` and `fallbackBase` set still returns `mode: 'full'`. With `stamp: null` and `fallbackBase: null` it still returns `mode: 'full'` for any declaration.\n4. CLI: in a temp repo with a declaration without `impact`, no stamp, and a branch whose only change since the merge-base maps to `suites: []`, `verify.js --scope {decl} --integration-branch {ref}` spawns no suite command, prints `still-verified: bookkeeping-only delta (…)`, writes a passing stamp whose `fullSha` is the merge-base, and a following `--stamp-status` reports `verifiedHead: true`.\n5. The #3511 cases in `cli-scope-integration.test.js` still assert baseline adjudication over both suites (`report.scope.suites` holds `unit` and `other`), with a fixture whose own rules select both. Every other existing test passes, apart from the assertions the Deliverables name.\n\n## Release Note\n\nOn a project whose verify-scope declaration has no impact map, the first scoped verification in a new worktree now checks only what the branch changed since the integration branch, so a branch of non-code files runs no test suite.\n\n## Technical Approach\n\nOne condition in `selectScope` changes. The anchoring invariant is kept: every non-full mode's `base` is either the stamp's `fullSha` or the merge-base, and the stamp `verify.js` writes for a non-full pass already records `fullSha: sel.base`, so the next scoped run anchors on that merge-base stamp and later deltas chain as they do for impact declarations. Merge-narrowing (#3072) applies once that stamp exists, as it does today.\n\nThe trust assumption is the one #4024 already made for impact declarations: the integration branch at the merge-base is covered by its own CI, so a branch's first scoped run needs only the suites its own diff selects.\n\n### Key Files\n\n- `plugin/bin/lib/verify/scope.js` — drop the `decl.impact` gate on the `fallbackBase` anchor; header comment\n- `plugin/bin/verify.js` — comment at the `fallbackBase` computation (no logic change)\n- `plugin/skills/test/verification.md` — Re-verify scoping: merge-base anchor for any declaration; Build Common Step 5 row\n- `tests/bin-lib/verify/scope.test.js` — replace the `fallbackBase ignored` case; AC 1-3\n- `tests/bin-lib/verify/cli-scope-integration.test.js` — #3511 fixture selects both suites by rule; AC 4's no-stamp, non-impact, bookkeeping-only CLI case\n- `docs/journeys/run-a-deterministic-verification-check.md` — first-run anchor sentence\n- `tests/bin-lib/verify/impact-cli.test.js` — read for the existing merge-base-anchor CLI pattern (no change expected)\n\n## Gotchas\n\n- **Decided (2026-11-25, autonomous lane): fix in the scope rule, not by a flag from build.** The record's alternative (build's Spec Step 2.5 passes a \"wholly operational\" fact to Common Step 5) was rejected: it would only cover operational records, and it rests on a prose judgment, whereas the merge-base classification is mechanical and also fixes every first verification of a code branch in a non-impact project.\n- **Decided: explicit `--base` still never anchors.** `verify.js`'s H4 check and the `fallbackBase` computation already keep it that way. Do not widen this change to `--base`.\n- **Decided: the comment's items 2 and 3 are out of scope.** Item 1 (CI cannot answer when the delta skips every suite) goes away with this fix, because a `none` selection consults no CI. Item 2 (`/flow` still runs `test`/`review`/`polish` after a wholly operational build): the review part is #5929, and the `test` part becomes a no-op `none` run with this fix. Item 3 (handoff loses an owner's acceptance of a failing gate) and item 2's remaining `polish` skip went through the deferral gate (`genuinely-larger`, verdict `digest`) and are recorded in the materiality digest.\n- Lane ct-verify-ci is editing `verify.js`'s CI-source code at the same time. This record's `verify.js` change is a comment only, and the logic change is in `scope.js`, so a catch-up merge should not conflict on logic.\n- `verify.js` is in this record's own impact path: verify the change with the scoped runner as usual, and expect CI to run the impact subset.\n\n## Original request\n\nverify.js: a wholly operational record still runs every suite at build's final verification\n\n## A wholly operational record still pays for a full local suite run at build's final verification\n\n**Kind:** gap\n\n**What happened.** `/claude-tweaks:build` Spec Step 2.5 (`build/manual-steps.md`) routes a record whose Deliverables are all operational (no source change) straight to Common Step 5. There, the scoped `verify.js --scope … --integration-branch master` call had no pass stamp to anchor on (first verification in a fresh worktree), so it forced `mode: full` and ran every suite locally (about 4.5 minutes of suites, plus a wait for a suite slot held by another checkout's run). That happened although the branch's whole diff against the integration branch was two files (the materialized `work/{n}-spec.md` and the run's `docs/plans/*-ledger.md`), both of which the project's `verify-scope.json` rules map to `suites: []`. `report.json` showed `scope.mode: \"full\"`, `matched: []`, `changedFiles` = those two paths, `base` = the merge-base. The PR was a draft, so CI could not answer either (`ci-job-not-found`).\n\n**Why it matters.** The verification proves nothing about the record's work: the tree under test is the integration branch's own tip plus two non-code files, which that branch's CI already covered. On a machine where suites queue behind sibling sessions, it is the longest step of an otherwise minutes-long operational run.\n\n**Suggested direction.** When there is no stamp anchor but `--integration-branch` resolves a merge-base, classify the branch's own diff against that merge-base with the declaration's rules; if every changed path maps to no suite and no static check, select `none` (or `static-only`) and stamp, the same outcome a bookkeeping-only delta gets from a stamp anchor. Alternatively, let a wholly operational record (as Spec Step 2.5 already detects) pass that fact to Common Step 5.\n\n**Version:** claude-tweaks 6.176.0.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-d56f1873 -->\n\n",
+        "createdAt": "2026-11-23T04:56:38Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6102,
+        "state": "OPEN",
+        "title": "verify.js: a wholly operational record still runs every suite at build's final verification",
+        "updatedAt": "2026-11-25T07:25:55Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -1088,78 +1192,6 @@
     ],
     [
       {
-        "body": "Verified-as-of: 325e2a6693c7d226283c6793b90372262f55a902\n\nOrigin: reflect full from #5542\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/wrap-up-pack.js` writes the wrap-up fact pack to `{run-dir}/wrap-up-pack.json` and, on its default path (no `--print`), also prints the whole pack to stdout (line 107, `stdout(text)`). `plugin/skills/wrap-up/SKILL.md` (\"Fact pack first\") has the session run it once and has every later sub-step read its own field from the file, so nothing reads the printed copy, yet all of it enters the session's context.\n\nIn run `2026-11-15T231049-spec-5535-5542` the two per-record calls printed 696 and 690 lines (the line counts of the two `wrap-up-pack.json` files), in a run that crossed the context cap three times.\n\n`tests/bin-lib/wrap-up/pack-cli.test.js` pins the current shape: its `#1930 AC2` test is named \"the pack on stdout\" and parses stdout as the pack.\n\nIntegration-branch probe, 2026-11-16: `git grep -n -F -e 'stdout(text)' origin/main -- plugin/bin/wrap-up-pack.js` matched line 107, and `git log -S 'stdout(text)' --oneline origin/main -- plugin/bin/wrap-up-pack.js` lists only `bd22f310aa`, the commit that added the CLI. The behavior is unchanged on the integration branch.\n\n`plugin/bin/flow-preflight.js:79` and `plugin/bin/release-preflight.js:117` print their packs the same way. Their callers were not checked, and they are outside this record.\n\n## Deliverables\n\n- [ ] `wrap-up-pack.js` with no `--print` prints one JSON line naming the file it wrote and each gathered probe's `ok` flag, in place of the whole pack. The file's content is unchanged.\n- [ ] `--print <probe>` keeps printing that probe's value, as today.\n- [ ] Every caller that names `wrap-up-pack.js` in `plugin/skills` and `plugin/bin` is read and confirmed to take its facts from the file or from `--print`; one that parses the default stdout is moved to the file in the same change.\n- [ ] `plugin/skills/wrap-up/SKILL.md`'s \"Fact pack first\" paragraph says what the printed line holds.\n- [ ] `tests/bin-lib/wrap-up/pack-cli.test.js` pins the one-line shape, reading the pack from the written file where it reads it from stdout today.\n\n## Acceptance Criteria\n\n- [ ] In a run directory with all eight probes gathered, `node plugin/bin/wrap-up-pack.js --run <run-dir>` prints exactly one line, and that line parses as JSON holding the written file's path and one `ok` flag per probe.\n- [ ] The `wrap-up-pack.json` it writes holds the same eight probe keys as before the change.\n- [ ] `node plugin/bin/wrap-up-pack.js --run <run-dir> --print state` prints the same value as before the change.\n- [ ] `node --test tests/bin-lib/wrap-up/pack-cli.test.js tests/wrap-up-pack-conformance.test.js` passes, and the changed stdout test fails when line 107's whole-pack print is restored.\n\n## Release Note\n\nStop the wrap-up fact pack from printing its whole content into the session; it now prints one summary line and keeps the facts in its file.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/wrap-up-pack.js` — print one summary line on the default path\n- `tests/bin-lib/wrap-up/pack-cli.test.js` — pin the one-line stdout shape\n- `plugin/skills/wrap-up/SKILL.md` — say what the printed line holds\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-16T06:46:54Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5670,
-        "state": "OPEN",
-        "title": "Have wrap-up-pack.js print one summary line instead of the whole fact pack",
-        "updatedAt": "2026-11-25T07:22:56Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Defer-reason: genuinely-larger\n\n## Current State\n\n#4359 registered two child-facing phases in `plugin/bin/lib/compose-context/phases.js`: `review-lens-child` (bundle `lens-child`, composing `skills/_shared/subagent-output-contract.md` and `skills/_shared/criteria-architecture-depth.md`) and `sdd-child` (bundle `sdd-child`, composing `skills/_shared/subagent-dispatch-core.md`). Both compose whole files, because `compose-context.js` has only whole-file sources and `<!-- when: -->` condition fences (refs #4359, whole-branch review lens 3e).\n\n- A lens prompt cites only the Scratch rule of the output contract (`plugin/skills/review/step3-lens-dispatch.md`), and only lens 3e cites the depth criteria. A non-3e lens child that reads the bundle once, whole, takes about 38 KB where one rule is needed.\n- An SDD child's prompt (`plugin/skills/build/dispatch.md`) names three rules (no-stash, no-name-kill, discrimination checks) and reads the whole 38 KB dispatch core.\n- #4359's AC1 counts reads per run, so the bundle meets it. The cost the bundle still carries is bytes per child read, which is the context-overhead goal #4027 and #4359 share.\n- #4359 deliberately added no `<!-- when: -->` fences (its PR body, decision-rule choices): a fence added an all-`unresolved` composed row over the rail before Step 6.7's body moved out.\n\n## Deliverables\n\n1. Decide how a child bundle selects the sections its prompt cites: fence the source files with `when:` markers keyed to the dispatching phase, give `compose-context.js` a named-section source, or split the cited rules into small `_shared` files the registry composes whole.\n2. Apply it so the `lens-child` bundle carries the Scratch rule and the shared rules every lens prompt cites, and lens 3e's depth criteria reach only a 3e child (its own bundle or a second on-demand read).\n3. Apply it so the `sdd-child` bundle carries the rules its prompt cites.\n4. Keep `composedRailViolations(\"plugin\")` printing `[]` and the prose `--phase` lines in place.\n\n## Acceptance Criteria\n\n- The composed `lens-child` bundle for a non-3e lens is under 12 KB, and no cited rule is missing from it (a citation test names each rule the prompt cites).\n- The composed `sdd-child` bundle is under 15 KB with the three rules the prompt names.\n- `composedRailViolations(\"plugin\")` prints `[]` and the existing conformance suites pass with no added skips.\n\n### Key Files\n\n- `plugin/bin/lib/compose-context/phases.js` — modify (the two child phases)\n- `plugin/bin/lib/compose-context/compose.js` — modify only if named-section sources are chosen\n- `plugin/skills/review/step3-lens-dispatch.md` — modify (the lens-child citation)\n- `plugin/skills/build/dispatch.md` — modify (the sdd-child citation)\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/subagent-dispatch-core.md` — modify (fences or a split)\n\n_Filed by `review` via specShapedBody._\n\n## Release Note\n\nSlice the review lens and subagent composed bundles down to the sections their prompts cite, so each child loads less.\n",
         "createdAt": "2026-11-16T06:45:05Z",
         "labels": [
@@ -1209,6 +1241,90 @@
           "risk": "low",
           "size": "medium",
           "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #4990\nRisk-flags: none\n\n## Current State\n\n`plugin/bin/qa-stamp.js --check` decides whether a pipeline's selected QA stories can skip, using `decideQaSkip` (`plugin/bin/lib/verify/qa-stamp.js:57`). Any difference between the stamp's sha and HEAD returns `{ skip: false, reason: 'sha-mismatch' }` (line 62), whatever the commits between them changed. `/claude-tweaks:test`'s pipeline story selection (`plugin/skills/test/SKILL.md`, the QA pass stamp paragraph) runs the selection again on any `skip: false`.\n\nThe runner stamp has the exemption the QA stamp lacks. A scoped `verify.js` run whose delta maps only to rules with `suites: []` and no static check selects `mode: 'none'` (`plugin/bin/lib/verify/scope.js`'s `selectScope`), prints `still-verified: bookkeeping-only delta (…)`, and re-stamps HEAD. So after one ledger-only commit the two stamps disagree about the same commit.\n\nObserved (claude-tweaks 6.170.0, filed via `/claude-tweaks:feedback`): a `/flow` test step ran QA, wrote the QA pass stamp, then committed its own QA caveats to the open-items ledger (four lines; the ledger path maps to no suite in `verify-scope.json`). On a context-cap resume, `verify.js` re-stamped HEAD as still verified, but `qa-stamp.js --check` reported `sha-mismatch`. Followed as written, the rule would re-run every selected story against two QA servers. The agent skipped the re-run by judgment and logged the deviation. The same happens without a resume whenever a later call consults the QA stamp after any bookkeeping commit (a dispatched group's second call, the auto-inserted second-call `test`).\n\n## Deliverables\n\n- [ ] `qa-stamp.js --check` accepts an optional `--scope <declaration path>`. When it is given, and the stamp's sha differs from HEAD, the check classifies `stamp.sha..HEAD`:\n  - it is a usable anchor (an ancestor of HEAD, per `usableAnchor` in `plugin/bin/lib/verify/changed-files.js`)\n  - the tree is clean (the CLI's existing dirty check)\n  - the declaration reads clean (`readDeclaration`)\n  - `selectScope({ decl, files, stamp: { fullSha: stamp.sha } })` over `changedFiles({ base: stamp.sha })` returns `mode: 'none'`\n\n  When every condition holds, the sha comparison is satisfied and the remaining checks run unchanged (stories-dir match, every selected story covered and its hash unchanged). An all-pass result is `{ skip: true, reason: 'covered-bookkeeping-delta' }`. Any condition failing (not an ancestor, unreadable or missing declaration, `mode` other than `none`) keeps today's `sha-mismatch`.\n- [ ] `--check` stays read-only: the bookkeeping path never rewrites the QA stamp. A later check classifies the larger `stamp.sha..HEAD` delta again, so the stamp needs no advance.\n- [ ] `decideQaSkip` takes the classification result as an input (for example `bookkeepingDelta: true`), so the rule stays pure and unit-testable. The git and declaration reads stay in the CLI.\n- [ ] `plugin/skills/test/SKILL.md`'s QA pass stamp paragraph: pass `--scope .claude-tweaks/verify-scope.json` when the project has a declaration (the same declaration the scoped verify calls pass). On `skip: true` with reason `covered-bookkeeping-delta`, report `QA: skipped — stories already passed at {short-sha}; only bookkeeping commits since`, and log `AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha}, bookkeeping-only delta since (QA pass stamp). Reversibility: high.`\n- [ ] `plugin/skills/test/qa-reporting.md`'s QA pass stamp paragraph names the bookkeeping-delta skip in one sentence.\n- [ ] Tests: `tests/bin-lib/verify/qa-stamp.test.js` covers the pure rule, and `tests/bin-lib/verify/qa-stamp-cli.test.js` covers the CLI cases in the Acceptance Criteria.\n\n## Acceptance Criteria\n\n1. With a QA stamp at S, a clean HEAD one commit past S whose only change is `docs/plans/x-ledger.md` (mapped to `suites: []`, static false), and `--scope` naming that declaration, `--check` prints `skip: true`, `reason: \"covered-bookkeeping-delta\"`, `sha` S. The stamp file is byte-identical afterwards.\n2. Same setup with a delta that also changes a path mapped to a suite: `skip: false`, `reason: \"sha-mismatch\"`.\n3. Same as AC 1 without `--scope`: `skip: false`, `reason: \"sha-mismatch\"` (today's behavior).\n4. Same as AC 1 with a selected story file changed since the stamp: `skip: false`, `reason: \"story-changed: {id}\"`.\n5. A stamp sha that is not an ancestor of HEAD (rewritten history), or a `--scope` path that does not exist or fails to parse: `skip: false`, `reason: \"sha-mismatch\"`, and `--check` still exits 0 (status is data).\n6. A dirty tree with a bookkeeping-only delta: `skip: false`, `reason: \"dirty-tree\"`, as today.\n\n## Release Note\n\nA pipeline's QA step no longer re-runs browser stories after a commit that only touched bookkeeping files such as the run ledger: the QA pass stamp now treats that commit the way the test runner's stamp already does.\n\n## Technical Approach\n\nThe classification reuses `verify.js`'s own rule rather than a QA-specific path list. A commit is QA-bookkeeping exactly when it is runner-bookkeeping, so the two stamps can no longer disagree about the same commit. The anchor passed to `selectScope` is a synthetic stamp `{ fullSha: stamp.sha }`, which makes `anchorOf` return the QA stamp's sha. No impact context is passed: a bookkeeping delta never reaches an impact rule, and any delta that does is not `none` anyway.\n\n`qa-stamp.js`'s `parseArgs` gains `--scope <path>` (valid with `--check` only; with `--write` it is a usage error, exit 2). A relative path resolves against the repo root (`git rev-parse --show-toplevel`), matching how `verify.js` resolves `--scope`.\n\n### Key Files\n\n- `plugin/bin/qa-stamp.js` — `--scope` flag; delta classification before `decideQaSkip`\n- `plugin/bin/lib/verify/qa-stamp.js` — `decideQaSkip` accepts the bookkeeping-delta input; new reason `covered-bookkeeping-delta`\n- `plugin/bin/lib/verify/scope.js` — read only: `selectScope` reused\n- `plugin/bin/lib/verify/changed-files.js` — read only: `usableAnchor`, `changedFiles` reused\n- `plugin/skills/test/SKILL.md` — QA pass stamp paragraph: pass `--scope`; report and log line for the new reason\n- `plugin/skills/test/qa-reporting.md` — QA pass stamp paragraph\n- `tests/bin-lib/verify/qa-stamp.test.js` — pure-rule cases\n- `tests/bin-lib/verify/qa-stamp-cli.test.js` — AC 1-6\n\n## Gotchas\n\n- **Decided (2026-11-25, autonomous lane): the check classifies the delta (the record's first option), not a re-ordered stamp write.** Writing the QA stamp after the test step's own ledger commit fixes one ordering only. Any other bookkeeping commit before a later check (a resume, a dispatched group's second call, the auto-inserted second-call `test`) would still mismatch. A hard-coded QA bookkeeping path list was also rejected: it would duplicate the project-owned declaration and drift from it.\n- **Decided: `--check` never re-stamps.** `verify.js` re-stamps on a bookkeeping delta, but `qa-stamp.js`'s header contract is that `--check` only reports. The classification is repeatable over a growing delta, so nothing needs advancing.\n- **Decided: the exemption trusts the declaration.** A path a project maps to `suites: []` with no static check is one it says affects nothing tested. A project whose rendered content lives under such a path (a docs site, for example) must map it to a suite or a static check to keep QA re-running on it. Say so in the `qa-reporting.md` sentence.\n- The `AUTO` log line is `AUTO`, not `STAGED`: it records an applied skip and writes no `staged/` artifact.\n\n## Original request\n\ntest: the QA pass stamp has no bookkeeping-only exemption, so a ledger commit forces a QA re-run on unchanged code\n\n**Summary:** After a commit that changes only the open-items ledger, the QA pass stamp check reports `sha-mismatch` and the test step's rule re-runs browser QA, although the code under test is byte-identical to what the stamp covers.\n\n**Kind:** Gap\n\n**Affected component:** /claude-tweaks:test (the QA pass stamp check, `qa-stamp.js --check`)\n\n**Use case:** In a `/claude-tweaks:flow` run, the test step ran QA for the stories its diff selected and wrote the QA pass stamp. It then appended its own QA caveats to the open-items ledger and committed them, which moved HEAD by one bookkeeping-only commit (the ledger path maps to no suite in the project's `verify-scope.json`). The run crossed its context cap and the test step was resumed in a fresh agent. On resume, `verify.js` classified the delta as bookkeeping-only and re-stamped HEAD as still verified, but `qa-stamp.js --check` reported `sha-mismatch` against the same delta, and the test step's rule for that result is to run QA again. The agent skipped the re-run by judgment and logged the deviation. Followed as written, the rule would have re-run every selected story against two QA servers for a commit that touched four ledger lines. The runner stamp already has this exemption (a bookkeeping-only delta prints `still-verified` and re-stamps); the QA stamp does not, so the two stamps disagree about the same commit. The same thing happens without a resume whenever a later step consults the QA stamp after the test step's own ledger commit.\n\n**Definition:** Needed — whether the QA stamp check should classify the delta against `verify-scope.json` like the runner does (and re-stamp), or the test step should write its QA stamp after its ledger commit, is a design choice.\n\n**Plugin version:** 6.170.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-c0b944da -->\n\n",
+        "createdAt": "2026-11-16T05:35:56Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5643,
+        "state": "OPEN",
+        "title": "test: the QA pass stamp has no bookkeeping-only exemption, so a ledger commit forces a QA re-run on unchanged code",
+        "updatedAt": "2026-11-25T07:26:07Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -1371,84 +1487,6 @@
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`verify.js --scope`, under a declaration with a `ci` block, takes each CI-declared suite's verdict from the PR's CI job on HEAD (`plugin/bin/lib/verify/ci-source.js`'s `fetchCiVerdict`, #4347). Every `gh` read there goes through the local `gh(args, timeout = GH_TIMEOUT_MS)` helper, which calls the injected `runner` exactly once. `GH_TIMEOUT_MS` is 5 s (`plugin/bin/lib/shared-primitives.js`), and the job-log read uses `LOG_TIMEOUT_MS` (30 s). Only `ENOENT` (→ `gh-unavailable`) and a missing commit (HTTP 404/422 → `head-not-pushed`) are classified. Every other error, a timeout included, becomes `CiFallback('gh-error: …')` at once, and the suite runs locally, or, under `localRuns: \"on-request\"`, the run exits 3 with no verdict.\n\nObserved in a consumer project (plugin 6.167.0): one `spawnSync gh ETIMEDOUT` on the first read (`repos/{owner}/{repo}/commits/{sha}/pulls`), on a machine loaded by sibling sessions, sent all three CI-declared suites to a local run (`CI: <suite> — ran locally (gh-error: spawnSync gh ETIMEDOUT)`). The local core run took about 6 minutes and failed 3 timing-sensitive tests in a file the branch never touched, while the PR's CI on the same sha was green. An identical re-run minutes later took all three suites from CI and passed. Avoiding that local run is the reason the CI source exists (`plugin/skills/test/ci-source.md`: 55+ min locally vs 3.5 min in CI).\n\n## Deliverables\n\n1. In `fetchCiVerdict`, a `gh` read that fails with a timeout is retried before it counts as a failure. A timeout is an error whose `code` is `ETIMEDOUT`, or which carries a non-null `signal` (the child was killed when its `timeout` elapsed). At most 3 attempts in total (`GH_MAX_ATTEMPTS = 3`), with backoff waits of 1 s and then 2 s (`GH_RETRY_BACKOFF_MS = [1000, 2000]`). The waits go through the existing injected `sleep`, so tests never sleep for real. The retry lives in the one `gh` helper, so it covers every read: the PR lookup, the PR detail read, each poll's runs and jobs reads, and the job-log read, including the read that drops `--allow-escape-sequences`. The helper becomes `async`, and every call site awaits it.\n2. Only timeouts are retried. `ENOENT` still throws `gh-unavailable` on the first attempt. A missing commit (HTTP 404/422) still yields `head-not-pushed` with no retry. Any other error (an HTTP 4xx or 5xx response, unparseable JSON) keeps today's immediate handling.\n3. When a read needed more than one attempt and still failed, its `gh-error` fallback reason names the attempt count: `gh-error after {k} attempts: {errText}` (e.g. `gh-error after 3 attempts: spawnSync gh ETIMEDOUT`). `{errText}` is the last attempt's error, so a timeout followed by an HTTP 500 reports `gh-error after 2 attempts: HTTP 500 …`. A read that failed on its single attempt keeps today's exact text, `gh-error: {errText}`. The PR-detail read's errors are swallowed today, and they still are, after its retries.\n4. `plugin/skills/test/ci-source.md`'s Fallback reasons table: the `gh-unavailable` / `gh-error: …` row states that a timed-out read is retried up to 3 attempts first, and that the reason then reads `gh-error after {k} attempts: …`.\n5. Unit tests in `tests/bin-lib/verify/ci-source.test.js`, using the existing fake-runner and fake-sleep seams (see Acceptance Criteria).\n\n## Acceptance Criteria\n\n- A stubbed runner that throws an `ETIMEDOUT` error once on the `commits/{sha}/pulls` read and then returns valid JSON for every read yields `used: true`. The fake `sleep` records exactly one wait, of 1000 ms, before the second attempt.\n- A runner that throws `ETIMEDOUT` on every attempt of the first read yields `used: false` with `fallback` exactly `gh-error after 3 attempts: spawnSync gh ETIMEDOUT` (the stub's error message). The runner is called 3 times for that read, and the fake `sleep` records waits of 1000 then 2000 ms.\n- A runner whose error has `signal: 'SIGTERM'` and no `code` is retried the same way.\n- A runner that throws `ENOENT` yields `fallback: 'gh-unavailable'` after exactly one runner call, with no `sleep`.\n- A runner that throws an HTTP 422 `No commit found` error yields `fallback: 'head-not-pushed'` after exactly one runner call.\n- A runner that throws a non-timeout error (stderr `HTTP 500`) on the first read yields `fallback` beginning `gh-error: ` (no attempt count) after exactly one runner call.\n- A timeout on one poll read (the runs list), followed by success, does not end the wait: the poll completes and the verdict is `used: true`.\n- The full `tests/bin-lib/verify/` suite passes.\n\n## Release Note\n\nRetry a timed-out GitHub read up to three times before a CI-sourced verification falls back to running the suite locally.\n\n## Technical Approach\n\nInside `fetchCiVerdict`, replace the synchronous `gh` closure with an async one that loops up to `GH_MAX_ATTEMPTS`: call `runner(args, { cwd, timeout })`. On `ENOENT`, throw `CiFallback('gh-unavailable')` as now. On a timeout (`isTimeout(err)`: `err.code === 'ETIMEDOUT' || (err.signal != null)`) with attempts left, `await sleep(GH_RETRY_BACKOFF_MS[attempt - 1])` and try again. Otherwise set `err.ciAttempts = attempt` and rethrow. A small `ghErrorReason(err)` builds `gh-error after {k} attempts: …` when `err.ciAttempts > 1`, else `gh-error: …`. Use it at the two sites that build a `gh-error` reason today: the pulls-read catch and the outer catch. `ghJson` becomes async (`await gh(args)`). Every `ghJson`/`gh` call site gains `await`, the escape-flag fallback in the log read included. Export `GH_MAX_ATTEMPTS` and `GH_RETRY_BACKOFF_MS` so tests assert against the constants. Backoff time counts toward `waitedMs` naturally, since `now()` is read at fallback time.\n\n### Key Files\n\n- `plugin/bin/lib/verify/ci-source.js`: async `gh` helper with timeout-only retry, `ghErrorReason`, exported retry constants\n- `tests/bin-lib/verify/ci-source.test.js`: retry, no-retry and reason-text cases\n- `plugin/skills/test/ci-source.md`: Fallback reasons row for `gh-error` names the retry\n\n## Gotchas\n\n- Decided while shaping: 3 attempts total with 1 s / 2 s backoff, retrying timeouts only. A loaded machine is the observed cause, and a short backoff costs seconds against a 6-55 minute local run. Non-timeout errors are not transient enough to justify the wait.\n- The job-log read has a 30 s timeout, so its worst case grows to about 93 s. That is still far below a local suite run. A green job whose log never arrives still stands without a log, as today.\n- `verify.js` itself does not change: it already awaits `fetchCiVerdict`. A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code, so keep this change inside `ci-source.js` to avoid overlap.\n- Use the injected `sleep` and `now` in tests. A real backoff would add 3 s per timeout case to the suite.\n- #5657 moves every `gh` spawn, `ci-source.js`'s `defaultRunner` included, onto a shared `makeGhRunner`. This record's retry sits above the runner, in `fetchCiVerdict`'s `gh` helper, so either order works, but whichever lands second takes a catch-up merge in `ci-source.js`. #5095 raises the 5 s `gh` default. That lowers how often the retry fires and does not replace it, since a loaded machine can stall any single call.\n\n**Related:** #5657, #5095, #5436, #5658, #5465, #5133, #5135, #5378, #5870\n\n## Original request\n\nverify.js CI source: one transient gh timeout drops every CI-sourced suite to a full local run\n\n`verify.js --scope` with a `ci` block takes each declared suite from the PR's CI job. In `bin/lib/verify/ci-source.js`, every `gh` read goes through `gh(args, timeout = GH_TIMEOUT_MS)` with no retry. Any error other than ENOENT or a missing commit becomes `CiFallback('gh-error: …')`. One `spawnSync gh ETIMEDOUT` on the first read (`repos/{owner}/{repo}/commits/{sha}/pulls`) therefore sends the suite to a full local run.\n\nObserved in a consumer project (plugin 6.167.0):\n- All three CI-declared suites printed `CI: <suite> — ran locally (gh-error: spawnSync gh ETIMEDOUT)`.\n- Sibling sessions had the machine loaded. The local core run took about 6 minutes and failed 3 timing-sensitive tests in a file the branch never touched.\n- The PR's CI run on the same sha was green.\n- An identical re-run minutes later took all three suites from CI and passed.\n\nThe fallback cost a long local run plus a false red result the caller had to sort out. Avoiding that cost is the reason the CI source exists (ci-source.md: 55+ min local vs 3.5 min in CI).\n\n**Proposed:** on a timeout (`ETIMEDOUT` or a signal), retry the `gh` read once or twice with a short backoff before falling back. Name the retry in the `fallback` reason, e.g. `gh-error after 3 attempts: spawnSync gh ETIMEDOUT`. Other error classes keep today's immediate fallback.\n\n**Acceptance:**\n- A stubbed runner that throws ETIMEDOUT once, then returns valid JSON, yields `used: true`.\n- A runner that times out on every attempt yields `fallback: 'gh-error …'` naming the attempt count.\n- ENOENT still yields `gh-unavailable` with no retry.\n",
-        "createdAt": "2026-11-14T15:35:16Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5437,
-        "state": "OPEN",
-        "title": "verify.js CI source: one transient gh timeout drops every CI-sourced suite to a full local run",
-        "updatedAt": "2026-11-25T07:23:11Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -1691,6 +1729,90 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #5319, #5169, #5168, #5257, #5189, #5753, #5653, #5075, #5378, #5465, #5466, #5498, #5511, #5210, #5333, #5427, #5859\nRisk-flags: none\n\n## Current State\n\n`verify.js` picks the checks' slot lane with `chooseLane` (`plugin/bin/lib/verify/slot.js:45`). The caller (`plugin/bin/verify.js:1055`) sets `fullSuiteRuns` when any local command other than `types`/`lint`, the impact subset or the tool-scoped command runs. So any declared suite running its own full command sends the whole run to the full lane, whatever that suite's size. `plugin/skills/test/suite-slots.md`'s Lanes table states the same rule (\"any local suite runs its full command: a `--cmd`, or a declared suite command\").\n\nIn this repo, `journeys` is a declared suite (`.claude-tweaks/verify-scope.json`, `checks.tests.journeys`, eleven test files) that runs in about one second. Almost every pipeline writes a `docs/journeys/` file, so almost every scoped run selects it. When the `tests` suite is answered by CI (the `ci` block, `localRuns: \"on-request\"`), `journeys` is the only local suite, and the run still queues in the full lane behind whole-suite runs from every project on the machine.\n\nMeasured (2026-11-13, each worktree's last `report.json`): three CI-answered runs waited 447, 545 and 954 s for a full-lane slot, then ran `journeys` in 0.8 to 2 s. A run with a 591-file impact subset plus `journeys` was classed `full`, not `subset`. Across 91 `verify` events from 9 to 13 November, slot waits were 16.5 of 23.6 hours of verify time. Later occurrences (record comments) show a 784 s wait for a 0.9 s run, and a dispatched subagent hitting its 60-wait bound and stopping `BLOCKED` twice.\n\n`plugin/bin/lib/verify/declaration.js` keeps the `concurrency` block strict (an unknown key there is an error for older readers), but it has no check on unknown top-level keys: its `ci` comment says \"A reader that predates the key ignores it\". A new top-level key can therefore be committed to this repo's declaration in the same change without breaking a run on an older installed build.\n\n## Deliverables\n\n- [ ] New optional top-level declaration key `subsetLaneSuites`: an array of declared suite names. `readDeclaration` validates it (an array of strings, each a declared suite, no duplicates, and never the `impact.suite`, since that suite's full command is the whole-suite run the full lane exists for), returns it on the parsed declaration (`[]` when absent), and reports each violation as a declaration error in the existing style.\n- [ ] `verify.js`'s lane computation: a declared suite listed in `subsetLaneSuites` that runs its own declared command does not count toward `fullSuiteRuns`. A `--cmd` suite always counts, even under a listed name, because its command is the caller's, not the declaration's. Nothing else about lane choice changes.\n- [ ] `plugin/skills/test/suite-slots.md`'s Lanes table: the full row excludes suites listed in `subsetLaneSuites`, and the subset row includes them, with one line saying what the key is for (a small declared suite that should not queue behind whole-suite runs). `report.json`'s `slot.lane` already reports the chosen lane, and the doc says so.\n- [ ] This repo's `.claude-tweaks/verify-scope.json` gains `\"subsetLaneSuites\": [\"journeys\"]`.\n- [ ] Tests: `tests/bin-lib/verify/declaration.test.js` covers the validation cases; `tests/bin-lib/verify/cli-slot.test.js` covers a CI-answered run plus a listed small suite (lane `subset`), an impact subset plus a listed small suite (lane `subset`), and an unlisted declared suite (lane `full`, unchanged).\n\n## Acceptance Criteria\n\n1. With `subsetLaneSuites: [\"journeys\"]`, `tests` answered by CI and `journeys` running locally, `report.json` `slot.lane` is `subset`.\n2. With `subsetLaneSuites: [\"journeys\"]`, `tests` running an impact subset and `journeys` its declared command, `slot.lane` is `subset`.\n3. With `subsetLaneSuites` absent, or the local suite not listed, a declared suite's full command still takes `slot.lane` `full`.\n4. `--cmd journeys=…` takes the full lane even when `journeys` is listed.\n5. `readDeclaration` rejects `subsetLaneSuites` that is not an array of strings, names an undeclared suite, repeats a name, or names `impact.suite`, each with its own error naming the key.\n6. A declaration without the key parses exactly as before (no new field values change for existing declarations except the `[]` default).\n\n## Release Note\n\nA declaration can list small test suites under `subsetLaneSuites`, so a verification whose only local suite is one of them no longer waits behind whole-suite runs for a full-lane slot.\n\n## Technical Approach\n\nThe key lives at the top level, not in `concurrency`, because older readers reject unknown `concurrency` keys and ignore unknown top-level ones. So committing it to this repo's declaration is safe for runs in flight on the previous release (they keep today's lane). The lane rule stays \"the commands that run decide the lane\". The key only marks which declared commands the project vouches are small.\n\nIn `verify.js`, the `fullSuiteRuns` predicate gets one more exclusion: `c` is a declared suite (its command is the declaration's own command for that name, not a `--cmd` override) and `decl.subsetLaneSuites` includes `c.name`. Pass the parsed list into the same scope as `impactSubset` and `toolScopedCommand`.\n\n### Key Files\n\n- `plugin/bin/lib/verify/declaration.js` — parse and validate `subsetLaneSuites`\n- `plugin/bin/verify.js` — exclude listed declared suites from `fullSuiteRuns`\n- `plugin/bin/lib/verify/slot.js` — `chooseLane` comment (rule unchanged)\n- `plugin/skills/test/suite-slots.md` — Lanes table and key description\n- `.claude-tweaks/verify-scope.json` — `\"subsetLaneSuites\": [\"journeys\"]`\n- `tests/bin-lib/verify/declaration.test.js` — validation cases\n- `tests/bin-lib/verify/cli-slot.test.js` — lane cases\n\n## Gotchas\n\n- **Decided (2026-11-25, autonomous lane): option 1, per-suite opt-in, as a top-level key.** The record's objection to option 1 (older readers reject unknown `concurrency` keys) does not apply at the top level, because `declaration.js` ignores unknown top-level keys. Option 2 (only the impact suite's full command takes the full lane) was rejected: it is implicit, and wrong for a project whose other declared suites are large, such as an e2e suite. Option 3 (a third lane) was rejected: one more slot pool on the machine for what one exclusion achieves.\n- **Decided: not blocked by #5169.** Whether slots are keyed by machine or by shared resource does not change which lane a run takes, so the two records are independent.\n- **Decided: `impact.suite` cannot be listed.** That suite's full command is exactly the whole-suite run the full lane serializes.\n- Lane ct-verify-ci is editing `verify.js`'s CI-source code at the same time. This change touches only the `fullSuiteRuns` predicate near the checks' slot hold, so expect a catch-up merge, not a logic conflict.\n- `cli-slot.test.js` cases drive real lock dirs: give each case its own `CT_TEST_SUITE_SLOT_DIR` so it never queues behind a real run on the machine.\n\n## Original request\n\nA CI-answered verify run waits minutes in the full slot lane to run a one-second suite\n\n**Related:** #5319, #5169, #5168, #5257\n\nVerified-as-of: 79cd5710d803946af6d845e8f430fbc9c8ef84f0\n\n## Current State\n\n`plugin/skills/test/suite-slots.md` puts a `verify.js` run in the full lane when \"any local suite runs its full command\". The rule does not look at how large that suite is.\n\nIn this repo `journeys` is a declared suite of nine test files that runs in about one second (`.claude-tweaks/verify-scope.json`, `checks.tests.journeys`). Every pipeline writes a `docs/journeys/` file, so almost every scoped run selects it and therefore queues in the full lane, behind whole-suite runs.\n\nMeasured on 2026-11-13 from each worktree's last `report.json`:\n\n- The three runs whose `tests` suite was answered by CI (worktrees `record-5230`, `record-5268`, `learned-skills-pr-5290`) ran no test of that suite on this machine. They still waited 447, 545 and 954 seconds for a full-lane slot, then ran `journeys` in 0.8 to 2 seconds.\n- A run with a 591-file impact subset plus `journeys` (`record-5291`) was classed `full`, not `subset`.\n\nAcross the 91 `verify` events logged between 9 and 13 November, slot waits were 16.5 of 23.6 hours of total verify time.\n\nThis is wall time, not CPU: the slot is held for a second. It still delays every pipeline phase that verifies, and it makes a CI-answered run look as slow as a local one.\n\n## Deliverables\n\n- [ ] A rule for which lane a run takes that follows the size of what it will spawn, so a run whose only local suite is small does not queue behind whole-suite runs.\n- [ ] `plugin/skills/test/suite-slots.md`'s Lanes table states the rule, and `report.json`'s `slot.lane` reports the lane chosen under it.\n- [ ] Tests in `tests/bin-lib/verify/cli-slot.test.js` cover a CI-answered run plus a small declared suite, and an impact subset plus a small declared suite.\n\n## Open Question\n\nHow does the runner know a declared suite is small? Three candidates, none chosen:\n\n1. A per-suite opt-in in the declaration's `concurrency` block (for example a list of suites that always take the subset lane). Simple and explicit, but the project must keep the list right, and older readers reject unknown `concurrency` keys, so it needs a reader release before any project commits it.\n2. Lane by the suite that declares `impact`: only that suite's full command (and any `--cmd` suite) takes the full lane, every other declared suite takes the subset lane. No new key, but wrong for a project whose other declared suites are large.\n3. A third lane for suites that are neither the impact subset nor a whole suite. Keeps both existing lanes' meaning, at the cost of one more slot pool on the machine.\n\nThe answer also depends on #5169 (whether slots should be keyed by shared resource rather than by machine).\n\n## Release Note\n\nNo user-visible change yet — pending definition.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/verify/slot.js` — lane choice\n- `plugin/bin/verify.js` — lane choice at the checks' slot\n- `plugin/skills/test/suite-slots.md` — Lanes table\n- `tests/bin-lib/verify/cli-slot.test.js` — lane cases\n\n_Filed by `capture` via specShapedBody._\n",
+        "createdAt": "2026-11-13T13:17:35Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5368,
+        "state": "OPEN",
+        "title": "A CI-answered verify run waits minutes in the full slot lane to run a one-second suite",
+        "updatedAt": "2026-11-25T07:26:01Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -2001,6 +2123,84 @@
           "risk": "low",
           "size": "medium",
           "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect hindsight from #4395\n\nDefer-reason: tangential\n\n## Current State\n\nA scoped re-verify classifies the delta since the stamp anchor `fullSha`, and a scoped pass does not advance that anchor (`anchorOf` in `plugin/bin/lib/verify/stamp.js` returns the `fullSha` field of the stamp, and a scoped pass writes its own base there, `plugin/bin/verify.js`). So after `/build` Common Step 5 passes scoped at S, a bookkeeping-only commit (a run-ledger row) followed by `/test` gets a delta of every file the branch changed since the merge-base, not just the ledger path.\n\nObserved on #4395's own run: build verified 4acac2138 (scoped, impact-selected, 12794 tests), a ledger-only commit moved HEAD to 55a8e9ef8, and `/test` re-ran the same 12794 tests for 140 s before stamping HEAD `scope: scoped` (`report.json`, `scope.base` = the merge-base `ebeb43749`). The stall #4395 fixes is gone, but the `scope: none` outcome its AC1 names only happens when the prior pass was a full one.\n\n## Deliverables\n\n- [ ] When the prior stamp is a passing scoped pass at a commit that is an ancestor of HEAD, classify the delta since that pass (not since `fullSha`) so a bookkeeping-only delta resolves to `none` and re-stamps HEAD without running a suite.\n\n- [ ] Keep `fullSha` as the base for every delta that contains a non-bookkeeping path, so the scoped set never narrows below the last full pass.\n\n## Acceptance Criteria\n\n1. With a passing scoped stamp at S and a HEAD whose delta from S is only `docs/plans/*-ledger.md`, `verify.js --scope` runs no suite, prints `still-verified: bookkeeping-only delta`, and `--stamp-status` reports `verifiedHead: true` at HEAD.\n\n2. With a passing scoped stamp at S and a delta from S that contains one `plugin/**` path, the scoped run selects the suites that path maps to, over the delta since `fullSha`, exactly as today.\n\n## Release Note\n\nA run-ledger commit after build's scoped verification no longer re-runs the impact-selected test suite: the test step re-stamps the new commit without running anything.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — let a scoped pass stamp anchor the next scoped delta\n- `plugin/skills/test/verification.md` — document the scoped-anchor rule in Re-verify scoping\n\n_Filed by `reflect`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n",
+        "createdAt": "2026-11-03T20:10:49Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 5075,
+        "state": "OPEN",
+        "title": "A bookkeeping-only commit after a scoped build verify re-runs the whole impact-selected suite",
+        "updatedAt": "2026-11-25T07:25:48Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -9956,266 +10156,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #1426, #3900, #3901, #3903, #3904\n\n## Current State\n\nThe materiality-floor digest (#1426) promoted four below-floor `docs` findings into this record. Each reported a pipeline ledger under `docs/plans/` whose rows still read `open` after the issues or PRs they referenced had closed. Checked against `origin/main` at shaping time (2026-10-24), every one of the four ledgers has since been deleted, so the stale rows no longer exist:\n\n1. `docs/plans/2026-09-06-skill-context-composer-ledger.md`, deleted in `0d73305e2` (2026-09-29, \"Resolve stale pipeline ledgers and close their remaining open items\").\n2. `docs/plans/2026-09-12-record-2278-ledger.md`, deleted in `9fd5ddd62` (2026-09-29, #2809).\n3. `docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md`, deleted in `2c7d4859f` (2026-10-04, a tidy orphaned-ledger sweep).\n4. `docs/plans/2026-10-14-record-1350-ledger.md`, deleted in `f826796b9` (2026-10-17, #2989).\n\nWhat remains is closing the loop: record the dispositions and mark the digest entries.\n\n## Deliverables\n\n1. Confirm each of the four ledgers is absent from the integration branch, citing its deleting commit. Any ledger found to still exist has its stale rows reconciled here instead.\n2. Mark each of the four promoted digest entry lines in #1426 with `→ #3902`.\n3. Close this record with a comment listing each finding's disposition.\n\n## Acceptance Criteria\n\n- The closing comment names a disposition for all four findings, each citing the commit that deleted its ledger (or the fix made here).\n- None of the four ledger paths exists on the integration branch, or any that does carries no `open` row referencing a closed issue or merged PR.\n- Each of the four digest entry lines in #1426 carries `→ #3902`.\n\n## Release Note\n\nCloses out four stale-ledger findings whose ledgers were already cleaned up.\n\n## Technical Approach\n\nThis is verification and bookkeeping only. Run `git cat-file -e origin/{integration-branch}:{path}` per ledger, then `git log --diff-filter=D -1 -- {path}` for the deleting commit. Edit the #1426 digest comment lines and close this record.\n\n### Key Files\n\n- `docs/plans/2026-09-06-skill-context-composer-ledger.md` — confirm deleted\n- `docs/plans/2026-09-12-record-2278-ledger.md` — confirm deleted\n- `docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md` — confirm deleted\n- `docs/plans/2026-10-14-record-1350-ledger.md` — confirm deleted\n\n## Gotchas\n\n- Digest entry lines in #1426 are comments on the digest container. Edit the comment that holds each entry rather than posting new ones.\n\n## Original request\n\ndocs: resolve 4 accumulated below-floor digest findings\n\n## Current State\nThe materiality-floor digest (#1426) has accumulated 4 below-floor findings in the `docs` area. Each was too small to file on its own, but together they make a coherent unit of work.\n\n## Deliverables\n- Ledger docs/plans/2026-09-06-skill-context-composer-ledger.md rows 10, 14, 16, 25, 26, 27 still show Status: open, but each row references a follow-up GitHub issue (#2017, #2020, #2018, #2015, #2016) that has since closed with a merged PR resolving the exact question the row left open — the ledger was never revisited after those closures. — docs/plans/2026-09-06-skill-context-composer-ledger.md — Defer-reason: direct-filing-sweep — /claude-tweaks:docs-health\n- Ledger docs/plans/2026-09-12-record-2278-ledger.md row 1 still shows Status: open for PR #2305, but that PR merged on 2026-09-12T15:36:17Z resolving record #2278's only open item — the ledger was never revisited after the merge. — docs/plans/2026-09-12-record-2278-ledger.md — Defer-reason: direct-filing-sweep — /claude-tweaks:docs-health\n- Ledger rows 2, 5, 8, 9 cite open/deferred issues and staged skill-update proposals that have since closed or shipped (#2768 merged via #2883; the three skill proposals shipped in #2864), but the ledger was never revisited after those closures — docs/plans/2026-09-30-flow-spec-2704-2709-ledger.md — Defer-reason: direct-filing-sweep — /claude-tweaks:docs-health\n- Ledger row 1 (#1350 AC2) resolution text frames the item as an unresolved standing watch-item pointing to future conditions (#3128 shipping, #1350 closing) that have both since occurred (#1350 closed via PR #3135, #3128 closed via PR #3150), but the ledger was never revisited after those closures — docs/plans/2026-10-14-record-1350-ledger.md — Defer-reason: direct-filing-sweep — /claude-tweaks:docs-health\n\n## Acceptance Criteria\n- Each Deliverable above is fixed, or explicitly ruled won't-fix with a one-line reason in the closing PR.\n- Each promoted digest entry line in #1426 carries `→ #{this record}`.\n",
-        "createdAt": "2026-10-21T20:50:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3902,
-        "state": "OPEN",
-        "title": "docs: resolve 4 accumulated below-floor digest findings",
-        "updatedAt": "2026-11-24T10:53:50Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: terminal\n\nOrigin: ledger resolve gate (#4024, ledger row 24)\n\nDefer-reason: needs-human-decision\n\n**Related:** #4024, #4131, #4130, #3822, #4217, #4310, #4333, #4347, #4424, #4462\n\n## Current State\n\n`tools/test-impact.js fetch` picks the newest successful `push`/`workflow_dispatch` main run whose head commit is an ancestor of `HEAD`. It skips the download only when the cached map's `commit` equals that run's head commit and the map is not `dirty` (`tools/test-impact.js:285`). Any other cached map gets overwritten. That includes a valid map a developer traced on their branch at a commit that descends from the CI commit, and the result is an older map with fewer reads.\n\nWhen this record was filed, keeping a local map was not obviously safe, because `trace --allow-dirty` could produce a map from a tree its `commit` does not describe (ledger row 27). #4131 has since closed that gap:\n\n- `trace` records `dirty: true` for such a map;\n- `plugin/bin/lib/verify/impact.js:155` refuses it as `map-dirty`;\n- `fetch` already treats a dirty cached map as not current.\n\nA cached map that parses, came from a passing suite and is not dirty was therefore traced with no tracked changes at its `commit`. It is still not identical to a CI map, in three ways:\n\n- `trace` ignores untracked files when judging dirty (`--untracked-files=no`), so an untracked file can contribute reads;\n- a developer may trace on another Node version, and the map records `node`, but `impact.js` never reads it;\n- a developer may trace on another platform, which the map does not record.\n\nThe map decides which tests run, so these differences could in principle change the selection. Keeping the map in `fetch` adds no new trust, though: `verify.js` already uses any such local map as-is whenever `mapProblem` finds nothing wrong, without calling `fetch`. This record only stops `fetch` from being stricter than the reader it serves. Whether local maps should be trusted at all is a separate question that this record does not change.\n\n**Decision (human-approved 2026-10-30):** `fetch` keeps a cached map that is valid and at least as new as the CI map on the same line of history. Otherwise it takes the CI map.\n\nHow much this matters: `verify.js` runs `impact.fetch` only when the cached map already has a problem (`plugin/bin/lib/verify/impact.js:152-159`, `:257`). Every such problem either fails the keep rule below or leaves the CI map no better, so `verify.js`'s behaviour does not change. The rule decides what happens when someone runs `fetch` by hand, and it stops `fetch` from ever replacing a better map with a worse one.\n\n## Deliverables\n\n1. Widen `tools/test-impact.js` `fetch`'s cache check so it keeps the cached map with no download when all of these hold:\n   - it parses (`ok`), `exitCode === 0`, and it is not `dirty`;\n   - its `commit` equals the chosen run's `headSha`, or `git merge-base --is-ancestor --end-of-options {headSha} {cachedCommit}` succeeds;\n   - its `commit` is an ancestor of `HEAD` (`git merge-base --is-ancestor --end-of-options {cachedCommit} HEAD`).\n2. Log the outcome on stdout, matching today's `fetch: map at … already current` line. Name both commits when the kept map is newer than the CI one, e.g. `fetch: cached map at {cachedCommit} descends from CI map {headSha}, kept → {out}`.\n3. A git error on either ancestry check, such as an unknown commit, counts as \"not kept\", and `fetch` downloads as today.\n4. Update the header comment, and any doc that describes `fetch`'s cache rule, to state the new rule.\n\n## Acceptance Criteria\n\n1. A clean, passing cached map whose commit descends from the chosen CI commit and is an ancestor of `HEAD` is kept. No `gh run download` call is made, exit is 0, and the log line names both commits.\n2. The same cached map with `dirty: true` is replaced: one download.\n3. A cached map with `exitCode !== 0` that descends from the CI commit is replaced.\n4. A cached map on a diverged line, where the CI commit is not its ancestor, is replaced.\n5. A cached map that descends from the CI commit but is not an ancestor of `HEAD` is replaced. An example is a map left from another branch.\n6. A cached map whose ancestry check makes git error is replaced, and `fetch` does not exit non-zero because of that error.\n7. The existing fetch cases in `tests/test-impact-cli.test.js` still pass unchanged. That includes the no-op at the chosen commit and the dirty map at the chosen commit being replaced.\n8. Revert the widened check and show that the AC1 test fails.\n9. `npm test` passes.\n\n## Release Note\n\n`tools/test-impact.js fetch` no longer replaces a fresher, clean local test-impact map with an older CI map.\n\n## Technical Approach\n\nLeave the existing equality short-circuit in place and add one branch next to it. That branch runs only when the cached map is valid, passing and clean, and its commit differs from `headSha`. It makes two `deps.git(['merge-base', '--is-ancestor', ...])` calls, each in its own try/catch, using the same pattern as the run-selection loop above it. The tests reuse the file's `mapText` helper and its fake `deps.git`, which answers per argument list.\n\n### Key Files\n\n- `tools/test-impact.js` — `fetch`'s cache check (around line 285)\n- `tests/test-impact-cli.test.js` — the fetch section (around line 435): new keep/replace cases\n- `plugin/bin/lib/verify/impact.js` — read only: the map-problem reasons that decide when `verify.js` calls `fetch`\n\n## Gotchas\n\n- Do not relax the downloaded-map checks: commit equals `headSha`, `exitCode` 0, not dirty. The new rule applies to the cached map only.\n- Keep the `--end-of-options` guard on both new `merge-base` calls, because `cachedCommit` comes from a file.\n\n## Original request\n\nOrigin: ledger resolve gate (#4024, ledger row 24)\nDefer-reason: needs-human-decision\n\n## Current State\n\n`tools/test-impact.js fetch` skips the download only when the cached map's `commit` equals the chosen CI run's head commit. A locally traced map at a newer commit (a developer ran `trace` on their branch) is replaced by an older ancestor map from CI on the next fetch, losing the fresher reads. `verify.js` runs `impact.fetch` only when the cached map has a problem (missing, stale, not an ancestor), so this happens only after such a problem, which limits the cost to one re-trace. A local map can also be traced with `--allow-dirty`, from a tree the map's commit does not describe (ledger row 27), which is why preferring it is not obviously safe.\n\n## Open Question\n\nShould `fetch` keep a cached map whose commit descends from the chosen CI commit (fresher, but locally produced and possibly from a dirty tree), or always take the CI map (older, but clean and from main)?\n\n## Release Note\n\nDefines which test-impact map wins when a local trace and a CI map both exist.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/test-impact.js` — the `fetch` cache check\n- `tests/test-impact-cli.test.js` — the fetch cases a rule would extend\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-10-24T12:33:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4128,
-        "state": "OPEN",
-        "title": "Decide whether test-impact fetch may overwrite a fresher local map with an older CI map",
-        "updatedAt": "2026-10-30T13:46:37Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #3737, #3822, #3819, #3818\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7 (\"Shell constraint\", `scratch-worktree.md:235`). `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it.\n\nNo `plugin/skills/build/*.md` file carries the mandate (probed at HEAD). `build/dispatch.md` cites `subagent-dispatch-core.md` only for its Model Selection section (`:12`) and its no-stash rule (`:19`). `adopted-branch-collision-check.md:32` cites §7 for one `$(...)` shape.\n\nRun #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms, and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\nThe precedent for the fix shape is already in `build/dispatch.md:19`: \"**Forbid `git stash` in every per-task implementer dispatch:** in the same invocation instruction, also direct `/superpowers:subagent-driven-development` to instruct each per-task implementer to never run `git stash`…\". That paragraph carries a dispatch-core rule into SDD's templates through the controller's invocation instruction, citing rather than restating it.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review, and final-review dispatch it composes. Word it as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n3. Absorbs #5335 (same goal, decided 2026-11-25): the roster also covers every fix-round (a resumed or a fresh implementer), fix-wave, whole-branch-fix and NEEDS_CONTEXT/BLOCKED re-dispatch, and the sentence names heredocs, `for`/`while` loops, `cd ... &&` chains and the one-plain-command-per-call rule (or cites the file that does — `dispatch/task-prompt.md` item 6 / `_shared/scratch-worktree.md` §7), never a third copy.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes: implementer, task-review, re-review, and final-review.\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n- `npm test` passes.\n- `wc -c plugin/skills/build/dispatch.md` stays below the 52,500-byte `RAIL_BYTES` rail (from #5335).\n- `git grep -n -i -e 'shell constraint' -- plugin/skills/build/dispatch.md` matches the new sentence, and the sentence names fix-round, fix-wave and whole-branch-fix dispatches (from #5335).\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\nMirror the `git stash` paragraph at `build/dispatch.md:19`. In the same invocation instruction, direct `/superpowers:subagent-driven-development` to include the shell-constraint paragraph in every dispatch it composes, citing `subagent-dispatch-core.md`'s \"One plain command per Bash call\" and `scratch-worktree.md` §7 rather than restating the refusal table. Add the conformance test beside the existing build-dispatch prose tests (`tests/build-dispatch-status-token-and-tree-immutability.test.js` is the nearest neighbour).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n- `plugin/skills/_shared/scratch-worktree.md` — reference only (§7)\n- `tests/build-dispatch-shell-constraint-prose.test.js` — new conformance test\n\n## Gotchas\n\n- #3822 is still open and may change the wording of the mandate it settles against the §7 table. Cite the shared files by section rather than copying their text, so this record's paragraph follows #3822 without a second edit.\n- The final-review dispatch is composed by the whole-branch review step, not by SDD's per-task loop. Check that the paragraph reaches it too, because the acceptance criteria name all four dispatch kinds.\n- #3737 covers the same gap for `/review` lens prompts, a different skill. Do not fold it in here.\n\n## Original request\n\nCarry the worktree shell constraint into /build's SDD implementer and reviewer dispatches\n\nOrigin: reflect full from #4149\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (\"One plain command per Bash call\") requires every worktree-isolated dispatch prompt to carry the harness shell constraint, citing `_shared/scratch-worktree.md` §7. `/claude-tweaks:build`'s subagent path runs `/superpowers:subagent-driven-development`, whose implementer, task-reviewer and re-review templates have no slot for it, and no `plugin/skills/build/*.md` file cites the rule. Run #4149 (`.claude-tweaks/pipelines/2026-10-24T163054-spec-4149`) logged 131 `wd-guard-refusal` events, all with reason `harness-worktree-isolation`, in this session and its dispatched agents. By shape: 83 heredocs, 29 `cd …&&` chains, 5 git-token arguments, 5 variable or substitution forms and 9 others. 90 of them fell in one hour (2026-10-25T09), while the residual-round fix and re-review agents ran their bash differentials. Related: #3737 (the same gap for review lens prompts), #3822 (settling the mandate against the §7 table) and #3819 (counting subagent refusals). Found by /claude-tweaks:reflect full (Friction lens) at wrap-up of #4149.\n\n## Deliverables\n\n1. Give `/claude-tweaks:build`'s SDD dispatch path one place that adds the shell-constraint paragraph to every implementer, task-review, re-review and final-review dispatch it composes. It should be worded as `_shared/subagent-dispatch-core.md:39` and `_shared/scratch-worktree.md` §7 settle it (#3822), with the scratchpad-script pattern (Write the script, run `node <script>`) as the workaround for multi-step probes.\n\n2. Cite that place from `plugin/skills/build/dispatch.md`, so the SDD controller reads it before its first dispatch.\n\n## Acceptance Criteria\n\n- `plugin/skills/build/dispatch.md` names the shell constraint and the scratchpad-script workaround for every SDD dispatch it composes.\n\n- A conformance test fails when that paragraph is removed from the build dispatch path.\n\n- `npm test` passes.\n\n## Release Note\n\nFewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — carry the shell constraint into SDD dispatches\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only\n\n_Filed by `reflect` via specShapedBody._\n\n",
-        "createdAt": "2026-10-25T10:25:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4243,
-        "state": "OPEN",
-        "title": "Carry the worktree shell constraint into /build's SDD implementer and reviewer dispatches",
-        "updatedAt": "2026-11-25T07:19:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: terminal\n\nOrigin: ledger resolve gate (#4024, ledger row 23)\n\nDefer-reason: needs-human-decision\n\n**Related:** #4024, #4128, #4333, #4347, #4424\n\n## Current State\n\n`tools/test-impact/build-map.js` (`buildMap`) skips a `.trace` file whose first line is not a `[\"T\", test]` header and counts it as `headerless`. `tools/test-impact.js trace` prints that count on stderr and still writes the map (`tools/test-impact.js:213-216`). The file's reads belong to some test, so that test's recorded reads may be missing paths, and a later change to such a path would not select it. Nothing in the map shows this happened.\n\n`trace` handles the other kinds of damaged trace data safely:\n\n- a `.lost` marker (a trace write failed) writes no map and exits 1 (`tools/test-impact.js:203-207`);\n- a corrupt line in an attributed file keeps the map but gives that test a `c: ''` entry, so it runs for every change (`build-map.js`, `entry.c.add('')`);\n- a run that leaves no parseable trace file writes no map and exits 1.\n\nThe header-less file is the only case that can silently under-select. That contradicts `plugin/bin/lib/verify/impact.js`'s stated rule that selection fails closed.\n\nIt should be rare. The tracer writes the header as the first line of each file, and a failed write is already marked `.lost`. What remains is mainly a process killed partway through its first write.\n\n**Decision (human-approved 2026-10-30):** a header-less file refuses the map, the same as a `.lost` marker.\n\n- In CI, the failed trace fails the job, and the upload step also errors on the missing map (`if-no-files-found: error`, `.github/workflows/test-impact-map.yml`). `fetch`'s `--status success` listing skips the run and the previous main map stays in use.\n- Locally, the developer re-runs the trace.\n\nThe rejected alternative was recording a `headerless` count in the map for `verify.js` to treat as a fallback reason. Its only outcome is a full-suite run, which is what having no map already gives, and it would add a field to the map format for a case that barely ever happens.\n\n## Deliverables\n\n1. `tools/test-impact.js trace`: when `built.headerless > 0`, print an error naming the count and ending `— no map written`, leave any existing map at `--out` untouched, and exit 1. Check this next to the existing `built.lost` check, before the map is written.\n2. Keep the existing stderr warning for unparseable lines (`built.skipped`), with the header-less clause removed from it, since those maps stay valid.\n3. Update the `build-map.js` header comment and any `tools/test-impact.js` comment or usage text that describes header-less files as skipped-and-warned. `buildMap` itself still counts them and skips their reads.\n\n## Acceptance Criteria\n\n1. A `trace` run whose trace dir holds one header-less `.trace` file alongside valid ones exits 1, writes no map, and prints an error with the count and `no map written`.\n2. An existing map at `--out` is byte-identical after that run.\n3. An empty `.trace` file counts as header-less and gets the same refusal.\n4. A run with only unparseable record lines, in files with valid headers, still writes the map, exits 0 and prints the warning, which no longer mentions header-less files.\n5. The `buildMap` unit case at `tests/test-impact-cli.test.js:56` still passes: `buildMap` counts and skips the file.\n6. The end-to-end clean trace test still asserts an empty stderr.\n7. Revert the new check and show that the AC1 and AC2 tests fail.\n8. `npm test` passes.\n\n## Release Note\n\n`tools/test-impact.js trace` now refuses to write a map when a trace file can't be attributed to a test, instead of writing one that may skip tests it should run.\n\n## Technical Approach\n\nAdd one branch beside the `built.lost` refusal in `trace`. No map format change and no `verify.js` change. The tests reuse the file's existing fake-suite pattern, whose spawned body writes files into `CT_TRACE_DIR`, as the `.lost` cases at `tests/test-impact-cli.test.js:264-310` do.\n\n### Key Files\n\n- `tools/test-impact.js` — `trace`'s refusal and warning\n- `tools/test-impact/build-map.js` — header comment only\n- `tests/test-impact-cli.test.js` — new `trace` cases next to the `.lost` ones\n- `plugin/bin/lib/verify/impact.js` — read only: the fail-closed rule this restores\n\n## Gotchas\n\n- `#4128` edits `fetch` in the same file, in a different function. There should be no logical conflict, but whichever merges second may need a rebase.\n\n## Original request\n\nOrigin: ledger resolve gate (#4024, ledger row 23)\nDefer-reason: needs-human-decision\n\n## Current State\n\n`tools/test-impact/build-map.js` skips a trace file whose first line is not a `[\"T\", test]` header and counts it as `headerless`; `tools/test-impact.js trace` prints that count on stderr and still writes the map. The unattributable file's reads belong to some test, so that test's recorded reads may be missing paths, and a later change to such a path would not select it. The implementation plan for #4024 chose \"skip and warn\"; a reader of the map cannot tell afterwards that it was built with a header-less file. The tracer writes the header as the first line of each file (`tools/test-impact/tracer.js`), so a header-less file needs a failed or truncated first write; the end-to-end trace test now asserts a clean run prints no header-less warning.\n\n## Open Question\n\nShould `trace` refuse to write the map when any trace file is header-less (a hard failure for CI, which then keeps the previous main map), or write it with a recorded `headerless` count that `verify.js` reads and treats as a fallback reason?\n\n## Release Note\n\nDefines whether an unattributable trace file invalidates a test-impact map.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/test-impact/build-map.js` — the header check and the `headerless` count\n- `tools/test-impact.js` — the `trace` command that decides whether to write\n- `plugin/bin/lib/verify/impact.js` — the map codec a recorded count would extend\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-10-24T12:33:31Z",
         "labels": [
@@ -10892,13 +10832,6 @@
         3822,
         4004,
         4493
-      ]
-    },
-    {
-      "records": [
-        3902,
-        4128,
-        4243
       ]
     },
     {
