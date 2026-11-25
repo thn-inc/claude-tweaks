@@ -1129,7 +1129,17 @@ async function run(argv, deps = {}) {
     // A degrade, logged `SKIP` in _shared/auto-decision-log.md's Degrade-trace shape: what the ownership read could not do.
     const ownershipNotes = (upstreamRead === null ? [] : upstreamRead.notes).map((note) => formatEntry({ status: 'SKIP', now: now(), step: 'Upstream ownership', text: `condition: ${note}`, reversibility: 'n/a' }));
     appendEntry({ runDir, section: '/wrap-up', entry: [header, ...lines, ...ownershipNotes].join('\n') });
-    writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+    // #6284: under the same lock `recheck-followups.js approve`/`execute` take, so an approval written since the early read
+    // above is carried onto its pending item instead of being overwritten.
+    withLock(path.join(runDir, '.console.lock'), () => {
+      let fresh = null;
+      try { fresh = JSON.parse(fs.readFileSync(consolePath, 'utf8')); } catch { fresh = null; }
+      for (const it of (fresh && Array.isArray(fresh.items) ? fresh.items : [])) {
+        if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object' && !priorApprovals.has(it.id)) priorApprovals.set(it.id, it.approval);
+      }
+      result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) && !it.approval ? { ...it, approval: priorApprovals.get(it.id) } : it));
+      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+    }, { failClosed: true, env: process.env });
   }
   // #3370: items this console deliberately left pending/keep-staged must survive
   // the run's own final stop. Read-only: nothing here applies or resolves them.

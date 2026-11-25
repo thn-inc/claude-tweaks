@@ -1023,6 +1023,36 @@ test('M8: a second execute attempted between the first one\'s console read and i
   assert.equal(again.calls.length, 0);
 });
 
+test('a second approve attempted inside the first one\'s console read is refused by the console lock', () => {
+  const f = fixture(); stageProposal(f); seedRunState(f);
+  const env = { ...process.env, CLAUDE_TWEAKS_LOCK_WAIT_MS: '50' };
+  let second = null;
+  let fired = false;
+  const readFile = (p) => {
+    const text = realDeps.readFile(p);
+    if (!fired && path.basename(p) === 'console.json') {
+      fired = true;
+      try { second = task5(f, ['approve', '--run', f.runDir, '--id', ID], { env, readFile: realDeps.readFile }); } catch (err) { second = { code: 'threw', err: String(err) }; }
+    }
+    return text;
+  };
+  // console.json does not exist yet, so the first approve's own read throws ENOENT before the hook sees a path: seed one.
+  fs.writeFileSync(consolePath(f), JSON.stringify({ resolved: false, mode: 'recheck-approval', at: 'then', items: [] }));
+  const first = task5(f, ['approve', '--run', f.runDir, '--id', ID], { env, readFile });
+  assert.equal(first.code, 0, first.err);
+  assert.equal(second.code, 3, JSON.stringify(second));
+  assert.match(second.err, /locked by another approve or execute/);
+  assert.equal(readConsole(f).items.length, 1);
+});
+
+test('a proposal-changed hold tells the human to re-run approve', () => {
+  const f = fixture(); stageProposal(f, proposal('narrow')); seedRunState(f);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 0);
+  stageProposal(f, proposal('close'));
+  assert.equal(exec(f, fakeGh()).code, 0);
+  assert.match(skipLines(f)[0], /proposal-changed.*re-run approve/);
+});
+
 test('M9: a failing AUTO log leaves the approve unwritten and the executed item unsettled', () => {
   const f = fixture(); stageProposal(f); seedRunState(f);
   const failAuto = (arg) => { if (arg.items.some((i) => /^- AUTO/.test(i.entry))) throw new Error('log down'); return realDeps.appendEntries(arg); };

@@ -360,7 +360,7 @@ const autoEntry = (deps, text, reversibility) => ({
   section: SECTION, entry: formatEntry({ status: 'AUTO', now: deps.now(), step: STEP_EXECUTE, text, reversibility }),
 });
 
-function approve(o, target, deps) {
+function approveLocked(o, target, deps) {
   const file = path.join(target.dir, CONSOLE_REL);
   const existing = readConsole(file, deps);
   const items = existing && Array.isArray(existing.items) ? existing.items : [];
@@ -479,6 +479,17 @@ function localRecord(number, root, postedComment) {
 
 const isApprovedPending = (item) => Boolean(item) && typeof item === 'object' && Boolean(item.approval) && item.resolution === 'pending';
 
+// `approve` reads and rewrites console.json, so it takes the same lock `execute` does: console-resolve.js and a second
+// approve then never interleave with its read-modify-write.
+function approve(o, target, deps) {
+  try {
+    return withLock(path.join(target.dir, CONSOLE_LOCK), () => approveLocked(o, target, deps), { failClosed: true, env: deps.env });
+  } catch (err) {
+    if (err && err.code === 'LOCK_TIMEOUT') throw new Fail(3, `${CONSOLE_REL} is locked by another approve or execute (${CONSOLE_LOCK}); nothing written — re-run once it finishes`);
+    throw err;
+  }
+}
+
 // One item's guard and writes, under the console lock: the item is re-read from a fresh console.json inside the
 // lock, so a concurrent execute that already settled or commented it is seen before anything posts.
 function executeItem(itemId, o, ctx, deps, envelope) {
@@ -517,7 +528,7 @@ function executeItem(itemId, o, ctx, deps, envelope) {
   const label = stagedId && stagedId !== item.id ? `${item.id} (${stagedId})` : item.id;
 
   if (verdict.action === 'hold') {
-    log('SKIP', `held ${label} (${name}): ${verdict.reason}; the approval stays pending`);
+    log('SKIP', `held ${label} (${name}): ${verdict.reason}; the approval stays pending${verdict.reason === 'proposal-changed' ? ' — read the changed proposal, then re-run approve to bind it' : ''}`);
     envelope.held.push({ id: item.id, reason: verdict.reason });
     return;
   }
