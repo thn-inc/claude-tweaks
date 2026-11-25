@@ -929,6 +929,30 @@ test('a carried bundle with a terminal-fixed member row refuses before writing a
   assert.strictEqual(cj(fx).items[0].resolution, 'apply');
 });
 
+test('a carried bundle whose second row cannot be settled exits 3 naming the settled row; the repaired re-run finishes', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([bundleItem()]), staged: { 'bundle-1.md': 'b' } });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'one', status: 'deferred', resolution: '→ backlog, staged/bundle-1.md' });
+  // A six-cell row (a stray pipe in the Resolution) is found by the carry scan but rewriteLedgerRow refuses it.
+  const good = fs.readFileSync(ledger, 'utf8');
+  fs.writeFileSync(ledger, `${good}| 2 | build | two | deferred | → backlog | staged/bundle-1.md |\n`);
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundle-1.md', 'carried', '--ledger', ledger), b.d), 3);
+  assert.match(b.err(), /could not settle ledger row #2 .*— item bundle-1\.md unchanged; ledger row #1 already settled/);
+  const half = fs.readFileSync(ledger, 'utf8');
+  assert.match(half, /\| 1 \| build \| one \| deferred \| carried to the acceptance packet as decision:console:bundle-1\.md \|/);
+  assert.match(half, /\| 2 \| build \| two \| deferred \| → backlog \| staged\/bundle-1\.md \|/);
+  assert.strictEqual(cj(fx).items[0].resolution, 'apply', 'the console item is unchanged');
+  fs.writeFileSync(ledger, half.replace('→ backlog | staged', '→ backlog, staged'));
+  const again = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundle-1.md', 'carried', '--ledger', ledger), again.d), 0, again.err());
+  const done = fs.readFileSync(ledger, 'utf8');
+  assert.match(done, /\| 1 \| build \| one \| deferred \| carried to the acceptance packet as decision:console:bundle-1\.md \|/);
+  assert.match(done, /\| 2 \| build \| two \| deferred \| carried to the acceptance packet as decision:console:bundle-1\.md \|/);
+  assert.strictEqual(cj(fx).items[0].resolution, 'carried');
+});
+
 test('--ledger still exits 2 for an id that is neither bundle-* nor ledger-record-*', async () => {
   const fx = controlFixture({ consoleJson: consoleOf([{ ...leftover(), id: 'bundled-1.md' }]) });
   const b = baseDeps(fx, []);

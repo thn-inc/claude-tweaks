@@ -117,8 +117,8 @@
 // nothing else, so no item is ever dropped. Under `--set-item`, control mode stores a requested
 // `keep-staged`/`pending` as `carried`; `--resolution carried` is the one route for a failed or
 // refused `ledger-record-*` or Queue-write item, and `--ledger <path>` (a `--set-item` modifier only)
-// settles the one ledger row naming `staged/{id}` (a bundle-* id: every such row, one fact, one settle per member — #6283) `deferred` with `carried to the acceptance packet as
-// {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
+// settles the one ledger row naming `staged/{id}` (a bundle-* id: every such row, one fact, one settle per
+// member — #6283) `deferred` with `carried to the acceptance packet as {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
 // ledger.md or *-ledger.md under the run or worktree), 3 when the settle throws. `carried` and `--ledger` need
 // control mode and a ledger-record-* or bundle-* id: otherwise exit 2. Exit 6: the facts could not be written.
 'use strict';
@@ -489,8 +489,8 @@ function findCarryRows(ledgerText, id, factId) {
 }
 
 // `--set-item … carried` (also what a requested keep-staged/pending becomes under control mode): the item's
-// decision fact first, then — for a `ledger-record-*` item with `--ledger` — its ledger row, and only then the
-// stored rewrite. Returns an exit code, or null when the item does not qualify so the plain path refuses or
+// decision fact first, then — for a `ledger-record-*` or `bundle-*` item with `--ledger` — its ledger row (a bundle:
+// every member row, #6283), and only then the stored rewrite. Returns an exit code, or null when the item does not qualify so the plain path refuses or
 // reports it exactly as it always has.
 function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
   const consolePath = path.join(runDir, 'console.json');
