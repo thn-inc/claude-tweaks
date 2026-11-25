@@ -20,15 +20,26 @@ const { pidStartTime } = require('./process-probe');
 // state could not be listed, or when the worktree is not among the ones git lists for
 // its main checkout (the caller already established the directory exists, so an
 // unlisted one is a path git did not match, not a worktree known to be unlocked).
-// #5377: `env` (optional, last parameter of lockInUse, isUnbornHead and lastCommitMs) is the environment their git
-// children run in; absent, the call builds the same runGit options as before (no `env` key).
+// #5377: `env` (optional, the second parameter of lockInUse and the last of isUnbornHead and lastCommitMs) is the
+// environment their git children run in; absent, the call builds the same runGit options as before (no `env` key).
 const gitOpts = (env) => (env ? { env } : undefined);
 
-function lockInUse(worktree, env) {
+// `listStdout(root)` (#3977), when given, supplies the `git worktree list
+// --porcelain` text instead of a fresh spawn — a caller judging many runs in one
+// pass shares one listing (SessionStart's run-integrity cache); `null` from it is
+// "could not list".
+function lockInUse(worktree, env, { listStdout } = {}) {
   const root = mainCheckoutRoot(worktree);
   if (!root) throw new Error(`could not resolve the main checkout of ${worktree}`);
-  const { stdout, failure } = runGit(['worktree', 'list', '--porcelain'], root, gitOpts(env));
-  if (failure) throw new Error(`could not list worktrees from ${root}: git ${failure}`);
+  let stdout;
+  if (typeof listStdout === 'function') {
+    stdout = listStdout(root);
+    if (typeof stdout !== 'string') throw new Error(`could not list worktrees from ${root}`);
+  } else {
+    const listed = runGit(['worktree', 'list', '--porcelain'], root, gitOpts(env));
+    if (listed.failure) throw new Error(`could not list worktrees from ${root}: git ${listed.failure}`);
+    stdout = listed.stdout;
+  }
   const entry = findWorktreeEntry(parseWorktreeList(stdout), safeReal(worktree) || worktree);
   if (!entry) throw new Error(`${worktree} is not listed by git worktree list in ${root}`);
   const verdict = lockVerdict(entry);

@@ -29,6 +29,11 @@ const { structurallyStuckBody, parseStuckPaths } = require('../../../plugin/bin/
 const { createIssueListCache } = require('../../../plugin/bin/lib/reconcile/issue-list-cache');
 const { readText } = require('../../helpers/read-skill');
 const { STUB_SKIP } = require('../../helpers/path-stub');
+
+// #3977: archiveMerged skips every archive path for a `live` run. A fixture whose
+// worktree carries a seconds-old commit reads `live` on the real probes, so a test
+// about a non-liveness rule injects this instead.
+const UNKNOWN_VERDICT = () => ({ verdict: 'unknown', evidence: [] });
 const {
   git, trackedFiles, makeRepo, commitPath, installGhWrapper, mergedFeatureBranchRepo,
   fixtureCleanUnarchivedRun, fixtureAbandonedShippedRun, verdictOf, DEAD, mkDirWithMtime, seedStuckDir4180,
@@ -2346,7 +2351,7 @@ test('archiveMerged: a main-loop decideArchiveCore skip (no-pr) enters the struc
   const wrapper = installGhWrapper([]);
   let result;
   try {
-    result = archiveMerged({ cwd: root });
+    result = archiveMerged({ cwd: root, runVerdict: UNKNOWN_VERDICT });
   } finally {
     wrapper.restore();
   }

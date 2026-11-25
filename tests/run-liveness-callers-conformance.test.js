@@ -453,11 +453,12 @@ test('boundary finder ignores braces inside string literals', () => {
 });
 
 // #5998: review-lens/history.js is one more run-liveness consumer; every list of the consumers
-// carries the count word and the route. The frozen constant is the pre-change count the helper rejects.
+// carries the count word and the route. #3977 added the sixth route (archive-merged.js's loop-top
+// live skip and disposition pass), so the count word is Six. The frozen constant is the pre-change count the helper rejects.
 const FROZEN_COUNT = 'Four routes consume it';
 function consumerListGaps(text, { count = true } = {}) {
   const gaps = [];
-  if (count && !text.includes('Five routes consume it')) gaps.push('count word');
+  if (count && !text.includes('Six routes consume it')) gaps.push('count word');
   if (!text.includes('review-lens/history.js')) gaps.push('history route');
   return gaps;
 }

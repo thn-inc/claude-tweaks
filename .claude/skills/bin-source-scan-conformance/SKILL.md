@@ -92,6 +92,8 @@ A floor that counts allow-listed sites drops when a change moves those sites ont
 
 A site deleted along with the code that held it is the same kind of drop. When that floor has no exact count yet, add one in the same change, so the drop has its proof. #5544 deleted a test-only wrapper in `plugin/bin/lib/reconcile/archive-merged.js` whose body held one allowed `ownEventRecency` call. In the same commit (`7d8909187`), `tests/run-liveness-callers-conformance.test.js` lowered `SCOPED_SITE_FLOOR` from 8 to 7, added `SCOPED_SITE_COUNT = 7` with an exact-equality assertion, and named the record and the deleted site in the floor's comment.
 
+A constant that must be read at exactly one site (a one-line enable switch meant to be flipped and deleted, never re-read elsewhere) takes a ceiling as well as a floor: `tests/bin-lib/reconcile/report-only-constant-conformance.test.js` (#3977) asserts `reads.length === 1` and names the one file it expects, excluding the declaration line and any `module.exports` listing from the count.
+
 Two scans get the same protection another way. The path-guard scan's exact per-file counts fail when a count drifts either way. The exit-code scan asserts `files.length > 50` over the walk. The windows-hide and path-containment scans have no floor. A scan whose zero-offender result is the expected one needs the planted self-test below to show its matcher can still match.
 
 ### Self-test the matcher
@@ -166,7 +168,7 @@ A scan that lands with a list of files not yet converted (`NOT_YET` in `tests/bi
 
 ## Reference
 
-- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`, `tests/porcelain-cwd-compare-conformance.test.js`, `tests/statusline-no-shell-conformance.test.js`
+- Instances: `tests/git-status-optional-locks.test.js`, `tests/windows-hide-spawn-conformance.test.js`, `tests/bin-lib/exit-code-conformance.test.js`, `tests/path-guard-conformance.test.js`, `tests/path-containment-conformance.test.js`, `tests/porcelain-cwd-compare-conformance.test.js`, `tests/statusline-no-shell-conformance.test.js`, `tests/bin-lib/reconcile/report-only-constant-conformance.test.js`
 - Shared stripper and its planted cases: `plugin/bin/lib/strip-comments.js` (`tests/helpers/strip-comments.js` re-exports `stripComments` and itself defines `stripperVerdict`) and `tests/helpers-strip-comments.test.js`
 - Could-not-parse principle: `.claude/skills/parse-signal-discipline/SKILL.md`, item 15
 - Rule: the `--no-optional-locks` line in `docs/donts.md`

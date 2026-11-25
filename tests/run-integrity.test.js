@@ -471,6 +471,15 @@ test('clean status is a VALID run-state shape but NOT in the non-terminal set ->
 // (fakeSpawn: no real one) and reads the home dir (a fixture home, not the machine's).
 const SESSION_START_HOME = scratchDir('ct-ri-home-');
 const fakeSpawn = () => ({ on() {}, unref() {} });
+// #3977: the SessionStart banner lists a run only once reconcile cached it as
+// orphaned and its run-liveness verdict reads dead (here: the owner pid is gone;
+// the fixtures' commits are already dated in the past).
+const { seedOrphan, deadOwner } = require('./helpers/orphan-fixture');
+function markDeadOrphan(root, runDir) {
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  writeRunState(runDir, { ...state, ...deadOwner() });
+  seedOrphan(root, runDir);
+}
 async function runSessionStart(cwd) {
   const { code, stdout } = await runHookCli(['session-start'], {
     input: JSON.stringify({ cwd }), cwd, env: fixtureHomeEnv(SESSION_START_HOME, hookEnv()), deps: { spawn: fakeSpawn },
@@ -482,6 +491,7 @@ test('SessionStart: shipped-unclosed run line names both remediations (AC1 messa
   const { root, runDir } = fixtureRepo();
   sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
@@ -496,6 +506,7 @@ test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-
     status: 'active', worktree: wt,
     pr: { number: 7, url: 'https://example.test/pr/7', branch: 'feat-branch' },
   });
+  markDeadOrphan(root, runDir);
   const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
@@ -507,11 +518,12 @@ test('#1672 AC1: SessionStart renders the shipped-unclosed hint for a torn-down-
 test('SessionStart: genuinely in-progress run line is byte-identical to the pre-change format (AC6 half)', async () => {
   const { runDir, root } = fixtureRepo(); // unmerged branch -> in-progress
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   const r = await runSessionStart(root);
   assert.strictEqual(r.code, 0);
   const ctxOut = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
   const base = path.basename(runDir);
-  assert.ok(ctxOut.includes(`- ${base} (status: active)`), `expected the unchanged line, got: ${ctxOut}`);
+  assert.ok(ctxOut.includes(`- ${base} (status: active) — PR #7 open, session gone: resume with `), `expected the base line plus its #3977 reason, got: ${ctxOut}`);
   assert.ok(!ctxOut.includes('appears shipped'), 'in-progress run must not carry the new text');
 });
 
@@ -521,6 +533,7 @@ test('#5377 SessionStart: the shipped-unclosed verdict is reached through the co
   const { root, runDir } = fixtureRepo();
   sh(root, 'merge', '-q', '--no-edit', 'feat-branch');
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   const r = await withBrokenGitDir(() => runSessionStart(root));
   assert.strictEqual(r.code, 0);
   assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /appears shipped/);
@@ -533,6 +546,7 @@ test('#5377 SessionStart: the shipped-unclosed verdict is reached through the co
 test('AC9.1: run-integrity — an event call uses the injected cwd or env', async () => {
   const { runDir, root } = fixtureRepo();
   writeEvents(runDir, [EV_BUILD]);
+  markDeadOrphan(root, runDir);
   assert.notStrictEqual(fs.realpathSync(root), fs.realpathSync(process.cwd()), 'precondition: the fixture repo is not the runner cwd');
   const home = scratchDir('ct-ri-home9-');
   const { code, stdout } = await runHookCli(['session-start'], {

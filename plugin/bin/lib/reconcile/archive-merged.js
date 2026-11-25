@@ -17,6 +17,8 @@ const { canonicalRealpath, resolveLeaf, lstatType } = require('../path-guard');
 const { runLiveness, runIdMs, LIVE_PROBES } = require('../run-liveness');
 const { LEGACY_DEAD_MS } = require('../run-liveness/constants');
 const { ownEventRecency } = require('../run-liveness/probes');
+const { disposition } = require('../run-liveness/disposition');
+const { gatherFacts } = require('../run-liveness/facts');
 const { VERDICT_STEPS, verdictMarker } = require('../dispatch/merge-verdict');
 const { readWorkBackend } = require('../work-backend');
 const {
@@ -30,7 +32,9 @@ const { escalateResidue, resolveResidue, residueRepoOf } = require('./escalate-r
 const { isWorktreeAlwaysOn } = require('../policy');
 const { prClosesIssue } = require('./release-merged');
 const { closeRunState } = require('../hooks/close-run-state');
-const { checkRunIntegrity, fallbackBranch, worktreeListStdout, mergedEvidence } = require('../hooks/run-integrity');
+const {
+  checkRunIntegrity, fallbackBranch, branchFromDecisions, worktreeListStdout, mergedEvidence,
+} = require('../hooks/run-integrity');
 const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = require('../flow/manifest');
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const {
@@ -182,10 +186,15 @@ function adHocSessionLiveness(dir) {
 // main checkout (recordedWorktreeIsMainCheckout, not the ad-hoc-only gate): there
 // the worktree-lock and last-commit evidence belong to the shared checkout, not
 // to this run. State is read from disk, the same file runLiveness reads.
+// `probes` (#3977) are extra run-liveness probes merged under the adjustment —
+// SessionStart's banner passes a lockInUse that reads one shared worktree listing.
+// `env` (optional, #5377) binds the remaining probes' git and ps children to it.
 // -> { verdict, evidence }
-function defaultRunVerdict(dir, now) {
+function defaultRunVerdict(dir, now, probes = {}, env) {
   const adjust = recordedWorktreeIsMainCheckout(dir, readRunState(dir));
-  return runLiveness(dir, { now, probes: adjust ? { pathType: () => ({ type: 'missing' }) } : {} });
+  return runLiveness(dir, {
+    now, probes: adjust ? { ...probes, pathType: () => ({ type: 'missing' }) } : probes, ...(env ? { env } : {}),
+  });
 }
 
 // #1604: the "swept once genuinely superseded" half of #1117's own design
@@ -1357,7 +1366,7 @@ function archiveRunDir(root, runDir, { env } = {}) {
   // permanently-stranded-on-failure bug the existence-only check caused —
   // context.js's staleness check lets a crashed/failed attempt's claim
   // expire instead of blocking every future archival of this run forever.
-  writeRunState(archiveDir, { status: 'archiving', worktree: null });
+  writeRunState(archiveDir, { status: 'archiving', worktree: null }, { env });
 
   // Collects the actual set of entries this call moves, in move order — so
   // a caller reporting what happened (e.g. hooks.js archive-run's "moved:"
@@ -1761,7 +1770,7 @@ function archiveRunDir(root, runDir, { env } = {}) {
   const wtAtClose = priorWorktree(preMoveState);
   const result = writeRunState(archiveDir, wtAtClose
     ? { status: 'clean', worktree: null, worktreeAtClose: wtAtClose }
-    : { status: 'clean', worktree: null });
+    : { status: 'clean', worktree: null }, { env });
   if (!result) return refuseAfterMarker('close-failed');
 
   // Late-write guard (#990 — reproduced live during #893's own wrap-up even
@@ -2006,8 +2015,12 @@ function classifyRunDir(ctx, now = Date.now()) {
           const ref = last !== null ? last : runIdMs(dir);
           const silentMs = ref === null ? null : now - ref;
           if (readable && silentMs !== null && silentMs > STALE_INTERRUPTED_TTL_MS) {
-            let result = null;
-            try { result = runVerdict(dir, now); } catch { /* a throwing hook reads as not abandoned */ }
+            // #3977: archiveMerged's loop computed the verdict once already;
+            // reuse it rather than spawning the same probes a second time.
+            let result = ctx.runLivenessResult || null;
+            if (!result) {
+              try { result = runVerdict(dir, now); } catch { /* a throwing hook reads as not abandoned */ }
+            }
             const evidence = result && Array.isArray(result.evidence) ? result.evidence : null;
             const verdict = result ? result.verdict : undefined;
             const dead = !!evidence && verdict === 'dead' && !evidence.some((e) => e && e.result === 'error');
@@ -2389,6 +2402,76 @@ function countOwnerlessNonClean(root) {
   return count;
 }
 
+// #3977: the run-liveness verdict archiveMerged's loop-top guard reads. A run
+// dir with no run-state.json is `unknown` without asking (runLiveness's legacy
+// route would otherwise read a state-less dir `dead`); a throwing hook, or a
+// result with no evidence array, is `unknown` too. Those stand-ins are marked
+// `asked: false` so classifyRunDir never treats them as a real verdict (its
+// abandoned-interrupted kind reads a throwing hook as "not abandoned").
+function verdictAtGuard(dir, state, runVerdict, now) {
+  const notAsked = { verdict: 'unknown', evidence: [], asked: false };
+  if (state === null || state === undefined) return notAsked;
+  let result = null;
+  try { result = (runVerdict || defaultRunVerdict)(dir, now); } catch { /* unknown below */ }
+  if (!result || !Array.isArray(result.evidence) || typeof result.verdict !== 'string') return notAsked;
+  return result;
+}
+
+// #3977: the run-disposition table (run-liveness/disposition.js) runs in
+// REPORT-ONLY mode in this release: reconcile says which runs it would close and
+// which are orphans needing a human, and closes nothing. A release step, not a
+// policy key — so every consumer project gets a dry run on its own pile first.
+// Read at exactly one site (archiveMerged's return; a source-scan test pins it).
+const RUN_AUTO_CLOSE_REPORT_ONLY = true;
+
+// #3977: evaluate the disposition for every non-clean run dir still present
+// (dirs this pass archived — `exclude` — are skipped, so a dry run never
+// reports a run twice). Writes nothing anywhere. `verdicts` is archiveMerged's
+// per-pass map; a dir missing from it is asked the guard's way. A run with
+// neither a stamped pr.number nor a branch has no PR lookup to make, so its PR
+// fact is `unknown`, never `none`.
+// -> { reportOnly: true, wouldClose: [{ runId, runDir, reason, evidence, dropFindings }],
+//      orphaned: [{ runId, runDir, reason, pr }], unknown: number } — both lists newest run id first.
+function reportRunDispositions({
+  root, worktrees = [], verdicts = new Map(), exclude = new Set(), prStates, integration, now = Date.now(), runVerdict, deps = {},
+} = {}) {
+  const report = { reportOnly: true, wouldClose: [], orphaned: [], unknown: 0 };
+  try {
+    for (const { dir, state } of iterRunDirsWithState(root)) {
+      if (exclude.has(dir)) continue;
+      const liveResult = verdicts.get(dir) || verdictAtGuard(dir, state, runVerdict, now);
+      const verdict = liveResult.verdict;
+      if (verdict === 'unknown') report.unknown += 1;
+      if (verdict !== 'dead') continue;
+      // The recorded name counts even when the branch itself is gone: "the
+      // branch no longer exists anywhere" is exactly what row 12 asks.
+      const recorded = (state && state.pr && typeof state.pr.branch === 'string' && state.pr.branch) || branchFromDecisions(dir);
+      const branch = runDirBranch(root, dir, state, worktrees) || recorded || null;
+      const hasPrIdentity = !!(state && state.pr && state.pr.number) || !!branch;
+      let prState;
+      if (hasPrIdentity) {
+        try { prState = (deps.resolvePr || resolveRunPrState)(root, state, branch, prStates); } catch { prState = undefined; }
+      }
+      const facts = gatherFacts({
+        root, dir, state, branch, integration, prState, now, deps: { listStaged: listStagedItems, ...(deps.git ? { git: deps.git } : {}) },
+      });
+      const d = disposition({ ...facts, verdict });
+      const runId = path.basename(dir);
+      if (d.action === 'close') {
+        report.wouldClose.push({ runId, runDir: dir, reason: d.reason, evidence: d.evidence, dropFindings: d.dropFindings });
+      } else if (d.action === 'orphan') {
+        report.orphaned.push({ runId, runDir: dir, reason: d.reason, pr: d.evidence.prNumber });
+      }
+    }
+  } catch (err) {
+    return { reportOnly: true, wouldClose: [], orphaned: [], unknown: 0, error: (err && err.message) || String(err) };
+  }
+  const newestFirst = (a, b) => (a.runId < b.runId ? 1 : a.runId > b.runId ? -1 : 0);
+  report.wouldClose.sort(newestFirst);
+  report.orphaned.sort(newestFirst);
+  return report;
+}
+
 // #4599: `postMergeDeferred` lists the run dirs the same pass's post-merge check skipped for a
 // RETRYABLE reason (post-merge.js's `deferred`). Archived runs are never walked again, so archiving
 // one would turn "a later pass" into never. Each listed dir is skipped `post-merge-pending` in both
@@ -2444,12 +2527,28 @@ function archiveMerged({
     if (plan && plan.action !== 'none') residuePlan.push(plan);
   };
 
+  // #3977: one liveness verdict per run per pass, shared by the loop-top guard,
+  // classifyRunDir's abandoned-interrupted kind and the disposition report.
+  const passNow = Date.now();
+  const verdicts = new Map();
+
   // #3975: without worktree-always, at most one clean-twin shell is archived in place per pass.
   let shellSlotUsed = false;
   for (const { dir, state } of iterRunDirsWithState(root, { includeTrackedShells: true })) {
     // #4599: first, before any per-run work — see the header comment above archiveMerged.
     if (postMergePending.has(path.resolve(dir))) {
       skipped.push({ runDir: dir, reason: 'post-merge-pending' });
+      continue;
+    }
+
+    // #3977: no archive path acts on a run whose session is provably live —
+    // closing it would end that run's enforcement and event logging under a
+    // sibling session still driving it. `unknown` and `dead` fall through to
+    // the paths below unchanged (each has its own evidence).
+    const liveResult = verdictAtGuard(dir, state, runVerdict, passNow);
+    verdicts.set(dir, liveResult);
+    if (liveResult.verdict === 'live') {
+      skipped.push({ runDir: dir, reason: 'live' });
       continue;
     }
 
@@ -2531,7 +2630,7 @@ function archiveMerged({
     // first-match order, unchanged from what this loop checked before
     // consolidation.
     const classification = classifyRunDir({
-      dir, state, worktrees, sessionId, liveness, runVerdict,
+      dir, state, worktrees, sessionId, liveness, runVerdict, runLivenessResult: liveResult.asked === false ? null : liveResult,
       kinds: ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'adhoc-session-ended'],
     });
     let { kind } = classification;
@@ -2844,7 +2943,18 @@ function archiveMerged({
   // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
   // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
   const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
-  return { archived, skipped, archiveCommits, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
+
+  // #3977: the one read of RUN_AUTO_CLOSE_REPORT_ONLY. In this release the
+  // disposition pass only reports — it writes nothing to any run dir. #3978
+  // replaces the `null` arm with the act path and deletes the constant.
+  const runDispositions = RUN_AUTO_CLOSE_REPORT_ONLY
+    ? reportRunDispositions({
+      root, worktrees, verdicts, exclude: new Set(archived), prStates, integration, now: passNow, runVerdict,
+    })
+    : null;
+  return {
+    archived, skipped, archiveCommits, residuePlan, residueErrors, runDispositions, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }),
+  };
 }
 
 module.exports = {
@@ -2858,5 +2968,6 @@ module.exports = {
   compareWorkTwin, resolveIdenticalWorkTwin, listFilesRecursive,
   isClosedSlugStuck, recordNumbersFromSlug, runRecordSet, inFlightRecords,
   listStagedItems, hasStagedItems, consoleReplacedByAutoMerge,
+  reportRunDispositions, verdictAtGuard, RUN_AUTO_CLOSE_REPORT_ONLY,
   refusal, TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
 };

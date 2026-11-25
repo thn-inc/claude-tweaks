@@ -26,7 +26,7 @@ const BATCH_TIMEOUT_MS = 15000; // one call covers up to 50 lookups — roomier 
 const BATCH_MAX_BUFFER = 8 * 1024 * 1024;
 
 // Selection verbatim from the live probe.
-const PR_FIELDS = 'number state mergedAt updatedAt mergeCommit{ oid } closingIssuesReferences(first:20){ nodes{ number repository{ name owner{ login } } } pageInfo{ hasNextPage } }';
+const PR_FIELDS = 'number state isDraft mergedAt updatedAt mergeCommit{ oid } closingIssuesReferences(first:20){ nodes{ number repository{ name owner{ login } } } pageInfo{ hasNextPage } }';
 
 const POSITIVE_INTEGER_RE = /^[1-9]\d*$/;
 const toNumber = (n) => ((typeof n === 'number' || typeof n === 'string') && POSITIVE_INTEGER_RE.test(String(n)) ? Number(n) : null);
@@ -58,6 +58,7 @@ function reshapeNode(node, withMergeFields) {
   const pr = {
     number: node.number,
     state: node.state,
+    isDraft: node.isDraft === true,
     mergedAt: node.mergedAt,
     updatedAt: node.updatedAt,
     mergeCommit: node.mergeCommit || null,
