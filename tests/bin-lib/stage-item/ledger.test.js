@@ -682,6 +682,29 @@ test("settleRow treats the run's own record as incomplete", () => {
   assert.ok(f.text().includes('| 1 | build | finding 1 | accepted | ok |'));
 });
 
+test('settleRow bundle re-point: a deferred staged/ row moves to a bundle path and back (#6283)', () => {
+  const f = plainFixture(row(1, 'deferred', 'staged/ledger-record-a.md'));
+  settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'deferred', resolution: 'staged/bundle-1.md' });
+  assert.ok(f.text().includes('| 1 | build | finding 1 | deferred | staged/bundle-1.md |'));
+  settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'deferred', resolution: 'staged/ledger-record-a.md' });
+  assert.ok(f.text().includes('| 1 | build | finding 1 | deferred | staged/ledger-record-a.md |'));
+});
+
+test('settleRow bundle re-point: an unrelated deferred-to-deferred rewrite and a non-deferred target stay refused (#6283)', () => {
+  const cases = [
+    ['staged/a.md', 'deferred', 'staged/b.md'], // neither names a bundle
+    ['staged/bundle-1.md', 'deferred', 'staged/bundle-2.md'], // both name a bundle
+    ['staged/a.md', 'accepted', 'staged/bundle-1.md'], // status changes
+    ['staged/a.md', 'deferred', 'no pointer here'], // the new Resolution names no staged path
+  ];
+  for (const [from, status, to] of cases) {
+    const f = plainFixture(row(1, 'deferred', from));
+    const before = f.text();
+    assert.throws(() => settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status, resolution: to }), /already deferred \(terminal\)/, `${from} -> ${status} ${to}`);
+    assert.equal(f.text(), before);
+  }
+});
+
 test('settleRow to open: open row keeps open with a new Resolution', () => {
   const f = plainFixture(row(1, 'open'));
   settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'open', resolution: 'still looking' });

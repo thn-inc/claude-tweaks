@@ -1,0 +1,68 @@
+'use strict';
+// Pins the Review Console's proposal-bundling wiring prose (#6283): the sub-file, its citation from the
+// single-spec and multi-spec consoles (under the multi-spec file's Read rail), the narrowing step's
+// ordering after bundling, and the ledger Resolution naming for a bundled member.
+const test = require('node:test');
+const assert = require('node:assert');
+const path = require('node:path');
+const { RAIL_BYTES } = require(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
+
+const { readText } = require('./helpers/read-skill');
+
+const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
+const read = (p) => readText(path.join(SKILLS, p));
+
+const BUNDLING = read('wrap-up/proposal-bundling.md');
+const CONSOLE = read('wrap-up/review-console.md');
+const MULTISPEC_PATH = path.join(SKILLS, 'flow/multispec-review-console.md');
+const MULTISPEC = readText(MULTISPEC_PATH);
+const INTERACTIVE = read('wrap-up/review-console-interactive.md');
+const NARROWING = read('wrap-up/ledger-narrowing-auto-file.md');
+const LEDGER_FORMAT = read('_shared/ledger-format.md');
+
+// Each claim is checked on a copy with only its own pinned text removed: the check must throw with its
+// own message (a bare throw could be any other claim failing first).
+const CLAIMS = [
+  ['cli', BUNDLING, /bin\/bundle-proposals\.js" --run/, 'bundling file lacks the CLI invocation'],
+  ['skip', BUNDLING, /log-decision\.js[^\n]*--status SKIP[^\n]*condition: bundle-proposals\.js exited \{code\}/, 'bundling file lacks the Degrade-trace SKIP command naming the bundler exit'],
+  ['unbundle', BUNDLING, /un-bundle \{Q#\}[^\n]*--unbundle/, 'bundling file lacks the un-bundle Override route'],
+  ['retry', BUNDLING, /Re-run the identical command once[^\n]*`ROLLBACK INCOMPLETE`[^\n]*Only a second non-zero exit logs one Degrade-trace line/, 'bundling file lacks the one-retry-before-fallback rule'],
+  ['override-log', BUNDLING, /logs `un-bundled \(override\)`[^\n]*never re-bundled/, 'bundling file lacks the override no-re-bundle rule'],
+  ['interactive-unbundle', INTERACTIVE, /`un-bundle \{Q#\}` on a `Q#` row[^\n]*human-present only, named in option 3's description\): run its `--unbundle` call, then re-read the run's `staged\/`[^\n]*re-present the Queue writes section with each restored member as its own `Q#` row[^\n]*no `console-resolve\.js` call/, 'interactive console lacks the un-bundle Override route (re-read staged/ and re-present, no resolve call)'],
+  ['interactive-option3', INTERACTIVE, /ratify\/reverse \{#\} for an SDD ruling row; un-bundle \{Q#\} for a bundle row; also the only path/, 'interactive option 3 description does not name un-bundle {Q#}'],
+  ['multispec-option3', MULTISPEC, /ratify\/reverse \{#\} for an SDD ruling row; un-bundle \{Q#\} for a bundle row; also the only path/, 'multispec option 3 description does not name un-bundle {Q#}'],
+  ['interactive-drill', INTERACTIVE, /A bundle `Q#` is not binary: `un-bundle \{Q#\}` is a third reply/, 'interactive Override drill does not flag a bundle Q# as not binary'],
+  ['carry', BUNDLING, /--set-item bundle-\{n\}\.md --resolution carried/, 'bundling file lacks the carry route'],
+  ['control-gate', BUNDLING, /Under control mode \([^\n]*\), a bundle whose create fails, or that is carried, settles every member/, 'bundling file does not scope the carry route to control mode'],
+  ['outside-control', BUNDLING, /Outside control mode[^\n]*exits 2[^\n]*refused-proposals\.md`'s failed-execution rewrite[^\n]*stays staged[^\n]*staged\/bundle-\{n\}\.md/, 'bundling file lacks the outside-control-mode failed-create path'],
+  ['section', BUNDLING, /log-decision\.js[^\n]*--section "\/wrap-up"[^\n]*--status SKIP|log-decision\.js[^\n]*--status SKIP[^\n]*--section "\/wrap-up"/, 'bundling SKIP command lacks --section "/wrap-up"'],
+  ['dry-run', BUNDLING, /Skip it under `--dry-run`/, 'bundling file does not state it is skipped under --dry-run'],
+  ['order', CONSOLE, /proposal-bundling\.md[\s\S]*ledger-narrowing-auto-file\.md/, 'review-console.md must cite proposal-bundling.md before ledger-narrowing-auto-file.md'],
+  ['bundled-into', NARROWING, /Bundled-into:/, 'narrowing file lacks the Bundled-into: skip'],
+  ['after', NARROWING, /runs after proposal bundling/, 'narrowing file does not state it runs after bundling'],
+  ['multispec', MULTISPEC, /proposal-bundling\.md/, 'multispec console does not cite proposal-bundling.md'],
+  ['ledger-control', LEDGER_FORMAT, /Under control mode a bundle whose create fails or is carried settles every member's row through `console-resolve\.js --set-item bundle-\{n\}\.md --resolution carried/, 'ledger-format.md lacks the control-mode carry sentence'],
+  ['console-control', CONSOLE, /A `bundle-\*` item[^\n]*--set-item bundle-\{n\}\.md --resolution carried[^\n]*settles every member row/, 'review-console.md control-mode paragraph lacks the bundle-* carry case'],
+  ['ledger', LEDGER_FORMAT, /staged\/bundle-\{n\}\.md/, 'ledger-format.md does not name staged/bundle-{n}.md'],
+];
+
+for (const [name, text, re, msg] of CLAIMS) {
+  test(`pinned: ${name}`, () => {
+    assert.ok(re.test(text), msg);
+    const mutated = text.replace(new RegExp(re.source, 'g'), '');
+    assert.notEqual(mutated, text);
+    assert.ok(!re.test(mutated), `${name}: control still matches after the strip`);
+  });
+}
+
+test('multispec console stays under the Read rail', () => {
+  assert.ok(Buffer.byteLength(MULTISPEC) < RAIL_BYTES, 'multispec-review-console.md is over the Read rail');
+});
+
+test('interactive console stays under the Read rail', () => {
+  assert.ok(Buffer.byteLength(INTERACTIVE) < RAIL_BYTES, 'review-console-interactive.md is over the Read rail');
+});
+
+test('bundling file runs before console.json', () => {
+  assert.match(BUNDLING, /console\.json/);
+});

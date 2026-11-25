@@ -31,10 +31,10 @@ SPECIFY_EXISTING_FINGERPRINTS=$(node -e "
   console.log(sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, 'specify-existing-fingerprints.json') || require('path').join(require('os').tmpdir(), 'specify-existing-fingerprints.json'))
 ")
 node -e "
-  const { extractFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { extractFingerprints } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const issues = require('$SPECIFY_ALL_ISSUES');
   const map = {};
-  for (const i of issues) { const fp = extractFingerprint(i.body); if (fp && !(fp in map)) map[fp] = i.number; }
+  for (const i of issues) { for (const fp of extractFingerprints(i.body)) if (!(fp in map)) map[fp] = i.number; }
   require('fs').writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
 "
 ```
@@ -50,10 +50,10 @@ SPECIFY_EXISTING_FINGERPRINTS=$(node -e "
 ")
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  const { extractFingerprint } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { extractFingerprints } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const records = [...queryRecords('specs', {}), ...queryRecords('specs', { closed: true })];
   const map = {};
-  for (const r of records) { const fp = extractFingerprint(r.body); if (fp && !(fp in map)) map[fp] = r.id; }
+  for (const r of records) { for (const fp of extractFingerprints(r.body)) if (!(fp in map)) map[fp] = r.id; }
   require('fs').writeFileSync('$SPECIFY_EXISTING_FINGERPRINTS', JSON.stringify(map));
 "
 ```

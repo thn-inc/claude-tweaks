@@ -2,6 +2,8 @@
 
 Referenced by `skills/wrap-up/review-console.md`'s "Ledger narrowing auto-file" stub. Runs before rendering the console.
 
+This step runs after proposal bundling (`proposal-bundling.md`): skip a staged proposal whose header carries `Bundled-into:` (a retired bundle member, now under `bundled/`), and any `decisions.md` entry whose staged path no longer resolves to a creatable proposal file.
+
 Resolve the `ceiling` per `_shared/autonomy-ceiling.md`'s existing precedence ladder. If
 `bookkeepingPermissions(ceiling).queueWriteAutoFile === true` (`bin/lib/issues/autonomy.js`), before building any of the tables
 below: for every queue-write proposal already staged (from ledger Phase 2's narrowing, leftover

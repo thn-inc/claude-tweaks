@@ -241,6 +241,12 @@ test('fingerprintMap: first record wins, and rows without a marker, body or posi
   assert.deepStrictEqual(fingerprintMap([]), {});
 });
 
+test('fingerprintMap maps every marker of a bundle body to its record', () => {
+  const bundle = 'x\n<!-- work-fingerprint: a -->\nwork-fingerprint: a\n<!-- work-fingerprint: b -->\nwork-fingerprint: b\n';
+  assert.deepStrictEqual(fingerprintMap([{ number: 7, body: bundle }]), { a: 7, b: 7 });
+  assert.deepStrictEqual(fingerprintMap([{ number: 3, body: '<!-- work-fingerprint: b -->' }, { number: 7, body: bundle }]), { b: 3, a: 7 });
+});
+
 // ---- the unattended can't-tell routing (#4679) ----
 
 test("can't-tell proposal is a verification task (#4679 AC2)", () => {

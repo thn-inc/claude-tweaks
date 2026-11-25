@@ -19,7 +19,7 @@ const { materialityEntryLine, CONSOLE_FINDING_PREFIX } = require('../health-core
 const { isTrustedComment } = require('../issues/comment-trust');
 const { CONSOLE_FINDING_FP } = require('./residue');
 const {
-  specShapedBody, recordPayload, fencedBlock, defuse, LABELS, extractFingerprint, checkFingerprint, recordFingerprint,
+  specShapedBody, recordPayload, fencedBlock, defuse, LABELS, extractFingerprints, checkFingerprint, recordFingerprint,
 } = require('../issues/record');
 
 const DEFER_REASON = 'needs-human-decision';
@@ -280,8 +280,8 @@ function fingerprintMap(rows) {
   const map = {};
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
-    const fp = extractFingerprint(row.body);
-    if (fp && Number.isInteger(row.number) && row.number > 0 && checkFingerprint(map, fp) === null) recordFingerprint(map, fp, row.number);
+    if (!Number.isInteger(row.number) || row.number <= 0) continue;
+    for (const fp of extractFingerprints(row.body)) if (checkFingerprint(map, fp) === null) recordFingerprint(map, fp, row.number);
   }
   return map;
 }

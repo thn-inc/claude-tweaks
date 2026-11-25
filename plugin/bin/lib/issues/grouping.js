@@ -57,6 +57,8 @@ function computeHubPaths(items, getFiles, minCount, fraction) {
 // union-find step entirely — as is any bare directory-level entry, regardless
 // of count. Such a path can never bridge two items together, though each
 // item's other files still can.
+// `options.hubPaths` (a Set) replaces the batch-computed hub set entirely; any
+// other value is ignored and the batch computes its own hubs.
 function groupByFileOverlap(items, options = {}) {
   const hubPathMinCount = options.hubPathMinCount ?? HUB_PATH_MIN_COUNT;
   const hubPathFraction = options.hubPathFraction ?? HUB_PATH_FRACTION;
@@ -77,7 +79,11 @@ function groupByFileOverlap(items, options = {}) {
 
   for (const item of items) parent.set(item.id, item.id);
 
-  const hubPaths = computeHubPaths(items, (item) => item.keyFiles, hubPathMinCount, hubPathFraction);
+  // An external hub set (e.g. computed from the open backlog by backlogHubPaths)
+  // replaces the batch-computed one; absent, the batch decides as before.
+  const hubPaths = options.hubPaths instanceof Set
+    ? options.hubPaths
+    : computeHubPaths(items, (item) => item.keyFiles, hubPathMinCount, hubPathFraction);
 
   // Two independent, additive exclusions from bridging. Neither removes a file
   // from an item's keyFiles — only its eligibility to bridge two items here:
@@ -102,6 +108,19 @@ function groupByFileOverlap(items, options = {}) {
     groups.get(root).push(item.id);
   }
   return [...groups.values()];
+}
+
+// Hub paths of an open backlog: a path cited in `### Key Files` by at least
+// max(minCount, ceil(n * fraction)) of `openRecords`. Feeds groupByFileOverlap's
+// `hubPaths` option so a run's own proposals are judged against the backlog's
+// churn rather than their own small batch.
+function backlogHubPaths(openRecords, options = {}) {
+  return computeHubPaths(
+    openRecords,
+    (record) => extractKeyFiles(record),
+    options.hubPathMinCount ?? HUB_PATH_MIN_COUNT,
+    options.hubPathFraction ?? HUB_PATH_FRACTION,
+  );
 }
 
 // A group whose member count exceeds this threshold is oversized — a second,
@@ -634,4 +653,4 @@ function selectGroupsForExplicitList(requestedNumbers, groups, batchSize) {
   return { selectedGroups, deferredByCap, notFound };
 }
 
-module.exports = { groupByFileOverlap, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };
+module.exports = { groupByFileOverlap, backlogHubPaths, GROUP_SIZE_GUARD_DEFAULT, partitionGroupsBySizeGuard, bundleFastLaneSingletons, FASTLANE_BUNDLE_CAP_DEFAULT, extractKeyFiles, extractKeyFilesSection, extractKeyFileEntries, expectsKeyFilesSection, parseExplicitIssueList, selectGroupsForExplicitList, hasOrigin, detectCrossPRFileOverlap, CROSS_PR_HUB_MIN_COUNT, CROSS_PR_HUB_FRACTION, directOverlaps, findInFlightNeighbours, buildDispatchGroups };
