@@ -853,6 +853,17 @@ test('planBatch dedups a fingerprint-less filing against a record carrying its m
   assert.deepStrictEqual(again.entries.map((e) => e.ref), ['#500', '#501']);
 });
 
+test('a staged Queue-writes proposal whose second marker already maps to an existing record reuses that record', () => {
+  const text = 'Title: Bundle\nType: task\n\nbody\n\n<!-- work-fingerprint: m1 -->\nwork-fingerprint: m1\n<!-- work-fingerprint: m2 -->\nwork-fingerprint: m2\n';
+  const out = plan({
+    workList: workList([stagedItem({ name: 'bundle-1.md', section: 'Queue writes' }, { itemId: 'bf:00000000000000c1' })]),
+    existingIssues: [{ number: 42, title: 'Other', body: '<!-- work-fingerprint: m2 -->' }],
+    readStaged: files({ 'bundle-1.md': text }),
+  });
+  assert.deepStrictEqual(out.file, []);
+  assert.deepStrictEqual(out.reuse, [{ itemId: 'bf:00000000000000c1', number: 42 }]);
+});
+
 // R15: a proposal filed before the backfill existed carries no marker, so its minted fingerprint matches
 // nothing; the exact title of the record it became is the only join.
 const QUEUE_TITLE = 'Reconcile archives a live run when an earlier PR… merged';

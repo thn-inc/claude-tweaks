@@ -56,6 +56,21 @@ function extractFingerprint(body) {
   return plain ? plain[1] : null;
 }
 
+// body -> every fingerprint marker in body order (work and legacy HTML-comment markers and the
+// plain-text companion lines alike), deduped with the first occurrence keeping its position; [] for a
+// non-string or empty body. A bundle record (#6283) carries one marker per member finding, so a map that
+// dedups against existing records must read all of them; extractFingerprint above stays first-wins for
+// the places that attach ONE fingerprint to a record. Defused text spells none of the three forms.
+function extractFingerprints(body) {
+  if (typeof body !== 'string' || !body) return [];
+  const hits = [];
+  for (const re of [FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN]) {
+    for (const m of body.matchAll(new RegExp(re.source, `${re.flags}g`))) hits.push([m.index, m[1]]);
+  }
+  hits.sort((a, b) => a[0] - b[0]);
+  return [...new Set(hits.map((h) => h[1]))];
+}
+
 // Producer-supplied text quoted into a record body must not spell a fingerprint marker.
 // A fence does not stop extractFingerprint above, which takes the FIRST marker in the proposal:
 // a quoted `<!-- work-fingerprint: X -->` (or a `work-fingerprint: X` line, the form read once the
@@ -113,5 +128,5 @@ function recordFingerprint(map, fingerprint, number) {
 }
 
 module.exports = {
-  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,
+  FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint,
 };

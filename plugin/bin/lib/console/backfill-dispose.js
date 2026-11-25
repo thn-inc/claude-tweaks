@@ -25,7 +25,7 @@ const { BACKFILL_OUTCOMES, BACKFILL_SOURCES } = require('./backfill-apply');
 const { materialityEntryLine, materialityFingerprint, parseMaterialityFingerprints } = require('../health-core/materiality-digest');
 const { fingerprintFromBasis } = require('../health-core/fingerprint');
 const {
-  extractFingerprint, checkFingerprint, defuse, FP_RE_WORK, FP_RE_WORK_PLAIN,
+  extractFingerprint, extractFingerprints, checkFingerprint, defuse, FP_RE_WORK, FP_RE_WORK_PLAIN,
 } = require('../issues/record');
 const { isTrustedComment } = require('../issues/comment-trust');
 
@@ -216,10 +216,10 @@ function disposeNoClaim({ item, runId }) {
 // run's existing-records map instead of being filed a second time. A marker already in the text wins.
 function withFingerprint(item, text) {
   const own = extractFingerprint(text);
-  if (own) return { fingerprint: own, text };
+  if (own) return { fingerprint: own, fingerprints: extractFingerprints(text), text };
   const fingerprint = itemFingerprint(item);
   const gap = text.endsWith('\n') ? '\n' : '\n\n';
-  return { fingerprint, minted: true, text: `${text}${gap}<!-- work-fingerprint: ${fingerprint} -->\nwork-fingerprint: ${fingerprint}\n` };
+  return { fingerprint, fingerprints: [], minted: true, text: `${text}${gap}<!-- work-fingerprint: ${fingerprint} -->\nwork-fingerprint: ${fingerprint}\n` };
 }
 
 // A backfill filing never adds or removes an auto:* / bot:* label by itself (they are granted, not
@@ -252,16 +252,16 @@ function disposeStaged({ item, runId, readStaged }) {
     text = read(s.name);
     const composed = composeShadowDupProposal({ name: s.name, text, anchorText: read(shadow[1]), runId });
     if (composed.ok) {
-      const { fingerprint, minted, text: proposal } = withFingerprint(item, composed.proposal);
-      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, minted, title: composed.title, text: proposal } });
+      const { fingerprint, fingerprints, minted, text: proposal } = withFingerprint(item, composed.proposal);
+      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, fingerprints, minted, title: composed.title, text: proposal } });
     }
   } else if (typeof s.name === 'string' && s.reason !== 'engine-row') {
     text = read(s.name);
     if (s.section === SECTIONS.QUEUE && !s.reason && typeof text === 'string' && text.startsWith('Title:')) {
       const stripped = stripGrantLabels(text);
       const title = squash(/^Title:(.*)$/m.exec(stripped)[1]);
-      const { fingerprint, minted, text: proposal } = withFingerprint(item, stripped);
-      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, minted, title, text: proposal } });
+      const { fingerprint, fingerprints, minted, text: proposal } = withFingerprint(item, stripped);
+      return result(item, 'file', 'staged-kind', { proposal: { fingerprint, fingerprints, minted, title, text: proposal } });
     }
   }
 
@@ -452,7 +452,11 @@ function planBatch({ workList, verdicts, existingIssues, digestComments, limit =
         // A staged proposal whose fingerprint was minted here (its text carried no marker) cannot match a record
         // filed before the backfill existed, so it also dedups by exact title. Anything with a marker of its own,
         // and every finding filing, is fingerprint-only.
-        const number = filedRecordOf(item, fp, known, markers);
+        let number = filedRecordOf(item, fp, known, markers);
+        // A bundle proposal carries one marker per member; any of them already on a record is that record (#6283).
+        if (number === null && d.source === 'staged-kind') {
+          for (const f of d.proposal.fingerprints || []) { number = checkFingerprint(known, f); if (number !== null) break; }
+        }
         const byTitle = number === null && d.source === 'staged-kind' && d.proposal.minted === true ? titles.get(normalizeTitle(d.proposal.title)) : undefined;
         const matched = number !== null ? number : (byTitle === undefined ? null : byTitle);
         if (matched !== null) {

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   recordPayload, ORIGINS, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
-  extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
+  extractFingerprint, extractFingerprints, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, ownOriginLine, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
   buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   buildAuthorAssociationQuery,
@@ -1737,4 +1737,17 @@ test('#6052: record.js re-exports the Plan: line API', () => {
   const record = require('../../../plugin/bin/lib/issues/record');
   const planLine = require('../../../plugin/bin/lib/issues/plan-line');
   for (const k of ['parsePlanLine', 'composePlanLine', 'specHash']) assert.strictEqual(record[k], planLine[k], k);
+});
+
+test('extractFingerprints returns every marker in body order, deduped', () => {
+  const body = '<!-- work-fingerprint: a -->\nwork-fingerprint: a\n<!-- work-fingerprint: b -->\nwork-fingerprint: b\n<!-- code-health-fingerprint: c -->';
+  assert.deepStrictEqual(extractFingerprints(body), ['a', 'b', 'c']);
+  assert.strictEqual(extractFingerprint(body), 'a');
+  assert.deepStrictEqual(extractFingerprints(null), []);
+  assert.deepStrictEqual(extractFingerprints(''), []);
+});
+
+test('extractFingerprints ignores defused markers', () => {
+  const body = `${defuse('<!-- work-fingerprint: z -->\nwork-fingerprint: z')}\n<!-- work-fingerprint: y -->`;
+  assert.deepStrictEqual(extractFingerprints(body), ['y']);
 });
