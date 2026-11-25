@@ -26,14 +26,15 @@ files:
 
 ## Steps
 
-### 1. Opt in
+### 1. Check the project can run it
 - **URL:** `.claude-tweaks/policy.yml`
-- **Action:** Add `express-lane: true`. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
-- **Should feel:** One deliberate switch. Off, nothing about `/dispatch` or `/flow` changes. Not one extra call, read or fetch.
+- **Action:** Confirm `.claude-tweaks/policy.yml` resolves `integration-model: pr-first` and the repo has PR CI. Set `express-lane: false` to turn the lane off. Leave `express-review-sample-every` at its default `5` unless a different post-merge review share is wanted.
+- **Should feel:** No switch to flip on a pr-first repo with PR CI; one line to turn it off.
 - **Should understand:**
-  - The lane is off by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - The lane is on by default and runs only under `integration-model: pr-first`, with `gh` available.
+  - A malformed value such as `express-lane: off` never turns it on: the gate refuses every record with `express-lane value invalid — treated as off`.
   - It needs PR CI. An empty check rollup reads pending, never green, so a repo without CI parks every express merge.
-- **Red flags:** An express routing note in a run on a repo that never opted in; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane off.
+- **Red flags:** An express routing note in a run on a repo that set `express-lane: false` or a malformed value; `/flow` reading `express-entry.md` or calling `gh issue view` with the lane set `false`.
 
 ### 2. Ask the gate why a record is (or isn't) eligible
 - **URL:** `node plugin/bin/express-lane.js gate --issue {n}`
