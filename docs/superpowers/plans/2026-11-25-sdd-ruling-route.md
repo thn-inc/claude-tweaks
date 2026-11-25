@@ -41,6 +41,8 @@ Scope keywords: sddRulingRoute, sdd-ruling-route
 
 ### Task 1: `sddRulingRoute` route function
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/console/sdd-ruling.js` (extend `readHeader`; add `sddRulingRoute`; export it)
 - Modify: `plugin/bin/lib/console/resolve.js:14-16` (destructured import) and `:1074` (module.exports) — re-export `sddRulingRoute`
@@ -162,6 +164,8 @@ git commit -m "Add sdd-ruling-route.js CLI — print a ruling's audit/console ro
 
 ### Task 3: Carry-forward routing prose, console prose twin, and conformance pin
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/skills/build/dispatch.md` (the **Carry-forward commands (#3510).** paragraph and its fence, ~line 21-26)
 - Modify: `plugin/skills/wrap-up/review-console-appendix.md` (the `apply` on an `sdd-ruling-*` item bullet, ~line 89)
@@ -182,6 +186,7 @@ test('AC5.1: the carry-forward names the route CLI, the console branch stage-ite
   // block matches /ledger-row .*--status observation/             message 'audit branch ledger row'
   // block states the rubric: 'Class: procedural', 'Class: behaviour', and 'when in doubt' (ws-tolerant)
   // block states the route runs for sdd-ruling only (Review Focus 5): /`sdd-ruling-\{N\}` file/
+  // block states the audit-failure fallback (plan review): ws('If either exits non-zero, run the `sdd-ruling-{N}` line unchanged')  message 'audit fallback'
 test('AC5.1: each pinned clause can go red', ...)
   // for each of the first three: mutate the block (remove that token), assert.notEqual(mutated, block),
   // assert.throws(() => assertCarryForward(mutated), { message: '<that message>' })
@@ -196,7 +201,7 @@ Expected: FAIL — `route CLI`.
 
 - [ ] **Step 3: Edit `dispatch.md`'s carry-forward** — append to the paragraph, before the fence, this text (exact, it is the rubric the spec fixes):
 
-> **Route procedural rulings (#5449).** Before staging an `sdd-ruling-{N}` file (never a `build-deviation-*` one), write one `Class:` line into its temp file's header: `Class: procedural` for dispatch sequencing, commit packing, fix-round placement, or implementer handoff or model choice, when the ruling changes nothing that ships and defers nothing; `Class: behaviour` for anything else, and when in doubt. Then run the route command (first line below). On `console` or any non-zero exit, run the `sdd-ruling-{N}` line unchanged. On `audit`, stage nothing: write `SDD ruling (procedural) carried as audit, not staged: {one-liner}` to `{line file}` with the Write tool, then run the last two lines — an `AUTO` decision and an `observation` ledger row.
+> **Route procedural rulings (#5449).** Before staging an `sdd-ruling-{N}` file (never a `build-deviation-*` one), write one `Class:` line into its temp file's header: `Class: procedural` for dispatch sequencing, commit packing, fix-round placement, or implementer handoff or model choice, when the ruling changes nothing that ships and defers nothing; `Class: behaviour` for anything else, and when in doubt. Then run the route command (first line below). On `console` or any non-zero exit, run the `sdd-ruling-{N}` line unchanged. On `audit`, stage nothing: write `SDD ruling (procedural) carried as audit, not staged: {one-liner}` to `{line file}` with the Write tool, then run the last two lines — an `AUTO` decision and an `observation` ledger row. If either exits non-zero, run the `sdd-ruling-{N}` line unchanged.
 
 and extend the fence to (route first, the two existing lines unchanged, then the two audit lines):
 
@@ -204,11 +209,11 @@ and extend the fence to (route first, the two existing lines unchanged, then the
 node "${CLAUDE_PLUGIN_ROOT}/bin/sdd-ruling-route.js" --file "{tmp}.md"
 <existing sdd-ruling-{N} stage-item line, unchanged>
 <existing build-deviation-{N} stage-item line, unchanged>
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "/build" --step "Common Step 2" --text-file "{line file}"
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --section "/build" --text-file "{line file}"
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" ledger-row --run "$PIPELINE_RUN_DIR" --ledger "{ledger path}" --phase build --item-file "{line file}" --status observation
 ```
 
-(`log-decision.js` renders this as `AUTO {time} — Common Step 2: SDD ruling (procedural) carried as audit, not staged: {one-liner}. Reversibility: n/a.` — `formatEntry` inserts the step location, so the spec's line gains `Common Step 2:` after the dash; record that as a beneficial deviation at Architecture Alignment.)
+(The log-decision call is the spec's command exactly, no `--step`; `formatEntry` renders its default location, `AUTO {time} — log-decision: SDD ruling (procedural) carried as audit, not staged: {one-liner}. Reversibility: n/a.`)
 
 Then run `wc -c plugin/skills/build/dispatch.md`; it must print ≤ 52500. Over → trim words inside the new paragraph only.
 
