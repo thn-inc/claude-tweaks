@@ -103,6 +103,9 @@ const SECTION_MAP = [
   // premise-satisfied- (#3488): bin/materialize.js stages a proposal to close a record
   // whose premise check already passes; closing is a human call, so it resolves pending.
   [/^premise-satisfied-/, SECTIONS.QUEUE, 'premise-satisfied-close-proposal'],
+  // bundle- (#6283): the proposal bundler stages one `bundle-{n}.md` per cluster of
+  // related staged proposals; it carries no Category: line, so it stays Queue writes.
+  [/^bundle-/, SECTIONS.QUEUE],
   [/^(reflect|digest-promotion|leftover|ledger-record|upstream-unfiled|red-team|specify-overlap|specify-redteam|flaky-allowlist|efficiency-budget|tidy|plan-retention|feedback-drafts|review-followup|build-followup|reconcile-live-run-archived|wrap-up-cleanup-ordering)(-|\b)/, SECTIONS.QUEUE],
   [/^wrap-up-memory-/, SECTIONS.MEMORY],
   [/^wrap-up-upstream-/, SECTIONS.UPSTREAM],
@@ -138,6 +141,7 @@ const CANONICAL_PREFIXES = [
   'specify-overlap-', 'specify-redteam-', 'flaky-allowlist-', 'efficiency-budget-', 'tidy-', 'plan-retention-', 'feedback-drafts-',
   'review-followup-', 'build-followup-', 'reconcile-live-run-archived-', 'wrap-up-cleanup-ordering-',
   'premise-satisfied-',
+  'bundle-',
   'wrap-up-memory-',
   'wrap-up-upstream-',
   'upstream-draft-',
