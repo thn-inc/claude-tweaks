@@ -40,6 +40,7 @@ Scope keywords: size-proxy, ALWAYS_STUB_BASENAMES
 ### Task 1: Pure size-proxy module
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/review-context/size-proxy.js`
@@ -133,6 +134,7 @@ git commit -m "Add build-review-context.js size-proxy verb (refs #5148)"
 ### Task 3: Wire the size proxy and the schema comment-only exception into review-effort derivation
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/review/review-effort-derivation.md` (step 3's risk-proxy and record-size-proxy bullets; step 4's #4028 example only if its wording no longer matches)
@@ -144,18 +146,20 @@ git commit -m "Add build-review-context.js size-proxy verb (refs #5148)"
 
 - [ ] **Step 1: Write the failing prose tests** in `prose.test.js` (whitespace-collapsed matching per `skill-prose-conformance-tests`):
   - `AC8.1: review-effort-derivation.md names the size-proxy call, its --stat fallback, and the comment-only schema exception` — asserts the text contains `build-review-context.js" size-proxy --base`, `--files-from` tied to the Merge-Provenance Check, a fallback sentence naming the unfiltered `git diff --stat` totals with a one-line notice, the phrase `never lower than the filtered count`, the comment-only exception naming `git diff -w {base}...{branch} -- {file}`, and that unclassifiable hunks fire the trigger.
-  - `the {reasoning} slot names the filtered counts and the exclusions` — asserts the example form `excluded 10 files / 290 lines: bookkeeping 9, lockfile 1`.
+  - `the {reasoning} slot names the filtered counts and the exclusions` — asserts the example form `size medium (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)` (the `size medium` prefix included: 3 files / 60 lines is `medium` under the thresholds, per AC1.1).
+  - `the own-work list for --files-from is written to the session temp dir` — asserts the text names `session-tmp-resolve.js` and `_shared/session-tmp-root.md` beside `--files-from`.
+  - `the record-size counts no longer claim to come only from --stat` — asserts `Both counts come from Step 2's \`git diff --stat\` totals` is absent and `--stat` is named as the fallback.
   - Control: `code-mode-steps.md` does not contain `size-proxy` (the read-rail constraint).
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/review-context/prose.test.js`
-Expected: FAIL after Step 1 — the three new tests fail.
+Expected: FAIL after Step 1 — the new tests (all but the control) fail.
 
 - [ ] **Step 3: Edit step 3 of `review-effort-derivation.md`:**
-  - Record-size proxy: counts come from `size-proxy`'s `size` (files/lines after excluding declared bookkeeping paths and lockfiles); pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits. A non-zero exit or unparseable output → today's unfiltered `--stat` totals plus a one-line notice; that fallback is never lower than the filtered count. Keep `**high** at 10+ files` and the threshold sentences verbatim.
+  - Record-size proxy: counts come from `size-proxy`'s `size` (files/lines after excluding declared bookkeeping paths and lockfiles); pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits. Step 2.5 writes that list once (one path per line, Write tool) to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value review-own-work-{n-or-branch-slug}.txt` prints — the session temp dir (`_shared/session-tmp-root.md`), never `{ctx-dir}`, which a worktree-isolated session cannot write — and Step 3's `build --files-from` may reuse the same path. A non-zero exit or unparseable output → today's unfiltered `--stat` totals plus a one-line notice; that fallback is never lower than the filtered count. Keep `**high** at 10+ files` and the threshold sentences verbatim, but rewrite the sentence "Both counts come from Step 2's `git diff --stat` totals — this proxy never needs the full diff" so it names `size-proxy` (numstat, still no full diff) as the source and `--stat` only as the fallback.
   - Risk proxy: the schema/migration trigger fires only when `git diff -w {base}...{branch} -- {file}` changes at least one line that is neither blank nor a comment (markers `--`, `#`, `//`, `/*`, `*`, `*/` after leading whitespace); unclassifiable hunks fire it. Other triggers unchanged; a lockfile still counts toward the new-dependency check.
-  - State that the `{reasoning}` in Step 2.5's `diff heuristic: {reasoning}` slot names the filtered counts and exclusions, e.g. `size low (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)`.
+  - State that the `{reasoning}` in Step 2.5's `diff heuristic: {reasoning}` slot names the filtered counts and exclusions, e.g. `size medium (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)`.
   - The "If `git diff --stat` produces no output" bullet stays.
   - Re-read step 4's #4028 example; keep every pinned phrase listed in Global Constraints.
 
