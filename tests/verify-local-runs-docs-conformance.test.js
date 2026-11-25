@@ -45,7 +45,8 @@ test('ci-source.md: the Local runs on request section states the key, the flag a
 
 const REASON_FACTS = [
   [/\| `local-requested` \| `--local` was passed, so CI was not consulted\. \|/, 'the local-requested row'],
-  [/\| `not-consulted` \| Under `localRuns`, an earlier suite already left the run with no verdict, so CI was not asked about this one\. \|/, 'the not-consulted row'],
+  [/\| `not-consulted` \| An earlier suite already left the run with no verdict \(under `localRuns`, or on `head-not-pushed`\), so CI was not asked about this one\. \|/, 'the not-consulted row'],
+  [/\| `head-not-pushed` \| GitHub does not know HEAD's commit\. Exits 3 with or without `localRuns`, and never runs the suite here\. \|/, 'the head-not-pushed row'],
   [/\| `ci-log-unavailable` \| A red job's log could not be downloaded, so nothing names its failures \(without `localRuns`\)\. \|/, 'the ci-log-unavailable row is qualified'],
 ];
 
@@ -88,6 +89,7 @@ const VERIFY_LINE_FACTS = [
   [/\[--stamp-suite\] \[--local\]/, 'plugin-structure: the synopsis carries [--local]'],
   [/CI cannot answer exits 3/, 'plugin-structure: exit 3'],
   [/neither `--scope` nor `--local` exits 2/, 'plugin-structure: exit 2'],
+  [/`head-not-pushed` exits 3 under any declaration/, 'plugin-structure: head-not-pushed exits 3'],
 ];
 const CI_ENTRY_FACTS = [
   [/localRuns/, 'plugin-structure: the ci-source.js entry names localRuns'],
