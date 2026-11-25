@@ -30,6 +30,7 @@ const CLAIMS = [
   ['override-log', BUNDLING, /logs `un-bundled \(override\)`[^\n]*never re-bundled/, 'bundling file lacks the override no-re-bundle rule'],
   ['interactive-unbundle', INTERACTIVE, /`un-bundle \{Q#\}` on a `Q#` row[^\n]*human-present only, named in option 3's description\): run its `--unbundle` call, then re-read the run's `staged\/`[^\n]*re-present the Queue writes section with each restored member as its own `Q#` row[^\n]*no `console-resolve\.js` call/, 'interactive console lacks the un-bundle Override route (re-read staged/ and re-present, no resolve call)'],
   ['interactive-option3', INTERACTIVE, /ratify\/reverse \{#\} for an SDD ruling row; un-bundle \{Q#\} for a bundle row; also the only path/, 'interactive option 3 description does not name un-bundle {Q#}'],
+  ['multispec-option3', MULTISPEC, /ratify\/reverse \{#\} for an SDD ruling row; un-bundle \{Q#\} for a bundle row; also the only path/, 'multispec option 3 description does not name un-bundle {Q#}'],
   ['interactive-drill', INTERACTIVE, /A bundle `Q#` is not binary: `un-bundle \{Q#\}` is a third reply/, 'interactive Override drill does not flag a bundle Q# as not binary'],
   ['carry', BUNDLING, /--set-item bundle-\{n\}\.md --resolution carried/, 'bundling file lacks the carry route'],
   ['control-gate', BUNDLING, /Under control mode \([^\n]*\), a bundle whose create fails, or that is carried, settles every member/, 'bundling file does not scope the carry route to control mode'],

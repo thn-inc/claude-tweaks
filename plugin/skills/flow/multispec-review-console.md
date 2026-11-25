@@ -115,7 +115,7 @@ Immediately after presenting the console tables above, call `AskUserQuestion` wi
 **`integration-model: pr-first`** — four options:
 - Option 1 — `label`: `"Approve all + merge (Recommended)"`, `description`: `"Apply pending items, accept auto-applied, apply skill + config updates, execute cleanup incl. merging the shared branch (items {N}-{M}); resolve every Q#/M# to Apply and every U# to filed (systemic causal tag) or declined (otherwise); apply every R# row's recommended destination."`
 - Option 2 — `label`: `"Approve all, leave PR open"`, `description`: `"Same as above, but skip the branch-finish merge — the shared PR stays open for manual merge later."`
-- Option 3 — `label`: `"Override specific items"`, `description`: `"Reply with #s to skip/modify (e.g., \"skip 6, modify 8, revert 2\"); ratify/reverse {#} for an SDD ruling row; also the only path that drills Q#/M#/U#/R# individually."`
+- Option 3 — `label`: `"Override specific items"`, `description`: `"Reply with #s to skip/modify (e.g., \"skip 6, modify 8, revert 2\"); ratify/reverse {#} for an SDD ruling row; un-bundle {Q#} for a bundle row; also the only path that drills Q#/M#/U#/R# individually."`
 - Option 4 — `label`: `"Stop and re-engage"`, `description`: `"Pause; resume after manual review."`
 
 **`integration-model: local-merge`** — no PR to leave open, so the merge decision isn't split; unchanged three options: `"Approve all (Recommended)"` (apply pending items and execute cleanup, incl. branch-finish), `"Override specific items"`, `"Stop and re-engage"`, same descriptions as above minus the merge clause.
