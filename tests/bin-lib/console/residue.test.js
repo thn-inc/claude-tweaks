@@ -714,7 +714,9 @@ test('AC16.1: that line carries the paste-ready execute command', () => {
   recheckConsole(dir, [recheckItem(412, 'pending'), recheckItem(9, 'pending', 'local')], { 'followup-recheck-412.md': recheckStaged(412) });
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
   assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-412.md`), lines.join('\n'));
-  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-9.md --local-merged   (local merge: run it only after the push landed)`), lines.join('\n'));
+  const at = lines.indexOf(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-9.md --local-merged`);
+  assert.ok(at !== -1, lines.join('\n'));
+  assert.strictEqual(lines[at + 1], '    # local merge: run it only after the push landed');
   assert.ok(!lines.some((l) => l.includes('re-run ')), 'no console-filings re-run for this kind');
 });
 
@@ -738,7 +740,32 @@ test('C1: the execute line of an unapproved proposal in a local-merge run (confi
     if (config) fs.writeFileSync(path.join(dir, 'config.yml'), config);
     recheckConsole(dir, [{ id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' }], { 'followup-recheck-5.md': recheckStaged(5) });
     const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
-    assert.ok(lines.includes(`    then after the merge: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-5.md --local-merged   (local merge: run it only after the push landed)`), lines.join('\n'));
+    const at = lines.indexOf(`    then after the merge: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-5.md --local-merged`);
+    assert.ok(at !== -1, lines.join('\n'));
+    assert.strictEqual(lines[at + 1], '    # local merge: run it only after the push landed');
+  }
+});
+
+// AC16 (#6284): every approve/execute command the residue prints must paste and parse whole. `bash -n` checks the
+// syntax only; it runs nothing.
+const BASH = (() => {
+  try { return require('child_process').spawnSync('bash', ['--version'], { windowsHide: true, stdio: 'ignore' }).status === 0; } catch { return false; }
+})();
+test('AC16: every re-check approve and execute command line the residue prints passes bash -n', { skip: !BASH && 'bash is not available' }, () => {
+  const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'config.yml'), 'integration-model: local-merge\n');
+  recheckConsole(dir, [
+    { id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' },
+    recheckItem(9, 'pending', 'local'),
+    recheckItem(412, 'pending'),
+    { id: 'q-2', resolution: 'pending', stagedFile: 'followup-recheck-8.md', approval: { at: 'then', pr: 'local' } },
+  ], { 'followup-recheck-5.md': recheckStaged(5), 'followup-recheck-412.md': recheckStaged(412), 'followup-recheck-8.md': recheckStaged(8) });
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p lugin', maxItems: 10 });
+  const commands = lines.map((l) => /^ {4}(?:approve|execute|then after the merge): (.*)$/.exec(l)).filter(Boolean).map((m) => m[1]);
+  assert.strictEqual(commands.length, 5, lines.join('\n'));
+  for (const cmd of commands) {
+    const r = require('child_process').spawnSync('bash', ['-n', '-c', cmd], { windowsHide: true, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, `${cmd}\n${r.stderr}`);
   }
 });
 

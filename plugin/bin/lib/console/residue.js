@@ -165,14 +165,16 @@ function recheckRunFacts(dir, readFile = defaultReadFile) {
 }
 
 // The paste-ready re-check verbs (#6284). `approve` takes no --pr: the CLI derives it from the run itself. A local
-// merge's `execute` carries --local-merged, which the CLI still checks by ancestry of the approved head commit.
+// merge's `execute` carries --local-merged, which the CLI still checks by ancestry of the approved head commit. Each
+// returns a bare, runnable command: the local-merge note is RECHECK_LOCAL_NOTE, printed on its own line, never inside.
 const recheckBin = (pluginRoot) => (pluginRoot ? `node "${pluginRoot}/bin/recheck-followups.js"` : 'recheck-followups.js');
 function recheckApproveCommand({ consoleDir, pluginRoot, id }) {
   return `${recheckBin(pluginRoot)} approve --run "${consoleDir}" --id ${id}`;
 }
 function recheckExecuteCommand({ consoleDir, pluginRoot, id, localMerged = false }) {
-  return `${recheckBin(pluginRoot)} execute --run "${consoleDir}" --id ${id}${localMerged ? ' --local-merged   (local merge: run it only after the push landed)' : ''}`;
+  return `${recheckBin(pluginRoot)} execute --run "${consoleDir}" --id ${id}${localMerged ? ' --local-merged' : ''}`;
 }
+const RECHECK_LOCAL_NOTE = 'local merge: run it only after the push landed';
 
 // #6284: a `followup-recheck-{n}.md` item `recheck-followups.js approve` left `pending` with an `approval` field is
 // approved but unexecuted (its merge never landed or `execute` was never run). Re-worded `recheck-approved` at read
@@ -323,6 +325,7 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
   if (item.resolution === RECHECK_APPROVED_RESOLUTION && recheckId) {
     const localMerged = Boolean(item.approval) && item.approval.pr === 'local';
     lines.push(`    execute: ${recheckExecuteCommand({ consoleDir, pluginRoot, id: recheckId, localMerged })}`);
+    if (localMerged) lines.push(`    # ${RECHECK_LOCAL_NOTE}`);
     return lines;
   }
   // C1: an unapproved re-check proposal (the unattended `followup-recheck-human-call` pending item) — without an
@@ -331,6 +334,7 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
     lines.push(`    approve: ${recheckApproveCommand({ consoleDir, pluginRoot, id: recheckId })}`);
     const localMerged = recheckRunFacts(consoleDir).pr === 'local';
     lines.push(`    then after the merge: ${recheckExecuteCommand({ consoleDir, pluginRoot, id: recheckId, localMerged })}`);
+    if (localMerged) lines.push(`    # ${RECHECK_LOCAL_NOTE}`);
     return lines;
   }
   const kind = pendingKindOf(item.resolution);
@@ -382,7 +386,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
 
 module.exports = {
   CONSOLE_FINDING_FP, UNRESOLVED_RESOLUTIONS, FAILED_OUTCOMES, MISSING_RESOLUTION, FILING_PENDING_RESOLUTION, DIGEST_PENDING_RESOLUTION, RECHECK_APPROVED_RESOLUTION, FILED_LINE_RE, DIGESTED_LINE_RE,
-  FILING_LOG_REMEDY, digestLogRemedy, recheckStagedId, recheckRunFacts, recheckApproveCommand, recheckExecuteCommand,
+  FILING_LOG_REMEDY, digestLogRemedy, recheckStagedId, recheckRunFacts, recheckApproveCommand, recheckExecuteCommand, RECHECK_LOCAL_NOTE,
   filedRecords, digestedFindings, unresolvedItems, pendingFilings, pendingDigests, consoleResidueItems, splitMissing, consoleRerunCommand,
   readRunResidue, formatResidueLines,
 };

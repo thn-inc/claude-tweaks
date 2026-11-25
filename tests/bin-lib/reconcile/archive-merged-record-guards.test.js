@@ -343,6 +343,27 @@ test('A9: the archive-block hint names an execute line for a recheck-approved it
   assert.ok(hint.indexOf('recheck-followups.js') < hint.indexOf('console-residue.js --ack'), hint);
 });
 
+// AC16 (#6284): the hint's re-check commands, joined with '; ', parse whole — the local-merge note is its own remedy
+// part after them, never between them. `bash -n` checks syntax only.
+const HAS_BASH = (() => { try { return execFileSync('bash', ['--version'], { windowsHide: true, stdio: 'ignore' }) !== undefined; } catch { return false; } })();
+test('A9/AC16: a local approved re-check execute remedy is a bare command list that passes bash -n, with the note in its own part', { skip: !HAS_BASH && 'bash is not available' }, () => {
+  const runDir = scratchDir('archive-merged-residue-recheck-local-');
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  for (const n of [4, 6]) fs.writeFileSync(path.join(runDir, 'staged', `followup-recheck-${n}.md`), `Title: Close #${n}: t\n`);
+  fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({
+    resolved: true,
+    mode: 'auto-resolve',
+    items: [4, 6].map((n) => ({ id: `followup-recheck-${n}.md`, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: 'then', pr: 'local' } })),
+  }));
+  const hint = consoleResidueHint(runDir);
+  const m = /execute the approved re-check proposal\(s\) after the merge: (.*?); each --local-merged execute: local merge: run it only after the push landed;/.exec(hint);
+  assert.ok(m, hint);
+  assert.strictEqual(m[1].split('; ').length, 2, m[1]);
+  assert.ok(m[1].split('; ').every((c) => c.endsWith('--local-merged')), m[1]);
+  const r = cp.spawnSync('bash', ['-n', '-c', m[1]], { windowsHide: true, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, `${m[1]}\n${r.stderr}`);
+});
+
 test('digestRerunRemedy is empty for a residue console with no planned digest (#4679)', () => {
   assert.strictEqual(digestRerunRemedy(prConsoleRunDir([['f1', 'filing-failed']])), '');
 });

@@ -39,7 +39,7 @@ const { readManifest, readDeferredClosures, readSingleRecordDeferredClosure } = 
 const { checkRunTiebreakCoverage } = require('../tiebreak');
 const {
   readRunResidue, FILING_PENDING_RESOLUTION, FILING_LOG_REMEDY, consoleRerunCommand, DIGEST_PENDING_RESOLUTION, digestLogRemedy,
-  RECHECK_APPROVED_RESOLUTION, recheckStagedId, recheckApproveCommand, recheckExecuteCommand,
+  RECHECK_APPROVED_RESOLUTION, recheckStagedId, recheckApproveCommand, recheckExecuteCommand, RECHECK_LOCAL_NOTE,
 } = require('../console/residue');
 
 // #4178: every call here addresses `root` via `-C`; an inherited GIT_DIR /
@@ -618,13 +618,16 @@ function digestRemedyOf(consoles, alsoRerun) {
 function recheckRemediesOf(consoles) {
   const execute = [];
   const approve = [];
+  let local = false;
   for (const c of consoles.filter((con) => !con.acknowledged)) {
     const consoleDir = path.dirname(c.path);
     for (const item of c.items) {
       const id = recheckStagedId(item);
       if (!id) continue;
       if (item.resolution === RECHECK_APPROVED_RESOLUTION) {
-        execute.push(recheckExecuteCommand({ consoleDir, id, localMerged: Boolean(item.approval) && item.approval.pr === 'local' }));
+        const localMerged = Boolean(item.approval) && item.approval.pr === 'local';
+        local = local || localMerged;
+        execute.push(recheckExecuteCommand({ consoleDir, id, localMerged }));
       }
       else if (item.resolution === 'pending' && !item.approval) approve.push(recheckApproveCommand({ consoleDir, id }));
     }
@@ -632,6 +635,8 @@ function recheckRemediesOf(consoles) {
   return [
     execute.length ? `execute the approved re-check proposal(s) after the merge: ${execute.join('; ')}` : '',
     approve.length ? `approve a staged re-check proposal, then execute it after the merge: ${approve.join('; ')}` : '',
+    // Its own remedy part, never between the commands, so each command stays paste-ready.
+    local ? `each --local-merged execute: ${RECHECK_LOCAL_NOTE}` : '',
   ].filter(Boolean);
 }
 
