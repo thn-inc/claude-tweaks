@@ -17,6 +17,7 @@ const { slotEnv } = require('../../helpers/suite-slot-env');
 const { anchoredRunDir } = require('./cli-helpers');
 const { derivePhases } = require('../../../plugin/bin/lib/timing/derive');
 const { initRepo } = require('../../helpers/git-fixtures');
+const { encodeImpactMap, DEFAULT_MAP_NAME } = require('../../../plugin/bin/lib/verify/impact.js');
 
 const CLI = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'verify.js');
 const SKIP = process.platform === 'win32' ? 'a PATH shim named gh is not spawnable on win32' : false;
@@ -933,4 +934,52 @@ test('AC5.1: under localRuns on-request an inert-only dirty tree does not exit 3
   assert.strictEqual(res.code, 0, res.stdout + res.stderr);
   assert.strictEqual(reportOf(r).ci[0].used, true);
   assert.ok(!fs.existsSync(marker));
+});
+
+test('a tree dirty only in a declared generated path takes the CI verdict (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { generated: ['gen/out.txt'] } });
+  fs.mkdirSync(path.join(r.repo, 'gen'));
+  fs.writeFileSync(path.join(r.repo, 'gen', 'out.txt'), 'regenerated\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls));
+  assert.match(res.stdout, /^CI: tree dirty only in inert paths \(gen\/out\.txt\) — taking CI verdicts on HEAD$/m);
+  assert.strictEqual(reportOf(r).ci[0].used, true);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['gen/out.txt']);
+});
+
+test('--local with only an inert dirty path prints no inert line and records local-requested (#5234)', { skip: SKIP }, async () => {
+  const r = repoWith({ declExtra: { rules: INERT_RULES }, extraFiles: { 'notes.md': 'a\n' } });
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls } = await inertRun(r, ['--local']);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(marker), 'the suite ran locally');
+  assert.ok(!fs.existsSync(calls), 'gh must not be called');
+  assert.doesNotMatch(res.stdout, /tree dirty only in inert paths/);
+  assert.strictEqual(reportOf(r).ci[0].fallback, 'local-requested');
+  assert.strictEqual(reportOf(r).ci[0].dirtyExempt, null);
+});
+
+test('an impact declaration with only an inert dirty path takes the CI verdict (#5234)', { skip: SKIP }, async () => {
+  const impact = { suite: 'tests', command: 'node --test {files}', tests: ['tests/**/*.test.js'] };
+  const rules = [{ match: 'notes.md', suites: [], static: false }, { match: 'tests/**', impact: true, static: false }, { match: '**', suites: '*', static: false }];
+  const r = repoWith({ declExtra: { impact, rules }, extraFiles: { 'notes.md': 'a\n' } });
+  const mapCommit = r.git('rev-parse', 'HEAD').trim();
+  r.git('checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(r.repo, 'tests', 'ok.test.js'), "require('node:test')('ok', () => {}); // changed\n");
+  r.git('add', 'tests/ok.test.js');
+  r.git('commit', '-q', '-m', 'edit test');
+  fs.writeFileSync(path.join(r.gitDir, DEFAULT_MAP_NAME), JSON.stringify(encodeImpactMap({
+    commit: mapCommit, tracedAt: '2026-10-24T00:00:00Z', exitCode: 0, node: process.version,
+    tests: { 'tests/ok.test.js': { f: ['tests/ok.test.js'] } },
+  })));
+  fs.writeFileSync(path.join(r.repo, 'notes.md'), 'edited\n');
+  const { res, marker, calls } = await inertRun(r);
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(!fs.existsSync(marker));
+  assert.ok(fs.existsSync(calls), res.stdout + res.stderr);
+  assert.ok(reportOf(r).scope.impact, 'the run went through impact selection');
+  assert.match(res.stdout, INERT_LINE);
+  assert.deepStrictEqual(reportOf(r).ci[0].dirtyExempt, ['notes.md']);
 });

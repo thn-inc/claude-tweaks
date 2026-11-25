@@ -1020,7 +1020,9 @@ async function main() {
   if (decl && decl.ci && sel && !parsed.stampSuite && sel.mode !== 'none') {
     let stopped = false;
     let announced = false;
-    // Under an impact declaration scopeStatusRead is null, so this is a fresh status read after impact.fetch (as for startDirtyPaths); it fails closed.
+    // Under an impact declaration scopeStatusRead is null, so this is a
+    // fresh status read after impact.fetch (as for startDirtyPaths); it fails
+    // closed.
     const ciDirtyExempt = startGit.dirty === true
       ? inertDirtyPaths(decl, startDirtyPaths && startDirtyPaths.length ? startDirtyPaths : dirtyFilePaths(undefined, scopeStatusRead))
       : null;
