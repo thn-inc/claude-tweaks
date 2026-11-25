@@ -89,6 +89,13 @@ test('guard: a dirty scoped stamp never anchors a none', async () => {
   // expect: Scope: scoped; r.marker exists; stamp.base === F
 });
 
+test('AC1.2: with an impact declaration (as this repo\'s own verify-scope.json has), a ledger-only delta since a scoped stamp still runs no suite and exits 0', async () => {
+  // scopedRepo with RULES plus an `impact` block whose suite is 'unit' (shape as in .claude-tweaks/verify-scope.json;
+  // the ledger rule keeps suites: []); scopedPassAt; commit the ledger file; run args.
+  // expect: code 0; /^Impact: 0 of the unit test file\(s\) selected — no impact-rule path changed, map not read$/m;
+  // /still-verified: bookkeeping-only delta/; r.marker absent; stamp.scope 'none', stamp.fullSha === F
+});
+
 test('carry-forward: a none written on a scoped-pass base keeps the anchor\'s baseline marker', async () => {
   // scopedPassAt; rewrite the stamp adding baseline: { base: 'origin/main', baseSha: 'b'.repeat(40), baselineFailing: ['tests/env.test.js'], flakyPassed: [] }
   // (fullSha F unchanged, dirty false); commit the ledger file; run args.
@@ -109,7 +116,7 @@ In `changed-files.js`, add `scopedPassBase` per the Interfaces block and export 
 
 1. Compute `const passBase = scopedPassBase({ stamp: priorStamp, anchor: anchorSha });`.
 2. When `passBase` is non-null, read `changedFiles({ base: passBase })` and classify it with `selectScope({ decl, files: short.files, stamp: priorStamp })`. Pass no `impact` context and no statuses. An impact-rule path then falls back to `map-missing`, which selects its suite, so the result is never `none` and no test-impact map is loaded.
-3. When that selection's `mode === 'none'`: set `resolvedBase = passBase`, `files = short.files`, `sel =` that selection, and skip the rest of the block: merge narrowing, the impact context, the `#4638` re-select, the impact subset and the command assembly. `sel.base` is `anchorOf(priorStamp)` (the anchor), so the stamp writer's `fullSha: sel.base` keeps F and `base: resolvedBase` records S. The `baseline`/`preExisting` carry-forward (`priorStamp.fullSha === sel.base`) holds unchanged.
+3. When that selection's `mode === 'none'`: set `resolvedBase = passBase`, `files = short.files`, `sel =` that selection, set `cmds = []` explicitly (skipping the command assembly would otherwise leave `cmds` at its default `parsed.cmds` and spawn every `--cmd` suite; spec family rule: "no suite command is spawned at all (the command set is empty)"), and when `decl.impact` is set, set `impactCtx = { loaded: false }` (the downstream `impactLine(sel.impact, impactCtx)` reads `ctx.loaded` and must print the "map not read" line, never throw on `null`). Then skip the rest of the block: merge narrowing, the impact context load, the `#4638` re-select, the impact subset and the command assembly. `sel.base` is `anchorOf(priorStamp)` (the anchor), so the stamp writer's `fullSha: sel.base` keeps F and `base: resolvedBase` records S. The `baseline`/`preExisting` carry-forward (`priorStamp.fullSha === sel.base`) holds unchanged.
 4. Otherwise, run today's code byte-for-byte.
 
 The `none` mode's existing downstream handling (H2 skip, `emptyNonNoneRun`, the `still-verified:` line) needs no change. Add a `#5075` comment naming the rule. Then amend `scope.js`'s header invariant sentence and the `only a full run advances fullSha (#1922)` comment at `verify.js` ~1457. They should say that a `none` selected over a clean scoped pass's own delta takes that pass's `sha` as `base`, while `fullSha` still never moves.
@@ -152,7 +159,7 @@ git commit -m "Anchor a bookkeeping-only scoped re-verify on the prior scoped pa
 Run: `wc -c plugin/skills/test/verification.md`
 Expected: at most 52500.
 
-Run: `git grep -n -i -e "stays at the earlier full pass" -e "re-runs their mapped suites instead of resolving" -e "their mapped suites run again" -e "as every scoped run is" -- plugin docs`
+Run: `git grep -n -i -e "stays at the earlier full pass" -e "re-runs their mapped suites instead of resolving" -e "their mapped suites run again" -e "as every scoped run is" -- plugin docs ':!docs/superpowers/plans/2026-11-25-scoped-stamp-anchor.md'`
 Expected: no output.
 
 Run: `node tools/run-tests.js tests/argument-hint-mirrors.test.js tests/plan-citations-resolve.test.js tests/test-skill-affected-conformance.test.js tests/build-pre-verify-catchup-conformance.test.js`
