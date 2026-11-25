@@ -313,6 +313,60 @@ test('a red CI suite\'s local flaky retry runs under a held subset-lane slot (#5
   assert.deepStrictEqual(fs.readdirSync(dir), ['subset'], 'never the full lane');
 });
 
+// #5368: a declared suite listed in subsetLaneSuites runs its own command on the subset lane.
+function listedDecl(m, extra = {}, listed = ['journeys']) {
+  return {
+    checks: { tests: { tests: 'npm test', journeys: markerCommand(m), ...extra } },
+    retry: { tests: 'node --test --test-reporter=tap {file}' },
+    localRuns: 'on-request',
+    ...(listed ? { subsetLaneSuites: listed } : {}),
+  };
+}
+const LISTED_ARGS = (r, more = []) => ['--scope', '.claude-tweaks/verify-scope.json', '--integration-branch', r.branch, ...more];
+
+test('AC1.1: a CI-answered run whose only local suite is listed takes the subset lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const dir = path.join(tmpDir(), 'slots');
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, dir) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'subset');
+  assert.deepStrictEqual(fs.readdirSync(dir), ['subset']);
+});
+
+test('AC3.1: the same run without subsetLaneSuites takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m, {}, null) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
+test('AC3.2: a listed suite beside an unlisted declared suite still takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const m2 = path.join(tmpDir(), 'm2');
+  const r = repoWith({ declExtra: listedDecl(m, { other: markerCommand(m2) }) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m) && fs.existsSync(m2), 'both ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
+test('AC4.1: --cmd under a listed name takes the full lane (#5368)', { skip: SKIP }, async () => {
+  const m = path.join(tmpDir(), 'm');
+  const r = repoWith({ declExtra: listedDecl(m) });
+  const { env } = fakeGhEnv('green', ciLogOf(r, ['tests/ok.test.js']));
+  const res = await runCli(LISTED_ARGS(r, ['--cmd', `journeys=${markerCommand(m)}`]), { cwd: r.repo, env: withSlots(env, path.join(tmpDir(), 'slots')) });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  assert.ok(fs.existsSync(m), 'journeys ran');
+  assert.strictEqual(reportOf(r).slot.lane, 'full');
+});
+
 test('a SIGTERM during a CI-failed suite\'s local retry kills the retry and its forked grandchild, and frees its slot (#5119)', { skip: SKIP }, async () => {
   const out = path.join(tmpDir(), 'retry-pid.txt');
   const grandOut = path.join(tmpDir(), 'grandchild-pid.txt');

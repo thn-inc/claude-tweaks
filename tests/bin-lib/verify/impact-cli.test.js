@@ -198,6 +198,26 @@ test('AC4.1: a run whose only suite runs its impact subset takes the subset lane
   assert.ok(fs.existsSync(fullLock), 'the full-lane holder is untouched');
 });
 
+test('AC2.1: an impact subset plus a listed declared suite takes the subset lane (#5368)', async () => {
+  const smallMarker = path.join(tmpDir('verify-impact-small-'), 'small');
+  const small = `node -e "require('fs').writeFileSync(process.argv[1], '1')" "${smallMarker}"`;
+  const r = impactRepo(declOf({}, {
+    checks: { tests: { tests: 'node scripts/full.js', small } },
+    subsetLaneSuites: ['small'],
+    rules: [{ match: 'docs/**', suites: ['small'], static: false }, ...RULES],
+  }));
+  writeMap(r);
+  commitFile(r, 'src/x.js', 'x2\n');
+  fs.mkdirSync(path.join(r.repo, 'docs'));
+  commitFile(r, 'docs/n.md', 'n\n');
+  const slotDir = tmpDir('verify-impact-slots-');
+  const run = await runCli(ARGS, r.repo, { env: slotEnv(slotDir), timeout: 60000 });
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(r.marker(), 'tests/a.test.js\n', 'the impact subset ran');
+  assert.ok(fs.existsSync(smallMarker), 'the listed suite ran its own command');
+  assert.strictEqual(r.report().slot.lane, 'subset');
+});
+
 test('a test edited after the map commit to read src/x.js is selected when src/x.js changes, map older than the base (#4132)', async () => {
   const r = impactRepo();
   writeMap(r); // map at the original base M: b reads only src/y.js

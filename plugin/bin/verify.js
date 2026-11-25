@@ -1097,11 +1097,17 @@ async function main() {
   // The lane follows the commands that run: any local suite running a full
   // command (anything but the impact subset or tool-scoped's tests command)
   // takes the full lane; types/lint and narrowed suites queue as subset.
+  // #5368: a declared suite listed in subsetLaneSuites runs its own small
+  // command, so it queues as subset too — unless a --cmd of that name replaced
+  // the declared command.
+  const subsetLaneNames = new Set(decl ? decl.subsetLaneSuites : []);
+  const cmdNames = new Set(parsed.cmds.map((c) => c.name));
   let checksHold = null;
   let ranChecks = [];
   if (!(sel && sel.mode === 'none') && (localCmds.length || !ciResults.length)) {
     const fullSuiteRuns = localCmds.some((c) => c.name !== 'types' && c.name !== 'lint'
-      && !(impactSubset && c.command === impactSubset.command) && c.command !== toolScopedCommand);
+      && !(impactSubset && c.command === impactSubset.command) && c.command !== toolScopedCommand
+      && !(subsetLaneNames.has(c.name) && !cmdNames.has(c.name)));
     checksHold = holdFor(chooseLane({ localCheckCount: localCmds.length, fullSuiteRuns }));
     try {
       ranChecks = await runChecks({
