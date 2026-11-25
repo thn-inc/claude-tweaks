@@ -208,6 +208,7 @@ function evaluateRecordEligibility(issue, opts) {
     enabled, integrationModel, sensitivePaths = [], escalated = false, allowAbsentCeremony = false,
     sizeCeiling, maxKeyFiles, riskCeiling, allowAnyCeremony = false, protectedPathsNeedReviewer = false,
     protectedPathGlobs = SHIPPED_PROTECTED_PATHS,
+    ceremonyVerdict, // #5262: the ceremony-check judgment for a record with no ceremony:* label (capture-born)
   } = opts || {};
   const body = (issue && issue.body) || '';
   const labels = (issue && issue.labels) || [];
@@ -241,6 +242,7 @@ function evaluateRecordEligibility(issue, opts) {
   const ceremonyNames = normalizeLabelNames(labels).filter((n) => /^ceremony:/i.test(n));
   const ceremonyOk = facets.ceremony === 'fast-lane'
     || (allowAbsentCeremony === true && ceremonyNames.length === 0)
+    || (ceremonyVerdict === 'fast-lane' && ceremonyNames.length === 0)
     || (allowAnyCeremony === true && ceremonyNames.length > 0 && ceremonyNames.every(isCeremonyTierName));
   if (!ceremonyOk) reasons.push(REASONS.ceremony);
   if (!typeOf(issue || {})) reasons.push(REASONS.type);

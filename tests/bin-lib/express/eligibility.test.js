@@ -276,6 +276,14 @@ test('resolveBlastRadiusConfig reads merge-sensitive-paths and auto-merge-max-li
 
 const DRIVER = { ...OPTS, allowAbsentCeremony: true };
 
+test('#5262: ceremonyVerdict fast-lane admits an unlabeled record; standard or a standard label still refuses', () => {
+  const bare = record(['risk:low', 'size:low', 'type:task']);
+  assert.ok(!evaluateRecordEligibility(bare, { ...OPTS, ceremonyVerdict: 'fast-lane' }).reasons.includes(REASONS.ceremony));
+  assert.ok(evaluateRecordEligibility(bare, { ...OPTS, ceremonyVerdict: 'standard' }).reasons.includes(REASONS.ceremony));
+  const std = record(['risk:low', 'size:low', 'ceremony:standard', 'type:task']);
+  assert.ok(evaluateRecordEligibility(std, { ...OPTS, ceremonyVerdict: 'fast-lane' }).reasons.includes(REASONS.ceremony));
+});
+
 test('AC2.1: with allowAbsentCeremony, an otherwise-eligible record with no ceremony:* label is eligible', () => {
   const out = evaluateRecordEligibility(record(['risk:low', 'size:low', 'type:task']), DRIVER);
   assert.strictEqual(out.eligible, true);
