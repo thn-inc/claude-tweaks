@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown skill prose, Node (`plugin/bin/`), `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-25T073222-record-4118/work/4118-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-25T074831-record-4118/work/4118-spec.md` (re-materialized after the record gained `## Planning Decisions`; this plan folds those decisions in)
 
 **Scope keywords:** `sole owner of \`ceremony:*\``, `stamped by \`/specify\``, `this branch never`
 
@@ -33,6 +33,8 @@ Waived AC3.1: `npm test` is run whole by /build Common Step 5 and /test, not by 
 ---
 
 ### Task 1: `manifesto-write.js` accepts a `:skipped` ceremony source
+
+**Review risk:** high (decision logic: a guard branching on computed ceremony state)
 
 **Files:**
 - Modify: `plugin/bin/lib/flow/manifesto-write.js` (`CEREMONY_SOURCES` ~line 49, `checkRecords` ~line 80, the ceremony log loop ~line 305)
@@ -97,6 +99,8 @@ git commit -m "Add a skipped ceremony source to manifesto-write — refs #4118"
 ---
 
 ### Task 2: Manifesto skip rule in prose, pinned by a conformance test
+
+**Review risk:** high (decision logic: when a ceremony judgment may be skipped)
 
 **Files:**
 - Modify: `plugin/skills/flow/manifesto.md:35` (the `**Ceremony profile computation.**` paragraph)
@@ -225,7 +229,7 @@ Expected: FAIL on the first three assertions groups.
   - Remove `ceremony` from the "never passes those" list.
   - Add `ceremony:{c}` to the presentation line.
   - State the call-site delta in one sentence: writeback, per-record, without `#{n}`.
-  - State the failure rule: output with no `CEREMONY:` line files the record without a ceremony label (flow's Manifesto fallback still judges it) and says so in the presentation line. It is never defaulted to `standard`.
+  - State the failure rule (record Planning Decisions, blanket rule): if the inline ceremony check fails, stalls, or its output has no `CEREMONY:` line, file the record without a ceremony label (today's behavior; flow's Manifesto fallback still judges it), say so in the presentation line, and never block or delay the filing on it. It is never defaulted to `standard`.
   - The `needs:definition` branch (step 1) stays label-free, because an undecided record is not shaped.
 
 - [ ] **Step 4: Edit the ownership sites.**
@@ -242,7 +246,7 @@ Expected: FAIL on the first three assertions groups.
     - Add one row under `/capture`'s section for the `/assess-agent-autonomy` edge (ceremony-check, inline, writeback on the Shaped-body branch, #4118).
     - Reword the `/flow` row (~373) "`/specify` owns the label" → "`/specify` and `/capture`'s Shaped-body branch own the label".
     - Reword the `/specify` row (~647) "`/specify` is this mode's primary caller" → "`/specify` and `/capture`'s Shaped-body branch are this mode's primary callers".
-  - ADR 0006 note: `/capture`'s Shaped-body branch now also stamps `ceremony:*` (#4118). It is a filing-time shaper that already co-owns `risk:*`/`size:*`/`ready`, so the ADR's "compute once where the record is shaped, stamp a permanent label" reasoning extends to it. The rejected alternative (a build-time path writing back) still stands. The body is left as originally written.
+  - ADR 0006 note: `/capture`'s Shaped-body branch now also stamps `ceremony:*` (#4118), on that branch only. It is a filing-time shaper that already co-owns `risk:*`/`size:*`/`ready`, so the ADR's "compute once where the record is shaped, stamp a permanent label" reasoning extends to it. The rejected alternative (a build-time path writing back) still stands. Name the lane consequence (record Planning Decisions Q1, Reading A): the label is the single ceremony authority for every lane, so a capture judged `standard` leaves the driver lane by default (`allowAbsentCeremony` is not widened) and one judged `fast-lane` becomes express-eligible. The body is left as originally written.
 
 - [ ] **Step 5: Run tests**
 
@@ -251,9 +255,64 @@ Expected: PASS.
 
 - [ ] **Step 6: Sweep.** Run `git grep -n -F "sole owner"` and `git grep -n -F "stamped by \`/specify\`"` under `plugin/` and `docs/` (excluding `docs/decisions/` bodies and `CHANGELOG`). Expected: no remaining claim that only `/specify` writes `ceremony:*`.
 
+- [ ] **Step 6b: Revert check (record Planning Decisions).** Prove the conformance assertions go red on reverted prose: extract the base's `plugin/skills/capture/SKILL.md` and `plugin/skills/_shared/work-record-permission-matrix.md` with `git show 68608178fa:{path}` into a scratch copy of the repo tree (never edit the worktree's files in place), point the test at it (or run the first two tests' assertions against the base text in a scratch script), and confirm they fail. Quote the failing output in the task report.
+
 - [ ] **Step 7: Commit**
 
 ```bash
 git add plugin/skills/capture/SKILL.md plugin/skills/_shared/work-record-permission-matrix.md plugin/skills/_shared/work-record.md plugin/skills/flow/materialize.md plugin/skills/_shared/ceremony-profile.md plugin/skills/assess-agent-autonomy/ceremony-check.md plugin/skills/assess-agent-autonomy/SKILL.md plugin/skills/_shared/ceremony-check-invocation.md docs/skill-graph.md docs/decisions/0006-ceremony-tiering-owned-by-specify.md tests/capture-born-ready-ceremony-conformance.test.js
 git commit -m "Stamp ceremony on born-ready captures — refs #4118"
 ```
+
+---
+
+### Task 4: Eligibility test for capture-stamped records (record Planning Decisions Q1)
+
+**Files:**
+- Test: `tests/bin-lib/express/eligibility.test.js`
+
+**Interfaces:**
+- Consumes: `evaluateRecordEligibility` (already imported), `eligibilityOptions` from `plugin/bin/lib/driver/lane-bounds.js`, `resolvePolicyKeys` from `plugin/bin/lib/policy-schema.js` (as `tests/bin-lib/driver/plan-lane.test.js` resolves real policy defaults).
+
+This task pins existing behavior (no production change: `allowAbsentCeremony` is deliberately not widened), so its tests pass on first run. That is expected; there is no red step.
+
+- [ ] **Step 1: Add the tests** after the `allowAbsentCeremony: gh {name} label objects…` test, reusing the file's `record()` helper with a `by:capture` label so the fixture is a capture-stamped born-ready record:
+
+```js
+// #4118 (Planning Decisions Q1, Reading A): /capture's Shaped-body branch stamps ceremony:*, and the
+// label is the single ceremony authority for every lane. Options are the driver lane's real ones,
+// resolved from policy defaults, not a hand-built DRIVER object.
+test('#4118: a capture-stamped ceremony:fast-lane record is express-eligible and driver-eligible', () => {
+  const r = record(['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task', 'by:capture']);
+  assert.strictEqual(evaluateRecordEligibility(r, OPTS).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(r, driverDefaults()).eligible, true);
+});
+
+test('#4118: a capture-stamped ceremony:standard record is refused by the default driver-lane options, naming ceremony', () => {
+  const r = record(['risk:low', 'size:low', 'ceremony:standard', 'type:task', 'by:capture']);
+  assert.deepStrictEqual(evaluateRecordEligibility(r, driverDefaults()).reasons, [REASONS.ceremony]);
+});
+```
+
+`driverDefaults()` returns `eligibilityOptions(policy)`, `policy` being `resolvePolicyKeys` over every key `eligibilityOptions` reads with an empty `policyRaw` (schema defaults; `express-driver-review` default is not `on`). If `resolvePolicyKeys` needs a different call shape, read `plan-lane.test.js` and `budget.test.js`'s `POLICY_RESOLVED` and match them.
+
+- [ ] **Step 2: Run** `node --test tests/bin-lib/express/eligibility.test.js`. Expected: PASS.
+
+- [ ] **Step 3: Discrimination check.** In a scratch copy (never the worktree file), flip `allowAbsentCeremony`'s neighbor — temporarily set `allowAnyCeremony: true` in a scratch copy of `lane-bounds.js` loaded by a scratch script — and confirm the `ceremony:standard` assertion would fail. Quote the output.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/bin-lib/express/eligibility.test.js
+git commit -m "Pin lane eligibility for capture-stamped ceremony labels — refs #4118"
+```
+
+---
+
+### Controller steps (not dispatched to an implementer)
+
+Record Planning Decisions require two record-body corrections and one digest routing, all outside the code diff. The `/build` controller performs them after Task 4, before Common Step 3:
+
+1. **Release Note (Q1):** edit #4118's `## Release Note` to state the lane change: born-ready captures now carry `ceremony:*`; one judged `standard` leaves the driver lane by default, one judged `fast-lane` becomes express-eligible.
+2. **Current State (Q2):** correct #4118's Current State claim that health-sweep findings are filed through `/capture --source`: health sweeps file through `issue-payload.js`, and `/review` Step 3 Defer filings also bypass `/capture`; both stay unlabelled and rely on Deliverable 2's Manifesto skip.
+3. **Digest (Q2):** route the remaining gap (health-sweep and `/review` Defer filings carry no `ceremony:*`) through `bin/deferral-route.js` with `Defer-reason: pre-existing-outside-diff` and record it as a ledger row for wrap-up's digest write.
