@@ -46,10 +46,9 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const MODES = Object.freeze(['auto']);
 const MODE_SOURCES = Object.freeze(['arg', 'dispatch', 'policy', 'default']);
 const CEREMONIES = Object.freeze(['fast-lane', 'standard']);
-// The skip source's word is built, not spelled: this file requires station-events, and
-// station-literal-conformance's retired-outcome scan flags a bare string literal of that word
-// in any emitter. It is a ceremony source here, not a station outcome.
-const SKIPPED = ['skip', 'ped'].join('');
+// A ceremony source (flow/manifesto.md's skip rule, #4118), not a station outcome. This file requires
+// station-events, so station-literal-conformance's retired-outcome scan exempts exactly this line.
+const SKIPPED = 'skipped';
 const CEREMONY_SOURCES = Object.freeze(['label', 'judged', SKIPPED]);
 const SECTION = '/flow';
 // `created:` is the run id's timestamp prefix (_shared/run-dir-resolution.md's
@@ -315,7 +314,11 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {
     if (r.ceremonySource === 'judged') log('AUTO', 'Manifesto ceremony-check', `#${r.n} carries no ceremony:* label -> CEREMONY: ${r.ceremony}`);
-    else if (r.ceremonySource === SKIPPED) log('AUTO', `Manifesto ceremony-check (${SKIPPED})`,`#${r.n} carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #${r.n} is not size:low)`);
+    else if (r.ceremonySource === SKIPPED) {
+      log('AUTO', `Manifesto ceremony-check (${SKIPPED})`,
+        `#${r.n} carries no ceremony:* label -> CEREMONY: standard `
+        + `(judgment skipped: the run-wide fold is already standard from a labelled record and #${r.n} is not size:low)`);
+    }
   }
   log('AUTO', 'Manifesto', `levers written to ${configPath}`);
   if (mergeRefusal) {

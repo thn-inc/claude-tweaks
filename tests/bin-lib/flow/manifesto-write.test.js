@@ -572,6 +572,19 @@ test('CLI: an existing config.yml exits 3 and nothing changes', () => {
   assert.strictEqual(resolveCalls, 0, 'refused before resolving policy');
 });
 
+test('CLI: --ceremony :skipped on a fast-lane record, or without a labelled standard record, exits 2 (#4118)', () => {
+  for (const ceremony of ['4027=standard,8=fast-lane:skipped', '8=standard:skipped', '4027=standard:judged,8=standard:skipped']) {
+    const fx = fixture({ decisions: CLAIM });
+    const { err, deps } = cliDeps(fx);
+    assert.strictEqual(run(['--run', fx.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', ceremony], deps), 2, ceremony);
+    assert.match(err.join(''), /skipped ceremony judgment/, ceremony);
+    assert.ok(!fs.existsSync(path.join(fx.runDir, 'config.yml')), `${ceremony}: nothing written`);
+  }
+  const ok = fixture({ decisions: CLAIM });
+  const { err, deps } = cliDeps(ok);
+  assert.strictEqual(run(['--run', ok.runDir, '--mode', 'auto', '--mode-source', 'default', '--ceremony', '4027=standard,8=standard:skipped'], deps), 0, err.join(''));
+});
+
 test('CLI: --ceremony :judged marks a judged record; several records parse', () => {
   const fx = fixture();
   const { err, deps } = cliDeps(fx);
