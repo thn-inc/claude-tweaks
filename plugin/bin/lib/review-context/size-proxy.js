@@ -5,13 +5,18 @@
 
 const { globToRegExp } = require('../issues/blast-radius');
 const { BOOKKEEPING_RULES } = require('../init/verify-scope-starter');
+const fs = require('node:fs');
+const path = require('node:path');
 const { ALWAYS_STUB_BASENAMES } = require('./build');
+const { readDeclaration, DECLARATION_PATH } = require('../verify/declaration');
 
 const HIGH_FILES = 10;
 const HIGH_LINES = 300;
 const MEDIUM_FILES = 3;
 const MEDIUM_LINES = 50;
 
+// Assumes `git diff --numstat -z --no-renames` output: a rename record would otherwise carry an
+// empty path field followed by two path records.
 function parseNumstat(text) {
   const s = String(text || '');
   const records = s.includes('\0') ? s.split('\0') : s.split('\n');
@@ -26,7 +31,9 @@ function parseNumstat(text) {
     const d = rec.slice(i1 + 1, i2);
     const file = rec.slice(i2 + 1);
     if (!file) continue;
-    out.push({ file, lines: a === '-' && d === '-' ? 0 : (Number(a) || 0) + (Number(d) || 0) });
+    const lines = a === '-' && d === '-' ? 0 : Number(a) + Number(d);
+    if (!Number.isFinite(lines)) continue;
+    out.push({ file, lines });
   }
   return out;
 }
@@ -75,4 +82,19 @@ function computeSizeProxy({ numstat, decl = null, ownWork = null }) {
   return { files, lines, size: sizeTier(files, lines), excluded };
 }
 
-module.exports = { parseNumstat, classifyPath, sizeTier, computeSizeProxy };
+const NUMSTAT_ARGV = ['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '--no-renames', '--no-color', '--no-ext-diff', '--end-of-options'];
+
+// The git-facing half: runs the pinned numstat, reads the declaration (an unreadable one falls
+// back to the built-in list, never to "no exclusions"), and applies an optional --files-from scope.
+function collectSizeProxy({ base, branch, filesFrom = null, cwd, git, readFile = fs.readFileSync, readDecl = readDeclaration }) {
+  const numstat = git([...NUMSTAT_ARGV, `${base}...${branch}`]);
+  const root = String(git(['rev-parse', '--show-toplevel'])).trim();
+  const res = readDecl(path.join(root, DECLARATION_PATH));
+  const decl = res && res.ok ? res.decl || null : null;
+  const ownWork = filesFrom
+    ? readFile(cwd ? path.resolve(cwd, filesFrom) : filesFrom, 'utf8').split('\n').map((s) => s.trim()).filter(Boolean)
+    : null;
+  return computeSizeProxy({ numstat, decl, ownWork });
+}
+
+module.exports = { collectSizeProxy, parseNumstat, classifyPath, sizeTier, computeSizeProxy };

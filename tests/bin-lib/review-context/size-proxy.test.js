@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseNumstat, classifyPath, sizeTier, computeSizeProxy } = require('../../../plugin/bin/lib/review-context/size-proxy');
+const { collectSizeProxy, parseNumstat, classifyPath, sizeTier, computeSizeProxy } = require('../../../plugin/bin/lib/review-context/size-proxy');
 
 const num = (rows) => rows.map(([p, n]) => `${n}\t0\t${p}`).join('\n');
 
@@ -86,4 +86,36 @@ test('sizeTier boundaries', () => {
 test('a lockfile under a bookkeeping glob is listed once with reason bookkeeping', () => {
   const r = computeSizeProxy({ numstat: num([['.claude-tweaks/pipelines/r/package-lock.json', 9]]), decl: null });
   assert.deepEqual(r.excluded, [{ file: '.claude-tweaks/pipelines/r/package-lock.json', lines: 9, reason: 'bookkeeping' }]);
+});
+
+function fakeGit(calls) {
+  return (argv) => {
+    calls.push(argv);
+    if (argv[0] === 'rev-parse') return '/repo\n';
+    return '5\t0\tsrc/a.js\0' + '9\t0\tdocs/superpowers/plans/x.md\0' + '4\t0\tsrc/b.js\0';
+  };
+}
+
+test('collectSizeProxy passes the pinned numstat argv', () => {
+  const calls = [];
+  const r = collectSizeProxy({ base: 'main', branch: 'HEAD', git: fakeGit(calls), readDecl: () => ({ ok: false, errors: ['x'] }) });
+  assert.deepEqual(calls[0], ['-c', 'core.quotePath=false', 'diff', '--numstat', '-z', '--no-renames', '--no-color', '--no-ext-diff', '--end-of-options', 'main...HEAD']);
+  assert.equal(r.files, 2);
+  assert.deepEqual(r.excluded.map((e) => e.file), ['docs/superpowers/plans/x.md']);
+});
+
+test('collectSizeProxy with filesFrom reads the list relative to cwd and drops blanks', () => {
+  const seen = [];
+  const r = collectSizeProxy({
+    base: 'main', branch: 'HEAD', filesFrom: 'list.txt', cwd: '/work', git: fakeGit([]),
+    readDecl: () => ({ ok: true, decl: null, missing: true }),
+    readFile: (p) => { seen.push(p); return ' src/a.js \n\n'; },
+  });
+  assert.equal(require('node:path').resolve('/work', 'list.txt'), seen[0]);
+  assert.equal(r.files, 1);
+  assert.equal(r.lines, 5);
+});
+
+test('parseNumstat skips a record whose counts are not numbers', () => {
+  assert.deepEqual(parseNumstat('x\ty\tfile.js\0'), []);
 });
