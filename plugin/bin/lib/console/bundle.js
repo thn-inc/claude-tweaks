@@ -81,7 +81,6 @@ function planBundles(proposals, options = {}) {
   const hubPaths = options.hubPaths instanceof Set ? options.hubPaths : new Set();
   const guard = options.groupSizeGuard ?? GROUP_SIZE_GUARD_DEFAULT;
   if (!Number.isInteger(guard) || guard < 2) throw new TypeError(`planBundles: groupSizeGuard must be an integer >= 2 (got ${guard})`);
-  const bundles = [];
   const singletons = [];
   const skipped = [];
   const byClass = { ready: [], 'needs-definition': [] };
@@ -123,9 +122,8 @@ function planBundles(proposals, options = {}) {
   }
   const order = new Map(proposals.map((p, i) => [p.key, i]));
   found.sort((a, b) => order.get(a.members[0].key) - order.get(b.members[0].key));
-  bundles.push(...found);
   singletons.sort((a, b) => order.get(a.key) - order.get(b.key));
-  return { bundles, singletons, skipped };
+  return { bundles: found, singletons, skipped };
 }
 
 // Non-hub, non-directory paths cited by two or more members, sorted.
