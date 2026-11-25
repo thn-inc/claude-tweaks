@@ -63,7 +63,7 @@ function decideQaSkip({
   if (!stamp) return { skip: false, reason: 'no-stamp' };
   if (dirty !== false) return { skip: false, reason: 'dirty-tree' };
   const moved = stamp.sha !== head;
-  if (moved && bookkeepingDelta !== true) return { skip: false, reason: 'sha-mismatch' };
+  if (moved && (bookkeepingDelta !== true || typeof head !== 'string' || !SHA_RE.test(head))) return { skip: false, reason: 'sha-mismatch' };
   if (stamp.storiesDir !== storiesDir) return { skip: false, reason: 'stories-dir-mismatch' };
   if (!Array.isArray(selected) || selected.length === 0) return { skip: false, reason: 'nothing-selected' };
   for (const sel of selected) {

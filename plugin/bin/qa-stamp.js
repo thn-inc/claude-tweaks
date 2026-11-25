@@ -6,12 +6,18 @@
 // call skips stories that already passed at the same clean HEAD.
 //
 //   node bin/qa-stamp.js --write --report <RUN_DIR/report.json> [--stories-dir <dir>]
-//   node bin/qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>]
+//   node bin/qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>] [--scope <verify-scope.json>]
 //
 // Prints one JSON line: --write → {written: true, path, sha, stories} or
 // {written: false, reason[, invalidated: true | invalidateFailed: <code>]};
 // --check → {skip, reason, sha}.
 // Status is data: exit 0 in every state; 2 malformed invocation.
+//
+// Bookkeeping-only delta (#5643): with --check --scope <declaration>, a clean
+// HEAD past the stamp's sha still skips (reason covered-bookkeeping-delta) when
+// verify.js's own scope rule (selectScope) reads every path changed since the
+// stamp as mode "none". --check never re-stamps; any failure to prove it keeps
+// the plain sha-mismatch.
 //
 // Dirty check (Important 3, #3003 final review): cleanliness is this CLI's own
 // `git status --porcelain -- . ':(exclude).claude-tweaks/artifacts'` pathspec,
@@ -40,14 +46,18 @@ const {
 } = require('./lib/verify/qa-stamp');
 const { gitInfo, gitDir } = require('./lib/verify/report');
 const { toPosix } = require('./lib/shared-primitives');
+const { readDeclaration } = require('./lib/verify/declaration');
+const { usableAnchor, changedFiles } = require('./lib/verify/changed-files');
+const { selectScope } = require('./lib/verify/scope');
+const { canonicalRealpath } = require('./lib/path-guard');
 
 const USAGE = 'usage: qa-stamp.js --write --report <RUN_DIR/report.json> [--stories-dir <dir>]\n'
-  + '       qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>]\n'
+  + '       qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>] [--scope <verify-scope.json>]\n'
   + '  prints one JSON line; exit 0 in every state; 2 malformed invocation\n';
 
 function parseArgs(argv) {
   const o = {
-    write: false, check: false, report: null, storiesDir: null, stories: null,
+    write: false, check: false, report: null, storiesDir: null, stories: null, scope: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -55,7 +65,10 @@ function parseArgs(argv) {
     else if (a === '--check') o.check = true;
     else if (a === '--report') o.report = argv[++i] ?? null;
     else if (a === '--stories-dir') o.storiesDir = argv[++i] ?? null;
-    else if (a === '--stories') {
+    else if (a === '--scope') {
+      o.scope = argv[++i] ?? null;
+      if (!o.scope) return { error: '--scope expects a path' };
+    } else if (a === '--stories') {
       const raw = argv[++i] ?? '';
       const pairs = raw.split(',').filter(Boolean).map((item) => {
         const eq = item.indexOf('=');
@@ -66,6 +79,7 @@ function parseArgs(argv) {
     } else return { error: `unknown argument: ${a}` };
   }
   if (o.write === o.check) return { error: 'exactly one of --write or --check is required' };
+  if (o.write && o.scope !== null) return { error: '--scope is valid with --check only' };
   if (o.write && !o.report) return { error: '--write requires --report <path>' };
   if (o.check && !o.stories) return { error: '--check requires --stories <id=file,...>' };
   return o;
@@ -85,6 +99,7 @@ function computeDirty(execImpl = execFileSync, cwd = process.cwd()) {
 
 const realDeps = {
   cwd: () => process.cwd(),
+  exec: (cmd, args, opts) => execFileSync(cmd, args, { ...opts, windowsHide: true }),
   gitInfo: () => gitInfo(),
   gitDir: () => gitDir(),
   dirty: () => computeDirty(),
@@ -164,6 +179,34 @@ function write(o, deps) {
   return emit(deps, { written: true, path: p, sha: stamp.sha, stories: stamp.stories.length });
 }
 
+const ARTIFACTS_PREFIX = '.claude-tweaks/artifacts/';
+
+// True only when every path changed since the stamp's sha is bookkeeping by
+// verify.js's own rule (selectScope mode "none") — never throws.
+function classifyBookkeepingDelta({ stampSha, scope, execImpl }) {
+  try {
+    const top = String(execImpl('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true })).trim(); // git-path-read: single path
+    const resolved = path.isAbsolute(scope) ? scope : path.join(top, scope);
+    const topReal = canonicalRealpath(top);
+    const leafReal = canonicalRealpath(resolved);
+    let selfPath = null;
+    if (topReal !== null && leafReal !== null) {
+      const rel = path.relative(topReal, leafReal);
+      if (rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)) selfPath = toPosix(rel);
+    }
+    const read = readDeclaration(resolved, undefined, { selfPath });
+    if (!read.ok || !read.decl) return false;
+    const stamp = { sha: stampSha, fullSha: stampSha };
+    const anchor = usableAnchor({ stamp, execImpl });
+    if (!anchor) return false;
+    const { files } = changedFiles({ base: anchor, execImpl });
+    const rest = files.filter((f) => !f.startsWith(ARTIFACTS_PREFIX));
+    return selectScope({ decl: read.decl, files: rest, stamp }).mode === 'none';
+  } catch {
+    return false;
+  }
+}
+
 function check(o, deps) {
   const dir = deps.gitDir();
   const stamp = dir ? readQaStamp(dir) : null;
@@ -171,8 +214,13 @@ function check(o, deps) {
   const selected = o.stories.map((s) => ({ ...s, sha256: hashFile(path.resolve(deps.cwd(), storiesDir, s.file)) }));
   const { sha } = deps.gitInfo();
   const dirty = deps.dirty();
+  let bookkeepingDelta = false;
+  if (o.scope && stamp && dirty === false && stamp.sha !== sha) {
+    const execImpl = (cmd, args, opts) => deps.exec(cmd, args, { ...opts, cwd: deps.cwd() });
+    bookkeepingDelta = classifyBookkeepingDelta({ stampSha: stamp.sha, scope: o.scope, execImpl });
+  }
   const verdict = decideQaSkip({
-    stamp, head: sha, dirty, storiesDir, selected,
+    stamp, head: sha, dirty, storiesDir, selected, bookkeepingDelta,
   });
   return emit(deps, { ...verdict, sha: stamp ? stamp.sha : null });
 }
@@ -185,7 +233,7 @@ function run(argv, overrides = {}) {
 }
 
 module.exports = {
-  run, parseArgs, computeDirty,
+  run, parseArgs, computeDirty, classifyBookkeepingDelta,
 };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
