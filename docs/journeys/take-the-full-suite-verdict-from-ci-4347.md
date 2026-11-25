@@ -3,6 +3,7 @@ files:
   - plugin/bin/verify.js
   - plugin/bin/lib/verify/ci-source.js
   - plugin/bin/lib/verify/declaration.js
+  - plugin/bin/lib/verify/scope.js
   - plugin/skills/test/ci-source.md
   - plugin/skills/build/SKILL.md
   - .claude-tweaks/verify-scope.json
@@ -44,4 +45,5 @@ files:
 - Updated during `/claude-tweaks:build` of #5369: step 1 notes that under the declaration's `localRuns: "on-request"` key an unanswered run exits 3 instead of running locally (`docs/journeys/keep-ci-declared-suites-off-this-machine-5369.md`).
 - Updated during `/claude-tweaks:build` of #5437: step 1 notes that a timed-out `gh` read is retried before the suite falls back to a local run.
 - Updated during `/claude-tweaks:build` of #5800: step 1 notes that an unpushed HEAD exits 3 under any declaration (push and re-run) and that every other local fallback is announced on stderr before the local run starts.
+- Updated during `/claude-tweaks:build` of #5234: a tree dirty only in inert paths (declared `generated`, or a first matching rule running no checks) still takes CI's verdict and announces it with `CI: tree dirty only in inert paths (…) — taking CI verdicts on HEAD`; the stamp still records the tree as dirty unless every dirty path is `generated`.
 - Related: `docs/journeys/get-one-full-suite-run-on-a-docs-touching-build-3060.md` (Common Step 5's run-once rule), `docs/journeys/declare-a-verify-scope-1924.md` (the declaration).
