@@ -60,6 +60,10 @@ terminal decision below.
 5. **Staged inventory reconciliation** — run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-staged-inventory --run "{run-dir}"`. On `MISMATCH`, surface it as a visible warning line (never a silent log entry) — a `STAGED` entry whose named `staged/` file is missing needs manual re-derivation from `decisions.md`'s prose before it can be applied here.
 6. **Session-start residue check** — run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" check-session-residue --run "{run-dir}"`. On pending residue, render a "Still pending from earlier" informational line naming each item and its resolution command, above the console tables (see console-template.md) — informational only, never acted on here. Omit when it reports none.
 
+## Proposal bundling (runs before ledger narrowing)
+
+Read `proposal-bundling.md` and follow it first: staged record proposals of one class that cite overlapping Key Files are composed into one `bundle-{n}.md` proposal, so the console files one record, not N. A non-zero bundler exit bundles nothing and every proposal files individually.
+
 ## Ledger narrowing auto-file (runs before rendering)
 
 Read `ledger-narrowing-auto-file.md` and follow it before building the tables below — when `_shared/autonomy-ceiling.md`'s `queueWriteAutoFile` capability is unlocked, a staged queue-write proposal is created directly and logged as `AUTO` instead of waiting for Queue writes' per-item approval.
