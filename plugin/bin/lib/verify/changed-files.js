@@ -52,6 +52,21 @@ function usableAnchor({ stamp = null, execImpl = execFileSync } = {}) {
   return canonical === null || canonical.trim() === '' ? null : canonical.trim();
 }
 
+// scopedPassBase({ stamp, anchor, execImpl }) (#5075): the canonical sha of a
+// clean, passing NON-full stamp (scoped, none, static-only, tool-scoped) when it
+// is a real ancestor of HEAD and not already the stamp's own anchor, else null.
+// verify.js uses it only to ask "is everything since that pass bookkeeping-only?";
+// a delta with any other path is still measured from fullSha, and fullSha never
+// moves here. A dirty, non-ancestor or unreadable stamp never anchors.
+function scopedPassBase({ stamp = null, anchor = null, execImpl = execFileSync } = {}) {
+  if (!stamp || typeof anchor !== 'string' || !anchor) return null;
+  if (stamp.scope === 'full' || stamp.dirty !== false || stamp.sha === anchor) return null;
+  if (typeof stamp.sha !== 'string' || stamp.sha === '') return null;
+  if (tryGit(execImpl, ['merge-base', '--is-ancestor', '--end-of-options', stamp.sha, 'HEAD']) === null) return null;
+  const canonical = tryGit(execImpl, ['rev-parse', '--verify', '--end-of-options', `${stamp.sha}^{commit}`]);
+  return canonical === null || canonical.trim() === '' ? null : canonical.trim();
+}
+
 function resolveBase({
   stamp = null, integrationBranch = null, base = null, execImpl = execFileSync, requireNonDegenerate = false,
   head = undefined, anchor: knownAnchor = undefined,
@@ -226,5 +241,5 @@ function mergeNarrowing({ anchor, integrationBranch, files, execImpl = execFileS
 }
 
 module.exports = {
-  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
 };
