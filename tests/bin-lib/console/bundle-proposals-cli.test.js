@@ -215,6 +215,8 @@ test('input set: shadow-dup copies, sdd-ruling ledger records, bundle- files, Bu
   const keep = { title: 'Other', files: ['src/a.js'], fp: 'fp-o' };
   put(f, 'leftover-dup.md.shadow-dup', keep);
   put(f, 'ledger-record-sdd-ruling-1.md', keep);
+  // A row names the ruling, so only the input-set exclusion (not "ledger row not found") keeps it out.
+  fs.appendFileSync(f.ledger, '| 3 | build | ruling | deferred | staged/ledger-record-sdd-ruling-1.md |\n');
   fs.writeFileSync(f.staged('leftover-held.md'), `Bundled-into: staged/bundle-9.md\n${proposal(keep)}`);
   put(f, 'leftover-refused.md', keep);
   fs.appendFileSync(path.join(f.runDir, 'decisions.md'), '- REFUSED 10:01:00 — /wrap-up: leftover proposal staged/leftover-refused.md refused. Reversibility: high.\n');
@@ -342,24 +344,73 @@ test('crash recovery: a stray staged/bundle-1.md with no bundled/ members is rem
   assert.doesNotMatch(f.read(f.staged('bundle-1.md')), /Stray/);
 });
 
-test('crash recovery: a bundled/ member whose bundle file is missing goes back to staged/ with its ledger Resolution', () => {
+test('a committed bundle whose file is gone with no un-bundling marker was skipped at the console: members stay in bundled/', () => {
   const f = fixture();
-  const texts = seed(f);
+  seed(f);
+  assert.equal(go(f).code, 0);
   const ledger = f.read(f.ledger);
+  const decisions = f.decisions();
+  fs.rmSync(f.staged('bundle-1.md'));
+  fs.writeFileSync(f.records, hubRecords());
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), ['leftover-z.md']);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), ['ledger-record-c.md', 'leftover-a.md', 'leftover-b.md']);
+  assert.equal(f.read(f.ledger), ledger);
+  assert.equal(f.decisions(), decisions, 'nothing is logged');
+});
+
+test('a new bundle never takes the number of a committed bundle the console skipped', () => {
+  const f = fixture();
+  seed(f);
   assert.equal(go(f).code, 0);
   fs.rmSync(f.staged('bundle-1.md'));
-  // Three open records citing src/a.js make it a hub, so the restored members do not bundle again.
-  const body = specShapedBody({
-    currentState: 'x', deliverables: '- [ ] x', acceptanceCriteria: 'x', releaseNote: 'x', filedBy: 't', provenance: { origin: 'o', deferReason: 'tangential' },
-    keyFiles: [{ path: 'src/a.js', change: 'modify' }],
-  });
-  fs.writeFileSync(f.records, JSON.stringify([1, 2, 3].map((n) => ({ number: n, title: `c${n}`, body, labels: [], state: 'OPEN' }))));
+  put(f, 'leftover-p.md', { title: 'Pi gap', files: ['src/p.js'], fp: 'fp-p' });
+  put(f, 'leftover-q.md', { title: 'Rho gap', files: ['src/p.js'], fp: 'fp-q' });
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json.bundles[0].path, 'staged/bundle-2.md');
+  assert.equal(f.ls(path.join(f.runDir, 'bundled')).includes('leftover-a.md'), true, 'the skipped bundle keeps its members');
+});
+
+test('crash after the un-bundling marker: the next bundle-mode run finishes the restore, whichever step died', () => {
+  const dies = {
+    'bundle file not yet deleted': () => ({ unlink: () => { throw new Error('died'); } }),
+    'after the file, mid restore': () => {
+      let n = 0;
+      return { writeFile: (p, s) => { n += 1; if (n === 2) throw new Error('died'); return realDeps.writeFile(p, s); } };
+    },
+  };
+  for (const [label, overrides] of Object.entries(dies)) {
+    const f = fixture();
+    const texts = seed(f);
+    const ledger = f.read(f.ledger);
+    assert.equal(go(f).code, 0);
+    assert.equal(go(f, ['--unbundle', 'bundle-1.md'], overrides()).code, 3, label);
+    assert.match(f.decisions(), /Proposal bundling: un-bundling staged\/bundle-1\.md/, label);
+    fs.writeFileSync(f.records, hubRecords());
+    const r = go(f);
+    assert.equal(r.code, 0, `${label}: ${r.err}`);
+    assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), Object.keys(texts).sort(), label);
+    for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, `${label} ${name}`);
+    assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), [], label);
+    assert.equal(f.read(f.ledger), ledger, label);
+    assert.deepEqual(events(f), ['bundled staged/bundle-1.md', 'un-bundling staged/bundle-1.md', 'un-bundled staged/bundle-1.md'], label);
+  }
+});
+
+test('input set: a committed bundle is never nested into a later bundle', () => {
+  const f = fixture();
+  seed(f);
+  assert.equal(go(f).code, 0);
+  const bundle = f.read(f.staged('bundle-1.md'));
+  put(f, 'leftover-late.md', { title: 'Late gap', files: ['src/a.js'], fp: 'fp-late' });
   const r = go(f);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(r.json.bundles, []);
-  for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, name);
-  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), []);
-  assert.equal(f.read(f.ledger), ledger);
+  assert.ok(r.json.singletons.includes('staged/leftover-late.md'));
+  assert.equal(f.read(f.staged('bundle-1.md')), bundle);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), ['bundle-1.md', 'leftover-late.md', 'leftover-z.md']);
 });
 
 test('Review Focus 3: a ledger-record member with no ledger row stays a singleton and is not retired', () => {
@@ -496,7 +547,7 @@ function hubRecords() {
   return JSON.stringify([1, 2, 3].map((n) => ({ number: n, title: `c${n}`, body, labels: [], state: 'OPEN' })));
 }
 
-const events = (f) => f.decisions().split('\n').map((l) => /Proposal bundling: ((?:un-)?bundled) (\S+)/.exec(l)).filter(Boolean).map((m) => `${m[1]} ${m[2]}`);
+const events = (f) => f.decisions().split('\n').map((l) => /Proposal bundling: (bundled|un-bundling|un-bundled) (\S+)/.exec(l)).filter(Boolean).map((m) => `${m[1]} ${m[2]}`);
 
 test('spec-qualified ledger match: a run-level and a spec member of one name each bind to their own row', () => {
   const f = fixture();
@@ -607,22 +658,45 @@ test('partial un-bundle: the bundle file goes first, and the next bundle-mode ru
   for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, name);
   assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), []);
   assert.equal(f.read(f.ledger), ledger);
-  assert.deepEqual(events(f), ['bundled staged/bundle-1.md', 'un-bundled staged/bundle-1.md']);
+  assert.deepEqual(events(f), ['bundled staged/bundle-1.md', 'un-bundling staged/bundle-1.md', 'un-bundled staged/bundle-1.md']);
 });
 
-test('recovery refuses to delete a bundle while a bundled/ file cannot be read or parsed (exit 3, nothing changed)', () => {
+test('a pending repair refuses to delete a bundle while a bundled/ file in its members\' dir cannot be parsed (exit 3, nothing changed)', () => {
+  const f = fixture();
+  seed(f);
+  assert.equal(go(f, [], { settleRow: () => { throw new Error('died'); }, inProcessRollback: false }).code, 3);
+  fs.writeFileSync(path.join(f.runDir, 'bundled', 'junk.md'), 'not a bundled member\n');
+  const staged = f.ls(path.join(f.runDir, 'staged'));
+  const bundled = f.ls(path.join(f.runDir, 'bundled'));
+  const r = go(f);
+  assert.equal(r.code, 3);
+  assert.match(r.err, /junk\.md/);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), staged);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), bundled);
+});
+
+test('an unparseable bundled/ file in another dir does not block a repair elsewhere', () => {
+  const f = fixture();
+  const texts = seed(f);
+  assert.equal(go(f, [], { settleRow: () => { throw new Error('died'); }, inProcessRollback: false }).code, 3);
+  fs.mkdirSync(path.join(f.runDir, 'spec-1', 'bundled'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'spec-1', 'bundled', 'junk.md'), 'not a bundled member\n');
+  fs.writeFileSync(f.records, hubRecords());
+  const r = go(f);
+  assert.equal(r.code, 0, r.err);
+  for (const [name, text] of Object.entries(texts)) assert.equal(f.read(f.staged(name)), text, name);
+  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), []);
+});
+
+test('an unparseable bundled/ file blocks nothing when no repair is pending for a bundle in its dir', () => {
   const f = fixture();
   seed(f);
   assert.equal(go(f).code, 0);
   fs.writeFileSync(path.join(f.runDir, 'bundled', 'junk.md'), 'not a bundled member\n');
-  fs.rmSync(f.staged('bundle-1.md'));
-  const before = f.ls(path.join(f.runDir, 'bundled'));
-  const r = go(f);
-  assert.equal(r.code, 3);
-  assert.match(r.err, /junk\.md/);
-  assert.deepEqual(f.ls(path.join(f.runDir, 'bundled')), before);
-  assert.deepEqual(f.ls(path.join(f.runDir, 'staged')), ['leftover-z.md']);
-  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 3, 'un-bundle refuses too');
+  fs.writeFileSync(f.records, hubRecords());
+  assert.equal(go(f).code, 0, 'a healthy committed bundle needs no repair');
+  assert.equal(go(f, ['--unbundle', 'bundle-1.md']).code, 3, 'un-bundle of a bundle whose member dir holds the junk refuses');
+  assert.equal(f.ls(path.join(f.runDir, 'bundled')).includes('leftover-a.md'), true);
 });
 
 test('a readdir error other than ENOENT exits 3 and writes nothing; only ENOENT reads as an empty dir', () => {

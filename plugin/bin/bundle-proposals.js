@@ -19,10 +19,12 @@
 // Commit marker: a bundle's `bundled staged/bundle-{n}.md` AUTO line in decisions.md, written last (step 4).
 // A failure anywhere undoes every bundle of the invocation, committed ones included (each logs an
 // `un-bundled` line), so a non-zero exit bundles nothing.
-// A crashed run is repaired on the next bundle-mode start: a bundle that is not committed (no marker, or the
-// last marker for it is `un-bundled`), or is committed but whose file is gone (a partial --unbundle, which
-// deletes the bundle file first), is rolled back — its bundled/ members return to staged/ with their ledger
-// Resolutions and the bundle file goes. A bundled/ file that cannot be read or parsed blocks that repair (exit 3).
+// A crashed run is repaired on the next bundle-mode start: a bundle that is not committed (no marker, or its
+// last marker is `un-bundled`), or whose last marker is `un-bundling` (--unbundle logs it before deleting the
+// bundle file), is rolled back — its bundled/ members return to staged/ with their ledger Resolutions and the
+// bundle file goes. A committed bundle whose file is gone with no `un-bundling` marker was skipped at the
+// console: its members stay in bundled/ and nothing is logged. A bundled/ file that cannot be read or parsed,
+// in a dir a pending repair touches, blocks that repair (exit 3).
 'use strict';
 
 const fs = require('fs');
@@ -289,7 +291,7 @@ function bundledMembers(dirs, deps) {
       let parsed = null;
       try { parsed = parseBundled(deps.readFile(path.join(dir.abs, 'bundled', name))); } catch { parsed = null; }
       if (parsed) members.push({ dir, name, parsed });
-      else unreadable.push(relPath(dir, 'bundled', name));
+      else unreadable.push({ dir, path: relPath(dir, 'bundled', name) });
     }
   }
   return { members, unreadable };
@@ -302,20 +304,27 @@ function readOptional(deps, file) {
   }
 }
 
-// decisions.md -> Map(bundle ref -> true when its last Proposal bundling event is `bundled`, false when `un-bundled`).
-const EVENT_RE = /^- AUTO \S+ — Proposal bundling: (bundled|un-bundled) (staged\/bundle-\d+\.md)(?=[ ;])/;
+// decisions.md -> Map(bundle ref -> its last Proposal bundling event: 'bundled' (committed), 'un-bundling' (an
+// un-bundle began; its commit point is the bundle file going) or 'un-bundled' (done)).
+const EVENT_RE = /^- AUTO \S+ — Proposal bundling: (bundled|un-bundling|un-bundled) (staged\/bundle-\d+\.md)(?=[ ;])/;
 function bundleEvents(decisionsText) {
   const state = new Map();
   for (const line of String(decisionsText || '').split('\n')) {
     const m = EVENT_RE.exec(line);
-    if (m) state.set(m[2], m[1] === 'bundled');
+    if (m) state.set(m[2], m[1]);
   }
   return state;
 }
 
-function refuseUnreadable(unreadable) {
-  if (unreadable.length > 0) throw new Error(`bundled/ file(s) cannot be read or parsed (${unreadable.join(', ')}) — refusing to delete a bundle; fix or remove them first`);
+// A repair that deletes a bundle or restores its members must not run past a bundled/ file it cannot read: that
+// file may be one of those members. `touched` is the dirs the repair's parseable members sit in, or null when the
+// repair has none (an unreadable file anywhere could be its member).
+function refuseUnreadable(unreadable, touched) {
+  const blocking = unreadable.filter((u) => touched === null || touched.has(u.dir.abs));
+  if (blocking.length > 0) throw new Error(`bundled/ file(s) cannot be read or parsed (${blocking.map((u) => u.path).join(', ')}) — refusing to delete a bundle; fix or remove them first`);
 }
+
+const dirsOf = (members) => (members.length === 0 ? null : new Set(members.map((m) => m.dir.abs)));
 
 function auto(text, deps) {
   return formatEntry({
@@ -331,12 +340,17 @@ function unbundle(o, target, deps) {
   const paths = [];
   try {
     const all = bundledMembers(dirs, deps);
-    refuseUnreadable(all.unreadable);
     const members = all.members.filter((m) => m.parsed.bundleRef === ref);
+    refuseUnreadable(all.unreadable, dirsOf(members));
     const bundleExists = readOptional(deps, bundleFile) !== null;
     if (!bundleExists && members.length === 0) throw new Fail(2, `${ref} is not a bundle of this run: no such file and no bundled/ member names it`);
-    // The bundle file goes first: it is the un-bundle's commit point, so a crash leaves "committed, file gone",
-    // which the next bundle-mode start finishes (recover) instead of treating the half-restored members as fresh.
+    // The `un-bundling` marker goes first, then the bundle file (the commit point). A crash after the marker is
+    // finished by the next bundle-mode start; a bundle file that is gone with NO marker was skipped at the console,
+    // and its members stay in bundled/.
+    deps.appendEntries({
+      runDir: target.dir,
+      items: [{ section: SECTION, entry: auto(`un-bundling ${ref} → ${members.map((m) => relPath(m.dir, 'staged', m.name)).join(', ') || '(no members)'}`, deps) }],
+    });
     deps.unlink(bundleFile);
     for (const m of members) {
       restoreMember(m.dir, m.name, m.parsed, deps, ledger);
@@ -353,29 +367,38 @@ function unbundle(o, target, deps) {
   return 0;
 }
 
-// Crash repair (see the header). Throws on any failure; the caller exits 3.
+// Crash repair (see the header). Throws on any failure; the caller exits 3. Returns the highest bundle number still
+// in use (committed bundles, including ones the console skipped), so a new bundle never takes a live number.
 function recover(target, dirs, deps, ledger) {
   const all = bundledMembers(dirs, deps);
-  refuseUnreadable(all.unreadable);
   const state = bundleEvents(readOptional(deps, path.join(target.dir, 'decisions.md')));
   const stagedDir = path.join(target.dir, 'staged');
   const files = new Set(deps.readdir(stagedDir).filter((n) => BUNDLE_NAME_RE.test(n)).map((n) => `staged/${n}`));
-  const refs = new Set([...files, ...all.members.map((m) => m.parsed.bundleRef), ...[...state].filter(([, c]) => c).map(([r]) => r)]);
+  const refs = new Set([...files, ...all.members.map((m) => m.parsed.bundleRef), ...[...state].filter(([, s]) => s !== 'un-bundled').map(([r]) => r)]);
+  const live = [];
+  const repairs = [];
   for (const ref of [...refs].sort()) {
-    const committed = state.get(ref) === true;
-    if (committed && files.has(ref)) continue;
+    const st = state.get(ref);
+    // Committed: a healthy bundle stays; one whose file is gone with no `un-bundling` marker was skipped at the
+    // console (review-console-interactive.md), so its members stay in bundled/ and nothing is restored or logged.
+    if (st === 'bundled') { live.push(ref); continue; }
+    repairs.push({ ref, st, members: all.members.filter((m) => m.parsed.bundleRef === ref) });
+  }
+  for (const r of repairs) refuseUnreadable(all.unreadable, dirsOf(r.members));
+  for (const { ref, st, members } of repairs) {
     const paths = [];
-    for (const m of all.members.filter((x) => x.parsed.bundleRef === ref)) {
+    for (const m of members) {
       restoreMember(m.dir, m.name, m.parsed, deps, ledger);
       paths.push(relPath(m.dir, 'staged', m.name));
     }
     if (files.has(ref)) deps.unlink(path.join(target.dir, ref));
-    if (committed) {
+    if (st === 'un-bundling') {
       deps.appendEntries({
         runDir: target.dir, items: [{ section: SECTION, entry: auto(`un-bundled ${ref} → ${paths.join(', ') || '(no members left)'}`, deps) }],
       });
     }
   }
+  return Math.max(0, ...live.map((ref) => Number(/(\d+)\.md$/.exec(ref)[1])));
 }
 
 function enumerate(dirs, ledgerFinder, deps) {
@@ -385,7 +408,8 @@ function enumerate(dirs, ledgerFinder, deps) {
   for (const dir of dirs) {
     const refused = refusedStagedNames(readOptional(deps, path.join(dir.abs, 'decisions.md')) || '');
     for (const name of deps.readdir(path.join(dir.abs, 'staged')).filter((n) => n.endsWith('.md') && !n.startsWith('.')).sort()) {
-      if (/\.shadow-dup/.test(name) || /^ledger-record-sdd-ruling-/.test(name) || /^bundle-/.test(name) || refused.has(name)) continue;
+      // `.shadow-dup` copies never reach here: SHADOW_DUP_RE names end in `.shadow-dup[-n]`, so the `.md` filter drops them.
+      if (/^ledger-record-sdd-ruling-/.test(name) || /^bundle-/.test(name) || refused.has(name)) continue;
       const key = relPath(dir, 'staged', name);
       let text;
       try { text = deps.readFile(path.join(dir.abs, 'staged', name)); } catch (err) {
@@ -423,7 +447,8 @@ function bundle(o, target, deps) {
   const openRecords = loadOpenRecords(o, deps);
   const dirs = memberDirs(target.dir, deps);
   const ledgerFinder = { ...makeLedgerFinder(o, target, deps), runDir: target.dir };
-  try { recover(target, dirs, deps, ledgerFinder); } catch (err) {
+  let highest;
+  try { highest = recover(target, dirs, deps, ledgerFinder); } catch (err) {
     throw new Fail(3, `could not repair an interrupted bundling run (${err && err.message})`);
   }
 
@@ -448,7 +473,7 @@ function bundle(o, target, deps) {
     for (const b of plan.bundles) {
       const composed = composeBundle(b, { openRecords });
       const staged = deps.writeStaged({
-        runDir: target.dir, id: 'bundle-1', sourcePath: 'bundle-1.md', content: composed.text, allocate: true,
+        runDir: target.dir, id: `bundle-${highest + 1}`, sourcePath: 'bundle.md', content: composed.text, allocate: true,
       });
       const bundleRef = `staged/${staged.id}.md`;
       const memberKeys = b.members.map((m) => m.key);
