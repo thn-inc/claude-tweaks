@@ -49,7 +49,7 @@ const { toPosix } = require('./lib/shared-primitives');
 const { readDeclaration } = require('./lib/verify/declaration');
 const { usableAnchor, changedFiles } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
-const { canonicalRealpath } = require('./lib/path-guard');
+const { canonicalRealpath, resolveWithin } = require('./lib/path-guard');
 
 const USAGE = 'usage: qa-stamp.js --write --report <RUN_DIR/report.json> [--stories-dir <dir>]\n'
   + '       qa-stamp.js --check --stories <id=file,...> [--stories-dir <dir>] [--scope <verify-scope.json>]\n'
@@ -188,12 +188,9 @@ function classifyBookkeepingDelta({ stampSha, scope, execImpl }) {
     const top = String(execImpl('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', windowsHide: true })).trim(); // git-path-read: single path
     const resolved = path.isAbsolute(scope) ? scope : path.join(top, scope);
     const topReal = canonicalRealpath(top);
-    const leafReal = canonicalRealpath(resolved);
+    const leaf = resolveWithin(resolved, top);
     let selfPath = null;
-    if (topReal !== null && leafReal !== null) {
-      const rel = path.relative(topReal, leafReal);
-      if (rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) selfPath = toPosix(rel);
-    }
+    if (topReal !== null && leaf !== null) selfPath = toPosix(path.relative(topReal, leaf)) || null;
     const read = readDeclaration(resolved, undefined, { selfPath });
     if (!read.ok || !read.decl) return false;
     const stamp = { sha: stampSha, fullSha: stampSha };
