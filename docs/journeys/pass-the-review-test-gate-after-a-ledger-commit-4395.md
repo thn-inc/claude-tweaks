@@ -1,5 +1,6 @@
 ---
 files:
+  - plugin/bin/verify.js
   - plugin/skills/review/code-mode-steps.md
   - plugin/skills/test/SKILL.md
   - plugin/skills/test/verification.md
