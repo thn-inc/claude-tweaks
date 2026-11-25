@@ -890,3 +890,48 @@ test('#4621: outside control mode an upstream item still files and nothing about
   assert.ok(!calls.some((c) => c.includes('get-url') || c[1] === 'show'), JSON.stringify(calls));
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
 });
+
+const bundleItem = (resolution = 'apply') => ({ id: 'bundle-1.md', section: 'Queue writes', resolution, reason: 'bundled queue write' });
+
+test('a carried bundle settles every ledger row naming it (#6283)', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([bundleItem()]), staged: { 'bundle-1.md': 'b' } });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  for (const item of ['one', 'two']) appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item, status: 'deferred', resolution: '→ backlog, staged/bundle-1.md' });
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'other', status: 'deferred', resolution: '→ backlog, staged/bundle-10.md' });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundle-1.md', 'carried', '--ledger', ledger), b.d), 0, b.err());
+  const text = fs.readFileSync(ledger, 'utf8');
+  assert.match(text, /\| 1 \| build \| one \| deferred \| carried to the acceptance packet as decision:console:bundle-1\.md \|/);
+  assert.match(text, /\| 2 \| build \| two \| deferred \| carried to the acceptance packet as decision:console:bundle-1\.md \|/);
+  assert.match(text, /\| 3 \| build \| other \| deferred \| → backlog, staged\/bundle-10\.md \|/, 'a prefix-sharing id is untouched');
+  assert.match(b.out(), /ledger rows #1, #2 settled/);
+  assert.strictEqual(cj(fx).items[0].resolution, 'carried');
+  assert.deepStrictEqual(readJson(FACTS(fx)).map((f) => f.id), ['decision:console:bundle-1.md'], 'one decision fact for the bundle');
+  // A re-run finds every row already carried and changes nothing.
+  const again = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundle-1.md', 'carried', '--ledger', ledger), again.d), 0, again.err());
+  assert.strictEqual(fs.readFileSync(ledger, 'utf8'), text);
+});
+
+test('a carried bundle with a terminal-fixed member row refuses before writing anything', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([bundleItem()]), staged: { 'bundle-1.md': 'b' } });
+  const ledger = path.join(fx.root, 'ledger.md');
+  fs.writeFileSync(ledger, LEDGER_HEAD);
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'one', status: 'deferred', resolution: '→ backlog, staged/bundle-1.md' });
+  appendRow({ runDir: fx.runDir, ledgerPath: ledger, phase: 'build', item: 'two', status: 'fixed', resolution: 'staged/bundle-1.md done' });
+  const before = fs.readFileSync(ledger, 'utf8');
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundle-1.md', 'carried', '--ledger', ledger), b.d), 5);
+  assert.match(b.err(), /already fixed \(terminal\)/);
+  assert.strictEqual(fs.readFileSync(ledger, 'utf8'), before);
+  assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')));
+  assert.strictEqual(cj(fx).items[0].resolution, 'apply');
+});
+
+test('--ledger still exits 2 for an id that is neither bundle-* nor ledger-record-*', async () => {
+  const fx = controlFixture({ consoleJson: consoleOf([{ ...leftover(), id: 'bundled-1.md' }]) });
+  const b = baseDeps(fx, []);
+  assert.strictEqual(await run(setItemArgs(fx, 'bundled-1.md', 'carried', '--ledger', 'ledger.md'), b.d), 2);
+  assert.match(b.err(), /--ledger applies only to a ledger-record-\* item or a bundle-\* item/);
+});

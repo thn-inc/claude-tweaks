@@ -117,10 +117,10 @@
 // nothing else, so no item is ever dropped. Under `--set-item`, control mode stores a requested
 // `keep-staged`/`pending` as `carried`; `--resolution carried` is the one route for a failed or
 // refused `ledger-record-*` or Queue-write item, and `--ledger <path>` (a `--set-item` modifier only)
-// settles the one ledger row naming `staged/{id}` `deferred` with `carried to the acceptance packet as
+// settles the one ledger row naming `staged/{id}` (a bundle-* id: every such row, one fact, one settle per member — #6283) `deferred` with `carried to the acceptance packet as
 // {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
 // ledger.md or *-ledger.md under the run or worktree), 3 when the settle throws. `carried` and `--ledger` need
-// control mode and a ledger-record-* id: otherwise exit 2. Exit 6: the facts could not be written.
+// control mode and a ledger-record-* or bundle-* id: otherwise exit 2. Exit 6: the facts could not be written.
 'use strict';
 
 const fs = require('fs');
@@ -166,7 +166,7 @@ function issueUrlRepo(url) {
 }
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
-  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
+  + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* or bundle-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
   + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
@@ -521,7 +521,8 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
 
   // The ledger row is located (read-only) before anything is written, so a refusal leaves no orphan fact.
   let ledger = null;
-  if (o.ledger !== null && o.setItem.startsWith('ledger-record-')) {
+  const isBundle = o.setItem.startsWith('bundle-');
+  if (o.ledger !== null && (isBundle || o.setItem.startsWith('ledger-record-'))) {
     // The same confinement every other ledger writer applies (hooks.js ledger-row): a ledger.md or *-ledger.md
     // file under the run directory or the worktree. A refused path is exit 5, with nothing written.
     const resolved = resolveLedgerPath({ runDir, worktree: cwd(), explicit: path.resolve(cwd(), o.ledger) });
@@ -544,17 +545,19 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
       stderr(`console-resolve.js: no ledger row names staged/${o.setItem} in ${ledgerPath} — nothing written\n`);
       return 5;
     }
-    if (found.rows.length > 1) {
+    if (found.rows.length > 1 && !isBundle) {
       stderr(`console-resolve.js: ${found.rows.length} ledger rows name staged/${o.setItem} in ${ledgerPath} (#${found.rows.map((r) => r.number).join(', #')}) — nothing written\n`);
       return 5;
     }
     // A row already final in a terminal status the carry cannot settle (settleRow would throw after the fact landed) is refused here;
     // any other status (open, empty, malformed) falls through to settleRow's own handling.
-    if (found.rows.length === 1 && TERMINAL_STATUSES.includes(found.rows[0].status) && found.rows[0].status !== 'deferred') {
-      stderr(`console-resolve.js: ledger row #${found.rows[0].number} naming staged/${o.setItem} is already ${found.rows[0].status} (terminal) — nothing written\n`);
+    const stuck = found.rows.find((r) => TERMINAL_STATUSES.includes(r.status) && r.status !== 'deferred');
+    if (stuck) {
+      stderr(`console-resolve.js: ledger row #${stuck.number} naming staged/${o.setItem} is already ${stuck.status} (terminal) — nothing written\n`);
       return 5;
     }
-    ledger = { ledgerPath, row: found.rows.length === 1 ? found.rows[0].number : null, alreadyRow: found.already[0] };
+    // A bundle settles every member row (one decision fact, one settle per row); a ledger-record-* item has exactly one.
+    ledger = { ledgerPath, rows: found.rows.map((r) => r.number), alreadyRows: found.already };
   }
 
   try { writeDecisionFacts(runDir, [fact]); } catch (err) { return carryFailure(stderr, [o.setItem], err); }
@@ -562,17 +565,20 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
   let ledgerNote = '';
   let ledgerChanged = false;
   if (ledger !== null) {
-    if (ledger.row === null) {
-      ledgerNote = `ledger row #${ledger.alreadyRow} already carried`;
+    const list = (rows) => `ledger row${rows.length > 1 ? 's' : ''} #${rows.join(', #')}`;
+    if (ledger.rows.length === 0) {
+      ledgerNote = `${list(ledger.alreadyRows)} already carried`;
     } else {
-      try {
-        settleRow({ runDir, ledgerPath: ledger.ledgerPath, row: ledger.row, status: 'deferred', resolution: carriedText });
-      } catch (err) {
-        stderr(`console-resolve.js: could not settle ledger row #${ledger.row} in ${ledger.ledgerPath}: ${err && err.message ? err.message : err} — item ${o.setItem} unchanged\n`);
-        return 3;
+      for (const [i, row] of ledger.rows.entries()) {
+        try {
+          settleRow({ runDir, ledgerPath: ledger.ledgerPath, row, status: 'deferred', resolution: carriedText });
+        } catch (err) {
+          stderr(`console-resolve.js: could not settle ledger row #${row} in ${ledger.ledgerPath}: ${err && err.message ? err.message : err} — item ${o.setItem} unchanged${i > 0 ? `; ${list(ledger.rows.slice(0, i))} already settled` : ''}\n`);
+          return 3;
+        }
+        ledgerChanged = true;
       }
-      ledgerNote = `ledger row #${ledger.row} settled`;
-      ledgerChanged = true;
+      ledgerNote = `${list(ledger.rows)} settled`;
     }
   }
 
@@ -587,7 +593,7 @@ function carryItem(o, runDir, { stdout, stderr, now, cwd }) {
   }
   if (r.status === 'refused') {
     // The fact (and possibly the ledger row) already landed: say so, never "nothing written".
-    stderr(`console-resolve.js: ${r.why} — the decision fact ${fact.id} is in decisions.json${ledgerChanged ? ` and ledger row #${ledger.row} is settled` : ''}; the console item is unchanged\n`);
+    stderr(`console-resolve.js: ${r.why} — the decision fact ${fact.id} is in decisions.json${ledgerChanged ? ` and ${ledgerNote}` : ''}; the console item is unchanged\n`);
     return 5;
   }
   // One helper for both paths: appends the AUTO line; returns null, or the message a failed append leaves.
@@ -627,7 +633,7 @@ function setItem(o, runDir, { stdout, stderr, now, execFile, cwd }) {
   // `carried` is control mode's resolution: with it off the value is refused as it was before this record.
   if (o.resolution === 'carried' && !controlMode) return usage(`--resolution must be one of ${Object.keys(REWRITE_FROM).join(', ')} (got carried)`);
   if (o.ledger !== null) {
-    if (!o.setItem.startsWith('ledger-record-')) return usage(`--ledger applies only to a ledger-record-* item (got ${o.setItem})`);
+    if (!o.setItem.startsWith('ledger-record-') && !o.setItem.startsWith('bundle-')) return usage(`--ledger applies only to a ledger-record-* item or a bundle-* item (got ${o.setItem})`);
     if (!controlMode) return usage('--ledger applies only to a carried item, which needs control mode');
   }
   if (controlMode) {
