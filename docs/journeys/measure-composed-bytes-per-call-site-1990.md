@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/skill-audit/context-cost.js
   - plugin/bin/lib/compose-context/phases.js
+  - plugin/bin/lib/compose-context/sections.js
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/review/step3-lens-dispatch.md
   - plugin/skills/build/dispatch.md
