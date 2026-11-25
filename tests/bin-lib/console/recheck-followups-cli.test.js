@@ -590,6 +590,7 @@ test('AC15.2: a record labelled bot:in-progress holds', () => {
   const gh = fakeGh({ issue: { state: 'OPEN', labels: [{ name: 'bot:in-progress' }], body: RECORD_BODY } });
   assert.equal(exec(f, gh).code, 0);
   assert.equal(gh.writes().length, 0);
+  assert.equal(skipLines(f).length, 1);
   assert.match(skipLines(f)[0], /record-claimed/);
 });
 
@@ -694,4 +695,120 @@ test('backend resolution: a local-files backend without --local still routes thr
   assert.equal(exec(f, gh, ['--local-merged'], { workBackend: () => 'local-files' }).code, 0);
   assert.equal(gh.calls.length, 0);
   assert.match(skipLines(f)[0], /record-read-failed/);
+});
+
+// ---- Task 5 fix round 1 ---------------------------------------------------------------------------------------
+
+test('partial failure: comment posts, close fails, re-run posts no second comment and closes exactly once', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const first = fakeGh({ failClose: true });
+  assert.equal(exec(f, first).code, 0);
+  assert.equal(writesOf(first, 'comment').length, 1);
+  const item = readConsole(f).items[0];
+  assert.equal(item.resolution, 'pending');
+  assert.ok(item.approval.commentedAt);
+  const second = fakeGh();
+  assert.equal(exec(f, second).code, 0);
+  assert.equal(writesOf(second, 'comment').length, 0);
+  assert.equal(writesOf(second, 'close').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+test('partial failure on a narrow proposal: a settle write that fails after the comment does not repost it', () => {
+  const f = fixture(); stageProposal(f, proposal('narrow')); seedApproved(f);
+  const first = fakeGh();
+  let writes = 0;
+  // Let the commentedAt marker write through; fail the settle write that follows.
+  const writeAtomic = (p, text) => { writes += 1; if (writes === 2) throw new Error('disk full'); fs.writeFileSync(p, text); };
+  assert.equal(exec(f, first, [], { writeAtomic }).code, 3);
+  assert.equal(writesOf(first, 'comment').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.ok(readConsole(f).items[0].approval.commentedAt);
+  const second = fakeGh();
+  assert.equal(exec(f, second).code, 0);
+  assert.equal(writesOf(second, 'comment').length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+test('local-files partial failure: a close that failed after the append re-runs without re-appending or holding as body-changed', () => {
+  const f = fixture();
+  const specs = path.join(f.main, 'specs');
+  const ls = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store'));
+  const { id } = createRecord(specs, {
+    slug: 'plain', title: 'Plain', body: RECORD_BODY, facets: defaultFacets(),
+  });
+  const stored = ls.queryRecords(specs)[0].body;
+  const sid = `followup-recheck-${id}.md`;
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', sid), composeProposal({
+    number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(stored), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
+  }));
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local', commentedAt: 'then' } }] }));
+  // State left by a first run: the comment is already appended, the close never happened.
+  const file = path.join(specs, fs.readdirSync(specs).find((n) => n.endsWith('.md')));
+  const rec = ls.readRecord(file);
+  const comment = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'recheck')).parseProposal(fs.readFileSync(path.join(f.runDir, 'staged', sid), 'utf8')).comment;
+  ls.writeRecord(file, { title: rec.title, body: `${rec.body}\n\n${comment}\n`, facets: rec.facets });
+  const r = exec(f, fakeGh(), ['--local', '--local-merged']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readConsole(f).items[0].resolution, 'applied', f.decisions());
+  const after = ls.readRecord(file);
+  assert.equal(after.facets.closed, true);
+  assert.equal(after.body.split('satisfy every deliverable').length - 1, 1);
+});
+
+test('approve refuses (exit 5, nothing written) an item already applied or dropped', () => {
+  for (const resolution of ['applied', 'dropped']) {
+    const f = fixture(); stageProposal(f);
+    fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: ID, section: 'Queue writes', resolution, approval: { at: 'then', pr: '12' } }] }));
+    const before = fs.readFileSync(consolePath(f), 'utf8');
+    assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 5);
+    assert.equal(fs.readFileSync(consolePath(f), 'utf8'), before);
+    assert.equal(autoLines(f).length, 0);
+  }
+});
+
+test('execute: an item id that is not followup-recheck-<n>.md holds as malformed-proposal with no gh call', () => {
+  const f = fixture(); stageProposal(f);
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'other.md'), proposal());
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: 'other.md', section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: '12' } }] }));
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /malformed-proposal/);
+});
+
+test('execute: a proposal whose Target number differs from the id number holds as malformed-proposal with no gh call', () => {
+  const f = fixture();
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', 'followup-recheck-9.md'), proposal());
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: 'followup-recheck-9.md', section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: '12' } }] }));
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /malformed-proposal/);
+});
+
+test('local execute reads records from the run dir main-checkout root, not the cwd', () => {
+  const f = fixture();
+  const specs = path.join(f.main, 'specs');
+  const { id } = createRecord(specs, {
+    slug: 'plain', title: 'Plain', body: RECORD_BODY, facets: defaultFacets(),
+  });
+  const ls = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store'));
+  const sid = `followup-recheck-${id}.md`;
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', sid), composeProposal({
+    number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(ls.queryRecords(specs)[0].body), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
+  }));
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local' } }] }));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-cwd-'));
+  fixtureRoots.push(elsewhere);
+  const r = exec(f, fakeGh(), ['--local', '--local-merged'], { cwd: () => elsewhere, mainRoot: f.main });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
 });

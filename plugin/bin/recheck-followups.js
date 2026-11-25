@@ -291,6 +291,9 @@ function approve(o, target, deps) {
   if (current && current.resolution === 'carried') {
     throw new Fail(5, `${o.id} is carried (control mode resolves it at the acceptance packet, not here) — nothing written`);
   }
+  if (current && (current.resolution === 'applied' || current.resolution === 'dropped')) {
+    throw new Fail(5, `${o.id} is already ${current.resolution} — a settled item is not re-approved; nothing written`);
+  }
   if (deps.controlMode(target.dir)) throw new Fail(5, "control mode is on — an approval is the acceptance packet's to take, not this verb's; nothing written");
   try { deps.readFile(path.join(target.dir, 'staged', o.id)); } catch (err) {
     throw new Fail(3, `staged/${o.id} is unreadable (${err && err.message})`);
@@ -338,19 +341,27 @@ function ghRecord(number, deps) {
   } catch { return { ok: false }; }
 }
 
-function localRecordPath(number, deps) {
-  const root = findGitRoot(deps.cwd());
-  const found = queryRecords(path.resolve(root ? root.dir : deps.cwd(), DEFAULT_DIR)).find((r) => Number(r.id) === number);
+// `root` is the anchored run dir's main-checkout root, the one backend resolution uses.
+function localRecordPath(number, root) {
+  const found = queryRecords(path.resolve(root, DEFAULT_DIR)).find((r) => Number(r.id) === number);
   return found ? found.path : null;
 }
 
-function localRecord(number, deps) {
+// `postedComment`: the comment this verb already appended to the body; it is taken back off before the
+// body-hash check, so a close that failed after the append does not hold as body-changed forever.
+function localRecord(number, root, postedComment) {
   try {
-    const p = localRecordPath(number, deps);
+    const p = localRecordPath(number, root);
     if (!p) return { ok: false };
     const r = readRecord(p);
+    let body = r.body || '';
+    if (postedComment) {
+      const suffix = `\n\n${postedComment}`;
+      const trimmed = body.trimEnd();
+      if (trimmed.endsWith(suffix)) body = trimmed.slice(0, -suffix.length);
+    }
     return {
-      ok: true, state: r.facets && r.facets.closed ? 'CLOSED' : 'OPEN', labels: r.facets && r.facets.isParentIssue ? ['parent-issue'] : [], body: r.body || '',
+      ok: true, state: r.facets && r.facets.closed ? 'CLOSED' : 'OPEN', labels: r.facets && r.facets.isParentIssue ? ['parent-issue'] : [], body,
     };
   } catch { return { ok: false }; }
 }
@@ -360,11 +371,17 @@ function execute(o, target, deps) {
   const data = readConsole(file, deps);
   const envelope = { applied: [], dropped: [], held: [] };
   if (!data || !Array.isArray(data.items)) { deps.stdout(`${JSON.stringify(envelope)}\n`); return 0; }
-  const root = findGitRoot(target.dir);
-  const local = o.local || deps.workBackend(root ? root.dir : deps.cwd()) === 'local-files';
+  const found = findGitRoot(target.dir);
+  const root = found ? found.dir : deps.cwd();
+  const local = o.local || deps.workBackend(root) === 'local-files';
   const log = (status, text, reversibility = 'n/a') => deps.appendEntries({
     runDir: target.dir, items: [{ section: SECTION, entry: formatEntry({ status, now: deps.now(), step: STEP_EXECUTE, text, reversibility }) }],
   });
+  const markCommented = (index) => {
+    const cur = data.items[index];
+    data.items[index] = { ...cur, approval: { ...cur.approval, commentedAt: new Date(deps.now()).toISOString() } };
+    writeConsole(file, data, deps);
+  };
   const settle = (index, resolution) => {
     data.items[index] = { ...data.items[index], resolution };
     writeConsole(file, data, deps);
@@ -375,10 +392,15 @@ function execute(o, target, deps) {
     if (!item || typeof item !== 'object' || !item.approval || item.resolution !== 'pending') continue;
     if (o.id !== null && item.id !== o.id) continue;
     let proposal = null;
-    try { proposal = parseProposal(deps.readFile(path.join(target.dir, 'staged', String(item.id)))); } catch { proposal = null; }
+    const idMatch = /^followup-recheck-(\d+)\.md$/.exec(String(item.id));
+    if (idMatch) {
+      try { proposal = parseProposal(deps.readFile(path.join(target.dir, 'staged', item.id))); } catch { proposal = null; }
+      // An approval for one staged file must never act on another record.
+      if (proposal && proposal.number !== Number(idMatch[1])) proposal = null;
+    }
     const pr = typeof item.approval.pr === 'string' ? item.approval.pr : '';
     const merge = () => (pr === 'local' ? { ok: true, state: o.localMerged ? 'MERGED' : 'OPEN' } : ghMergeState(pr, deps));
-    const record = () => (local ? localRecord(proposal.number, deps) : ghRecord(proposal.number, deps));
+    const record = () => (local ? localRecord(proposal.number, root, item.approval.commentedAt ? proposal.comment : null) : ghRecord(proposal.number, deps));
     const verdict = executionGuard({
       proposal, approval: item.approval, merge, record,
     });
@@ -397,21 +419,29 @@ function execute(o, target, deps) {
     }
 
     const closing = proposal.action === 'close';
-    let posted = false;
+    // `approval.commentedAt` is written before the close is tried, so a re-run after a partial failure never
+    // posts the comment twice.
+    let posted = Boolean(item.approval.commentedAt);
     try {
       if (local) {
-        const p = localRecordPath(proposal.number, deps);
-        const rec = readRecord(p);
-        writeRecord(p, { title: rec.title, body: `${rec.body || ''}\n\n${proposal.comment}\n`, facets: rec.facets });
-        posted = true;
+        const p = localRecordPath(proposal.number, root);
+        if (!posted) {
+          const rec = readRecord(p);
+          writeRecord(p, { title: rec.title, body: `${rec.body || ''}\n\n${proposal.comment}\n`, facets: rec.facets });
+          markCommented(i);
+          posted = true;
+        }
         if (closing) closeRecord(p);
       } else {
-        deps.gh(['issue', 'comment', '--body-file', '-', '--', String(proposal.number)], proposal.comment);
-        posted = true;
+        if (!posted) {
+          deps.gh(['issue', 'comment', '--body-file', '-', '--', String(proposal.number)], proposal.comment);
+          markCommented(i);
+          posted = true;
+        }
         if (closing) deps.gh(['issue', 'close', '--reason', 'completed', '--', String(proposal.number)]);
       }
     } catch (err) {
-      const why = posted ? `the comment was posted but the close failed (${err && err.message}); a re-run would comment again` : `the comment failed (${err && err.message})`;
+      const why = posted ? `the comment was posted but the close failed (${err && err.message}); a re-run skips the comment and retries the close` : `the comment failed (${err && err.message})`;
       log('SKIP', `held ${item.id} (${name}): ${why}; the approval stays pending`);
       envelope.held.push({ id: item.id, reason: posted ? 'close-failed' : 'comment-failed' });
       continue;
