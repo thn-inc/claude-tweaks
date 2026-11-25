@@ -20,6 +20,8 @@
 - A `ceremony-check` output with no `CEREMONY:` line is never defaulted to `standard` (`_shared/ceremony-check-invocation.md`).
 - Commit subjects use `{Verb} {what} — {detail}` and say `refs #4118`, never `closes`/`fixes`.
 
+Waived AC3.1: `npm test` is run whole by /build Common Step 5 and /test, not by a task step.
+
 ## Review Focus
 
 1. A single-record run, or a run where no record carries a `ceremony:standard` *label*, must never skip, because the fold is not yet `standard`. A judged verdict does not count as a label. Task 1's lib guard refuses `:skipped` without a labelled `standard` record (test included).
@@ -104,7 +106,7 @@ git commit -m "Add a skipped ceremony source to manifesto-write — refs #4118"
 **Interfaces:**
 - Consumes: Task 1's `:skipped` grammar and its exact log text.
 
-- [ ] **Step 1: Write the failing test.** Append to the conformance file:
+- [ ] **Step 1: Write the failing test (AC2.1).** Append to `tests/flow-manifesto-ceremony-fallback-conformance.test.js`:
 
 ```js
 // --- #4118: skip the judgment when its verdict cannot matter ---
@@ -137,7 +139,7 @@ test('control: the frozen pre-#4118 paragraph fails every skip pin', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/flow-manifesto-ceremony-fallback-conformance.test.js`
-Expected: FAIL on the `#4118:` test (7 pins missing). The control passes.
+Expected: FAIL after Step 1 on the `#4118:` test (7 pins missing). The control passes.
 
 - [ ] **Step 3: Edit `manifesto.md` line 35.** Insert right after "…and hold each verdict in memory." (inside the same paragraph):
 
@@ -185,7 +187,7 @@ git commit -m "Skip a Manifesto ceremony-check whose verdict cannot matter — r
 **Interfaces:**
 - Consumes: `recordPayload`'s existing `ceremony` key (`plugin/bin/lib/issues/record-payload.js:91`, emits `ceremony:{tier}`), already passed through `bin/compose-record.js`.
 
-- [ ] **Step 1: Write the failing test** `tests/capture-born-ready-ceremony-conformance.test.js`, in the house style of `tests/flow-manifesto-ceremony-fallback-conformance.test.js` (`readText`, `collapse`):
+- [ ] **Step 1: Write the failing test (AC1.1)** `tests/capture-born-ready-ceremony-conformance.test.js`, in the house style of `tests/flow-manifesto-ceremony-fallback-conformance.test.js` (`readText`, `collapse`):
 
 ```js
 // FROZEN_PRE_4118_ROW: the /capture permission-matrix row at this plan's base, verbatim, collapsed.
