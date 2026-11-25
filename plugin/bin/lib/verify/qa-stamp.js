@@ -6,7 +6,10 @@
 // is never covered. Lives beside the verification stamp in the checkout's own
 // git dir (report.js's gitDir()), so both dispatch calls in one worktree read
 // it. bin/qa-stamp.js is the only writer. Reads fail toward absence, like
-// stamp.js: anything malformed is null, never a covering stamp.
+// stamp.js: anything malformed is null, never a covering stamp. decideQaSkip's
+// `bookkeepingDelta === true` input (#5643) satisfies the sha check for a HEAD
+// past the stamp whose delta is bookkeeping-only, reporting
+// 'covered-bookkeeping-delta'; every other check still runs.
 'use strict';
 
 const fs = require('fs');
@@ -55,11 +58,12 @@ function composeQaStamp({
 }
 
 function decideQaSkip({
-  stamp, head, dirty, storiesDir, selected,
+  stamp, head, dirty, storiesDir, selected, bookkeepingDelta = false,
 }) {
   if (!stamp) return { skip: false, reason: 'no-stamp' };
   if (dirty !== false) return { skip: false, reason: 'dirty-tree' };
-  if (stamp.sha !== head) return { skip: false, reason: 'sha-mismatch' };
+  const moved = stamp.sha !== head;
+  if (moved && bookkeepingDelta !== true) return { skip: false, reason: 'sha-mismatch' };
   if (stamp.storiesDir !== storiesDir) return { skip: false, reason: 'stories-dir-mismatch' };
   if (!Array.isArray(selected) || selected.length === 0) return { skip: false, reason: 'nothing-selected' };
   for (const sel of selected) {
@@ -70,7 +74,7 @@ function decideQaSkip({
     if (sel.sha256 === null) return { skip: false, reason: `story-file-unreadable: ${sel.id}` };
     if (entry.sha256 !== sel.sha256) return { skip: false, reason: `story-changed: ${sel.id}` };
   }
-  return { skip: true, reason: 'covered' };
+  return { skip: true, reason: moved ? 'covered-bookkeeping-delta' : 'covered' };
 }
 
 function validStory(s) {
