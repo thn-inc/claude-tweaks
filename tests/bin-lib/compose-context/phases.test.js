@@ -187,7 +187,8 @@ test('a CRLF sectioned source composes the same slice as its LF twin', () => {
   const read = (content) => {
     const f = twoBundlePhase(content, ['## Sliced']);
     const { bundles } = composePhase({ runDir: f.runDir, phase: 'sdd-child', pluginRoot: f.root, repoRoot: f.root }, f.deps);
-    return readText(bundles[1].path);
+    // Raw read: readText would strip a leaked \r and mask a missing normalization.
+    return fs.readFileSync(bundles[1].path, 'utf8');
   };
   const lfText = read(lf);
   assert.ok(lfText.includes('kept body') && !lfText.includes('dropped'));
