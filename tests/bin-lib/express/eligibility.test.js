@@ -11,7 +11,8 @@ const {
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'express', 'eligibility.js'));
 const { globToRegExp } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'issues', 'blast-radius.js'));
 const { resolveBlastRadiusConfig } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'blast-radius-cli.js'));
-const { POLICY_KEYS } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+const { POLICY_KEYS, resolvePolicyKeys } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+const { eligibilityOptions } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'driver', 'lane-bounds.js'));
 
 const ELIGIBLE_LABELS = ['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task'];
 const ELIGIBLE_KEYS = ['plugin/skills/init/claude-md-template.md', 'CLAUDE.md'];
@@ -317,6 +318,32 @@ test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule a
     const out = evaluateRecordEligibility(record(objs([...base, bad])), DRIVER);
     assert.deepStrictEqual(out.reasons, [REASONS.ceremony], bad);
   }
+});
+
+// #4118 (Planning Decisions Q1, Reading A): /capture's Shaped-body branch stamps ceremony:*, and the
+// label is the single ceremony authority for every lane. Options are the driver lane's real ones,
+// resolved from policy defaults, not a hand-built DRIVER object.
+function driverDefaults() {
+  const values = {
+    'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5, 'express-driver-max-risk': 'low',
+    'express-driver-review': 'beyond-express', 'express-driver-protected-paths': 'refuse',
+    'integration-model': 'pr-first', 'merge-sensitive-paths': [],
+  };
+  return eligibilityOptions({
+    'protected-paths': resolvePolicyKeys(['protected-paths'], { policyRaw: '' })['protected-paths'],
+    ...Object.fromEntries(Object.entries(values).map(([k, value]) => [k, { value, source: 'policy' }])),
+  });
+}
+
+test('#4118: a capture-stamped ceremony:fast-lane record is express-eligible and driver-eligible', () => {
+  const r = record(['risk:low', 'size:low', 'ceremony:fast-lane', 'type:task', 'by:capture']);
+  assert.strictEqual(evaluateRecordEligibility(r, OPTS).eligible, true);
+  assert.strictEqual(evaluateRecordEligibility(r, driverDefaults()).eligible, true);
+});
+
+test('#4118: a capture-stamped ceremony:standard record is refused by the default driver-lane options, naming ceremony', () => {
+  const r = record(['risk:low', 'size:low', 'ceremony:standard', 'type:task', 'by:capture']);
+  assert.deepStrictEqual(evaluateRecordEligibility(r, driverDefaults()).reasons, [REASONS.ceremony]);
 });
 
 // Driver lane bounds (#5224): sizeCeiling / maxKeyFiles options; absent options keep every express verdict.
