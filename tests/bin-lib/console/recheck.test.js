@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { RECHECK_CAP, HUNK_BYTE_CAP, EXCLUDED_LABELS, parseJudgedItems, parseChangedPaths, selectCandidates,
-  splitHunks, quoteFound, checkVerdicts, outcomeFor, composeProposal, parseProposal, judgeHunks } =
+  splitHunks, quoteFound, checkVerdicts, outcomeFor, composeProposal, parseProposal, judgeHunks, executionGuard } =
   require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'recheck'));
 
 function rec(number, files, { labels = [], items = ['Do the thing'], title = `Record ${number}` } = {}) {
@@ -228,4 +228,33 @@ test('composeProposal fences a quote containing backticks with a longer fence', 
   checked[0].quote = 'x ```` y';
   const text = composeProposal({ number: 1, title: 'T', outcome: 'close', checked, bodyHash: 'c'.repeat(64), updatedAt: 'u', runId: 'r' });
   assert.match(text, /`{5}\nx `{4} y\n`{5}/);
+});
+
+test('executionGuard: every hold/drop reason, in order, and execute only when all hold', () => {
+  const body = 'record body';
+  const proposal = { number: 7, action: 'close', bodyHash: crypto.createHash('sha256').update(body).digest('hex'), updatedAt: '2026-11-25T00:00:00Z', comment: 'c' };
+  const ok = { proposal, approval: { pr: '12' }, merge: { ok: true, state: 'MERGED' }, record: { ok: true, state: 'OPEN', labels: [], body } };
+  const g = (over) => executionGuard({ ...ok, ...over });
+  assert.deepEqual(g({}), { action: 'execute', reason: 'ready' });
+  assert.deepEqual(g({ proposal: null }), { action: 'hold', reason: 'malformed-proposal' });
+  assert.deepEqual(g({ approval: { pr: 'abc' } }), { action: 'hold', reason: 'malformed-pr' });
+  assert.deepEqual(g({ approval: null }), { action: 'hold', reason: 'malformed-pr' });
+  assert.deepEqual(g({ approval: { pr: 'local' }, merge: { ok: true, state: 'MERGED' } }).action, 'execute');
+  assert.deepEqual(g({ merge: { ok: false } }), { action: 'hold', reason: 'merge-read-failed' });
+  assert.deepEqual(g({ merge: { ok: true, state: 'CLOSED' } }), { action: 'drop', reason: 'pr-closed-unmerged' });
+  assert.deepEqual(g({ merge: { ok: true, state: 'OPEN' } }), { action: 'hold', reason: 'not-merged' });
+  assert.deepEqual(g({ record: { ok: false } }), { action: 'hold', reason: 'record-read-failed' });
+  assert.deepEqual(g({ record: { ...ok.record, state: 'CLOSED' } }), { action: 'hold', reason: 'record-closed' });
+  assert.deepEqual(g({ record: { ...ok.record, labels: ['bot:in-progress'] } }), { action: 'hold', reason: 'record-claimed' });
+  assert.deepEqual(g({ record: { ...ok.record, body: 'edited' } }), { action: 'hold', reason: 'body-changed' });
+});
+
+test('executionGuard: merge and record may be thunks, called only when the earlier checks pass', () => {
+  const calls = [];
+  const thunks = { merge: () => { calls.push('merge'); return { ok: true, state: 'OPEN' }; }, record: () => { calls.push('record'); return { ok: false }; } };
+  assert.equal(executionGuard({ proposal: null, approval: { pr: '1' }, ...thunks }).reason, 'malformed-proposal');
+  assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: 'zz' }, ...thunks }).reason, 'malformed-pr');
+  assert.deepEqual(calls, []);
+  assert.equal(executionGuard({ proposal: { bodyHash: 'x' }, approval: { pr: '1' }, ...thunks }).reason, 'not-merged');
+  assert.deepEqual(calls, ['merge']);
 });

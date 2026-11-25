@@ -1139,4 +1139,4 @@ if (require.main === module) {
   run(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => { process.stderr.write(`console-resolve.js: ${err && err.stack ? err.stack : err}\n`); process.exitCode = 1; });
 }
 
-module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };
+module.exports = { run, parseArgs, defaultExecFile, ghReadGrants, readPolicy, controlModeOn, readUpstreamOwnership, checkPatchStack, writeDecisionFacts, EXIT_CARRY_FAILED, USAGE };

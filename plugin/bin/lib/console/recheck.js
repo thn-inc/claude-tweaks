@@ -233,7 +233,28 @@ function judgeHunks(hunksByPath, intersecting, cap = HUNK_BYTE_CAP) {
   return bytes > cap ? { hunks: [], overCap: true } : { hunks, overCap: false };
 }
 
+// The execution guard: whether an approved proposal may touch the record now (#6284). Closing a record and
+// posting a comment are never-reversible by contract, so every doubt is a hold. `merge` ({ ok, state }) and
+// `record` ({ ok, state, labels, body }) may be thunks, called only once the checks before them pass — a
+// malformed approval makes no gh call. -> { action: 'execute' | 'hold' | 'drop', reason }.
+function executionGuard({ proposal, approval, merge, record }) {
+  const hold = (reason) => ({ action: 'hold', reason });
+  if (!proposal) return hold('malformed-proposal');
+  const pr = approval && typeof approval.pr === 'string' ? approval.pr : null;
+  if (pr === null || (pr !== 'local' && !/^\d+$/.test(pr))) return hold('malformed-pr');
+  const m = typeof merge === 'function' ? merge() : merge;
+  if (!m || m.ok !== true) return hold('merge-read-failed');
+  if (m.state === 'CLOSED') return { action: 'drop', reason: 'pr-closed-unmerged' };
+  if (m.state !== 'MERGED') return hold('not-merged');
+  const r = typeof record === 'function' ? record() : record;
+  if (!r || r.ok !== true) return hold('record-read-failed');
+  if (String(r.state).toUpperCase() !== 'OPEN') return hold('record-closed');
+  if ((r.labels || []).includes('bot:in-progress')) return hold('record-claimed');
+  if (crypto.createHash('sha256').update(r.body || '').digest('hex') !== proposal.bodyHash) return hold('body-changed');
+  return { action: 'execute', reason: 'ready' };
+}
+
 module.exports = {
   RECHECK_CAP, HUNK_BYTE_CAP, EXCLUDED_LABELS, parseJudgedItems, parseChangedPaths, selectCandidates,
-  splitHunks, quoteFound, checkVerdicts, outcomeFor, composeProposal, parseProposal, judgeHunks,
+  splitHunks, quoteFound, checkVerdicts, outcomeFor, composeProposal, parseProposal, judgeHunks, executionGuard,
 };

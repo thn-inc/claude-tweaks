@@ -373,3 +373,325 @@ test('--local: Updated-at comes from the record file mtime and a parent-issue fa
   assert.match(text, /^Updated-at: 2026-01-02T03:04:05\.000Z$/m);
   assert.equal(parseProposal(text).action, 'close');
 });
+
+// ---- approve / execute (Task 5) -------------------------------------------------------------------------------
+
+const { composeProposal } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'recheck'));
+const sha = (t) => require('crypto').createHash('sha256').update(t).digest('hex');
+const RECORD_BODY = '## Deliverables\n- [ ] Do the thing\n\n### Key Files\n- `src/a.js`\n';
+const ID = 'followup-recheck-7.md';
+
+function proposal(outcome = 'close', body = RECORD_BODY) {
+  return composeProposal({
+    number: 7, title: 'Record 7', outcome, checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(body), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
+  });
+}
+
+function stageProposal(f, text = proposal()) {
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', ID), text);
+}
+const consolePath = (f) => path.join(f.runDir, 'console.json');
+const readConsole = (f) => JSON.parse(fs.readFileSync(consolePath(f), 'utf8'));
+function seedApproved(f, pr = '12', extra = {}) {
+  fs.writeFileSync(consolePath(f), JSON.stringify({
+    resolved: true, mode: 'recheck-approval', at: 'then',
+    items: [{ id: ID, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at: 'then', pr }, ...extra }],
+  }));
+}
+
+// A fake gh: records every argv (and stdin) and answers from a per-test table.
+function fakeGh({
+  pr = { state: 'MERGED' }, issue = { state: 'OPEN', labels: [], body: RECORD_BODY }, failPr = false, failIssue = false, failComment = false, failClose = false,
+} = {}) {
+  const calls = []; const inputs = [];
+  const fn = (args, input) => {
+    calls.push(args); inputs.push(input);
+    const j = args.join(' ');
+    if (/^pr view/.test(j)) { if (failPr) throw new Error('gh pr view failed'); return JSON.stringify(pr); }
+    if (/^issue view/.test(j)) { if (failIssue) throw new Error('gh issue view failed'); return JSON.stringify(issue); }
+    if (/^issue comment/.test(j)) { if (failComment) throw new Error('comment failed'); return ''; }
+    if (/^issue close/.test(j)) { if (failClose) throw new Error('close failed'); return ''; }
+    throw new Error(`unexpected gh call: ${j}`);
+  };
+  fn.calls = calls; fn.inputs = inputs;
+  fn.writes = () => calls.filter((a) => /^issue (close|comment)/.test(a.join(' ')));
+  return fn;
+}
+const writesOf = (gh, what) => gh.calls.filter((a) => a.slice(0, 2).join(' ') === `issue ${what}`);
+
+const task5 = (f, argv, over = {}) => go(f, argv, { controlMode: () => false, workBackend: () => 'github-issues', ...over });
+const exec = (f, gh, extra = [], over = {}) => task5(f, ['execute', '--run', f.runDir, ...extra], { gh, ...over });
+const skipLines = (f) => f.decisions().split('\n').filter((l) => /^- SKIP/.test(l));
+const autoLines = (f) => f.decisions().split('\n').filter((l) => /^- AUTO/.test(l));
+
+test('approve: creates console.json with resolved:true and one pending item carrying approval; logs one AUTO line', () => {
+  const f = fixture(); stageProposal(f);
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']);
+  assert.equal(r.code, 0, r.err);
+  const c = readConsole(f);
+  assert.equal(c.resolved, true);
+  assert.equal(c.mode, 'recheck-approval');
+  assert.equal(c.items.length, 1);
+  const { approval, ...rest } = c.items[0];
+  assert.deepEqual(rest, {
+    id: ID, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved',
+  });
+  assert.equal(approval.pr, '12');
+  assert.ok(approval.at);
+  assert.equal(autoLines(f).length, 1);
+});
+
+test('approve: into a PR-shaped console.json keeps prNumber, commentIds and existing items; re-approving replaces the same id', () => {
+  const f = fixture(); stageProposal(f);
+  fs.writeFileSync(consolePath(f), JSON.stringify({ commentIds: [5], prNumber: 99, items: [{ id: 'q-1', kind: 'x', summary: 's', stagedHash: 'h' }] }));
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 0);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', 'local']).code, 0);
+  const c = readConsole(f);
+  assert.equal(c.prNumber, 99);
+  assert.deepEqual(c.commentIds, [5]);
+  assert.equal(c.items.length, 2);
+  assert.equal(c.items[0].id, 'q-1');
+  assert.equal(c.items[1].approval.pr, 'local');
+});
+
+test('approve: refuses (exit 5, nothing written) under control mode and when the item is carried', () => {
+  const f = fixture(); stageProposal(f);
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12'], { controlMode: () => true });
+  assert.equal(r.code, 5);
+  assert.equal(fs.existsSync(consolePath(f)), false);
+  const g = fixture(); stageProposal(g);
+  fs.writeFileSync(consolePath(g), JSON.stringify({ items: [{ id: ID, section: 'Queue writes', resolution: 'carried' }] }));
+  const before = fs.readFileSync(consolePath(g), 'utf8');
+  assert.equal(task5(g, ['approve', '--run', g.runDir, '--id', ID, '--pr', '12']).code, 5);
+  assert.equal(fs.readFileSync(consolePath(g), 'utf8'), before);
+});
+
+test('approve: malformed --id / --pr exit 2; a missing staged file exits 3', () => {
+  const f = fixture();
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', '../x.md', '--pr', '12']).code, 2);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', 'abc']).code, 2);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID]).code, 2);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 3);
+});
+
+test('AC7.1: an approved close with the PR OPEN is not executed and stays pending with approval', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ pr: { state: 'OPEN' } });
+  const r = exec(f, gh);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(gh.writes().length, 0);
+  const item = readConsole(f).items[0];
+  assert.equal(item.resolution, 'pending');
+  assert.equal(item.approval.pr, '12');
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /not-merged/);
+});
+
+test('AC8.1: an approved close after MERGED comments then closes, once each, and logs one AUTO line naming #7', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh();
+  const r = exec(f, gh);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(writesOf(gh, 'comment').length, 1);
+  assert.equal(writesOf(gh, 'close').length, 1);
+  const order = gh.calls.map((a) => a.slice(0, 2).join(' '));
+  assert.ok(order.indexOf('issue comment') < order.indexOf('issue close'));
+  assert.ok(gh.calls.every((a) => a.includes('--')), 'every gh call separates values with --');
+  assert.match(gh.inputs[order.indexOf('issue comment')], /satisfy every deliverable/);
+  assert.ok(writesOf(gh, 'close')[0].includes('completed'));
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+  assert.equal(autoLines(f).length, 1);
+  assert.match(autoLines(f)[0], /#7/);
+  assert.match(autoLines(f)[0], /Reversibility: high \(gh issue reopen\)/);
+  assert.equal(skipLines(f).length, 0);
+});
+
+test('a narrow proposal posts the comment only, no close', () => {
+  const f = fixture(); stageProposal(f, proposal('narrow')); seedApproved(f);
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(writesOf(gh, 'comment').length, 1);
+  assert.equal(writesOf(gh, 'close').length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+test('AC11.1: a proposal approved at a multi-spec parent run dir executes from that dir only after merge', () => {
+  const f = fixture();
+  fs.writeFileSync(path.join(f.runDir, 'manifest.yml'), 'specs: [1]\n');
+  fs.mkdirSync(path.join(f.runDir, 'spec-1'));
+  stageProposal(f);
+  assert.equal(task5(f, ['approve', '--run', f.runDir, '--id', ID, '--pr', '12']).code, 0);
+  const open = fakeGh({ pr: { state: 'OPEN' } });
+  assert.equal(exec(f, open).code, 0);
+  assert.equal(open.writes().length, 0);
+  const merged = fakeGh();
+  assert.equal(exec(f, merged).code, 0);
+  assert.equal(writesOf(merged, 'comment').length, 1);
+  assert.equal(writesOf(merged, 'close').length, 1);
+});
+
+test('AC13.1: merge read failing holds with one SKIP line and no writes', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ failPr: true });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /merge-read-failed/);
+});
+
+test('AC13.2: record read failing holds with one SKIP line and no writes', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ failIssue: true });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /record-read-failed/);
+});
+
+test('AC14.1: approval pr "abc" holds as malformed-pr, with no gh call at all', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f, 'abc');
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /malformed-pr/);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+});
+
+test('AC14.2: a staged file with no Target header holds as malformed-proposal', () => {
+  const f = fixture(); stageProposal(f, proposal().replace(/^Target:.*\n/m, '')); seedApproved(f);
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /malformed-proposal/);
+});
+
+test('a missing staged file holds as malformed-proposal', () => {
+  const f = fixture(); seedApproved(f);
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /malformed-proposal/);
+});
+
+test('AC15.1: a closed record holds', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ issue: { state: 'CLOSED', labels: [], body: RECORD_BODY } });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /record-closed/);
+});
+
+test('AC15.2: a record labelled bot:in-progress holds', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ issue: { state: 'OPEN', labels: [{ name: 'bot:in-progress' }], body: RECORD_BODY } });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.match(skipLines(f)[0], /record-claimed/);
+});
+
+test('AC15.3: a changed body hash holds', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ issue: { state: 'OPEN', labels: [], body: `${RECORD_BODY}edited\n` } });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.match(skipLines(f)[0], /body-changed/);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+});
+
+test('AC16.2: a PR CLOSED unmerged drops the approval with one logged line and no close or comment', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ pr: { state: 'CLOSED' } });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.writes().length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'dropped');
+  assert.equal(autoLines(f).length, 1);
+  assert.match(autoLines(f)[0], /#7/);
+});
+
+test('a failed comment leaves the item pending with one SKIP line and never closes', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ failComment: true });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(writesOf(gh, 'close').length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.equal(skipLines(f).length, 1);
+});
+
+test('a comment that posted but a close that failed stays pending and the SKIP line says the comment was posted', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  const gh = fakeGh({ failClose: true });
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(writesOf(gh, 'comment').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'pending');
+  assert.equal(skipLines(f).length, 1);
+  assert.match(skipLines(f)[0], /comment was posted/);
+});
+
+test('execute twice: the second run makes no gh calls', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f);
+  assert.equal(exec(f, fakeGh()).code, 0);
+  const again = fakeGh();
+  assert.equal(exec(f, again).code, 0);
+  assert.equal(again.calls.length, 0);
+});
+
+test('execute: --id restricts to one item; an unapproved or absent console.json makes no gh call', () => {
+  const f = fixture(); stageProposal(f);
+  const none = fakeGh();
+  assert.equal(exec(f, none).code, 0);
+  assert.equal(none.calls.length, 0);
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: ID, section: 'Queue writes', resolution: 'pending' }] }));
+  assert.equal(exec(f, none).code, 0);
+  assert.equal(none.calls.length, 0);
+  seedApproved(f);
+  const other = fakeGh();
+  assert.equal(exec(f, other, ['--id', 'followup-recheck-9.md']).code, 0);
+  assert.equal(other.calls.length, 0);
+});
+
+test('execute: a local PR is not-merged without --local-merged', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f, 'local');
+  const gh = fakeGh();
+  assert.equal(exec(f, gh).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /not-merged/);
+});
+
+test('local-files: --local --local-merged closes via local-store and appends the comment to the body', () => {
+  const f = fixture();
+  const specs = path.join(f.main, 'specs');
+  const { id } = createRecord(specs, {
+    slug: 'plain', title: 'Plain', body: RECORD_BODY, facets: defaultFacets(),
+  });
+  // The candidates pass hashes the body local-store hands back, which is what the guard re-reads.
+  const stored = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store')).queryRecords(specs)[0].body;
+  const staged = composeProposal({
+    number: Number(id), title: 'Plain', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(stored), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1',
+  });
+  const sid = `followup-recheck-${id}.md`;
+  fs.mkdirSync(path.join(f.runDir, 'staged'), { recursive: true });
+  fs.writeFileSync(path.join(f.runDir, 'staged', sid), staged);
+  fs.writeFileSync(consolePath(f), JSON.stringify({ items: [{ id: sid, section: 'Queue writes', resolution: 'pending', approval: { at: 'then', pr: 'local' } }] }));
+  const gh = fakeGh();
+  const r = exec(f, gh, ['--local', '--local-merged']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(gh.calls.length, 0);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+  const after = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store')).readRecord(path.join(specs, fs.readdirSync(specs).find((n) => n.endsWith('.md'))));
+  assert.equal(after.facets.closed, true);
+  assert.match(after.body, /satisfy every deliverable/);
+  assert.match(after.body, /Do the thing/);
+});
+
+test('backend resolution: a local-files backend without --local still routes through local-store, not gh', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f, 'local');
+  const gh = fakeGh();
+  assert.equal(exec(f, gh, ['--local-merged'], { workBackend: () => 'local-files' }).code, 0);
+  assert.equal(gh.calls.length, 0);
+  assert.match(skipLines(f)[0], /record-read-failed/);
+});

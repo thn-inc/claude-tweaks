@@ -12,10 +12,16 @@
 // `stage` reads the judge's verdicts file { "<number>": { status, verdicts: [{ deliverable, verdict, quote }] } },
 // validates every `satisfied` quote against the gathered hunks, and stages a proposal per candidate that has
 // a satisfied deliverable. stdout, one JSON line: { staged: [ids], nothing: [numbers], judgeFailed: [numbers] }.
-// Both verbs log to decisions.md (a SCANNED summary; one STAGED line per staged file). This CLI is a
+// `approve --run <run-dir> --id followup-recheck-<n>.md --pr <number|local>` records a human approval in
+// console.json (resolution stays `pending`, plus an `approval` field); exit 5 under control mode or when the item
+// is `carried`. `execute --run <run-dir> [--id <id>] [--local] [--local-merged]` runs the execution guard over
+// every approved pending item and, only after the run's PR MERGED and the record is unchanged, comments (and for
+// `close` closes) the record; a closed-unmerged PR drops the approval, anything else holds with one SKIP line.
+// The work backend is resolved here (CLAUDE.md `work-backend:`); `--local` forces local-files.
+// All verbs log to decisions.md (a SCANNED summary; one STAGED line per staged file). This CLI is a
 // sanctioned run-dir writer: recheck/candidates.json is written inside the anchored dir.
-// Exit 0 done (nothing to judge included); 2 malformed invocation; 3 run dir missing/not anchored ([IL-127]),
-// git failed, or a write failed; 4 open-backlog records unreadable, not an array, or empty.
+// Exit 0 done (nothing to judge included; `execute` exits 0 whatever the item outcomes); 2 malformed invocation; 3 run dir missing/not anchored ([IL-127]),
+// git failed, or a write failed; 4 open-backlog records unreadable, not an array, or empty; 5 `approve` refused.
 'use strict';
 
 const fs = require('fs');
@@ -23,19 +29,31 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolveTarget, writeStagedItem, findGitRoot } = require('./lib/stage-item/write');
 const { appendEntries, formatEntry } = require('./lib/log-decision/append');
-const { queryRecords, DEFAULT_DIR } = require('./lib/issues/local-store');
+const { writeFileAtomic } = require('./lib/atomic-write');
+const { readWorkBackend } = require('./lib/work-backend');
+const { controlModeOn, defaultExecFile } = require('./console-resolve');
+const { ghOptions } = require('./lib/repo-resolve');
+const { normalizeLabelNames } = require('./lib/issues/record');
+const {
+  queryRecords, readRecord, writeRecord, closeRecord, DEFAULT_DIR,
+} = require('./lib/issues/local-store');
 const { backlogHubPaths } = require('./lib/issues/grouping');
 const {
-  parseChangedPaths, selectCandidates, splitHunks, judgeHunks, checkVerdicts, outcomeFor, composeProposal,
+  parseChangedPaths, selectCandidates, splitHunks, judgeHunks, checkVerdicts, outcomeFor, composeProposal, parseProposal, executionGuard,
 } = require('./lib/console/recheck');
 
 const USAGE = 'usage: recheck-followups.js candidates --run <run-dir> (--records-json <path> | --local) --base <ref> [--own 1,2]\n'
   + '       recheck-followups.js stage --run <run-dir> --verdicts <path>\n'
-  + '  exit 0 done; 2 malformed invocation; 3 run dir missing/not anchored, git failed, or a write failed; 4 open-backlog records unreadable, not an array, or empty\n';
+  + '       recheck-followups.js approve --run <run-dir> --id followup-recheck-<n>.md --pr <number|local>\n'
+  + '       recheck-followups.js execute --run <run-dir> [--id <id>] [--local] [--local-merged]\n'
+  + '  exit 0 done; 2 malformed invocation; 3 run dir missing/not anchored, git failed, or a write failed; 4 open-backlog records unreadable, not an array, or empty; 5 approve refused (control mode, or the item is carried)\n';
 
 const SECTION = '/wrap-up';
 const STEP = 'Follow-up re-check';
 const CANDIDATES_REL = path.join('recheck', 'candidates.json');
+const STEP_EXECUTE = 'Follow-up re-check execute';
+const CONSOLE_REL = 'console.json';
+const ID_RE = /^followup-recheck-\d+\.md$/;
 const JUDGE_OK = new Set(['DONE', 'DONE_WITH_CONCERNS']);
 
 const realDeps = {
@@ -55,6 +73,16 @@ const realDeps = {
       cwd, env, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES,
     });
   },
+  writeAtomic: (p, text) => writeFileAtomic(p, text),
+  // `gh` through argv only, never a shell; `input` is the body for `--body-file -`.
+  gh: (args, input) => {
+    const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+    return execFileSync('gh', args, ghOptions(args, {
+      encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
+    }));
+  },
+  controlMode: (runDir) => controlModeOn({ execFile: defaultExecFile, cwd: () => process.cwd(), runDir }),
+  workBackend: (root) => readWorkBackend(root),
   writeStaged: writeStagedItem,
   appendEntries,
   stdout: (s) => process.stdout.write(s),
@@ -66,18 +94,19 @@ class Fail extends Error {
 }
 
 const VALUE_FLAGS = {
-  '--run': 'run', '--records-json': 'recordsJson', '--base': 'base', '--own': 'own', '--verdicts': 'verdicts',
+  '--run': 'run', '--records-json': 'recordsJson', '--base': 'base', '--own': 'own', '--verdicts': 'verdicts', '--id': 'id', '--pr': 'pr',
 };
 
 function parseArgs(argv) {
   const o = {
-    verb: null, run: null, recordsJson: null, local: false, base: null, own: null, verdicts: null, help: false,
+    verb: null, run: null, recordsJson: null, local: false, localMerged: false, base: null, own: null, verdicts: null, id: null, pr: null, help: false,
   };
   const value = (i) => (typeof argv[i] === 'string' && !argv[i].startsWith('--') ? argv[i] : null);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--local') o.local = true;
+    else if (a === '--local-merged') o.localMerged = true;
     else if (VALUE_FLAGS[a]) {
       const v = value(i + 1);
       if (v === null) return { error: `${a} requires a value` };
@@ -236,10 +265,171 @@ function stage(o, target, deps) {
   return 0;
 }
 
+// ---- approve / execute (#6284) --------------------------------------------------------------------------------
+
+function readConsole(file, deps) {
+  let text;
+  try { text = deps.readFile(file); } catch (err) {
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return null;
+    throw new Fail(3, `${CONSOLE_REL} is unreadable (${err && err.message})`);
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch (err) { throw new Fail(3, `${CONSOLE_REL} is not valid JSON (${err && err.message})`); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Fail(3, `${CONSOLE_REL} is not a JSON object`);
+  return parsed;
+}
+
+const writeConsole = (file, data, deps) => {
+  try { deps.writeAtomic(file, `${JSON.stringify(data, null, 2)}\n`); } catch (err) { throw new Fail(3, `a write failed (${err && err.message})`); }
+};
+
+function approve(o, target, deps) {
+  const file = path.join(target.dir, CONSOLE_REL);
+  const existing = readConsole(file, deps);
+  const items = existing && Array.isArray(existing.items) ? existing.items : [];
+  const current = items.find((it) => it && it.id === o.id);
+  if (current && current.resolution === 'carried') {
+    throw new Fail(5, `${o.id} is carried (control mode resolves it at the acceptance packet, not here) — nothing written`);
+  }
+  if (deps.controlMode(target.dir)) throw new Fail(5, "control mode is on — an approval is the acceptance packet's to take, not this verb's; nothing written");
+  try { deps.readFile(path.join(target.dir, 'staged', o.id)); } catch (err) {
+    throw new Fail(3, `staged/${o.id} is unreadable (${err && err.message})`);
+  }
+  const at = new Date(deps.now()).toISOString();
+  const entry = {
+    id: o.id, section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-approved', approval: { at, pr: o.pr },
+  };
+  const next = existing
+    ? { ...existing, items: current ? items.map((it) => (it && it.id === o.id ? entry : it)) : [...items, entry] }
+    : { resolved: true, mode: 'recheck-approval', at, items: [entry] };
+  writeConsole(file, next, deps);
+  try {
+    deps.appendEntries({
+      runDir: target.dir,
+      items: [{
+        section: SECTION,
+        entry: formatEntry({
+          status: 'AUTO', now: deps.now(), step: STEP_EXECUTE, text: `approval recorded for ${o.id} (PR ${o.pr}); it executes only after the merge`, reversibility: 'high (remove the console.json approval)',
+        }),
+      }],
+    });
+  } catch (err) { throw new Fail(3, `a write failed (${err && err.message})`); }
+  deps.stdout(`${JSON.stringify({ approved: o.id, pr: o.pr })}\n`);
+  return 0;
+}
+
+const parseJson = (text) => { try { return JSON.parse(text); } catch { return null; } };
+
+// gh reads, each `{ ok: false }` on any throw or unusable output.
+function ghMergeState(pr, deps) {
+  try {
+    const parsed = parseJson(deps.gh(['pr', 'view', '--json', 'state', '--', pr]));
+    return parsed && typeof parsed.state === 'string' ? { ok: true, state: parsed.state.toUpperCase() } : { ok: false };
+  } catch { return { ok: false }; }
+}
+
+function ghRecord(number, deps) {
+  try {
+    const parsed = parseJson(deps.gh(['issue', 'view', '--json', 'state,labels,body', '--', String(number)]));
+    if (!parsed || typeof parsed.state !== 'string') return { ok: false };
+    return {
+      ok: true, state: parsed.state, labels: normalizeLabelNames(parsed.labels), body: typeof parsed.body === 'string' ? parsed.body : '',
+    };
+  } catch { return { ok: false }; }
+}
+
+function localRecordPath(number, deps) {
+  const root = findGitRoot(deps.cwd());
+  const found = queryRecords(path.resolve(root ? root.dir : deps.cwd(), DEFAULT_DIR)).find((r) => Number(r.id) === number);
+  return found ? found.path : null;
+}
+
+function localRecord(number, deps) {
+  try {
+    const p = localRecordPath(number, deps);
+    if (!p) return { ok: false };
+    const r = readRecord(p);
+    return {
+      ok: true, state: r.facets && r.facets.closed ? 'CLOSED' : 'OPEN', labels: r.facets && r.facets.isParentIssue ? ['parent-issue'] : [], body: r.body || '',
+    };
+  } catch { return { ok: false }; }
+}
+
+function execute(o, target, deps) {
+  const file = path.join(target.dir, CONSOLE_REL);
+  const data = readConsole(file, deps);
+  const envelope = { applied: [], dropped: [], held: [] };
+  if (!data || !Array.isArray(data.items)) { deps.stdout(`${JSON.stringify(envelope)}\n`); return 0; }
+  const root = findGitRoot(target.dir);
+  const local = o.local || deps.workBackend(root ? root.dir : deps.cwd()) === 'local-files';
+  const log = (status, text, reversibility = 'n/a') => deps.appendEntries({
+    runDir: target.dir, items: [{ section: SECTION, entry: formatEntry({ status, now: deps.now(), step: STEP_EXECUTE, text, reversibility }) }],
+  });
+  const settle = (index, resolution) => {
+    data.items[index] = { ...data.items[index], resolution };
+    writeConsole(file, data, deps);
+  };
+
+  for (let i = 0; i < data.items.length; i++) {
+    const item = data.items[i];
+    if (!item || typeof item !== 'object' || !item.approval || item.resolution !== 'pending') continue;
+    if (o.id !== null && item.id !== o.id) continue;
+    let proposal = null;
+    try { proposal = parseProposal(deps.readFile(path.join(target.dir, 'staged', String(item.id)))); } catch { proposal = null; }
+    const pr = typeof item.approval.pr === 'string' ? item.approval.pr : '';
+    const merge = () => (pr === 'local' ? { ok: true, state: o.localMerged ? 'MERGED' : 'OPEN' } : ghMergeState(pr, deps));
+    const record = () => (local ? localRecord(proposal.number, deps) : ghRecord(proposal.number, deps));
+    const verdict = executionGuard({
+      proposal, approval: item.approval, merge, record,
+    });
+    const name = proposal ? `#${proposal.number}` : String(item.id);
+
+    if (verdict.action === 'hold') {
+      log('SKIP', `held ${item.id} (${name}): ${verdict.reason}; the approval stays pending`);
+      envelope.held.push({ id: item.id, reason: verdict.reason });
+      continue;
+    }
+    if (verdict.action === 'drop') {
+      settle(i, 'dropped');
+      log('AUTO', `dropped the approval for ${item.id} (${name}): ${verdict.reason}; no comment, no close`);
+      envelope.dropped.push(item.id);
+      continue;
+    }
+
+    const closing = proposal.action === 'close';
+    let posted = false;
+    try {
+      if (local) {
+        const p = localRecordPath(proposal.number, deps);
+        const rec = readRecord(p);
+        writeRecord(p, { title: rec.title, body: `${rec.body || ''}\n\n${proposal.comment}\n`, facets: rec.facets });
+        posted = true;
+        if (closing) closeRecord(p);
+      } else {
+        deps.gh(['issue', 'comment', '--body-file', '-', '--', String(proposal.number)], proposal.comment);
+        posted = true;
+        if (closing) deps.gh(['issue', 'close', '--reason', 'completed', '--', String(proposal.number)]);
+      }
+    } catch (err) {
+      const why = posted ? `the comment was posted but the close failed (${err && err.message}); a re-run would comment again` : `the comment failed (${err && err.message})`;
+      log('SKIP', `held ${item.id} (${name}): ${why}; the approval stays pending`);
+      envelope.held.push({ id: item.id, reason: posted ? 'close-failed' : 'comment-failed' });
+      continue;
+    }
+    settle(i, 'applied');
+    log('AUTO', `${closing ? 'closed' : 'narrowed (commented on)'} ${name} from ${item.id} after the merge`, closing ? 'high (gh issue reopen)' : 'n/a');
+    envelope.applied.push(item.id);
+  }
+  deps.stdout(`${JSON.stringify(envelope)}\n`);
+  return 0;
+}
+
 // One entry per verb: the flags it requires, then the handler. A later verb registers here.
 const VERBS = {
   candidates: { handler: candidates },
   stage: { handler: stage },
+  approve: { handler: approve },
+  execute: { handler: execute },
 };
 
 function run(argv, deps = realDeps) {
@@ -247,7 +437,7 @@ function run(argv, deps = realDeps) {
   const usage = (message) => { deps.stderr(`recheck-followups.js: ${message}\n${USAGE}`); return 2; };
   if (o.error) return usage(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
-  if (!o.verb) return usage('a verb is required (candidates | stage)');
+  if (!o.verb) return usage('a verb is required (candidates | stage | approve | execute)');
   const verb = Object.hasOwn(VERBS, o.verb) ? VERBS[o.verb] : null;
   if (!verb) return usage(`unknown verb: ${o.verb}`);
   if (!o.run) return usage('--run <run-dir> is required');
@@ -265,6 +455,11 @@ function run(argv, deps = realDeps) {
     }
   } else if (o.verb === 'stage') {
     if (!o.verdicts) return usage('--verdicts <path> is required');
+  } else if (o.verb === 'approve') {
+    if (!o.id || !ID_RE.test(o.id)) return usage('--id followup-recheck-<n>.md is required');
+    if (!o.pr || (o.pr !== 'local' && !/^\d+$/.test(o.pr))) return usage('--pr <number|local> is required');
+  } else if (o.verb === 'execute') {
+    if (o.id !== null && !ID_RE.test(o.id)) return usage('--id must be followup-recheck-<n>.md');
   }
 
   let target;
