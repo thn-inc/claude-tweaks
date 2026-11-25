@@ -8,6 +8,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { run, realDeps, USAGE } = require(path.join(ROOT, 'plugin', 'bin', 'recheck-followups'));
 const { RECHECK_CAP, parseProposal } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'recheck'));
+const { createRecord, defaultFacets } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'local-store'));
 const { initRepo, fixtureGit, cleanGitEnv } = require(path.join(ROOT, 'tests', 'helpers', 'git-fixtures'));
 
 const fixtureRoots = [];
@@ -341,4 +342,34 @@ test('stage: exit codes — no candidates.json 3, unreadable verdicts 2-or-3 per
   const g = stageFixture();
   assert.equal(go(g, ['stage', '--run', g.runDir]).code, 2); // --verdicts missing
   assert.equal(go(g, ['stage', '--run', g.runDir, '--verdicts', path.join(g.root, 'absent.json')]).code, 3);
+});
+
+test('stage: DONE with an empty verdicts array for a candidate with items is judge-failed, not nothing', () => {
+  const f = stageFixture();
+  const r = go(f, writeVerdicts(f, { 10: { status: 'DONE', verdicts: [] } }));
+  assert.deepEqual(r.json, { staged: [], nothing: [], judgeFailed: [10] });
+  assert.match(f.decisions(), /judge-failed #10/);
+  assert.doesNotMatch(f.decisions(), /nothing for #10/);
+});
+
+test('--local: Updated-at comes from the record file mtime and a parent-issue facet excludes the record', () => {
+  const f = fixture();
+  const specs = path.join(f.main, 'specs');
+  const body = '## Deliverables\n- [ ] Do the thing\n\n### Key Files\n- `src/a.js`\n';
+  createRecord(specs, { slug: 'plain', title: 'Plain', body, facets: defaultFacets() });
+  createRecord(specs, { slug: 'parent', title: 'Parent', body, facets: { ...defaultFacets(), isParentIssue: true } });
+  for (const name of fs.readdirSync(specs)) fs.utimesSync(path.join(specs, name), new Date('2026-01-02T03:04:05Z'), new Date('2026-01-02T03:04:05Z'));
+  const r = go(f, ['candidates', '--run', f.runDir, '--local', '--base', 'main']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json.candidates.length, 1);
+  assert.deepEqual(r.json.excluded.map((e) => e.reason), ['label:parent-issue']);
+  const [c] = f.cands().candidates;
+  assert.equal(c.updatedAt, '2026-01-02T03:04:05.000Z');
+  const verdicts = writeVerdicts(f, {
+    [c.number]: { status: 'DONE', verdicts: [{ deliverable: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }] },
+  });
+  assert.equal(go(f, verdicts).code, 0);
+  const text = f.read(path.join(f.runDir, 'staged', `followup-recheck-${c.number}.md`));
+  assert.match(text, /^Updated-at: 2026-01-02T03:04:05\.000Z$/m);
+  assert.equal(parseProposal(text).action, 'close');
 });

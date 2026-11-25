@@ -209,7 +209,7 @@ function parseProposal(text) {
   if (!target) return null;
   if (head.Action !== 'close' && head.Action !== 'narrow') return null;
   if (!/^[0-9a-f]{64}$/.test(head['Body-hash'] || '')) return null;
-  if (!head['Updated-at']) return null;
+  if (!head['Updated-at'] || Number.isNaN(Date.parse(head['Updated-at']))) return null;
   const at = lines.findIndex((l, idx) => idx >= i && l.trim() === '## Comment');
   if (at === -1) return null;
   return {

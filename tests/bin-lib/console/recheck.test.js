@@ -217,6 +217,7 @@ test('parseProposal round-trips composeProposal (also with CRLF); null on malfor
   assert.equal(p.comment, text.slice(text.indexOf('## Comment') + '## Comment'.length).trim());
   assert.deepEqual(parseProposal(text.replace(/\n/g, '\r\n')), p);
   assert.equal(parseProposal(text.replace('Target: #7', 'Target: #abc')), null);
+  assert.equal(parseProposal(text.replace(/^Updated-at: .*$/m, 'Updated-at: undefined')), null);
   assert.equal(parseProposal(text.replace('Action: narrow', 'Action: nuke')), null);
   assert.equal(parseProposal(text.replace('b'.repeat(64), 'b'.repeat(63))), null);
   assert.equal(parseProposal('garbage'), null);

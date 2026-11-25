@@ -47,6 +47,7 @@ const realDeps = {
     if (!fs.lstatSync(p).isFile()) throw new Error(`${p} is not a regular file`);
     return fs.readFileSync(p, 'utf8');
   },
+  mtimeIso: (p) => fs.statSync(p).mtime.toISOString(),
   writeFile: (p, text) => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text); },
   git: (args, { cwd, env } = {}) => {
     const { GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
@@ -95,7 +96,14 @@ function loadOpenRecords(o, deps) {
       const root = findGitRoot(deps.cwd());
       raw = queryRecords(path.resolve(root ? root.dir : deps.cwd(), DEFAULT_DIR))
         .map((r) => ({
-          number: r.id, title: r.title, body: r.body, labels: [], state: 'OPEN', updatedAt: r.updatedAt,
+          number: r.id,
+          title: r.title,
+          body: r.body,
+          // Only `is-parent-issue` is a file-backed facet with a label; `bot:*` and `digest` are not, so a
+          // local record can never carry them. The record file's mtime stands in for the forge's updatedAt.
+          labels: r.facets && r.facets.isParentIssue ? ['parent-issue'] : [],
+          state: 'OPEN',
+          updatedAt: deps.mtimeIso(r.path),
         }));
     } catch (err) { throw new Fail(4, `could not read local records (${err && err.message})`); }
   } else {
@@ -189,7 +197,8 @@ function stage(o, target, deps) {
   try {
     for (const c of cands.candidates || []) {
       const entry = verdictsByNumber[String(c.number)];
-      if (!entry || typeof entry !== 'object' || !JUDGE_OK.has(entry.status) || !Array.isArray(entry.verdicts)) {
+      if (!entry || typeof entry !== 'object' || !JUDGE_OK.has(entry.status) || !Array.isArray(entry.verdicts)
+        || (entry.verdicts.length === 0 && c.items.length > 0)) {
         envelope.judgeFailed.push(c.number);
         continue;
       }
