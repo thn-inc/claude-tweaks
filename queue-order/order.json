@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-25T07:21:18.560Z",
+  "computedAt": "2026-11-25T07:24:24.039Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -30,7 +30,7 @@
       },
       {
         "number": 5929,
-        "updatedAt": "2026-11-25T07:19:16Z",
+        "updatedAt": "2026-11-25T07:23:49Z",
         "state": "OPEN"
       },
       {
@@ -39,13 +39,38 @@
         "state": "OPEN"
       },
       {
+        "number": 5800,
+        "updatedAt": "2026-11-25T07:23:13Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5670,
+        "updatedAt": "2026-11-25T07:22:56Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5668,
+        "updatedAt": "2026-11-25T07:23:03Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5512,
         "updatedAt": "2026-11-25T07:18:16Z",
         "state": "OPEN"
       },
       {
+        "number": 5463,
+        "updatedAt": "2026-11-25T07:23:08Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5449,
         "updatedAt": "2026-11-25T07:18:53Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5437,
+        "updatedAt": "2026-11-25T07:23:11Z",
         "state": "OPEN"
       },
       {
@@ -70,12 +95,17 @@
       },
       {
         "number": 5262,
-        "updatedAt": "2026-11-25T07:18:03Z",
+        "updatedAt": "2026-11-25T07:23:34Z",
         "state": "OPEN"
       },
       {
         "number": 5257,
         "updatedAt": "2026-11-25T07:18:47Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5234,
+        "updatedAt": "2026-11-25T07:23:14Z",
         "state": "OPEN"
       },
       {
@@ -694,6 +724,16 @@
         "state": "CLOSED"
       },
       {
+        "number": 6269,
+        "updatedAt": "2026-11-25T07:21:22Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6268,
+        "updatedAt": "2026-11-25T07:21:21Z",
+        "state": "OPEN"
+      },
+      {
         "number": 6256,
         "updatedAt": "2026-11-25T07:20:47Z",
         "state": "OPEN"
@@ -886,78 +926,6 @@
     ],
     [
       {
-        "body": "Origin: reflect light from #5918\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build`'s Spec Step 2.5 already recognizes a wholly-operational record (every Deliverable a live action, no code change, #2554) and collapses its code-oriented steps into one consolidated SKIP. `/claude-tweaks:review` has no matching shortcut: `plugin/skills/review/code-mode-steps.md`'s Ceremony-Aware Step Selection still runs Step 2.5's effort derivation and the Step 3 lens fan-out on such a run, whose whole branch diff is bookkeeping (the materialized `work/{n}-spec.md` and the `docs/plans/*-ledger.md` ledger).\n\nEvidence (#5918, run 2026-11-19T054801-spec-5918): the build triaged all four Deliverables as auto-executable live dispatches; `verify.js --scope` resolved `none` (`still-verified: bookkeeping-only delta`). The test+review+polish handoff agent then spent ~566 s and ~248k subagent tokens, and review's lenses produced two low findings about the materialized spec's command wording, both accepted-not-fixed because the spec is a verbatim snapshot of the issue (ledger row 2).\n\nProbe: `git grep -n -i 'bookkeeping\\|operational' origin/main -- plugin/skills/review/code-mode-steps.md` exited 1 with no output — no such skip exists on the integration branch.\n\n## Deliverables\n\n- [ ] In `/claude-tweaks:review` code/full mode, detect a run whose branch diff from the integration base is bookkeeping-only (the same `.claude-tweaks/verify-scope.json` bookkeeping rules `verify.js --scope` already resolves to `none`), and skip Step 2.5 and the Step 3 lens fan-out with one `SKIP` line naming the condition\n- [ ] Keep the Step 1.5 test gate and Step 7 summary so the PR still gets a review verdict comment\n\n## Acceptance Criteria\n\n- [ ] A review over a branch whose only changes are `work/{n}-spec.md` and a `docs/plans/*-ledger.md` ledger dispatches no lens agent and logs one `SKIP` naming the bookkeeping-only condition\n- [ ] A review over a branch with any non-bookkeeping path runs Step 3 unchanged\n\n## Release Note\n\nReview no longer runs its lens reviewers on a pipeline run that changed only its own bookkeeping files.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/code-mode-steps.md` — add a bookkeeping-only skip to Ceremony-Aware Step Selection\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-19T06:28:59Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5929,
-        "state": "OPEN",
-        "title": "Skip review lenses on a bookkeeping-only (wholly operational) pipeline diff",
-        "updatedAt": "2026-11-25T07:19:16Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "## Current State\n\nUnder `consoleAutoResolve`, `console-resolve.js --policy console-auto` computes the merge half once and persists it to `{run-dir}/console.json` as `merge.resolution`. `mergeResolution()` in `plugin/bin/lib/console/resolve.js` honours a needs-human verdict only through `needsHumanVerdict(decisions)`, which reads `decisions.md` at that moment.\n\n`wrap-up/execution-and-verification.md`'s Branch finish then routes the pr-first merge on `console.json`'s `merge.resolution` directly, and `_shared/pr-first-merge.md` never re-reads a needs-human verdict. `review-console.md` orders the Auto-merge short-circuit (which logs the `assess-agent-autonomy` merge-check verdict) before the Auto-resolution short-circuit, but nothing mechanical enforces that order.\n\nObserved in run `2026-11-16T183913-record-5770` (#5770, PR #5780): `console-resolve.js` ran at 20:12:39Z and recorded `merge.resolution: merge`; the short-circuit's `needs-human` verdict was logged at 20:13:22Z, 43 seconds later. Only the dispatched agent's manual hold kept the PR from merging.\n\n## Deliverables\n\n1. At Branch finish, before acting on `merge.resolution: merge`, re-evaluate `needsHumanVerdict` against the current `decisions.md`. On a hit, resolve leave-open (`pending-review`) and log one decision line naming the late verdict.\n2. Have `console-resolve.js` refuse to resolve the merge half, or mark it stale, when the Auto-merge short-circuit applies to the run (live `auto:build` + `auto:merge`/`auto:merge-pending`) but no merge-check verdict line exists yet.\n\n## Acceptance Criteria\n\n- A test where `decisions.md` gains a needs-human merge-check line after `console.json` records `merge.resolution: merge` shows Branch finish leaving the PR open, never merging.\n- A test where `console-resolve.js` runs with the short-circuit applicable and no verdict line yet shows it not resolving `merge`.\n- The in-order path (verdict logged before the resolve) is unchanged: existing `console-resolve` tests stay green.\n\n## Release Note\n\nAn unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — needsHumanVerdict / mergeResolution: refuse or mark stale before a verdict exists\n- `plugin/bin/console-resolve.js` — surface the stale merge half\n- `plugin/skills/wrap-up/execution-and-verification.md` — Branch finish re-checks the verdict before merging\n- `plugin/skills/wrap-up/review-console.md` — state the ordering requirement as enforced\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-17T05:57:57Z",
         "labels": [
@@ -1021,6 +989,234 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: public-contract\nRisk-flags-unconfirmed: true\n\n## Current State\n\nReported: in a `/claude-tweaks:flow` run, flow's story step committed a story file after the build phase's push. `/claude-tweaks:test`'s scoped `verify.js` then ran on that unpushed HEAD and produced no output for over 20 minutes, until it was stopped by hand. After a manual push the same command took the CI verdict in about 5 minutes. The report reads the silence as `verify.js` waiting for a CI run that could never start.\n\nPremise check at shaping time, against `main`: `verify.js` does not wait in that case. `plugin/bin/lib/verify/ci-source.js`'s `fetchCiVerdict` makes `repos/{owner}/{repo}/commits/{sha}/pulls` its first read. For a commit GitHub does not know, that read returns HTTP 422 `No commit found`, and `isMissingCommit` turns it into the `head-not-pushed` fallback at once, before any CI wait. That code has shipped since 6.164.0 (#4347), and the report is on 6.170.0. What `verify.js` does with the fallback depends on the declaration:\n\n- Under `localRuns: \"on-request\"` (#5369), `head-not-pushed` ends the run with exit 3 (`EXIT_NO_VERDICT`) and `noVerdictLines`' stderr text, at once.\n- Without `localRuns`, every CI fallback runs the suite on this machine, a full suite run (`plugin/skills/test/ci-source.md`: 55+ min locally vs 3.5 min in CI). The only output naming the fallback is the `CI: {suite} — ran locally ({reason})` row in the final report (`plugin/bin/verify.js`, the report rendering). That row prints after the local run ends.\n\nSo the 20 silent minutes were almost certainly the local full run of a suite that CI would have answered minutes after a push. The defect stands, with its cause moved: an unpushed HEAD costs a whole local suite run without `localRuns`, and every fallback to a local run is silent until the run ends.\n\n`plugin/skills/test/verification.md`'s \"Push first, and exit 3\" paragraph already says to push after any commit that moves HEAD, and its \"Outcome: the call exited 3\" branch already routes `head-not-pushed`: push and re-run once in a `pr-first` run, `--local` otherwise. That routing is written for `localRuns` declarations only.\n\n## Deliverables\n\n1. `head-not-pushed` ends a scoped run with no verdict (exit 3), whatever the declaration's `localRuns` says. In `verify.js`'s CI loop, a `head-not-pushed` attempt stops the loop (later CI-declared suites record `not-consulted`, as on-request does today) and takes the existing no-verdict path: no check runs, no slot is taken, no report or pass stamp is written, the stale `report.json` is removed, and a `noVerdict` verify event is written when `--run` is set. `--local` still skips CI entirely, so it never meets this.\n2. `noVerdictLines` keeps its first-line shape, `verify.js: no verdict yet for suite \"{suite}\" — CI could not answer ({reason})`, which `verification.md` and its conformance test read. For `head-not-pushed`, that line continues `: HEAD {short-sha} is not on the remote; no check ran and no pass stamp was written.` and the next line reads `  Push the branch (commit first if the tree is dirty), then re-run this command,` followed by the existing `--local` line. The `localRuns \"on-request\"` clause stays on the on-request lines for every other reason.\n3. Without `localRuns`, any other CI fallback that sends a suite to a local run prints one stderr line when the fallback is decided, before the slot wait and the local checks start: `verify.js: CI could not answer suite \"{suite}\" ({reason}) — running it on this machine`. The final report's `CI: … — ran locally (…)` row is unchanged.\n4. `plugin/skills/test/verification.md`: the \"Outcome: the call exited 3\" paragraph says a scoped run exits 3 on `head-not-pushed` under any declaration, and on every other no-answer reason only under `localRuns: \"on-request\"`. Its existing branches (push and re-run once in a `pr-first` run with a run dir; otherwise `--local`) apply unchanged. The \"Push first\" paragraph names a commit `/test` itself makes (flow's story step committing a story file) as one that moves HEAD and needs its own push before the scoped call.\n5. `plugin/skills/test/ci-source.md`: the Fallback reasons table's `head-not-pushed` row says it exits 3 in both modes and never runs the suite locally. The table's lead-in sentence stops saying every reason runs locally without `localRuns`.\n6. Tests: unit coverage in `tests/bin-lib/verify/ci-cli.test.js` (see Acceptance Criteria), plus updates to the prose-pinning conformance suites that read these paragraphs (`tests/pipelines-push-first-local-runs-conformance.test.js`, `tests/verify-local-runs-docs-conformance.test.js`).\n\n## Acceptance Criteria\n\n- A scoped `verify.js` run without `localRuns`, whose CI source answers `head-not-pushed` (fake `gh` returning HTTP 422 `No commit found` on the pulls read), exits 3. No check command is spawned, no `report.json` exists afterward, and stderr's first line starts `verify.js: no verdict yet for suite \"` and contains `(head-not-pushed): HEAD ` followed by the short sha.\n- The same run under `localRuns: \"on-request\"` exits 3 with the same `head-not-pushed` first line, which now names the short sha.\n- A run without `localRuns` whose CI source answers `no-open-pr-at-head` still runs the suite locally. Its stderr carries `verify.js: CI could not answer suite \"{suite}\" (no-open-pr-at-head) — running it on this machine` before the check's own output, and the final report row still reads `CI: {suite} — ran locally (no-open-pr-at-head)`.\n- With two CI-declared suites and no `localRuns`, a `head-not-pushed` answer for the first records the second as `not-consulted` in the `noVerdict` verify event's `ci` entries.\n- `--local` on an unpushed HEAD runs locally with exit 0/1 as before, never 3.\n- `verification.md`'s exit-3 paragraph and `ci-source.md`'s `head-not-pushed` row state the any-declaration rule, and the conformance suites named in Deliverables pass.\n- `npm test -- --full` passes.\n\n## Release Note\n\nStop a scoped verification at once when HEAD has not been pushed, instead of running the whole suite locally while CI could answer after a push.\n\n## Technical Approach\n\nIn `plugin/bin/verify.js`'s CI loop (the `#4347` / `#5369` block), after `fetchCiVerdict` returns `used: false`, set `stopped = onRequest || verdict.ci.fallback === 'head-not-pushed'`. Widen the `noVerdict` finder from `onRequest ? … : undefined` to also pick a `head-not-pushed` attempt when `onRequest` is false. `noVerdictLines(attempt, { sha, onRequest })` takes the start sha and the mode, and composes the head-not-pushed variant from them. For the early notice, write the stderr line at the `!verdict.used && !stopped` branch when `onRequest` is false. Keep it to that branch so `dirty-tree` and `tree-state-unreadable` skips (`skipCi`) get the same line from one helper. `ci-source.js` itself does not change: `head-not-pushed` is already detected there.\n\n### Key Files\n\n- `plugin/bin/verify.js`: CI loop stop rule, `noVerdict` selection, `noVerdictLines` head-not-pushed variant, early fallback stderr line\n- `plugin/skills/test/verification.md`: exit-3 outcome paragraph (any declaration for `head-not-pushed`), Push-first clause for a commit made inside `/test`\n- `plugin/skills/test/ci-source.md`: Fallback reasons lead-in and `head-not-pushed` row\n- `tests/bin-lib/verify/ci-cli.test.js`: exit-3 and early-notice cases with and without `localRuns`\n- `tests/pipelines-push-first-local-runs-conformance.test.js`: updated prose pins\n- `tests/verify-local-runs-docs-conformance.test.js`: updated prose pins\n\n## Gotchas\n\n- Decided while shaping: fail fast reuses the existing `head-not-pushed` detection (the API's 422) instead of the report's proposed `git ls-remote` / `git branch -r --contains` pre-check. The API read is already the first thing the CI path does, it needs no extra process, and it answers the question CI actually depends on (does GitHub know the commit?) rather than one remote-tracking ref.\n- Decided while shaping: exit 3 on `head-not-pushed` applies without `localRuns` as well. Pushing takes seconds and a local full run takes up to an hour. Every scoped call site already reaches exit 3 through `verification.md`'s routing, and the roster of runs that never push already passes `--local` on its first call, so none of them meets the new exit. This is a behavior change for a project without `localRuns`, not a removed contract (no flag, verb or field changes), so the record is not labelled `breaking`.\n- A just-pushed commit can briefly read as unknown while GitHub indexes it. The result is one exit 3 and one re-run, which `verification.md`'s routing already allows.\n- A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code. This change stays in the CI loop and `noVerdictLines`, so expect catch-up merges, not conflicts in the same hunks.\n- #5234 also edits this CI loop (its dirty-tree precondition), two lines above the `head-not-pushed` handling. Whichever lands second takes a catch-up merge.\n- #5465 moves the on-request decisions (which suites are not consulted, whether the run ends with no verdict) into one pure function under `lib/verify/`. If it lands first, this record's `head-not-pushed` rule goes into that function as one more input, not back inline in `main()`. If this lands first, #5465 absorbs the rule. #5483 adds a `pr-conflicted` branch to the same exit-3 paragraph of `verification.md`. Merge the prose by hand; the two changes are independent.\n\n**Related:** #5234, #5437, #5483, #5511, #5167, #5378, #5427, #5465, #5466, #5507, #5888, #5135, #5653, #3765, #5075, #5210, #4601, #5133, #5426, #5464\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n\n## Original request\n\nverify.js waits out its CI window on a HEAD that was never pushed instead of failing fast\n\n**Summary:** With a `ci` block in the scope declaration, a scoped `verify.js` run whose HEAD is not on the remote waits for a CI run that can never start, for the whole CI wait, instead of reporting that HEAD is unpushed.\n\n**Kind:** Defect\n\n**Affected component:** `bin/verify.js` (the `ci` block's CI-verdict wait), `skills/test/verification.md` (\"Push first, and exit 3\")\n\n**Use case:** In a `/claude-tweaks:flow` run, the build phase exit pushed the branch and CI passed on that HEAD. Flow's automatic story step then committed a new story file, so `/claude-tweaks:test` took `verification.md`'s Mismatch branch and ran the scoped `verify.js`. The new commit had not been pushed: the push-first rule is prose in `verification.md`, and nothing between the story commit and the verify call pushes. `verify.js` looked for CI on HEAD, found no run, and kept waiting. The foreground call hit the 600 s tool ceiling and was moved to the background, where it sat with no output for over 20 minutes until it was stopped by hand. After a manual push, the same command took the CI verdict in about 5 minutes.\n\nCost: about 20 minutes of wall time and a stopped background task, on a delta that was one YAML file.\n\nWhat would have caught it: before entering the CI wait, `verify.js` compares HEAD with the remote branch (`git rev-parse HEAD` against `git ls-remote origin <branch>`, or `git branch -r --contains HEAD`). When HEAD is not on the remote, it exits 3 at once with a message naming the unpushed commit (`HEAD <sha> is not on origin/<branch>: push first`), which `verification.md`'s existing exit-3 handling already routes. Optionally, the push-first paragraph could also state that a commit made inside `/test` (the flow's story step) needs its own push.\n\n**Definition:** Ready — the check, its exit code and the message are named above; the existing exit-3 path handles the outcome.\n\n**Plugin version:** 6.170.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-76e9abf5 -->\n",
+        "createdAt": "2026-11-16T20:42:53Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
+            "name": "bug",
+            "description": "Something isn't working",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5800,
+        "state": "OPEN",
+        "title": "verify.js waits out its CI window on a HEAD that was never pushed instead of failing fast",
+        "updatedAt": "2026-11-25T07:23:13Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: 325e2a6693c7d226283c6793b90372262f55a902\n\nOrigin: reflect full from #5542\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/wrap-up-pack.js` writes the wrap-up fact pack to `{run-dir}/wrap-up-pack.json` and, on its default path (no `--print`), also prints the whole pack to stdout (line 107, `stdout(text)`). `plugin/skills/wrap-up/SKILL.md` (\"Fact pack first\") has the session run it once and has every later sub-step read its own field from the file, so nothing reads the printed copy, yet all of it enters the session's context.\n\nIn run `2026-11-15T231049-spec-5535-5542` the two per-record calls printed 696 and 690 lines (the line counts of the two `wrap-up-pack.json` files), in a run that crossed the context cap three times.\n\n`tests/bin-lib/wrap-up/pack-cli.test.js` pins the current shape: its `#1930 AC2` test is named \"the pack on stdout\" and parses stdout as the pack.\n\nIntegration-branch probe, 2026-11-16: `git grep -n -F -e 'stdout(text)' origin/main -- plugin/bin/wrap-up-pack.js` matched line 107, and `git log -S 'stdout(text)' --oneline origin/main -- plugin/bin/wrap-up-pack.js` lists only `bd22f310aa`, the commit that added the CLI. The behavior is unchanged on the integration branch.\n\n`plugin/bin/flow-preflight.js:79` and `plugin/bin/release-preflight.js:117` print their packs the same way. Their callers were not checked, and they are outside this record.\n\n## Deliverables\n\n- [ ] `wrap-up-pack.js` with no `--print` prints one JSON line naming the file it wrote and each gathered probe's `ok` flag, in place of the whole pack. The file's content is unchanged.\n- [ ] `--print <probe>` keeps printing that probe's value, as today.\n- [ ] Every caller that names `wrap-up-pack.js` in `plugin/skills` and `plugin/bin` is read and confirmed to take its facts from the file or from `--print`; one that parses the default stdout is moved to the file in the same change.\n- [ ] `plugin/skills/wrap-up/SKILL.md`'s \"Fact pack first\" paragraph says what the printed line holds.\n- [ ] `tests/bin-lib/wrap-up/pack-cli.test.js` pins the one-line shape, reading the pack from the written file where it reads it from stdout today.\n\n## Acceptance Criteria\n\n- [ ] In a run directory with all eight probes gathered, `node plugin/bin/wrap-up-pack.js --run <run-dir>` prints exactly one line, and that line parses as JSON holding the written file's path and one `ok` flag per probe.\n- [ ] The `wrap-up-pack.json` it writes holds the same eight probe keys as before the change.\n- [ ] `node plugin/bin/wrap-up-pack.js --run <run-dir> --print state` prints the same value as before the change.\n- [ ] `node --test tests/bin-lib/wrap-up/pack-cli.test.js tests/wrap-up-pack-conformance.test.js` passes, and the changed stdout test fails when line 107's whole-pack print is restored.\n\n## Release Note\n\nStop the wrap-up fact pack from printing its whole content into the session; it now prints one summary line and keeps the facts in its file.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/wrap-up-pack.js` — print one summary line on the default path\n- `tests/bin-lib/wrap-up/pack-cli.test.js` — pin the one-line stdout shape\n- `plugin/skills/wrap-up/SKILL.md` — say what the printed line holds\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-16T06:46:54Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5670,
+        "state": "OPEN",
+        "title": "Have wrap-up-pack.js print one summary line instead of the whole fact pack",
+        "updatedAt": "2026-11-25T07:22:56Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Defer-reason: genuinely-larger\n\n## Current State\n\n#4359 registered two child-facing phases in `plugin/bin/lib/compose-context/phases.js`: `review-lens-child` (bundle `lens-child`, composing `skills/_shared/subagent-output-contract.md` and `skills/_shared/criteria-architecture-depth.md`) and `sdd-child` (bundle `sdd-child`, composing `skills/_shared/subagent-dispatch-core.md`). Both compose whole files, because `compose-context.js` has only whole-file sources and `<!-- when: -->` condition fences (refs #4359, whole-branch review lens 3e).\n\n- A lens prompt cites only the Scratch rule of the output contract (`plugin/skills/review/step3-lens-dispatch.md`), and only lens 3e cites the depth criteria. A non-3e lens child that reads the bundle once, whole, takes about 38 KB where one rule is needed.\n- An SDD child's prompt (`plugin/skills/build/dispatch.md`) names three rules (no-stash, no-name-kill, discrimination checks) and reads the whole 38 KB dispatch core.\n- #4359's AC1 counts reads per run, so the bundle meets it. The cost the bundle still carries is bytes per child read, which is the context-overhead goal #4027 and #4359 share.\n- #4359 deliberately added no `<!-- when: -->` fences (its PR body, decision-rule choices): a fence added an all-`unresolved` composed row over the rail before Step 6.7's body moved out.\n\n## Deliverables\n\n1. Decide how a child bundle selects the sections its prompt cites: fence the source files with `when:` markers keyed to the dispatching phase, give `compose-context.js` a named-section source, or split the cited rules into small `_shared` files the registry composes whole.\n2. Apply it so the `lens-child` bundle carries the Scratch rule and the shared rules every lens prompt cites, and lens 3e's depth criteria reach only a 3e child (its own bundle or a second on-demand read).\n3. Apply it so the `sdd-child` bundle carries the rules its prompt cites.\n4. Keep `composedRailViolations(\"plugin\")` printing `[]` and the prose `--phase` lines in place.\n\n## Acceptance Criteria\n\n- The composed `lens-child` bundle for a non-3e lens is under 12 KB, and no cited rule is missing from it (a citation test names each rule the prompt cites).\n- The composed `sdd-child` bundle is under 15 KB with the three rules the prompt names.\n- `composedRailViolations(\"plugin\")` prints `[]` and the existing conformance suites pass with no added skips.\n\n### Key Files\n\n- `plugin/bin/lib/compose-context/phases.js` — modify (the two child phases)\n- `plugin/bin/lib/compose-context/compose.js` — modify only if named-section sources are chosen\n- `plugin/skills/review/step3-lens-dispatch.md` — modify (the lens-child citation)\n- `plugin/skills/build/dispatch.md` — modify (the sdd-child citation)\n- `plugin/skills/_shared/subagent-output-contract.md`, `plugin/skills/_shared/subagent-dispatch-core.md` — modify (fences or a split)\n\n_Filed by `review` via specShapedBody._\n\n## Release Note\n\nSlice the review lens and subagent composed bundles down to the sections their prompts cite, so each child loads less.\n",
+        "createdAt": "2026-11-16T06:45:05Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          }
+        ],
+        "number": 5668,
+        "state": "OPEN",
+        "title": "Slice the lens-child and sdd-child composed bundles down to the sections their prompts cite",
+        "updatedAt": "2026-11-25T07:23:03Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -1175,6 +1371,84 @@
           "risk": "medium",
           "size": "medium",
           "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`verify.js --scope`, under a declaration with a `ci` block, takes each CI-declared suite's verdict from the PR's CI job on HEAD (`plugin/bin/lib/verify/ci-source.js`'s `fetchCiVerdict`, #4347). Every `gh` read there goes through the local `gh(args, timeout = GH_TIMEOUT_MS)` helper, which calls the injected `runner` exactly once. `GH_TIMEOUT_MS` is 5 s (`plugin/bin/lib/shared-primitives.js`), and the job-log read uses `LOG_TIMEOUT_MS` (30 s). Only `ENOENT` (→ `gh-unavailable`) and a missing commit (HTTP 404/422 → `head-not-pushed`) are classified. Every other error, a timeout included, becomes `CiFallback('gh-error: …')` at once, and the suite runs locally, or, under `localRuns: \"on-request\"`, the run exits 3 with no verdict.\n\nObserved in a consumer project (plugin 6.167.0): one `spawnSync gh ETIMEDOUT` on the first read (`repos/{owner}/{repo}/commits/{sha}/pulls`), on a machine loaded by sibling sessions, sent all three CI-declared suites to a local run (`CI: <suite> — ran locally (gh-error: spawnSync gh ETIMEDOUT)`). The local core run took about 6 minutes and failed 3 timing-sensitive tests in a file the branch never touched, while the PR's CI on the same sha was green. An identical re-run minutes later took all three suites from CI and passed. Avoiding that local run is the reason the CI source exists (`plugin/skills/test/ci-source.md`: 55+ min locally vs 3.5 min in CI).\n\n## Deliverables\n\n1. In `fetchCiVerdict`, a `gh` read that fails with a timeout is retried before it counts as a failure. A timeout is an error whose `code` is `ETIMEDOUT`, or which carries a non-null `signal` (the child was killed when its `timeout` elapsed). At most 3 attempts in total (`GH_MAX_ATTEMPTS = 3`), with backoff waits of 1 s and then 2 s (`GH_RETRY_BACKOFF_MS = [1000, 2000]`). The waits go through the existing injected `sleep`, so tests never sleep for real. The retry lives in the one `gh` helper, so it covers every read: the PR lookup, the PR detail read, each poll's runs and jobs reads, and the job-log read, including the read that drops `--allow-escape-sequences`. The helper becomes `async`, and every call site awaits it.\n2. Only timeouts are retried. `ENOENT` still throws `gh-unavailable` on the first attempt. A missing commit (HTTP 404/422) still yields `head-not-pushed` with no retry. Any other error (an HTTP 4xx or 5xx response, unparseable JSON) keeps today's immediate handling.\n3. When a read needed more than one attempt and still failed, its `gh-error` fallback reason names the attempt count: `gh-error after {k} attempts: {errText}` (e.g. `gh-error after 3 attempts: spawnSync gh ETIMEDOUT`). `{errText}` is the last attempt's error, so a timeout followed by an HTTP 500 reports `gh-error after 2 attempts: HTTP 500 …`. A read that failed on its single attempt keeps today's exact text, `gh-error: {errText}`. The PR-detail read's errors are swallowed today, and they still are, after its retries.\n4. `plugin/skills/test/ci-source.md`'s Fallback reasons table: the `gh-unavailable` / `gh-error: …` row states that a timed-out read is retried up to 3 attempts first, and that the reason then reads `gh-error after {k} attempts: …`.\n5. Unit tests in `tests/bin-lib/verify/ci-source.test.js`, using the existing fake-runner and fake-sleep seams (see Acceptance Criteria).\n\n## Acceptance Criteria\n\n- A stubbed runner that throws an `ETIMEDOUT` error once on the `commits/{sha}/pulls` read and then returns valid JSON for every read yields `used: true`. The fake `sleep` records exactly one wait, of 1000 ms, before the second attempt.\n- A runner that throws `ETIMEDOUT` on every attempt of the first read yields `used: false` with `fallback` exactly `gh-error after 3 attempts: spawnSync gh ETIMEDOUT` (the stub's error message). The runner is called 3 times for that read, and the fake `sleep` records waits of 1000 then 2000 ms.\n- A runner whose error has `signal: 'SIGTERM'` and no `code` is retried the same way.\n- A runner that throws `ENOENT` yields `fallback: 'gh-unavailable'` after exactly one runner call, with no `sleep`.\n- A runner that throws an HTTP 422 `No commit found` error yields `fallback: 'head-not-pushed'` after exactly one runner call.\n- A runner that throws a non-timeout error (stderr `HTTP 500`) on the first read yields `fallback` beginning `gh-error: ` (no attempt count) after exactly one runner call.\n- A timeout on one poll read (the runs list), followed by success, does not end the wait: the poll completes and the verdict is `used: true`.\n- The full `tests/bin-lib/verify/` suite passes.\n\n## Release Note\n\nRetry a timed-out GitHub read up to three times before a CI-sourced verification falls back to running the suite locally.\n\n## Technical Approach\n\nInside `fetchCiVerdict`, replace the synchronous `gh` closure with an async one that loops up to `GH_MAX_ATTEMPTS`: call `runner(args, { cwd, timeout })`. On `ENOENT`, throw `CiFallback('gh-unavailable')` as now. On a timeout (`isTimeout(err)`: `err.code === 'ETIMEDOUT' || (err.signal != null)`) with attempts left, `await sleep(GH_RETRY_BACKOFF_MS[attempt - 1])` and try again. Otherwise set `err.ciAttempts = attempt` and rethrow. A small `ghErrorReason(err)` builds `gh-error after {k} attempts: …` when `err.ciAttempts > 1`, else `gh-error: …`. Use it at the two sites that build a `gh-error` reason today: the pulls-read catch and the outer catch. `ghJson` becomes async (`await gh(args)`). Every `ghJson`/`gh` call site gains `await`, the escape-flag fallback in the log read included. Export `GH_MAX_ATTEMPTS` and `GH_RETRY_BACKOFF_MS` so tests assert against the constants. Backoff time counts toward `waitedMs` naturally, since `now()` is read at fallback time.\n\n### Key Files\n\n- `plugin/bin/lib/verify/ci-source.js`: async `gh` helper with timeout-only retry, `ghErrorReason`, exported retry constants\n- `tests/bin-lib/verify/ci-source.test.js`: retry, no-retry and reason-text cases\n- `plugin/skills/test/ci-source.md`: Fallback reasons row for `gh-error` names the retry\n\n## Gotchas\n\n- Decided while shaping: 3 attempts total with 1 s / 2 s backoff, retrying timeouts only. A loaded machine is the observed cause, and a short backoff costs seconds against a 6-55 minute local run. Non-timeout errors are not transient enough to justify the wait.\n- The job-log read has a 30 s timeout, so its worst case grows to about 93 s. That is still far below a local suite run. A green job whose log never arrives still stands without a log, as today.\n- `verify.js` itself does not change: it already awaits `fetchCiVerdict`. A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code, so keep this change inside `ci-source.js` to avoid overlap.\n- Use the injected `sleep` and `now` in tests. A real backoff would add 3 s per timeout case to the suite.\n- #5657 moves every `gh` spawn, `ci-source.js`'s `defaultRunner` included, onto a shared `makeGhRunner`. This record's retry sits above the runner, in `fetchCiVerdict`'s `gh` helper, so either order works, but whichever lands second takes a catch-up merge in `ci-source.js`. #5095 raises the 5 s `gh` default. That lowers how often the retry fires and does not replace it, since a loaded machine can stall any single call.\n\n**Related:** #5657, #5095, #5436, #5658, #5465, #5133, #5135, #5378, #5870\n\n## Original request\n\nverify.js CI source: one transient gh timeout drops every CI-sourced suite to a full local run\n\n`verify.js --scope` with a `ci` block takes each declared suite from the PR's CI job. In `bin/lib/verify/ci-source.js`, every `gh` read goes through `gh(args, timeout = GH_TIMEOUT_MS)` with no retry. Any error other than ENOENT or a missing commit becomes `CiFallback('gh-error: …')`. One `spawnSync gh ETIMEDOUT` on the first read (`repos/{owner}/{repo}/commits/{sha}/pulls`) therefore sends the suite to a full local run.\n\nObserved in a consumer project (plugin 6.167.0):\n- All three CI-declared suites printed `CI: <suite> — ran locally (gh-error: spawnSync gh ETIMEDOUT)`.\n- Sibling sessions had the machine loaded. The local core run took about 6 minutes and failed 3 timing-sensitive tests in a file the branch never touched.\n- The PR's CI run on the same sha was green.\n- An identical re-run minutes later took all three suites from CI and passed.\n\nThe fallback cost a long local run plus a false red result the caller had to sort out. Avoiding that cost is the reason the CI source exists (ci-source.md: 55+ min local vs 3.5 min in CI).\n\n**Proposed:** on a timeout (`ETIMEDOUT` or a signal), retry the `gh` read once or twice with a short backoff before falling back. Name the retry in the `fallback` reason, e.g. `gh-error after 3 attempts: spawnSync gh ETIMEDOUT`. Other error classes keep today's immediate fallback.\n\n**Acceptance:**\n- A stubbed runner that throws ETIMEDOUT once, then returns valid JSON, yields `used: true`.\n- A runner that times out on every attempt yields `fallback: 'gh-error …'` naming the attempt count.\n- ENOENT still yields `gh-unavailable` with no retry.\n",
+        "createdAt": "2026-11-14T15:35:16Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5437,
+        "state": "OPEN",
+        "title": "verify.js CI source: one transient gh timeout drops every CI-sourced suite to a full local run",
+        "updatedAt": "2026-11-25T07:23:11Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -1504,78 +1778,6 @@
     ],
     [
       {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\nOrigin: reflect light from #5249\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/express/eligibility.js:110` refuses any record whose labels do not parse to `ceremony: fast-lane` (`REASONS.ceremony`, \"ceremony is not fast-lane\"). Only `/claude-tweaks:specify` Step 3 stamps a `ceremony:*` label. `/claude-tweaks:capture` files born-ready records (`ready`, `risk:*`, `size:*`, `type:*`) with no `ceremony:*` label at all — `git grep -n -i ceremony -- plugin/skills/capture/SKILL.md` finds one incidental mention and no stamping step.\n\n`/claude-tweaks:flow` Step 2.9 runs the express gate before Step 3, where the Manifesto judges an unlabeled record's ceremony (`_shared/ceremony-check-invocation.md`). So a capture-born `ready` record is never express-eligible, even when the Manifesto then judges it `fast-lane` moments later.\n\nObserved 2026-11-12 on #5249 (a three-line citation retarget, `risk:low`, `size:low`, filed by `capture`): `express-lane.js gate --issue 5249` returned `eligible: false` with reasons `ceremony is not fast-lane` and `no Key Files`; the Manifesto judged it `fast-lane`; the run then took the full pipeline — a `/superpowers:writing-plans` plan, an SDD implementer and task review, a context-cap handoff to a fresh agent for test/review/polish (281k subagent tokens), and a full wrap-up.\n\n## Deliverables\n\n- [ ] A capture-born record the express gate would otherwise accept can take the express lane: either `/claude-tweaks:capture` judges and stamps a `ceremony:*` label when it files born-ready (the same `ceremony-check` `/specify` runs), or `/claude-tweaks:flow` Step 2.9 runs the ceremony judgment for an unlabeled record before the gate and passes the verdict in.\n- [ ] The chosen site's prose and a test pin the behavior.\n\n## Acceptance Criteria\n\n1. A `ready`, `risk:low`, `size:low`, `type:*` record filed by `/claude-tweaks:capture` with a `### Key Files` list naming one non-protected file, and no `ceremony:*` label, reaches an express-gate verdict that does not list `ceremony is not fast-lane` when its ceremony judgment is `fast-lane`.\n2. A record judged `standard` still gets `ceremony is not fast-lane`.\n3. `npm test` passes.\n\n## Release Note\n\nSmall records filed with /claude-tweaks:capture can now take the express lane instead of always running the full pipeline.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/express/eligibility.js` — the ceremony reason, or the verdict it reads\n- `plugin/skills/capture/SKILL.md` — stamp a ceremony label at born-ready filing, if that site is chosen\n- `plugin/skills/flow/express-entry.md` — judge ceremony before the gate, if that site is chosen\n\n_Filed by `reflect` via specShapedBody._",
-        "createdAt": "2026-11-12T14:38:45Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5262,
-        "state": "OPEN",
-        "title": "The express lane never admits a /capture-born record — no ceremony label until /specify",
-        "updatedAt": "2026-11-25T07:18:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect light from #5253\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/build/dispatch.md`'s **Affected-set testing (#5117)** rule tells every per-task implementer, fix-wave and whole-branch-fix dispatch to run `verify.js --scope … --no-stamp` before committing. It names a fallback set only for `Scope: full` / `Impact: full` or exit 2. It says nothing about a run that queues for the machine-wide suite slot (`test/suite-slots.md`) behind a sibling session's suite.\n\nIn one session on 2026-11-12, three per-task implementers hit exactly that and returned `BLOCKED` with their work uncommitted: #5216 Task 2 and Task 4, and #5253 Task 1. The #5253 implementer had launched the run in the background and was holding it, pid 18379's slot ahead of it. Each one cost a controller ruling (`sdd-ruling-1`/`sdd-ruling-3` on #5216, `sdd-ruling-1` on #5253), a resume round, and a Review Console item. All three rulings said the same thing: commit on the focused tests, because Common Step 5's verification is the branch's suite run.\n\nProbe: `git grep -n -o -E -e \".{0,120}(queued|waiting for a test-suite slot|slot is held|held slot).{0,120}\" origin/main -- plugin/skills/build/dispatch.md` exits 1 (no match).\n\n## Deliverables\n\n- [ ] `dispatch.md`'s Affected-set testing rule gives a queued slot its own branch: when `verify.js` prints `waiting for a test-suite slot` (or is still queued after a stated bound), the dispatched agent stops it (its own PID only), runs the fallback focused set instead, says so in its reply, and commits. It never returns `BLOCKED` for slot contention alone.\n- [ ] The rule's wording keeps Common Step 5's verification as the branch's one suite run, so the fallback loses no coverage.\n- [ ] A prose conformance test pins the new branch's sentence in `dispatch.md`.\n\n## Acceptance Criteria\n\n1. `dispatch.md`'s Affected-set testing paragraph names the queued-slot case and its fallback (focused set, commit, report), in addition to the existing `Scope: full`/`Impact: full`/exit-2 case.\n2. The paragraph states that slot contention alone is not a `BLOCKED` status.\n3. A conformance test fails when that sentence is removed.\n4. `npm test` passes.\n\n## Release Note\n\nA build's per-task implementers no longer stop and wait for a human ruling when another session's test run holds the machine's test slot; they run their focused tests and carry on.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — the Affected-set testing (#5117) rule's queued-slot branch\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-11-12T14:11:56Z",
         "labels": [
@@ -1625,6 +1827,90 @@
           "risk": "low",
           "size": "low",
           "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`verify.js --scope` takes a CI-declared suite's verdict from the PR's CI job only on a tree that was clean when the run started. In `plugin/bin/verify.js`'s CI loop, any `startGit.dirty !== false` skips CI for every CI-declared suite with `dirty-tree` (or `tree-state-unreadable`), and the suite runs locally, or, under `localRuns: \"on-request\"`, the run exits 3 with no verdict. `startGit.dirty` comes from `git status --porcelain` being non-empty, so one untracked file is enough.\n\nPlugin steps routinely leave inert files dirty right before a scoped verification:\n\n- `hooks.js ledger-row` appends to the tracked `docs/plans/<feature>-ledger.md` during `/claude-tweaks:build` Common Step 4 and at wrap-up's reflect pass. Common Step 5's scoped verify then ran all three CI-declared suites locally with `dirty-tree`: about 8 minutes on a loaded machine, observed on 6.164.0 and again on 6.168.0. The consumer's `verify-scope.json` maps that path to `suites: [], static: false`.\n- `/claude-tweaks:design-wrapper`'s review mode leaves its audit cache, `docs/plans/YYYY-MM-DD-{feature}-audit.json`, untracked. `/claude-tweaks:review`'s Step 6.7 re-verify then ran every CI-declared suite locally, about 20 minutes, with two load-timeout failures in untouched files (6.168.0). Moving that cache out of the tree is #4431's scope.\n\nThe runner already knows these paths are inert. After the ledger row was committed, the same run printed `Scope: none … still-verified: bookkeeping-only delta (docs/plans/<feature>-ledger.md)`. That comes from `plugin/bin/lib/verify/scope.js`'s `selectScope`, which takes each file's first matching rule, `decl.rules.findIndex(...)`. A precedent exists for the `generated` globs: `plugin/bin/lib/verify/declaration.js`'s `generatedExemption(dirtyPaths, generated)` already treats a tree dirty only in declared `generated` paths as clean, for the stamp (#2987, #3757). The CI-source precondition consults neither of them.\n\n## Deliverables\n\n1. A new pure helper `inertDirtyPaths(decl, paths)` in `plugin/bin/lib/verify/scope.js`, exported. It returns the sorted, de-duplicated `paths` when every path is inert, and `null` otherwise, including for an empty or `null` list. A path is inert when either:\n   - it matches one of `decl.generated`'s globs, or\n   - its **first** matching rule (the same `findIndex(globToRegExp(r.match).test(file))` order `selectScope` uses) has `suites` equal to an empty array, `static` false, and no `impact`.\n\n   A path no rule matches is never inert: it fails closed, as in `selectScope`.\n2. `verify.js`'s CI-source precondition: when `startGit.dirty === true` and `inertDirtyPaths(decl, dirtyFilePaths(undefined, scopeStatusRead))` is non-null, the tree counts as clean for CI sourcing, and each CI-declared suite goes to `fetchCiVerdict` as on a clean tree. `dirtyFilePaths` lists tracked, untracked and both sides of a rename. When that path list cannot be read (`null`), the precondition stays `dirty-tree`. `tree-state-unreadable` is unchanged.\n3. Each CI attempt entry taken under the exemption carries `dirtyExempt: [paths]` (`null` otherwise), in `report.json`'s `ci` entries and the verify event's `ci` entries. stdout prints one line before the CI wait: `CI: tree dirty only in inert paths ({paths, comma-joined}) — taking CI verdicts on HEAD`.\n4. The pass stamp is unchanged: it still records the tree's real `dirty` state. This record changes the CI-source precondition only.\n5. `plugin/skills/test/ci-source.md`: the `dirty-tree` row (and the \"on a clean tree\" wording in the section that introduces the CI source) names the exemption: dirty paths that are all declared `generated` or bookkeeping-only (first matching rule `suites: []`, `static: false`) do not block CI sourcing. `plugin/skills/test/verification.md`'s CI source paragraph (\"HEAD must be pushed and be the open PR's head, on a clean tree\") gets the same qualifier.\n6. Tests (see Acceptance Criteria).\n\n## Acceptance Criteria\n\n- `inertDirtyPaths` unit tests in `tests/bin-lib/verify/scope.test.js`:\n  - a single path whose first matching rule is `{suites: [], static: false}` returns `[path]`;\n  - a path matching a `generated` glob returns it;\n  - a mix of one inert path and one path whose rule selects a suite returns `null`;\n  - an unmatched path returns `null`;\n  - a path whose first matching rule selects a suite, though a later rule would be inert, returns `null` (first match wins);\n  - a rule with `static: true` and `suites: []` is not inert;\n  - `[]` and `null` return `null`.\n- `tests/bin-lib/verify/ci-cli.test.js`: a scoped run whose only dirty path is an uncommitted edit to a file mapped to `suites: [], static: false` consults the fake `gh`, takes the CI verdict (`used: true`, no local check spawned for that suite), and prints the `CI: tree dirty only in inert paths (…)` line. Its `report.json` CI entry carries `dirtyExempt` naming that path.\n- The same run with the dirty path untracked instead of modified behaves the same.\n- A scoped run with one inert dirty path and one dirty source file still records `fallback: 'dirty-tree'` and runs locally.\n- A scoped run under `localRuns: \"on-request\"` with only inert dirty paths does not exit 3 for `dirty-tree`.\n- `npm test -- --full` passes.\n\n## Release Note\n\nTake CI-sourced verification verdicts even when the only uncommitted files are bookkeeping or generated paths the scope declaration already marks as running no checks.\n\n## Technical Approach\n\nAdd `inertDirtyPaths` beside `selectScope` in `scope.js`. It reuses the module's `globToRegExp` import and the same first-match lookup. Consider extracting a `firstRuleIndex(decl, file)` used by both, so the two cannot drift. In `verify.js`, compute `ciDirtyExempt` once, before the CI loop, and only when `startGit.dirty === true && decl && decl.ci`. Reuse `scopeStatusRead`, the porcelain text the scope read already holds (#5773), so no second `git status` runs. Change the `skipCi` guard to `startGit.dirty !== false && ciDirtyExempt === null`. Thread `ciDirtyExempt` into `verdict.ci.dirtyExempt` after each `fetchCiVerdict` call, and into `skipCi`'s entry shape as `null`, so every CI entry has the field. The stamp-write gate's own `generatedExemption` use is untouched.\n\n### Key Files\n\n- `plugin/bin/lib/verify/scope.js`: new exported `inertDirtyPaths` (and a shared first-match helper)\n- `plugin/bin/verify.js`: CI-source precondition consults `inertDirtyPaths`; `dirtyExempt` on CI entries; one stdout line\n- `plugin/skills/test/ci-source.md`: `dirty-tree` row and clean-tree wording name the exemption\n- `plugin/skills/test/verification.md`: CI source paragraph's clean-tree qualifier\n- `tests/bin-lib/verify/scope.test.js`: `inertDirtyPaths` unit cases\n- `tests/bin-lib/verify/ci-cli.test.js`: inert-dirty CI-sourcing cases, tracked and untracked\n\n## Gotchas\n\n- Decided while shaping: the report's preferred fix (treat inert dirty paths as clean for the CI precondition) is the one built. The two alternatives (commit ledger rows before Common Step 5; warn from `ledger-row`) each cover one producer, and the second occurrence showed several producers in the chain.\n- Decided while shaping: \"inert\" means the first matching rule is `suites: []` and `static: false`, plus declared `generated` globs. It is not \"any path `selectScope` would put in a `none`-mode delta\": an `impact` rule's path can select a subset, and a `static: true` rule runs lint or types on it, so neither is inert.\n- Decided while shaping: the design-wrapper audit cache (second comment) is left to #4431, which moves it out of the tree. This record does not add `docs/plans/*-audit.json` to any declaration. A consumer whose scope file maps it to an inert rule gets the exemption automatically. An unmatched path stays fail-closed.\n- Soundness: CI ran on HEAD, and the exempt paths are by declaration ones no check reads, so HEAD's CI verdict still describes everything the suites test. A misdeclared rule (a path that does affect tests, mapped to `suites: []`) would already be wrong for scope selection today. This change trusts the same declaration, never more.\n- A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code, and #5800 edits the same CI loop two lines below this precondition. Keep the edit to the `skipCi` guard and the entry fields, and expect catch-up merges.\n\n- #5484 (commit ledger rows from Common Steps 4.5 and 6.5 before Step 5) and #5673 (keep `/review`'s ledger writes from dirtying HEAD) are the per-producer alternative this record's report weighed. They stay useful on their own, for the pass stamp and for projects whose scope file has no inert rule for the ledger path. This record does not replace them, and they do not replace it.\n\n**Related:** #4431, #5800, #5437, #3765, #5427, #5465, #5507, #5075, #5167, #5378, #5466, #5511, #6102, #5148, #5484, #5837\n\n## Original request\n\nverify.js: CI-sourced verdicts fall back to a local run when the only dirty path is bookkeeping-only\n\n**Summary:** `verify.js --scope` takes CI verdicts only on a clean tree, and it falls back to a local full run even when the only dirty path is one its own scope rules classify as bookkeeping-only.\n\n**Kind:** Gap\n\n**Affected component:** `bin/verify.js` (CI-sourced suite verdicts, `skills/test/ci-source.md`)\n\n**Use case:**\n- `/claude-tweaks:build` Common Step 5 runs `verify.js --scope .claude-tweaks/verify-scope.json` so the suite verdicts come from the PR's CI jobs.\n- In one pipeline run, the only uncommitted change at that point was a row `hooks.js ledger-row` had just appended to `docs/plans/<feature>-ledger.md`. The project's `verify-scope.json` maps that path to `suites: [], static: false`.\n- All three CI-declared suites reported `fallback: \"dirty-tree\"` and ran locally: about 8 minutes on a loaded machine, while the same suites were already queued in CI at 4–6 minutes.\n\nAfter committing that one row and re-running, the same runner printed `Scope: none … still-verified: bookkeeping-only delta (docs/plans/<feature>-ledger.md)`. So its change-set logic already knows the path is inert, but the clean-tree precondition for CI sourcing doesn't consult that classification. The local pass also wasn't CI-sourced, so getting a CI-sourced verdict took an extra commit, push and re-run.\n\n**Suggested behavior:**\n- **Preferred:** treat a tree whose only dirty paths match a scope rule with `suites: []` and `static: false` (or a declared `generated` path, the same set `liveGeneratedExempt` already covers) as clean for the CI-source precondition.\n- **Alternative:** have Common Step 5 commit pending ledger rows before invoking verification.\n- **Alternative:** have `ledger-row` print a warning when it leaves the worktree dirty inside an active pipeline run.\n\n**Definition:** Clear\n\n**Plugin version:** 6.164.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-87932071 -->\n",
+        "createdAt": "2026-11-12T06:04:35Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5234,
+        "state": "OPEN",
+        "title": "verify.js: CI-sourced verdicts fall back to a local run when the only dirty path is bookkeeping-only",
+        "updatedAt": "2026-11-25T07:23:14Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
@@ -8643,6 +8929,90 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n**Related:** #5396, #4765, #6076, #4118\nRisk-flags: none\n\n## Current State\n\nOn plugin 6.168.0, a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet reached 312,673 context tokens by the end of `/build`, so `/flow` handed test, review and polish to a fresh agent. That agent spent about 255k more tokens and 6.5 minutes. The record lists the procedure reads that filled the context: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), `flow/SKILL.md`, `build/SKILL.md`, and the subagent-driven-development skill with its reviewer template.\n\nThe build took the full planning path because `/build`'s micro-plan gate fell through. `plugin/bin/lib/issues/micro-plan-gate.js` sets `MAX_IMPLEMENTATION_FILES = 1`, and the record's Key Files counted four implementation files (three config files plus one prompt-prose skill file). A fall-through loads `/superpowers:writing-plans` (10,335 B), `build/plan-authoring-checks.md` (52,476 B on origin/main `68608178fa`) and its two cited sub-files (`plan-authoring-pairing-checks.md`, 2,999 B; `plan-authoring-boundary-checks.md`, 4,490 B). It also produces a multi-task plan, and a multi-task plan keeps SDD's whole-branch review, which the fast-lane profile skips only at `tasks: 1` (`_shared/ceremony-profile.md`'s `sdd-whole-branch-review` row). The micro-plan path loads `build/micro-plan.md` (8,125 B) instead and composes a one-task plan.\n\nThe gate's limit of one is stricter than the lanes beside it. The express lane (`plugin/bin/lib/express/eligibility.js`, `EXPRESS_MAX_KEY_FILES = 3`) builds a record with up to three Key Files of any kind, test files included, in one agent with no plan, no per-task review and a merge on green. The pipeline driver admits the same bound by default (`express-driver-max-key-files`, default 3). `/build`'s micro-plan path keeps more checks than either: it still runs an SDD task review and `/claude-tweaks:review`'s lenses. It still refuses every fast-lane record with two or more implementation files. #5396 records the same fall-through with two files: one key added to a static plist, plus the generator that writes it.\n\nThe gate is read in two places: `/build`'s Spec Step 3 (`build/micro-plan.md`'s Applicability gate) and `/claude-tweaks:specify`'s plan-lane predicate (`plugin/bin/lib/driver/plan-lane.js` `needsNoPlan`, #6053), which tries the driver lane, then the express lane, then the micro-plan lane.\n\nA fence survey at origin/main `68608178fa` (the `compose-context-fencing` procedure) ruled out the other reads as levers. `build/dispatch.md` (49,720 B) is two single lines of 27,006 B and 17,829 B plus small paragraphs. Fences are line-anchored, and the only prose that cannot apply to a fast-lane one-task build is the whole-branch-review block (about 4.4 KB: \"Whole-branch review model.\" and \"Persist SDD's final whole-branch review before Finish\"). That block keys on task count, not on `ceremony-profile`, which is not a `compose-context` condition key either (`resolve-conditions.js` resolves six). The worktree-setup sources already measured 0 B fenceable on their run-level axes (#1993). `test/verification.md` runs under every profile.\n\n## Deliverables\n\n- [ ] Raise `MAX_IMPLEMENTATION_FILES` in `plugin/bin/lib/issues/micro-plan-gate.js` from 1 to 3. Rewrite the header comment's \"the gate is \\\"at most one\\\", not \\\"exactly one\\\"\" sentence so it names the constant, not a number. Add one sentence giving the reason: the express lane builds up to `EXPRESS_MAX_KEY_FILES` Key Files with no plan at all, and the micro-plan path keeps the task review and the review lenses, so it needs no stricter bound. Keep it a separate constant, not an import of `EXPRESS_MAX_KEY_FILES`: the express lane counts every Key File, while this gate counts implementation files only.\n- [ ] Reword `plugin/skills/build/micro-plan.md`'s title (`single-file fast-lane records skip`) and its opening sentence (\"A one-file, one-task record\") so neither says one file. The composed plan stays one task, its `**Files:**` block one line per Key Files entry, as today. Keep conditions 3 and 4 citing the code, not restating the number (`tests/build-micro-plan-code-twin.test.js` fails on a restated limit).\n- [ ] Update `plugin/skills/_shared/ceremony-profile.md`'s exemption row that quotes the old title phrase (`single-file fast-lane records skip`) to quote the new title phrase, so `tests/ceremony-profile-roster.test.js` still matches it.\n- [ ] Update the tests that pin the old limit: `tests/bin-lib/issues/micro-plan-gate.test.js` (the constant-value assertion, and the `implementation-file-limit` failure case moved from two entries to four), and `tests/bin-lib/driver/plan-lane.test.js` (the AC2.1 case that expects two implementation Key Files outside every lane). `tests/build-micro-plan-conformance.test.js`'s AC5.1 case (one implementation file satisfies condition 3) stays true and needs no change.\n\n## Acceptance Criteria\n\n- [ ] `MAX_IMPLEMENTATION_FILES` is 3. `evaluateMicroPlanGate` returns `{ passes: true, failed: [], unreadable: null }` for a `fast-lane`, `low`, unflagged record whose Key Files name three implementation files (for example two `plugin/bin/*.js` modules and one `plugin/skills/**/*.md` file). It returns `failed: ['implementation-file-limit']` for four.\n- [ ] `needsNoPlan` (`plan-lane.js`) returns `{ lane: 'micro-plan', reason: 'passes-micro-plan-gate' }` for a fast-lane low record with three implementation Key Files when `express-lane` is `false` and `express-driver` is `off`, and `{ lane: null, reason: 'outside-every-lane' }` for four.\n- [ ] The two-implementation-file shape #5396 observed (a static config file plus the generator module that writes it, fast-lane, low, unflagged) passes the gate, pinned by a test case.\n- [ ] `plugin/skills/build/micro-plan.md` no longer describes the gate as single-file or one-file. `tests/build-micro-plan-code-twin.test.js` and `tests/ceremony-profile-roster.test.js` pass.\n- [ ] Every changed or added assertion goes red when `MAX_IMPLEMENTATION_FILES` is set back to 1, shown by running the affected test files against that revert.\n- [ ] `npm test -- --full` passes.\n\n## Release Note\n\nA fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.\n\n## Technical Approach\n\nOne constant change plus the prose and tests that pin it. `countImplementationFiles`'s counting rule (tests, non-prompt docs, `docs/plans/*.html` and read-only entries excluded) is unchanged, and so are the other three conditions, including the risk-flag condition that keeps a flagged record on the audited plan path. The plan-lane predicate reads the gate through `evaluateMicroPlanGate`, so it follows the new limit with no change to `plan-lane.js` itself. Only its tests move.\n\n### Key Files\n\n- `plugin/bin/lib/issues/micro-plan-gate.js` — modify (constant and header comment)\n- `plugin/skills/build/micro-plan.md` — modify (title and opening sentence)\n- `plugin/skills/_shared/ceremony-profile.md` — modify (the exemption row quoting the micro-plan title)\n- `tests/bin-lib/issues/micro-plan-gate.test.js` — modify (limit assertions, three-pass and four-fail cases, the #5396 shape)\n- `tests/bin-lib/driver/plan-lane.test.js` — modify (AC2.1 limit case)\n- `plugin/bin/lib/driver/plan-lane.js` — read only, no change\n\n## Gotchas\n\n- Decisions made while shaping this record in an autonomous lane (maintainer-authorized 2026-11-25), each the shaping agent's call:\n  - **Direction:** raise the gate's limit. The record's other two directions were not taken. A \"same-shape edits as one unit\" rule is a property of the diff, which does not exist yet when the gate reads Key Files at plan time. A lazy split of `plan-authoring-checks.md` only helps the full plan path, and #4765 already tracks that file's rail split.\n  - **Bound 3:** matches `EXPRESS_MAX_KEY_FILES`, the bound below which the shipped express lane already builds with no plan, so the micro-plan path is never stricter than a lane that does less checking.\n  - **Override of #5396's last line** (\"A record with two genuine source modules should still fall through\"): overridden for the reason above. The micro-plan path still gives such a record an SDD task review and `/claude-tweaks:review`'s lenses.\n  - **Ceremony fencing rejected:** the Current State survey measured under 10% of `build/dispatch.md` as fast-lane-only prose, keyed on task count and locked inside two long lines.\n- The 6.168.0 incident's own shape (three config files plus one skill file, four counted) still falls through after this change. It passes only once #5396's config-file exclusion also lands. This record does not change the counting rule.\n- More records now read as the `micro-plan` lane in `/claude-tweaks:specify`'s plan-lane predicate, so `plan-at-specify` skips writing a plan for them. That is intended: `/build` composes the same micro-plan for them.\n- #6076 (open, `ready`) adds a CLI that runs `evaluateMicroPlanGate` for `/build` and edits the same `micro-plan.md` and `micro-plan-gate.js`. One of its acceptance criteria expects two implementation files to print `\"passes\":false`. Whichever of the two lands second moves that fixture past the new limit (four implementation files), so the two records' tests agree.\n- Do not import `EXPRESS_MAX_KEY_FILES`. It counts every Key File, tests included, so coupling the two would make the express bound silently move this gate.\n- `tests/build-micro-plan-code-twin.test.js` refuses prose that restates the limit (for example \"names at most 1 implementation file\"), so the reworded title must not carry a number either.\n\n## Original request\n\nbuild: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test\n\n**Summary:** On a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet, the orchestrating agent reached 312,673 context tokens by the end of `build`, crossing the 200,000 cap and forcing a handoff of test/review/polish to a fresh agent.\n\n**Kind:** Gap\n\n**Affected component:** skills/build (procedure reads), skills/flow context cap\n\n**Use case:** Fast-lane exists to make small records cheap. Here the fixed cost of loading the procedure the orchestrator must follow exceeded the cap on its own, before any of the change's own complexity, so every fast-lane run of similar size hands off mid-pipeline (the handed-off agent spent another ~255k tokens and ~6.5 minutes). Most of the context was procedure reads: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), plus `flow/SKILL.md`, `build/SKILL.md`, the SDD skill and its reviewer template. The micro-plan gate also routed the record to the full writing-plans + plan-authoring-checks path because it counted the three one-line config edits as three implementation files (the config-file part is already tracked in #5396). Possible directions, not prescriptive: a fast-lane digest for `/build` like `/wrap-up`'s `_shared/fast-lane-digest.md`, so a fast-lane build loads only the rows it runs; counting small same-shape edits across files as one implementation unit; lazy-splitting `plan-authoring-checks.md` so a single-task plan reads only the checks that can apply.\n\n**Definition:** Needed — three viable directions (a build fast-lane digest, a same-shape-edit unit in the micro-plan gate, lazy-splitting plan-authoring-checks) with no preference stated.\n\n**Plugin version:** 6.168.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2e26818f -->\n",
+        "createdAt": "2026-11-14T22:14:15Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 5463,
+        "state": "OPEN",
+        "title": "build: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test",
+        "updatedAt": "2026-11-25T07:23:08Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
           "stage": "ready",
           "grants": {
             "build": true,
