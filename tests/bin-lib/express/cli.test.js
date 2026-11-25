@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync, execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const {
@@ -13,7 +13,7 @@ const {
 const { REASONS } = require(path.join(LIB, 'express', 'eligibility.js'));
 const { expressMarker, REVIEW_COMMENT_MARKER } = require(path.join(LIB, 'express', 'sampling.js'));
 const { resolveProtectedPathsEntry } = require(path.join(LIB, 'express', 'policy.js'));
-const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
+const { gitRepo, harnessWorktreeOf, fixtureGit, cleanGitEnv } = require('../../helpers/git-fixtures');
 const { BlastRadiusError, resolveBlastRadiusConfig } = require(path.join(LIB, 'blast-radius-cli.js'));
 const { computeAdoption } = require(path.join(LIB, 'flow', 'preflight.js'));
 
@@ -1108,16 +1108,18 @@ test('AC8.1 (check half): a worktree edit removing package.json from the list do
 const { resolvePolicyConfig } = require(path.join(LIB, 'policy-schema.js'));
 
 // The fake for every key but express-lane, which resolves through the real resolver over the fixture repo's
-// policy.yml. A hermetic env and homeDir keep a user-wide factory policy from supplying a value.
+// policy.yml. A hermetic env and homeDir keep a user-wide factory policy from supplying a value, and the git
+// child ignores the host's system and global git config and any GIT_DIR-style location variables (git-ground-truth-test-env rule 2).
+const HERMETIC_GIT_ENV = { ...cleanGitEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
 function policyHarness(fx, policyText) {
-  if (policyText !== null) writeMainPolicy(fx.main, policyText);
+  writeMainPolicy(fx.main, policyText);
   const h = harness(fx);
   const fakeResolve = h.deps.resolvePolicy;
   h.deps.resolvePolicy = (keys, opts) => {
     const out = fakeResolve(keys, opts);
     if (keys.includes('express-lane')) {
       out['express-lane'] = resolvePolicyConfig({
-        git: (args) => execFileSync('git', args, { cwd: fx.main, encoding: 'utf8' }),
+        git: (args) => fixtureGit(args, { cwd: fx.main, env: HERMETIC_GIT_ENV, encoding: 'utf8' }),
         readFile: h.deps.readFile, keys: ['express-lane'], cwd: fx.main, homeDir: fx.root, env: {},
       }).result['express-lane'];
     }
