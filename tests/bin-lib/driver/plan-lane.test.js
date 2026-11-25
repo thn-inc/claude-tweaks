@@ -98,8 +98,13 @@ test('AC2.1: a record passing the micro-plan gate reads micro-plan when the driv
   assert.deepStrictEqual(v, { lane: 'micro-plan', reason: 'passes-micro-plan-gate' });
 });
 
-test('AC2.1: two implementation Key Files fail the micro-plan gate', () => {
-  const v = verdictFor({ labels: EXPRESS_LABELS, keyFiles: backendFiles(2), pol: policy({ 'express-lane': false, 'express-driver': 'off' }) });
+test('AC2.1: three implementation Key Files read micro-plan', () => {
+  const v = verdictFor({ labels: EXPRESS_LABELS, keyFiles: backendFiles(3), pol: policy({ 'express-lane': false, 'express-driver': 'off' }) });
+  assert.deepStrictEqual(v, { lane: 'micro-plan', reason: 'passes-micro-plan-gate' });
+});
+
+test('AC2.1: four implementation Key Files fail the micro-plan gate', () => {
+  const v = verdictFor({ labels: EXPRESS_LABELS, keyFiles: backendFiles(4), pol: policy({ 'express-lane': false, 'express-driver': 'off' }) });
   assert.deepStrictEqual(v, { lane: null, reason: 'outside-every-lane' });
 });
 
@@ -259,9 +264,9 @@ test('AC6.2: grant and state labels (auto:merge-pending, auto:build, parked, bot
 
 test('AC3.1: a Key File under merge-sensitive-paths keeps the record out of the driver and express lanes', () => {
   const sensitive = { 'merge-sensitive-paths': ['plugin/bin/lib/plan-lane-fixture/**'] };
-  assert.deepStrictEqual(verdictFor({ labels: EXPRESS_LABELS, keyFiles: EXPRESS_FILES, pol: policy(sensitive) }), { lane: null, reason: 'outside-every-lane' });
+  assert.deepStrictEqual(verdictFor({ labels: EXPRESS_LABELS, keyFiles: EXPRESS_FILES, pol: policy(sensitive) }), { lane: 'micro-plan', reason: 'passes-micro-plan-gate' });
   assert.deepStrictEqual(verdictFor({ labels: EXPRESS_LABELS, keyFiles: EXPRESS_FILES, pol: policy({ ...sensitive, 'express-driver': 'off' }) }),
-    { lane: null, reason: 'outside-every-lane' });
+    { lane: 'micro-plan', reason: 'passes-micro-plan-gate' });
 });
 
 test('AC6.1: labels given as {name} objects read the same as strings', () => {
@@ -434,7 +439,7 @@ test('a merge-sensitive-paths value that is neither a string nor a list of strin
   // Controls: a list, an empty string and a comma-separated string all read.
   assert.deepStrictEqual(run([]), { lane: 'driver', reason: 'inside-driver-bounds' });
   assert.deepStrictEqual(run(''), { lane: 'driver', reason: 'inside-driver-bounds' });
-  assert.deepStrictEqual(run('docs/**, plugin/bin/lib/plan-lane-fixture/**'), { lane: null, reason: 'outside-every-lane' });
+  assert.deepStrictEqual(run('docs/**, plugin/bin/lib/plan-lane-fixture/**'), { lane: 'micro-plan', reason: 'passes-micro-plan-gate' });
   for (const [name, value] of Object.entries({ null: null, number: 5, object: { a: 1 }, boolean: true, 'list with a number': [1], 'list with null': ['docs/**', null] })) {
     await t.test(name, () => assert.deepStrictEqual(run(value), { lane: null, reason: 'policy-unreadable' }));
   }
