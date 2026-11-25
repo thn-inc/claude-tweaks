@@ -15,7 +15,7 @@ function decl(json) {
   return r.decl;
 }
 
-const EXAMPLE = decl({
+const EXAMPLE_JSON = {
   checks: { types: 't', lint: 'l', tests: { api: 'a', web: 'w' } },
   rules: [
     { match: 'apps/api/**', suites: ['api'], static: true },
@@ -25,7 +25,9 @@ const EXAMPLE = decl({
     { match: 'docs/plans/*-ledger.md', suites: [], static: false },
     { match: '.claude-tweaks/pipelines/**', suites: [], static: false },
   ],
-});
+};
+const EXAMPLE = decl(EXAMPLE_JSON);
+const EXAMPLE_WITH_CI = decl({ ...EXAMPLE_JSON, ci: { api: { workflow: 'test.yml', job: 'api' } } });
 
 test('no declaration → full, byte-for-byte today (AC1)', () => {
   for (const files of [[], ['anything.js'], ['docs/x.md']]) {
@@ -33,7 +35,7 @@ test('no declaration → full, byte-for-byte today (AC1)', () => {
   }
 });
 
-test('no prior stamp → full even with a declaration (the first run is always the anchor)', () => {
+test('no prior stamp and no fallbackBase → full even with a declaration', () => {
   const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null });
   assert.strictEqual(r.mode, 'full');
   assert.strictEqual(r.suites, '*');
@@ -297,7 +299,7 @@ test('no stamp + fallbackBase anchors on the merge-base; no stamp + no fallbackB
   assert.deepStrictEqual(r.impact, { ...FULL_RUN, fallback: 'map-missing' });
 });
 
-test('no impact block is unchanged: no impact key, fallbackBase ignored', () => {
+test('no impact block: no impact key in any result', () => {
   const MB = 'fedcba9876543210fedcba9876543210fedcba98';
   assert.deepStrictEqual(
     selectScope({ decl: null, files: ['a.js'], stamp: STAMP, statuses: { 'a.js': 'M' }, impact: CTX, fallbackBase: MB }),
@@ -307,6 +309,30 @@ test('no impact block is unchanged: no impact key, fallbackBase ignored', () => 
   for (const files of [[], ['apps/api/src/a.ts'], ['docs/x.md'], ['unknown/path.txt']]) {
     assert.strictEqual('impact' in selectScope({ decl: EXAMPLE, files, stamp: STAMP }), false, files.join());
   }
-  const r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB });
-  assert.deepStrictEqual(r, { mode: 'full', suites: '*', static: true, base: null, unmatched: [], matched: [] });
+});
+
+test('no stamp + fallbackBase anchors a declaration with a ci block on the merge-base (#6102 AC1-2)', () => {
+  const MB = 'fedcba9876543210fedcba9876543210fedcba98';
+  const sel = (files) => selectScope({ decl: EXAMPLE_WITH_CI, files, stamp: null, fallbackBase: MB });
+  let r = sel(['docs/x.md']);
+  assert.strictEqual(r.mode, 'none');
+  assert.strictEqual(r.base, MB);
+  r = sel(['apps/api/src/a.ts']);
+  assert.strictEqual(r.mode, 'scoped');
+  assert.deepStrictEqual(r.suites, ['api']);
+  assert.strictEqual(r.base, MB);
+  r = sel(['unknown/path.txt']);
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.suites, '*');
+});
+
+test('no stamp: a declaration with neither impact nor ci, decl null, or no fallbackBase stays full (#6102 AC1, AC3)', () => {
+  const MB = 'fedcba9876543210fedcba9876543210fedcba98';
+  let r = selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB });
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.base, null);
+  assert.strictEqual(selectScope({ decl: null, files: ['a.js'], stamp: null, fallbackBase: MB }).mode, 'full');
+  r = selectScope({ decl: EXAMPLE_WITH_CI, files: ['docs/x.md'], stamp: null, fallbackBase: null });
+  assert.strictEqual(r.mode, 'full');
+  assert.strictEqual(r.base, null);
 });
