@@ -107,23 +107,32 @@ test('exit 0 prints the reply; one stderr line per failed side', async (t) => {
   assert.strictEqual(logLines(fx.runDir).length, 3);
 });
 
-test('readPaths carries the git common dir for a linked worktree', async (t) => {
+// deps() injects a sandbox-probed POSIX platform so a worker can start, but a linked worktree's
+// readPaths entry is its real git common dir: on a Windows checkout a win32 path, which
+// assertReadPaths' posix check refuses, so no worker starts. On real win32 the CLI never starts
+// a worker at all (win32 is not sandbox-probed).
+const LINKED_WORKTREE_SKIP = process.platform === 'win32' && 'a win32 git common dir cannot pair with the injected POSIX platform';
+
+test('readPaths carries the git common dir for a linked worktree', { skip: LINKED_WORKTREE_SKIP }, async (t) => {
   const fx = fixture(t);
   const wt = linkedWorktree(t, fx.main);
   const { runner, calls } = fakeRunner();
   const res = await call(fx, argv(fx, wt), { runner });
   assert.strictEqual(res.code, 0, res.stderr);
+  assert.strictEqual(calls.length, 4);
   const common = fs.realpathSync(path.join(fx.main, '.git'));
   for (const c of calls) assert.deepStrictEqual(JSON.parse(c.files['--settings']).sandbox.filesystem.allowRead, [common]);
-  // A plain checkout's common dir is inside it: no read paths.
-  const fx2 = fixture(t);
-  const plain = plainCheckout(t);
-  const second = fakeRunner();
-  assert.strictEqual((await call(fx2, argv(fx2, plain), { runner: second.runner })).code, 0);
-  for (const c of second.calls) assert.deepStrictEqual(JSON.parse(c.files['--settings']).sandbox.filesystem.allowRead, []);
 });
 
-test('AC8.1/AC8.2/AC8.3 (Q1): the worker runs in the reviewed worktree with the bundle inlined and writes nothing there', async (t) => {
+test('readPaths is empty for a plain checkout, whose common dir is inside it', async (t) => {
+  const fx = fixture(t);
+  const { runner, calls } = fakeRunner();
+  assert.strictEqual((await call(fx, argv(fx, plainCheckout(t)), { runner })).code, 0);
+  assert.strictEqual(calls.length, 4);
+  for (const c of calls) assert.deepStrictEqual(JSON.parse(c.files['--settings']).sandbox.filesystem.allowRead, []);
+});
+
+test('AC8.1/AC8.2/AC8.3 (Q1): the worker runs in the reviewed worktree with the bundle inlined and writes nothing there', { skip: LINKED_WORKTREE_SKIP }, async (t) => {
   const fx = fixture(t, { bundle: 'DIFF AND CONTEXT\nline two\n' });
   const wt = linkedWorktree(t, fx.main);
   const listing = (root) => {
