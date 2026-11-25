@@ -83,7 +83,7 @@ function errText(err) {
 }
 
 function isMissingCommit(err) {
-  return /HTTP 4(04|22)\b|No commit found/i.test(String((err && (err.stderr || err.message)) || ''));
+  return /HTTP 422\b|No commit found/i.test(String((err && (err.stderr || err.message)) || ''));
 }
 
 // Distinguishes "gh is not installed" from a gh call that ran and failed.
