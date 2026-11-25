@@ -328,6 +328,8 @@ function appendRow({
   }, { failClosed: true, env });
 }
 
+const BUNDLE_STAGED_RE = /\bstaged\/bundle-\d+\.md(?![\w-]|\.\w)/;
+
 // Rewrites row `row`'s Status and Resolution under the ledger lock, fail-closed. The status guards
 // read the row's current state first: a terminal row is final ("a wrong resolution gets a new
 // item") except an incomplete `deferred` one, and `open` is reachable only from `open` or by the
@@ -346,13 +348,19 @@ function settleRow({
     // #4620: the one terminal-to-terminal move — a control-mode console carrying a staged-pointer deferral into the packet.
     const carriedMove = status === 'deferred' && current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
       && LEDGER_CARRIED_RE.test(String(resolution || ''));
+    // #6283: the second terminal-to-terminal move — proposal bundling re-points a deferred staged-pointer row at
+    // `staged/bundle-{n}.md` (and un-bundling or a rollback re-points it back): both Resolutions name a staged/ path
+    // and exactly one names a bundle path.
+    const bundleRepointMove = status === 'deferred' && current === 'deferred'
+      && LEDGER_DEFERRED_STAGED_RE.test(currentResolution) && LEDGER_DEFERRED_STAGED_RE.test(String(resolution || ''))
+      && BUNDLE_STAGED_RE.test(currentResolution) !== BUNDLE_STAGED_RE.test(String(resolution || ''));
     if (status === 'open') {
       const refusedReopen = current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
         && String(resolution || '').includes(REFUSED_PROPOSAL_NOTE);
       if (current !== 'open' && !refusedReopen) {
         throw new Error(`row #${row} is ${shown}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
       }
-    } else if (TERMINAL_STATUSES.includes(current) && !carriedMove && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
+    } else if (TERMINAL_STATUSES.includes(current) && !carriedMove && !bundleRepointMove && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
       throw new Error(`row #${row} is already ${shown} (terminal) — a wrong resolution gets a new item`);
     }
     writeFileAtomic(ledgerPath, rewritten);
