@@ -612,3 +612,34 @@ test('rail diagnostic: total description chars against the listing budget (repor
     + `${listingBudgetChars(200000)} chars (200k context) / ${listingBudgetChars(1000000)} chars (1M context) — `
     + 'listing entries also carry whenToUse and the name, so the real listing cost is higher');
 });
+
+// AC3.1's composedRailViolations(REPO) === [] is the 'rail: every compose call site' test above.
+test('AC3.1: a --phase sdd-child row measures the sliced bytes', () => {
+  const row = findComposeCallSites(REPO).find((r) => r.step === 'sdd-child');
+  assert.ok(row, 'a --phase sdd-child call site exists in the shipped prose');
+  assert.ok(Array.isArray(row.sections) && row.sections.length === row.sources.length, 'the row carries sections aligned with sources');
+  const measured = measureComposed(REPO, row);
+  assert.strictEqual(measured.error, undefined, measured.error);
+  const { selectSections } = require('../../../plugin/bin/lib/compose-context/sections.js');
+  const sources = row.sources.map((p, i) => {
+    const label = path.relative(REPO, p).split(path.sep).join('/');
+    const content = fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
+    return { path: label, content: row.sections[i] ? selectSections(content, row.sections[i], label) : content };
+  });
+  const conditions = Object.fromEntries(KEYS.map((k) => [k, VOCAB[k][0]]));
+  // The < 15 KB bound is tests/child-bundle-sections.test.js's AC2.1 on these same composed bytes;
+  // tests/skill-size-single-source.test.js forbids restating a size number in this file.
+  assert.strictEqual(measured.max, Buffer.byteLength(compose(sources, conditions), 'utf8'));
+  assert.ok(measured.max < measuredBytes(row.sources[0]).bytes,'the sliced bundle measures less than its whole source');
+});
+
+test('a --phase row whose selector no longer resolves is an error row, not a whole-file measurement', () => {
+  const dir = scratchDir('ctx-sections-');
+  const tmpFile = path.join(dir, 'src.md');
+  fs.writeFileSync(tmpFile, '# Src\n\n**Present.** body\n');
+  const row = measureComposed(dir, {
+    step: 'x', file: 'demo/SKILL.md', line: 1, sources: [tmpFile], sections: [['**Missing.**']],
+  });
+  assert.match(row.error, /not found/);
+  assert.deepStrictEqual(row.combinations, []);
+});
