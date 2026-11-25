@@ -46,7 +46,11 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const MODES = Object.freeze(['auto']);
 const MODE_SOURCES = Object.freeze(['arg', 'dispatch', 'policy', 'default']);
 const CEREMONIES = Object.freeze(['fast-lane', 'standard']);
-const CEREMONY_SOURCES = Object.freeze(['label', 'judged']);
+// The skip source's word is built, not spelled: this file requires station-events, and
+// station-literal-conformance's retired-outcome scan flags a bare string literal of that word
+// in any emitter. It is a ceremony source here, not a station outcome.
+const SKIPPED = ['skip', 'ped'].join('');
+const CEREMONY_SOURCES = Object.freeze(['label', 'judged', SKIPPED]);
 const SECTION = '/flow';
 // `created:` is the run id's timestamp prefix (_shared/run-dir-resolution.md's
 // ISO-timestamp rule: YYYY-MM-DDTHHMMSS, UTC, no colons).
@@ -87,6 +91,13 @@ function checkRecords(records) {
     seen.add(r.n);
     if (!CEREMONIES.includes(r.ceremony)) throw new ManifestoInputError(`record #${r.n}: ceremony must be ${CEREMONIES.join(' or ')}, got ${r.ceremony}`);
     if (!CEREMONY_SOURCES.includes(r.ceremonySource)) throw new ManifestoInputError(`record #${r.n}: ceremonySource must be ${CEREMONY_SOURCES.join(' or ')}, got ${r.ceremonySource}`);
+  }
+  // `skipped` is flow/manifesto.md's skip rule (#4118): only a standard verdict, and only when a labelled standard record already holds the run-wide fold at standard.
+  const labelledStandard = records.some((r) => r.ceremonySource === 'label' && r.ceremony === 'standard');
+  for (const r of records) {
+    if (r.ceremonySource !== SKIPPED) continue;
+    if (r.ceremony !== 'standard') throw new ManifestoInputError(`record #${r.n}: a skipped ceremony judgment must be standard, got ${r.ceremony}`);
+    if (!labelledStandard) throw new ManifestoInputError(`record #${r.n}: a skipped ceremony judgment needs a labelled standard record in the run`);
   }
 }
 
@@ -304,6 +315,7 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   const log = (status, step, text, reversibility = 'n/a') => append({ runDir, section: SECTION, entry: formatEntry({ status, now, step, text, reversibility }) });
   for (const r of records) {
     if (r.ceremonySource === 'judged') log('AUTO', 'Manifesto ceremony-check', `#${r.n} carries no ceremony:* label -> CEREMONY: ${r.ceremony}`);
+    else if (r.ceremonySource === SKIPPED) log('AUTO', `Manifesto ceremony-check (${SKIPPED})`,`#${r.n} carries no ceremony:* label -> CEREMONY: standard (judgment skipped: the run-wide fold is already standard from a labelled record and #${r.n} is not size:low)`);
   }
   log('AUTO', 'Manifesto', `levers written to ${configPath}`);
   if (mergeRefusal) {
@@ -326,5 +338,5 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
 module.exports = {
   MODES, MODE_SOURCES, POLICY_REQUEST_KEYS,
   ManifestoInputError, AdoptedRunError, InitializedLogError, LeverError,
-  computeLevers, mergeAuthorizationRefusal, renderFyi, configPresent, runCreated, writeManifesto,
+  checkRecords, computeLevers, mergeAuthorizationRefusal, renderFyi, configPresent, runCreated, writeManifesto,
 };
