@@ -1,7 +1,8 @@
 'use strict';
 
 // Review size proxy (#5148): sizes a change for /review Step 2.5 while leaving
-// out files that are pipeline bookkeeping or lockfiles. Pure: no fs, no git.
+// out files that are pipeline bookkeeping or lockfiles. computeSizeProxy and its helpers are pure;
+// collectSizeProxy gathers inputs through an injected git and reader.
 
 const { globToRegExp } = require('../issues/blast-radius');
 const { BOOKKEEPING_RULES } = require('../init/verify-scope-starter');
@@ -21,19 +22,18 @@ function parseNumstat(text) {
   const s = String(text || '');
   const records = s.includes('\0') ? s.split('\0') : s.split('\n');
   const out = [];
+  // An unparseable record still counts as one file with 0 lines: the proxy fails toward the higher count.
   for (const rec of records) {
     if (!rec) continue;
     const i1 = rec.indexOf('\t');
-    if (i1 < 0) continue;
-    const i2 = rec.indexOf('\t', i1 + 1);
-    if (i2 < 0) continue;
+    const i2 = i1 < 0 ? -1 : rec.indexOf('\t', i1 + 1);
+    if (i2 < 0) { out.push({ file: rec, lines: 0 }); continue; }
     const a = rec.slice(0, i1);
     const d = rec.slice(i1 + 1, i2);
     const file = rec.slice(i2 + 1);
-    if (!file) continue;
+    if (!file) { out.push({ file: rec, lines: 0 }); continue; }
     const lines = a === '-' && d === '-' ? 0 : Number(a) + Number(d);
-    if (!Number.isFinite(lines)) continue;
-    out.push({ file, lines });
+    out.push({ file, lines: Number.isFinite(lines) ? lines : 0 });
   }
   return out;
 }
@@ -70,6 +70,10 @@ function computeSizeProxy({ numstat, decl = null, ownWork = null }) {
   if (Array.isArray(ownWork)) {
     const keep = new Set(ownWork);
     entries = entries.filter((e) => keep.has(e.file));
+    // A listed path numstat did not report (git quotes non-ASCII paths in a plain --name-only list)
+    // still counts as one file with 0 lines, so the size fails toward higher.
+    const seen = new Set(entries.map((e) => e.file));
+    for (const f of keep) if (!seen.has(f)) entries.push({ file: f, lines: 0 });
   }
   let files = 0;
   let lines = 0;

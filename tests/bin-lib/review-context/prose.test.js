@@ -141,7 +141,8 @@ const SIZE_PROXY_CLAIMS = [
   ['--files-from tied to Merge-Provenance Check', (t) => /Pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits/.test(t), "Pass the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits"],
   ['--stat fallback with notice', (t) => /non-zero exit or unparseable output falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice/.test(t), "falls back to Step 2's unfiltered `git diff --stat` totals with a one-line notice"],
   ['never lower', (t) => t.includes('never lower than the filtered count'), 'never lower than the filtered count'],
-  ['comment-only schema exception', (t) => t.includes('`git diff -w {base}...{branch} -- {file}`') && /neither blank nor a comment/.test(t), 'neither blank nor a comment'],
+  ['comment-only schema exception', (t) => /neither blank nor a comment/.test(t), 'neither blank nor a comment'],
+  ['schema exception names the targeted git diff -w read', (t) => t.includes('`git diff -w {base}...{branch} -- {file}`'), '`git diff -w {base}...{branch} -- {file}`'],
   ['lockfile is not itself a dependency trigger', (t) => t.includes('a lockfile excluded from the size count is still visible to this check') && !/lockfile change included/.test(t), 'a lockfile excluded from the size count is still visible to this check'],
   ['unclassifiable hunks fire', (t) => /hunks you cannot classify fire the trigger/.test(t), 'hunks you cannot classify fire the trigger'],
 ];
@@ -163,6 +164,7 @@ test('AC8.1 go-red: stripping each clause reports exactly that claim missing', (
 test('the {reasoning} slot names the filtered counts and the exclusions', () => {
   assert.ok(
     collapse(EFFORT_DERIVATION).includes('size medium (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)'),
+    'the {reasoning} slot must carry the filtered counts and exclusions example',
   );
 });
 

@@ -116,6 +116,24 @@ test('collectSizeProxy with filesFrom reads the list relative to cwd and drops b
   assert.equal(r.lines, 5);
 });
 
-test('parseNumstat skips a record whose counts are not numbers', () => {
-  assert.deepEqual(parseNumstat('x\ty\tfile.js\0'), []);
+test('parseNumstat counts a record whose counts are not numbers as one file with 0 lines (fails toward higher)', () => {
+  assert.deepEqual(parseNumstat('x\ty\tfile.js\0'), [{ file: 'file.js', lines: 0 }]);
+  assert.deepEqual(parseNumstat('garbage\0'), [{ file: 'garbage', lines: 0 }]);
+});
+
+test('an own-work path numstat did not report (git-quoted name) counts as one file with 0 lines', () => {
+  const r = computeSizeProxy({ numstat: num([['a.js', 5]]), decl: null, ownWork: ['a.js', '"caf\\303\\251.js"'] });
+  assert.equal(r.files, 2);
+  assert.equal(r.lines, 5);
+});
+
+test('collectSizeProxy reads the declaration at <root>/.claude-tweaks/verify-scope.json and a non-null one replaces the fallback', () => {
+  const seen = [];
+  const r = collectSizeProxy({
+    base: 'main', branch: 'HEAD', git: fakeGit([]),
+    readDecl: (p) => { seen.push(p); return { ok: true, decl: { rules: [{ match: 'docs/plans/*-ledger.md', suites: [], static: false }] } }; },
+  });
+  assert.equal(seen[0], require('node:path').join('/repo', '.claude-tweaks', 'verify-scope.json'));
+  assert.equal(r.files, 3);
+  assert.deepEqual(r.excluded, []);
 });
