@@ -142,6 +142,14 @@ test('AC4.1: CLI exits 1 on a missing --file path and 2 on a malformed call, pri
   }
 });
 
+test('a two-token call whose first token is a different flag exits 2 even with a readable path', () => {
+  const dir = tmpFile('r.md', read(FIXTURES[0]));
+  const r = runCliSync(CLI, ['--path', path.join(dir, 'r.md')]);
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.strictEqual(r.stdout, '');
+  assert.ok(r.stderr.includes('usage:'), r.stderr);
+});
+
 test('an empty or whitespace-only --file value exits 2 with usage on stderr and nothing on stdout', () => {
   const dir = scratchDir('sdd-ruling-route-cli-');
   for (const v of ['', '   ']) {
