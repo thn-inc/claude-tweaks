@@ -1,9 +1,10 @@
 # Micro-Plan — small fast-lane records skip `/superpowers:writing-plans` (#1911)
 
-Read from Spec Step 3, before invoking `/superpowers:writing-plans`. A one-task record whose `### Key Files` stays within the gate's implementation-file limit
-has no cross-task structure for a full plan to capture — no task ordering, no shared-file
-conflicts, no pre-execution conflict scan for SDD to run over task pairs. This procedure composes
-that single task directly from the already-materialized spec instead.
+Read from Spec Step 3, before invoking `/superpowers:writing-plans`. A one-task record whose
+`### Key Files` stays within the gate's implementation-file limit has no cross-task structure for a
+full plan to capture — no task ordering, no shared-file conflicts, no pre-execution conflict scan for
+SDD to run over task pairs. This procedure composes that single task directly from the
+already-materialized spec instead.
 
 ## Applicability gate
 
