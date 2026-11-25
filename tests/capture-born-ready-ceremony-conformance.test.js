@@ -34,6 +34,7 @@ test('capture Shaped-body step 3 judges ceremony through the canonical pattern a
   assert.ok(branch.includes('"ceremony": "<fast-lane|standard>"'));
   assert.ok(!/accepted keys are wider[^)]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
   assert.ok(branch.includes('never defaulted to `standard`'), 'missing-verdict clause');
+  assert.ok(branch.includes('present only when the ceremony check returned a verdict — omit the key otherwise (null throws)'), 'ceremony payload key must be conditional');
 });
 
 test('the permission matrix grants /capture ceremony:* on the Shaped-body branch only', () => {
@@ -55,7 +56,10 @@ test('no file still calls /specify the sole owner of ceremony:*, and the shared 
 
 test('the presentation line carries ceremony:{c} and the no-verdict wording', () => {
   const c = collapse(read('plugin/skills/capture/SKILL.md'));
-  const branch = c.slice(c.indexOf('## Shaped-body branch'), c.indexOf('## Entry Format'));
+  const start = c.indexOf('## Shaped-body branch');
+  const end = c.indexOf('## Entry Format');
+  assert.ok(start >= 0 && end > start, 'Shaped-body branch and Entry Format headings both present');
+  const branch = c.slice(start, end);
   assert.ok(branch.includes('risk:{r} size:{s}, ceremony:{c}, ready)'), 'presentation line');
   assert.ok(branch.includes('ceremony check failed — filed without a ceremony label'), 'no-verdict wording');
 });

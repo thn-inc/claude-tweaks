@@ -137,6 +137,8 @@ test('#4118: the Manifesto skips a ceremony-check whose verdict cannot matter, a
   assert.deepStrictEqual(skipPinsMissing(p), []);
   const flowSkill = collapse(read('plugin/skills/flow/SKILL.md'));
   assert.ok(flowSkill.includes('[:judged|:skipped]'), 'flow Step 3 auto command must name :skipped');
+  assert.ok(flowSkill.includes('`:skipped` when skipped'), 'flow Step 3 must explain the :skipped source');
+  assert.ok(flowSkill.includes("skip it as `:skipped` under `manifesto.md`'s skip rule"), "flow Step 3 must route the skip through manifesto.md's skip rule");
 });
 
 test('control: the frozen pre-#4118 paragraph fails every skip pin', () => {

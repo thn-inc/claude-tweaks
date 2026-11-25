@@ -59,7 +59,7 @@ Lines that pair `fast-lane` with `skip` without skipping a step. The conformance
 | `_shared/ceremony-check-invocation.md` | `Skip the call entirely when \`facets.ceremony\`` | The ceremony-check CLI is skipped when a label already exists, at any profile |
 | `_shared/fast-lane-digest.md` | `skips or narrows` | A restatement file that defers to this roster |
 | `flow/manifesto.md` | `Skip the judgment when its verdict cannot matter (#4118)` | Skips the ceremony-check call for one record when the run-wide fold is already `standard`, not a profile skip (#4118) |
-| `flow/SKILL.md` | `--pre-authorize-merge]` | The `:skipped` ceremony source in the Manifesto command grammar, not a profile skip (#4118) |
+| `flow/SKILL.md` | `:skipped][,…]` | The `:skipped` ceremony source in the Manifesto command grammar, not a profile skip (#4118) |
 | `flow/steps-and-gates.md` | `a fast-lane run logs the polish SKIP` | The polish decision tree's entry line — the skip itself is the tagged `polish` row |
 | `flow/steps-and-gates.md` | `removes the row at polish's would-be exit` | The phase-exit paragraph's PR-checklist row handling — the skip itself is the tagged `polish` row |
 | `flow/polish-execution.md` | `A skipped polish phase` | This file's own load-condition list — the skip itself is the tagged `polish` row |

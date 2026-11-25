@@ -321,8 +321,8 @@ test('allowAbsentCeremony: gh {name} label objects take the same ceremony rule a
 });
 
 // #4118 (Planning Decisions Q1, Reading A): /capture's Shaped-body branch stamps ceremony:*, and the
-// label is the single ceremony authority for every lane. Options are the driver lane's real ones,
-// resolved from policy defaults, not a hand-built DRIVER object.
+// label is the single ceremony authority for every lane. Options are representative driver-lane
+// options (hand-set values, not the schema defaults), not a hand-built DRIVER object.
 function driverDefaults() {
   const values = {
     'express-driver-max-size': 'medium', 'express-driver-max-key-files': 5, 'express-driver-max-risk': 'low',
@@ -341,7 +341,7 @@ test('#4118: a capture-stamped ceremony:fast-lane record is express-eligible and
   assert.strictEqual(evaluateRecordEligibility(r, driverDefaults()).eligible, true);
 });
 
-test('#4118: a capture-stamped ceremony:standard record is refused by the default driver-lane options, naming ceremony', () => {
+test('#4118: a capture-stamped ceremony:standard record is refused by representative driver-lane options, naming ceremony', () => {
   const r = record(['risk:low', 'size:low', 'ceremony:standard', 'type:task', 'by:capture']);
   assert.deepStrictEqual(evaluateRecordEligibility(r, driverDefaults()).reasons, [REASONS.ceremony]);
 });
