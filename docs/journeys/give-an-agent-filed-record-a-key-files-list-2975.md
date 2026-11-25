@@ -18,10 +18,10 @@ files:
 
 # Give an Agent-Filed Record a Key Files List
 
-**Persona:** A claude-tweaks maintainer whose `/claude-tweaks:capture`, `/claude-tweaks:reflect`, wrap-up leftover routing, or a health sweep just filed a small, born-ready record — and who later watches `/claude-tweaks:dispatch` build it and wants the one-file fix to take `/claude-tweaks:build`'s micro-plan fast path instead of a full planning dispatch.
+**Persona:** A claude-tweaks maintainer whose `/claude-tweaks:capture`, `/claude-tweaks:reflect`, wrap-up leftover routing, or a health sweep just filed a small, born-ready record — and who later watches `/claude-tweaks:dispatch` build it and wants the small fix to take `/claude-tweaks:build`'s micro-plan fast path instead of a full planning dispatch.
 **Goal:** The filed record carries a parseable `## Technical Approach` / `### Key Files` section naming its repo-relative target file(s), so `build/micro-plan.md`'s condition 3 and `grouping.js`'s `extractKeyFilesSection` can read it.
 **Entry point:** A checkout of this repo; any producer that composes a body through `specShapedBody` (`plugin/bin/lib/issues/record.js`).
-**Success state:** The record body ends `## Release Note` → `## Technical Approach` → `### Key Files` → one `` - `{path}` — {change} `` bullet per file → the producer's footer; a fast-lane, `size:low` record naming one implementation file passes condition 3; a producer with no known files files a body byte-identical to before.
+**Success state:** The record body ends `## Release Note` → `## Technical Approach` → `### Key Files` → one `` - `{path}` — {change} `` bullet per file → the producer's footer; a fast-lane, `size:low` record naming at most `MAX_IMPLEMENTATION_FILES` (three) implementation files passes condition 3; a producer with no known files files a body byte-identical to before.
 
 ## Steps
 
@@ -48,11 +48,12 @@ files:
 
 ### 4. See the fast path taken at build time
 - **URL:** `plugin/skills/build/micro-plan.md` (Applicability gate), `plugin/bin/lib/issues/micro-plan-gate.js` (`countImplementationFiles`, `MAX_IMPLEMENTATION_FILES`), `{run-dir}/work/{n}-spec.md`, `{run-dir}/decisions.md`
-- **Action:** Dispatch a `ceremony:fast-lane`, `size:low` record whose Key Files names one implementation file (plus, optionally, its test).
-- **Should feel:** A one-file fix goes straight to a one-task plan — no writing-plans dispatch, no plan audit.
+- **Action:** Dispatch a `ceremony:fast-lane`, `size:low` record whose Key Files names one to three implementation files (plus, optionally, their tests).
+- **Should feel:** A small fix of up to three implementation files goes straight to a one-task plan — no writing-plans dispatch, no plan audit.
 - **Should understand:** Condition 3's counting rule lives in `micro-plan-gate.js`, which `micro-plan.md` cites instead of restating. It counts implementation files only (tests, `*.test.*`/`*.spec.*`, markdown that is not prompt prose such as `docs/**`, and a top-level `docs/plans/*.html` diagram (#4187) excluded; markdown under `skills/`, `agents/`, or `commands/` counts as implementation — the same split `computeDiffFacts` applies, #3477), and skips an entry whose note marks it read-only (`read only`, `read-only`, or a `no change(s)` that ends the note or a clause). `extractKeyFilesSection` returns the bullets' backticked paths; `extractKeyFileEntries` keeps each bullet's note and counts the bullets it could not read. A record with no Key Files section, or with a bullet that names no backticked path or an unfilled `{template}` one, still falls through ("could not parse" is never "parsed to zero"). A record carrying a kept risk flag (a `Risk-flags:` line naming a slug, or one that cannot be read) also falls through, by condition 4 (#4618), because the micro-plan has no audited `Proof(<slug>)` line.
-- **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane single-file record that carries Key Files and no kept risk flag; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
+- **Red flags:** `decisions.md` shows a full `/superpowers:writing-plans` dispatch for a fast-lane record within the implementation-file limit that carries Key Files and no kept risk flag; `extractKeyFilesSection` returning `[]` on a body that visibly has the section.
 
 ## Origin
 - Created during build of #2975 (micro-plan gate unreachable for specShapedBody-composed records), the producer-side fix chosen over a gate fallback or materialize-time derivation.
+- Updated during build of #5463: the micro-plan gate limit `MAX_IMPLEMENTATION_FILES` rose from 1 to 3, so the fast path now covers records with up to three implementation Key Files.
 - Related journeys: `add-a-fast-lane-skip-to-the-roster-1926.md` (the fast-lane roster the micro-plan skip belongs to), `harness-health-premise-check.md` (the sibling body-metadata line harness-health composes).
