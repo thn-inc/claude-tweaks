@@ -56,7 +56,9 @@ function readHeader(text) {
   // Every header line beginning with `Defer-reason:` is a reason line, whatever its value looks like
   // (#3880 fix round 1): a malformed one must fail closed, not fall through as if it were absent.
   const reasons = header.map((l) => /^defer-reason:(.*)$/i.exec(l)).filter(Boolean).map((m) => m[1].trim());
-  return { defersMatches, reasons };
+  // #5449: `Class:` is read the same way as `Defers:`; only sddRulingRoute consumes it.
+  const classMatches = header.map((l) => /^class:(.*)$/i.exec(l)).filter(Boolean).map((m) => [m[0], m[1].trim()]);
+  return { defersMatches, reasons, classMatches };
 }
 
 function sddRulingDeferralReason(text) {
@@ -88,6 +90,26 @@ function sddRulingRatifyAction(text) {
   return settledNo ? SDD_RULING_RATIFY_ACTIONS.ACCEPT : SDD_RULING_RATIFY_ACTIONS.FILE_RECORD;
 }
 
+// #5449: the two routes sddRulingRoute returns.
+const SDD_RULING_ROUTES = Object.freeze({
+  AUDIT: 'audit',
+  CONSOLE: 'console',
+});
+
+// #5449: where a ruling is settled — 'audit' (the run's decision log, no console row) or 'console'.
+// Fail closed: 'audit' only for exactly one `Class: procedural` header line, exactly one
+// `Defers: no` line, and no `Defer-reason:` line; anything else, including missing or blank
+// text, is 'console'. Prose twin: wrap-up/review-console-appendix.md's sdd-ruling-* bullet and
+// build/dispatch.md's carry-forward.
+function sddRulingRoute(text) {
+  if (text === null || text === undefined || String(text).trim() === '') return SDD_RULING_ROUTES.CONSOLE;
+  const { defersMatches, reasons, classMatches } = readHeader(text);
+  const audit = classMatches.length === 1 && classMatches[0][1].toLowerCase() === 'procedural'
+    && defersMatches.length === 1 && defersMatches[0][1].toLowerCase() === 'no'
+    && reasons.length === 0;
+  return audit ? SDD_RULING_ROUTES.AUDIT : SDD_RULING_ROUTES.CONSOLE;
+}
+
 module.exports = {
-  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction,
+  SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingRoute, SDD_RULING_ROUTES,
 };
