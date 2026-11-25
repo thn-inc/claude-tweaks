@@ -566,8 +566,8 @@ test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', 
   assert.ok(section(read('dispatch/close-out.md'), '7. **On `merged`', '\n## ').includes('Step 4.0b'), 'close-out step 7');
   const mergeStep = section(read('wrap-up/merge-mode.md'), '3. On `merged`:', '\n## ');
   assert.ok(
-    mergeStep.includes('run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.1.'),
-    'merge-mode step 3: one sequence, Step 4.0 then Step 4.0b then Step 4.1',
+    mergeStep.includes('run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.0c, then Step 4.1.'),
+    'merge-mode step 3: one sequence, Step 4.0 then Step 4.0b then Step 4.0c then Step 4.1',
   );
 });
 

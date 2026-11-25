@@ -4,7 +4,7 @@ For multi-spec `/flow` runs in `auto` or `hybrid` mode, the per-spec Wrap-Up Rev
 
 This preserves the bookend architecture (Manifesto at start, one Review Console at end) even when N > 1 specs run sequentially.
 
-**Scope:** this console belongs to a single `/flow` invocation and never aggregates across multiple invocations. `/claude-tweaks:dispatch` does not consolidate through here across firings or groups — each firing reports its one claimed group's outcome directly (see `dispatch/SKILL.md`'s Reporting section). A dispatched bundle's own `/flow "#A,#B"` call still lands here exactly like any other multi-spec run — this file's job doesn't change, only who aggregates across separate runs does (nobody, now).
+**Scope:** this console belongs to a single `/flow` invocation and never aggregates across multiple invocations. `/claude-tweaks:dispatch` does not consolidate through here across firings or groups — each firing reports its one claimed group's outcome directly (see `dispatch/SKILL.md`'s Reporting section). A dispatched bundle's own `/flow "#A,#B"` call still lands here exactly like any other multi-spec run.
 
 ## Run directory layout (multi-spec)
 
@@ -17,7 +17,7 @@ The single-spec path is unchanged: `PIPELINE_RUN_DIR` points to a top-level run 
 After every spec's pipeline reaches `/wrap-up`'s Phase 4 execution step (or stops at a HARD-GATE failure) AND the multi-spec run is in `auto` or `hybrid` mode:
 
 0. If `MULTISPEC_CURATION_DEFER=1`, run the batch pass first — `multispec-batch-curation.md`. It writes to the parent's `decisions.md`/`staged/`/`engine-state.json`, covered by steps 2-3.
-1. Read `manifest.yml` to enumerate per-spec subdirectories, in spec execution order. Then run `wrap-up/proposal-bundling.md` once over the parent dir, before step 2's reads.
+1. Read `manifest.yml` to enumerate per-spec subdirectories, in spec execution order. Then run `wrap-up/followup-recheck.md`, then `wrap-up/proposal-bundling.md`, once each over the parent dir, before step 2's reads; a re-check file is a parent `Q#` row that step 2 runs `approve` for, never `gh issue create`.
 2. For each `spec-{N}/`: read `decisions.md` + `staged/` contents (including any `staged/leftover-*.md` queue-write proposals and divergent/collision `.shadow-dup` copies, per `wrap-up/review-console.md` step 7's shadow-dup clause — see Queue writes below) for the prose-aggregated sections (Auto-applied, Pending review, Dismissed duplicates, Low-confidence findings, Contested findings, the unnumbered Dropped by tiebreak block, Cleanup actions, Issue closures, Translated briefs, Queue writes, Memory updates, Upstream feedback, Reflection insights, Skill updates (each spec's `staged/reflect-{n}.md` observation/convention rows)). This read is unconditional: a spec with no `engine-state.json` (its wrap-up never reached Phase 2 — e.g. it failed before that point) still contributes every prose-aggregated row and a Not run/Failed footer row; it simply contributes nothing to the engine call in step 3 below. ALSO read the parent run dir's own `decisions.md` + `staged/` (Manifesto-created — holds run-level items such as freeform-issue translations and any parent-level leftover proposals). Staged files are written via `bin/stage-item.js` (`_shared/auto-decision-log.md`'s "Staged proposal files" section) — this console is a reader, never a writer, of `staged/`.
 3. Invoke the engine for the five engine-rendered sections — Skill updates, Documentation updates, Journey updates, Configuration updates, Reference repairs — using one repeated `--spec-state` flag per spec with an `engine-state.json` present, in the spec execution order from step 1:
 
@@ -140,8 +140,7 @@ None of these three options carries `(Recommended)` — the source text requires
 ## Preflight
 
 Before "On approval" or "On override" below runs any `gh` command, run the Detection Ladder
-from `_shared/forge-detection.md` (checks 1-3). A ladder failure is a hard gate here, matching
-`wrap-up/cleanup-procedures-execution.md` Section E's own posture — this console's entire approval path
+from `_shared/forge-detection.md` (checks 1-3). A ladder failure is a hard gate here — this console's entire approval path
 writes GitHub state (releases, grant removal), so there is no fail-open degraded mode.
 
 ## On approval (option 1)
