@@ -43,6 +43,8 @@ existing failure reporting (shaping mode: the record's failure row in Actions Pe
 write; `record-creation-subissues.md`: the sub-issue is not created, reported with the same
 per-sub-issue isolation as a write-path failure (the rest of the decomposition continues) —
 the local-store fallback does not apply, since there is no verdict to write;
+`capture/SKILL.md`'s Shaped-body branch: the record is still filed, without a ceremony label, and
+the presentation line says so — the filing is never blocked on the check;
 `flow/manifesto.md`: the pipeline stops before Step 4 with the generic failure card, gate
 `ceremony-check`; `materialize.md`, where no Manifesto verdict exists: the run stops for that record with the
 same stop semantics as a Materialization hard-gate failure) — and is never treated as `standard`: the conservative default

@@ -26,8 +26,10 @@ const FROZEN_PRE_4118_ROW = "| **`/capture`** | `by:capture`, Type (`type:*` onl
 
 test('capture Shaped-body step 3 judges ceremony through the canonical pattern and passes it to recordPayload', () => {
   const c = collapse(read('plugin/skills/capture/SKILL.md'));
-  const branch = c.slice(c.indexOf('## Shaped-body branch'), c.indexOf('## Entry Format'));
-  assert.ok(branch.length > 0);
+  const start = c.indexOf('## Shaped-body branch');
+  const end = c.indexOf('## Entry Format');
+  assert.ok(start >= 0 && end > start, 'Shaped-body branch and Entry Format headings both present');
+  const branch = c.slice(start, end);
   assert.ok(branch.includes('`_shared/ceremony-check-invocation.md`'));
   assert.ok(branch.includes('"ceremony": "<fast-lane|standard>"'));
   assert.ok(!/accepted keys are wider[^)]*`ceremony`/.test(branch), 'ceremony still listed as never passed');
@@ -36,12 +38,24 @@ test('capture Shaped-body step 3 judges ceremony through the canonical pattern a
 
 test('the permission matrix grants /capture ceremony:* on the Shaped-body branch only', () => {
   const row = matrixRow('/capture');
-  assert.ok(row.includes('`ceremony:*`'));
-  assert.ok(!FROZEN_PRE_4118_ROW.includes('`ceremony:*`'), 'control');
+  assert.ok(!FROZEN_PRE_4118_ROW.includes('`ceremony:*`'), 'control: the base row never named it');
+  assert.ok(row.includes('`ceremony:*`'), 'row names ceremony:*');
+  assert.ok(row.includes('`risk:*`, `size:*`, `ceremony:*`, `ready` (**only** on the Shaped-body branch'), 'Adds column');
+  assert.ok(row.includes('scoring, `ceremony:*` and `ready` on the **new record** of any **stub** filing'), 'Never column');
 });
 
-test('no file still calls /specify the sole owner of ceremony:*', () => {
-  for (const rel of ['plugin/skills/flow/materialize.md', 'plugin/skills/_shared/work-record.md']) {
-    assert.ok(!collapse(read(rel)).includes('remains the sole owner of `ceremony:*`'), rel);
-  }
+test('no file still calls /specify the sole owner of ceremony:*, and the shared docs name /capture', () => {
+  assert.ok(!collapse(read('plugin/skills/flow/materialize.md')).includes('remains the sole owner of `ceremony:*`'));
+  const wr = collapse(read('plugin/skills/_shared/work-record.md'));
+  const i = wr.indexOf('| Ceremony (2) |');
+  assert.ok(i >= 0, 'Ceremony row present');
+  const row = wr.slice(i, wr.indexOf(' |', wr.indexOf('stamped by', i)) + 2);
+  assert.ok(row.includes("`/capture`'s Shaped-body branch"), 'work-record Ceremony row names /capture');
+});
+
+test('the presentation line carries ceremony:{c} and the no-verdict wording', () => {
+  const c = collapse(read('plugin/skills/capture/SKILL.md'));
+  const branch = c.slice(c.indexOf('## Shaped-body branch'), c.indexOf('## Entry Format'));
+  assert.ok(branch.includes('risk:{r} size:{s}, ceremony:{c}, ready)'), 'presentation line');
+  assert.ok(branch.includes('ceremony check failed — filed without a ceremony label'), 'no-verdict wording');
 });

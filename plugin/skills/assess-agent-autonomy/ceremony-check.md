@@ -3,7 +3,7 @@
 **Called from:** `/claude-tweaks:specify`'s Step 3 (Create the Records) — both Shaping mode's
 single-record path and decomposition mode's per-sub-issue loop (never the parent, which carries no
 `risk:*`/`size:*` scoring either) — immediately alongside the existing `risk:*`/`size:*` label
-stamping. Every sub-issue/single record, every `/specify` run, no pre-filtering to "borderline" records — one `ceremony-check #{n}` invocation per record (bare `ceremony-check`, no trailing `#{n}`, only in decomposition mode's per-sub-issue loop, which has no issue number yet — `SKILL.md`'s Input section documents the exception in full).
+stamping. Every sub-issue/single record, every `/specify` run, no pre-filtering to "borderline" records — one `ceremony-check #{n}` invocation per record (bare `ceremony-check`, no trailing `#{n}`, only in decomposition mode's per-sub-issue loop and `/capture`'s Shaped-body branch, which have no issue number yet — `SKILL.md`'s Input section documents the exception in full).
 
 `/claude-tweaks:capture`'s Shaped-body branch (step 3) is the other primary caller: bare
 `ceremony-check` over the born-ready body composed in memory, immediately after its `risk`/`size`

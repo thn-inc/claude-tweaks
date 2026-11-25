@@ -9,7 +9,7 @@ argument-hint: "<grant-check|merge-check|failure-check|ceremony-check> [#{n}] [-
 Four-mode inline helper that replaces mechanical label lookups with judgment read from actual
 record/diff/failure content. Never invoked directly by a human — always a component step inside
 `/claude-tweaks:backlog refine` (human-present or headless posture), `/claude-tweaks:dispatch`,
-`/claude-tweaks:specify`, or (fallback only) `/claude-tweaks:flow`:
+`/claude-tweaks:specify`, `/claude-tweaks:capture`, `/claude-tweaks:wrap-up`, or (fallback only) `/claude-tweaks:flow`:
 
 ```
 /claude-tweaks:backlog refine (human-present)     [ grant-check ]    -> RECOMMEND_BUILD / RECOMMEND_MERGE
@@ -46,10 +46,10 @@ mode needs one. Each mode's own Step 1 ("Gather") is the source of truth for exa
 fetches and how — they differ enough (some key off `#{n}`, `merge-check` doesn't consume it at
 all) that this router doesn't restate it.
 
-`#{n}` is omitted only from `ceremony-check`'s primary call in `/specify`'s Step 3
-decomposition-mode per-sub-issue loop — the sub-issue has no issue number yet at that point in the
-procedure (it's assigned only after the record is created, later in the same step), so that call
-site invokes this skill as bare `ceremony-check` with no trailing `#{n}` at all. Every other mode,
+`#{n}` is omitted only from `ceremony-check`'s primary calls in `/specify`'s Step 3
+decomposition-mode per-sub-issue loop and `/capture`'s Shaped-body branch step 3 — the record has
+no issue number yet at either point in the procedure (it's assigned only after the record is
+created), so those call sites invoke this skill as bare `ceremony-check` with no trailing `#{n}` at all. Every other mode,
 and `ceremony-check`'s own Shaping-mode and `/flow`-fallback calls, always pass `#{n}`.
 
 `--base <ref>` is `merge-check`-only — an optional pre-known merge-base commit or ref the caller
