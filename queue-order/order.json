@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-25T07:49:46.182Z",
+  "computedAt": "2026-11-25T09:49:00.873Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,12 +15,7 @@
       },
       {
         "number": 6282,
-        "updatedAt": "2026-11-25T07:48:14Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6222,
-        "updatedAt": "2026-11-25T07:18:59Z",
+        "updatedAt": "2026-11-25T09:20:21Z",
         "state": "OPEN"
       },
       {
@@ -45,7 +40,7 @@
       },
       {
         "number": 6102,
-        "updatedAt": "2026-11-25T07:25:55Z",
+        "updatedAt": "2026-11-25T09:14:14Z",
         "state": "OPEN"
       },
       {
@@ -54,38 +49,18 @@
         "state": "OPEN"
       },
       {
-        "number": 5800,
-        "updatedAt": "2026-11-25T07:23:13Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5668,
-        "updatedAt": "2026-11-25T07:40:33Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5643,
         "updatedAt": "2026-11-25T07:26:07Z",
         "state": "OPEN"
       },
       {
-        "number": 5512,
-        "updatedAt": "2026-11-25T07:18:16Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5463,
-        "updatedAt": "2026-11-25T07:23:08Z",
+        "updatedAt": "2026-11-25T09:20:21Z",
         "state": "OPEN"
       },
       {
         "number": 5449,
-        "updatedAt": "2026-11-25T07:18:53Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5437,
-        "updatedAt": "2026-11-25T07:37:10Z",
+        "updatedAt": "2026-11-25T09:30:17Z",
         "state": "OPEN"
       },
       {
@@ -109,33 +84,13 @@
         "state": "OPEN"
       },
       {
-        "number": 5335,
-        "updatedAt": "2026-11-25T07:19:33Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5262,
-        "updatedAt": "2026-11-25T07:26:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5257,
-        "updatedAt": "2026-11-25T07:18:47Z",
-        "state": "OPEN"
-      },
-      {
         "number": 5234,
-        "updatedAt": "2026-11-25T07:23:14Z",
+        "updatedAt": "2026-11-25T09:47:41Z",
         "state": "OPEN"
       },
       {
         "number": 5148,
-        "updatedAt": "2026-11-25T07:19:29Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5075,
-        "updatedAt": "2026-11-25T07:44:58Z",
+        "updatedAt": "2026-11-25T08:51:58Z",
         "state": "OPEN"
       },
       {
@@ -191,11 +146,6 @@
       {
         "number": 4786,
         "updatedAt": "2026-11-02T06:57:09Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4747,
-        "updatedAt": "2026-11-25T07:19:22Z",
         "state": "OPEN"
       },
       {
@@ -409,11 +359,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4442,
-        "updatedAt": "2026-11-25T07:18:42Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4433,
         "updatedAt": "2026-10-28T18:38:51Z",
         "state": "OPEN"
@@ -624,11 +569,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4243,
-        "updatedAt": "2026-11-25T07:28:38Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4242,
         "updatedAt": "2026-11-15T15:09:22Z",
         "state": "OPEN"
@@ -664,16 +604,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4128,
-        "updatedAt": "2026-11-25T07:28:37Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4118,
-        "updatedAt": "2026-11-25T07:47:59Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4058,
         "updatedAt": "2026-11-03T18:45:52Z",
         "state": "OPEN"
@@ -696,11 +626,6 @@
       {
         "number": 3963,
         "updatedAt": "2026-11-24T11:29:59Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 3902,
-        "updatedAt": "2026-11-25T07:29:28Z",
         "state": "OPEN"
       },
       {
@@ -749,13 +674,13 @@
         "state": "CLOSED"
       },
       {
-        "number": 6269,
-        "updatedAt": "2026-11-25T07:21:22Z",
+        "number": 6268,
+        "updatedAt": "2026-11-25T07:21:21Z",
         "state": "OPEN"
       },
       {
-        "number": 6268,
-        "updatedAt": "2026-11-25T07:21:21Z",
+        "number": 6269,
+        "updatedAt": "2026-11-25T07:21:22Z",
         "state": "OPEN"
       },
       {
@@ -849,14 +774,14 @@
         "state": "CLOSED"
       },
       {
+        "number": 5046,
+        "updatedAt": "2026-11-25T09:30:47Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5392,
         "updatedAt": "2026-11-15T17:54:20Z",
         "state": "CLOSED"
-      },
-      {
-        "number": 5046,
-        "updatedAt": "2026-11-25T07:25:37Z",
-        "state": "OPEN"
       },
       {
         "number": 5232,
@@ -927,168 +852,6 @@
           "origin": null,
           "risk": "medium",
           "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #4725, #4764, #5303, #5322, #5451, #5694, #4790, #4286, #6203, #6021\n\n## Current State\n\n`tools/windows-regression/file-issue.js` (run by `.github/workflows/windows-regression.yml`'s `file` job on every push to `main`) only ever opens or comments on `Windows regression: … newly failing after {sha}` records. On a passing verify outcome `run()` returns `0` straight after `classify(report)` (\"pass — nothing to file\"), and on a failing one `fileOrComment` files or comments. Nothing ever closes a record whose files have since been fixed, so fixed records stay open, and the ones `/specify` shaped stay `ready` + `auto:build` in the dispatch and driver queues.\n\nMeasured 2026-11-24: of 17 open Windows-regression records, 5 named only files that main's latest full Windows run (45372736400 at 88cdbe82, `npm test -- --full`, 36,338 tests, `flakyPassed: []`, `timedOut: []`) no longer listed in `baselineAdjudicated.failingFiles`. Those were #4725 (fixed by #5694), #4764 (#4286), and #5303, #5322 and #5451 (#4790), each fixed 1-3 weeks before. The pipeline driver claimed #4725 and built PR #6203 for a failure #5694 had already fixed eight days earlier. Its change weakened the test, and only the whole-branch review stopped it. All five were closed by hand with that run as evidence.\n\nThe report already carries everything the close decision needs: `baselineAdjudicated.failingFiles` (every file failing at head, pre-existing ones included), `timedOut`, `flakyPassed`, and `checks.tests.command`/`exitCode`. Each record body lists its files under `### Newly failing test files` as `` - `path` `` bullets, which `composeIssue` writes.\n\n## Deliverables\n\n1. On `refs/heads/main`, on every run whose report is readable, pass or fail, `file-issue.js` lists open `type:bug` issues whose title starts with `TITLE_PREFIX` and that carry a `### Newly failing test files` list. It closes (`--reason completed`) each one where none of its listed files is in the head's failing set, with a comment naming the run URL, the head sha, and the files. It runs after filing or commenting, so a file that fails at this head is never closed by the same run that reports it.\n\n2. The head's failing set is `baselineAdjudicated.failingFiles` when adjudication ran. It is empty only for a raw pass of the full suite (`checks.tests.exitCode === 0`). In every other case it is unknown: the run skips closing altogether and prints one stderr line.\n\n3. No close happens when the run is not a full-suite run (`checks.tests.command` lacks `--full`), when any test file timed out (`baselineAdjudicated.timedOut` non-empty), or when a listed file is in `flakyPassed`. A record with no parseable file list (the `(not adjudicated)` and `no verify report` shapes, or an edited body) is never closed. A record carrying `bot:in-progress` gets a comment saying its files now pass, not a close, so its claimant settles it.\n\n4. Any `gh` failure while listing, closing or commenting is one stderr line and never changes the CLI's exit code (still `0` on pass, `1` on fail).\n\n## Acceptance Criteria\n\n1. `tests/windows-regression-file-issue.test.js` covers, against an injected `gh` fake:\n   - a pass run closes a record whose files are all absent from the failing set;\n   - a fail run closes a stale record while filing the new one;\n   - a record with one still-failing file stays open;\n   - a timed-out, non-`--full`, or flaky-passed run closes nothing;\n   - a `(not adjudicated)` record is never closed;\n   - a `bot:in-progress` record is commented on, not closed;\n   - a throwing `gh` leaves the exit code unchanged.\n\n2. Reverting the close logic turns each close-asserting test red (revert proof).\n\n3. The CLI's header comment and exit-code block describe the close behaviour.\n\n4. `npm test` passes.\n\n## Release Note\n\nNo user-facing change. Maintainer-side: the post-merge Windows check now closes its own regression records once their test files pass again on main, so already-fixed records stop reaching the build queue.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/windows-regression/file-issue.js` — close stale records after filing; stale-set derivation from the report\n- `tests/windows-regression-file-issue.test.js` — close/skip/comment cases and gh-failure posture\n- `.github/workflows/windows-regression.yml` — confirm the file job runs on a passing verify too (issues: write already granted)\n\n_Filed by `capture` via specShapedBody._\n\nhttps://claude.ai/code/session_011SMTg7db2nRU6HiAa2j7kN\n",
-        "createdAt": "2026-11-24T14:37:45Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 6222,
-        "state": "OPEN",
-        "title": "Close a Windows-regression record once main's full Windows run no longer fails its files",
-        "updatedAt": "2026-11-25T07:18:59Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #5075, #5093, #5210, #5929\nRisk-flags: none\n\n## Current State\n\nA scoped `verify.js --scope … --integration-branch {ref}` run with no usable stamp anchor anchors on the integration-branch merge-base only when the declaration has an `impact` block. `selectScope` (`plugin/bin/lib/verify/scope.js:53`) reads `if (base === null && decl && decl.impact) base = fallbackBase || null;`, and every other declaration falls to the `base === null` branch and returns `{ mode: 'full', suites: '*' }` with `matched: []`. `plugin/bin/verify.js:763` already computes `fallbackBase` (the merge-base that `resolveBase` returned) for any declaration whenever `--integration-branch` is passed with no anchor and no `--base`. The gate is only in `selectScope`. `tests/bin-lib/verify/scope.test.js`'s `no impact block is unchanged: no impact key, fallbackBase ignored` pins today's behavior for a non-impact declaration (`EXAMPLE`, `stamp: null`, `fallbackBase: MB` gives `mode: 'full'`, `base: null`).\n\nThe first verification in a fresh worktree (build Common Step 5) never has a stamp, so a consumer project whose declaration has no `impact` block runs every suite there, even when the branch's whole diff since the merge-base maps to `suites: []`. The filed occurrence (claude-tweaks 6.176.0, a wholly operational record) ran about 4.5 minutes of suites plus a slot wait for a diff of `work/{n}-spec.md` and `docs/plans/*-ledger.md`. `report.json` showed `scope.mode: \"full\"`, `matched: []`. A second occurrence (comment on this record) ran the full suite three times, and a known flaky test failed the gate each time on a branch with no code.\n\nThis repo's own declaration has `impact`, so it already anchors on the merge-base (#4024). The gap is in every consumer declaration without it.\n\n## Deliverables\n\n- [ ] `selectScope` anchors on `fallbackBase` for every declaration (with or without `impact`) when there is no stamp anchor: drop the `decl.impact` condition from the fallback line. Mode selection over the branch's own diff then runs unchanged: `none` / `static-only` / `scoped`, and `full` when a path is unmatched or a rule selects every suite.\n- [ ] Unchanged: no declaration (`decl` null) stays full; an explicit `--base` never anchors (`verify.js` already passes `fallbackBase: null` then); no `--integration-branch` and no stamp stays full; an `impact` declaration's `no-anchor` fallback reason is unchanged.\n- [ ] Update `scope.js`'s header comment and the comment at `verify.js:748-751` so they no longer say the fallback anchors only an impact declaration.\n- [ ] `plugin/skills/test/verification.md`'s Re-verify scoping: state that a scoped run with no stamp anchor diffs against the `--integration-branch` merge-base for any declaration, and correct the Build Common Step 5 row accordingly. `plugin/skills/test/impact-selection.md`'s `no-anchor` row stays as is (it describes the impact suite's fallback reason).\n- [ ] `tests/bin-lib/verify/cli-scope-integration.test.js`'s #3511 `--scope + --baseline` cases rely on the no-stamp full fallback (`scopedBaselineRepo` with `--integration-branch`; the AC1.1 case asserts `report.scope.mode === 'full'` and both suites). Change that fixture so its diff selects both suites by its own rules (for example `src/**` maps to `['unit', 'other']`), so those cases keep testing baseline adjudication and later-suite continuation instead of the fallback. Correct the AC1.1 comment, and update every other test the full suite shows relying on the old fallback in the same way.\n- [ ] `docs/journeys/run-a-deterministic-verification-check.md` (line 90, \"The first run has no prior stamp, so it is `full`\"): state that a first run given `--integration-branch` diffs against the merge-base, and one without it is `full`.\n- [ ] Tests: replace the `fallbackBase ignored` assertion in `tests/bin-lib/verify/scope.test.js` with the cases in the Acceptance Criteria, and add one CLI case (no stamp, a declaration without `impact`, a bookkeeping-only branch diff, `--integration-branch`) to `cli-scope-integration.test.js`.\n\n## Acceptance Criteria\n\n1. `selectScope({ decl: EXAMPLE, files: ['docs/x.md'], stamp: null, fallbackBase: MB })`, where `docs/**` maps to `suites: []` with no static check, returns `mode: 'none'` and `base: MB`.\n2. With a declaration without `impact`, no stamp and `fallbackBase: MB`, a changed path that maps to one suite returns `mode: 'scoped'`, that suite alone, `base: MB`. An unmatched path returns `mode: 'full'`, `suites: '*'`.\n3. `selectScope` with `decl: null` and `fallbackBase` set still returns `mode: 'full'`. With `stamp: null` and `fallbackBase: null` it still returns `mode: 'full'` for any declaration.\n4. CLI: in a temp repo with a declaration without `impact`, no stamp, and a branch whose only change since the merge-base maps to `suites: []`, `verify.js --scope {decl} --integration-branch {ref}` spawns no suite command, prints `still-verified: bookkeeping-only delta (…)`, writes a passing stamp whose `fullSha` is the merge-base, and a following `--stamp-status` reports `verifiedHead: true`.\n5. The #3511 cases in `cli-scope-integration.test.js` still assert baseline adjudication over both suites (`report.scope.suites` holds `unit` and `other`), with a fixture whose own rules select both. Every other existing test passes, apart from the assertions the Deliverables name.\n\n## Release Note\n\nOn a project whose verify-scope declaration has no impact map, the first scoped verification in a new worktree now checks only what the branch changed since the integration branch, so a branch of non-code files runs no test suite.\n\n## Technical Approach\n\nOne condition in `selectScope` changes. The anchoring invariant is kept: every non-full mode's `base` is either the stamp's `fullSha` or the merge-base, and the stamp `verify.js` writes for a non-full pass already records `fullSha: sel.base`, so the next scoped run anchors on that merge-base stamp and later deltas chain as they do for impact declarations. Merge-narrowing (#3072) applies once that stamp exists, as it does today.\n\nThe trust assumption is the one #4024 already made for impact declarations: the integration branch at the merge-base is covered by its own CI, so a branch's first scoped run needs only the suites its own diff selects.\n\n### Key Files\n\n- `plugin/bin/lib/verify/scope.js` — drop the `decl.impact` gate on the `fallbackBase` anchor; header comment\n- `plugin/bin/verify.js` — comment at the `fallbackBase` computation (no logic change)\n- `plugin/skills/test/verification.md` — Re-verify scoping: merge-base anchor for any declaration; Build Common Step 5 row\n- `tests/bin-lib/verify/scope.test.js` — replace the `fallbackBase ignored` case; AC 1-3\n- `tests/bin-lib/verify/cli-scope-integration.test.js` — #3511 fixture selects both suites by rule; AC 4's no-stamp, non-impact, bookkeeping-only CLI case\n- `docs/journeys/run-a-deterministic-verification-check.md` — first-run anchor sentence\n- `tests/bin-lib/verify/impact-cli.test.js` — read for the existing merge-base-anchor CLI pattern (no change expected)\n\n## Gotchas\n\n- **Decided (2026-11-25, autonomous lane): fix in the scope rule, not by a flag from build.** The record's alternative (build's Spec Step 2.5 passes a \"wholly operational\" fact to Common Step 5) was rejected: it would only cover operational records, and it rests on a prose judgment, whereas the merge-base classification is mechanical and also fixes every first verification of a code branch in a non-impact project.\n- **Decided: explicit `--base` still never anchors.** `verify.js`'s H4 check and the `fallbackBase` computation already keep it that way. Do not widen this change to `--base`.\n- **Decided: the comment's items 2 and 3 are out of scope.** Item 1 (CI cannot answer when the delta skips every suite) goes away with this fix, because a `none` selection consults no CI. Item 2 (`/flow` still runs `test`/`review`/`polish` after a wholly operational build): the review part is #5929, and the `test` part becomes a no-op `none` run with this fix. Item 3 (handoff loses an owner's acceptance of a failing gate) and item 2's remaining `polish` skip went through the deferral gate (`genuinely-larger`, verdict `digest`) and are recorded in the materiality digest.\n- Lane ct-verify-ci is editing `verify.js`'s CI-source code at the same time. This record's `verify.js` change is a comment only, and the logic change is in `scope.js`, so a catch-up merge should not conflict on logic.\n- `verify.js` is in this record's own impact path: verify the change with the scoped runner as usual, and expect CI to run the impact subset.\n\n## Original request\n\nverify.js: a wholly operational record still runs every suite at build's final verification\n\n## A wholly operational record still pays for a full local suite run at build's final verification\n\n**Kind:** gap\n\n**What happened.** `/claude-tweaks:build` Spec Step 2.5 (`build/manual-steps.md`) routes a record whose Deliverables are all operational (no source change) straight to Common Step 5. There, the scoped `verify.js --scope … --integration-branch master` call had no pass stamp to anchor on (first verification in a fresh worktree), so it forced `mode: full` and ran every suite locally (about 4.5 minutes of suites, plus a wait for a suite slot held by another checkout's run). That happened although the branch's whole diff against the integration branch was two files (the materialized `work/{n}-spec.md` and the run's `docs/plans/*-ledger.md`), both of which the project's `verify-scope.json` rules map to `suites: []`. `report.json` showed `scope.mode: \"full\"`, `matched: []`, `changedFiles` = those two paths, `base` = the merge-base. The PR was a draft, so CI could not answer either (`ci-job-not-found`).\n\n**Why it matters.** The verification proves nothing about the record's work: the tree under test is the integration branch's own tip plus two non-code files, which that branch's CI already covered. On a machine where suites queue behind sibling sessions, it is the longest step of an otherwise minutes-long operational run.\n\n**Suggested direction.** When there is no stamp anchor but `--integration-branch` resolves a merge-base, classify the branch's own diff against that merge-base with the declaration's rules; if every changed path maps to no suite and no static check, select `none` (or `static-only`) and stamp, the same outcome a bookkeeping-only delta gets from a stamp anchor. Alternatively, let a wholly operational record (as Spec Step 2.5 already detects) pass that fact to Common Step 5.\n\n**Version:** claude-tweaks 6.176.0.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-d56f1873 -->\n\n",
-        "createdAt": "2026-11-23T04:56:38Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6102,
-        "state": "OPEN",
-        "title": "verify.js: a wholly operational record still runs every suite at build's final verification",
-        "updatedAt": "2026-11-25T07:25:55Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -1191,90 +954,6 @@
     ],
     [
       {
-        "body": "Surface: backend\nRisk-flags: public-contract\nRisk-flags-unconfirmed: true\n\n## Current State\n\nReported: in a `/claude-tweaks:flow` run, flow's story step committed a story file after the build phase's push. `/claude-tweaks:test`'s scoped `verify.js` then ran on that unpushed HEAD and produced no output for over 20 minutes, until it was stopped by hand. After a manual push the same command took the CI verdict in about 5 minutes. The report reads the silence as `verify.js` waiting for a CI run that could never start.\n\nPremise check at shaping time, against `main`: `verify.js` does not wait in that case. `plugin/bin/lib/verify/ci-source.js`'s `fetchCiVerdict` makes `repos/{owner}/{repo}/commits/{sha}/pulls` its first read. For a commit GitHub does not know, that read returns HTTP 422 `No commit found`, and `isMissingCommit` turns it into the `head-not-pushed` fallback at once, before any CI wait. That code has shipped since 6.164.0 (#4347), and the report is on 6.170.0. What `verify.js` does with the fallback depends on the declaration:\n\n- Under `localRuns: \"on-request\"` (#5369), `head-not-pushed` ends the run with exit 3 (`EXIT_NO_VERDICT`) and `noVerdictLines`' stderr text, at once.\n- Without `localRuns`, every CI fallback runs the suite on this machine, a full suite run (`plugin/skills/test/ci-source.md`: 55+ min locally vs 3.5 min in CI). The only output naming the fallback is the `CI: {suite} — ran locally ({reason})` row in the final report (`plugin/bin/verify.js`, the report rendering). That row prints after the local run ends.\n\nSo the 20 silent minutes were almost certainly the local full run of a suite that CI would have answered minutes after a push. The defect stands, with its cause moved: an unpushed HEAD costs a whole local suite run without `localRuns`, and every fallback to a local run is silent until the run ends.\n\n`plugin/skills/test/verification.md`'s \"Push first, and exit 3\" paragraph already says to push after any commit that moves HEAD, and its \"Outcome: the call exited 3\" branch already routes `head-not-pushed`: push and re-run once in a `pr-first` run, `--local` otherwise. That routing is written for `localRuns` declarations only.\n\n## Deliverables\n\n1. `head-not-pushed` ends a scoped run with no verdict (exit 3), whatever the declaration's `localRuns` says. In `verify.js`'s CI loop, a `head-not-pushed` attempt stops the loop (later CI-declared suites record `not-consulted`, as on-request does today) and takes the existing no-verdict path: no check runs, no slot is taken, no report or pass stamp is written, the stale `report.json` is removed, and a `noVerdict` verify event is written when `--run` is set. `--local` still skips CI entirely, so it never meets this.\n2. `noVerdictLines` keeps its first-line shape, `verify.js: no verdict yet for suite \"{suite}\" — CI could not answer ({reason})`, which `verification.md` and its conformance test read. For `head-not-pushed`, that line continues `: HEAD {short-sha} is not on the remote; no check ran and no pass stamp was written.` and the next line reads `  Push the branch (commit first if the tree is dirty), then re-run this command,` followed by the existing `--local` line. The `localRuns \"on-request\"` clause stays on the on-request lines for every other reason.\n3. Without `localRuns`, any other CI fallback that sends a suite to a local run prints one stderr line when the fallback is decided, before the slot wait and the local checks start: `verify.js: CI could not answer suite \"{suite}\" ({reason}) — running it on this machine`. The final report's `CI: … — ran locally (…)` row is unchanged.\n4. `plugin/skills/test/verification.md`: the \"Outcome: the call exited 3\" paragraph says a scoped run exits 3 on `head-not-pushed` under any declaration, and on every other no-answer reason only under `localRuns: \"on-request\"`. Its existing branches (push and re-run once in a `pr-first` run with a run dir; otherwise `--local`) apply unchanged. The \"Push first\" paragraph names a commit `/test` itself makes (flow's story step committing a story file) as one that moves HEAD and needs its own push before the scoped call.\n5. `plugin/skills/test/ci-source.md`: the Fallback reasons table's `head-not-pushed` row says it exits 3 in both modes and never runs the suite locally. The table's lead-in sentence stops saying every reason runs locally without `localRuns`.\n6. Tests: unit coverage in `tests/bin-lib/verify/ci-cli.test.js` (see Acceptance Criteria), plus updates to the prose-pinning conformance suites that read these paragraphs (`tests/pipelines-push-first-local-runs-conformance.test.js`, `tests/verify-local-runs-docs-conformance.test.js`).\n\n## Acceptance Criteria\n\n- A scoped `verify.js` run without `localRuns`, whose CI source answers `head-not-pushed` (fake `gh` returning HTTP 422 `No commit found` on the pulls read), exits 3. No check command is spawned, no `report.json` exists afterward, and stderr's first line starts `verify.js: no verdict yet for suite \"` and contains `(head-not-pushed): HEAD ` followed by the short sha.\n- The same run under `localRuns: \"on-request\"` exits 3 with the same `head-not-pushed` first line, which now names the short sha.\n- A run without `localRuns` whose CI source answers `no-open-pr-at-head` still runs the suite locally. Its stderr carries `verify.js: CI could not answer suite \"{suite}\" (no-open-pr-at-head) — running it on this machine` before the check's own output, and the final report row still reads `CI: {suite} — ran locally (no-open-pr-at-head)`.\n- With two CI-declared suites and no `localRuns`, a `head-not-pushed` answer for the first records the second as `not-consulted` in the `noVerdict` verify event's `ci` entries.\n- `--local` on an unpushed HEAD runs locally with exit 0/1 as before, never 3.\n- `verification.md`'s exit-3 paragraph and `ci-source.md`'s `head-not-pushed` row state the any-declaration rule, and the conformance suites named in Deliverables pass.\n- `npm test -- --full` passes.\n\n## Release Note\n\nStop a scoped verification at once when HEAD has not been pushed, instead of running the whole suite locally while CI could answer after a push.\n\n## Technical Approach\n\nIn `plugin/bin/verify.js`'s CI loop (the `#4347` / `#5369` block), after `fetchCiVerdict` returns `used: false`, set `stopped = onRequest || verdict.ci.fallback === 'head-not-pushed'`. Widen the `noVerdict` finder from `onRequest ? … : undefined` to also pick a `head-not-pushed` attempt when `onRequest` is false. `noVerdictLines(attempt, { sha, onRequest })` takes the start sha and the mode, and composes the head-not-pushed variant from them. For the early notice, write the stderr line at the `!verdict.used && !stopped` branch when `onRequest` is false. Keep it to that branch so `dirty-tree` and `tree-state-unreadable` skips (`skipCi`) get the same line from one helper. `ci-source.js` itself does not change: `head-not-pushed` is already detected there.\n\n### Key Files\n\n- `plugin/bin/verify.js`: CI loop stop rule, `noVerdict` selection, `noVerdictLines` head-not-pushed variant, early fallback stderr line\n- `plugin/skills/test/verification.md`: exit-3 outcome paragraph (any declaration for `head-not-pushed`), Push-first clause for a commit made inside `/test`\n- `plugin/skills/test/ci-source.md`: Fallback reasons lead-in and `head-not-pushed` row\n- `tests/bin-lib/verify/ci-cli.test.js`: exit-3 and early-notice cases with and without `localRuns`\n- `tests/pipelines-push-first-local-runs-conformance.test.js`: updated prose pins\n- `tests/verify-local-runs-docs-conformance.test.js`: updated prose pins\n\n## Gotchas\n\n- Decided while shaping: fail fast reuses the existing `head-not-pushed` detection (the API's 422) instead of the report's proposed `git ls-remote` / `git branch -r --contains` pre-check. The API read is already the first thing the CI path does, it needs no extra process, and it answers the question CI actually depends on (does GitHub know the commit?) rather than one remote-tracking ref.\n- Decided while shaping: exit 3 on `head-not-pushed` applies without `localRuns` as well. Pushing takes seconds and a local full run takes up to an hour. Every scoped call site already reaches exit 3 through `verification.md`'s routing, and the roster of runs that never push already passes `--local` on its first call, so none of them meets the new exit. This is a behavior change for a project without `localRuns`, not a removed contract (no flag, verb or field changes), so the record is not labelled `breaking`.\n- A just-pushed commit can briefly read as unknown while GitHub indexes it. The result is one exit 3 and one re-run, which `verification.md`'s routing already allows.\n- A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code. This change stays in the CI loop and `noVerdictLines`, so expect catch-up merges, not conflicts in the same hunks.\n- #5234 also edits this CI loop (its dirty-tree precondition), two lines above the `head-not-pushed` handling. Whichever lands second takes a catch-up merge.\n- #5465 moves the on-request decisions (which suites are not consulted, whether the run ends with no verdict) into one pure function under `lib/verify/`. If it lands first, this record's `head-not-pushed` rule goes into that function as one more input, not back inline in `main()`. If this lands first, #5465 absorbs the rule. #5483 adds a `pr-conflicted` branch to the same exit-3 paragraph of `verification.md`. Merge the prose by hand; the two changes are independent.\n\n**Related:** #5234, #5437, #5483, #5511, #5167, #5378, #5427, #5465, #5466, #5507, #5888, #5135, #5653, #3765, #5075, #5210, #4601, #5133, #5426, #5464\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n\n## Original request\n\nverify.js waits out its CI window on a HEAD that was never pushed instead of failing fast\n\n**Summary:** With a `ci` block in the scope declaration, a scoped `verify.js` run whose HEAD is not on the remote waits for a CI run that can never start, for the whole CI wait, instead of reporting that HEAD is unpushed.\n\n**Kind:** Defect\n\n**Affected component:** `bin/verify.js` (the `ci` block's CI-verdict wait), `skills/test/verification.md` (\"Push first, and exit 3\")\n\n**Use case:** In a `/claude-tweaks:flow` run, the build phase exit pushed the branch and CI passed on that HEAD. Flow's automatic story step then committed a new story file, so `/claude-tweaks:test` took `verification.md`'s Mismatch branch and ran the scoped `verify.js`. The new commit had not been pushed: the push-first rule is prose in `verification.md`, and nothing between the story commit and the verify call pushes. `verify.js` looked for CI on HEAD, found no run, and kept waiting. The foreground call hit the 600 s tool ceiling and was moved to the background, where it sat with no output for over 20 minutes until it was stopped by hand. After a manual push, the same command took the CI verdict in about 5 minutes.\n\nCost: about 20 minutes of wall time and a stopped background task, on a delta that was one YAML file.\n\nWhat would have caught it: before entering the CI wait, `verify.js` compares HEAD with the remote branch (`git rev-parse HEAD` against `git ls-remote origin <branch>`, or `git branch -r --contains HEAD`). When HEAD is not on the remote, it exits 3 at once with a message naming the unpushed commit (`HEAD <sha> is not on origin/<branch>: push first`), which `verification.md`'s existing exit-3 handling already routes. Optionally, the push-first paragraph could also state that a commit made inside `/test` (the flow's story step) needs its own push.\n\n**Definition:** Ready — the check, its exit code and the message are named above; the existing exit-3 path handles the outcome.\n\n**Plugin version:** 6.170.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-76e9abf5 -->\n",
-        "createdAt": "2026-11-16T20:42:53Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5800,
-        "state": "OPEN",
-        "title": "verify.js waits out its CI window on a HEAD that was never pushed instead of failing fast",
-        "updatedAt": "2026-11-25T07:23:13Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #4990\nRisk-flags: none\n\n## Current State\n\n`plugin/bin/qa-stamp.js --check` decides whether a pipeline's selected QA stories can skip, using `decideQaSkip` (`plugin/bin/lib/verify/qa-stamp.js:57`). Any difference between the stamp's sha and HEAD returns `{ skip: false, reason: 'sha-mismatch' }` (line 62), whatever the commits between them changed. `/claude-tweaks:test`'s pipeline story selection (`plugin/skills/test/SKILL.md`, the QA pass stamp paragraph) runs the selection again on any `skip: false`.\n\nThe runner stamp has the exemption the QA stamp lacks. A scoped `verify.js` run whose delta maps only to rules with `suites: []` and no static check selects `mode: 'none'` (`plugin/bin/lib/verify/scope.js`'s `selectScope`), prints `still-verified: bookkeeping-only delta (…)`, and re-stamps HEAD. So after one ledger-only commit the two stamps disagree about the same commit.\n\nObserved (claude-tweaks 6.170.0, filed via `/claude-tweaks:feedback`): a `/flow` test step ran QA, wrote the QA pass stamp, then committed its own QA caveats to the open-items ledger (four lines; the ledger path maps to no suite in `verify-scope.json`). On a context-cap resume, `verify.js` re-stamped HEAD as still verified, but `qa-stamp.js --check` reported `sha-mismatch`. Followed as written, the rule would re-run every selected story against two QA servers. The agent skipped the re-run by judgment and logged the deviation. The same happens without a resume whenever a later call consults the QA stamp after any bookkeeping commit (a dispatched group's second call, the auto-inserted second-call `test`).\n\n## Deliverables\n\n- [ ] `qa-stamp.js --check` accepts an optional `--scope <declaration path>`. When it is given, and the stamp's sha differs from HEAD, the check classifies `stamp.sha..HEAD`:\n  - it is a usable anchor (an ancestor of HEAD, per `usableAnchor` in `plugin/bin/lib/verify/changed-files.js`)\n  - the tree is clean (the CLI's existing dirty check)\n  - the declaration reads clean (`readDeclaration`)\n  - `selectScope({ decl, files, stamp: { fullSha: stamp.sha } })` over `changedFiles({ base: stamp.sha })` returns `mode: 'none'`\n\n  When every condition holds, the sha comparison is satisfied and the remaining checks run unchanged (stories-dir match, every selected story covered and its hash unchanged). An all-pass result is `{ skip: true, reason: 'covered-bookkeeping-delta' }`. Any condition failing (not an ancestor, unreadable or missing declaration, `mode` other than `none`) keeps today's `sha-mismatch`.\n- [ ] `--check` stays read-only: the bookkeeping path never rewrites the QA stamp. A later check classifies the larger `stamp.sha..HEAD` delta again, so the stamp needs no advance.\n- [ ] `decideQaSkip` takes the classification result as an input (for example `bookkeepingDelta: true`), so the rule stays pure and unit-testable. The git and declaration reads stay in the CLI.\n- [ ] `plugin/skills/test/SKILL.md`'s QA pass stamp paragraph: pass `--scope .claude-tweaks/verify-scope.json` when the project has a declaration (the same declaration the scoped verify calls pass). On `skip: true` with reason `covered-bookkeeping-delta`, report `QA: skipped — stories already passed at {short-sha}; only bookkeeping commits since`, and log `AUTO {time} — QA skipped: {k} selected stories already passed at {short-sha}, bookkeeping-only delta since (QA pass stamp). Reversibility: high.`\n- [ ] `plugin/skills/test/qa-reporting.md`'s QA pass stamp paragraph names the bookkeeping-delta skip in one sentence.\n- [ ] Tests: `tests/bin-lib/verify/qa-stamp.test.js` covers the pure rule, and `tests/bin-lib/verify/qa-stamp-cli.test.js` covers the CLI cases in the Acceptance Criteria.\n\n## Acceptance Criteria\n\n1. With a QA stamp at S, a clean HEAD one commit past S whose only change is `docs/plans/x-ledger.md` (mapped to `suites: []`, static false), and `--scope` naming that declaration, `--check` prints `skip: true`, `reason: \"covered-bookkeeping-delta\"`, `sha` S. The stamp file is byte-identical afterwards.\n2. Same setup with a delta that also changes a path mapped to a suite: `skip: false`, `reason: \"sha-mismatch\"`.\n3. Same as AC 1 without `--scope`: `skip: false`, `reason: \"sha-mismatch\"` (today's behavior).\n4. Same as AC 1 with a selected story file changed since the stamp: `skip: false`, `reason: \"story-changed: {id}\"`.\n5. A stamp sha that is not an ancestor of HEAD (rewritten history), or a `--scope` path that does not exist or fails to parse: `skip: false`, `reason: \"sha-mismatch\"`, and `--check` still exits 0 (status is data).\n6. A dirty tree with a bookkeeping-only delta: `skip: false`, `reason: \"dirty-tree\"`, as today.\n\n## Release Note\n\nA pipeline's QA step no longer re-runs browser stories after a commit that only touched bookkeeping files such as the run ledger: the QA pass stamp now treats that commit the way the test runner's stamp already does.\n\n## Technical Approach\n\nThe classification reuses `verify.js`'s own rule rather than a QA-specific path list. A commit is QA-bookkeeping exactly when it is runner-bookkeeping, so the two stamps can no longer disagree about the same commit. The anchor passed to `selectScope` is a synthetic stamp `{ fullSha: stamp.sha }`, which makes `anchorOf` return the QA stamp's sha. No impact context is passed: a bookkeeping delta never reaches an impact rule, and any delta that does is not `none` anyway.\n\n`qa-stamp.js`'s `parseArgs` gains `--scope <path>` (valid with `--check` only; with `--write` it is a usage error, exit 2). A relative path resolves against the repo root (`git rev-parse --show-toplevel`), matching how `verify.js` resolves `--scope`.\n\n### Key Files\n\n- `plugin/bin/qa-stamp.js` — `--scope` flag; delta classification before `decideQaSkip`\n- `plugin/bin/lib/verify/qa-stamp.js` — `decideQaSkip` accepts the bookkeeping-delta input; new reason `covered-bookkeeping-delta`\n- `plugin/bin/lib/verify/scope.js` — read only: `selectScope` reused\n- `plugin/bin/lib/verify/changed-files.js` — read only: `usableAnchor`, `changedFiles` reused\n- `plugin/skills/test/SKILL.md` — QA pass stamp paragraph: pass `--scope`; report and log line for the new reason\n- `plugin/skills/test/qa-reporting.md` — QA pass stamp paragraph\n- `tests/bin-lib/verify/qa-stamp.test.js` — pure-rule cases\n- `tests/bin-lib/verify/qa-stamp-cli.test.js` — AC 1-6\n\n## Gotchas\n\n- **Decided (2026-11-25, autonomous lane): the check classifies the delta (the record's first option), not a re-ordered stamp write.** Writing the QA stamp after the test step's own ledger commit fixes one ordering only. Any other bookkeeping commit before a later check (a resume, a dispatched group's second call, the auto-inserted second-call `test`) would still mismatch. A hard-coded QA bookkeeping path list was also rejected: it would duplicate the project-owned declaration and drift from it.\n- **Decided: `--check` never re-stamps.** `verify.js` re-stamps on a bookkeeping delta, but `qa-stamp.js`'s header contract is that `--check` only reports. The classification is repeatable over a growing delta, so nothing needs advancing.\n- **Decided: the exemption trusts the declaration.** A path a project maps to `suites: []` with no static check is one it says affects nothing tested. A project whose rendered content lives under such a path (a docs site, for example) must map it to a suite or a static check to keep QA re-running on it. Say so in the `qa-reporting.md` sentence.\n- The `AUTO` log line is `AUTO`, not `STAGED`: it records an applied skip and writes no `staged/` artifact.\n\n## Original request\n\ntest: the QA pass stamp has no bookkeeping-only exemption, so a ledger commit forces a QA re-run on unchanged code\n\n**Summary:** After a commit that changes only the open-items ledger, the QA pass stamp check reports `sha-mismatch` and the test step's rule re-runs browser QA, although the code under test is byte-identical to what the stamp covers.\n\n**Kind:** Gap\n\n**Affected component:** /claude-tweaks:test (the QA pass stamp check, `qa-stamp.js --check`)\n\n**Use case:** In a `/claude-tweaks:flow` run, the test step ran QA for the stories its diff selected and wrote the QA pass stamp. It then appended its own QA caveats to the open-items ledger and committed them, which moved HEAD by one bookkeeping-only commit (the ledger path maps to no suite in the project's `verify-scope.json`). The run crossed its context cap and the test step was resumed in a fresh agent. On resume, `verify.js` classified the delta as bookkeeping-only and re-stamped HEAD as still verified, but `qa-stamp.js --check` reported `sha-mismatch` against the same delta, and the test step's rule for that result is to run QA again. The agent skipped the re-run by judgment and logged the deviation. Followed as written, the rule would have re-run every selected story against two QA servers for a commit that touched four ledger lines. The runner stamp already has this exemption (a bookkeeping-only delta prints `still-verified` and re-stamps); the QA stamp does not, so the two stamps disagree about the same commit. The same thing happens without a resume whenever a later step consults the QA stamp after the test step's own ledger commit.\n\n**Definition:** Needed — whether the QA stamp check should classify the delta against `verify-scope.json` like the runner does (and re-stamp), or the test step should write its QA stamp after its ledger commit, is a design choice.\n\n**Plugin version:** 6.170.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-c0b944da -->\n\n",
         "createdAt": "2026-11-16T05:35:56Z",
         "labels": [
@@ -1335,168 +1014,6 @@
           "origin": null,
           "risk": "low",
           "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\nRisk-flags: none\n\n## Current State\n\n`/claude-tweaks:review`'s Step 3 routes a confirmed finding that cannot be fixed now into a new work record, by one of two paths. The Defer bullet in `plugin/skills/review/step3-routing.md` creates the record directly. The \"Staging a record proposal\" paragraph in the same file writes `staged/review-followup-{n}.md`, which `wrap-up/review-console.md`'s \"On approval\" step 7 then files as written, never recomposed (`release/disposition.md` follows the same rule). Both paths compose the body \"exactly as the Defer bullet does\": a `specShapedBody` call whose argument list names `filedBy`, `provenance` and `footer` but never `keyFiles`.\n\n`specShapedBody` (`plugin/bin/lib/issues/record-payload.js`) renders `## Technical Approach` / `### Key Files` only when `keyFiles` is passed. #2975 (shipped v6.145.0) added that argument and wired it into `/capture`'s born-ready compose, `/reflect`'s staged findings, `wrap-up/leftover-routing.md` and the health sweeps' `issue-payload.js` composers, but not into `/review`. `tests/build-micro-plan-conformance.test.js`'s AC6.1 loop pins the instruction for those three prose producers and does not list `review/step3-routing.md`.\n\nThe result: a review follow-up record carries no `### Key Files` section even though the finding's own `--at '{file:line}'` anchor names the file. `build/micro-plan.md`'s applicability gate condition 3 (\"missing entirely → falls through\") sends a one-file `ceremony:fast-lane`/`size:low` record through the full `/superpowers:writing-plans` path. Dispatch's file-overlap grouping (`extractKeyFilesSection` in `plugin/bin/lib/issues/grouping.js`) also can't see the record. Observed on plugin v6.169.0: a one-file test-fixture sync filed this way paid a full plan-authoring pass, which contributed to the context-cap trip #5463 tracks.\n\n## Deliverables\n\n- [ ] In `plugin/skills/review/step3-routing.md`'s Defer bullet, add `keyFiles: [{ path, change }]` to the `specShapedBody` argument list. Its value is the files the finding names: the finding's own `{file:line}` anchor with the `:line` suffix stripped, plus any other file the stated fix must touch. Use repo-relative file paths, no directories, and drop any out-of-repo file. Omit the argument when the finding names no file. Follow the wording `/reflect`'s SKILL.md uses for the same argument, so the staged `review-followup-{n}.md` proposal (which composes \"exactly as the Defer bullet does\") inherits it with no second edit.\n- [ ] Add `plugin/skills/review/step3-routing.md` to the AC6.1 producer list in `tests/build-micro-plan-conformance.test.js`, so the instruction is pinned the same way #2975 pinned the other three prose producers.\n\n## Acceptance Criteria\n\n- [ ] `plugin/skills/review/step3-routing.md`'s Defer bullet contains the literal `keyFiles: [{ path, change }]` and the word `repo-relative`, and states that the `:line` suffix of the finding's anchor is stripped.\n- [ ] `node --test tests/build-micro-plan-conformance.test.js` passes, and its AC6.1 test now runs for `plugin/skills/review/step3-routing.md` (the test name lists that path).\n- [ ] Reverting the Defer bullet edit while keeping the test edit makes the new AC6.1 case fail, which proves the test discriminates.\n- [ ] The staging paragraph (\"Staging a record proposal\") still composes through the Defer bullet. It gains no separate `keyFiles` instruction that could drift from the bullet's.\n\n## Release Note\n\nRecords filed from a review follow-up now list the files the finding names under Key Files, so a one-file fix takes the micro-plan fast path and shows up in dispatch's file-overlap checks.\n\n## Technical Approach\n\nA prose-only change to the one composer instruction both review filing paths share, plus a one-line addition to the existing conformance loop. `specShapedBody` already validates each path (`keyFilePathProblem` throws on absolute, `..`-segment, directory and multi-line paths), so the skill text needs only to say which paths to pass and to strip the line suffix before passing them. The `{file:line}` anchor is already in hand at this point: the same value goes to `review-routing-line.js --at`.\n\n### Key Files\n\n- `plugin/skills/review/step3-routing.md` — add the `keyFiles` argument to the Defer bullet's `specShapedBody` call\n- `tests/build-micro-plan-conformance.test.js` — add the review routing file to the AC6.1 producer list\n\n## Gotchas\n\n- Strip only a trailing `:{digits}` (or `:{digits}-{digits}`) suffix from the anchor. A `#symbol` suffix, when a lens writes one, is stripped the same way the code-health composer strips it (`plugin/bin/lib/code-health/issue-payload.js`'s anchor handling). A path with a stray line suffix makes `specShapedBody` render an entry `grouping.js` can't match to a real file.\n- Scope decision (made while shaping on 2026-11-25, autonomous lane): other `specShapedBody` producers have the same missing-argument gap: `_shared/ledger-format.md`'s Phase 3 Keep, `wrap-up/review-console-appendix.md`'s ruling and ledger filings, `wrap-up/residue-sweep.md`, `visual-review/browser-review.md` and `reflect/full-mode.md`'s Defer. This record covers only the review follow-up path it names. A builder that finds a second producer whose filed records the same symptom reaches routes it to the digest, not into this diff.\n- The Capture route in the same file hands a shaped body to `/claude-tweaks:capture`, whose compose already documents `keyFiles`. It needs no change here.\n\n## Original request\n\nwrap-up: records filed from staged review follow-ups carry no ### Key Files, so build's micro-plan gate falls through\n\n**Summary:** Records the wrap-up Review Console files from a staged review follow-up (`staged/review-followup-{n}.md`) carry no `### Key Files` section, so `/build`'s micro-plan gate falls through for one-file fast-lane records filed this way.\n\n**Kind:** Gap\n\n**Affected component:** wrap-up Review Console — review follow-up record filing (`staged/review-followup-*.md` → record); consumer: `skills/build/micro-plan.md` applicability gate condition 3\n\n**Use case:**\nA `/claude-tweaks:review` finding outside the diff was staged as a review follow-up and filed by the Review Console as a `ceremony:fast-lane`, `size:low` record whose whole deliverable was syncing one test-fixture file with a byte-identical upstream copy. The finding's own Origin line named that single file (with a line number). When `/claude-tweaks:flow` built the record, the materialized spec had Current State / Deliverables / Acceptance Criteria / Release Note but no `## Technical Approach` / `### Key Files`, so micro-plan condition 3 (\"missing entirely → falls through\") sent a one-file copy through the full `/superpowers:writing-plans` path. The same missing section also leaves the record invisible to dispatch's file-overlap grouping (`extractKeyFilesSection`).\n\n#2975 (closed, shipped v6.145.0) fixed this for the `specShapedBody` producers it listed — `/capture`'s born-ready compose, `/reflect`'s staged findings, the health sweeps' `issue-payload.js`, and `wrap-up/leftover-routing.md` — but the review follow-up filing path was not among them. The record here was filed on a plugin version after v6.145.0 and still had no Key Files section.\n\nSuggested fix: have the review follow-up filer pass `keyFiles` to `specShapedBody` from the finding's own file reference (path, line number stripped), as the producers #2975 covered already do.\n\nRelated: #2975 (same gap, other producers), #5463 (fast-lane builds crossing flow's 200k context cap — the extra plan-authoring pass here contributed to the same cap trip).\n\n**Definition:** Clear\n\n**Plugin version:** 6.169.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b566d9cd -->\n\n",
-        "createdAt": "2026-11-15T16:56:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5512,
-        "state": "OPEN",
-        "title": "wrap-up: records filed from staged review follow-ups carry no ### Key Files, so build's micro-plan gate falls through",
-        "updatedAt": "2026-11-25T07:18:16Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\nVerified against `origin/main` 68608178fa on 2026-11-25.\n\n`plugin/skills/build/dispatch.md`'s SDD carry-forward (the **Carry-forward commands (#3510)** paragraph) stages every load-bearing `Ruling:` line from the SDD `progress.md` with one `bin/stage-item.js --id \"sdd-ruling-{N}\" --allocate --ledger … --item 'SDD ruling — {one-liner}: ratify or reverse at the Review Console'` call. Each becomes a ratify-or-reverse Review Console row. The staged file's header carries `Title:`, `Kind: sdd-ruling`, `Ruling:`, `Defers: yes|no`, `Staged-at:` and `Ledger:`; `plugin/bin/lib/console/sdd-ruling.js`'s `readHeader` parses `Defers:`/`Defer-reason:` from that header (the lines before the first blank line) and nothing else. The carry-forward cannot tell a controller sequencing note from a decision that changed what shipped.\n\nRun 2026-11-12T102742-spec-5160-5161-5162 (#5160, #5161, #5162) staged 71 ruling rows. Its archive is still on the maintainer's machine at `.claude-tweaks/pipelines/archive/2026-11-12T102742-spec-5160-5161-5162/spec-516{0,1,2}/staged/sdd-ruling-*.md` (71 files; gitignored local data, not in the repo). Many record controller procedure, not a product or design decision: spec-5162 sdd-ruling-9 (round 4 goes to a fresh implementer), sdd-ruling-16 (a comment fix rides in Task 3's commit), sdd-ruling-31 (a wording fix rides in Task 7's commit), spec-5161 sdd-ruling-3 (five Minors fixed in an immediate round). A human clearing the console has to read and settle every one. An open-issue search (#5060, #5061, #5097, #5433) found no record covering ruling volume.\n\n**Related:** #5060, #5335, #5433, #5061, #5097, #5165, #5257, #5434, #5439\n\n## Deliverables\n\n- [ ] **Classification at carry-forward.** `dispatch.md`'s carry-forward has the controller write one `Class:` header line into every ruling's temp file before staging it, from a closed rubric stated in that paragraph: `Class: procedural` for dispatch sequencing, commit packing, fix-round placement, and implementer handoff or model choice, when the ruling changes nothing that ships and defers nothing; `Class: behaviour` for anything else. When in doubt, the controller writes `behaviour`.\n- [ ] **Fail-closed route function.** `plugin/bin/lib/console/sdd-ruling.js` exports `sddRulingRoute(text)`, re-exported from `console/resolve.js` like the module's other names. It returns `'audit'` only when the header has exactly one `Class:` line whose value is `procedural`, exactly one `Defers:` line whose value is `no`, and no `Defer-reason:` line. Every other header returns `'console'`: no `Class:` line, a duplicate or unknown `Class:` value, `Defers: yes`, a missing or duplicate `Defers:` line, any `Defer-reason:` line, or empty text. It reuses `readHeader`, extended to collect `Class:` lines the same way it collects `Defers:` lines.\n- [ ] **Route CLI.** New `plugin/bin/sdd-ruling-route.js --file <path>` prints exactly `audit` or `console` and exits 0. It exits 1 when the file is unreadable and 2 on a malformed call, following the `run(argv, deps)` CLI wrapper contract (the `gh-api-module-pattern` skill's `cli-wrapper-contract.md`).\n- [ ] **Routing in the carry-forward.** `dispatch.md` runs the route CLI on each ruling's temp file before staging. On `console`, or on any non-zero exit, it runs today's `stage-item.js` call unchanged. On `audit`, it stages nothing and instead logs one line through `node \"${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js\" --run \"$PIPELINE_RUN_DIR\" --status AUTO --section \"/build\" --text-file {line file}` reading `AUTO {time} — SDD ruling (procedural) carried as audit, not staged: {one-liner}. Reversibility: n/a.`, and adds one `observation` row for the ruling to the build's active open items ledger.\n- [ ] **Console prose twin.** `plugin/skills/wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet says that a staged ruling's header may carry `Class: behaviour`, and that procedural rulings never reach the console because they are logged in `decisions.md`.\n- [ ] **Tests.** A unit suite for `sddRulingRoute` and the CLI, plus a prose conformance pin on `dispatch.md`'s carry-forward naming the route CLI and both branches.\n\n## Acceptance Criteria\n\n1. Fixtures copied verbatim from the archive (spec-5162 `sdd-ruling-9.md`, `sdd-ruling-16.md`, `sdd-ruling-31.md`, and spec-5161 `sdd-ruling-3.md`), each with a `Class: procedural` line added to its header, route `audit`. The same four files without the added line route `console`.\n2. A fixture with `Class: procedural` and `Defers: yes` routes `console`. So do fixtures with `Class: procedural` plus any `Defer-reason:` line, two `Class:` lines, an unknown value such as `Class: maybe`, or no header at all.\n3. The route CLI prints `console` and exits 0 for each of the 71 unmodified archived rulings, which carry no `Class:` line. With a `Class: procedural` line injected into a copy of all 71, every `Defers: yes` ruling still prints `console`. This is a one-time check against the maintainer's local archive, quoted in the PR body, not a committed test (the archive is gitignored).\n4. The CLI exits 1 on a missing `--file` path and 2 on a call with no `--file`, printing nothing to stdout in either case.\n5. A conformance test fails when `dispatch.md`'s carry-forward stops naming `sdd-ruling-route.js`, the `console` branch's `stage-item.js` call, or the `audit` branch's `log-decision.js --status AUTO` call.\n6. `npm test -- --full` passes.\n\n## Release Note\n\nThe Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.\n\n## Technical Approach\n\nThe controller (an LLM with the ruling's context) does the classification. Code only checks the controller's label and fails closed. A keyword classifier over free-text `Ruling:` prose would misroute without anyone noticing, and a procedural ruling wrongly kept on the console only costs a click, while a behaviour-changing ruling wrongly routed to audit hides a decision from the human. So everything except a clean, explicit `Class: procedural` + `Defers: no` header stays a console row.\n\n`Class:` is a new header key, distinct from the existing `Kind: sdd-ruling`. `readHeader` already stops at the first blank line, and the new key rides the same parse.\n\nThe audit line uses status `AUTO` because it records an applied routing that writes no staged artifact, so `STAGED` would be wrong (`_shared/auto-decision-log.md`'s Status semantics).\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — modify: the Carry-forward commands paragraph gets the `Class:` rubric, the route CLI call and both branches\n- `plugin/bin/lib/console/sdd-ruling.js` — modify: `readHeader` collects `Class:` lines; new `sddRulingRoute` export\n- `plugin/bin/lib/console/resolve.js` — modify: re-export `sddRulingRoute`\n- `plugin/bin/sdd-ruling-route.js` — new: route CLI\n- `plugin/skills/wrap-up/review-console-appendix.md` — modify: the `sdd-ruling-*` bullet names the `Class:` header\n- `tests/bin-lib/console/sdd-ruling-route.test.js` — new: route function and CLI tests, with the four archived rulings as fixtures\n- `tests/bin-lib/console/fixtures/sdd-ruling-route/` — new: fixture files\n- `tests/build-sdd-ruling-route-carryforward.test.js` — new: prose pin on `dispatch.md`\n- `docs/plugin-structure.md` — modify: list the new CLI\n\n## Gotchas\n\n- **Decisions made during autonomous shaping (2026-11-25), recorded here because the maintainer authorized deciding open questions without asking:**\n  1. Classification is the controller's judgment, written as a header line, not a mechanical text classifier. Code enforces only the fail-closed gate (Technical Approach).\n  2. The original \"replay the 71 rulings through the classifier\" check is restated as AC 3. The archived rulings predate the `Class:` line, so a faithful replay shows they all fail closed to `console`, and the four cited examples are proven as committed fixtures instead (AC 1).\n  3. Procedural rulings are logged with status `AUTO`, not `STAGED`, because no staged artifact is written.\n  4. The ledger row for an audit-routed ruling is an `observation` (terminal and non-blocking per `_shared/ledger-format.md`), so it never holds the pipeline.\n- `stage-item.js --ledger` is today's only ledger writer on this path. The audit branch needs its own write of an `observation` row. Use the ledger skill's documented append procedure, or an existing `hooks.js` ledger verb if one fits, and never hand-format a row that skips the ledger's format check.\n- Check that no consumer of staged `sdd-ruling-*` headers (`console/resolve.js`'s `stagedItems`, `reconcile/console-execute.js`, `wrap-up/pack.js`, `reference-repair.js`) rejects an unknown header key before adding `Class:`. If one does, extend it in the same change.\n- A behaviour-changing ruling that the controller mislabels `procedural` is the residual risk. The `Defers: yes` override covers every deferral, which is the costliest misroute.\n\n## Original request\n\nRoute procedural SDD rulings to an audit line instead of a ratify/reverse Review Console row\n\nVerified-as-of: 940cee7b913b16c8b101f126103ec1d1499fe2fb\n\nOrigin: batch reflect pass, Review Console Approve all (run 2026-11-12T102742-spec-5160-5161-5162, insight 3)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`plugin/skills/build/dispatch.md`'s SDD carry-forward stages every load-bearing `Ruling:` line from the SDD `progress.md` as `staged/sdd-ruling-{N}.md`, each a \"ratify or reverse at the Review Console\" row. It has no way to tell a controller sequencing note from a decision that changed what shipped.\n\nRun 2026-11-12T102742-spec-5160-5161-5162 (#5160, #5161, #5162) staged 71 ruling rows. Many record controller procedure, not a product or design decision: spec-5162 sdd-ruling-9 (round 4 goes to a fresh implementer), sdd-ruling-16 (a comment fix rides in Task 3's commit), sdd-ruling-31 (a wording fix rides in Task 7's commit), spec-5161 sdd-ruling-3 (five Minors fixed in an immediate round). A human clearing the console has to read and settle every one. An open-issue search (#5060, #5061, #5097, #5433) found no record covering ruling volume.\n\n## Deliverables\n\n- [ ] The carry-forward classifies each ruling as procedural (dispatch sequencing, commit packing, fix-round placement, implementer handoff) or behaviour-changing (changes what ships, or defers work), with the classification written into the staged header so the console can read it.\n- [ ] Procedural rulings are logged as an audit line in `decisions.md` (and the ledger, as an observation) rather than staged as ratify/reverse rows; behaviour-changing rulings and every deferral keep today's row.\n- [ ] A ruling that cannot be classified stays a console row (fail closed toward the human).\n- [ ] Tests pin the classification and the routing, including the unclassifiable case.\n\n## Acceptance Criteria\n\nReplaying this run's 71 staged rulings through the new classifier routes the four examples above to audit lines and keeps every `Defers: yes` ruling as a console row.\n\nA ruling the classifier cannot read is staged as a console row, never dropped.\n\n`npm test` passes.\n\n## Release Note\n\nThe Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — modify\n\n_Filed by `flow` (multi-spec Review Console, batch reflect insight) via specShapedBody._\n",
-        "createdAt": "2026-11-14T15:40:48Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5449,
-        "state": "OPEN",
-        "title": "Route procedural SDD rulings to an audit line instead of a ratify/reverse Review Console row",
-        "updatedAt": "2026-11-25T07:18:53Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -1820,324 +1337,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full from #5293\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:build`'s SDD invocation instruction (`plugin/skills/build/dispatch.md`) forwards working-directory discipline, the no-stash rule, the stash guard and affected-set testing to every implementer and reviewer it composes, but not the worktree shell constraint (no heredoc, no `for`/`while` loop, no `cd ... &&` chain, no `$(...)`, one plain command per Bash call).\n\nThe two other dispatch sites already carry it: `plugin/skills/dispatch/task-prompt.md` item 6 (\"Worktree shell constraint\") and `plugin/skills/flow/context-handoff.md`'s continuation template. Probe on `origin/main` (2026-11-13): `git grep -n -F -e 'Worktree shell constraint' origin/main -- plugin/skills/build/dispatch.md` returns nothing, while the same probe matches both other files.\n\nOn #5293's build (run `2026-11-13T003948-spec-5293`), dispatched implementers and reviewers hit 9 `wd-guard-refusal` events (`harness-worktree-isolation`): heredoc appends to a test file, `cd \"...\" && ...` chains, a `for f in ...` loop, and a redirected `node --test` run. Each was a refused call followed by a retry in another shape.\n\n## Deliverables\n\n- `plugin/skills/build/dispatch.md`'s SDD invocation instruction also directs SDD to include the worktree shell constraint in every per-task implementer, fix-round, fix-wave, whole-branch-fix and reviewer dispatch, by citing the same wording `dispatch/task-prompt.md` item 6 uses (or `_shared/scratch-worktree.md` §7) rather than a third copy.\n- The addition keeps `plugin/skills/build/dispatch.md` under the 52,500-byte `RAIL_BYTES` rail (43,677 B on origin/main at eac494770, 2026-11-13).\n\n## Acceptance Criteria\n\n- [ ] `git grep -n -i -e 'shell constraint' -- plugin/skills/build/dispatch.md` matches the SDD invocation instruction's new sentence (run against a tree where it is absent first, to confirm the probe matches nothing there).\n- [ ] The sentence names heredocs, loops, `cd ... &&` chains and the one-plain-command-per-call rule, or cites the file that does.\n- [ ] `wc -c plugin/skills/build/dispatch.md` stays below 52,500.\n\n## Release Note\n\nImplementers and reviewers dispatched by /build now get the worktree shell rules up front, so fewer of their commands are refused and retried.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — forward the worktree shell constraint in the SDD invocation instruction\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-13T04:14:12Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5335,
-        "state": "OPEN",
-        "title": "Forward the worktree shell constraint to /build's SDD dispatches",
-        "updatedAt": "2026-11-25T07:19:33Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect light from #5253\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/build/dispatch.md`'s **Affected-set testing (#5117)** rule tells every per-task implementer, fix-wave and whole-branch-fix dispatch to run `verify.js --scope … --no-stamp` before committing. It names a fallback set only for `Scope: full` / `Impact: full` or exit 2. It says nothing about a run that queues for the machine-wide suite slot (`test/suite-slots.md`) behind a sibling session's suite.\n\nIn one session on 2026-11-12, three per-task implementers hit exactly that and returned `BLOCKED` with their work uncommitted: #5216 Task 2 and Task 4, and #5253 Task 1. The #5253 implementer had launched the run in the background and was holding it, pid 18379's slot ahead of it. Each one cost a controller ruling (`sdd-ruling-1`/`sdd-ruling-3` on #5216, `sdd-ruling-1` on #5253), a resume round, and a Review Console item. All three rulings said the same thing: commit on the focused tests, because Common Step 5's verification is the branch's suite run.\n\nProbe: `git grep -n -o -E -e \".{0,120}(queued|waiting for a test-suite slot|slot is held|held slot).{0,120}\" origin/main -- plugin/skills/build/dispatch.md` exits 1 (no match).\n\n## Deliverables\n\n- [ ] `dispatch.md`'s Affected-set testing rule gives a queued slot its own branch: when `verify.js` prints `waiting for a test-suite slot` (or is still queued after a stated bound), the dispatched agent stops it (its own PID only), runs the fallback focused set instead, says so in its reply, and commits. It never returns `BLOCKED` for slot contention alone.\n- [ ] The rule's wording keeps Common Step 5's verification as the branch's one suite run, so the fallback loses no coverage.\n- [ ] A prose conformance test pins the new branch's sentence in `dispatch.md`.\n\n## Acceptance Criteria\n\n1. `dispatch.md`'s Affected-set testing paragraph names the queued-slot case and its fallback (focused set, commit, report), in addition to the existing `Scope: full`/`Impact: full`/exit-2 case.\n2. The paragraph states that slot contention alone is not a `BLOCKED` status.\n3. A conformance test fails when that sentence is removed.\n4. `npm test` passes.\n\n## Release Note\n\nA build's per-task implementers no longer stop and wait for a human ruling when another session's test run holds the machine's test slot; they run their focused tests and carry on.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — the Affected-set testing (#5117) rule's queued-slot branch\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-12T14:11:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          }
-        ],
-        "number": 5257,
-        "state": "OPEN",
-        "title": "A per-task implementer blocks on a verify.js slot a sibling session holds, with no fallback",
-        "updatedAt": "2026-11-25T07:18:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`verify.js --scope` takes a CI-declared suite's verdict from the PR's CI job only on a tree that was clean when the run started. In `plugin/bin/verify.js`'s CI loop, any `startGit.dirty !== false` skips CI for every CI-declared suite with `dirty-tree` (or `tree-state-unreadable`), and the suite runs locally, or, under `localRuns: \"on-request\"`, the run exits 3 with no verdict. `startGit.dirty` comes from `git status --porcelain` being non-empty, so one untracked file is enough.\n\nPlugin steps routinely leave inert files dirty right before a scoped verification:\n\n- `hooks.js ledger-row` appends to the tracked `docs/plans/<feature>-ledger.md` during `/claude-tweaks:build` Common Step 4 and at wrap-up's reflect pass. Common Step 5's scoped verify then ran all three CI-declared suites locally with `dirty-tree`: about 8 minutes on a loaded machine, observed on 6.164.0 and again on 6.168.0. The consumer's `verify-scope.json` maps that path to `suites: [], static: false`.\n- `/claude-tweaks:design-wrapper`'s review mode leaves its audit cache, `docs/plans/YYYY-MM-DD-{feature}-audit.json`, untracked. `/claude-tweaks:review`'s Step 6.7 re-verify then ran every CI-declared suite locally, about 20 minutes, with two load-timeout failures in untouched files (6.168.0). Moving that cache out of the tree is #4431's scope.\n\nThe runner already knows these paths are inert. After the ledger row was committed, the same run printed `Scope: none … still-verified: bookkeeping-only delta (docs/plans/<feature>-ledger.md)`. That comes from `plugin/bin/lib/verify/scope.js`'s `selectScope`, which takes each file's first matching rule, `decl.rules.findIndex(...)`. A precedent exists for the `generated` globs: `plugin/bin/lib/verify/declaration.js`'s `generatedExemption(dirtyPaths, generated)` already treats a tree dirty only in declared `generated` paths as clean, for the stamp (#2987, #3757). The CI-source precondition consults neither of them.\n\n## Deliverables\n\n1. A new pure helper `inertDirtyPaths(decl, paths)` in `plugin/bin/lib/verify/scope.js`, exported. It returns the sorted, de-duplicated `paths` when every path is inert, and `null` otherwise, including for an empty or `null` list. A path is inert when either:\n   - it matches one of `decl.generated`'s globs, or\n   - its **first** matching rule (the same `findIndex(globToRegExp(r.match).test(file))` order `selectScope` uses) has `suites` equal to an empty array, `static` false, and no `impact`.\n\n   A path no rule matches is never inert: it fails closed, as in `selectScope`.\n2. `verify.js`'s CI-source precondition: when `startGit.dirty === true` and `inertDirtyPaths(decl, dirtyFilePaths(undefined, scopeStatusRead))` is non-null, the tree counts as clean for CI sourcing, and each CI-declared suite goes to `fetchCiVerdict` as on a clean tree. `dirtyFilePaths` lists tracked, untracked and both sides of a rename. When that path list cannot be read (`null`), the precondition stays `dirty-tree`. `tree-state-unreadable` is unchanged.\n3. Each CI attempt entry taken under the exemption carries `dirtyExempt: [paths]` (`null` otherwise), in `report.json`'s `ci` entries and the verify event's `ci` entries. stdout prints one line before the CI wait: `CI: tree dirty only in inert paths ({paths, comma-joined}) — taking CI verdicts on HEAD`.\n4. The pass stamp is unchanged: it still records the tree's real `dirty` state. This record changes the CI-source precondition only.\n5. `plugin/skills/test/ci-source.md`: the `dirty-tree` row (and the \"on a clean tree\" wording in the section that introduces the CI source) names the exemption: dirty paths that are all declared `generated` or bookkeeping-only (first matching rule `suites: []`, `static: false`) do not block CI sourcing. `plugin/skills/test/verification.md`'s CI source paragraph (\"HEAD must be pushed and be the open PR's head, on a clean tree\") gets the same qualifier.\n6. Tests (see Acceptance Criteria).\n\n## Acceptance Criteria\n\n- `inertDirtyPaths` unit tests in `tests/bin-lib/verify/scope.test.js`:\n  - a single path whose first matching rule is `{suites: [], static: false}` returns `[path]`;\n  - a path matching a `generated` glob returns it;\n  - a mix of one inert path and one path whose rule selects a suite returns `null`;\n  - an unmatched path returns `null`;\n  - a path whose first matching rule selects a suite, though a later rule would be inert, returns `null` (first match wins);\n  - a rule with `static: true` and `suites: []` is not inert;\n  - `[]` and `null` return `null`.\n- `tests/bin-lib/verify/ci-cli.test.js`: a scoped run whose only dirty path is an uncommitted edit to a file mapped to `suites: [], static: false` consults the fake `gh`, takes the CI verdict (`used: true`, no local check spawned for that suite), and prints the `CI: tree dirty only in inert paths (…)` line. Its `report.json` CI entry carries `dirtyExempt` naming that path.\n- The same run with the dirty path untracked instead of modified behaves the same.\n- A scoped run with one inert dirty path and one dirty source file still records `fallback: 'dirty-tree'` and runs locally.\n- A scoped run under `localRuns: \"on-request\"` with only inert dirty paths does not exit 3 for `dirty-tree`.\n- `npm test -- --full` passes.\n\n## Release Note\n\nTake CI-sourced verification verdicts even when the only uncommitted files are bookkeeping or generated paths the scope declaration already marks as running no checks.\n\n## Technical Approach\n\nAdd `inertDirtyPaths` beside `selectScope` in `scope.js`. It reuses the module's `globToRegExp` import and the same first-match lookup. Consider extracting a `firstRuleIndex(decl, file)` used by both, so the two cannot drift. In `verify.js`, compute `ciDirtyExempt` once, before the CI loop, and only when `startGit.dirty === true && decl && decl.ci`. Reuse `scopeStatusRead`, the porcelain text the scope read already holds (#5773), so no second `git status` runs. Change the `skipCi` guard to `startGit.dirty !== false && ciDirtyExempt === null`. Thread `ciDirtyExempt` into `verdict.ci.dirtyExempt` after each `fetchCiVerdict` call, and into `skipCi`'s entry shape as `null`, so every CI entry has the field. The stamp-write gate's own `generatedExemption` use is untouched.\n\n### Key Files\n\n- `plugin/bin/lib/verify/scope.js`: new exported `inertDirtyPaths` (and a shared first-match helper)\n- `plugin/bin/verify.js`: CI-source precondition consults `inertDirtyPaths`; `dirtyExempt` on CI entries; one stdout line\n- `plugin/skills/test/ci-source.md`: `dirty-tree` row and clean-tree wording name the exemption\n- `plugin/skills/test/verification.md`: CI source paragraph's clean-tree qualifier\n- `tests/bin-lib/verify/scope.test.js`: `inertDirtyPaths` unit cases\n- `tests/bin-lib/verify/ci-cli.test.js`: inert-dirty CI-sourcing cases, tracked and untracked\n\n## Gotchas\n\n- Decided while shaping: the report's preferred fix (treat inert dirty paths as clean for the CI precondition) is the one built. The two alternatives (commit ledger rows before Common Step 5; warn from `ledger-row`) each cover one producer, and the second occurrence showed several producers in the chain.\n- Decided while shaping: \"inert\" means the first matching rule is `suites: []` and `static: false`, plus declared `generated` globs. It is not \"any path `selectScope` would put in a `none`-mode delta\": an `impact` rule's path can select a subset, and a `static: true` rule runs lint or types on it, so neither is inert.\n- Decided while shaping: the design-wrapper audit cache (second comment) is left to #4431, which moves it out of the tree. This record does not add `docs/plans/*-audit.json` to any declaration. A consumer whose scope file maps it to an inert rule gets the exemption automatically. An unmatched path stays fail-closed.\n- Soundness: CI ran on HEAD, and the exempt paths are by declaration ones no check reads, so HEAD's CI verdict still describes everything the suites test. A misdeclared rule (a path that does affect tests, mapped to `suites: []`) would already be wrong for scope selection today. This change trusts the same declaration, never more.\n- A parallel lane (`ct-verify-stamp`) is editing `verify.js`'s stamp and slot code, and #5800 edits the same CI loop two lines below this precondition. Keep the edit to the `skipCi` guard and the entry fields, and expect catch-up merges.\n\n- #5484 (commit ledger rows from Common Steps 4.5 and 6.5 before Step 5) and #5673 (keep `/review`'s ledger writes from dirtying HEAD) are the per-producer alternative this record's report weighed. They stay useful on their own, for the pass stamp and for projects whose scope file has no inert rule for the ledger path. This record does not replace them, and they do not replace it.\n\n**Related:** #4431, #5800, #5437, #3765, #5427, #5465, #5507, #5075, #5167, #5378, #5466, #5511, #6102, #5148, #5484, #5837\n\n## Original request\n\nverify.js: CI-sourced verdicts fall back to a local run when the only dirty path is bookkeeping-only\n\n**Summary:** `verify.js --scope` takes CI verdicts only on a clean tree, and it falls back to a local full run even when the only dirty path is one its own scope rules classify as bookkeeping-only.\n\n**Kind:** Gap\n\n**Affected component:** `bin/verify.js` (CI-sourced suite verdicts, `skills/test/ci-source.md`)\n\n**Use case:**\n- `/claude-tweaks:build` Common Step 5 runs `verify.js --scope .claude-tweaks/verify-scope.json` so the suite verdicts come from the PR's CI jobs.\n- In one pipeline run, the only uncommitted change at that point was a row `hooks.js ledger-row` had just appended to `docs/plans/<feature>-ledger.md`. The project's `verify-scope.json` maps that path to `suites: [], static: false`.\n- All three CI-declared suites reported `fallback: \"dirty-tree\"` and ran locally: about 8 minutes on a loaded machine, while the same suites were already queued in CI at 4–6 minutes.\n\nAfter committing that one row and re-running, the same runner printed `Scope: none … still-verified: bookkeeping-only delta (docs/plans/<feature>-ledger.md)`. So its change-set logic already knows the path is inert, but the clean-tree precondition for CI sourcing doesn't consult that classification. The local pass also wasn't CI-sourced, so getting a CI-sourced verdict took an extra commit, push and re-run.\n\n**Suggested behavior:**\n- **Preferred:** treat a tree whose only dirty paths match a scope rule with `suites: []` and `static: false` (or a declared `generated` path, the same set `liveGeneratedExempt` already covers) as clean for the CI-source precondition.\n- **Alternative:** have Common Step 5 commit pending ledger rows before invoking verification.\n- **Alternative:** have `ledger-row` print a warning when it leaves the worktree dirty inside an active pipeline run.\n\n**Definition:** Clear\n\n**Plugin version:** 6.164.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-87932071 -->\n",
-        "createdAt": "2026-11-12T06:04:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5234,
-        "state": "OPEN",
-        "title": "verify.js: CI-sourced verdicts fall back to a local run when the only dirty path is bookkeeping-only",
-        "updatedAt": "2026-11-25T07:23:14Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Current State\n\n`/claude-tweaks:review` Step 2.5 derives `review-effort` from the record's `risk:*` × `size:*` labels, cross-checked against a diff heuristic, and takes the higher of the two (`plugin/skills/review/review-effort-derivation.md`, steps 3-4). The heuristic's record-size proxy reads Step 2's `git diff {base}...{branch} --stat` totals: **high** at 10+ files or 300+ lines, **medium** at 3-9 files or 50-299 lines (`plugin/skills/review/code-mode-steps.md`, Step 2). Nothing is excluded from those totals. A pipeline run's own committed artifacts therefore count as code size. These are the materialized spec under `.claude-tweaks/pipelines/**/work/{n}-spec.md`, the plan under `docs/superpowers/plans/**`, the run ledger `docs/plans/*-ledger.md`, and package-manager lockfiles. The result is a heuristic tier that is pushed up and overrides a low label tier.\n\nThree measured cases from consumer runs, all reported on this record:\n\n- plugin 6.164.0: `risk:low` × `size:low`, 10 files / 412 lines, mostly spec, plan, ledger and prose. The diff tier was `medium` over a label tier of `low`, which dispatched 8 lens agents.\n- plugin 6.164.0: 13 files / 350 lines, about 245 of them flow artifacts and about 60 lines of production change in 3 files. A one-line comment-only edit to the schema file also fired the risk proxy's \"schema/migration file\" trigger, so high × high resolved `max`: 19 dispatches, every confirmed finding low or info.\n- plugin 6.165.0: 23 files / 462 lines, about 300 of them plan (172), lockfile churn (274) and materialized spec (61). An infra/CI risk proxy of `high` resolved `max` over a label tier of `medium`, which dispatched about 35 agents for a code delta under 100 lines.\n\nThe \"bookkeeping\" path class is already defined in two places. One is `plugin/bin/lib/init/verify-scope-starter.js`'s `BOOKKEEPING_RULES`: `docs/plans/*-ledger.md`, `.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**` and `docs/superpowers/specs/**`. The other is a project's `.claude-tweaks/verify-scope.json`, where these rules are declared as `{ \"suites\": [], \"static\": false }`, first match wins (`plugin/bin/lib/verify/scope.js`'s `selectScope`, matched with `globToRegExp` from `plugin/bin/lib/issues/blast-radius.js`). Lockfiles are already named in `plugin/bin/lib/review-context/build.js`'s `ALWAYS_STUB_BASENAMES`, which the review-context bundle stubs.\n\nThe record's Step 3.7 tiebreak half is settled and out of scope: #5540 batches tiebreak findings 8 per judge with one settle call per chunk, and #5541 moved `info` findings to the Standard tier. Resolving `info` findings as `drop` with no judge was measured and rejected (19.0% agreement).\n\n**Related:** #5929, #5569, #5076, #5213, #5475, #5972, #4937, #6008\n\n## Deliverables\n\n- [ ] A pure size-proxy module `plugin/bin/lib/review-context/size-proxy.js`. It takes `git diff --numstat` output, the parsed verify-scope declaration (or `null`) and an optional own-work file list. It returns `{ files, lines, size, excluded: [{ file, lines, reason }] }`, where `size` is `low|medium|high` under the unchanged 10/300 and 3/50 thresholds and `reason` is `bookkeeping` or `lockfile`.\n- [ ] Bookkeeping exclusion: a path is excluded when the first declared rule it matches is `suites: []` with `static: false` and no `impact` (the shape `selectScope` resolves to `none`). With no declaration, or an unreadable one, the module falls back to `BOOKKEEPING_RULES` from `verify-scope-starter.js`. A path that matches no rule is counted.\n- [ ] Lockfile exclusion: a path whose basename is one of the lockfile names in `build.js`'s `ALWAYS_STUB_BASENAMES` is excluded. Export that set (or a lockfile-only subset of it) so the two sites share one list. `*.jsonl` fixtures stay counted.\n- [ ] A `size-proxy` verb on `plugin/bin/build-review-context.js`: `size-proxy --base <ref> --branch <ref> [--files-from <path>]`. It runs `git diff --numstat {base}...{branch}`, reads the declaration through `readDeclaration`, prints the module's result as one JSON line, and exits 0 ok, 2 on a malformed invocation, 1 on a git failure. Add the verb to the file header, `USAGE`, and `docs/plugin-structure.md`'s CLI list.\n- [ ] `review-effort-derivation.md` step 3: the record-size proxy comes from `size-proxy`'s `size`, passing the own-work file list as `--files-from` when Step 2's Merge-Provenance Check detected merge commits. A non-zero exit or unparseable output falls back to today's unfiltered `--stat` totals, with a one-line notice. That fallback is never lower than the filtered count.\n- [ ] `review-effort-derivation.md` step 3, risk proxy: the \"schema/migration file\" trigger fires only when that file's targeted diff (`git diff -w {base}...{branch} -- {file}`, the same bounded read Step 2 already allows for dependency manifests) changes at least one line that is neither blank nor a comment. If the hunks cannot be classified, the trigger fires. The other risk triggers (`merge-sensitive-paths`, infra/CI-CD, new dependency) are unchanged, and a lockfile still counts toward the new-dependency check.\n- [ ] `review-effort-derivation.md` states that the `{reasoning}` filling Step 2.5's existing `diff heuristic: {reasoning}` slot names the filtered counts and the exclusions, for example `size low (3 files / 60 lines; excluded 10 files / 290 lines: bookkeeping 9, lockfile 1)`. `code-mode-steps.md`'s template line already carries `{reasoning}` and is not edited. Update step 4's #4028 worked-example wording if it no longer matches.\n- [ ] Unit tests in `tests/bin-lib/review-context/size-proxy.test.js` and CLI coverage beside the existing `exit-code.test.js`.\n\n## Acceptance Criteria\n\n- [ ] For numstat input of 13 files / 350 lines where 10 files / 290 lines sit under `.claude-tweaks/pipelines/**`, `docs/superpowers/plans/**` and `docs/plans/*-ledger.md`, the module returns `files: 3`, `lines: 60`, `size: 'medium'` and lists the 10 excluded paths with reason `bookkeeping`.\n- [ ] A `package-lock.json` with 274 changed lines is excluded with reason `lockfile`, and a `tests/fixtures/x.jsonl` file is counted.\n- [ ] With a declaration whose rules send `docs/plans/*-ledger.md` to `suites: []` but have no rule for `docs/superpowers/plans/**`, a plan file is counted, because the declaration replaces the fallback list. With `decl: null`, the same plan file is excluded through `BOOKKEEPING_RULES`.\n- [ ] A path whose first matching rule selects a suite (for example `*.md` → `suites: \"*\"`) is counted even when a later rule would mark it bookkeeping.\n- [ ] A binary file (numstat `-\\t-\\t{path}`) counts as one file with 0 lines.\n- [ ] `--files-from` restricts the count to the listed paths.\n- [ ] `build-review-context.js size-proxy` with a missing `--base` exits 2. With an unknown ref it exits 1 and prints nothing on stdout.\n- [ ] `review-effort-derivation.md` names the `size-proxy` call, the fallback to unfiltered `--stat` totals on failure, and the comment-only exception to the schema/migration trigger, which fires when the hunks are unclassifiable.\n- [ ] Each new test fails when its exclusion rule is reverted.\n\n## Release Note\n\nReview sizes a change by its code, not by the pipeline's own spec, plan, ledger and lockfile files, so small changes no longer get the heaviest reviews.\n\n## Technical Approach\n\nThe core is a pure function, so tests feed it numstat text and a declaration object with no git. The CLI verb only gathers inputs. It reuses `readDeclaration` (`plugin/bin/lib/verify/declaration.js`) and the first-match `globToRegExp` loop `selectScope` uses. Do not re-implement glob matching. A rule counts as bookkeeping by its shape (`suites` an empty array, `static` false, no `impact`), not by a hard-coded path list, so a consumer's own declaration decides what counts. Thresholds stay the stated constants in `review-effort-derivation.md`: the size check lives in the module and the prose cites it.\n\nThe schema comment-only check stays in prose, as a targeted read the model already does for dependency manifests. Comment markers are `--`, `#`, `//`, `/*`, `*` and `*/` at the start of a changed line after leading whitespace. A hunk the reader cannot classify fires the trigger.\n\n### Key Files\n\n- `plugin/bin/lib/review-context/size-proxy.js` — new: numstat parse, exclusion classification, size tier\n- `plugin/bin/lib/review-context/build.js` — export the lockfile basename set for reuse\n- `plugin/bin/build-review-context.js` — new `size-proxy` verb, header and `USAGE`\n- `plugin/bin/lib/init/verify-scope-starter.js` — `BOOKKEEPING_RULES` consumed as the no-declaration fallback (already exported, read-only)\n- `plugin/bin/lib/verify/declaration.js` — `readDeclaration` consumed (read-only)\n- `plugin/skills/review/review-effort-derivation.md` — step 3 size proxy and schema trigger, step 4 worked example\n- `docs/plugin-structure.md` — CLI list entry for the new verb\n- `tests/bin-lib/review-context/size-proxy.test.js` — new unit suite\n- `tests/bin-lib/review-context/exit-code.test.js` — `size-proxy` exit codes\n\n## Gotchas\n\n- Decision (specify, 2026-11-25): `*.md` is **not** excluded in general, although the original report suggested it. In this plugin, skill markdown is executable behavior, and in this repo's own declaration `*.md` selects every suite. Only declared bookkeeping paths and lockfiles are excluded.\n- Decision (specify, 2026-11-25): the size proxy fails toward the higher count. If the CLI fails, use the unfiltered totals, never a guessed lower tier, matching Step 2.5's \"ambiguity never resolves toward less scrutiny\" rule.\n- Decision (specify, 2026-11-25): the schema comment-only refinement from the 2026-11-11 comment is in scope. It is the same Step 2.5 proxy and the same over-scrutiny symptom, and the record had no other home for it. The lockfile exclusion applies only to the size count; lockfiles keep feeding the new-dependency risk check, per the 2026-11-12 comment.\n- Decision (specify, 2026-11-25): `*.jsonl` stays counted, even though `isAlwaysStub` stubs it in the context bundle. Fixtures can carry behavior-relevant test data, so reuse only the lockfile names, not `isAlwaysStub` as a whole.\n- The Step 3.7 tiebreak half of the original request is settled by #5540 and #5541. Do not reopen it here.\n- #5929 (review skip on a bookkeeping-only diff) classifies the same paths. Whichever lands second should reuse the other's classifier rather than adding a second one.\n- Do not add text to `plugin/skills/review/code-mode-steps.md`. It sits at its read rail (#5076), so every prose change goes in `review-effort-derivation.md`, which Step 2.5 already lazy-loads.\n- Under a worktree-local run, the materialized spec is committed under `.claude-tweaks/pipelines/{run}/work/{n}-spec.md`, so the `.claude-tweaks/pipelines/**` rule covers it. There is no top-level `work/` path to add.\n\n## Original request\n\nreview: effort size proxy counts prose, plan and run-dir files, and every info finding gets a Capable tiebreak\n\n**Summary:** review-effort's diff heuristic counts prose, plan and run-dir files as size, and Step 3.7 sends every info finding through a Capable tiebreak plus two hand-written input files.\n\n**Kind:** Gap\n\n**Affected component:** skills/review (Step 2.5 review-effort derivation, Step 3.7 tiebreak)\n\n**Use case:**\nA small Python-script-and-docs record (labels `risk:low`, `size:low`, fast-lane ceremony) was reviewed. Step 2.5's diff heuristic read `git diff --stat` as 10 files and 412 lines, which is size `high` under its 10-files-or-300-lines rule, and combined with risk `low` resolved review-effort `medium` over the label tier `low`. Most of that \"size\" was a materialized spec, a plan document, a ledger and journey and architecture prose, none of which carries the code-review risk the proxy stands for. At `medium` the review dispatched 8 lens agents (4 reproduction pairs), then 13 findings (6 of them info or low and dropped as not worth acting on) each went to an independent Capable tiebreak agent. Resolving the 13 verdicts meant writing two scratch files per finding by hand (the finding JSON and the agent reply) and running `resolve-tiebreak` 13 times, i.e. 26 file writes plus 13 CLI calls, before any fix.\n\n**Suggested fix:**\nHave the size proxy in `review-effort-derivation.md` count only files that can hold executable or configuration behavior, excluding `*.md` prose, the run directory's materialized spec, plan and ledger files; or cap the upgrade from the label tier to one step when every changed non-prose file is under a small threshold. Separately, let Step 3.7 skip the independent agent for a finding the lens itself rated `info`, resolving it as `drop` with a logged line, and have `review-coordination.js` accept the reply text and entry on stdin or in one batch file so a wave of tiebreak verdicts resolves in one call instead of two writes and a call per finding.\n\n**Definition:** Clear\n\n**Plugin version:** 6.164.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2b4035ff -->\n\n",
-        "createdAt": "2026-11-10T13:51:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5148,
-        "state": "OPEN",
-        "title": "review: effort size proxy counts prose, plan and run-dir files, and every info finding gets a Capable tiebreak",
-        "updatedAt": "2026-11-25T07:19:29Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -2892,84 +2091,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full from #4549/#4550/#4556 (multi-spec batch)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/review/step3-debate-and-refutation.md` Step 3.5 item 1 runs `detect-overlap` (same path, ±5 lines, different lenses), and item 2 keeps every pair whose severities differ. It never checks that the two findings describe the same defect. Item 5 only warns: \"Avoid running debate on every `Path:Line` where any two lenses touched\".\n\nOn #4556's high-tier review of a 40-line prose recipe, `detect-overlap` returned 32 pairs and 17 severity mismatches. Only 2 were the same defect; 15 were unrelated findings that happened to be near each other. Dispatching all 17 would have meant 34 Frontier/Capable judges. The reviewer had to make an ad-hoc ruling (decisions.md, 16:03:15) to debate only the 2.\n\n`categoriseReproduction` already scores substance similarity (`SUBSTANCE_SIMILARITY_MIN` 0.2) for reproduction pairs. Debate filtering does not use it.\n\n## Deliverables\n\nFilter `detect-overlap`'s contradiction pairs by the same substance score `categoriseReproduction` uses: only pairs at or above `SUBSTANCE_SIMILARITY_MIN` enter debate.\n\nPairs below the threshold keep their own buckets and go to Step 3.7, each logged once as a proximity coincidence.\n\nStep 3.5 item 2 states the filter, replacing the item-5 warning's judgment call.\n\n## Acceptance Criteria\n\n`review-coordination.js detect-overlap` output (or a new `filter-contradictions` subcommand) marks each pair with its substance score, and a unit test shows a same-location, different-substance pair excluded from debate.\n\nA same-defect pair (paraphrased claims about one line) still enters debate (unit test).\n\n`step3-debate-and-refutation.md` item 2 names the substance threshold; a conformance test pins it.\n\n## Release Note\n\nHigh-effort reviews no longer dispatch debate judges for unrelated findings that only sit near each other.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-debate-and-refutation.md` — modify\n- `plugin/bin/lib/coordination.js` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-31T15:41:26Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADAM5AEA",
-            "name": "size:small",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 4747,
-        "state": "OPEN",
-        "title": "review: Step 3.5 debates every nearby severity mismatch, not only same-defect contradictions",
-        "updatedAt": "2026-11-25T07:19:22Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": null,
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -8349,90 +7470,6 @@
     ],
     [
       {
-        "body": "**Related:** #3160, #4117\n\nOrigin: /claude-tweaks:flow #3898,#4012,#4041 Manifesto stall (run 2026-10-24T103516-spec-3898-4012-4041)\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:capture`'s Shaped-body branch step 3 files a spec-shaped body as `ready` with `risk:*`/`size:*` labels. It deliberately never passes `ceremony` to `recordPayload` (`plugin/skills/capture/SKILL.md` ~line 305: \"this branch never passes those\"), because `/claude-tweaks:specify` is the sole owner of `ceremony:*`. So every born-ready capture reaches `/claude-tweaks:flow` unlabelled. `flow/manifesto.md`'s Ceremony profile computation then runs one inline `assess-agent-autonomy ceremony-check` per such record, and `materialize.md` falls back the same way when no Manifesto verdict exists.\n\nThis is the common case: release-gate, wrap-up and health-sweep findings filed through `/capture --source …` all take this branch. On 2026-10-24, #4012, #4041 and #4060-#4072 were all filed this way. In `/flow #3898,#4012,#4041` (run 2026-10-24T103516-spec-3898-4012-4041) both fallback calls were wasted. #3898 already carried `ceremony:standard`, so the run-wide AND fold was `standard` before either judgment ran. A per-record verdict only changes behaviour where `build/micro-plan.md`'s gate reads `ceremony: fast-lane` with `size: low`, and #4041 is `size:medium`. The inline call is also where the pipeline stalled (the sibling record on return-to-caller).\n\n## Deliverables\n\n1. Born-ready captures carry a `ceremony:*` label. Either the Shaped-body branch judges it through the canonical `_shared/ceremony-check-invocation.md` pattern and stamps it, which updates `_shared/work-record.md`'s permission matrix so `/capture` co-owns `ceremony:*` on that branch only, or the decision to keep `/specify` as sole owner is recorded with its reason and deliverable 2 alone carries the fix.\n2. `flow/manifesto.md`'s Ceremony profile computation skips the per-record judgment when its verdict cannot change anything: the run-wide fold is already `standard` from a labelled record, **and** the record is not `size:low` (the only case `build/micro-plan.md` reads a per-record `fast-lane`). It passes `--ceremony standard` to materialize for those records and logs the skip with its reason.\n\n## Acceptance Criteria\n\n- A record filed through `/capture`'s born-ready branch carries a `ceremony:*` label, or the recorded decision explains why it does not.\n- A conformance test pins manifesto.md's skip condition (fold already `standard` and record not `size:low`) and its `--ceremony standard` pass-through, and reverting the prose turns it red.\n- `npm test` passes.\n\n## Release Note\n\nRecords filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/capture/SKILL.md` — Shaped-body branch: ceremony stamping (or recorded decision)\n- `plugin/skills/flow/manifesto.md` — Ceremony profile computation: skip judgment when the verdict cannot matter\n- `plugin/skills/_shared/work-record-permission-matrix.md` — permission matrix: `/capture` co-owns `ceremony:*` on its born-ready branch\n- `plugin/skills/_shared/work-record.md` — Ceremony label-table row: stamped by `/specify` or `/capture` (born-ready)\n- `docs/decisions/0006-ceremony-tiering-owned-by-specify.md` — amendment note for `/capture` co-ownership\n- `tests/bin-lib/express/eligibility.test.js` — capture-stamped fast-lane eligible; standard refused by driver-lane options\n\n## Planning Decisions\n\nDecided 2026-11-25 in the maintainer-authorized autonomous lane, answering the plan-review question comment on this record.\n\n**Decision (Q1, driver and express lane eligibility): Reading A.** `/capture`'s born-ready branch judges and stamps `ceremony:*`, and the label becomes the single authority on ceremony for every lane. A capture judged `standard` leaves the driver lane by default: `allowAbsentCeremony` existed only because captures carried no label, and is not widened. A capture judged `fast-lane` becomes express-eligible, which is the outcome #5262 asked for. Amend `docs/decisions/0006-ceremony-tiering-owned-by-specify.md` with a note that `/capture` co-owns `ceremony:*` on its born-ready branch only. Add a row for that to `_shared/work-record-permission-matrix.md` (the matrix lives there, not in `_shared/work-record.md`), and update `_shared/work-record.md`'s Ceremony label-table row (\"stamped by `/specify`\"). State the lane change in the Release Note. Add an eligibility test in `tests/bin-lib/express/eligibility.test.js`: a capture-stamped `ceremony:fast-lane` record is eligible, and a capture-stamped `ceremony:standard` record is refused by the driver-lane options.\n\n**Decision (Q2, filings that bypass `/capture`): Reading A.** The Acceptance Criterion stays `/capture`-only. Health-sweep `issue-payload.js` filings and `/review` Step 3 Defer filings remain unlabelled and rely on Deliverable 2's Manifesto skip. Correct Current State's claim that health-sweep findings go through `/capture --source`. Route the remaining gap to the digest per this repo's out-of-diff convention, not into this diff.\n\n**Decision (remaining plan-review rows, blanket rule for this record).**\n- If the inline ceremony check fails, stalls or renders no verdict during a capture filing, file the record without a `ceremony:*` label (today's behavior), say so in capture's output, and never block or delay the filing on it.\n- Add the `Review risk: high` markers the reviewer asked for on Tasks 1 and 2.\n- Task 3's conformance assertion must go red when the prose edit is reverted; prove it with a revert check.\n- Any further plan-review question for this record of the same kind (an undecided failure-path behavior or a scope edge) takes the option that keeps today's behavior on the failure path. Log it as an AUTO decision; it never stops the build for a human again.\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-10-24T10:51:13Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4118,
-        "state": "OPEN",
-        "title": "/capture's born-ready branch files `ready` records with no `ceremony:*` label, so every one pays /flow's ceremony-check fallback",
-        "updatedAt": "2026-11-25T07:47:59Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #3823, #3953, #3982, #3983, #3993\n\n## Current State\n\nThe post-merge Windows check on commit 6c660b23c (merged PR #3916, run 40029571772) reported `tests/bin-lib/issues/comment-trust.test.js` newly failing. The failing test is \"untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\" (line 66). Its actual output ends every line with `\\r\\n`, where the expected value is `\\n`-joined.\n\nRoot cause, reproduced on macOS against `main` at d02483933: native `jq` on Windows writes stdout in text mode, so every output newline becomes CRLF. The tests compare `spawnSync('jq', …).stdout` byte-for-byte against `\\n`-joined text. Running the files with a `jq` shim on `PATH` that converts output `\\n` to `\\r\\n` reproduces exactly four failures, and a CRLF file-read simulation adds none. This is not the `readText` CRLF-read class:\n\n- `tests/bin-lib/issues/comment-trust.test.js` (8 tests: 6 pass, 2 fail):\n  - \"untrustedJqNote prints the same text…\" (jq call at line 80)\n  - \"AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)\" (jq call at line 119; `split('\\n')` leaves a trailing `\\r` on each kept value)\n- `tests/comment-trust-conformance.test.js` (37 tests: 35 pass, 2 fail):\n  - \"AC5.2: grant-lane-decision.md's jq lines run…\"\n  - \"AC5.2: shaping-mode-stamping.md's jq lines run…\"\n  - Both go through the `runJq` helper's jq call at line 449.\n\n`tests/comment-trust-conformance.test.js` was never filed. The latest Windows run's `verify-report` artifact (run 40030935846, head d02483933) lists both files in `baselineAdjudicated.failingFiles`. The conformance file has been red since it was introduced, so the per-push baseline diff never reports it as newly failing. These three `spawnSync('jq', …)` calls are the only non-probe jq invocations under `tests/`. Shipped plugin code is unaffected: `comment-trust.js` only builds the filter strings.\n\n## Deliverables\n\n1. Normalize jq's stdout to `\\n` line endings at each of the three call sites (`tests/bin-lib/issues/comment-trust.test.js` lines 80 and 119, `tests/comment-trust-conformance.test.js` line 449) before any assertion reads it. Do this through one shared test helper rather than three hand-written replacements.\n2. Fix both test files in this record, since they share the root cause.\n\n## Acceptance Criteria\n\n1. No assertion in either file reads raw `jq` stdout. Every one of the three non-probe `spawnSync('jq', …)` results is EOL-normalized first.\n2. With a CRLF-emitting `jq` shim first on `PATH` (a wrapper that pipes real `jq` output through `perl -pe 's/\\n/\\r\\n/'`), both files pass every test. Before the fix this reports 2 failures in each file.\n3. Both files are green on Linux/macOS with the real `jq`. The `jq not found` skip path is unchanged.\n4. The next post-merge `windows-regression.yml` run's `verify-report` artifact lists neither file in `baselineAdjudicated.failingFiles`.\n\n## Release Note\n\nFix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.\n\n## Technical Approach\n\nAdd a small `runJq(args, input)` helper next to `readText` under `tests/helpers/`. It wraps `spawnSync('jq', args, { input, encoding: 'utf8' })` and returns the result with `stdout` normalized via `.replace(/\\r\\n/g, '\\n')`. Route the three call sites through it, keeping each `status`/`stderr` assertion as-is. Normalizing at the read mirrors the house rule for the CRLF-read class (#3776, #3953): fix the input once instead of loosening every assertion.\n\n### Key Files\n\n- `tests/bin-lib/issues/comment-trust.test.js` — two jq calls routed through the helper\n- `tests/comment-trust-conformance.test.js` — `runJq`'s jq call routed through the helper\n- `tests/helpers/` — new shared jq-run helper (or extend an existing helper module)\n\n## Gotchas\n\n- Do not pass `jq --binary` / `-b` instead. That flag is documented for native Windows builds, and its behavior on the Linux/macOS jq versions CI and maintainers run is not established here. Normalizing in the test is platform-independent.\n- The `--version` probes need no change: they only check `status`.\n- CI runs on ubuntu only. AC2's shim is the pre-merge stand-in, and only the post-merge `windows-regression.yml` run proves the fix on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 6c660b23c\n\nThe post-merge Windows check failed on commit 6c660b23cb7b054f4908afabd7a30949e220e57c (compared against 2b943d781).\n\n**Merged PR:** #3916 (https://github.com/thn-inc/claude-tweaks/pull/3916)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/40029571772\n\n### Newly failing test files\n- `tests/bin-lib/issues/comment-trust.test.js`\n\n### Failure excerpts\n\n#### `tests/bin-lib/issues/comment-trust.test.js`\n\n```\nnot ok 3668 - untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\n  ---\n  duration_ms: 1095.4188\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\bin-lib\\\\issues\\\\comment-trust.test.js:66:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator\\r\\n' +\n    +   'skipped marker comment https://x/c2 by unknown (NONE) — not an owner, member, or collaborator\\r\\n' +\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
         "createdAt": "2026-10-23T22:05:46Z",
         "labels": [
@@ -9160,262 +8197,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #4429, #4243, #3737, #3822, #3758, #3818, #3819, #3875, #3975, #4217, #4244, #4245, #4248, #4259, #4301, #4328, #4439, #4450, #4454, #4460, #4468, #4486, #4487\n\n## Current State\n\nThe canonical rule in `plugin/skills/_shared/subagent-dispatch-core.md:16-27` (Working Directory Discipline) already forbids `cd`: use `git -C \"<abs path>\"` for git, pass the absolute path as an argument for other commands, and never precede a path-sensitive command with `cd`, even in a `&&` chain. `_shared/worktree-setup.md`'s post-creation catch-up and `_shared/scratch-worktree.md` §7 state the same one-plain-command-per-call constraint.\n\nFour places still tell dispatched agents to do the opposite:\n\n- `plugin/skills/build/SKILL.md:214` — \"When dispatching subagents, require them to use `cd \"$WORKTREE\" && …` or `git -C \"$WORKTREE\" …`\", then cites the shared section that forbids the first form.\n- `plugin/skills/test/qa-prompts.md:98` and `:162` — the QA agent prompt: \"Start every shell command with `cd \"{ABSOLUTE_WORKTREE_PATH}\" && ...`\".\n- `plugin/skills/tidy/scan-procedures.md:185` — \"Anchor with `cd \"{REPO_ROOT}\" &&` / `cd \"{RUN_ROOT}\" &&` at the start of each command.\"\n- `plugin/skills/tidy/scan-procedures.md:75` — \"(or run after `cd \"{REPO_ROOT}\"`)\".\n\nObserved 2026-10-26 (6.156.1, Windows, Git Bash): `friction-events.js` reported 36 `wd-guard-refusal` events in one `/claude-tweaks:flow` run under `worktree-always`. 25 of them were `cd <worktree> && …` commands that SDD implementers and reviewers issued while following `build/SKILL.md:214`, and each cost the agent a turn to re-issue as plain calls.\n\n## Deliverables\n\n1. Rewrite `build/SKILL.md:214`'s dispatch sentence to match the shared rule: subagents use `git -C \"<abs worktree path>\"` and absolute path arguments, one plain command per Bash call, with the path substituted before dispatch. Drop the `cd \"$WORKTREE\" && …` form.\n2. Rewrite the QA agent prompt's working-directory line at `test/qa-prompts.md:98` and `:162` the same way (absolute paths and argument-anchored commands, no `cd … &&` prefix). Keep whatever the `playwright-cli` session actually needs as cwd expressed through absolute paths or the tool's own flags.\n3. Rewrite `tidy/scan-procedures.md:75` and `:185` to anchor with `git -C \"{REPO_ROOT}\"` and absolute-path arguments (e.g. `find \"{RUN_ROOT}/.claude-tweaks/pipelines/...\"`) instead of a `cd` prefix. Keep the loud-failure rationale at :185.\n4. Add a conformance test that fails if any `plugin/skills/**/*.md` instructs a dispatched agent to prefix commands with `cd \"…\" &&`. Allow-list the shared core's own \"never `cd \"...\" && git ...`\" counter-example.\n\n## Acceptance Criteria\n\n- `grep -rn 'cd \"\\$WORKTREE\" &&\\|cd \"{ABSOLUTE_WORKTREE_PATH}\" &&\\|cd \"{REPO_ROOT}\" &&\\|cd \"{RUN_ROOT}\" &&' plugin/skills` returns no instruction text. Quoted counter-examples labelled as forbidden are allowed.\n- The new conformance test fails when the old `build/SKILL.md:214` sentence is restored (verified by reverting deliverable 1), and passes with all four sites fixed.\n- `tests/subagent-contract-clauses.test.js` and `tests/review-dispatch-composition.test.js` still pass.\n\n## Release Note\n\nBuild, test and tidy no longer tell their helper agents to use a `cd … &&` command form that the worktree guard refuses, which removes repeated refused-and-retried commands in worktree runs.\n\n## Technical Approach\n\nThis is prose alignment to an existing canonical rule. No new rule is invented: each site either cites `_shared/subagent-dispatch-core.md`'s Working Directory Discipline or restates its two forms. Prefer citing over restating, so the next change to the rule lands in one place. The conformance test is a plain `fs` walk with a regex over `plugin/skills/**/*.md`, sized like the neighboring prose-pin tests.\n\n### Key Files\n\n- `plugin/skills/build/SKILL.md` — :214 dispatch sentence\n- `plugin/skills/test/qa-prompts.md` — :98 and :162 working-directory lines\n- `plugin/skills/tidy/scan-procedures.md` — :75 and :185 anchoring instructions\n- `plugin/skills/_shared/subagent-dispatch-core.md` — reference only: the canonical rule\n- `tests/subagent-contract-clauses.test.js` — existing contract-clause pins\n- `tests/review-dispatch-composition.test.js` — existing dispatch-composition pins\n\n## Gotchas\n\n- The QA agent is a Bash-only agent (`claude-tweaks:qa-agent`) running `playwright-cli`. Check whether any QA command relies on cwd, such as a relative screenshot output dir, before dropping the `cd` prefix, and make that path absolute.\n- Two ready records touch the same rule from other sites. #3737 (in flight) adds the one-plain-command rule to `review/step3-lens-dispatch.md` and may fold it into `_shared/subagent-dispatch-core.md`. #3822 rewords that rule's justification in `dispatch/task-prompt.md`. Rebase on whichever lands first and cite the shared section as it then reads. Do not restate a second copy.\n- The report also notes that the guard refuses a heredoc fed to an interpreter when its text merely mentions git. That is harness guard behavior, not plugin prose, and is out of scope here. The shared core already steers agents to Write-then-run.\n\n## Original request\n\nbuild: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses\n\n**Summary:** `/claude-tweaks:build`'s Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …` in subagent commands, a form the harness's worktree-isolation guard refuses in a worktree session.\n\n**Kind:** Defect\n\n**Affected component:** `skills/build/SKILL.md` (Common Step 2's Working Directory Discipline note) and `skills/_shared/subagent-dispatch-core.md`'s Working Directory Discipline section\n\n**Repro steps:**\n1. Run `/claude-tweaks:flow #N` in a project with `worktree-always`, so the session is isolated in a worktree.\n2. Let `/build` dispatch SDD implementers and reviewers with the Working Directory Discipline instruction (\"require them to use `cd \\\"$WORKTREE\\\" && …` or `git -C \\\"$WORKTREE\\\" …`\").\n3. Read `friction-events.js --run <run-dir>` afterwards.\n\n**Expected vs. actual:**\nExpected: subagents follow an instruction the guard accepts — one plain command per Bash call from the worktree (they inherit it as cwd), absolute paths or `git -C \"$WORKTREE\"`, never `cd X && …`; `_shared/worktree-setup.md`'s Post-creation catch-up (\"default to one plain command per call\") and `_shared/scratch-worktree.md` §7 already state that constraint.\nActual: in one run on 2026-10-26, `friction-events.js` reported 36 `wd-guard-refusal` events; 25 were `cd <worktree> && …` commands issued by dispatched implementers and reviewers following the instruction, each costing the subagent a turn to re-issue the command as separate plain calls. The guard also refuses a heredoc fed to an interpreter when the heredoc text merely mentions git.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1 (Claude Code on Windows, Git Bash)\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-4fbefad6 -->\n\n",
-        "createdAt": "2026-10-26T20:18:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4442,
-        "state": "OPEN",
-        "title": "build: Working Directory Discipline tells dispatchers to require `cd \"$WORKTREE\" && …`, which the worktree-isolation guard refuses",
-        "updatedAt": "2026-11-25T07:18:42Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #5396, #4765, #6076, #4118\nRisk-flags: none\n\n## Current State\n\nOn plugin 6.168.0, a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet reached 312,673 context tokens by the end of `/build`, so `/flow` handed test, review and polish to a fresh agent. That agent spent about 255k more tokens and 6.5 minutes. The record lists the procedure reads that filled the context: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), `flow/SKILL.md`, `build/SKILL.md`, and the subagent-driven-development skill with its reviewer template.\n\nThe build took the full planning path because `/build`'s micro-plan gate fell through. `plugin/bin/lib/issues/micro-plan-gate.js` sets `MAX_IMPLEMENTATION_FILES = 1`, and the record's Key Files counted four implementation files (three config files plus one prompt-prose skill file). A fall-through loads `/superpowers:writing-plans` (10,335 B), `build/plan-authoring-checks.md` (52,476 B on origin/main `68608178fa`) and its two cited sub-files (`plan-authoring-pairing-checks.md`, 2,999 B; `plan-authoring-boundary-checks.md`, 4,490 B). It also produces a multi-task plan, and a multi-task plan keeps SDD's whole-branch review, which the fast-lane profile skips only at `tasks: 1` (`_shared/ceremony-profile.md`'s `sdd-whole-branch-review` row). The micro-plan path loads `build/micro-plan.md` (8,125 B) instead and composes a one-task plan.\n\nThe gate's limit of one is stricter than the lanes beside it. The express lane (`plugin/bin/lib/express/eligibility.js`, `EXPRESS_MAX_KEY_FILES = 3`) builds a record with up to three Key Files of any kind, test files included, in one agent with no plan, no per-task review and a merge on green. The pipeline driver admits the same bound by default (`express-driver-max-key-files`, default 3). `/build`'s micro-plan path keeps more checks than either: it still runs an SDD task review and `/claude-tweaks:review`'s lenses. It still refuses every fast-lane record with two or more implementation files. #5396 records the same fall-through with two files: one key added to a static plist, plus the generator that writes it.\n\nThe gate is read in two places: `/build`'s Spec Step 3 (`build/micro-plan.md`'s Applicability gate) and `/claude-tweaks:specify`'s plan-lane predicate (`plugin/bin/lib/driver/plan-lane.js` `needsNoPlan`, #6053), which tries the driver lane, then the express lane, then the micro-plan lane.\n\nA fence survey at origin/main `68608178fa` (the `compose-context-fencing` procedure) ruled out the other reads as levers. `build/dispatch.md` (49,720 B) is two single lines of 27,006 B and 17,829 B plus small paragraphs. Fences are line-anchored, and the only prose that cannot apply to a fast-lane one-task build is the whole-branch-review block (about 4.4 KB: \"Whole-branch review model.\" and \"Persist SDD's final whole-branch review before Finish\"). That block keys on task count, not on `ceremony-profile`, which is not a `compose-context` condition key either (`resolve-conditions.js` resolves six). The worktree-setup sources already measured 0 B fenceable on their run-level axes (#1993). `test/verification.md` runs under every profile.\n\n## Deliverables\n\n- [ ] Raise `MAX_IMPLEMENTATION_FILES` in `plugin/bin/lib/issues/micro-plan-gate.js` from 1 to 3. Rewrite the header comment's \"the gate is \\\"at most one\\\", not \\\"exactly one\\\"\" sentence so it names the constant, not a number. Add one sentence giving the reason: the express lane builds up to `EXPRESS_MAX_KEY_FILES` Key Files with no plan at all, and the micro-plan path keeps the task review and the review lenses, so it needs no stricter bound. Keep it a separate constant, not an import of `EXPRESS_MAX_KEY_FILES`: the express lane counts every Key File, while this gate counts implementation files only.\n- [ ] Reword `plugin/skills/build/micro-plan.md`'s title (`single-file fast-lane records skip`) and its opening sentence (\"A one-file, one-task record\") so neither says one file. The composed plan stays one task, its `**Files:**` block one line per Key Files entry, as today. Keep conditions 3 and 4 citing the code, not restating the number (`tests/build-micro-plan-code-twin.test.js` fails on a restated limit).\n- [ ] Update `plugin/skills/_shared/ceremony-profile.md`'s exemption row that quotes the old title phrase (`single-file fast-lane records skip`) to quote the new title phrase, so `tests/ceremony-profile-roster.test.js` still matches it.\n- [ ] Update the tests that pin the old limit: `tests/bin-lib/issues/micro-plan-gate.test.js` (the constant-value assertion, and the `implementation-file-limit` failure case moved from two entries to four), and `tests/bin-lib/driver/plan-lane.test.js` (the AC2.1 case that expects two implementation Key Files outside every lane). `tests/build-micro-plan-conformance.test.js`'s AC5.1 case (one implementation file satisfies condition 3) stays true and needs no change.\n\n## Acceptance Criteria\n\n- [ ] `MAX_IMPLEMENTATION_FILES` is 3. `evaluateMicroPlanGate` returns `{ passes: true, failed: [], unreadable: null }` for a `fast-lane`, `low`, unflagged record whose Key Files name three implementation files (for example two `plugin/bin/*.js` modules and one `plugin/skills/**/*.md` file). It returns `failed: ['implementation-file-limit']` for four.\n- [ ] `needsNoPlan` (`plan-lane.js`) returns `{ lane: 'micro-plan', reason: 'passes-micro-plan-gate' }` for a fast-lane low record with three implementation Key Files when `express-lane` is `false` and `express-driver` is `off`, and `{ lane: null, reason: 'outside-every-lane' }` for four.\n- [ ] The two-implementation-file shape #5396 observed (a static config file plus the generator module that writes it, fast-lane, low, unflagged) passes the gate, pinned by a test case.\n- [ ] `plugin/skills/build/micro-plan.md` no longer describes the gate as single-file or one-file. `tests/build-micro-plan-code-twin.test.js` and `tests/ceremony-profile-roster.test.js` pass.\n- [ ] Every changed or added assertion goes red when `MAX_IMPLEMENTATION_FILES` is set back to 1, shown by running the affected test files against that revert.\n- [ ] `npm test -- --full` passes.\n\n## Release Note\n\nA fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.\n\n## Technical Approach\n\nOne constant change plus the prose and tests that pin it. `countImplementationFiles`'s counting rule (tests, non-prompt docs, `docs/plans/*.html` and read-only entries excluded) is unchanged, and so are the other three conditions, including the risk-flag condition that keeps a flagged record on the audited plan path. The plan-lane predicate reads the gate through `evaluateMicroPlanGate`, so it follows the new limit with no change to `plan-lane.js` itself. Only its tests move.\n\n### Key Files\n\n- `plugin/bin/lib/issues/micro-plan-gate.js` — modify (constant and header comment)\n- `plugin/skills/build/micro-plan.md` — modify (title and opening sentence)\n- `plugin/skills/_shared/ceremony-profile.md` — modify (the exemption row quoting the micro-plan title)\n- `tests/bin-lib/issues/micro-plan-gate.test.js` — modify (limit assertions, three-pass and four-fail cases, the #5396 shape)\n- `tests/bin-lib/driver/plan-lane.test.js` — modify (AC2.1 limit case)\n- `plugin/bin/lib/driver/plan-lane.js` — read only, no change\n\n## Gotchas\n\n- Decisions made while shaping this record in an autonomous lane (maintainer-authorized 2026-11-25), each the shaping agent's call:\n  - **Direction:** raise the gate's limit. The record's other two directions were not taken. A \"same-shape edits as one unit\" rule is a property of the diff, which does not exist yet when the gate reads Key Files at plan time. A lazy split of `plan-authoring-checks.md` only helps the full plan path, and #4765 already tracks that file's rail split.\n  - **Bound 3:** matches `EXPRESS_MAX_KEY_FILES`, the bound below which the shipped express lane already builds with no plan, so the micro-plan path is never stricter than a lane that does less checking.\n  - **Override of #5396's last line** (\"A record with two genuine source modules should still fall through\"): overridden for the reason above. The micro-plan path still gives such a record an SDD task review and `/claude-tweaks:review`'s lenses.\n  - **Ceremony fencing rejected:** the Current State survey measured under 10% of `build/dispatch.md` as fast-lane-only prose, keyed on task count and locked inside two long lines.\n- The 6.168.0 incident's own shape (three config files plus one skill file, four counted) still falls through after this change. It passes only once #5396's config-file exclusion also lands. This record does not change the counting rule.\n- More records now read as the `micro-plan` lane in `/claude-tweaks:specify`'s plan-lane predicate, so `plan-at-specify` skips writing a plan for them. That is intended: `/build` composes the same micro-plan for them.\n- #6076 (open, `ready`) adds a CLI that runs `evaluateMicroPlanGate` for `/build` and edits the same `micro-plan.md` and `micro-plan-gate.js`. One of its acceptance criteria expects two implementation files to print `\"passes\":false`. Whichever of the two lands second moves that fixture past the new limit (four implementation files), so the two records' tests agree.\n- Do not import `EXPRESS_MAX_KEY_FILES`. It counts every Key File, tests included, so coupling the two would make the express bound silently move this gate.\n- `tests/build-micro-plan-code-twin.test.js` refuses prose that restates the limit (for example \"names at most 1 implementation file\"), so the reworded title must not carry a number either.\n\n## Original request\n\nbuild: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test\n\n**Summary:** On a `ceremony: fast-lane`, `size: low` record whose whole change was three one-line config additions plus one skill-doc bullet, the orchestrating agent reached 312,673 context tokens by the end of `build`, crossing the 200,000 cap and forcing a handoff of test/review/polish to a fresh agent.\n\n**Kind:** Gap\n\n**Affected component:** skills/build (procedure reads), skills/flow context cap\n\n**Use case:** Fast-lane exists to make small records cheap. Here the fixed cost of loading the procedure the orchestrator must follow exceeded the cap on its own, before any of the change's own complexity, so every fast-lane run of similar size hands off mid-pipeline (the handed-off agent spent another ~255k tokens and ~6.5 minutes). Most of the context was procedure reads: the composed `worktree-setup` bundle (~52 KB), `build/dispatch.md` (~44 KB), `build/plan-authoring-checks.md` (~51 KB), parts of `test/verification.md` (~47 KB), plus `flow/SKILL.md`, `build/SKILL.md`, the SDD skill and its reviewer template. The micro-plan gate also routed the record to the full writing-plans + plan-authoring-checks path because it counted the three one-line config edits as three implementation files (the config-file part is already tracked in #5396). Possible directions, not prescriptive: a fast-lane digest for `/build` like `/wrap-up`'s `_shared/fast-lane-digest.md`, so a fast-lane build loads only the rows it runs; counting small same-shape edits across files as one implementation unit; lazy-splitting `plan-authoring-checks.md` so a single-task plan reads only the checks that can apply.\n\n**Definition:** Needed — three viable directions (a build fast-lane digest, a same-shape-edit unit in the micro-plan gate, lazy-splitting plan-authoring-checks) with no preference stated.\n\n**Plugin version:** 6.168.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-2e26818f -->\n",
-        "createdAt": "2026-11-14T22:14:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5463,
-        "state": "OPEN",
-        "title": "build: a fast-lane build of a ~15-line, four-file change crosses flow's 200k context cap before test",
-        "updatedAt": "2026-11-25T07:23:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #5512\nRisk-flags: none\n\n## Overview\n\nMake every remaining staged-record-proposal producer pass `keyFiles` to `specShapedBody`, so the records a run files carry a `### Key Files` section. The console-time bundler (sibling sub-issue, part of the same decomposition) groups a run's follow-up proposals by shared Key Files; a proposal with no Key Files can only ever be a singleton, so the bundler bundles little until the producers pass them. A Key Files list also lets `/build`'s micro-plan gate (condition 3) and `/dispatch`'s file-overlap grouping read the record.\n\n#5512 (open, ready) owns `/review`'s Defer bullet and staged follow-up in `plugin/skills/review/step3-routing.md`; this record never touches that file. `plugin/skills/wrap-up/leftover-routing.md` already passes `keyFiles` (#2975). This record covers the remaining producers named in #5512's own Gotchas list, plus `plugin/skills/wrap-up/claude-md-curation.md`'s over-budget queue write (found by a repo-wide `specShapedBody` sweep at specify time).\n\n**Complexity:** Low\n**Estimated tasks:** 4\n\n## Non-Goals\n\n- `plugin/skills/review/step3-routing.md` (`/review`'s Defer and staged follow-up) — owned by #5512.\n- Can't-tell filings composed by `plugin/bin/lib/console/finding-filing.js` — they are not bundler input (the bundler sub-issue's Non-Goals) and keep their own path.\n- Any change to `specShapedBody` itself (`plugin/bin/lib/issues/record-payload.js`), to the bundler, or to grouping.\n- Inventing file paths: a producer with no file in hand passes no `keyFiles`, and its record stays a singleton.\n- `plugin/skills/release/disposition.md` (lines 58, 65): its Defer path composes \"per `review/step3-routing.md`'s Defer bullet\", so it inherits #5512's change and needs no edit here. The other `specShapedBody` mentions in `plugin/skills` (`_shared/autonomy-ceiling.md`, `_shared/deferral-gate.md`, `flow/materialize.md`, `wrap-up/review-console.md` line 123) are references, not producers (classified at specify time).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none | — |\n\n## Current State\n\n- `plugin/bin/lib/issues/record-payload.js` — `specShapedBody({ …, keyFiles })` (#2975): `keyFiles?: Array<{ path, change? }>` renders `## Technical Approach` / `### Key Files` after `## Release Note`, one `` - `{path}` — {change} `` bullet per entry. `keyFilePathProblem` throws on an absolute (posix or win32) path, a drive prefix, a `..` segment, a trailing slash, a backtick or a line break. It does **not** reject a `:line` suffix — `src/x.js:10` passes and becomes a Key File no other record shares (verified at specify time, lines 232-245).\n- `plugin/skills/reflect/SKILL.md` line 165 — the wording to copy: \"`keyFiles: [{ path, change }]` = the files the finding names, repo-relative file paths (no directories; drop any out-of-repo file) and omitted when none are named, so build's micro-plan gate and dispatch's file-overlap grouping can read the record\".\n- `plugin/skills/wrap-up/leftover-routing.md` line 55 — already lists `keyFiles?` in its compose args.\n- `plugin/skills/_shared/ledger-format.md` lines 271-275 — Phase 3's `Defer` (stages `staged/ledger-record-{slug}.md`; `currentState` = \"the ledger item's evidence and affected files\"), `Keep` (\"same composition, backlog landing\"), the no-run-dir direct create, and `Acknowledge` (ops items) all compose via `specShapedBody` with no `keyFiles`.\n- `plugin/skills/wrap-up/review-console-appendix.md` lines 100-130 — the SDD ruling `file-record` (ratify) composition (line 107) and `reverse` composition (line 124) use `specShapedBody` with no `keyFiles`; both stage `staged/ledger-record-sdd-ruling-{N}.md`.\n- `plugin/skills/wrap-up/residue-sweep.md` line 175 — \"composes exactly as ledger Phase 3's branches do (`_shared/ledger-format.md`) — `specShapedBody`…\"; no `keyFiles` of its own.\n- `plugin/skills/visual-review/browser-review.md` line 247 — Defer \"Compose via `specShapedBody` exactly as review Step 3's Defer does (`review/step3-routing.md`)\"; no `keyFiles`.\n- `plugin/skills/wrap-up/claude-md-curation.md` lines 21-25 — the `claudeMdOverBudget` queue write composes via `specShapedBody` from `plugin/bin/lib/wrap-up/facts.js`'s `claudeMdBudgetTargets` (`[{path, lines, budget}]`); no `keyFiles`.\n- `plugin/skills/reflect/full-mode.md` line 397 — Defer composes via `specShapedBody` (insight → Current State, …, footer `_Filed by \\`reflect\\` via specShapedBody._`); no `keyFiles`.\n- Tests: `tests/build-micro-plan-conformance.test.js` lines 127-133 — the AC6.1 loop over `['plugin/skills/capture/SKILL.md', 'plugin/skills/reflect/SKILL.md', 'plugin/skills/wrap-up/leftover-routing.md']` asserts each file matches `/keyFiles: \\[\\{ path, change \\}\\]/` and `/repo-relative/`.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/ledger-format.md`: Phase 3's `Defer`, `Keep`, no-run-dir direct create and `Acknowledge` compositions each name `keyFiles: [{ path, change }]` in their own compose list = the ledger item's affected files. The path rules may live in one shared sentence each branch cites: repo-relative file paths only, taken from explicit file tokens the source names (never guessed from prose), with a trailing `:{digits}` or `:{digits}-{digits}` line suffix and a `#symbol` suffix stripped (the same strip #5512 uses), no directories, out-of-repo files dropped, and `keyFiles` omitted when the item names no file. \"Same path rules\" below means exactly this rule.\n- [ ] `plugin/skills/wrap-up/review-console-appendix.md`: the `file-record` (ratify) and `reverse` compositions pass `keyFiles: [{ path, change }]` = the files the ruling's finding names, same path rules.\n- [ ] `plugin/skills/wrap-up/residue-sweep.md`: the composition passes `keyFiles: [{ path, change }]` = the residue item's files, same path rules (stated in this file, not only inherited from `ledger-format.md`).\n- [ ] `plugin/skills/visual-review/browser-review.md`: the Defer composition passes `keyFiles: [{ path, change }]` = the source files the finding maps to, same path rules; omitted when the finding names only a route or URL.\n- [ ] `plugin/skills/reflect/full-mode.md`: the Defer composition passes `keyFiles: [{ path, change }]` = the files the insight names, same path rules.\n- [ ] `plugin/skills/wrap-up/claude-md-curation.md`: the `claudeMdOverBudget` composition passes `keyFiles: [{ path, change }]` = each over-budget target's `path` from `claudeMdBudgetTargets`, same path rules.\n- [ ] `tests/build-micro-plan-conformance.test.js`: the AC6.1 producer list gains the six paths above.\n\n## Acceptance Criteria\n\n1. For each of the six producer files above, `grep -F 'keyFiles: [{ path, change }]' {file}` prints at least one line, and the file text matches `/repo-relative/`. (Control: before this change none of the six matches the `grep -F`, checked at specify time.)\n2. `grep -cF 'keyFiles: [{ path, change }]' plugin/skills/_shared/ledger-format.md` prints at least 4 (one per branch: `Defer`, `Keep`, direct create, `Acknowledge`) and the same count on `plugin/skills/wrap-up/review-console-appendix.md` prints at least 2 (`file-record`, `reverse`). (Control: both print 0 at specify time.)\n3. Each producer's path rule (or the shared sentence it cites) names the `:{digits}` / `:{digits}-{digits}` / `#symbol` strip and the omit-when-no-file rule.\n4. `node --test tests/build-micro-plan-conformance.test.js` runs an `AC6.1:` case for each of the six new paths, in addition to the three existing ones, and every case passes.\n5. Reverting any one of the six producer edits while keeping the test edit makes that file's `AC6.1:` case fail — the builder runs this revert proof once per file and quotes the failing output.\n6. The build's diff (`git diff --name-only {base}...HEAD`) does not include `plugin/skills/review/step3-routing.md`.\n\n## Release Note\n\nFollow-up records filed from ledger rulings, residue sweeps, visual reviews, reflections and CLAUDE.md budget checks now list the files they touch, so related follow-ups can be grouped and built together.\n\n## Technical Approach\n\nCopy `plugin/skills/reflect/SKILL.md`'s wording into each producer, adding the suffix strip, with the per-producer source of the file list named in Deliverables. The AC6.1 loop's two regexes are whole-file matches, so the per-branch counts (AC 2) and the revert proof (AC 5) are what show each branch is covered and each new case discriminates.\n\n### Data / API Surface\n\nNo code change: `specShapedBody`'s existing `keyFiles?: Array<{ path, change? }>` parameter, `change` defaulting to \"modify\".\n\n### Key Files\n\n- `plugin/skills/_shared/ledger-format.md` — Phase 3 `Defer` / `Keep` / direct-create / `Acknowledge` pass `keyFiles`\n- `plugin/skills/wrap-up/review-console-appendix.md` — SDD ruling `file-record` and `reverse` compositions pass `keyFiles`\n- `plugin/skills/wrap-up/residue-sweep.md` — residue composition passes `keyFiles`\n- `plugin/skills/visual-review/browser-review.md` — Defer composition passes `keyFiles`\n- `plugin/skills/reflect/full-mode.md` — Defer composition passes `keyFiles`\n- `plugin/skills/wrap-up/claude-md-curation.md` — over-budget queue write passes `keyFiles`\n- `tests/build-micro-plan-conformance.test.js` — AC6.1 producer list gains the six paths\n\n## Gotchas\n\n- #5512 also appends to the same AC6.1 list (adding `plugin/skills/review/step3-routing.md`). Whichever lands second gets a one-line textual conflict on that array: keep both entries. This is why the two are Related, not Blocked-by (policy `overlap: companion`'s default would be Blocked-by; overridden deliberately at decomposition because the only shared file is that one list).\n- Keep the `ledger-format.md` addition small: one shared path-rule sentence plus a short `keyFiles` clause in each branch's compose list. The file is 45,152 B, 2,098 B under the 47,250 B headroom flag.\n- `specShapedBody` accepts `src/x.js:10` as a Key File path without throwing, but `groupByFileOverlap` (`plugin/bin/lib/issues/grouping.js`) then treats it as a different file from `src/x.js`, so the record never groups. The strip is the producer's job.\n- A bare directory entry (`plugin/skills/`) throws in `specShapedBody` (trailing slash) and contributes nothing to grouping anyway — pass file paths only.\n- Conformance tests pin prose: run the full suite (`npm test -- --full`) before merging, not only the impact-selected set (project memory: full suite for markdown PRs).\n- `plugin/skills/reflect/full-mode.md` is 39,949 B — under the 47,250 B headroom flag, so no rail trimming is expected.\n- The bundler that consumes these Key Files is a sibling sub-issue of this record's parent; this record has no dependency on it and can land first.\n\n\n<!-- work-fingerprint: deferral-bundling:pass-key-files-from-the-remaining-record-proposal-producers -->\nwork-fingerprint: deferral-bundling:pass-key-files-from-the-remaining-record-proposal-producers",
-        "createdAt": "2026-11-25T07:38:29Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6282,
-        "state": "OPEN",
-        "title": "Pass Key Files from the remaining record-proposal producers so a run's follow-ups can be grouped by file",
-        "updatedAt": "2026-11-25T07:48:14Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
@@ -10828,12 +9609,6 @@
   ],
   "grouping": "per-record+express+driver",
   "bundles": [
-    {
-      "records": [
-        5463,
-        6282
-      ]
-    },
     {
       "records": [
         3765,
