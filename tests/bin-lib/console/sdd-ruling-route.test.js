@@ -128,7 +128,8 @@ test('AC4.1: CLI exits 1 on a missing --file path and 2 on a malformed call, pri
   const missing = runCliSync(CLI, ['--file', path.join(dir, 'nope.md')]);
   assert.strictEqual(missing.code, 1);
   assert.strictEqual(missing.stdout, '');
-  assert.ok(missing.stderr.length > 0);
+  assert.ok(missing.stderr.includes(path.join(dir, 'nope.md')), missing.stderr);
+  assert.ok(missing.stderr.includes('ENOENT'), missing.stderr);
   const none = runCliSync(CLI, []);
   assert.strictEqual(none.code, 2);
   assert.strictEqual(none.stdout, '');
@@ -139,6 +140,14 @@ test('AC4.1: CLI exits 1 on a missing --file path and 2 on a malformed call, pri
     assert.strictEqual(r.stdout, '', argv.join(' '));
     assert.ok(r.stderr.includes('usage:'), argv.join(' '));
   }
+});
+
+test('an empty --file value exits 1 with nothing on stdout and a non-empty stderr', () => {
+  const dir = scratchDir('sdd-ruling-route-cli-');
+  const r = runCliSync(CLI, ['--file', ''], { cwd: dir });
+  assert.strictEqual(r.code, 1, r.stderr);
+  assert.strictEqual(r.stdout, '');
+  assert.ok(r.stderr.length > 0);
 });
 
 test('spawn smoke: script entry exits 0 and prints console', () => {
