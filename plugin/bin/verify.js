@@ -1012,7 +1012,9 @@ async function main() {
       else ciResults.push(await retryHook(ciResult, retryCtx));
     }
   }
-  const noVerdict = ciAttempts.find((a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED && (onRequest || a.fallback === HEAD_NOT_PUSHED));
+  // A CI attempt CI could not answer (not skipped by --local, not left unconsulted).
+  const isCiNoAnswer = (a) => !a.used && a.fallback !== LOCAL_REQUESTED && a.fallback !== NOT_CONSULTED;
+  const noVerdict = ciAttempts.find((a) => isCiNoAnswer(a) && (onRequest || a.fallback === HEAD_NOT_PUSHED));
   if (noVerdict) {
     // No check ran, so no report, no stamp and no slot: a report left by an
     // earlier run would read as this run's answer.
@@ -1043,8 +1045,7 @@ async function main() {
   // #5800: a suite CI could not answer runs here without the key — say so before
   // any check starts. Held to this point so an exit-3 run never prints one.
   if (!onRequest) {
-    for (const a of ciAttempts) {
-      if (a.used || a.fallback === LOCAL_REQUESTED || a.fallback === NOT_CONSULTED) continue;
+    for (const a of ciAttempts.filter(isCiNoAnswer)) {
       process.stderr.write(`verify.js: CI could not answer suite "${a.suite}" (${a.fallback}) — running it on this machine\n`);
     }
   }
