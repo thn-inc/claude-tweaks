@@ -32,10 +32,11 @@ const USAGE =
   + '\nnote: under --scope, --baseline-cmd is optional and may name a declared suite — each '
   + 'declared suite falls back to the declaration\'s retry.{suite} template (#3511).'
   + '\nnote: --cwd must stay inside the checkout verify.js runs from (a subdirectory, e.g. a monorepo package); a --cwd in another repository or worktree is a usage error (exit 2), since the pass stamp and report always belong to the invoking checkout (#3799).'
-  + '\nnote: --local runs every selected suite on this machine and never consults a declared ci source; under a declaration with localRuns "on-request" a CI-declared suite runs here only with it, a --scope run CI cannot answer exits 3 (no verdict yet, never a test failure), and a run naming a CI-declared suite with neither --scope nor --local exits 2 (#5369).';
+  + '\nnote: --local runs every selected suite on this machine and never consults a declared ci source; under a declaration with localRuns "on-request" a CI-declared suite runs here only with it, a --scope run CI cannot answer exits 3 (no verdict yet, never a test failure), under any declaration a --scope run whose HEAD GitHub does not know (head-not-pushed) exits 3 too (#5800), and a run naming a CI-declared suite with neither --scope nor --local exits 2 (#5369).';
 
 // #5369: exit code for "no verdict yet" — a --scope run whose CI-declared suite
-// CI cannot answer. Never a test failure (1) and never a usage error (2).
+// CI cannot answer, or (any declaration, #5800) whose HEAD GitHub does not know
+// (head-not-pushed). Never a test failure (1) and never a usage error (2).
 const EXIT_NO_VERDICT = 3;
 
 const VALUE_FLAGS = new Set(['--cmd', '--cmd-env', '--cmd-timeout', '--json', '--log-dir', '--count-stamp', '--git-dir', '--scope', '--base', '--integration-branch', '--run', '--cwd', '--baseline', '--baseline-cmd', '--default-suite-slots']);
