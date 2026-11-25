@@ -76,7 +76,7 @@ Line 53 becomes `if (base === null && decl && (decl.impact || decl.ci)) base = f
 
 - [ ] **Step 4: Fix the #3511 fixture in `tests/bin-lib/verify/cli-scope-integration.test.js`**
 
-In `scopedBaselineRepo`, change the `src/**` rule to `{ match: 'src/**', suites: '*', static: true }` so the branch's own diff selects every suite by rule (`suites` in declared order `unit`, `other`; `types`/`lint` are undeclared, so `static: true` adds no check). Update the AC1.1 comment ("No prior stamp anchor → selectScope forces mode full") to say the `src/**` rule selects every suite. Keep every existing assertion, including `report.scope.suites` deepStrictEqual `['unit', 'other']`.
+In `scopedBaselineRepo`, change the `src/**` rule to `{ match: 'src/**', suites: '*', static: true }` so the branch's own diff selects every suite by rule (`suites` in declared order `unit`, `other`; `types`/`lint` are undeclared, so `static: true` adds no check). Update the AC1.1 comment ("No prior stamp anchor → selectScope forces mode full") to say the run is still unanchored and `full` (this declaration has neither `ci` nor `impact`, so the merge-base never anchors it), and the `src/**` rule also selects both suites by itself (spec's Plan Review Clarifications, Reading A). Do not add a `ci` block to this fixture. Keep every existing assertion, including `report.scope.suites` deepStrictEqual `['unit', 'other']`.
 
 - [ ] **Step 5: AC 4 CLI case, and the `ci-cli.test.js` fixture**
 
