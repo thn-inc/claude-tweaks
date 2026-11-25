@@ -45,7 +45,7 @@ const { composeStamp, writeStamp, readStamp: readVerifyStamp, anchorOf } = requi
 const { readDeclaration, generatedExemption, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readSuiteStamps, writeSuiteStamps, composeSuiteCoverage } = require('./lib/verify/suite-stamp');
 const {
-  changedFiles, resolveBase, usableAnchor, mergeNarrowing, ChangedFilesError,
+  changedFiles, resolveBase, usableAnchor, scopedPassBase, mergeNarrowing, ChangedFilesError,
 } = require('./lib/verify/changed-files');
 const { selectScope } = require('./lib/verify/scope');
 const { checkoutImpactContext } = require('./lib/verify/impact');
@@ -721,6 +721,26 @@ async function main() {
         }
       }
 
+      // #5075: a delta since a clean passing non-full stamp (the scoped pass the run
+      // before this one wrote) that holds only bookkeeping paths (every one selecting no
+      // suite) needs no suite: it is classified from that pass's sha with no impact
+      // context, so an impact-rule path reads map-missing, selects its suite and never
+      // reads none. A `none` there takes the pass's sha as `base`; sel.base stays the
+      // anchor, so fullSha does not move. Any other delta falls through to the code below.
+      let pass = null;
+      const passBase = scopedPassBase({ stamp: priorStamp, anchor: anchorSha });
+      if (passBase) {
+        const short = changedFiles({ base: passBase });
+        const passSel = selectScope({ decl, files: short.files, stamp: priorStamp });
+        if (passSel.mode === 'none' && short.files.length > 0) pass = { base: passBase, files: short.files, sel: passSel };
+      }
+      if (pass) {
+        resolvedBase = pass.base;
+        files = pass.files;
+        sel = pass.sel;
+        cmds = [];
+        if (decl.impact) impactCtx = { loaded: false };
+      } else {
       // #4024: an impact declaration also needs each changed path's A/M/D status.
       const statusCapture = {};
       const changed = changedFiles({ base: resolvedBase, withStatus: Boolean(decl.impact), capture: statusCapture });
@@ -849,6 +869,7 @@ async function main() {
           scopeUsageExit(`--scope: mode ${sel.mode} requires --cmd for: ${missing.join(', ')}`);
           return;
         }
+      }
       }
     }
     // #3022: a --cmd-env naming neither a --cmd nor a declared suite is a
@@ -1455,7 +1476,8 @@ async function main() {
   // declaration that this --cmd set is deliberately partial. The write is
   // best-effort like the count stamp: a stamp failure never fails the run.
   // Under --scope the stamp's scope names exactly what ran; only a full run
-  // advances fullSha (#1922).
+  // advances fullSha (#1922); a `none` over a clean scoped pass's own delta takes
+  // that pass's sha as `base` (#5075), fullSha unmoved.
   const fullSet = results.every((c) => !c.skipped);
   // M6 (review): a --scope run at an unchanged HEAD (clean tree, same sha as
   // the prior FULL stamp) never downgrades that stamp. Its own selection

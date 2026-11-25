@@ -6,7 +6,9 @@
 // The anchoring invariant lives here: every non-full mode's base is the
 // stamp's fullSha (or, for an impact declaration with no stamp, the caller's
 // integration-branch merge-base, fallbackBase), never a prior scoped sha, so
-// scoped runs never chain.
+// scoped runs never chain. One exception (#5075), made by verify.js, not here:
+// a delta since a clean scoped pass that selects `none` is stamped with that
+// pass's sha as `base`; fullSha, and so this base, still never moves.
 //
 // Test-impact selection (#4024), gated on decl.impact: a file matched by an
 // impact rule goes to impact.js's selectImpactTests, so impact.suite runs only
