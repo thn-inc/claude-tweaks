@@ -623,12 +623,14 @@ function recheckRemediesOf(consoles) {
     for (const item of c.items) {
       const id = recheckStagedId(item);
       if (!id) continue;
-      if (item.resolution === RECHECK_APPROVED_RESOLUTION) execute.push(recheckExecuteCommand({ consoleDir, id }));
+      if (item.resolution === RECHECK_APPROVED_RESOLUTION) {
+        execute.push(recheckExecuteCommand({ consoleDir, id, localMerged: Boolean(item.approval) && item.approval.pr === 'local' }));
+      }
       else if (item.resolution === 'pending' && !item.approval) approve.push(recheckApproveCommand({ consoleDir, id }));
     }
   }
   return [
-    execute.length ? `execute the approved re-check proposal(s) after the merge: ${execute.join('; ')} (a local merge adds --local-merged once the push landed)` : '',
+    execute.length ? `execute the approved re-check proposal(s) after the merge: ${execute.join('; ')}` : '',
     approve.length ? `approve a staged re-check proposal, then execute it after the merge: ${approve.join('; ')}` : '',
   ].filter(Boolean);
 }

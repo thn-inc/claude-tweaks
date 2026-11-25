@@ -180,7 +180,9 @@ function outcomeFor(checked) {
   return satisfied === checked.length ? 'close' : 'narrow';
 }
 
-function composeProposal({ number, title, outcome, checked, bodyHash, updatedAt, runId }) {
+// `runHead` (optional): the run branch's head commit the candidates diff was taken at. `approve` falls back to it
+// when the run is torn down and no live head can be read, so a local merge can still be proved later.
+function composeProposal({ number, title, outcome, checked, bodyHash, updatedAt, runId, runHead }) {
   const label = outcome === 'close' ? 'Close' : 'Narrow';
   const lines = [
     `Title: ${label} #${number}: ${title}`,
@@ -189,6 +191,7 @@ function composeProposal({ number, title, outcome, checked, bodyHash, updatedAt,
     `Body-hash: ${bodyHash}`,
     `Updated-at: ${updatedAt}`,
     `Run: ${runId}`,
+    ...(typeof runHead === 'string' && runHead !== '' ? [`Run-head: ${runHead}`] : []),
     '',
     '## Comment',
     '',
@@ -232,6 +235,7 @@ function parseProposal(text) {
     action: head.Action,
     bodyHash: head['Body-hash'],
     updatedAt: head['Updated-at'],
+    runHead: /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(head['Run-head'] || '') ? head['Run-head'] : null,
     comment: lines.slice(at + 1).join('\n').trim(),
   };
 }

@@ -110,7 +110,10 @@ test('candidates: git is asked for both diffs with unquoted paths, no color, fix
   seed(f, [rec(10, ['src/a.js'])]);
   const calls = [];
   go(f, candidatesArgv(f), { git: fakeGit(calls) });
-  assert.equal(calls.length, 2);
+  // Two diffs, then one read of the head commit for the proposals' Run-head header.
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[2], ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']);
+  calls.pop();
   for (const args of calls) {
     assert.deepEqual(args.slice(0, 2), ['-c', 'core.quotePath=false']);
     assert.ok(args.includes('--no-color'));
@@ -1078,4 +1081,70 @@ test('A8: a marker write that fails after the comment posted says so and holds t
   assert.doesNotMatch(skipLines(f)[0], /the comment failed/);
   assert.equal(readConsole(f).items[0].resolution, 'pending');
   assert.deepEqual(r.json.held, [{ id: ID, reason: 'marker-write-failed' }]);
+});
+
+// ---- targeted fix: torn-down local-merge runs (#6284) ----------------------------------------------------------
+
+test('candidates records the checkout HEAD and stage writes it as the proposal Run-head header', () => {
+  const f = fixture();
+  seed(f, [rec(10, ['src/a.js'])]);
+  const calls = [];
+  const base = fakeGit(calls);
+  const git = (args, opts) => (args[0] === 'rev-parse' ? `${HEAD}\n` : base(args, opts));
+  assert.equal(go(f, candidatesArgv(f), { git }).code, 0);
+  assert.equal(f.cands().head, HEAD);
+  assert.ok(calls.length >= 2);
+  const v = { status: 'DONE', verdicts: [{ deliverable: 1, verdict: 'satisfied', quote: 'const widget = makeWidget();' }] };
+  assert.equal(go(f, writeVerdicts(f, { 10: v })).code, 0);
+  const text = fs.readFileSync(path.join(f.runDir, 'staged', 'followup-recheck-10.md'), 'utf8');
+  assert.match(text, new RegExp(`^Run-head: ${HEAD}$`, 'm'));
+  assert.equal(parseProposal(text).runHead, HEAD);
+});
+
+test('a torn-down local-merge run (worktree null after close-run) approves from the staged Run-head, and execute holds until it is an ancestor', () => {
+  const f = fixture();
+  const { env, g, head } = realRepo(f);
+  stageProposal(f, composeProposal({
+    number: 7, title: 'Record 7', outcome: 'close', checked: [{ item: 'Do the thing', verdict: 'satisfied', quote: 'makeWidget()' }],
+    bodyHash: sha(RECORD_BODY), updatedAt: '2026-11-25T00:00:00Z', runId: 'run-1', runHead: head,
+  }));
+  fs.writeFileSync(path.join(f.runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: null, worktreeAtClose: '/gone/worktree' }));
+  fs.writeFileSync(path.join(f.runDir, 'config.yml'), 'mode: auto\nintegration-model: local-merge\n');
+  const over = { git: realDeps.git, env };
+  const r = task5(f, ['approve', '--run', f.runDir, '--id', ID], over);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readConsole(f).items[0].approval.pr, 'local');
+  assert.equal(readConsole(f).items[0].approval.headSha, head);
+  const held = fakeGh();
+  assert.equal(exec(f, held, ['--local-merged'], over).code, 0);
+  assert.equal(held.writes().length, 0);
+  assert.match(skipLines(f)[0], /not-merged/);
+  g('merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
+  const merged = fakeGh();
+  assert.equal(exec(f, merged, ['--local-merged'], over).code, 0);
+  assert.equal(writesOf(merged, 'close').length, 1);
+  assert.equal(readConsole(f).items[0].resolution, 'applied');
+});
+
+test('a local-merge approval with no live head and a missing or malformed Run-head exits 3 and writes nothing', () => {
+  for (const runHead of [undefined, 'not-a-sha']) {
+    const f = fixture();
+    const text = proposal();
+    stageProposal(f, runHead === undefined ? text : text.replace(/^Run: (.*)$/m, `Run: $1\nRun-head: ${runHead}`));
+    fs.writeFileSync(path.join(f.runDir, 'run-state.json'), JSON.stringify({ status: 'closed', worktree: null }));
+    fs.writeFileSync(path.join(f.runDir, 'config.yml'), 'integration-model: local-merge\n');
+    const r = task5(f, ['approve', '--run', f.runDir, '--id', ID]);
+    assert.equal(r.code, 3, `${runHead}: ${r.err}`);
+    assert.equal(fs.existsSync(consolePath(f)), false);
+  }
+});
+
+test('execute hands deps.env to integrationBranch, and realDeps.integrationBranch takes that env', () => {
+  const f = fixture(); stageProposal(f); seedApproved(f, 'local');
+  const env = { ...process.env, MARKER: 'x' };
+  const seen = [];
+  assert.equal(exec(f, fakeGh(), ['--local-merged'], { env, integrationBranch: (root, e) => { seen.push(e); return 'main'; } }).code, 0);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], env);
+  assert.equal(realDeps.integrationBranch.length, 2);
 });

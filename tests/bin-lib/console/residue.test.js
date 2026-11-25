@@ -714,12 +714,13 @@ test('AC16.1: that line carries the paste-ready execute command', () => {
   recheckConsole(dir, [recheckItem(412, 'pending'), recheckItem(9, 'pending', 'local')], { 'followup-recheck-412.md': recheckStaged(412) });
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
   assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-412.md`), lines.join('\n'));
-  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-9.md   (local merge: add --local-merged only after the push landed)`), lines.join('\n'));
+  assert.ok(lines.includes(`    execute: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-9.md --local-merged   (local merge: run it only after the push landed)`), lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('re-run ')), 'no console-filings re-run for this kind');
 });
 
 test('C1: an unapproved pending followup-recheck item (the unattended human-call) prints a paste-ready approve line, then its execute line', () => {
   const dir = tmpRun();
+  fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify({ pr: { number: 12 } }));
   recheckConsole(dir, [{ id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' }], { 'followup-recheck-5.md': recheckStaged(5) });
   const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
   const approveAt = lines.indexOf(`    approve: node "/p/bin/recheck-followups.js" approve --run "${dir}" --id followup-recheck-5.md`);
@@ -728,6 +729,17 @@ test('C1: an unapproved pending followup-recheck item (the unattended human-call
   assert.ok(executeAt > approveAt, lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('--pr')), 'approve derives the PR from the run itself');
   assert.ok(lines.some((l) => l.includes('--ack')), 'the ack line still prints');
+});
+
+test('C1: the execute line of an unapproved proposal in a local-merge run (config pin, or no PR) carries --local-merged', () => {
+  for (const [state, config] of [[{ pr: { number: 12 } }, 'integration-model: local-merge\n'], [{ status: 'closed', worktree: null }, null]]) {
+    const dir = tmpRun();
+    fs.writeFileSync(path.join(dir, 'run-state.json'), JSON.stringify(state));
+    if (config) fs.writeFileSync(path.join(dir, 'config.yml'), config);
+    recheckConsole(dir, [{ id: 'followup-recheck-5.md', section: 'Queue writes', resolution: 'pending', reason: 'followup-recheck-human-call' }], { 'followup-recheck-5.md': recheckStaged(5) });
+    const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p' });
+    assert.ok(lines.includes(`    then after the merge: node "/p/bin/recheck-followups.js" execute --run "${dir}" --id followup-recheck-5.md --local-merged   (local merge: run it only after the push landed)`), lines.join('\n'));
+  }
 });
 
 test('I3: an approved PR-console q-N row reads its staged id from stagedFile for its reason and its execute line', () => {

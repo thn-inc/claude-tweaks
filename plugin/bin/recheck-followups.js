@@ -50,6 +50,7 @@ const { backlogHubPaths } = require('./lib/issues/grouping');
 const {
   parseChangedPaths, selectCandidates, splitHunks, judgeHunks, checkVerdicts, outcomeFor, composeProposal, parseProposal, executionGuard,
 } = require('./lib/console/recheck');
+const { recheckRunFacts } = require('./lib/console/residue');
 
 const USAGE = 'usage: recheck-followups.js candidates --run <run-dir> (--records-json <path> | --local) --base <ref> [--own 1,2]\n'
   + '       recheck-followups.js stage --run <run-dir> --verdicts <path>\n'
@@ -92,7 +93,7 @@ const realDeps = {
     }));
   },
   controlMode: (runDir) => controlModeOn({ execFile: defaultExecFile, cwd: () => process.cwd(), runDir }),
-  integrationBranch: (root) => bareIntegrationName(resolveIntegrationBranch(root, null, { env: process.env })),
+  integrationBranch: (root, env) => bareIntegrationName(resolveIntegrationBranch(root, null, { env })),
   workBackend: (root) => readWorkBackend(root),
   writeStaged: writeStagedItem,
   appendEntries,
@@ -196,6 +197,12 @@ function candidates(o, target, deps) {
     hubPaths: backlogHubPaths(openRecords),
     ownRecords: o.ownNumbers,
   });
+  // The run branch head the diff was taken at, for each staged proposal's Run-head header; null when unreadable.
+  let head = null;
+  try {
+    const out = String(deps.git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], gitOpts(deps)) || '').trim();
+    head = SHA_RE.test(out) ? out : null;
+  } catch { head = null; }
   const hunksByPath = splitHunks(unified);
   const out = selected.candidates.map((c) => {
     const { hunks, overCap } = judgeHunks(hunksByPath, c.intersecting);
@@ -205,7 +212,7 @@ function candidates(o, target, deps) {
   });
 
   try {
-    deps.writeFile(path.join(target.dir, CANDIDATES_REL), `${JSON.stringify({ base: o.base, candidates: out }, null, 2)}\n`);
+    deps.writeFile(path.join(target.dir, CANDIDATES_REL), `${JSON.stringify({ base: o.base, head, candidates: out }, null, 2)}\n`);
     const ids = selected.candidates.map((c) => `#${c.number}`);
     const parts = [`${ids.length} candidate(s)${ids.length ? `: ${ids.join(', ')}` : ''}`];
     if (selected.overCap.length) parts.push(`over cap: ${selected.overCap.map((n) => `#${n}`).join(', ')}`);
@@ -255,7 +262,7 @@ function stage(o, target, deps) {
         id,
         sourcePath: `${id}.md`,
         content: composeProposal({
-          number: c.number, title: c.title, outcome, checked, bodyHash: c.bodyHash, updatedAt: c.updatedAt, runId,
+          number: c.number, title: c.title, outcome, checked, bodyHash: c.bodyHash, updatedAt: c.updatedAt, runId, runHead: cands.head,
         }),
       });
       deps.appendEntries({
@@ -316,23 +323,9 @@ function stagedIdOf(item) {
   return null;
 }
 
-// The run's own facts approve derives `pr` and the branch head from: run-state.json and config.yml's
-// `integration-model` pin, read from the run dir, or a multi-spec spec dir's parent (the parent owns the PR).
-function readRunFacts(dir, deps) {
-  const factsDir = /^spec-/.test(path.basename(dir)) ? path.dirname(dir) : dir;
-  let state = null;
-  try { state = JSON.parse(deps.readFile(path.join(factsDir, 'run-state.json'))); } catch { state = null; }
-  if (!state || typeof state !== 'object' || Array.isArray(state)) state = {};
-  let model = null;
-  try {
-    const m = /^integration-model:[ \t]*([A-Za-z-]+)[ \t]*(?:#.*)?$/m.exec(deps.readFile(path.join(factsDir, 'config.yml')));
-    model = m ? m[1] : null;
-  } catch { model = null; }
-  const prNumber = state.pr && /^\d+$/.test(String(state.pr.number)) ? String(state.pr.number) : null;
-  const pr = model === 'local-merge' || prNumber === null ? 'local' : prNumber;
-  const branch = typeof state.branch === 'string' ? state.branch : (state.pr && typeof state.pr.branch === 'string' ? state.pr.branch : null);
-  return { pr, worktree: typeof state.worktree === 'string' ? state.worktree : null, branch };
-}
+// The run's own facts approve derives `pr` and the branch head from — residue.js's recheckRunFacts, the same reader
+// the residue's execute lines use to decide --local-merged.
+const readRunFacts = (dir, deps) => recheckRunFacts(dir, deps.readFile);
 
 // The run branch's head commit: the run worktree's HEAD, else the recorded branch's local ref. null on any failure.
 function runHeadSha(facts, root, deps) {
@@ -355,7 +348,7 @@ function runHeadSha(facts, root, deps) {
 function localMergeLanded(headSha, root, deps) {
   if (typeof headSha !== 'string' || !SHA_RE.test(headSha)) return false;
   let branch;
-  try { branch = deps.integrationBranch(root); } catch { return false; }
+  try { branch = deps.integrationBranch(root, deps.env); } catch { return false; }
   if (typeof branch !== 'string' || branch === '' || branch.startsWith('-')) return false;
   try {
     deps.git(['merge-base', '--is-ancestor', headSha, `refs/heads/${branch}`], { cwd: root, env: deps.env });
@@ -400,9 +393,12 @@ function approve(o, target, deps) {
     throw new Fail(2, `--pr ${o.pr} disagrees with this run's own ${facts.pr === 'local' ? 'local merge' : `PR #${facts.pr}`} (run-state.json / config.yml); nothing written`);
   }
   const found = findGitRoot(target.dir);
-  const headSha = runHeadSha(facts, found ? found.dir : deps.cwd(), deps);
+  // The live run head first; a torn-down run (close-run nulls run-state.json's worktree, and a local run records no
+  // branch) falls back to the Run-head `stage` wrote into the proposal from the diffed checkout's HEAD.
+  const staged = parseProposal(stagedText);
+  const headSha = runHeadSha(facts, found ? found.dir : deps.cwd(), deps) || (staged && staged.runHead) || null;
   if (facts.pr === 'local' && headSha === null) {
-    throw new Fail(3, "could not read the run branch's head commit (run-state.json's worktree or branch) — a local-merge approval needs it to prove the merge later; nothing written");
+    throw new Fail(3, "could not read the run branch's head commit (run-state.json's worktree or branch, or the proposal's Run-head) — a local-merge approval needs it to prove the merge later; nothing written");
   }
   const at = new Date(deps.now()).toISOString();
   // `stagedHash` binds the approval to the text the human saw: `stage` overwriting the file later (a re-run) changes
