@@ -3,8 +3,10 @@
 // context bundle /claude-tweaks:review Step 3's lens agents read (step3-lens-dispatch.md).
 //   node bin/build-review-context.js mint [--run <run-dir>] [--print-dir]
 //   node bin/build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]
+//   node bin/build-review-context.js size-proxy --base <ref> --branch <ref> [--files-from <path>]
 // Prints a one-line JSON result on stdout ({dir} for mint; {dir, contextPath, bytes, files,
-// emptySections, oversizeSections, baselinePath, listenersPath} for build) by default.
+// emptySections, oversizeSections, baselinePath, listenersPath} for build; {files, lines, size, excluded} for
+// size-proxy — /review Step 2.5's bookkeeping- and lockfile-free size, #5148) by default.
 // `mint --print-dir` instead prints the bare directory path followed by a newline and nothing
 // else — a shell-substitution convenience; `--print-dir` is mint-only and rejected on build.
 // Exit 0 ok; 2 malformed invocation; 1 git/filesystem failure.
@@ -13,11 +15,13 @@
 // `build`'s per-file sections resolve against the repo toplevel, not process.cwd() (#3017).
 'use strict';
 
-const { resolveDir, buildContext } = require('./lib/review-context/build');
+const { resolveDir, buildContext, realGit } = require('./lib/review-context/build');
+const { collectSizeProxy } = require('./lib/review-context/size-proxy');
 
 const USAGE =
   'usage: build-review-context.js mint [--run <run-dir>] [--print-dir]\n' +
-  '       build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]\n';
+  '       build-review-context.js build --base <ref> --branch <ref> [--dir <dir>|--run <run-dir>] [--files-from <path>]\n' +
+  '       build-review-context.js size-proxy --base <ref> --branch <ref> [--files-from <path>]\n';
 
 function parseArgs(argv) {
   const o = { command: null, base: null, branch: null, dir: null, run: null, filesFrom: null, printDir: false, help: false };
@@ -40,6 +44,7 @@ function parseArgs(argv) {
 const realDeps = {
   resolveDir,
   buildContext,
+  sizeProxy: (o) => collectSizeProxy({ ...o, git: (a, x) => realGit(a, { stdio: ['ignore', 'pipe', 'pipe'], ...(o.cwd ? { cwd: o.cwd } : {}), ...(o.env ? { env: o.env } : {}), ...x }) }),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
   cwd: () => process.cwd(),
@@ -88,6 +93,19 @@ function runCommand(argv, deps) {
     }
     const dir = deps.resolveDir({ dir: o.dir, run: o.run, cwd: deps.cwd(), env: deps.env });
     const result = deps.buildContext({ base: o.base, branch: o.branch, dir, filesFrom: o.filesFrom, cwd: deps.cwd(), env: deps.env });
+    deps.stdout(JSON.stringify(result) + '\n');
+    return 0;
+  }
+  if (o.command === 'size-proxy') {
+    if (o.printDir) {
+      deps.stderr('build-review-context.js: --print-dir is mint-only\n' + USAGE);
+      return 2;
+    }
+    if (!o.base || !o.branch) {
+      deps.stderr('build-review-context.js: size-proxy requires --base and --branch\n' + USAGE);
+      return 2;
+    }
+    const result = deps.sizeProxy({ base: o.base, branch: o.branch, filesFrom: o.filesFrom, cwd: deps.cwd(), env: deps.env });
     deps.stdout(JSON.stringify(result) + '\n');
     return 0;
   }
