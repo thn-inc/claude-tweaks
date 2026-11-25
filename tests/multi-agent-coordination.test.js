@@ -1170,7 +1170,11 @@ test('/review Step 3.5: the proximity-coincidence line is never read as a conver
   const producerLine = REVIEW_SKILL.split('\n').find((line) => line.includes('Debate skipped: proximity coincidence'));
   const template = producerLine.match(/`([^`]*\{HH:MM:SS\}[^`]*)`/)[1];
   const line = `- ${template.replace('{HH:MM:SS}', '14:41:05')}`;
-  assert.doesNotMatch(line, /^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on /);
+  const { DEBATE_CONVERGED_RE } = require("../plugin/bin/lib/console/resolve");
+  assert.strictEqual(DEBATE_CONVERGED_RE.test(line), false);
+  const positive = REVIEW_SKILL.split("\n").find((l) => l.includes("Both `agree`")).match(/`(AUTO [^`]*Debate: cross-lens disagreement[^`]*)`/)[1];
+  const filled = `- ${positive.replace("{HH:MM:SS}", "14:41:05").replace(/\{path\}/g, "src/a.ts").replace(/\{line\}/g, "4")}`;
+  assert.strictEqual(DEBATE_CONVERGED_RE.test(filled), true, `positive control did not match: ${filled}`);
 });
 
 test('Mode 2 trigger states the substance gate', () => {
