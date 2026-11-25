@@ -229,7 +229,7 @@ const MULTISPEC_TEMPLATE = read('plugin', 'skills', 'flow', 'multispec-console-t
 test('AC2.1 #3513: review-console-interactive.md names reverse in the Override option description and refuses modify/revert on a ruling row', () => {
   const reverseLines = INTERACTIVE.split('\n').filter((l) => /reverse/.test(l));
   assert.ok(reverseLines.length >= 2, `grep -c reverse must be >= 2, got ${reverseLines.length}`);
-  assert.match(INTERACTIVE, ws('ratify/reverse {#} for an SDD ruling row; also the only path that drills Q#/M#/U# individually'));
+  assert.match(INTERACTIVE, ws('ratify/reverse {#} for an SDD ruling row; un-bundle {Q#} for a bundle row; also the only path that drills Q#/M#/U# individually'));
   assert.match(INTERACTIVE, ws('`modify {#}` and `revert {#}` on a ruling row are refused with the same notice, that verb in place of `skip`'));
 });
 
