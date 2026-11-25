@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-25T072901-record-5075/work/5075-spec.md` (record #5075)
+**Spec:** `.claude-tweaks/pipelines/2026-11-25T074303-record-5075/work/5075-spec.md` (record #5075; its Decision paragraph picks Reading B: any clean, passing non-full stamp may anchor the shortcut, so `none` stamps chain)
 
 Scope keywords: scopedPassBase, stays at the earlier full pass, their mapped suites run again
 
