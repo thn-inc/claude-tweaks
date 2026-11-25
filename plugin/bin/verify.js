@@ -609,12 +609,10 @@ async function main() {
       selfPath: scopeSelfPath(resolvedScopePath, parsed.cwd || process.cwd()),
     });
     if (!read.ok) {
-      flushStaleWarnings();
       scopeUsageExit(read.errors.join('\n'));
       return;
     }
     if (read.missing) {
-      flushStaleWarnings();
       // #3017: a --scope path that still does not exist after resolving
       // against the checkout root is a usage error, not "no declaration" —
       // the prior silent full-run fallback is exactly how a cwd/typo
@@ -977,8 +975,8 @@ async function main() {
   // run with no verdict (exit 3, below), the later ones are not consulted, and
   // --local skips CI for all of them. #5800: a HEAD that is not on the remote
   // stops the run the same way under any declaration; every other fallback
-  // without the key runs the suite here and is announced on stderr first. A red answer's flaky retry is deferred
-  // until every suite answered, so "no verdict yet" is decided before any retry.
+  // without the key runs the suite here and is announced on stderr first. A red
+  // answer's flaky retry is deferred until every suite answered, so "no verdict yet" is decided before any retry.
   const onRequest = Boolean(decl && decl.localRuns === 'on-request');
   const ciAttempts = [];
   const ciResults = [];

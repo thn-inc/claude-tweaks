@@ -559,7 +559,9 @@ test('without the key the stale baseline warning precedes a --scope usage error 
 
 test('AC1.1, AC1.2: without the key an unpushed HEAD exits 3, runs no check, leaves no report, and names the short sha (#5800)', { skip: SKIP }, async () => {
   const r = repoWith();
-  const { env } = fakeGhEnv('unpushed', '');
+  const { env: baseEnv } = fakeGhEnv('unpushed', '');
+  const slotDir = path.join(tmpDir(), 'slots');
+  const env = withSlots(baseEnv, slotDir);
   const marker = path.join(tmpDir(), 'm');
   fs.mkdirSync(path.join(r.gitDir, 'claude-tweaks-verify'), { recursive: true });
   fs.writeFileSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json'), '{"pass":true}\n');
@@ -572,6 +574,7 @@ test('AC1.1, AC1.2: without the key an unpushed HEAD exits 3, runs no check, lea
   assert.strictEqual(lines[2], '  or re-run it with --local to run the suite on this machine.');
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify-pass.json')));
   assert.ok(!fs.existsSync(path.join(r.gitDir, 'claude-tweaks-verify', 'report.json')), 'exit 3 removes the stale report');
+  assert.strictEqual(fs.existsSync(slotDir), false, 'no slot was tried for');
 });
 
 test('AC2.1: under the key an unpushed HEAD exits 3 with the same head-not-pushed first line naming the short sha (#5800)', { skip: SKIP }, async () => {
@@ -644,6 +647,19 @@ test('without the key a suite that fell back before an unpushed second suite pri
   assert.strictEqual(res.code, 3, res.stdout + res.stderr);
   assert.strictEqual(res.stderr.split('\n')[0], HNP_FIRST('other', headOf(r)));
   assert.ok(!res.stderr.includes('— running it on this machine'), res.stderr);
+  assert.ok(!fs.existsSync(testsMarker) && !fs.existsSync(otherMarker), 'neither suite ran here');
+});
+
+test('without the key a local fallback prints its notice before a stale baseline worktree warning (#5800)', { skip: SKIP }, async () => {
+  const r = repoWith();
+  const { env } = fakeGhEnv('nopr', '');
+  const staleParent = fs.realpathSync(scratchDir('ct-verify-base-'));
+  r.git('worktree', 'add', '--detach', path.join(staleParent, 'wt'), 'HEAD');
+  const res = await runCli([...SCOPE(r), '--baseline', 'HEAD', '--baseline-cmd', 'tests=node -e 0 {file}', '--cmd', localMarkerCmd(path.join(tmpDir(), 'm'))], { cwd: r.repo, env });
+  assert.strictEqual(res.code, 0, res.stdout + res.stderr);
+  const lines = res.stderr.split('\n');
+  assert.strictEqual(lines[0], 'verify.js: CI could not answer suite "tests" (no-open-pr-at-head) — running it on this machine');
+  assert.match(lines[1], /^verify\.js: a stale baseline scratch worktree is registered at /);
 });
 
 test('under the key no fallback notice is printed (#5800)', { skip: SKIP }, async () => {
