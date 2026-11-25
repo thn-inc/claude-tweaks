@@ -95,11 +95,11 @@ Expected: PASS (all).
 - Modify: `plugin/skills/test/suite-slots.md` (Lanes table rows + one key line; file is 8,880 B, rail 52,500 B — ample headroom)
 - Modify: `docs/plugin-structure.md:103` (chooseLane parenthetical: add "or a declared suite listed in `subsetLaneSuites`" to the subset side)
 - Modify: `.claude-tweaks/verify-scope.json` (add `"subsetLaneSuites": ["journeys"]` at top level, after `"localRuns"`)
-- Test: `tests/bin-lib/verify/ci-cli.test.js` (AC1, AC3 — the fake-`gh` CI fixtures `repoWith`/`fakeGhEnv`/`withSlots` live only here)
+- Test: `tests/bin-lib/verify/ci-cli.test.js` (AC1, AC3, AC4 — the fake-`gh` CI fixtures `repoWith`/`fakeGhEnv`/`withSlots` live only here, and its map-form declaration gives the listed suite a real runnable declared command)
 - Test: `tests/bin-lib/verify/impact-cli.test.js` (AC2 — `impactRepo`/`declOf` live only here)
-- Test: `tests/bin-lib/verify/cli-slot.test.js` (AC4)
+- Test: `tests/bin-lib/verify/cli-slot.test.js` (regression run only, unchanged — its `scopedRepo` fixture declares `placeholder` commands that cannot run, so it cannot host a declared-command lane case)
 - Test: `tests/bin-lib/verify/slot.test.js` (regression run only, unchanged)
-- Deviation from the spec's test-file list: the spec named only `cli-slot.test.js`, but the CI and impact fixtures are file-local to the other two suites; the tests go beside the existing #5119 lane tests that use them rather than duplicating fixtures.
+- Deviation from the spec's test-file list (accepted at plan review): the spec named `cli-slot.test.js` for the lane cases, but the CI and impact fixtures are file-local to the other two suites; the tests go beside the existing #5119 lane tests that use them rather than duplicating fixtures. The PR body and the build's architecture-alignment step record this deviation.
 - No-change (swept): `plugin/skills/test/impact-selection.md` and `plugin/bin/lib/verify/scope.js:104` say "runs its full command" about impact fallback, not lane choice; `verify.js:1161-1166` and `baseline.js:453` concern adjudication's own full-lane slot, unchanged.
 
 **Interfaces:**
@@ -118,30 +118,27 @@ test('AC3.1: the same run without subsetLaneSuites takes the full lane (#5368)',
   // same decl minus subsetLaneSuites → slot.lane === 'full'
 test('AC3.2: a listed suite beside an unlisted declared suite still takes the full lane (#5368)', ...)
   // declare a third suite `other: markerCommand(m2)` (no ci entry), subsetLaneSuites ['journeys'] → slot.lane === 'full'
+test('AC4.1: --cmd under a listed name takes the full lane (#5368)', ...)
+  // the AC1.1 decl and run, plus ['--cmd', `journeys=${markerCommand(m)}`] — the only difference from AC1.1
+  // code 0; journeys marker written; slot.lane === 'full'
 ```
+
+AC1.1 and AC4.1 differ only by the `--cmd`; with the Step 3 `cmdNames` guard reverted, AC4.1 must go red (report `subset`) — run that revert once before committing and restore the guard.
 
 In `impact-cli.test.js`, beside `AC4.1` (#5119):
 
 ```js
 test('AC2.1: an impact subset plus a listed declared suite takes the subset lane (#5368)', ...)
   // impactRepo(declOf({}, { checks: { tests: { tests: 'node scripts/full.js', small: <node -e marker cmd> } }, subsetLaneSuites: ['small'] }))
-  // with RULES (or an override rule) selecting both the impact subset and `small`; writeMap; commitFile src/x.js
-  // runCli(ARGS, r.repo, { env: slotEnv(slotDir) }) → code 0; subset command ran; small ran; report().slot.lane === 'subset'
-```
-
-In `cli-slot.test.js`:
-
-```js
-test('AC4.1: --cmd under a listed name takes the full lane (#5368)', ...)
-  // scopedRepo([{ match: '**', suites: ['other'], static: false }], { subsetLaneSuites: ['other'] }); commit a change;
-  // runCli(['--scope', r.declPath, '--integration-branch', r.branch, '--cmd', `other=${r.unitCmd}`], { cwd: r.repo, env: slotEnv(tmpDir()) })
-  // code 0; reportAt(r).slot.lane === 'full'
+  // rules: [{ match: 'src/**', suites: ['small'], static: false }, ...RULES] — RULES alone never selects `small` (src/** is impact-only)
+  // writeMap; commitFile src/x.js
+  // runCli(ARGS, r.repo, { env: slotEnv(slotDir) }) → code 0; r.marker() === 'tests/a.test.js\n' (subset ran); small's marker written; report().slot.lane === 'subset'
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
 Run: `node --test tests/bin-lib/verify/ci-cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/bin-lib/verify/cli-slot.test.js`
-Expected: FAIL after Step 1 — AC1.1 and AC2.1 report `full`; AC3.x and AC4.1 pass already (controls).
+Expected: FAIL after Step 1 — AC1.1 and AC2.1 report `full`; AC3.x and AC4.1 pass already (controls; AC4.1's discrimination is proven by the guard revert above).
 
 - [ ] **Step 3: Implement** in `verify.js`: build `const subsetLaneNames = new Set(decl ? decl.subsetLaneSuites : [])` and `const cmdNames = new Set(parsed.cmds.map((c) => c.name))`; add `&& !(subsetLaneNames.has(c.name) && !cmdNames.has(c.name))` to the `fullSuiteRuns` predicate. Update the comment above it to name the exclusion (#5368). Update `slot.js:44`'s comment.
 
