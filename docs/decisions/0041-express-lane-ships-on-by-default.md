@@ -7,8 +7,9 @@
 
 ## Context
 
-The express lane (#4025, shipped in #4354) builds, tests and merges a small, low-risk singleton
-record in one agent call, with no review, polish or wrap-up stage. Its policy key `express-lane`
+The express lane (#4025, shipped in #4354) builds a small, low-risk singleton record, runs its
+impacted tests, opens its PR and merges on green in one agent, outside `/claude-tweaks:flow`'s
+frame. It runs no review before the merge. Its policy key `express-lane`
 defaulted to `false`, so a project got the lane only by setting the key in `policy.yml`. No project
 did, so the lane never ran.
 
@@ -34,7 +35,10 @@ express lane grants none. It removes review ceremony only:
   `/claude-tweaks:flow`, one whose merge authorization passes `manifesto-authorized-merge.md`'s
   Applicability check. Without either, the PR stays in draft for a human.
 - It takes only `risk:low` × `size:low` × `ceremony:fast-lane` records with a `type:*` label and at
-  most 3 Key Files.
+  most 3 Key Files, and refuses a record that carries a kept risk flag.
+- Before it merges, it still runs the content judgment the normal auto-merge path runs:
+  `/claude-tweaks:assess-agent-autonomy`'s `merge-check`, told the lane ran no review. Any verdict
+  but a confirmed `auto-merge` leaves the PR in draft as `pending-review`.
 - It refuses frontend surfaces, the shipped protected paths (`protected-paths`) and the project's
   `merge-sensitive-paths`.
 - It requires `integration-model: pr-first`, `gh`, and green PR CI. A repo with no PR CI reads as
