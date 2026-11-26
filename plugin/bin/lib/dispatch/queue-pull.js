@@ -55,10 +55,10 @@
 // filtering and appends when `ctx.omit.has(<its id>)` and runs its shared steps regardless (for
 // example `oversized` owns the grouping block that writes dispatch-groups.json and the `blocked`
 // appends, and `target-missing` owns the integration-branch and run-dir resolution). Omitting a
-// setup pass, or naming an unknown reason or id, throws TypeError. Omit is a test-only contract
-// (no shipped caller passes it, but `runBudget`'s `omit: ['driver-lane']` (#6119)); because an omitted pass before `write-back`
-// leaves groups the cache blob would then misdescribe, the write-back pass writes nothing (no
-// writeOrder call) whenever the omit set holds a pass positioned before it in PASSES (today `blocked`,
+// setup pass, or naming an unknown reason or id, throws TypeError. Omit has one shipped caller,
+// `runBudget`'s `omit: ['driver-lane']` (#6119); because an omitted pass positioned before
+// `write-back` leaves groups the cache blob would then misdescribe, the write-back pass writes
+// nothing (no writeOrder call) whenever the omit set holds such a pass (today `blocked`,
 // `oversized`); a pass after it cannot change the blob, so omitting only that one still writes it.
 //
 // failOpen is taken across both transports, so a gh-only reader sees `stop` for a pass whose

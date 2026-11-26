@@ -162,10 +162,9 @@ function realSpawnCli(name, args, { cwd, env } = {}) {
   return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
 }
 
-// The retained fence's entry: real policy, real spawn, one appendExclusion per entry.
-function runFromFiles({ groupsPath, exclusionsPath, transport, stderr = process.stderr, deps = {} }) {
+// The retained fence's compute half: real policy, real spawn; no append.
+function entriesFromFiles({ groupsPath, transport, stderr = process.stderr, deps = {} }) {
   const fs = require('fs');
-  const { appendExclusion } = require('./exclusions');
   const { expressQueuePolicy } = require('../express/queue');
   const runner = readDriverRunner({ resolvePolicy: deps.resolvePolicy, stderr });
   if (runner !== 'script') return [];
@@ -174,9 +173,35 @@ function runFromFiles({ groupsPath, exclusionsPath, transport, stderr = process.
   const readComments = transport === 'files'
     ? () => ({ ok: false, cause: 'comment read unavailable on the files transport' })
     : spawnCommentReader({ spawnCli: deps.spawnCli || realSpawnCli, cwd: process.cwd(), env: process.env });
-  const entries = driverLaneExclusions({ groups, policy, runner, readComments, stderr });
+  return driverLaneExclusions({ groups, policy, runner, readComments, stderr });
+}
+
+// Compute and append; throws on any failure.
+function runFromFiles({ exclusionsPath, ...rest }) {
+  const { appendExclusion } = require('./exclusions');
+  const entries = entriesFromFiles(rest);
   for (const e of entries) appendExclusion(exclusionsPath, e);
   return entries;
 }
 
-module.exports = { readDriverRunner, driverLaneExclusions, spawnCommentReader, runFromFiles, LIVE_FETCH_AUDIT };
+// The fence's entry, with queue-pull.js's postures: a refused append stops the pull (exit 1, the module's
+// stop line); any other throw is a `queue-pull: driver-lane:` step error and the pull goes on (exit 0).
+function runFence({ exclusionsPath, stderr = process.stderr, ...rest }) {
+  const { appendExclusion } = require('./exclusions');
+  let entries;
+  try {
+    entries = entriesFromFiles({ ...rest, stderr });
+  } catch (err) {
+    stderr.write(`queue-pull: driver-lane: ${errText(err)}\n`);
+    return 0;
+  }
+  try {
+    for (const e of entries) appendExclusion(exclusionsPath, e);
+  } catch (err) {
+    stderr.write(`dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: ${errText(err)}\n`);
+    return 1;
+  }
+  return 0;
+}
+
+module.exports = { readDriverRunner, driverLaneExclusions, spawnCommentReader, runFromFiles, runFence, LIVE_FETCH_AUDIT };

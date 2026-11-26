@@ -72,7 +72,7 @@ const {
   STREAM_TRUNCATED, TAIL_LINES,
 } = require('./queue-pull-oracle');
 const {
-  S1, S2, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, fakeRun, fakeSpawnCli,
+  S1, S2, SDriver, agentInputs, LANDING_COMMIT, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, fakeRun, fakeSpawnCli,
 } = require('./queue-pull-fixtures');
 const { PASSES, SESSION_FILES, sessionPaths, makeContext, runPasses } = require('../../../plugin/bin/lib/dispatch/queue-pull');
 const { appendExclusion } = require('../../../plugin/bin/lib/dispatch/exclusions');
@@ -181,6 +181,8 @@ const MATRIX = [
   { name: 'S1-files-hit', scenario: PARITY_S1(), transport: 'files', after: 'S1-files-miss', reasons: FILES_S1_REASONS },
   { name: 'S2-gh-miss', scenario: S2(), transport: 'gh', reasons: ['blocked'] },
   { name: 'S2-files-miss', scenario: S2(), transport: 'files', reasons: ['blocked'] },
+  // #6119: express-driver-runner: script, so only the driver-lane pass writes a reason (#9201; #9202's trusted marker spares it).
+  { name: 'SD-gh-miss', scenario: SDriver(), transport: 'gh', reasons: ['driver-lane'] },
 ];
 
 const AC1_FILES = ['dispatch-groups.json', 'dispatch-exclusions.json', 'dispatch-fastlane-bundles.json', 'dispatch-near-dup-pairs.json',
@@ -341,6 +343,8 @@ const FAULT_EXPECT = {
   'F-openprs': { status: 0, stderr: [OPEN_PR_FAIL], drops: [] },
   'F-writeback': { status: 0, stderr: ['Queue-order cache write-back failed (non-blocking): Command failed: git -C <SCR>/proj push origin '], drops: [] },
   'F-corrupt': { status: 1, stderr: [OPEN_STOP], entries: '{corrupt' },
+  'F-driver-lane-read': { status: 0, base: 'SD-gh-miss', stderr: ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: '], drops: ['driver-lane:9201'] },
+  'F-driver-lane-corrupt': { status: 1, base: 'SD-gh-miss', stderr: ['dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: '], entries: '{corrupt' },
   'F-groups': { status: 1, stderr: [OPEN_FILTER_WARNING, STOP_LINE.target], entries: ['blocked:9002', 'oversized:9001+9003+9016', 'not-spec-shaped:9004', 'not-spec-shaped:9007'] },
 };
 const posture = (r) => (r.status === 0 ? 'open' : 'stop');
@@ -411,9 +415,7 @@ function assertFailOpenPostures(pool, family, t) {
   const observed = strictest('oracle');
   assert.deepEqual(strictest('module'), observed, 'the module\'s exits give the same postures');
   for (const id of Object.keys(observed)) assert.ok(PASSES.some((p) => p.id === id), `fault rows name a registry id: ${id}`);
-  // driver-lane (#6119) is a no-op under the fixtures' default runner (session), so no fault row reaches it; queue-pull.test.js's AC3.2 and files-transport tests pin its open posture.
-  const UNOBSERVED = { 'driver-lane': 'open' };
-  for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || UNOBSERVED[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
+  for (const p of PASSES) assert.equal(p.failOpen, observed[p.id] || 'n/a', `${p.id} (${p.reason || p.kind})`);
   // PF6: neighbour-in-flight is open on gh and stop on files; the stricter value wins.
   assert.equal(posture(R['F-inflight'].oracle), 'open');
   assert.equal(posture(R['files-inFlightRaw-missing'].oracle), 'stop');
@@ -426,7 +428,7 @@ function assertFailOpenPostures(pool, family, t) {
 const MATRIX_CFG = Object.fromEntries(MATRIX.map((c) => [c.name, c]));
 const BASE = { gh: 'S1-gh-miss', files: 'S1-files-miss' };
 const FAULT_BASES = [
-  MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
+  MATRIX_CFG['S1-gh-miss'], MATRIX_CFG['S1-gh-hit'], MATRIX_CFG['S2-gh-miss'], MATRIX_CFG['SD-gh-miss'], { name: 'gh-livedep', scenario: S1LiveDep(), transport: 'gh' },
   MATRIX_CFG['S1-files-miss'], MATRIX_CFG['S2-files-miss'], { name: 'files-livedep', scenario: S1LiveDep(), transport: 'files' }, { name: 'files-opendeps', scenario: S1OpenDeps(), transport: 'files' },
 ];
 

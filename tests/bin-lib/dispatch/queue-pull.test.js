@@ -4138,11 +4138,15 @@ test('AC1.1 script: one driver-routable singleton and one standard record — on
   assert.deepEqual(seen, [['9003']], 'one batched comment read over the routable candidates only');
 });
 
-test('AC1.2 / AC2.1 / AC2.2 session and unset produce byte-identical groups, exclusions and stderr (no comment read)', () => {
-  const run = (deps) => pull(S1(), { passes: LANE_PASSES, deps: { expressQueuePolicy: routablePolicy([9003]), ...deps } });
+test('AC1.2 / AC2.1 / AC2.2 session and unset produce byte-identical groups, exclusions and stderr (the pass runs, no comment read)', () => {
+  const { readDriverRunner: realReadDriverRunner } = require('../../../plugin/bin/lib/dispatch/driver-lane');
+  const ran = [];
+  const run = (deps) => pull(S1(), { passes: LANE_PASSES, deps: { expressQueuePolicy: routablePolicy([9003]), onPass: (id) => ran.push(id), ...deps } });
   const session = run({ readDriverRunner: () => 'session' });
-  const unset = pull(S1(), { passes: LANE_PASSES, deps: { expressQueuePolicy: routablePolicy([9003]) } });
+  // The unset leg reads the real runner over a resolver that returns no entry for the key.
+  const unset = run({ readDriverRunner: (o) => realReadDriverRunner({ ...o, resolvePolicy: () => ({}) }) });
   const baseline = pull(S1(), { passes: LANE_PASSES });
+  assert.equal(ran.filter((id) => id === 'driver-lane').length, 2, 'the driver-lane pass ran once under each runner');
   for (const r of [session, unset]) {
     assert.deepEqual(commentCalls(r), []);
     assert.equal(r.text['dispatch-groups.json'], baseline.text['dispatch-groups.json']);
@@ -4165,7 +4169,9 @@ test('AC9.2 the left-to-the-script-job line on stderr names the excluded record'
 });
 
 test('AC3.1 through the module: a trusted escalation marker keeps the record selectable', () => {
-  const r = lanePull({ spawn: { 'resolve-record-comments.js': cannedComments({ 9003: { comments: [TRUSTED_MARKER], complete: true } }) } });
+  const seen = [];
+  const r = lanePull({ spawn: { 'resolve-record-comments.js': cannedComments({ 9003: { comments: [TRUSTED_MARKER], complete: true } }, seen) } });
+  assert.deepEqual(seen, [['9003']], 'the batched read happened, so the marker is what spared the record');
   assert.deepEqual(entriesOf(r, 'driver-lane'), []);
 });
 

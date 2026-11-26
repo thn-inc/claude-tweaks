@@ -250,3 +250,17 @@ test('runFromFiles: a policy-layer warning path writes through a function, never
   assert.deepEqual(out, []);
   assert.ok(lines.some((l) => l.startsWith('express-lane: policy read failed')), lines.join('|'));
 });
+
+test('runFence: a refused append stops (exit 1, the corrupt-file line); any other throw is a driver-lane step error and goes on (exit 0)', (t) => {
+  const { runFence } = require('../../../plugin/bin/lib/dispatch/driver-lane');
+  const spawnCli = () => ({ status: 0, stdout: '{"20":{"comments":[],"complete":true}}', stderr: '' });
+  const stop = fixture([[issueOf(20, ROUTABLE)]], t);
+  fs.writeFileSync(stop.exclusionsPath, '{corrupt');
+  const a = collector();
+  assert.equal(runFence({ groupsPath: stop.groupsPath, exclusionsPath: stop.exclusionsPath, transport: 'gh', stderr: a.stderr, deps: { resolvePolicy: resolver(), spawnCli } }), 1);
+  assert.ok(a.lines.some((l) => l.startsWith('dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: ')), a.lines.join('|'));
+  const soft = fixture([], t);
+  const b = collector();
+  assert.equal(runFence({ groupsPath: path.join(soft.dir, 'missing.json'), exclusionsPath: soft.exclusionsPath, transport: 'gh', stderr: b.stderr, deps: { resolvePolicy: resolver(), spawnCli } }), 0);
+  assert.ok(b.lines.some((l) => l.startsWith('queue-pull: driver-lane: ')), b.lines.join('|'));
+});

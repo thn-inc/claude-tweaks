@@ -578,11 +578,10 @@ fi
 
 # #6119: driver-lane exclusions. Why here, and why it fails open: queue-pull-notes.md.
 if ! node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" <<NODE_EVAL_EOF
-  require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/driver-lane.js').runFromFiles({ groupsPath: process.argv[1], exclusionsPath: process.argv[2], transport: 'gh' });
+  process.exitCode = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/driver-lane.js').runFence({ groupsPath: process.argv[1], exclusionsPath: process.argv[2], transport: 'gh' });
 NODE_EVAL_EOF
 then
   flush_shipped_claims
-  echo "dispatch: queue-pull stopped -- driver-lane exclusion pass failed; see error above." >&2
   exit 1
 fi
 
