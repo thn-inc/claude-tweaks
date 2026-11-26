@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T18:20:35.538Z",
+  "computedAt": "2026-11-26T18:46:16.191Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -85,7 +85,7 @@
       },
       {
         "number": 4672,
-        "updatedAt": "2026-10-31T09:57:06Z",
+        "updatedAt": "2026-11-26T18:45:04Z",
         "state": "OPEN"
       },
       {
@@ -1675,7 +1675,7 @@
         "number": 4672,
         "state": "OPEN",
         "title": "Review SCRATCH instruction omits that git fixtures cannot be created under the run-dir scratch path",
-        "updatedAt": "2026-10-31T09:57:06Z",
+        "updatedAt": "2026-11-26T18:45:04Z",
         "facets": {
           "origin": null,
           "risk": "low",
