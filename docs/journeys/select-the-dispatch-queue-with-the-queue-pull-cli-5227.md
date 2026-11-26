@@ -38,7 +38,7 @@ files:
 
 ### 2. Pick the next group
 - **URL:** `plugin/bin/queue-pull.js --rank [--priority high|medium|low]`; `plugin/bin/lib/dispatch/queue-pull.js` (`rankNext`, `rankFromFiles`)
-- **Action:** The maintainer runs `--rank`. It drops every group with a member under an `oversized`, `firing` or `neighbour-in-flight` entry, takes each group's best member (priority band, then oldest `createdAt`) as its representative, applies the optional `--priority` filter, and writes the top group or `null` to `dispatch-next-pick.json`.
+- **Action:** The maintainer runs `--rank`. It drops every group with a member under an `oversized`, `firing`, `driver-lane` or `neighbour-in-flight` entry, takes each group's best member (priority band, then oldest `createdAt`) as its representative, applies the optional `--priority` filter, and writes the top group or `null` to `dispatch-next-pick.json`.
 - **Should feel:** Silent and exact. Stdout stays empty, because the pick is a whole group of full records that must not reach an agent's context. The pick matches `next-ranking.md` expression for expression.
 - **Should understand:** A missing or unreadable `dispatch-exclusions.json` reads as no exclusions, as the script reads it. An unknown `--priority` value exits 1 instead of quietly picking nothing. Omit the flag when no filter is wanted, because an empty value exits 1 too.
 - **Red flags:** Anything on stdout from `--rank`. A pick that differs from the script's for snake_case `created_at` timestamps, which means the alias step was skipped.

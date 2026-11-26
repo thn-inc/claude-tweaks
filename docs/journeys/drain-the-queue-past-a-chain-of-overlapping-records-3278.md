@@ -37,7 +37,7 @@ files:
 
 ### 3. Rank, dispatch, and re-pull
 - **URL:** `plugin/bin/queue-pull.js --rank` (`rankNext` in `plugin/bin/lib/dispatch/queue-pull.js`); `plugin/skills/dispatch/SKILL.md` Step 3 Loop
-- **Action:** Bare drain's ranking skips groups with an `oversized`, `neighbour-in-flight` or this-firing exclusion, picks the best remaining group, and dispatches it. The queue pull then re-runs. A record that was waiting becomes eligible again on the pull after its neighbour's claim ends.
+- **Action:** Bare drain's ranking skips groups with an `oversized`, `neighbour-in-flight`, `driver-lane` or this-firing exclusion, picks the best remaining group, and dispatches it. The queue pull then re-runs. A record that was waiting becomes eligible again on the pull after its neighbour's claim ends.
 - **Should feel:** Steady. The firing spends its budget on records it can build now, rather than stopping on a group it may not touch.
 - **Should understand:** Records that share a file but were both idle at the pull can still build one after the other in the same firing. The later one meets the earlier one's changes at merge, through `_shared/pr-first-merge.md`'s Conflict path. That is the accepted trade for not starving records.
 - **Red flags:** Bare drain selecting a group with a `neighbour-in-flight` member. A firing ending with budget left while eligible, non-waiting groups remain, other than on a Claim permission stop, which ends the firing because every group uses the same token (#4899), or a Render-failure stop, which ends it because `dispatch-prompt.js`'s inputs are nearly all firing-wide (#5255).

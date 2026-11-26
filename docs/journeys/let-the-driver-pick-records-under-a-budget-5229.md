@@ -42,7 +42,7 @@ files:
   - The pre-screen calls the eligibility function with the per-record path's own options. It can skip a record but never admit one: an admitted record still goes through fetch, eligibility, admission and claim.
   - A record whose pulled data the pre-screen cannot read takes the full path, and stderr says `drive.js: pre-screen could not read #N (…); taking the full path`.
   - Each counted pre-screen skip writes `drive.js: pre-screen skipped #N (…); no live fetch` to stderr, naming the eligibility reasons. A skipped record leaves no event line, so this line is where to learn which records the summary's `skipped` counted and why.
-  - A group the pull excluded as `oversized` or `neighbour-in-flight` is never pre-screened or counted.
+  - A group the pull excluded as `oversized`, `neighbour-in-flight` or `driver-lane` (which this loop's own pull omits) is never pre-screened or counted.
   - The queue pull's own side effects are the ones dispatch's pull has: decision lines and Close proposals in the newest `dispatch-standalone` run directory, and a rewrite of the queue-order cache. Its stdout chatter goes to the driver's stderr, so stdout stays JSON lines only.
 - **Red flags:**
   - A record driven out of the ranking's order, or driven twice in one invocation.
