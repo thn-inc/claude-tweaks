@@ -350,7 +350,7 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
         ? "the local store's records as [{number: id, body}]"
         : 'gh issue list --state all --json number,body --limit <N>';
       lines.push(kind === 'filing'
-        ? `      (${lead}<issues.json>: ${listing};<comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
+        ? `      (${lead}<issues.json>: ${listing}; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
         : `      (${lead}<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
     }
   }

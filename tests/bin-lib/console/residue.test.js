@@ -493,6 +493,18 @@ test('a local-files backend names the local-store listing, no gh command, in the
   assert.ok(!lines.some((l) => l.includes('gh issue list')), lines.join('\n'));
 });
 
+test('the filing-pending hint keeps "; " before <comments.json> on both backends (#4337)', () => {
+  for (const [backend, listing] of [
+    ['github-issues', 'gh issue list --state all --json number,body --limit <N>'],
+    ['local-files', "the local store's records as [{number: id, body}]"],
+  ]) {
+    const dir = tmpRun();
+    plannedFilingConsole(dir, '');
+    const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p', backend });
+    assert.ok(lines.some((l) => l.startsWith(`      (<issues.json>: ${listing}; <comments.json>: the materiality digest's comments; `)), `${backend}:\n${lines.join('\n')}`);
+  }
+});
+
 test('consoleRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
   assert.strictEqual(
     consoleRerunCommand({ consoleDir: '/r' }),
