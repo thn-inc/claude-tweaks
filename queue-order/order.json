@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T07:05:02.079Z",
+  "computedAt": "2026-11-26T08:12:48.658Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -19,8 +19,18 @@
         "state": "OPEN"
       },
       {
+        "number": 6010,
+        "updatedAt": "2026-11-26T08:11:23Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 6009,
+        "updatedAt": "2026-11-26T08:11:18Z",
+        "state": "OPEN"
+      },
+      {
         "number": 5833,
-        "updatedAt": "2026-11-24T04:44:29Z",
+        "updatedAt": "2026-11-26T08:11:06Z",
         "state": "OPEN"
       },
       {
@@ -91,6 +101,11 @@
       {
         "number": 4786,
         "updatedAt": "2026-11-02T06:57:09Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4746,
+        "updatedAt": "2026-11-26T08:11:12Z",
         "state": "OPEN"
       },
       {
@@ -544,11 +559,6 @@
         "state": "OPEN"
       },
       {
-        "number": 3995,
-        "updatedAt": "2026-11-23T18:32:12Z",
-        "state": "OPEN"
-      },
-      {
         "number": 3986,
         "updatedAt": "2026-11-24T11:53:14Z",
         "state": "OPEN"
@@ -676,6 +686,84 @@
     ],
     [
       {
+        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nAdds the run's cost to its `manifest.json`: tokens by model, the list-price cost of those tokens, and the run's minutes, written when the run closes. The run manifest (#5903) carries run-start facts only (plugin version, lane, ceremony profile, policy hash, base commit, model profile). The design (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, Goal 7 and `## Phase 11`) asks that every run record what it cost and which policy it ran under, in a file Dispatch can read; the policy half shipped as `policyHash`, and this record adds the cost half.\n\nDollars are list-price equivalents of recorded token usage, one comparable unit, not invoices (the design's Non-goals). The price table that produces them lives today in maintainer-side `tools/pipeline-cost-report/spend.js`, which does not ship; this record moves it into the plugin payload so the shipped close path and the report price tokens identically.\n\n**Complexity:** Medium\n**Estimated tasks:** 6\n\n## Non-Goals\n\n- Model and effort per role: record #6010 \"Record each role's model and effort in the run manifest\".\n- Dispatch reading the new fields. Dispatch's manifest parser (thn-inc/dispatch #1958's `parseRunManifest`) stores nine named fields and ignores every other key, so reading `costUsd` is a change in thn-inc/dispatch, tracked there, not here. This record documents the fields in `docs/reference/run-manifest.md`, the contract Dispatch reads.\n- Real invoices, subscription accounting, or Claude Code's own `total_cost_usd`.\n- A cost for a run whose token rows could not be read: that is `null`, never `0`.\n- Changing how `timing.json` attributes tokens to phases.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #5903 | Write a run manifest.json when minting a run directory | closed (PR #5944) |\n| #5647 | Attribute dispatched runs' subagent transcripts to timing.json token totals | open, ready; without it a dispatched run's timing has no token totals (73 of 94 closed runs in its replay), so this record's cost would be `null` for most standard-lane runs |\n| #5967 | Read transcript usage through one shared max-per-message.id reader | open, ready; exposes the 5-minute / 1-hour cache-write split in `readUsage`, which list-price cost needs (the two rates differ) |\n\n## Current State\n\n- `plugin/bin/lib/run-manifest/write.js`: `initRunManifest` (mint, never overwrites) and `fillRunManifest(runDir, fields, deps)`; `FILL_ONLY_NULL = ['pluginVersion', 'policyHash', 'baseCommit', 'modelProfile']` with a `FILL_VALID` shape check per field; `lane` first-known-wins; `ceremonyProfile` the one overwrite; `MANIFEST_VERSION = 1`; a `spec-N` child directory never gets its own manifest. Every write is best-effort with one stderr line on failure.\n- `docs/reference/run-manifest.md` documents the nine fields, the writers per field, and the reading rules (\"ignore fields you do not know\", \"check both locations\", archive moves the manifest with the run).\n- `plugin/bin/lib/timing/at-close.js` `writeTimingAtClose(runDir, { tokens, env, homeDir, boundMs })` writes `timing.json` when a run closes. Every closing path calls it (`hooks.js close-run` and `teardown-run`, the reconciler's `archiveRunDir`, and `plugin/bin/timing-at-close.js`, the detached token pass `spawnTokenPass` starts). Token totals come from the run's own transcript, clipped to the run's lifetime; a `timing.json` that already has token totals is kept byte-identical; a `spec-N` child gets none.\n- `plugin/bin/lib/timing/run-timing.js` `deriveTiming` joins transcript usage rows into `timing.phases[*].tokens` and `timing.totals.tokens` (`{ input, output, cacheRead, cacheCreate }`), `timing.totals.modelMix` (turn-start counts per model id, not tokens) and `timing.dispatches` (`aggregateDispatches` in `plugin/bin/lib/timing/derive.js`: `byTier` and `byRole` buckets of subagent `tokens`, each item carrying `rawModel` and `tier`). `timing.totals.minutes` is the union of phase spans, not elapsed time.\n- `plugin/bin/lib/timing/transcript.js` `readUsage` keeps the maximum of each usage field per `message.id`; it does not return the cache-write split (#5967 adds it).\n- `tools/pipeline-cost-report/spend.js` (#5914) holds `PRICES` (dollars per million tokens, dated `2026-11-03`; per family `[input, output, cache read, 5-minute cache write, 1-hour cache write]` for fable, opus, sonnet, haiku), `familyOf(id)` (substring match, else `unpriced`), and `priceRequest(u)` (Haiku's long-prompt rate per request over 100k tokens). `tools/pipeline-cost-report/guards.js:20` already requires a plugin module (`../../plugin/bin/lib/markdown-blocks.js`), so a tool requiring plugin code is the existing direction.\n- Driver lane: each worker launch's step event carries `usage`, `costUsd`, `sessionId` and the launched `model` (`plugin/bin/lib/driver/steps.js` around lines 725-811), written to the run's `events.jsonl`.\n\n## Deliverables\n\n- [ ] `plugin/bin/lib/pricing/prices.js` (new): `PRICES`, `familyOf`, `priceRequest` moved from `tools/pipeline-cost-report/spend.js` unchanged in behaviour; `spend.js` requires them from the plugin path and keeps no copy.\n- [ ] `plugin/bin/lib/run-manifest/cost.js` (new): `deriveRunCost({ rows, events, manifest, closedAt, runStartAt })` returns `{ tokensByModel, costUsd, priceDate, unpricedModels, costPartial, minutes, closedAt }`. `rows` are per-request usage rows read through `readUsage` (`plugin/bin/lib/timing/transcript.js`, with #5967's `message.id` and cache-write split) from the run's main-session transcript and from each subagent transcript the token pass resolved, clipped to the run's lifetime exactly as the timing pass clips them; `deriveRunCost` never reads `timing.json`'s summed tokens, and `timing.json` is unchanged. Session lanes: per model id (each row's `model`), the sum of those rows; each row is priced with `priceRequest`, so Haiku's per-request long-prompt rate applies to main-session and subagent requests alike. A row with no cache-write split prices all of its cache write at the 5-minute rate, the rule `tools/pipeline-cost-report/spend.js` applies today. Driver lane: per launched model, the sum of each worker step event's `usage`. An unrecognised model id is listed in `unpricedModels` and left out of `costUsd`. `costUsd` is `null` when no token source was read, and `costPartial: true` when some sources were read and some were not (a transcript not found, an event with `usage: null`). `closedAt` is the run's close time (`runStartAt` and `closedAt` are passed by the close path; see the `writeTimingAtClose` deliverable), never the time of the fill. `minutes` is elapsed wall-clock from `runStartAt` to `closedAt`, to one decimal, and `null` when either is unknown.\n  One token source per lane, chosen by `manifest.lane`: the driver lane prices from its worker step events only, every other lane from the transcript rows only, so nothing is counted twice. A launched alias (`sonnet`, `opus`) is priced by `familyOf` as is and keyed as launched; a step event with `usage: null` makes `costPartial` true. `costUsd` is the sum of `priceRequest` over the priced rows, rounded once to cents. `priceDate` is `PRICES.date`.\n- [ ] `fillRunManifest` accepts the close-out fields with a `FILL_VALID`-style shape check each. `v` stays `1` (`MANIFEST_VERSION` unchanged): `docs/reference/run-manifest.md`'s Compatibility section adds a field without a version bump and reserves a bump for a removed field or a changed type or meaning. The mint writes nothing new; a manifest without the fields reads them as unknown. Fill rules: `closedAt` and `minutes` are fill-only-null. The cost group (`tokensByModel`, `costUsd`, `priceDate`, `unpricedModels`, `costPartial`) is written as one unit: written when `costUsd` is `null`; replaced once more when the stored group has `costPartial: true` or `costUsd: null` and the new group has `costPartial: false` and a non-null `costUsd`; never replaced after a complete group is stored. A partial group never replaces a complete one.\n- [ ] `writeTimingAtClose` fills the manifest after it writes a `timing.json` that has token totals (the token pass), passing the derived cost; a phase-rows-only write fills `closedAt` and `minutes` only. `closedAt` is the run's close time: the timestamp of the run's close event in `events.jsonl` (the event `hooks.js close-run` / `teardown-run` / `archiveRunDir` write), else the last timestamp the timing derivation saw, else `null`; never the detached token pass's own clock. `runStartAt` is the manifest's `createdAt` only when the mint wrote it (the manifest carries `pluginVersion`, `policyHash` or `baseCommit` from the mint, or `run-state.json`'s creation time agrees with it within one minute); for a manifest a fill created, `runStartAt` is the run's first event timestamp, and `minutes` is `null` when neither is known. A `spec-N` child is skipped, as for timing. A failed fill changes nothing about the timing write and leaves one stderr line (the manifest module's existing drop rule).\n- [ ] `docs/reference/run-manifest.md` documents the added fields (still version 1): their types, the `null`, `costPartial` and one-upgrade rules, the price date, that dollars are list-price equivalents priced per request, the 5-minute-rate rule for a row with no cache-write split, and the writer (the close path).\n- [ ] Tests: `tests/bin-lib/pricing/prices.test.js`, `tests/bin-lib/run-manifest/cost.test.js`, and extensions of `tests/bin-lib/run-manifest/write.test.js` and the at-close tests; the existing `tests/pipeline-cost-report/*.test.js` pass unchanged against the moved table.\n\n## Acceptance Criteria\n\n1. `git grep -n \"fable: \\[\" -- tools/` prints nothing and `git grep -n \"fable: \\[\" -- plugin/bin/lib/pricing/prices.js` prints one line (run both once before the change to see the first match in `tools/pipeline-cost-report/spend.js`).\n2. `deriveRunCost` over fixture rows from a main-session transcript on `claude-opus-5-5` and one subagent transcript on `claude-sonnet-5-5` returns both model ids in `tokensByModel` with the summed token counts, and a `costUsd` equal to the sum of `priceRequest` over the fixture's rows, rounded to cents (computed in the test from `prices.js`, not hard-coded), and `priceDate` equal to `PRICES.date`.\n3. A fixture row on a model id no family matches appears in `tokensByModel` and `unpricedModels` and adds nothing to `costUsd`.\n4. A fixture where no transcript resolves gives `costUsd: null`; one with one readable and one unreadable transcript gives a number and `costPartial: true`.\n4a. A Haiku row over 100k prompt tokens in a subagent transcript is priced at the long-prompt rate (the test computes the expected value with `priceRequest`), and a row with a cache write but no 5-minute / 1-hour split prices the whole write at the 5-minute rate.\n5. A driver-lane fixture `events.jsonl` with two worker step events (one `usage` object each, models `sonnet` and `opus` as launched) gives `tokensByModel` keyed by those two models and `costUsd` from their usage.\n6. After `writeTimingAtClose` writes a timing file with token totals for a fixture run, the run's `manifest.json` has `v: 1`, non-null `costUsd`, `tokensByModel`, `minutes` and `closedAt`, and every pre-existing field byte-identical in value; `closedAt` equals the fixture's close-event timestamp, not the test's clock; running the close again changes nothing in the manifest.\n7. A `spec-N` child directory gets no manifest fill from the close path, and a fill into a manifest that is not a JSON object leaves it untouched with one stderr line.\n8. A manifest minted before this change (`v: 1`, nine fields) filled at close gains the new fields, keeps `v: 1`, and keeps its nine fields' values; `git diff` of `write.js` shows `MANIFEST_VERSION` still `1`.\n8a. A stored cost group with `costPartial: true` is replaced by a later complete group (`costPartial: false`); a stored complete group is not replaced by a later complete or partial group; a stored partial group is not replaced by another partial group.\n8b. A manifest created by a fill (no mint facts, `createdAt` the fill's time) gets `minutes` from the run's first event timestamp, and `minutes: null` when the fixture has no events.\n9. `tests/pipeline-cost-report/*.test.js` pass with no edit to their assertions.\n\n## Release Note\n\nEvery pipeline run now records its token use by model, its list-price cost and its minutes in its run manifest when it closes.\n\n## Technical Approach\n\nThe close path already resolves everything cost needs: the token pass resolves the run's main-session and subagent transcripts, and the driver's events carry each worker's usage. Cost re-reads those transcripts' per-request rows rather than `timing.json`'s summed tokens, which carry no model key, no cache-write split and no per-request rows. A pure `deriveRunCost` turns those into the manifest fields, and the existing best-effort `fillRunManifest` writes them. Moving the price table into `plugin/bin/lib/` gives the shipped close path and the maintainer report one table.\n\nDecided while specifying: cost is priced from tokens with the plugin's table for every lane, including the driver, rather than taking the CLI's `total_cost_usd`, so every lane reports in the same unit the design's evidence uses; an unknown model id is listed, never priced at a guessed rate; `minutes` is elapsed time from the run's start to its close, because the design's Goal 1 measures time to a green pull request; the version stays `1`, as the manifest's own Compatibility rule requires for added fields; a partial cost may be upgraded once by a complete one (a close before #5647's attribution, or with a transcript briefly missing, would otherwise freeze a wrong figure), and a complete cost is never rewritten, so a figure Dispatch has copied changes at most from partial to complete.\n\n### Data / API Surface\n\n`manifest.json` adds, at `v: 1`:\n\n| Field | Type | Meaning |\n|---|---|---|\n| `tokensByModel` | object, nullable | `{ \"<model id>\": { \"input\", \"output\", \"cacheRead\", \"cacheWrite5m\", \"cacheWrite1h\" } }` |\n| `costUsd` | number, nullable | List-price dollars for the priced models, rounded to cents |\n| `priceDate` | string, nullable | The `PRICES.date` the cost used |\n| `unpricedModels` | string[], nullable | Model ids counted but not priced |\n| `costPartial` | boolean, nullable | `true` when some token sources could not be read |\n| `minutes` | number, nullable | Elapsed minutes from the run's start to `closedAt`, one decimal |\n| `closedAt` | string, nullable | ISO-8601 UTC time the run closed (its close event), not the time of the fill |\n\n`deriveRunCost({ rows, events, manifest, closedAt, runStartAt }) -> { tokensByModel, costUsd, priceDate, unpricedModels, costPartial, minutes, closedAt }`\n\n### Key Files\n\n- `plugin/bin/lib/pricing/prices.js` — new: the price table, moved from the tool\n- `tools/pipeline-cost-report/spend.js` — require the table from the plugin path\n- `plugin/bin/lib/run-manifest/cost.js` — new: `deriveRunCost`\n- `plugin/bin/lib/run-manifest/write.js` — close-out fields, cost-group upgrade rule (`v` stays `1`)\n- `plugin/bin/lib/timing/at-close.js` — fill the manifest after the timing write; pass the transcript rows, `closedAt` and `runStartAt`\n- `plugin/bin/lib/timing/run-timing.js` — expose the clipped per-request rows and resolved subagent transcripts the token pass already reads\n- `plugin/bin/lib/timing/transcript.js` — read only: `readUsage` (with #5967's split) supplies the rows\n- `plugin/bin/timing-at-close.js` — the detached token pass reaches the fill\n- `docs/reference/run-manifest.md` — document the added fields\n- `tests/bin-lib/pricing/prices.test.js` — new\n- `tests/bin-lib/run-manifest/cost.test.js` — new\n- `tests/bin-lib/run-manifest/write.test.js` — extend\n\n## Gotchas\n\n- `timing.totals.minutes` is the union of phase spans, not elapsed time; do not use it for `minutes`.\n- Price by each row's `model` (the model id), never by a dispatch item's `tier`, which is a profile bucket.\n- `timing.dispatches` items carry token totals per agent, not per request; that is why cost reads the subagent transcripts' rows instead.\n- ASSUMPTION — verify at build: after #5967, `readUsage` rows carry the 5-minute / 1-hour cache-write split — via reading `plugin/bin/lib/timing/transcript.js` on main once #5967 has merged. Until then a cache write cannot be priced at the right rate.\n- Count each transcript once: after #5647, the set of transcripts the token pass resolves may include subagent transcripts it also attributes to `timing.dispatches`. Dedupe the transcript paths (by real path) before reading rows, and dedupe rows by `message.id` across files.\n- #5969 (make `initRunManifest`'s never-overwrite rule hold under a concurrent fill) also edits `write.js`. A close-path fill can race a late lane fill; keep every new field fill-only-null so a lost update cannot replace a real value with a wrong one.\n- The token pass runs detached after close (`spawnTokenPass`) and may run after archival moved the run directory; `at-close.js` already follows a moved directory to its archive twin. Fill the manifest at the path the timing write used.\n- The detached token pass must not change any closing path's exit code or timing (`TIMING_BOUND_MS`, 60 s): the fill is synchronous, small, and inside the existing try/catch.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-11:record-a-run-s-tokens-by-model-list-price-cost-and-minutes-i -->\nwork-fingerprint: pipeline-economy-phase-11:record-a-run-s-tokens-by-model-list-price-cost-and-minutes-i\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
+        "createdAt": "2026-11-21T17:37:41Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6009,
+        "state": "OPEN",
+        "title": "Record a run's tokens by model, list-price cost and minutes in its manifest",
+        "updatedAt": "2026-11-26T08:11:18Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "## Current State\n\nUnder `consoleAutoResolve`, `console-resolve.js --policy console-auto` computes the merge half once and persists it to `{run-dir}/console.json` as `merge.resolution`. `mergeResolution()` in `plugin/bin/lib/console/resolve.js` honours a needs-human verdict only through `needsHumanVerdict(decisions)`, which reads `decisions.md` at that moment.\n\n`wrap-up/execution-and-verification.md`'s Branch finish then routes the pr-first merge on `console.json`'s `merge.resolution` directly, and `_shared/pr-first-merge.md` never re-reads a needs-human verdict. `review-console.md` orders the Auto-merge short-circuit (which logs the `assess-agent-autonomy` merge-check verdict) before the Auto-resolution short-circuit, but nothing mechanical enforces that order.\n\nObserved in run `2026-11-16T183913-record-5770` (#5770, PR #5780): `console-resolve.js` ran at 20:12:39Z and recorded `merge.resolution: merge`; the short-circuit's `needs-human` verdict was logged at 20:13:22Z, 43 seconds later. Only the dispatched agent's manual hold kept the PR from merging.\n\n## Deliverables\n\n1. At Branch finish, before acting on `merge.resolution: merge`, re-evaluate `needsHumanVerdict` against the current `decisions.md`. On a hit, resolve leave-open (`pending-review`) and log one decision line naming the late verdict.\n2. Have `console-resolve.js` refuse to resolve the merge half, or mark it stale, when the Auto-merge short-circuit applies to the run (live `auto:build` + `auto:merge`/`auto:merge-pending`) but no merge-check verdict line exists yet.\n\n## Acceptance Criteria\n\n- A test where `decisions.md` gains a needs-human merge-check line after `console.json` records `merge.resolution: merge` shows Branch finish leaving the PR open, never merging.\n- A test where `console-resolve.js` runs with the short-circuit applicable and no verdict line yet shows it not resolving `merge`.\n- The in-order path (verdict logged before the resolve) is unchanged: existing `console-resolve` tests stay green.\n\n## Release Note\n\nAn unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/console/resolve.js` — needsHumanVerdict / mergeResolution: refuse or mark stale before a verdict exists\n- `plugin/bin/console-resolve.js` — surface the stale merge half\n- `plugin/skills/wrap-up/execution-and-verification.md` — Branch finish re-checks the verdict before merging\n- `plugin/skills/wrap-up/review-console.md` — state the ordering requirement as enforced\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-17T05:57:57Z",
         "labels": [
@@ -710,6 +798,12 @@
             "color": "F9D0C4"
           },
           {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
             "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
             "name": "priority:high",
             "description": "Priority: dispatch picks this band first",
@@ -725,7 +819,7 @@
         "number": 5833,
         "state": "OPEN",
         "title": "wrap-up: Branch finish merges on a console.json merge resolution computed before a later needs-human verdict",
-        "updatedAt": "2026-11-24T04:44:29Z",
+        "updatedAt": "2026-11-26T08:11:06Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -738,7 +832,7 @@
           "stage": "ready",
           "grants": {
             "build": true,
-            "merge": false
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -1723,6 +1817,84 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect full from #4549/#4550/#4556 (multi-spec batch)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/specify/shaping-mode-stamping.md:182` resolves `$SPECIFY_SHAPED_BODY` as `sessionTmpPath(CLAUDE_CODE_SESSION_ID, 'specify-shaped-body.md')`, one fixed filename per session, falling back to `os.tmpdir()/specify-shaped-body.md`. `shaping-mode.md:75` reuses the same path for its `--check` probe.\n\nEvery record a session shapes therefore shares one body file. Sweep run `2026-10-30T154127-sweep-standalone` wrote #4559's body onto #4549, #4549's onto #4550, and #4555's onto #4556. #4559 and #4555 kept their own correct bodies. The misfiled bodies had to be reshaped by hand on 2026-10-31.\n\nProbe: `git grep -n -F -e 'specify-shaped-body' origin/main -- plugin` matched both lines above.\n\n## Deliverables\n\nKey the shaped-body temp file by record id (e.g. `specify-shaped-body-{N}.md`) at both resolve sites, so two records shaped in one session, or by sibling dispatches sharing a session id, never share a file.\n\nBefore the body write, check that the body file being written was composed for the record being written, failing loud on a mismatch rather than writing it.\n\nA regression test that shapes two records in one session and asserts each record receives its own body.\n\n## Acceptance Criteria\n\nBoth resolve sites name the record id in the temp filename; a conformance test pins the per-record form at each site and goes red on the fixed `specify-shaped-body.md` form.\n\nShaping two records back to back in one session writes each record its own body (regression test, red on the current fixed filename).\n\nA body file whose record id does not match the target record is refused before any write, with a message naming both ids.\n\n## Release Note\n\nShaping several records in one session (including sweeps) can no longer write one record's body onto another.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/specify/shaping-mode-stamping.md` — modify\n- `plugin/skills/specify/shaping-mode.md` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-10-31T15:41:22Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAADAM5AEA",
+            "name": "size:small",
+            "description": "",
+            "color": "ededed"
+          }
+        ],
+        "number": 4746,
+        "state": "OPEN",
+        "title": "specify: one session-wide shaped-body temp file lets a sweep write a body onto the wrong record",
+        "updatedAt": "2026-11-26T08:11:12Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": null,
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -6868,96 +7040,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n**Related:** #3823, #3953, #3982, #3983, #3993\n\n## Current State\n\nThe post-merge Windows check on commit 6c660b23c (merged PR #3916, run 40029571772) reported `tests/bin-lib/issues/comment-trust.test.js` newly failing. The failing test is \"untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\" (line 66). Its actual output ends every line with `\\r\\n`, where the expected value is `\\n`-joined.\n\nRoot cause, reproduced on macOS against `main` at d02483933: native `jq` on Windows writes stdout in text mode, so every output newline becomes CRLF. The tests compare `spawnSync('jq', …).stdout` byte-for-byte against `\\n`-joined text. Running the files with a `jq` shim on `PATH` that converts output `\\n` to `\\r\\n` reproduces exactly four failures, and a CRLF file-read simulation adds none. This is not the `readText` CRLF-read class:\n\n- `tests/bin-lib/issues/comment-trust.test.js` (8 tests: 6 pass, 2 fail):\n  - \"untrustedJqNote prints the same text…\" (jq call at line 80)\n  - \"AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)\" (jq call at line 119; `split('\\n')` leaves a trailing `\\r` on each kept value)\n- `tests/comment-trust-conformance.test.js` (37 tests: 35 pass, 2 fail):\n  - \"AC5.2: grant-lane-decision.md's jq lines run…\"\n  - \"AC5.2: shaping-mode-stamping.md's jq lines run…\"\n  - Both go through the `runJq` helper's jq call at line 449.\n\n`tests/comment-trust-conformance.test.js` was never filed. The latest Windows run's `verify-report` artifact (run 40030935846, head d02483933) lists both files in `baselineAdjudicated.failingFiles`. The conformance file has been red since it was introduced, so the per-push baseline diff never reports it as newly failing. These three `spawnSync('jq', …)` calls are the only non-probe jq invocations under `tests/`. Shipped plugin code is unaffected: `comment-trust.js` only builds the filter strings.\n\n## Deliverables\n\n1. Normalize jq's stdout to `\\n` line endings at each of the three call sites (`tests/bin-lib/issues/comment-trust.test.js` lines 80 and 119, `tests/comment-trust-conformance.test.js` line 449) before any assertion reads it. Do this through one shared test helper rather than three hand-written replacements.\n2. Fix both test files in this record, since they share the root cause.\n\n## Acceptance Criteria\n\n1. No assertion in either file reads raw `jq` stdout. Every one of the three non-probe `spawnSync('jq', …)` results is EOL-normalized first.\n2. With a CRLF-emitting `jq` shim first on `PATH` (a wrapper that pipes real `jq` output through `perl -pe 's/\\n/\\r\\n/'`), both files pass every test. Before the fix this reports 2 failures in each file.\n3. Both files are green on Linux/macOS with the real `jq`. The `jq not found` skip path is unchanged.\n4. The next post-merge `windows-regression.yml` run's `verify-report` artifact lists neither file in `baselineAdjudicated.failingFiles`.\n\n## Release Note\n\nFix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.\n\n## Technical Approach\n\nAdd a small `runJq(args, input)` helper next to `readText` under `tests/helpers/`. It wraps `spawnSync('jq', args, { input, encoding: 'utf8' })` and returns the result with `stdout` normalized via `.replace(/\\r\\n/g, '\\n')`. Route the three call sites through it, keeping each `status`/`stderr` assertion as-is. Normalizing at the read mirrors the house rule for the CRLF-read class (#3776, #3953): fix the input once instead of loosening every assertion.\n\n### Key Files\n\n- `tests/bin-lib/issues/comment-trust.test.js` — two jq calls routed through the helper\n- `tests/comment-trust-conformance.test.js` — `runJq`'s jq call routed through the helper\n- `tests/helpers/` — new shared jq-run helper (or extend an existing helper module)\n\n## Gotchas\n\n- Do not pass `jq --binary` / `-b` instead. That flag is documented for native Windows builds, and its behavior on the Linux/macOS jq versions CI and maintainers run is not established here. Normalizing in the test is platform-independent.\n- The `--version` probes need no change: they only check `status`.\n- CI runs on ubuntu only. AC2's shim is the pre-merge stand-in, and only the post-merge `windows-regression.yml` run proves the fix on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 6c660b23c\n\nThe post-merge Windows check failed on commit 6c660b23cb7b054f4908afabd7a30949e220e57c (compared against 2b943d781).\n\n**Merged PR:** #3916 (https://github.com/thn-inc/claude-tweaks/pull/3916)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/40029571772\n\n### Newly failing test files\n- `tests/bin-lib/issues/comment-trust.test.js`\n\n### Failure excerpts\n\n#### `tests/bin-lib/issues/comment-trust.test.js`\n\n```\nnot ok 3668 - untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\n  ---\n  duration_ms: 1095.4188\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\bin-lib\\\\issues\\\\comment-trust.test.js:66:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator\\r\\n' +\n    +   'skipped marker comment https://x/c2 by unknown (NONE) — not an owner, member, or collaborator\\r\\n' +\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
-        "createdAt": "2026-10-23T22:05:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3995,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after 6c660b23c",
-        "updatedAt": "2026-11-23T18:32:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: reflect full from #3947\n\nDefer-reason: tangential\n\n## Current State\n\nA skill step that dispatches agents or calls CLIs is specified in prose, and nothing at spec, plan or authoring time asks what happens when each of those calls fails.\n\nIn #3947 (Step 3.7, `plugin/skills/review/step3-tiebreak.md`), the SDD final review needed 1 Critical and 6 Important fixes, and the later 4-lens review found 23 more findings. Most of them were the same kind of gap: what the reviewer does when a dispatch fails or returns non-DONE, when `write-findings` exits 2, when `resolve-tiebreak` crashes, or when `log-decision.js` fails. Each was added after the fact, across fix commits a2d09600d, a645f740b, cc098dd27 and 494bb6045.\n\n`docs/skill-authoring.md` and `plugin/skills/build/plan-authoring-checks.md` have no rule or check that asks for a failure path per external call.\n\n## Deliverables\n\n- `docs/skill-authoring.md` gains a rule: a step whose prose dispatches an agent or runs a CLI states, for each such call, its next move on failure (retry once / fallback rung / surface and stop) and the log line it writes.\n- `plugin/skills/build/plan-authoring-checks.md` gains a check: a plan task that adds or changes such a step carries a failure-path table (call → failure mode → next move → log line) before its prose is written.\n- A conformance test pins both texts.\n\n## Acceptance Criteria\n\n1. `docs/skill-authoring.md` contains the failure-path rule and names the three next-move kinds.\n2. `plan-authoring-checks.md` contains the failure-path table check and its trigger (a task touching a step that dispatches an agent or runs a CLI).\n3. A test asserts both, and it was shown to go red without each text.\n\n## Release Note\n\nSkill steps that dispatch agents or run tools now have to say up front what happens when each call fails, so those gaps are found while planning instead of in review.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-authoring.md` — add the failure-path rule\n- `plugin/skills/build/plan-authoring-checks.md` — add the failure-path table check\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-23T01:13:13Z",
         "labels": [
@@ -8809,6 +8891,12 @@
       "blockedBy": [
         6119,
         6118
+      ]
+    },
+    {
+      "number": 6010,
+      "blockedBy": [
+        6009
       ]
     },
     {
