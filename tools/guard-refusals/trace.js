@@ -16,6 +16,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const { walkMarkdown, shellFences } = require('./fences');
+const { REFUSAL_SIGNATURES } = require('../../plugin/bin/lib/hooks/harness-refusal');
 
 const REASONS = [
   'too-complex', 'names-git', 'git-redirect-shared', 'cd-shared', 'git-C-runtime', 'glob-git',
@@ -56,12 +57,13 @@ const REASON_TABLE = [
   ['other-worktree-cwd', /\bworking directory\b[^\n]*\bis in a different worktree\b/],
 ];
 
-// The part of a refusal from "but this command" up to "Refusing to run"; the whole text when it has
+// The part of a refusal from "but this command" up to the first of REFUSAL_SIGNATURES; the whole text when it has
 // no such frame (a caller handing over only the clause).
 function clauseOf(refusalText) {
   const text = String(refusalText);
   const start = Math.max(0, text.search(/\bbut this command/));
-  const end = text.indexOf('Refusing to run', start);
+  const hits = REFUSAL_SIGNATURES.map((sig) => text.indexOf(sig, start)).filter((i) => i !== -1);
+  const end = hits.length ? Math.min(...hits) : -1;
   return end === -1 ? text.slice(start) : text.slice(start, end);
 }
 
