@@ -353,7 +353,8 @@ function sharedCauseOf(env) {
   if (env.reason === 'launch-error') return true;
   if (env.status !== 'fail' || !env.apiError) return false;
   const { status, type } = env.apiError;
-  return (type !== null && SHARED_CAUSE_API_TYPES.includes(type)) || (status !== null && SHARED_CAUSE_API_STATUSES.includes(status)) || (type === null && status === null);
+  if (type === null && status === null) return true;
+  return SHARED_CAUSE_API_TYPES.includes(type) || SHARED_CAUSE_API_STATUSES.includes(status);
 }
 
 // True when the envelope is a launch failure that counts toward a run of launch failures.
