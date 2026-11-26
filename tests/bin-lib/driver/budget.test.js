@@ -600,6 +600,7 @@ test('AC1.1, AC1.2, AC5.1, AC5.2: the second record\'s merge holds drain-overlap
   assert.equal(results[2].reason, 'drain-overlap');
   assert.match(results[2].detail, /in-flight PR 101/);
   assert.equal(f.files.get(LIST_PATH), '[{"number":101},{"number":102}]');
+  assert.deepEqual(f.calls.mkdirSync, [[SESSION_ROOT, { recursive: true }]], 'the session directory is made once, before the first write');
 });
 
 test('AC2.1, AC2.2: a first PR no longer OPEN does not hold the second record', async () => {
@@ -736,5 +737,8 @@ test('driveOne throwing marks the list broken before the throw propagates', asyn
   const driveOne = async (n) => { f.calls.driveOne.push(n); throw boom; };
   await assert.rejects(runShared(f, driveOne), boom);
   assert.deepEqual(f.driven(), [1], 'the run ends: no later record is driven');
-  assert.equal(f.err.split('\n').filter((l) => /#1 threw before returning its final line/.test(l)).length, 1);
+  const lines = f.err.split('\n').filter((l) => /#1 threw before returning its final line/.test(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /the run ends$/);
+  assert.doesNotMatch(lines[0], /every later/);
 });

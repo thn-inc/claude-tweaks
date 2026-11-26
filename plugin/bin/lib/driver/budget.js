@@ -178,15 +178,19 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   // The PRs this run opened, and whether the list can no longer be trusted (sticky).
   const drainPrs = [];
   let listBroken = false;
-  const breakList = (why) => {
+  const breakList = (why, consequence = 'every later driven record holds as in-flight-unreadable') => {
     if (listBroken) return;
     listBroken = true;
-    deps.stderr(`drive.js: ${why}; every later driven record holds as in-flight-unreadable\n`);
+    deps.stderr(`drive.js: ${why}; ${consequence}\n`);
   };
+  let rootMade = false;
   const writeList = (what) => {
     if (listBroken) return;
     try {
-      deps.mkdirSync(root, { recursive: true });
+      if (!rootMade) {
+        deps.mkdirSync(root, { recursive: true });
+        rootMade = true;
+      }
       deps.writeFile(listPath, JSON.stringify(drainPrs));
     } catch (err) {
       breakList(`drain-PR list ${what} failed (${listPath}): ${errorText(err)}`);
@@ -272,7 +276,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
       try {
         facts = await driveOne(n);
       } catch (err) {
-        breakList(`#${n} threw before returning its final line`);
+        breakList(`#${n} threw before returning its final line`, 'the run ends');
         throw err;
       }
       // Appended only after the record's own merge step has run.
