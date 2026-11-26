@@ -94,9 +94,11 @@ function remedyFiles(dir) {
   return hits.sort();
 }
 
-test('dispatch directory: only open-pr-exclusion-report.md names the remedy form', () => {
+// reporting.md's plan-review relay names the form as one of a question's two answer paths
+// (#5053 Deliverable 4); `dispatch resume` runs its own eligibility verdict before acting.
+test('dispatch directory: only open-pr-exclusion-report.md and the plan-review relay name the remedy form', () => {
   assert.ok(fs.readdirSync(DISPATCH_DIR).filter((f) => f.endsWith('.md')).length > 20, 'walk floor');
-  assert.deepStrictEqual(remedyFiles(DISPATCH_DIR), ['open-pr-exclusion-report.md']);
+  assert.deepStrictEqual(remedyFiles(DISPATCH_DIR), ['open-pr-exclusion-report.md', 'reporting.md']);
   // go-red control: the same walk over a tree where a second file also names it
   const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'resume-remedy-'));
   try {

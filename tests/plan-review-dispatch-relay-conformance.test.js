@@ -57,21 +57,27 @@ const SETTLE_ANCHORS = [
   'dispatch/two-call-gate.md` §5',
   'removes the local worktree only',
   'the pushed branch and draft PR stay open for the resumed run',
+  // #5053 D3: the build's exit waits on `needs:answer` and keeps the grants in any posture
+  'added `needs:answer` (in any posture), kept every `auto:*` grant',
 ];
 
 const RELAY_ANCHORS = [
   'failed:plan-review-needs-human',
   '<!-- plan-review-question -->',
-  "adding a `**Decision**` paragraph (or an Acceptance Criterion) to #{n}'s body",
-  '/claude-tweaks:dispatch #{n}',
-  '/claude-tweaks:backlog refine',
+  // #5053: the two answer options — an `/answer` reply the next bare drain folds in, or a body
+  // Decision and a typed resume
+  'reply `/answer …` on that question comment',
+  "the next bare `/claude-tweaks:dispatch` drain folds the reply into #{n}'s body and resumes the build",
+  "add a `**Decision**` paragraph (or an Acceptance Criterion) to #{n}'s body and run `/claude-tweaks:dispatch resume #{n}`",
   'no `AskUserQuestion` in a subagent',
-  // a non-headless block can be re-picked headlessly
-  'A non-headless block keeps `auto:build` with the claim released',
-  'a later Routine drain may re-pick the still-unanswered record',
-  '`bot:blocked`',
-  'answering on the record promptly avoids that spent run',
+  // a re-pick cannot happen: the kept draft PR holds the record in the open-pr exclusion
+  'the open-pr exclusion',
 ];
+
+// Retired from both paragraphs by #5053: the headless block, the re-grant and the re-pick.
+const RETIRED_SETTLE = ['added `bot:blocked`', 'removed every `auto:*` grant'];
+const RETIRED_RELAY = ['bot:blocked', 're-grant', 're-run `/claude-tweaks:dispatch #{n}`', 're-pick'];
+const retired = (text, banned) => banned.filter((b) => text.includes(b));
 
 test('Review Focus 5: Settle skips its numbered steps for the plan-review needs-human stop', () => {
   const text = read(SETTLE);
@@ -87,6 +93,21 @@ test('Review Focus 5: Settle skips its numbered steps for the plan-review needs-
 
 test('Review Focus 5: the dispatching session relays the question to the human', () => {
   assert.deepStrictEqual(missing(paragraph(read(REPORTING), RELAY_HEAD), RELAY_ANCHORS), []);
+});
+
+test('#5053: neither paragraph keeps the headless block, the re-grant or the re-pick', () => {
+  assert.deepStrictEqual(retired(paragraph(read(SETTLE), SETTLE_HEAD), RETIRED_SETTLE), []);
+  assert.deepStrictEqual(retired(paragraph(read(REPORTING), RELAY_HEAD), RETIRED_RELAY), []);
+});
+
+test('go-red: retired() flags each banned clause planted in its own live paragraph', () => {
+  const cases = [
+    [paragraph(read(SETTLE), SETTLE_HEAD), RETIRED_SETTLE],
+    [paragraph(read(REPORTING), RELAY_HEAD), RETIRED_RELAY],
+  ];
+  for (const [live, banned] of cases) {
+    for (const b of banned) assert.deepStrictEqual(retired(`${live} ${b}`, banned), [b], b);
+  }
 });
 
 test('reporting.md\'s PushNotification rule names the plan-review headless block (headless block notification)', () => {
@@ -110,6 +131,9 @@ test('AC8.1: docs/skill-graph.md states the /build → /dispatch edge once, in t
   const rows = section(text, 'build').split('\n').filter((l) => l.startsWith('| `/dispatch` |'));
   assert.strictEqual(rows.length, 1, 'expected exactly one /dispatch row under ## build');
   assert.ok(rows[0].includes('build/plan-review.md'), 'the /dispatch row must name build/plan-review.md');
+  // #5053: the stop adds `needs:answer` and keeps the grants; `bot:blocked` is the retry ceiling only.
+  assert.ok(rows[0].includes('adds `needs:answer`'), 'the /dispatch row must say the stop adds needs:answer');
+  assert.ok(!rows[0].includes('bot:blocked'), 'the /dispatch row must not say the stop applies bot:blocked');
   const dispatchRows = section(text, 'dispatch').split('\n').filter((l) => l.startsWith('|') && l.includes('build/plan-review.md'));
   assert.deepStrictEqual(dispatchRows, [], 'the ## dispatch section must not restate the edge');
 });
