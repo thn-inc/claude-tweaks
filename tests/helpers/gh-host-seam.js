@@ -414,6 +414,7 @@ const CLI_TABLE = [
   { cli: 'resolve-blockers.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
   { cli: 'resolve-foreign-blockers.js', argv: ['other/repo#5'], acceptsRepo: true, printsResolutionNote: true },
   { cli: 'resolve-linked-prs.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'resolve-record-comments.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
   // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
   // open PR, so the read is its one network-bound gh call and no per-record read follows.
   { cli: 'stuck-open-prs.js', argv: ['--records', 'records.json'], setup: writeJsonFile('records.json', [{ number: 1, state: 'OPEN', title: 'R', createdAt: '2026-10-01T08:00:00Z', labels: [{ name: 'auto:build' }] }]), acceptsRepo: false, canned: { 'api-graphql': STUCK_OPEN_PRS_GRAPHQL } },
