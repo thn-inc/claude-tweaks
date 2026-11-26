@@ -20,10 +20,10 @@ const {
 
 const HOOKS_DIR = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks');
 
-test('harness-refusal: the derived regex is the widened #3819 source exactly', () => {
+test('harness-refusal: the derived regex is the #4523-anchored source exactly', () => {
   assert.strictEqual(
     HARNESS_ISOLATION_REFUSAL_RE.source,
-    String.raw`(This session|This agent) is isolated in the worktree [\s\S]*?(Refusing to run it|Refusing to run there)`,
+    String.raw`^(This session|This agent) is isolated in the worktree [\s\S]*?(Refusing to run it|Refusing to run there)`,
   );
   assert.strictEqual(HARNESS_ISOLATION_REFUSAL_RE.flags, '');
 });
@@ -64,6 +64,16 @@ test('matcher: HARNESS_ISOLATION_REFUSAL_RE matches every refusal template on it
   }
 });
 
+function quoteMidText(text) {
+  return `Exit code 1\nnot ok 3 - classifies the refusal\n  expected: '${text}'`;
+}
+
+test('AC1.1: classifyRefusal returns null for an error that quotes a refusal mid-text', () => {
+  for (const [name, text] of FIXTURES) {
+    assert.strictEqual(classifyRefusal(quoteMidText(text)), null, name);
+  }
+});
+
 test('classifyRefusal: non-refusals return null', () => {
   const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
   for (const text of ['Exit code 1\nfatal: not a git repository', undefined, 42, editToolText]) {
@@ -96,6 +106,15 @@ for (const [name, text, expected] of FIXTURES) {
     assert.strictEqual(refusals[0].reason, 'harness-worktree-isolation', name);
     assert.strictEqual(refusals[0].actor, expected.actor, name);
     assert.strictEqual(refusals[0].variant, expected.variant, name);
+  });
+}
+
+for (const [name, text] of FIXTURES) {
+  test(`AC1.1: post-tool-use-failure logs no wd-guard-refusal for ${name} quoted mid-text`, () => {
+    const main = gitRepo();
+    const wt = harnessWorktreeOf(main);
+    failure.run(ptufCtx(wt, quoteMidText(text.split(WT).join(wt))));
+    assert.deepStrictEqual(adhocDirs(main), [], name);
   });
 }
 
