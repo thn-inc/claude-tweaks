@@ -994,25 +994,23 @@ test('AC1.1: a needs-human verdict logged after console.json recorded merge — 
   assert.strictEqual(recheckLines(fx).length, 1);
 });
 
-test('AC2.1 (CLI): the resolve shape persists mergeStale to console.json and names it on stderr when no verdict is logged', async () => {
+test('AC2.1 (CLI): the resolve shape names the stale merge half on stderr, leaves console.json without mergeStale, and --recheck-merge then prints leave-open', async () => {
   const fx = mainCheckoutWithRun({ staged: THREE });
   const { d, err } = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
   const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
   assert.strictEqual(data.merge.resolution, 'merge');
-  assert.deepStrictEqual(data.mergeStale.unconfirmed, [7]);
+  assert.strictEqual('mergeStale' in data, false);
   assert.match(err(), /console-resolve\.js: merge half stale — #7: no confirmed merge-check verdict/);
   const r = await recheck(fx);
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.out, /recheck-merge leave-open — /);
 });
 
-test('the resolve shape leaves console.json without a mergeStale key when a pass verdict is logged', async () => {
+test('the resolve shape prints no stale line when a pass verdict is logged', async () => {
   const fx = mainCheckoutWithRun({ staged: THREE, decisions: `${rmLine(7)}\n` });
   const { d, err } = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
-  const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
-  assert.strictEqual('mergeStale' in data, false);
   assert.doesNotMatch(err(), /merge half stale/);
 });
 
@@ -1020,7 +1018,7 @@ test('--recheck-merge is idempotent for every hit kind: a second run prints leav
   const fixtures = {
     'needs-human': mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` }),
     unparsed: mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmUnparsed(7)}\n` }),
-    unconfirmed: mainCheckoutWithRun({ consoleJson: MERGE_JSON({ mergeStale: { unconfirmed: [7], reason: 'x' } }) }),
+    unconfirmed: mainCheckoutWithRun({ consoleJson: MERGE_JSON() }),
   };
   for (const [kind, fx] of Object.entries(fixtures)) {
     const a = await recheck(fx);
@@ -1034,7 +1032,7 @@ test('--recheck-merge is idempotent for every hit kind: a second run prints leav
 });
 
 test('--recheck-merge with no late verdict prints merge and writes nothing', async () => {
-  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON({ mergeStale: { unconfirmed: [7], reason: 'x' } }), decisions: `${rmLine(7)}\n` });
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
   const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
   const r = await recheck(fx);
   assert.strictEqual(r.code, 0, r.err);
@@ -1081,7 +1079,7 @@ test('--recheck-merge: an absent decisions.md is empty content, not an error', a
   assert.match(r.out, /recheck-merge merge — /);
 });
 
-test('--recheck-merge: an old-format console.json (merge, no mergeStale key) with no verdict line prints leave-open', async () => {
+test('--recheck-merge: a console.json recording merge, with no verdict line prints leave-open', async () => {
   const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
   const r = await recheck(fx);
   assert.strictEqual(r.code, 0, r.err);
@@ -1089,11 +1087,11 @@ test('--recheck-merge: an old-format console.json (merge, no mergeStale key) wit
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'leave-open');
 });
 
-test('--recheck-merge: an old-format console.json with a pass verdict logged prints merge; mergeStale: null is not re-derived', async () => {
+test('--recheck-merge: a console.json recording merge with a pass verdict logged prints merge; a stored mergeStale: null does not suppress the check', async () => {
   const pass = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
   assert.match((await recheck(pass)).out, /recheck-merge merge — /);
   const explicit = mainCheckoutWithRun({ consoleJson: MERGE_JSON({ mergeStale: null }) });
-  assert.match((await recheck(explicit)).out, /recheck-merge merge — /);
+  assert.match((await recheck(explicit)).out, /recheck-merge leave-open — /);
 });
 
 test('--recheck-merge: an old-format console.json whose members cannot be read fails closed with members-unresolved', async () => {

@@ -121,6 +121,21 @@
 // member — #6283) `deferred` with `carried to the acceptance packet as {factId}` — exit 5 when no row names it or the ledger path is refused (resolveLedgerPath's confinement: a
 // ledger.md or *-ledger.md under the run or worktree), 3 when the settle throws. `carried` and `--ledger` need
 // control mode and a ledger-record-* or bundle-* id: otherwise exit 2. Exit 6: the facts could not be written.
+//
+// Eighth shape (#5833): `--run <dir> --recheck-merge` — the merge site's re-read of the console's merge half
+// against the decisions.md as it stands now (lib/console/resolve.js's recheckMerge). It takes no other flag than
+// --run and needs no ceiling. Everything runs under `{run}/.console.lock` (fail closed). stdout is exactly one line,
+// `console-resolve.js: recheck-merge merge — …` (no needs-human, malformed or unconfirmed merge-check verdict: merge
+// may proceed, nothing written) or `console-resolve.js: recheck-merge leave-open — {late verdict}` (do not merge).
+// Both exit 0; EVERY other exit means "do not merge". On a hit it logs one `Merge re-check:` AUTO line (skipped when
+// one naming the same verdict is already there) and, when console.json recorded `merge`, rewrites it to
+// `leave-open`. An absent console.json is the local-merge case (decisions.md judged alone, console.json never
+// created). When console.json recorded `merge` the stale set is always derived from the run's members (never
+// stored), and members that cannot be read are a hit (`members-unresolved`). Exit 0 judged, 2 malformed, 3 --run not
+// anchored, the lock not taken, decisions.md unreadable (absent is empty), or a write failed (the line may have
+// landed), 5 console.json present but unparseable (nothing written).
+// The resolve shape names a stale merge half on stderr (`merge half stale — {reason}`) and carries `mergeStale` in
+// `--json` output when non-null; console.json's byte shape is unchanged.
 'use strict';
 
 const fs = require('fs');
@@ -1032,10 +1047,11 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       }
       const autoResolve = data !== null && data.mode === 'auto-resolve';
       const merge = autoResolve && data.merge && typeof data.merge === 'object' ? data.merge : null;
-      let mergeStale = data !== null && data.mergeStale && typeof data.mergeStale === 'object' && Array.isArray(data.mergeStale.unconfirmed) ? data.mergeStale : null;
-      // A console.json an earlier release wrote: `merge` resolved but no `mergeStale` key at all. `mergeStale: null`
-      // (key present) means not stale; only an absent key is derived, from the run's members, failing closed.
-      if (autoResolve && merge && merge.resolution === 'merge' && !Object.prototype.hasOwnProperty.call(data, 'mergeStale')) {
+      // The stale set is never stored: whenever console.json recorded `merge`, derive it from the run's members and let
+      // recheckMerge's confirmPassingVerdicts decide against the live decisions.md; members that cannot be read fail closed.
+      let mergeStale = null;
+      // A merge half this shape already rewrote (`leave-open`, `recheckedFrom: merge`) is re-derived too, so a repeat call still holds.
+      if (autoResolve && merge && (merge.resolution === 'merge' || (merge.resolution === 'leave-open' && merge.recheckedFrom === 'merge'))) {
         let members = [];
         try { members = readMembers({ readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, ...(deps.resolverDeps || {}) }, runDir); } catch { members = []; }
         mergeStale = Array.isArray(members) && members.length ? { unconfirmed: members } : { unconfirmed: [], membersUnresolved: true };
@@ -1228,7 +1244,7 @@ async function run(argv, deps = {}) {
         if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object' && !priorApprovals.has(it.id)) priorApprovals.set(it.id, it.approval);
       }
       result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) && !it.approval ? { ...it, approval: priorApprovals.get(it.id) } : it));
-      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, ...(mergeStale ? { mergeStale } : {}), droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
     }, { failClosed: true, env: process.env });
   }
   if (mergeStale && !o.dryRun) stderr(`console-resolve.js: merge half stale — ${mergeStale.reason}\n`);

@@ -300,7 +300,7 @@ test('AC5.1: control mode off writes no packet-facts file and an identical conso
   assert.ok(!fs.existsSync(path.join(fx.runDir, 'packet-facts')), 'no packet-facts directory');
   const stored = cj(fx);
   assert.ok(!('controlMode' in stored) && !('decisionFacts' in stored));
-  assert.deepStrictEqual(Object.keys(stored), ['resolved', 'mode', 'at', 'ceiling', 'items', 'merge', 'mergeStale', 'droppedByTiebreak', 'filings', 'digests']); // #5833: this fixture logs no merge-check verdict, so its merge half is stale
+  assert.deepStrictEqual(Object.keys(stored), ['resolved', 'mode', 'at', 'ceiling', 'items', 'merge', 'droppedByTiebreak', 'filings', 'digests']);
   assert.strictEqual(stored.items.find((i) => i.id === 'review-contested-1.md').resolution, 'keep-staged');
   assert.match(out(), /Needs a human/);
   const decisions = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
