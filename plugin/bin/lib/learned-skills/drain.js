@@ -39,7 +39,7 @@
 const path = require('path');
 const { realDeps: lsRealDeps, firstStderrLine } = require('./learned-skills');
 const { drainPath } = require('./layout');
-const { classifyRollup, normalizeEntry, normalizeHeadRun } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, normalizeHeadRun, HEAD_RUN_FIELDS, HELD_CONCLUSIONS } = require('../pr-checks/classify');
 const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
 const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
 const { rebuild: realRebuild } = require('./rebuild');
@@ -55,6 +55,7 @@ const LOG_SECTION = '/wrap-up';
 const STEP = 'Learned-skills drain';
 const LEVER = 'learned-skills-auto-merge=true';
 const CONFLICT_PREFIX = 'conflict needs a human: ';
+// A HELD_CONCLUSIONS check (cancelled, action_required, stale) is excluded from the red scan and read as pending by classifyRollup (#3467).
 const OK_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 
 const LEFT_OPEN_REASONS = Object.freeze([
@@ -91,7 +92,7 @@ function classifyPr(view, headRuns, ready) {
   });
   if (verdict.state === 'red') return 'red';
   const checks = [...(rollup || []).map(normalizeEntry), ...(Array.isArray(headRuns) ? headRuns : []).map(normalizeHeadRun)];
-  if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || ''))) return 'red';
+  if (checks.some((c) => c.status === 'COMPLETED' && !OK_CONCLUSIONS.includes(c.conclusion || '') && !HELD_CONCLUSIONS.includes(c.conclusion || ''))) return 'red';
   // Step 2.5: only `awaiting` and `draft-skip-without-ready-trigger` yield to the Conflict path; a red ready-run stays red.
   if (r.state === 'red' || (!conflicting && r.state === 'draft-skip-without-ready-trigger')) return 'red';
   if (conflicting) return 'conflicting';
@@ -225,7 +226,7 @@ function drain(opts, overrides = {}) {
     if (!view || typeof view !== 'object' || Array.isArray(view)) throw new Error('gh pr view returned no object');
     if (view.state !== 'OPEN') return { view, headRuns: [], ready: null, verdict: 'closed' };
     if (typeof view.headRefOid !== 'string' || !view.headRefOid || !Array.isArray(view.statusCheckRollup)) throw new Error('gh pr view returned no head commit or check rollup');
-    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']), 'gh run list');
+    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]), 'gh run list');
     if (!Array.isArray(headRuns)) throw new Error('gh run list did not return an array');
     const ready = deps.readyRun({ pr: n, sha: view.headRefOid });
     if (!ready || ready.state === 'read-failed' || typeof ready.state !== 'string') throw new Error(`ready-run read failed: ${(ready && ready.reason) || 'no state'}`);

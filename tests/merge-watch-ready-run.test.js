@@ -39,8 +39,11 @@ else console.log(JSON.stringify({ state: v }));
 `;
 
 const DATE_STUB = 'date() { n=$(cat "$STUB_DIR/date-n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$STUB_DIR/date-n"; if [ "$n" -eq 1 ] || [ "$DATE_MODE" != jump ]; then echo 1000; else echo 5000; fi; }';
+// gh stub: `pr checks … --json` prints $CHECKS_JSON (default []) and exits $JSON_RC (default 0); plain
+// `pr checks` exits $CHECKS_RC (default 0); `run list` prints $RUNS_JSON (default []).
+const GH_STUB = 'gh() { case "$1 $2" in "pr checks") case "$*" in *--json*) printf \'%s\\n\' "${CHECKS_JSON:-[]}"; return "${JSON_RC:-0}";; esac; return "${CHECKS_RC:-0}";; "run list") printf \'%s\\n\' "${RUNS_JSON:-[]}";; esac; }';
 const STUBS = [
-  'gh() { case "$1 $2" in "pr checks") return 0;; "run list") echo \'[]\';; esac; }',
+  GH_STUB,
   'sleep() { :; }',
   DATE_STUB,
 ].join('\n');
@@ -62,9 +65,12 @@ function sandbox() {
   TMP_DIRS.push(dir);
   fs.mkdirSync(path.join(dir, 'bin'));
   fs.writeFileSync(path.join(dir, 'bin', 'ready-run.js'), STUB_CLI);
+  fs.mkdirSync(path.join(dir, 'bin', 'lib', 'pr-checks'), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'pr-checks', 'classify.js'), path.join(dir, 'bin', 'lib', 'pr-checks', 'classify.js'));
   const paths = {
     '{pr-checks-path}': fwd(path.join(dir, 'pr-checks.txt')),
     '{pr-runs-path}': fwd(path.join(dir, 'pr-runs.json')),
+    '{pr-checks-json-path}': fwd(path.join(dir, 'pr-checks-json.json')),
     '{pr-ready-path}': fwd(path.join(dir, 'pr-ready.json')),
     '{park-comment-path}': fwd(path.join(dir, 'park-comment.md')),
   };
@@ -170,6 +176,58 @@ for (const shell of SHELLS) {
     assert.notEqual(noCliGuard, FENCE);
     assert.equal(runWatch(shell, FENCE, '__fail').rc, 2);
     assert.notEqual(runWatch(shell, noCliGuard, '__fail').rc, 2, 'without the CLI-line guard a failed CLI call is read as met');
+  });
+
+  // #3467: gh buckets CANCELLED as `cancel` (exit 0) and ACTION_REQUIRED as `fail` (exit 1); both are held, not green/red.
+  const watchEnv = (e) => ({ DATE_MODE: 'jump', ...e });
+  const js = (obj) => JSON.stringify(obj);
+  const T1 = '2026-11-26T10:00:00Z';
+  const T2 = '2026-11-26T11:00:00Z';
+  const headRun = (databaseId, conclusion, startedAt) => ({ databaseId, name: 'test', workflowName: 'test', status: 'completed', conclusion, url: 'u', startedAt });
+
+  t('a lone cancelled check (gh exit 0) keeps watching until the bound', () => {
+    const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '0', CHECKS_JSON: js([{ state: 'CANCELLED' }]) }));
+    assert.equal(r.rc, 124);
+  });
+
+  t('ACTION_REQUIRED (gh exit 1) keeps watching, not red', () => {
+    const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '1', CHECKS_JSON: js([{ state: 'ACTION_REQUIRED' }]) }));
+    assert.equal(r.rc, 124);
+  });
+
+  t('a real failure beside a held check is still red on the first pass', () => {
+    const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '1', CHECKS_JSON: js([{ name: 'a', state: 'ACTION_REQUIRED' }, { name: 'b', state: 'FAILURE' }]) }));
+    assert.equal(r.rc, 1);
+  });
+
+  t('a held newest head run keeps watching', () => {
+    const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '0', RUNS_JSON: js([headRun(1, 'cancelled', T1)]) }));
+    assert.equal(r.rc, 124);
+  });
+
+  t('a cancelled head run superseded by a newer success breaks green', () => {
+    const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '0', RUNS_JSON: js([headRun(1, 'cancelled', T1), headRun(2, 'success', T2)]) }));
+    assert.equal(r.rc, 0);
+  });
+
+  t('a failed --json read stops the watch', () => {
+    for (const rc of ['0', '1']) {
+      const r = runWatch(shell, FENCE, 'met', { CHECKS_RC: rc, JSON_RC: '1' });
+      assert.equal(r.rc, 2, `gh exit ${rc}`);
+    }
+  });
+
+  t('go-red control: without the held-state re-read a cancelled check reads green and ACTION_REQUIRED red', () => {
+    const lines = FENCE.split('\n');
+    const recheck = lines.findIndex((l) => l.includes('--json name,state'));
+    assert.ok(recheck !== -1, 'the live fence carries the --json re-read');
+    const end = lines.findIndex((l, i) => i > recheck && l.includes('classify.js'));
+    assert.ok(end !== -1, 'the re-read maps states through classify.js');
+    const mutated = [...lines.slice(0, recheck), ':', ...lines.slice(end + 1)].join('\n');
+    assert.notEqual(mutated, FENCE);
+    assert.equal(runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '0', CHECKS_JSON: js([{ state: 'CANCELLED' }]) })).rc, 124);
+    assert.equal(runWatch(shell, mutated, 'met', watchEnv({ CHECKS_RC: '0', CHECKS_JSON: js([{ state: 'CANCELLED' }]) })).rc, 0);
+    assert.equal(runWatch(shell, mutated, 'met', watchEnv({ CHECKS_RC: '1', CHECKS_JSON: js([{ state: 'ACTION_REQUIRED' }]) })).rc, 1);
   });
 
   t('AC7.2: the park-comment fence writes the {resume} sentence as a printf argument', () => {
