@@ -10,6 +10,7 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 const { sectionOf } = require('./helpers/conformance-asserts');
+const { HEAD_RUN_FIELDS } = require('../plugin/bin/lib/pr-checks/classify');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -118,6 +119,14 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   assert.ok(awaitingAt !== -1 && breakAt !== -1 && awaitingAt < breakAt, 'the awaiting line must sit before the PENDING_RUNS break line');
   assert.ok(!zeroBranch.slice(zeroBranch.indexOf('bin/ready-run.js'), breakAt).includes('1)'), 'the inserted ready-run lines must not contain a 1) that truncates the 0) arm slice');
   assert.ok(section.includes('awaitingReadyRun'), 'the watch prose names awaitingReadyRun');
+  // #3467: a held conclusion keeps the watch going. The 0) arm requests HEAD_RUN_FIELDS and counts heldChecks.
+  assert.ok(zeroBranch.includes(`--json ${HEAD_RUN_FIELDS} >`), 'the 0) head-run read requests HEAD_RUN_FIELDS');
+  const pendingLine = zeroBranch.split('\n').find((l) => l.includes('PENDING_RUNS=$('));
+  assert.ok(pendingLine && pendingLine.includes('heldChecks'), 'PENDING_RUNS counts heldChecks');
+  assert.ok(!/--jq/.test(watch), 'no --jq program inside the loop (worktree guard)');
+  assert.ok(rc0.includes('not yet `completed` **or held**'), 'the RC=0 bullet names a held head run as resuming the bounded watch');
+  const rc1 = section.slice(section.indexOf('- `RC=1`'), section.indexOf('- `RC=3`'));
+  assert.ok(rc1.includes('{pr-checks-json-path}') && rc1.includes('FAILING_CONCLUSIONS') && !rc1.includes('`fail` rows'), 'the RC=1 bullet takes names from the --json rows in FAILING_CONCLUSIONS, never gh\'s fail bucket');
 });
 
 // #5153 AC7.2: every clause of the watch's ready-run edit, one message each, so a mutation control
