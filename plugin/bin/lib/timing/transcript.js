@@ -355,7 +355,7 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
       const msg = entry && entry.message;
       if (!entry || typeof entry.timestamp !== 'string' || !msg || typeof msg.role !== 'string') return;
       const content = Array.isArray(msg.content) ? msg.content : [];
-      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0, procedureFiles: {} };
+      const row = { ts: entry.timestamp, role: msg.role, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheCreate: 0, cacheWrite1h: 0, cacheWrite5m: 0, messageId: null, toolRoundTrip: false, procedureBytes: 0, model: null, turnClasses: {}, turnStart: false, contextTokens: 0, procedureFiles: {} };
       if (msg.role === 'assistant') {
         row.model = typeof msg.model === 'string' ? msg.model : null;
         const u = msg.usage || {};
@@ -363,6 +363,10 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
         row.outputTokens = Number(u.output_tokens) || 0;
         row.cacheRead = Number(u.cache_read_input_tokens) || 0;
         row.cacheCreate = Number(u.cache_creation_input_tokens) || 0;
+        const split = mergeUsage(null, u);
+        row.cacheWrite1h = split.cacheWrite1h;
+        row.cacheWrite5m = split.cacheWrite5m;
+        row.messageId = typeof msg.id === 'string' ? msg.id : null;
         for (const b of content) {
           if (!b || b.type !== 'tool_use') continue;
           if (typeof b.id === 'string') toolUses.set(b.id, { name: b.name, input: b.input });
@@ -392,7 +396,9 @@ async function readUsage(filePath, { fsImpl = fs, worktree = null, signal = null
             firstRow.outputTokens = merged.output;
             firstRow.cacheRead = merged.cacheRead;
             firstRow.cacheCreate = merged.cacheCreate;
-            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate']) row[field] = 0;
+            firstRow.cacheWrite1h = merged.cacheWrite1h;
+            firstRow.cacheWrite5m = merged.cacheWrite5m;
+            for (const field of ['inputTokens', 'outputTokens', 'cacheRead', 'cacheCreate', 'cacheWrite1h', 'cacheWrite5m']) row[field] = 0;
             row.turnStart = false;
           } else {
             firstRowById.set(msg.id, row);
@@ -694,6 +700,7 @@ async function scanAgentDir(dir, names, { fsImpl, window, worktree, signal = nul
       d.endTs = last.r.ts;
       d.wallClockMs = last.ms - first.ms;
       const keptRows = kept.map((x) => x.r).concat(timed.filter((x) => !Number.isFinite(x.ms)).map((x) => x.r));
+      d.usageRows = keptRows;
       d.tokens = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
       for (const r of keptRows) {
         d.tokens.input += r.inputTokens;

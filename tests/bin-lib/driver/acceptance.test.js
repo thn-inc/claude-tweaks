@@ -902,6 +902,13 @@ describe('runAcceptance: failures and bounds', () => {
     assert.strictEqual(r.detail, h.events[0].detail);
   });
 
+  test('the merge-acceptance line carries the envelope\'s usage object, the worker line\'s shape (#6009)', async () => {
+    const usage = { input_tokens: 12, output_tokens: 340, cache_read_input_tokens: 5000, cache_creation_input_tokens: 800 };
+    const h = harness('try-it-only', { envelope: { ...ok({ tryIt: [GROUP] }), usage } });
+    await h.run();
+    assert.deepStrictEqual(h.events[0].extra, { route: 'try-it-only', model: PROFILES.standard.model, effort: null, usage });
+  });
+
   test('a failure after the launch reports the route and the model (#5917)', async () => {
     const h = harness('no-parent-gated', { exit: { post: 4 } });
     const r = await h.run();

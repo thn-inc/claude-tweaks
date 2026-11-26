@@ -304,11 +304,13 @@ async function judge(env, ctx, route, extra, endToEnd = false, preRead = null) {
   });
   if (launched.stop) return launched;
   // Every return from here on follows a launch that returned, so each carries its model (#5917) and effort (#5942).
+  // `usage` is the envelope's, for the line's cost (#6009).
   const { envelope, model, effort } = launched;
-  if (isInterrupted(env.deps)) return { stop: 'interrupted', model, effort };
-  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model, effort };
+  const usage = envelope ? envelope.usage : undefined;
+  if (isInterrupted(env.deps)) return { stop: 'interrupted', model, effort, usage };
+  if (!envelope || envelope.status !== 'ok' || !isPlainObject(envelope.result)) return { stop: 'acceptance worker returned no valid result', model, effort, usage };
   const invalid = validateResult(route, envelope.result, endToEnd);
-  return invalid ? { ...invalid, model, effort } : { result: envelope.result, body: inputs.body, model, effort };
+  return invalid ? { ...invalid, model, effort, usage } : { result: envelope.result, body: inputs.body, model, effort, usage };
 }
 
 // The verdict's parent: { read } with its title, body and comments, or { stop }.
@@ -391,12 +393,14 @@ function ensureLabels(env, ctx, names) {
   return null;
 }
 
-// Records the launch's model and effort on the lane's state once a judge call resolved a model (#5917, #5942).
+// Records the launch's model and effort on the lane's state once a judge call resolved a model (#5917, #5942),
+// and its envelope's usage object when there is one (#6009).
 function noteLaunch(state, judged) {
   if (judged.model) {
     state.model = judged.model;
     state.effort = judged.effort ?? null;
   }
+  if (isPlainObject(judged.usage)) state.usage = judged.usage;
 }
 
 // try-it-only: the record's Try it, plus the end-to-end variant when the parent gate is `due` below the floor.
@@ -576,7 +580,7 @@ async function runAcceptance(env, ctx) {
   // Untrusted marker comments that were not acted on are named, so a planted one is never silent.
   const skipped = state.skipped > 0 ? `; skipped ${state.skipped} untrusted comment(s)` : '';
   const raw = `${completed ? out.detail : out.stop}${skipped}`;
-  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model, effort: state.effort ?? null } : {}) });
+  emitStep(deps, 'merge-acceptance', completed ? 'ok' : 'stop', startedAt, raw, { route: state.route, ...(state.model ? { model: state.model, effort: state.effort ?? null } : {}), ...(state.usage ? { usage: state.usage } : {}) });
   return { completed, route: state.route, detail: cleanDetail(raw) };
 }
 

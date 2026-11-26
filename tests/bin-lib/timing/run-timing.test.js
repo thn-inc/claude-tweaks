@@ -681,3 +681,49 @@ test('worker items merge with the subagent items sorted by startTs', async () =>
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('deriveTiming returns costRows and timing.json stays unchanged', async () => {
+  const { root, dir, transcript } = lifetimeFixture();
+  try {
+    const d = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir });
+    assert.equal(d.ok, true);
+    assert.equal(d.costRows.rows.length, d.timing.transcripts.reduce((s, t) => s + t.rows, 0));
+    assert.ok(d.costRows.rows.length > 0);
+    assert.equal(d.costRows.transcripts, d.timing.transcripts);
+    assert.equal(d.costRows.cwd, dir);
+    assert.ok(Array.isArray(d.costRows.items));
+    assert.ok(d.costRows.rows.every((r) => 'messageId' in r && 'cacheWrite5m' in r));
+    assert.equal('costRows' in d.timing, false);
+    for (const item of d.timing.dispatches.items || []) assert.equal('usageRows' in item, false);
+    const none = await deriveTiming(dir, { transcriptPaths: [], wantTokens: false });
+    assert.ok('costRows' in none);
+    assert.equal(none.costRows, null);
+    const late = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, deadlineAt: Date.now() - 1000 });
+    assert.equal(late.deadlineHit, true);
+    assert.ok('costRows' in late);
+    assert.equal(late.costRows, null);
+    const clipped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
+    assert.equal(clipped.costRows.rows.length, 3);
+    assert.equal(clipped.costRows.rows.length, clipped.timing.transcripts[0].rows);
+    assert.equal(clipped.costRows.transcripts, clipped.timing.transcripts);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('deriveTiming costRows keeps worker items whole', async () => {
+  const dir = workerRunDir();
+  try {
+    await runWorkers(dir, { lenses: [lensArg('3a', 1)], startAt: T0 });
+    const d = await deriveTiming(dir, { transcriptPaths: [], wantTokens: true });
+    assert.equal(d.costRows.items.length, 1);
+    const item = d.costRows.items[0];
+    const shipped = d.timing.dispatches.items[0];
+    assert.equal(item.kind, 'worker');
+    assert.deepEqual(item.tokens, { input: 100, output: 20, cacheRead: 300, cacheCreate: 40 });
+    assert.equal(item.transcriptModel, shipped.transcriptModel);
+    assert.equal(item.metaModel, shipped.metaModel);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
