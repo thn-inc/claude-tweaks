@@ -223,6 +223,23 @@ test('I1: a Decision header line inside a fence does not count as ingested', () 
   assert.deepEqual(decisionHeaderUrls(unfenced.replace(/\n/g, '\r\n')), [r.url]);
 });
 
+test('R1: a stray unclosed fence before an existing Decision header still reads that reply as ingested', () => {
+  const q = question();
+  const r = reply('/answer B');
+  const body = `${RECORD}\n\`\`\`\nstray opener\n\n**Decision** (answer by @maintainer, ${r.url}):\n`;
+  assert.deepEqual(decisionHeaderUrls(body), [r.url]);
+  assert.deepEqual(answeredState({ comments: [q, r], body }).pending, []);
+  assert.equal(appendAnswers(body, q, [r]), body);
+});
+
+test('R2: two reply entries with the same URL in one call write exactly one Decision header', () => {
+  const q = question();
+  const r = reply('/answer B');
+  const out = appendAnswers(RECORD, q, [r, { ...r }]);
+  assert.deepEqual(decisionHeaderUrls(out), [r.url]);
+  assert.equal(out, appendAnswers(RECORD, q, [r]));
+});
+
 test('T1: appendAnswers skips a reply with no url', () => {
   const noUrlReply = reply('/answer B');
   delete noUrlReply.url;

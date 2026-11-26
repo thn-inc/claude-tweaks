@@ -279,6 +279,20 @@ test('resume.md Step 2a: a typed resume that stops after its ingest and before S
   rewriteGoesRed(step2a, R_STOP_FACTS, 'When the ingest exited 0 with a non-empty `ingested`, or exited 4 (its write may have landed)', 'When the ingest exited 0', 'resume.md: the re-add applies after an ingest write');
 });
 
+// Step 6a's ordered stop sequence carries the re-add between close-run and ExitWorktree.
+const R_STEP_6A = '**Step 6a — ';
+const R_6A_FACTS = [
+  [/the re-add, the ExitWorktree, the log and the stop still run; when Step 2a's re-add condition holds \(the ingest exited 0 with a non-empty `ingested`, or exited 4\), run `gh issue edit \{N\} --add-label needs:answer`/, 'resume.md Step 6a: the stop re-adds needs:answer'],
+  [/\(a failed edit ends nothing either\); `ExitWorktree\(action: "keep"\)`/, 'resume.md Step 6a: the re-add precedes ExitWorktree'],
+];
+test("resume.md Step 6a: the ordered stop sequence re-adds needs:answer when Step 2a's condition holds", () => {
+  const step6a = paragraphStarting(RESUME, R_STEP_6A);
+  assert.deepEqual(missingFactsOf(R_6A_FACTS)(step6a), []);
+  assert.ok(step6a.indexOf('hooks.js" close-run') !== -1 && step6a.indexOf('--add-label needs:answer') > step6a.indexOf('hooks.js" close-run'));
+  rewriteGoesRed(step6a, R_6A_FACTS, "when Step 2a's re-add condition holds (the ingest exited 0 with a non-empty `ingested`, or exited 4), run `gh issue edit {N} --add-label needs:answer`", 'run nothing', 'resume.md Step 6a: the stop re-adds needs:answer');
+  rewriteGoesRed(step6a, R_6A_FACTS, '(a failed edit ends nothing either); `ExitWorktree(action: "keep")`', '; `ExitWorktree(action: "keep")`', 'resume.md Step 6a: the re-add precedes ExitWorktree');
+});
+
 test('AC4.3 control: a refused verdict that spends budget goes red on its own fact', () => {
   rewriteGoesRed(paragraphStarting(ANSWERED, P_VERDICT), VERDICT_FACTS, 'spend nothing and write nothing.', 'spend one unit.', 'a refused verdict spends nothing and writes nothing');
 });
