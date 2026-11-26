@@ -3,7 +3,8 @@
 //
 // One source per lane, chosen by `manifest.lane`:
 // - session lanes: the main session (`session`, from readUsage-shaped rows) plus each dispatched item
-//   (role from item.role or roleOf(description)), `models` from the item's model and `efforts` from the
+//   (role from item.role or roleOf(description)), `models` from the item's model (the transcript id wins
+//   over the dispatch alias: what ran, not what was asked for) and `efforts` from the
 //   item's per-turn usageRows;
 // - the driver lane: each launch line in driver-events.jsonl whose step maps to a driver role.
 // `models` counts agents; `efforts` counts assistant turns (launches on the driver lane, where no turns
@@ -55,7 +56,7 @@ function deriveRoles({ manifest, rows, items, events } = {}) {
         const e = entry(typeof item.role === 'string' ? item.role : roleOf(item.description));
         e.agents += 1;
         const readable = isObject(item.tokens);
-        bump(e.models, readable ? (item.rawModel ?? item.transcriptModel ?? item.metaModel ?? 'unknown') : 'unknown');
+        bump(e.models, readable ? (item.transcriptModel ?? item.rawModel ?? item.metaModel ?? 'unknown') : 'unknown');
         if (Array.isArray(item.usageRows)) tallyInto(e.efforts, item.usageRows);
         else if (readable) bump(e.efforts, 'unknown');
       }

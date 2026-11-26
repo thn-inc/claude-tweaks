@@ -25,7 +25,8 @@ async function rowsFor(name, model, efforts) {
   fs.writeFileSync(p, lines.join('\n') + '\n');
   return readUsage(p);
 }
-const item = (description, rawModel, usageRows) => ({ description, role: roleOf(description), rawModel, tokens: { input: 1 }, usageRows });
+// A collectDispatches-shaped item: no role, no rawModel.
+const item = (description, transcriptModel, usageRows) => ({ description, transcriptModel, tokens: { input: 1 }, usageRows });
 
 test('#6010 AC2.1: three implementers (two sonnet medium, one opus high) and one lens 3a dispatch', async () => {
   const s1 = await rowsFor('a.jsonl', 'claude-sonnet-5-5', ['medium', 'medium']);
@@ -40,6 +41,15 @@ test('#6010 AC2.1: three implementers (two sonnet medium, one opus high) and one
   const roles = deriveRoles({ manifest: { lane: 'standard' }, rows: [], items });
   assert.deepEqual(roles.implementer, { agents: 3, models: { 'claude-sonnet-5-5': 2, 'claude-opus-5-5': 1 }, efforts: { medium: 4, high: 1 } });
   assert.equal(roles['lens reviewer'].agents, 1);
+});
+
+test('#6010: the transcript model id wins over the dispatch alias', () => {
+  const items = [
+    { description: 'implement task 1', metaModel: 'sonnet', transcriptModel: 'claude-sonnet-5-5', rawModel: 'sonnet', tokens: { input: 1 }, usageRows: [] },
+    { description: 'implement task 2', transcriptModel: 'claude-sonnet-5-5', tokens: { input: 1 }, usageRows: [] },
+  ];
+  const roles = deriveRoles({ manifest: { lane: 'standard' }, items });
+  assert.deepEqual(roles.implementer.models, { 'claude-sonnet-5-5': 2 });
 });
 
 test('#6010 AC3.1: a description no roleOf pattern matches counts under unlabelled', () => {
