@@ -812,10 +812,28 @@ test('#6118 AC3.2, AC3.3: one fail then an ok does not end it', async () => {
   assert.equal(f.driven().length, 3);
 });
 
-test('#6118 AC4.1, AC4.2: cannot-complete and red tests neither count nor end the run', async () => {
-  const escalated = { ...LAUNCH_OK, outcome: 'express-escalated' };
-  const { summary } = await workerRun([LAUNCH_FAIL('exit'), escalated, LAUNCH_FAIL('exit')], { count: 3 });
+test('#6118 AC4.1: a cannot-complete escalation (worker ran) neither counts nor ends the run', async () => {
+  const cannotComplete = { ...LAUNCH_OK, outcome: 'express-escalated' };
+  const { summary } = await workerRun([LAUNCH_FAIL('exit'), cannotComplete, LAUNCH_FAIL('exit')], { count: 3 });
   assert.equal(summary.ended, 'exhausted');
+});
+
+test('#6118 AC4.2: a red-tests stop (worker ran) neither counts nor ends the run', async () => {
+  const redTests = { ...LAUNCH_OK, outcome: 'blocked' };
+  const { summary } = await workerRun([LAUNCH_FAIL('exit'), redTests, LAUNCH_FAIL('exit')], { count: 3 });
+  assert.equal(summary.ended, 'exhausted');
+});
+
+test('#6118 Decision: a non-counting shared-cause launch with a streak open takes the two-record path', async () => {
+  const sharedNonCounting = { ...DEFAULT_FACTS, implementerLaunch: { status: 'fail', reason: 'schema', counts: false }, sharedCause: true, escalationCommentId: null };
+  const { summary, ghCalls, f } = await workerRun([LAUNCH_FAIL('exit', { escalationCommentId: 991 }), sharedNonCounting], { count: 4 });
+  assert.deepEqual([summary.ended, summary.driven], ['worker-stop', 2]);
+  assert.equal(f.driven().length, 2);
+  assert.equal(ghCalls.length, 1);
+  assert.deepEqual(ghCalls[0].slice(0, 4), ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/991']);
+  assert.match(summary.detail, /#1 and #2/);
+  assert.match(summary.detail, /exit, schema/);
+  assert.match(summary.detail, /\(shared cause\)/);
 });
 
 test('#6118 AC10.1, AC10.2: a timeout between two exit failures resets the streak', async () => {

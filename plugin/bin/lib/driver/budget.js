@@ -28,7 +28,8 @@
 // count (a timeout, a HEAD move, a worker that ran) resets it; a record that never reached the implementer
 // leaves it unchanged. Both rules are judged together for the record that ends the run: the first record
 // of a streak is settled ordinarily (its escalation comment is posted), and the run deletes that comment
-// afterwards, so a shared cause leaves one marker-free comment, not two.
+// afterwards, so a worker stop leaves the first record without an escalation comment. A shared-cause launch that does not count still
+// takes the two-record path when a streak is open: no record leaves the driver lane over a cause every record would meet.
 //
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
@@ -258,7 +259,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
   const workerStop = (facts, n) => {
     const reasonN = launchReason(facts);
     const shareNote = facts.sharedCause === true ? ' (shared cause)' : '';
-    if (streakFirst === null || facts.implementerLaunch.counts !== true) return finish(ENDED.WORKER_STOP, `implementer launch on #${n} failed: ${reasonN}${shareNote}`);
+    if (streakFirst === null) return finish(ENDED.WORKER_STOP, `implementer launch on #${n} failed: ${reasonN}${shareNote}`);
     const a = streakFirst.n;
     let detail = `implementer launches on #${a} and #${n} both failed: ${streakFirst.reason}, ${reasonN}${shareNote}`;
     let note = null;
