@@ -204,6 +204,8 @@ function defineStep(name, stopClass, fn) {
       skip: result.skip === true && result.status === 'ok',
       // A refused step that wrote nothing emits no event line (run.js); an ok result never can.
       noLine: result.noLine === true && result.status !== 'ok',
+      // A halting worker launch failure (#6118): run.js's stopObject reads it for settle's shared-cause body. No line carries it.
+      launchFailure: result.launchFailure === true && halt,
       then: !halt && Array.isArray(result.then) ? result.then : [],
     };
   }

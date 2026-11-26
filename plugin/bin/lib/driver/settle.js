@@ -23,6 +23,11 @@ const { CLAIM_KIND, readClaimReason } = require('./claim-exit');
 const BIN_DIR = path.join(__dirname, '..', '..');
 
 const DRIVER_ESCALATION_MARKER = '<!-- express-driver: escalated -->';
+// The marker-free settle's own marker (#6118): a record that already carries it is escalated
+// on its next shared-cause stop, so a record that always fails at launch reaches a person.
+const DRIVER_SHARED_CAUSE_MARKER = '<!-- express-driver: shared-cause -->';
+// The settle-comment-record detail when the shared-cause body was posted: fixed text, never worker text.
+const SHARED_CAUSE_DETAIL = 'driver could not launch a worker; the record stays in the driver lane and is tried again on a later run';
 
 const DETAIL_MAX = 200;
 
@@ -74,6 +79,9 @@ function commentFor(kind, fields) {
   switch (kind) {
     case 'escalated':
       return `The pipeline driver (drive.js) stopped this record before pushing, at step ${step}: outcome express-escalated, reason ${reason}. Detail: ${detail}\n\nThe driver releases the claim and removes the worktree and local branch this run created. The driver will not take this record again while this comment stands; the standard path builds it. Delete this comment to let the driver take it again.\n\n${DRIVER_ESCALATION_MARKER}`;
+    case 'shared-cause':
+      // Fixed text: no detail, no worker text (#6118).
+      return `The pipeline driver (drive.js) could not launch a worker for this record, at step ${step}. The driver releases the claim and removes the worktree and local branch this run created, and will try this record again on a later run.\n\n${DRIVER_SHARED_CAUSE_MARKER}`;
     case 'blocked-record': {
       // The blocked row removes nothing. The sentence names exactly what exists (kept is
       // { pr, branch, worktree }) and is omitted when nothing does.
@@ -108,11 +116,37 @@ function escalateDetailText({ step, detail, removes }) {
 
 // true when a trusted comment ends with the marker; false when none does;
 // null when `comments` is not an array (unreadable).
-function hasDriverEscalationMarker(comments) {
+function hasTrustedMarker(comments, marker) {
   if (!Array.isArray(comments)) return null;
   return comments.some(
-    (c) => isTrustedComment(c) && typeof c.body === 'string' && c.body.trimEnd().endsWith(DRIVER_ESCALATION_MARKER),
+    (c) => isTrustedComment(c) && typeof c.body === 'string' && c.body.trimEnd().endsWith(marker),
   );
+}
+const hasDriverEscalationMarker = (comments) => hasTrustedMarker(comments, DRIVER_ESCALATION_MARKER);
+const hasDriverSharedCauseMarker = (comments) => hasTrustedMarker(comments, DRIVER_SHARED_CAUSE_MARKER);
+
+// The id of the comment gh printed the URL of (`gh issue comment` prints `…#issuecomment-{id}`): the
+// safe integer in the first match, else null.
+function commentIdFromUrl(text) {
+  const m = /#issuecomment-(\d+)/.exec(typeof text === 'string' ? text : '');
+  const id = m ? Number(m[1]) : NaN;
+  return Number.isSafeInteger(id) ? id : null;
+}
+
+// ctx.repo is the run's `--repo` slug, host-qualified off github.com (`{host}/owner/name`,
+// repo-resolve.js resolveRepoTarget). A REST path takes the bare owner/name, so the host is split
+// off and travels as --hostname, which also keeps ghOptions from injecting another host.
+function apiTarget(repo) {
+  const parts = String(repo || '').split('/');
+  return parts.length === 3 ? { slug: `${parts[1]}/${parts[2]}`, host: ['--hostname', parts[0]] } : { slug: String(repo || ''), host: [] };
+}
+
+// Deletes one of the record's comments by id (the budget loop removes the driver's own escalation comment, #6118).
+// An id that is not a safe integer is refused before any call; a gh failure throws to the caller.
+function deleteRecordComment(id, ghRepo, deps) {
+  if (!Number.isSafeInteger(id)) throw new Error(`deleteRecordComment: comment id must be a safe integer, got ${typeof id}`);
+  const target = apiTarget(ghRepo);
+  deps.gh(['api', '-X', 'DELETE', `repos/${target.slug}/issues/comments/${id}`, ...target.host]);
 }
 
 // ---- the settle table -------------------------------------------------------------
@@ -257,16 +291,29 @@ async function settle(input, deps) {
   };
   const noRun = () => ({ status: 'fail', detail: 'no run directory' });
   const outcome = () => outcomeFor(CLASS_BY_ROW[row]);
-  const commentRecord = (body) => { deps.gh(['issue', 'comment', '--repo', ghRepo, '--body', body, '--', String(record)]); };
+  // gh's stdout (the new comment's URL), or '' when gh returns none.
+  const commentRecord = (body) => {
+    const out = deps.gh(['issue', 'comment', '--repo', ghRepo, '--body', body, '--', String(record)]);
+    return typeof out === 'string' ? out : '';
+  };
+  // A shared-cause stop (#6118) posts the marker-free body, unless a trusted shared-cause comment already
+  // stands: a repeat is escalated as usual. Unreadable comments (null) show no earlier one.
+  const sharedCauseBody = stop.sharedCause === true && hasDriverSharedCauseMarker(input.comments) !== true;
+  // Which kind settle-comment-record posted, and gh's stdout for it; read below for escalationCommentId.
+  let recordKind = null;
+  let recordOut = null;
 
   const recordBody = () => {
     if (row === 'claim') {
       const exitCode = claim && claim.exit !== null ? claim.exit : undefined;
-      return commentFor('claim', { step: stop.step, outcome: outcome(), exitCode, detail: stop.detail });
+      return ['claim', commentFor('claim', { step: stop.step, outcome: outcome(), exitCode, detail: stop.detail })];
     }
-    if (row === 'pre-push') return commentFor('escalated', { step: stop.step, outcome: outcome(), reason, detail: stop.detail });
+    if (row === 'pre-push') {
+      if (sharedCauseBody) return ['shared-cause', commentFor('shared-cause', { step: stop.step })];
+      return ['escalated', commentFor('escalated', { step: stop.step, outcome: outcome(), reason, detail: stop.detail })];
+    }
     const kept = { pr: pr.number !== null, branch: created.branch === true, worktree: created.worktree === true };
-    return commentFor('blocked-record', { step: stop.step, outcome: outcome(), detail: stop.detail, kept });
+    return ['blocked-record', commentFor('blocked-record', { step: stop.step, outcome: outcome(), detail: stop.detail, kept })];
   };
 
   // One handler per settle step. `when` is the step's own precondition: a step whose
@@ -293,7 +340,15 @@ async function settle(input, deps) {
           commentFor('blocked-pr', { step: stop.step, outcome: outcome(), detail: stop.detail }), '--', String(pr.number)]);
       },
     },
-    'settle-comment-record': { run: () => commentRecord(recordBody()) },
+    'settle-comment-record': {
+      // gh's stdout is kept in recordOut, never returned: a returned string becomes the event's detail.
+      run: () => {
+        const [kind, body] = recordBody();
+        recordOut = commentRecord(body);
+        recordKind = kind;
+        return kind === 'shared-cause' ? SHARED_CAUSE_DETAIL : undefined;
+      },
+    },
     'settle-label': {
       run: () => { deps.gh(['issue', 'edit', '--repo', ghRepo, '--add-label', LABELS.BOT_BLOCKED, '--', String(record)]); },
     },
@@ -378,10 +433,13 @@ async function settle(input, deps) {
   // An unverified claim (claim-targets.js exit 5, or no exit): a claim may have been written.
   if (row === 'claim' && ((claim && claim.kind === CLAIM_KIND.UNVERIFIED) || input.claimed === true)) note = CLAIM_NOTE;
   else if (plan.unreadableNote) note = plan.unreadableNote;
-  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: plan.unclassified, note, ...(interrupted ? { interrupted: true } : {}) };
+  // The id of the escalation comment this settle posted (the budget loop may delete it, #6118); null otherwise.
+  const escalationCommentId = recordKind === 'escalated' ? commentIdFromUrl(recordOut) : null;
+  return { row, settledClass: CLASS_BY_ROW[row], calls, failed, unclassified: plan.unclassified, note, escalationCommentId, ...(interrupted ? { interrupted: true } : {}) };
 }
 
 module.exports = {
-  DRIVER_ESCALATION_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
+  DRIVER_ESCALATION_MARKER, DRIVER_SHARED_CAUSE_MARKER, reduceDetail, commentFor, escalateDetailText, hasDriverEscalationMarker,
+  hasDriverSharedCauseMarker, commentIdFromUrl, apiTarget, deleteRecordComment,
   toEscalationReason, selectRow, planRow, SETTLE_ROWS, ESCALATE_STEP, CLASS_BY_ROW, settle, canonicalWorktreePath,
 };

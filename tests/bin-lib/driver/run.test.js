@@ -979,7 +979,7 @@ test('every step emits one event line with the core fields; the final line carri
   assert.equal(final.msWithoutCi, final.msTotal - lines.find((l) => l.step === 'ci').ciWaitMs);
   assert.deepEqual(final.stop, {
     step: null, class: 'none', pushed: true, created: { worktree: true, branch: true },
-    reason: null, detail: null, checkLogged: true,
+    reason: null, detail: null, checkLogged: true, sharedCause: false,
   });
   assert.equal('eventsFileError' in final, false);
 });
@@ -7022,7 +7022,7 @@ test('AC4.1: --no-settle makes no settle call and leaves the stop to the caller'
   assert.equal(final.outcome, 'express-escalated');
   assert.deepEqual(final.stop, {
     step: 'test', class: 'pre-push', pushed: false, created: { worktree: true, branch: true },
-    reason: 'failing-test', detail: 'red tests', checkLogged: null,
+    reason: 'failing-test', detail: 'red tests', checkLogged: null, sharedCause: false,
   });
 });
 
@@ -7344,7 +7344,7 @@ test('budget: driveRecord on an interrupt before the first step has no final and
   const shared = await policyOnce(h);
   shared.interrupted = 'SIGINT';
   const facts = await driveRecord(7, shared, h.deps);
-  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null, implementerLaunch: null, sharedCause: null });
+  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null, implementerLaunch: null, sharedCause: null, escalationCommentId: null });
 });
 
 test('budget: driveRecord on an interrupt after the run directory exists is claimed', async () => {
@@ -7362,6 +7362,88 @@ test('budget: driveRecord on an interrupt after the run directory exists is clai
   assert.equal(facts.claimed, true);
   assert.equal(facts.claimExit, 0);
   assert.deepEqual(h.calls.filter((c) => c.kind === 'terminate').map((c) => c.args), [['SIGINT']]);
+});
+
+// ---- the shared-cause settle (#6118) -------------------------------------------------------
+const SC_MARKER = '<!-- express-driver: shared-cause -->';
+const ESC_MARKER = '<!-- express-driver: escalated -->';
+const SC_LAUNCH_ERROR = { status: 'fail', reason: 'launch-error', result: null, detail: 'ENOENT: spawn claude ENOENT' };
+const EXIT_FAIL = { status: 'fail', reason: 'exit', result: null, detail: 'exited 1' };
+const recordCommentBodies = (h) => ghCallsOf(h).filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment').map((c) => c.args[c.args.indexOf('--body') + 1]);
+const commentUrl = (id) => [on('gh', 'issue', 'comment'), `https://github.com/acme/widgets/issues/7#issuecomment-${id}\n`];
+
+test('#6118 a shared-cause worker stop settles marker-free in a named run', async () => {
+  const h = harness({ worker: SC_LAUNCH_ERROR, script: [commentUrl(41)] });
+  assert.equal(await run(['#7'], h.deps), 0);
+  const bodies = recordCommentBodies(h);
+  assert.equal(bodies.length, 1);
+  assert.ok(bodies[0].includes(SC_MARKER), bodies[0]);
+  assert.ok(!bodies[0].includes(ESC_MARKER), bodies[0]);
+  const final = lastLine(h);
+  assert.equal(final.stop.step, 'worker');
+  assert.equal(final.stop.sharedCause, true);
+  assert.equal(final.settleRow, 'pre-push');
+  assert.deepEqual(final.settleFailed, []);
+  // The row's cleanup is unchanged: the claim release and the close-run ran.
+  assert.equal(calls(h, 'node', /release-claim\.js$/).length, 1);
+  assert.equal(calls(h, 'node', /hooks\.js$/).filter((c) => c.args[1] === 'close-run').length, 1);
+  assert.match(settleLines(h).find((l) => l.step === 'settle-comment-record').detail, /could not launch a worker/);
+  // The record's fetched comments reach settle: a trusted shared-cause comment already standing escalates the repeat.
+  const earlier = [{ authorAssociation: 'OWNER', body: `Earlier.\n\n${SC_MARKER}` }];
+  const repeat = harness({ worker: SC_LAUNCH_ERROR, script: [[on('gh', 'issue', 'view'), JSON.stringify({ ...issueFor(7), comments: earlier })]] });
+  await run(['#7'], repeat.deps);
+  assert.ok(recordCommentBodies(repeat)[0].endsWith(ESC_MARKER), recordCommentBodies(repeat)[0]);
+  assert.equal(lastLine(repeat).stop.sharedCause, true, 'the stop is still shared-cause; only the comment escalates');
+});
+
+test('#6118 AC8.1: a streak-second launch failure settles marker-free', async () => {
+  const second = harness({ worker: EXIT_FAIL, script: [commentUrl(42)] });
+  const shared = await policyOnce(second);
+  shared.launchStreak = 1;
+  const facts = await driveRecord(7, shared, second.deps);
+  assert.deepEqual(facts.implementerLaunch, { status: 'fail', reason: 'exit', counts: true });
+  assert.equal(facts.sharedCause, false, 'fail/exit alone is not shared-cause');
+  assert.equal(facts.final.stop.sharedCause, true);
+  const bodies = recordCommentBodies(second);
+  assert.equal(bodies.length, 1);
+  assert.ok(bodies[0].includes(SC_MARKER) && !bodies[0].includes(ESC_MARKER), bodies[0]);
+  assert.equal(facts.escalationCommentId, null);
+  // With no streak open the same failure is the record's own: escalated, and its comment id is carried up.
+  const first = harness({ worker: EXIT_FAIL, script: [commentUrl(43)] });
+  const fresh = await policyOnce(first);
+  assert.equal(fresh.launchStreak, 0);
+  const own = await driveRecord(7, fresh, first.deps);
+  assert.equal(own.final.stop.sharedCause, false);
+  const escalated = recordCommentBodies(first);
+  assert.equal(escalated.length, 1);
+  assert.ok(escalated[0].endsWith(ESC_MARKER) && !escalated[0].includes(SC_MARKER), escalated[0]);
+  assert.equal(own.escalationCommentId, 43);
+  // A timeout does not count toward the streak, so an open streak does not make it shared-cause.
+  const timeout = harness({ worker: { status: 'timeout', reason: 'wall-clock-ceiling', result: null, detail: null } });
+  const open = await policyOnce(timeout);
+  open.launchStreak = 1;
+  assert.equal((await driveRecord(7, open, timeout.deps)).final.stop.sharedCause, false);
+  assert.ok(recordCommentBodies(timeout)[0].endsWith(ESC_MARKER));
+});
+
+test('#6118 red tests after an ok launch settle ordinarily', async () => {
+  const h = harness(REDTESTS);
+  const shared = await policyOnce(h);
+  shared.launchStreak = 1;
+  const facts = await driveRecord(7, shared, h.deps);
+  assert.equal(facts.final.stop.step, 'test');
+  assert.equal(facts.final.stop.sharedCause, false);
+  assert.deepEqual(facts.implementerLaunch, { status: 'ok', reason: null, counts: false });
+  const bodies = recordCommentBodies(h);
+  assert.equal(bodies.length, 1);
+  assert.ok(bodies[0].endsWith(ESC_MARKER) && !bodies[0].includes(SC_MARKER), bodies[0]);
+});
+
+test('#6118 a HEAD-moving launch failure is the record\'s own stop, settled with the marker', async () => {
+  const h = harness({ worker: SC_LAUNCH_ERROR, script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`)] });
+  await run(['#7'], h.deps);
+  assert.equal(lastLine(h).stop.sharedCause, false);
+  assert.ok(recordCommentBodies(h)[0].endsWith(ESC_MARKER));
 });
 
 test('budget pre-screen: eligibilityOptions is exactly what the eligibility step passes', async () => {

@@ -640,9 +640,124 @@ const ROW_SCENARIOS = {
 test('settle reports the shape on every row', async () => {
   for (const [row, sc] of Object.entries(ROW_SCENARIOS)) {
     const h = await harness(sc);
-    assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'failed', 'note', 'row', 'settledClass', 'unclassified'], row);
+    assert.deepStrictEqual(Object.keys(h.res).sort(), ['calls', 'escalationCommentId', 'failed', 'note', 'row', 'settledClass', 'unclassified'], row);
     for (const c of h.res.calls) assert.deepStrictEqual(Object.keys(c).sort(), ['detail', 'status', 'step'], row);
   }
+});
+
+// ---- the shared-cause settle (#6118) ---------------------------------------------------
+const { DRIVER_SHARED_CAUSE_MARKER, hasDriverSharedCauseMarker, commentIdFromUrl, deleteRecordComment } = require(SETTLE);
+const SC_MARKER = '<!-- express-driver: shared-cause -->';
+const SC_DETAIL = 'driver could not launch a worker; the record stays in the driver lane and is tried again on a later run';
+const SC_BODY = 'The pipeline driver (drive.js) could not launch a worker for this record, at step worker. The driver releases the claim and removes the worktree and local branch this run created, and will try this record again on a later run.\n\n' + SC_MARKER;
+const COMMENT_URL = 'https://github.com/o/r/issues/7#issuecomment-123\n';
+const scStop = (over = {}) => stopOf({ step: 'worker', reason: 'express-error', detail: 'fail/launch-error: ' + HOSTILE, sharedCause: true, ...over });
+const recordBodies = (h) => h.calls.filter((c) => c[0] === 'gh' && c[1] === 'issue' && c[2] === 'comment').map((c) => c[c.indexOf('--body') + 1]);
+const recordEvent = (h) => h.emitted.find((e) => e[0] === 'settle-comment-record');
+const urlGh = { gh: (args) => (args[0] === 'issue' && args[1] === 'comment' ? COMMENT_URL : undefined) };
+const scEscalated = () => commentFor('escalated', { step: 'worker', outcome: 'express-escalated', reason: 'express-error', detail: 'fail/launch-error: ' + HOSTILE });
+
+test('#6118: the shared-cause comment is fixed text with its own marker and carries no detail', async () => {
+  assert.equal(DRIVER_SHARED_CAUSE_MARKER, SC_MARKER);
+  assert.equal(commentFor('shared-cause', { step: 'worker', detail: HOSTILE }), SC_BODY);
+  assert.ok(!SC_BODY.includes(MARKER));
+  const odd = commentFor('shared-cause', { step: '@bob closes #9', detail: 'd' });
+  assert.ok(odd.includes('at step unknown.') && !/@|#9|bob/.test(odd), odd);
+  for (const kind of ['escalated', 'blocked-record', 'blocked-pr', 'claim']) {
+    assert.ok(!commentFor(kind, { step: 'push', outcome: 'blocked', reason: 'r', detail: 'd' }).includes(SC_MARKER), kind);
+  }
+});
+
+test('#6118 AC2.1, AC2.2: a shared-cause pre-push stop posts the marker-free comment and keeps the row\'s cleanup', async () => {
+  const h = await harness({ stop: scStop(), input: { comments: [] }, answers: urlGh });
+  assert.deepStrictEqual(recordBodies(h), [SC_BODY]);
+  assert.ok(recordBodies(h)[0].includes(SC_MARKER) && !recordBodies(h)[0].includes(MARKER));
+  assert.deepStrictEqual(h.calls, [
+    ESCALATE('express-error'), COMMENT(SC_BODY), RELEASE('drive.js settle: express-escalated at worker'), LIST_WT, RM_WT, BR_PROBE, RM_BR, CLOSE,
+  ]);
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push']);
+  assert.equal(h.res.row, 'pre-push');
+  assert.deepStrictEqual(h.res.failed, []);
+  assert.equal(h.res.escalationCommentId, null, 'only an escalated body yields an id');
+  assert.deepStrictEqual(recordEvent(h).slice(0, 2), ['settle-comment-record', 'ok']);
+  assert.equal(recordEvent(h)[3], SC_DETAIL);
+  assert.equal(h.res.calls.find((c) => c.step === 'settle-comment-record').detail, SC_DETAIL);
+  // Unreadable comments (null) cannot show an earlier shared-cause comment: still marker-free.
+  assert.deepStrictEqual(recordBodies(await harness({ stop: scStop(), input: { comments: null } })), [SC_BODY]);
+});
+
+test('#6118 AC9.1, AC9.2: a repeat shared-cause stop escalates with the marker', async () => {
+  const comments = [{ authorAssociation: 'MEMBER', body: 'earlier\n\n' + SC_MARKER + '\n' }];
+  const h = await harness({ stop: scStop(), input: { comments }, answers: urlGh });
+  assert.deepStrictEqual(recordBodies(h), [scEscalated()]);
+  assert.ok(recordBodies(h)[0].endsWith(MARKER));
+  assert.equal(h.res.escalationCommentId, 123);
+  assert.equal(recordEvent(h)[3], '', 'the escalated path names no detail, as before');
+  assert.deepStrictEqual(h.res.calls.map((c) => c.step), SETTLE_ROWS['pre-push']);
+});
+
+test('#6118 an untrusted shared-cause comment does not count', async () => {
+  const untrusted = [{ authorAssociation: 'NONE', body: 'x\n\n' + SC_MARKER }];
+  assert.deepStrictEqual(recordBodies(await harness({ stop: scStop(), input: { comments: untrusted } })), [SC_BODY]);
+  const body = 'x\n\n' + SC_MARKER;
+  assert.equal(hasDriverSharedCauseMarker([{ authorAssociation: 'OWNER', body }]), true);
+  assert.equal(hasDriverSharedCauseMarker([{ authorAssociation: 'NONE', body }]), false);
+  assert.equal(hasDriverSharedCauseMarker([{ body }]), false);
+  assert.equal(hasDriverSharedCauseMarker([{ authorAssociation: 'MEMBER', body: SC_MARKER + ' later text' }]), false);
+  assert.equal(hasDriverSharedCauseMarker([{ authorAssociation: 'MEMBER', body: 'x\n\n' + MARKER }]), false, 'the escalation marker is not the shared-cause one');
+  assert.equal(hasDriverSharedCauseMarker([null, 'x', { authorAssociation: 'COLLABORATOR', body }]), true);
+  assert.equal(hasDriverSharedCauseMarker([]), false);
+  for (const bad of ['x', null, {}]) assert.equal(hasDriverSharedCauseMarker(bad), null);
+});
+
+test('#6118 a pushed shared-cause stop is settled by the blocked row', async () => {
+  const h = await harness({ stop: scStop({ pushed: true }), input: { comments: [] }, answers: urlGh });
+  assert.equal(h.res.row, 'blocked');
+  assert.deepStrictEqual(recordBodies(h), [commentFor('blocked-record', { step: 'worker', outcome: 'blocked', detail: 'fail/launch-error: ' + HOSTILE, kept: { pr: false, branch: true, worktree: true } })]);
+  assert.ok(!h.calls.some((c) => c.some((a) => typeof a === 'string' && a.includes(SC_MARKER))));
+  assert.equal(h.res.escalationCommentId, null);
+  // A recorded PR: the blocked row too.
+  const pr = await harness({ stop: scStop(), input: { comments: [], pr: 9 }, answers: urlGh });
+  assert.equal(pr.res.row, 'blocked');
+  assert.ok(!recordBodies(pr).some((b) => b.includes(SC_MARKER)));
+});
+
+test('#6118 escalationCommentId is the escalated comment\'s id, else null', async () => {
+  // An ordinary pre-push stop (no sharedCause) parses the id from gh's stdout.
+  assert.equal((await harness({ answers: urlGh })).res.escalationCommentId, 123);
+  // gh printing no comment URL, or failing the post, gives null.
+  assert.equal((await harness()).res.escalationCommentId, null);
+  const thrown = await harness({ answers: { gh: () => new Error('HTTP 502') } });
+  assert.deepStrictEqual(thrown.res.failed, ['settle-comment-record']);
+  assert.equal(thrown.res.escalationCommentId, null);
+  // A failed escalate switches to the blocked row: its record comment is no escalation.
+  const blocked = await harness({ answers: { ...urlGh, node: (s) => (s === 'express-lane.js' ? { code: 1, stdout: '', stderr: 'no' } : undefined) } });
+  assert.equal(blocked.res.row, 'blocked');
+  assert.equal(blocked.res.escalationCommentId, null);
+  // The claim row's comment is not an escalation either.
+  assert.equal((await harness({ stop: stopOf({ step: 'claim', class: 'claim', reason: 'claim-exit-4' }), answers: urlGh })).res.escalationCommentId, null);
+});
+
+test('#6118 commentIdFromUrl and deleteRecordComment', async () => {
+  assert.equal(commentIdFromUrl('no url'), null);
+  assert.equal(commentIdFromUrl(''), null);
+  assert.equal(commentIdFromUrl(undefined), null);
+  assert.equal(commentIdFromUrl(COMMENT_URL), 123);
+  assert.equal(commentIdFromUrl('x#issuecomment-5 then #issuecomment-6'), 5, 'the first match');
+  assert.equal(commentIdFromUrl('#issuecomment-' + '9'.repeat(20)), null, 'not a safe integer');
+  const seen = [];
+  const deps = { gh: (args) => { seen.push(args); return ''; } };
+  deleteRecordComment(5, 'github.com/o/r', deps);
+  deleteRecordComment(6, 'o/r', deps);
+  assert.deepStrictEqual(seen, [
+    ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/5', '--hostname', 'github.com'],
+    ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/6'],
+  ]);
+  for (const bad of ['5', 1.5, null, undefined, Number.MAX_SAFE_INTEGER + 1, '5/../x']) {
+    assert.throws(() => deleteRecordComment(bad, 'o/r', deps), String(bad));
+  }
+  assert.equal(seen.length, 2, 'a refused id makes no gh call');
+  assert.throws(() => deleteRecordComment(7, 'o/r', { gh: () => { throw new Error('HTTP 404'); } }), /HTTP 404/);
 });
 
 test('with every precondition true, the emitted step names equal SETTLE_ROWS[row] in order', async () => {
