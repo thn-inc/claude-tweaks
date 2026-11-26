@@ -177,3 +177,120 @@ test('--check: misuse exits 2', () => {
   assert.equal(run([payloadFile, '--check', bodyFile], deps([])), 2, 'with a positional payload');
   assert.equal(fs.existsSync(path.join(dir, 'o.md')), false, 'nothing written on misuse');
 });
+
+// --- #4746: --check --record verifies and strips the composed-for marker ---
+const { readComposedFor } = require('../../../plugin/bin/compose-record');
+const SHAPED = SHAPED_BODY;
+const marker = (id) => `<!-- composed-for: #${id} -->\n`;
+
+function bodyFileWith(content, name = 'specify-shaped-body-4550.md') {
+  const f = path.join(tmpDir(), name);
+  fs.writeFileSync(f, content);
+  return f;
+}
+
+test('AC3.1: --check --record refuses a body composed for another record, naming both ids', () => {
+  const content = marker(4549) + SHAPED;
+  const f = bodyFileWith(content);
+  const out = [];
+  assert.equal(run(['--check', f, '--record', '4550'], deps(out)), 6);
+  const err = streamOf(out, 'err');
+  assert.match(err, /#4549/);
+  assert.match(err, /#4550/);
+  assert.equal(fs.readFileSync(f, 'utf8'), content);
+});
+
+test('--check --record on a matching marker strips it in place and exits 0', () => {
+  const f = bodyFileWith(marker(4746) + SHAPED);
+  const out = [];
+  assert.equal(run(['--check', f, '--record', '4746'], deps(out)), 0);
+  assert.equal(out.length, 0);
+  assert.equal(fs.readFileSync(f, 'utf8'), SHAPED);
+});
+
+test('--check --record refuses a body with no marker', () => {
+  const f = bodyFileWith(SHAPED);
+  const out = [];
+  assert.equal(run(['--check', f, '--record', '4550'], deps(out)), 6);
+  const err = streamOf(out, 'err');
+  assert.match(err, /carries no composed-for marker/);
+  assert.match(err, /#4550/);
+  assert.equal(fs.readFileSync(f, 'utf8'), SHAPED);
+});
+
+test('--check --record refuses a malformed marker', () => {
+  const content = '<!-- composed-for: 4550 -->\n' + SHAPED;
+  const f = bodyFileWith(content);
+  const out = [];
+  assert.equal(run(['--check', f, '--record', '4550'], deps(out)), 6);
+  assert.match(streamOf(out, 'err'), /malformed composed-for marker/);
+  assert.equal(fs.readFileSync(f, 'utf8'), content);
+});
+
+test('--check --record compares whole ids', () => {
+  const content = marker(45) + SHAPED;
+  const f = bodyFileWith(content);
+  assert.equal(run(['--check', f, '--record', '4'], deps([])), 6);
+  assert.equal(run(['--check', f, '--record', '456'], deps([])), 6);
+  assert.equal(fs.readFileSync(f, 'utf8'), content);
+});
+
+test('--check --record accepts a dashed local-files id and CRLF', () => {
+  const crlf = SHAPED.replace(/\n/g, '\r\n');
+  const f = bodyFileWith('<!-- composed-for: #2026-01-foo -->\r\n' + crlf);
+  assert.equal(run(['--check', f, '--record', '2026-01-foo'], deps([])), 0);
+  assert.equal(fs.readFileSync(f, 'utf8'), crlf);
+});
+
+test('--check --record: a shape failure exits 4 and leaves the marker in place', () => {
+  const content = marker(7) + '## Current State\n\nTODO\n';
+  const f = bodyFileWith(content);
+  assert.equal(run(['--check', f, '--record', '7'], deps([])), 4);
+  assert.equal(fs.readFileSync(f, 'utf8'), content);
+});
+
+test('--check --record: the marker check runs before the shape check', () => {
+  const f = bodyFileWith(marker(1) + '## Current State\n\nTODO\n');
+  assert.equal(run(['--check', f, '--record', '2'], deps([])), 6);
+});
+
+test('--check --record: a failed in-place rewrite exits 5', () => {
+  const f = bodyFileWith(marker(9) + SHAPED);
+  fs.chmodSync(f, 0o444);
+  const out = [];
+  const code = run(['--check', f, '--record', '9'], deps(out));
+  fs.chmodSync(f, 0o644);
+  if (process.platform === 'win32' || (process.getuid && process.getuid() === 0)) return;
+  assert.equal(code, 5);
+  assert.match(streamOf(out, 'err'), /could not rewrite body file/);
+});
+
+test('--check without --record ignores a leading marker and writes nothing', () => {
+  const content = marker(7) + SHAPED;
+  const f = bodyFileWith(content);
+  assert.equal(run(['--check', f], deps([])), 0);
+  assert.equal(fs.readFileSync(f, 'utf8'), content);
+});
+
+test('--record misuse is a usage error', () => {
+  const dir = tmpDir();
+  const payloadFile = path.join(dir, 'payload.json');
+  fs.writeFileSync(payloadFile, JSON.stringify(SHAPED_PAYLOAD));
+  const out = [];
+  assert.equal(run([payloadFile, '--out', path.join(dir, 'o.md'), '--record', '1'], deps(out)), 2);
+  assert.match(streamOf(out, 'err'), /--record is only valid with --check/);
+  const f = bodyFileWith(marker(1) + SHAPED);
+  const out2 = [];
+  assert.equal(run(['--check', f, '--record'], deps(out2)), 2);
+  assert.match(streamOf(out2, 'err'), /--record <id> is required/);
+  assert.equal(run(['--check', path.join(dir, 'missing.md'), '--record', '1'], deps([])), 2);
+});
+
+test('readComposedFor: ok / missing / malformed', () => {
+  assert.deepEqual(readComposedFor(marker(4746) + SHAPED), { status: 'ok', id: '4746', rest: SHAPED });
+  assert.deepEqual(readComposedFor('<!-- composed-for: #a-b.c_1 -->\r\nX'), { status: 'ok', id: 'a-b.c_1', rest: 'X' });
+  assert.deepEqual(readComposedFor(SHAPED), { status: 'missing', id: null, rest: SHAPED });
+  assert.deepEqual(readComposedFor(''), { status: 'missing', id: null, rest: '' });
+  const bad = '<!-- composed-for: 4550 -->\n' + SHAPED;
+  assert.deepEqual(readComposedFor(bad), { status: 'malformed', id: null, rest: bad });
+});
