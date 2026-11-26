@@ -420,6 +420,7 @@ const TOK = { input: 1, output: 2, cacheRead: 3, cacheWrite5m: 4, cacheWrite1h: 
 const group = (over = {}) => ({
   tokensByModel: { 'claude-opus-5-5': TOK }, costUsd: 1.25, priceDate: '2026-11-01', unpricedModels: [], costPartial: false, ...over,
 });
+const UNREAD = { tokensByModel: null, costUsd: null, priceDate: null, unpricedModels: null, costPartial: null };
 const quiet = { stderr: () => {} };
 
 test('close-out vocabulary constants', () => {
@@ -448,7 +449,7 @@ test('AC8.2: MANIFEST_VERSION is still 1', () => {
 });
 
 test('AC8.3: a stored partial group is replaced by a later complete group', () => {
-  for (const stored of [group({ costPartial: true }), group({ costUsd: null, costPartial: false })]) {
+  for (const stored of [group({ costPartial: true }), UNREAD]) {
     const dir = runDir();
     fillRunManifest(dir, { cost: stored }, quiet);
     const next = group({ costUsd: 9.5 });
@@ -473,15 +474,26 @@ test('AC8.5: a stored partial group is not replaced by another partial group', (
   fillRunManifest(dir, { cost: group({ costPartial: true }) }, quiet);
   const before = manifestBytes(dir);
   assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: 7, costPartial: true }) }, quiet), { changed: [] });
-  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet), { changed: [] });
+  assert.equal(manifestBytes(dir), before);
+});
+
+test('AC8.5b: a stored unread group yields to a partial read group, which no other partial replaces', () => {
+  const dir = runDir();
+  fillRunManifest(dir, { cost: UNREAD }, quiet);
+  const partial = group({ costUsd: 2, costPartial: true });
+  assert.ok(fillRunManifest(dir, { cost: partial }, quiet).changed.includes('costUsd'));
+  assert.equal(readManifest(dir).costPartial, true);
+  const before = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: 8, costPartial: true }) }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(dir, { cost: UNREAD }, quiet), { changed: [] });
   assert.equal(manifestBytes(dir), before);
 });
 
 test('an identical group writes nothing', () => {
   const dir = runDir();
-  fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet);
+  fillRunManifest(dir, { cost: UNREAD }, quiet);
   const before = manifestBytes(dir);
-  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(dir, { cost: { ...UNREAD } }, quiet), { changed: [] });
   assert.equal(manifestBytes(dir), before);
 });
 
@@ -505,7 +517,8 @@ test('an invalid cost group is ignored', () => {
     group({ costUsd: -1 }), group({ costUsd: NaN }), group({ costUsd: '1' }), group({ priceDate: 5 }),
     group({ unpricedModels: [1] }), group({ unpricedModels: 'x' }), group({ costPartial: 'no' }),
     group({ tokensByModel: { m: { ...TOK, input: -1 } } }), group({ tokensByModel: { m: { input: 1 } } }),
-    group({ tokensByModel: [TOK] }), { costUsd: 1 }, 'x', [],
+    group({ tokensByModel: [TOK] }), group({ costUsd: null, costPartial: true }),
+    group({ costUsd: 3, costPartial: null }), { ...UNREAD, costUsd: 0 }, { ...UNREAD, priceDate: '2026-11-01' }, { costUsd: 1 }, 'x', [],
   ];
   for (const bad of bads) {
     const dir = runDir();

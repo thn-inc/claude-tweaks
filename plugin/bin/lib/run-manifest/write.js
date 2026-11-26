@@ -54,21 +54,23 @@ const TOKEN_KEYS = Object.freeze(['input', 'output', 'cacheRead', 'cacheWrite5m'
 const isCount = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const COST_VALID = Object.freeze({
-  tokensByModel: (v) => v === null || (isObject(v)
-    && Object.values(v).every((t) => isObject(t) && TOKEN_KEYS.every((k) => isCount(t[k])))),
-  costUsd: (v) => v === null || isCount(v),
-  priceDate: (v) => v === null || typeof v === 'string',
-  unpricedModels: (v) => v === null || (Array.isArray(v) && v.every((m) => typeof m === 'string')),
-  costPartial: (v) => v === null || typeof v === 'boolean',
+  tokensByModel: (v) => isObject(v)
+    && Object.values(v).every((t) => isObject(t) && TOKEN_KEYS.every((k) => isCount(t[k]))),
+  costUsd: isCount,
+  priceDate: (v) => typeof v === 'string',
+  unpricedModels: (v) => Array.isArray(v) && v.every((m) => typeof m === 'string'),
+  costPartial: (v) => typeof v === 'boolean',
 });
-const validCostGroup = (g) => isObject(g) && COST_GROUP.every((k) => g[k] !== undefined && COST_VALID[k](g[k]));
+// A group has exactly two valid shapes (the two deriveRunCost emits): unread, every field null, or
+// read, every field typed. A mixed shape could never be upgraded or compared, so it is ignored.
+const validCostGroup = (g) => isObject(g)
+  && (COST_GROUP.every((k) => g[k] === null) || COST_GROUP.every((k) => g[k] !== undefined && COST_VALID[k](g[k])));
 
-// Whether a valid new group may be stored over what the manifest holds: freely while no cost is
-// stored, and once from a partial / null-cost group to a complete one.
+// Whether a valid new group may be stored over what the manifest holds: while no cost is stored
+// (an unread group yields to any read group), and once from a partial group to a complete one.
 function mayWriteCost(manifest, group) {
   if (manifest.costUsd == null) return true;
-  const storedOpen = manifest.costPartial === true || manifest.costUsd === null;
-  return storedOpen && group.costPartial === false && group.costUsd !== null;
+  return manifest.costPartial === true && group.costPartial === false;
 }
 
 // A multi-spec parent's per-spec child directory: one manifest lives at the top-level run dir.
