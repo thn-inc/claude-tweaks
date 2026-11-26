@@ -506,7 +506,7 @@ const MERGE_RECHECK_LOCATION = 'Merge re-check';
 function recheckMerge(merge, decisions, mergeStale) {
   const filtered = String(decisions).split(/\r?\n/).filter((ln) => {
     const entry = parseEntry(ln);
-    return !(entry && entry.location === MERGE_RECHECK_LOCATION);
+    return !(entry && (entry.location === MERGE_RECHECK_LOCATION || entry.location.endsWith(` — ${MERGE_RECHECK_LOCATION}`)));
   }).join('\n');
   let hit = null;
   const line = needsHumanVerdict(filtered);
@@ -515,6 +515,9 @@ function recheckMerge(merge, decisions, mergeStale) {
   } else {
     for (const [n, v] of latestVerdicts(filtered)) {
       if (v === 'unparsed') { hit = { kind: 'unparsed', lateVerdict: `#${n} merge-check verdict line unparsed` }; break; }
+    }
+    if (!hit && mergeStale && mergeStale.membersUnresolved === true) {
+      hit = { kind: 'unconfirmed', lateVerdict: 'members-unresolved: the run\'s members could not be read, so no merge-check verdict can be confirmed' };
     }
     if (!hit && mergeStale && Array.isArray(mergeStale.unconfirmed) && mergeStale.unconfirmed.length) {
       const confirmed = confirmPassingVerdicts(filtered, mergeStale.unconfirmed);
@@ -1124,4 +1127,4 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   return result;
 }
 
-module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingRoute, SDD_RULING_ROUTES, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, recheckMerge, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys, DEBATE_CONVERGED_RE };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingRoute, SDD_RULING_ROUTES, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, recheckMerge, readMembers, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys, DEBATE_CONVERGED_RE };

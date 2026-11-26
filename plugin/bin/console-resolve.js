@@ -126,7 +126,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { resolveAll, renderStoredTable } = require('./lib/console/resolve');
+const { resolveAll, renderStoredTable, recheckMerge, readMembers } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
 const { appendEntry, formatEntry } = require('./lib/log-decision/append');
@@ -168,6 +168,7 @@ function issueUrlRepo(url) {
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* or bundle-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
+  + '       console-resolve.js --run <dir> --recheck-merge  (takes no other flag; stdout `recheck-merge merge` or `recheck-merge leave-open`, both exit 0, every other exit means do not merge; exit 2 malformed, 3 unanchored, lock or decisions.md unreadable or a write failed, 5 console.json unparseable)\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
   + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)\n'
@@ -189,7 +190,7 @@ function needsAHumanBlock(unresolved, runDir, consolePath) {
 }
 
 function parseArgs(argv) {
-  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null, upstreamRoute: null, hold: null, filed: null };
+  const out = { run: null, policy: null, dryRun: false, json: false, setItem: null, resolution: null, reason: null, checkRepair: null, full: false, ledger: null, ceiling: false, converge: null, memoryWrite: null, memoryDir: null, contentFile: null, upstreamRoute: null, hold: null, filed: null, recheckMerge: false };
   const valued = { '--upstream-route': 'upstreamRoute', '--hold': 'hold', '--filed': 'filed', '--memory-write': 'memoryWrite', '--memory-dir': 'memoryDir', '--content-file': 'contentFile', '--run': 'run', '--policy': 'policy', '--set-item': 'setItem', '--resolution': 'resolution', '--reason': 'reason', '--check-repair': 'checkRepair', '--ledger': 'ledger', '--converge': 'converge' };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -202,9 +203,15 @@ function parseArgs(argv) {
     else if (flag === '--json') out.json = true;
     else if (flag === '--full') out.full = true;
     else if (flag === '--ceiling') out.ceiling = true;
+    else if (flag === '--recheck-merge') out.recheckMerge = true;
     else throw new UsageError(`unknown flag: ${flag}`);
   }
   if (!out.run) throw new UsageError('--run <dir> is required');
+  if (out.recheckMerge) {
+    const { run: _run, recheckMerge: _rm, ...others } = out;
+    if (Object.values(others).some((v) => v !== null && v !== false)) throw new UsageError('--recheck-merge takes no other flag than --run');
+    return out;
+  }
   if (out.upstreamRoute === null && (out.hold !== null || out.filed !== null)) throw new UsageError('--hold and --filed require --upstream-route');
   if (out.upstreamRoute !== null) {
     if (out.policy !== null || out.dryRun || out.json || out.setItem !== null || out.resolution !== null || out.checkRepair !== null || out.full || out.ledger !== null || out.ceiling || out.converge !== null || out.memoryWrite !== null || out.memoryDir !== null || out.contentFile !== null) throw new UsageError('--upstream-route takes no other flag than --run, --hold, --reason and --filed');
@@ -982,6 +989,88 @@ function upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd }) {
   return hold(reason, undefined, [...draftNotes, ...notes]);
 }
 
+// #5833: the `--recheck-merge` shape — the merge site's re-read of the merge half against the decisions.md as it
+// stands now. Fail closed: every exit but the two stdout lines' exit 0 means "do not merge".
+const RECHECK_TEXT = {
+  'needs-human': 'merge withheld — a merge-check verdict asked for a human',
+  unparsed: 'merge withheld — a merge-check verdict line did not parse',
+  unconfirmed: 'merge withheld — no confirmed merge-check verdict at merge time',
+};
+
+// One `Merge re-check:` line per late verdict: a repeat call logs nothing more.
+function recheckLogged(decisions, lateVerdict) {
+  return decisions.split(/\r?\n/).some((ln) => ln.includes('Merge re-check: ') && ln.includes(lateVerdict));
+}
+
+function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
+  const consolePath = path.join(runDir, 'console.json');
+  const decisionsPath = path.join(runDir, 'decisions.md');
+  let code = 0;
+  try {
+    code = withLock(path.join(runDir, '.console.lock'), () => {
+      let decisions = '';
+      try { decisions = fs.readFileSync(decisionsPath, 'utf8'); } catch (err) {
+        if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
+          stderr(`console-resolve.js: recheck-merge failed (decisions.md unreadable: ${oneLineNote(failureText(err))}) — not merging\n`);
+          return 3;
+        }
+      }
+      let data = null;
+      let raw = null;
+      try { raw = fs.readFileSync(consolePath, 'utf8'); } catch (err) {
+        if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
+          stderr(`console-resolve.js: recheck-merge refused (console.json unreadable: ${oneLineNote(failureText(err))}) — nothing written\n`);
+          return 5;
+        }
+      }
+      if (raw !== null) {
+        try { data = JSON.parse(raw); } catch { data = undefined; }
+        if (data === undefined || data === null || typeof data !== 'object' || Array.isArray(data)) {
+          stderr('console-resolve.js: recheck-merge refused (console.json unparseable) — nothing written\n');
+          return 5;
+        }
+      }
+      const autoResolve = data !== null && data.mode === 'auto-resolve';
+      const merge = autoResolve && data.merge && typeof data.merge === 'object' ? data.merge : null;
+      let mergeStale = data !== null && data.mergeStale && typeof data.mergeStale === 'object' && Array.isArray(data.mergeStale.unconfirmed) ? data.mergeStale : null;
+      // A console.json an earlier release wrote: `merge` resolved but no `mergeStale` key at all. `mergeStale: null`
+      // (key present) means not stale; only an absent key is derived, from the run's members, failing closed.
+      if (autoResolve && merge && merge.resolution === 'merge' && !Object.prototype.hasOwnProperty.call(data, 'mergeStale')) {
+        let members = [];
+        try { members = readMembers({ readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } }, ...(deps.resolverDeps || {}) }, runDir); } catch { members = []; }
+        mergeStale = Array.isArray(members) && members.length ? { unconfirmed: members } : { unconfirmed: [], membersUnresolved: true };
+      }
+      const re = recheckMerge(merge, decisions, mergeStale);
+      if (!re.hit) {
+        stdout('console-resolve.js: recheck-merge merge — no needs-human, malformed or unconfirmed merge-check verdict in decisions.md\n');
+        return 0;
+      }
+      if (!recheckLogged(decisions, re.lateVerdict)) {
+        try {
+          appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Merge re-check', text: `${RECHECK_TEXT[re.kind]}: ${re.lateVerdict}`, reversibility: 'n/a' }) });
+        } catch (err) {
+          stderr(`console-resolve.js: recheck-merge failed (decisions.md entry not written: ${oneLineNote(failureText(err))}) — not merging\n`);
+          return 3;
+        }
+      }
+      if (re.changed) {
+        try {
+          writeFileAtomic(consolePath, `${JSON.stringify({ ...data, merge: { ...re.merge, recheckedAt: new Date(now()).toISOString() } }, null, 2)}\n`);
+        } catch (err) {
+          stderr(`console-resolve.js: recheck-merge failed (console.json not rewritten: ${oneLineNote(failureText(err))}) — not merging; the Merge re-check line has landed\n`);
+          return 3;
+        }
+      }
+      stdout(`console-resolve.js: recheck-merge leave-open — ${re.lateVerdict}\n`);
+      return 0;
+    }, { failClosed: true, env: process.env });
+  } catch (err) {
+    stderr(`console-resolve.js: recheck-merge failed (lock: ${oneLineNote(failureText(err))}) — not merging\n`);
+    return 3;
+  }
+  return code;
+}
+
 async function run(argv, deps = {}) {
   const cwd = deps.cwd || (() => process.cwd());
   const stdout = deps.stdout || ((s) => process.stdout.write(s));
@@ -1005,6 +1094,7 @@ async function run(argv, deps = {}) {
     return 3;
   }
   const runDir = target.dir;
+  if (o.recheckMerge) return recheckMergeShape(runDir, { stdout, stderr, now, deps });
   if (o.upstreamRoute !== null) return upstreamRoute(o, runDir, { stdout, stderr, now, execFile, cwd });
   if (o.memoryWrite !== null || o.converge !== null) {
     const refusal = controlModeGate({ shape: o.memoryWrite !== null ? '--memory-write' : '--converge', runDir, stderr, execFile, cwd });
@@ -1095,11 +1185,11 @@ async function run(argv, deps = {}) {
     result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) ? { ...it, approval: priorApprovals.get(it.id) } : it));
   }
   // The proposal text stays in-process (result.filings); console.json and --json carry only the summary.
-  const { snapshot, table, filings, digests, decisionFacts, ...rest } = result;
+  const { snapshot, table, filings, digests, decisionFacts, mergeStale, ...rest } = result;
   const filingSummaries = filings.map(({ item, fingerprint, title }) => ({ item, fingerprint, title }));
   const digestSummaries = digests.map(({ item, fingerprint }) => ({ item, fingerprint }));
   // Outside control mode nothing changes: the public result carries no decisionFacts key.
-  const publicResult = { ...rest, ...(controlMode === true ? { decisionFacts } : {}), filings: filingSummaries, digests: digestSummaries };
+  const publicResult = { ...rest, ...(mergeStale ? { mergeStale } : {}), ...(controlMode === true ? { decisionFacts } : {}), filings: filingSummaries, digests: digestSummaries };
   const at = new Date(now()).toISOString();
   if (!o.dryRun) {
     // The facts land before the decisions block and console.json: a failed write leaves nothing else behind,
@@ -1138,9 +1228,10 @@ async function run(argv, deps = {}) {
         if (it && typeof it.id === 'string' && it.approval && typeof it.approval === 'object' && !priorApprovals.has(it.id)) priorApprovals.set(it.id, it.approval);
       }
       result.items = result.items.map((it) => (it.resolution === 'pending' && priorApprovals.has(it.id) && !it.approval ? { ...it, approval: priorApprovals.get(it.id) } : it));
-      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
+      writeFileAtomic(consolePath, `${JSON.stringify({ resolved: true, mode: 'auto-resolve', at, ceiling: 'unattended', items: result.items, merge: result.merge, ...(mergeStale ? { mergeStale } : {}), droppedByTiebreak: result.droppedByTiebreak, filings: filingSummaries, digests: digestSummaries, ...(controlMode === true ? { controlMode: true, decisionFacts: decisionFacts.length } : {}) }, null, 2)}\n`);
     }, { failClosed: true, env: process.env });
   }
+  if (mergeStale && !o.dryRun) stderr(`console-resolve.js: merge half stale — ${mergeStale.reason}\n`);
   // #3370: items this console deliberately left pending/keep-staged must survive
   // the run's own final stop. Read-only: nothing here applies or resolves them.
   const unresolved = unresolvedItems({ items: result.items });

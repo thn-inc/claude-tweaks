@@ -2551,6 +2551,22 @@ describe('merge half stale until a merge-check verdict is logged (#5833)', () =>
     }
   });
 
+  test('recheckMerge also ignores its own spec-scoped Merge re-check line (spec #N — Merge re-check)', () => {
+    const specLine = formatEntry({ status: 'AUTO', now: NOW, step: 'Merge re-check', spec: 7, text: verdictText(7, 'needs-human'), reversibility: 'n/a' });
+    assert.match(specLine, /spec #7 — Merge re-check/);
+    const first = recheckMerge(MERGE, `${passLine(7)}\n`, null);
+    const second = recheckMerge(MERGE, `${passLine(7)}\n${specLine}\n`, null);
+    assert.strictEqual(first.hit, false);
+    assert.strictEqual(second.hit, false);
+  });
+
+  test('recheckMerge: a mergeStale marking the members unresolved is an unconfirmed hit naming members-unresolved', () => {
+    const re = recheckMerge(MERGE, '', { unconfirmed: [], membersUnresolved: true });
+    assert.deepStrictEqual([re.hit, re.kind, re.changed], [true, 'unconfirmed', true]);
+    assert.match(re.lateVerdict, /^members-unresolved/);
+    assert.strictEqual(re.merge.resolution, 'leave-open');
+  });
+
   test('recheckMerge: a hit with no stored merge (null) or a stored leave-open reports hit:true, changed:false', () => {
     const stale = { unconfirmed: [7] };
     const lo = { resolution: 'leave-open', reason: 'x' };
