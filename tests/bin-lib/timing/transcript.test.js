@@ -1647,3 +1647,11 @@ test('#6010 format guard: the probed-format fixture yields an effort on at least
   const rows = await readUsage(f);
   assert.ok(rows.some((r) => r.role === 'assistant' && typeof r.effort === 'string'), 'transcript format changed: no assistant turn has an effort');
 });
+
+test('#6010: a non-object output_config records no effort', async () => {
+  const f = effortFile([
+    JSON.stringify({ type: 'api-request', timestamp: '2026-11-26T10:00:00.000Z', params: { model: EFF_MODEL, output_config: 'x' } }),
+    aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0]),
+  ]);
+  for (const r of await readUsage(f)) assert.equal('effort' in r, false);
+});

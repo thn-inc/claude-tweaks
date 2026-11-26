@@ -551,3 +551,17 @@ test('#6010: an invalid roles leaves the existing manifest untouched with one st
   assert.equal(c.lines.length, 1);
   assert.match(c.lines[0], /roles failed the shape check/);
 });
+
+test('#6010 F2: roles from a partial close is replaced when the cost group upgrades to complete, then frozen', () => {
+  const ROLES_C = { merge: { agents: 1, models: { x: 1 }, efforts: { low: 1 } } };
+  const tok = { input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  const grp = (partial) => ({ tokensByModel: { m: tok }, costUsd: 1, priceDate: '2026-11-03', unpricedModels: [], costPartial: partial });
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  assert.ok(fillRunManifest(dir, { cost: grp(true), roles: ROLES_A }).changed.includes('roles'));
+  assert.ok(fillRunManifest(dir, { cost: grp(false), roles: ROLES_B }).changed.includes('roles'));
+  assert.deepEqual(readManifest(dir).roles, ROLES_B);
+  const bytes = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: grp(false), roles: ROLES_C }).changed, []);
+  assert.equal(manifestBytes(dir), bytes);
+});

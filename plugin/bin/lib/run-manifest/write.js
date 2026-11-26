@@ -9,7 +9,8 @@
 //                     The close fills `closedAt` and `minutes` (fill-only-null) and the cost group
 //                     (#6009) as one unit: written while no cost is stored, upgraded once from a
 //                     partial or null-cost group to a complete one, never after a complete group.
-//                     It also fills `roles` (#6010, model and effort per role) fill-only-null; a
+//                     It also fills `roles` (#6010, model and effort per role) fill-only-null, plus once
+//                     more in the fill that upgrades a partial cost group to a complete one; a
 //                     `roles` that fails the shape check leaves the whole manifest untouched.
 //
 // Nothing here throws and nothing changes a caller's outcome: a failed write is dropped with one
@@ -212,6 +213,9 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
     }
 
     const group = input.cost;
+    // The fill that upgrades a partial cost group to a complete one also refreshes roles: the partial
+    // close derived them from an incomplete read (agents under model unknown).
+    const upgrading = validCostGroup(group) && manifest.costUsd != null && mayWriteCost(manifest, group);
     if (validCostGroup(group) && mayWriteCost(manifest, group)) {
       for (const key of COST_GROUP) {
         if (key in manifest && canonicalJson(group[key]) === canonicalJson(manifest[key])) continue;
@@ -220,7 +224,7 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
       }
     }
 
-    if (input.roles != null && manifest.roles == null) {
+    if (input.roles != null && (manifest.roles == null || (upgrading && canonicalJson(input.roles) !== canonicalJson(manifest.roles)))) {
       manifest.roles = input.roles;
       changed.push('roles');
     }

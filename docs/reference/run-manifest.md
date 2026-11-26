@@ -82,14 +82,14 @@ Derived by `deriveRunCost` at close, from the same transcripts the token pass re
 
 ## `roles`
 
-Model and effort per role (#6010), derived at close by `deriveRoles` in `plugin/bin/lib/run-manifest/roles.js` and stored by `fillRunManifest` only while `roles` is null. The only change to `manifest.json` is this additive nullable key at `v: 1`.
+Model and effort per role (#6010), derived at close by `deriveRoles` in `plugin/bin/lib/run-manifest/roles.js` and stored by `fillRunManifest` while `roles` is null, and once more in the fill that upgrades a partial cost group to a complete one (a partial close may have read an agent's transcript too late, leaving it under model `unknown`). Once the cost group is complete `roles` never changes, so closing again changes nothing. The only change to `manifest.json` is this additive nullable key at `v: 1`.
 
 - **Shape.** `{ "<role>": { "agents": n, "models": { "<model id>": n }, "efforts": { "<effort>": n } } }`. `models` counts agents; `efforts` counts turns (launches on the driver lane, where no turns are read).
-- **Role names, session lanes.** `session` is the run's own transcript plus, on a dispatched run, its Task-call transcripts, as one agent. Every dispatched agent is named by `roleOf` (`plugin/bin/lib/timing/derive.js`) from its description, e.g. `implementer`, `lens reviewer`, `unlabelled`. Driver worker transcripts are not resolved at close.
-- **Role names, driver lane.** Each launch line in `driver-events.jsonl` maps through `DRIVER_STEP_ROLES` (`plugin/bin/lib/driver/roles.js` steps): `worker` to `implementer`, `review` to `reviewer`, `merge-check` to `merge-check`, `merge-acceptance` to `acceptance`. Renaming a driver role changes these keys.
+- **Role names, session lanes.** `session` is the run's own transcript plus, on a dispatched run, its Task-call transcripts, as one agent. Every dispatched agent is named by `roleOf` (`plugin/bin/lib/timing/derive.js`) from its description, e.g. `implementer`, `lens reviewer`, `unlabelled`.
+- **Role names, driver lane.** Each launch line in `driver-events.jsonl` maps through `DRIVER_STEP_ROLES` (`plugin/bin/lib/driver/roles.js` steps): `worker` to `implementer`, `review` to `reviewer`, `merge-check` to `merge-check`, `merge-acceptance` to `acceptance`. Renaming a driver role changes these keys. Driver worker transcripts are not resolved at close.
 - **Model.** The transcript model id, else the dispatch alias; `unknown` when neither is recorded. An agent whose transcript could not be read counts under model `unknown` with no efforts. A headless lens worker (no turns recorded) counts one `unknown` effort.
 - **Effort.** Read from each transcript's `api-request` lines (`params.output_config.effort`); `unknown` means the transcript (or the driver launch line) recorded no effort.
-- **Only on a cost-deriving close.** `roles` is derived only where the cost group is, so a run whose cost group was already complete (first closed by an earlier release), or whose `roles` derive threw (one stderr line, the rest of the fill still lands), keeps `roles` null. Re-deriving there would add the transcript reads that path exists to avoid.
+- **Only on a cost-deriving close.** `roles` is derived only where the cost group is, so a run whose cost group was already complete (first closed by an earlier release), or whose `roles` derive threw (a bug: `deriveRoles` does not throw on any input shape, and the close logs one stderr line while the rest of the fill still lands), keeps `roles` null. Re-deriving there would add the transcript reads that path exists to avoid.
 - **Invalid is refused whole.** A `roles` that fails the shape check leaves the manifest untouched, with one stderr line.
 
 ## Lane
@@ -149,6 +149,26 @@ The tip of the integration branch the run builds on, read once at mint, not the 
   "pluginVersion": "6.174.0",
   "policyHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "priceDate": "2026-11-03",
+  "roles": {
+    "implementer": {
+      "agents": 2,
+      "efforts": {
+        "medium": 5
+      },
+      "models": {
+        "claude-sonnet-5-5": 2
+      }
+    },
+    "session": {
+      "agents": 1,
+      "efforts": {
+        "high": 12
+      },
+      "models": {
+        "claude-opus-4-7": 1
+      }
+    }
+  },
   "runId": "2026-11-19T073130-spec-5903",
   "tokensByModel": {
     "claude-opus-4-7": {

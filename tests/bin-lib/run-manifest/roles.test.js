@@ -118,3 +118,42 @@ test('#6010: validRoles accepts derived output and rejects bad shapes', () => {
     assert.equal(validRoles(bad), false, JSON.stringify(bad));
   }
 });
+
+test('#6010 F1: odd input shapes never throw and give null or a valid shape', () => {
+  const odd = [undefined, null, {}, { manifest: null }, { manifest: 5, rows: 'x', items: 3, events: {} },
+    { manifest: { lane: 'standard' }, rows: [null, 1, 'x', []], items: [null, 7, 'x', []] },
+    { manifest: { lane: 'driver' }, events: [null, 1, 'x', [], { step: 5 }, { step: 'worker', usage: 'x' }] }];
+  for (const a of odd) {
+    const r = deriveRoles(a);
+    assert.ok(r === null || validRoles(r), JSON.stringify(a));
+  }
+});
+
+test('#6010 F6a: a driver launch line with usage but no model counts under unknown', () => {
+  const roles = deriveRoles({ manifest: { lane: 'driver' }, events: [{ step: 'worker', usage: { input: 1 } }] });
+  assert.deepEqual(roles, { implementer: { agents: 1, models: { unknown: 1 }, efforts: { unknown: 1 } } });
+});
+
+test('#6010 F6b: a <synthetic> session row is excluded from models and efforts', () => {
+  const rows = [
+    { role: 'assistant', turnStart: true, model: 'claude-opus-5-5', effort: 'high' },
+    { role: 'assistant', turnStart: true, model: '<synthetic>', effort: 'low' },
+  ];
+  assert.deepEqual(deriveRoles({ manifest: { lane: 'standard' }, rows }), { session: { agents: 1, models: { 'claude-opus-5-5': 1 }, efforts: { high: 1 } } });
+});
+
+test('#6010 F6c: validRoles rejects a non-integer efforts value and a non-object models', () => {
+  assert.equal(validRoles({ x: { agents: 1, models: {}, efforts: { high: 1.5 } } }), false);
+  assert.equal(validRoles({ x: { agents: 1, models: 'a', efforts: {} } }), false);
+  assert.equal(validRoles({ x: { agents: 1, models: [], efforts: {} } }), false);
+});
+
+test('#6010 F7: an empty-string role falls back to roleOf, an empty model id falls through to unknown', () => {
+  const items = [
+    { description: 'implement task 1', role: '', transcriptModel: '', rawModel: '', metaModel: 'sonnet', tokens: { input: 1 }, usageRows: [] },
+    { description: 'implement task 2', transcriptModel: '', rawModel: '', metaModel: '', tokens: { input: 1 }, usageRows: [] },
+  ];
+  const roles = deriveRoles({ manifest: { lane: 'standard' }, items });
+  assert.deepEqual(Object.keys(roles), ['implementer']);
+  assert.deepEqual(roles.implementer.models, { sonnet: 1, unknown: 1 });
+});

@@ -9,6 +9,7 @@
 // - the driver lane: each launch line in driver-events.jsonl whose step maps to a driver role.
 // `models` counts agents; `efforts` counts assistant turns (launches on the driver lane, where no turns
 // are read). `unknown` means no model or effort was recorded. Returns null when no source exists.
+// Does not throw on any input shape; a thrown error is a bug, which the caller logs.
 // Model ids and efforts come from transcripts, so counts are built with Object.fromEntries over a Map:
 // `__proto__` is then an ordinary own key.
 
@@ -27,45 +28,43 @@ function tallyInto(m, rows) {
   }
 }
 
-function deriveRoles({ manifest, rows, items, events } = {}) {
-  try {
-    const acc = new Map(); // role -> { agents, models: Map, efforts: Map }
-    const entry = (role) => {
-      if (!acc.has(role)) acc.set(role, { agents: 0, models: new Map(), efforts: new Map() });
-      return acc.get(role);
-    };
-    if (isObject(manifest) && manifest.lane === 'driver') {
-      for (const line of Array.isArray(events) ? events : []) {
-        if (!isObject(line) || typeof line.step !== 'string' || !Object.hasOwn(DRIVER_STEP_ROLES, line.step)) continue;
-        if (!nonEmpty(line.model) && !isObject(line.usage)) continue;
-        const e = entry(DRIVER_STEP_ROLES[line.step]);
-        e.agents += 1;
-        bump(e.models, nonEmpty(line.model) ? line.model : 'unknown');
-        bump(e.efforts, nonEmpty(line.effort) ? line.effort : 'unknown');
-      }
-    } else {
-      const list = Array.isArray(rows) ? rows : [];
-      if (list.some((r) => isObject(r) && r.role === 'assistant' && r.turnStart === true)) {
-        const e = entry('session');
-        e.agents = 1;
-        for (const r of list) if (isObject(r) && typeof r.model === 'string' && r.model !== '<synthetic>') e.models.set(r.model, 1);
-        tallyInto(e.efforts, list);
-      }
-      for (const item of Array.isArray(items) ? items : []) {
-        if (!isObject(item)) continue;
-        const e = entry(typeof item.role === 'string' ? item.role : roleOf(item.description));
-        e.agents += 1;
-        const readable = isObject(item.tokens);
-        bump(e.models, readable ? (item.transcriptModel ?? item.rawModel ?? item.metaModel ?? 'unknown') : 'unknown');
-        if (Array.isArray(item.usageRows)) tallyInto(e.efforts, item.usageRows);
-        else if (readable) bump(e.efforts, 'unknown');
-      }
+function deriveRoles(args) {
+  const { manifest, rows, items, events } = isObject(args) ? args : {};
+  const acc = new Map(); // role -> { agents, models: Map, efforts: Map }
+  const entry = (role) => {
+    if (!acc.has(role)) acc.set(role, { agents: 0, models: new Map(), efforts: new Map() });
+    return acc.get(role);
+  };
+  if (isObject(manifest) && manifest.lane === 'driver') {
+    for (const line of Array.isArray(events) ? events : []) {
+      if (!isObject(line) || typeof line.step !== 'string' || !Object.hasOwn(DRIVER_STEP_ROLES, line.step)) continue;
+      if (!nonEmpty(line.model) && !isObject(line.usage)) continue;
+      const e = entry(DRIVER_STEP_ROLES[line.step]);
+      e.agents += 1;
+      bump(e.models, nonEmpty(line.model) ? line.model : 'unknown');
+      bump(e.efforts, nonEmpty(line.effort) ? line.effort : 'unknown');
     }
-    if (acc.size === 0) return null;
-    return Object.fromEntries([...acc].map(([role, e]) => [role, { agents: e.agents, models: Object.fromEntries(e.models), efforts: Object.fromEntries(e.efforts) }]));
-  } catch {
-    return null;
+  } else {
+    // A <synthetic> row is not a real model turn: neither models nor efforts count it.
+    const list = (Array.isArray(rows) ? rows : []).filter((r) => !(isObject(r) && r.model === '<synthetic>'));
+    if (list.some((r) => isObject(r) && r.role === 'assistant' && r.turnStart === true)) {
+      const e = entry('session');
+      e.agents = 1;
+      for (const r of list) if (isObject(r) && nonEmpty(r.model)) e.models.set(r.model, 1);
+      tallyInto(e.efforts, list);
+    }
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!isObject(item)) continue;
+      const e = entry(nonEmpty(item.role) ? item.role : roleOf(item.description));
+      e.agents += 1;
+      const readable = isObject(item.tokens);
+      bump(e.models, readable ? ([item.transcriptModel, item.rawModel, item.metaModel].find(nonEmpty) ?? 'unknown') : 'unknown');
+      if (Array.isArray(item.usageRows)) tallyInto(e.efforts, item.usageRows);
+      else if (readable) bump(e.efforts, 'unknown');
+    }
   }
+  if (acc.size === 0) return null;
+  return Object.fromEntries([...acc].map(([role, e]) => [role, { agents: e.agents, models: Object.fromEntries(e.models), efforts: Object.fromEntries(e.efforts) }]));
 }
 
 const isCount = (n) => Number.isInteger(n) && n >= 0;
