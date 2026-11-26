@@ -474,7 +474,8 @@ function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, run
     if (failure === null) { delete failures[key]; continue; }
     const error = boundedError(failure.error, failure.detail);
     resolveFailures.push({ reason, path: targetPath, op: 'resolve', error });
-    const retries = (Number.isInteger(entry.residueRetries) && entry.residueRetries > 0 ? entry.residueRetries : 0) + 1;
+    const priorRetries = Number.isInteger(entry.residueRetries) && entry.residueRetries > 0 ? entry.residueRetries : 0;
+    const retries = priorRetries + 1;
     if (retries >= RESIDUE_RETRY_LIMIT) delete failures[key];
     else failures[key] = { ...entry, residueRetries: retries, lastResidueError: { op: 'resolve', reason: error, at: now } };
   }
