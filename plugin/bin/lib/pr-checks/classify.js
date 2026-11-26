@@ -66,6 +66,8 @@ const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 // cancelled or left waiting for approval, or GitHub marked it stale.
 // The held subset is the part of that set a check may not stay green on (#3467):
 // SKIPPED stays green-compatible, the rest read pending.
+// The one --json field list every head-run reader (`gh run list --commit`) requests: heldChecks orders a check's rows by start time then id.
+const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt';
 const HELD_CONCLUSIONS = Object.freeze(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);
 const UNVERIFIED_CONCLUSIONS = Object.freeze(['SKIPPED', ...HELD_CONCLUSIONS]);
 
@@ -242,4 +244,4 @@ function applyBaseComparison(verdict, base) {
   return { ...verdict, state, failing, baseSha: base.sha };
 }
 
-module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, heldChecks, PR_EVENTS, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };
+module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, PR_EVENTS, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };

@@ -60,7 +60,7 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { classifyRollup, failingNamesAt, applyBaseComparison } = require('./lib/pr-checks/classify');
+const { classifyRollup, failingNamesAt, applyBaseComparison, HEAD_RUN_FIELDS } = require('./lib/pr-checks/classify');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
@@ -217,7 +217,7 @@ function classifyPr(deps, n, localHead, audit) {
   // so a transient runs-read failure must not turn `stale` into `read-failed`.
   if (typeof headRefOid === 'string' && headRefOid && headRefOid === compareHead) {
     try {
-      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
+      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]));
       if (!Array.isArray(rows)) throw new Error('not a JSON array');
       headRuns = rows;
     } catch (e) {

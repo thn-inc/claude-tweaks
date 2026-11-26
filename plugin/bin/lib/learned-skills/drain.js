@@ -39,7 +39,7 @@
 const path = require('path');
 const { realDeps: lsRealDeps, firstStderrLine } = require('./learned-skills');
 const { drainPath } = require('./layout');
-const { classifyRollup, normalizeEntry, normalizeHeadRun } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, normalizeHeadRun, HEAD_RUN_FIELDS } = require('../pr-checks/classify');
 const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
 const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
 const { rebuild: realRebuild } = require('./rebuild');
@@ -225,7 +225,7 @@ function drain(opts, overrides = {}) {
     if (!view || typeof view !== 'object' || Array.isArray(view)) throw new Error('gh pr view returned no object');
     if (view.state !== 'OPEN') return { view, headRuns: [], ready: null, verdict: 'closed' };
     if (typeof view.headRefOid !== 'string' || !view.headRefOid || !Array.isArray(view.statusCheckRollup)) throw new Error('gh pr view returned no head commit or check rollup');
-    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']), 'gh run list');
+    const headRuns = parseJson(deps.gh(['run', 'list', '--repo', repo, '--commit', view.headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]), 'gh run list');
     if (!Array.isArray(headRuns)) throw new Error('gh run list did not return an array');
     const ready = deps.readyRun({ pr: n, sha: view.headRefOid });
     if (!ready || ready.state === 'read-failed' || typeof ready.state !== 'string') throw new Error(`ready-run read failed: ${(ready && ready.reason) || 'no state'}`);

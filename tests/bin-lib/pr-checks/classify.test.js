@@ -655,3 +655,8 @@ test('#5153 normalizeHeadRun reads a REST html_url when there is no url, so a RE
   const r = ready([rest(W, 'pull_request', AFTER, 'completed', 'failure', 24)]);
   assert.deepEqual(r.failing, [{ name: 'ci', url: 'https://github.example/runs/24' }]);
 });
+
+test('HEAD_RUN_FIELDS carries start time and id for newest-per-check ordering', () => {
+  const { HEAD_RUN_FIELDS } = require('../../../plugin/bin/lib/pr-checks/classify');
+  assert.equal(HEAD_RUN_FIELDS, 'databaseId,name,workflowName,status,conclusion,url,startedAt');
+});
