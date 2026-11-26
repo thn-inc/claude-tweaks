@@ -403,6 +403,16 @@ test('#4284: win32 longpaths breadcrumb is not written to a fallback-attributed 
   assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'a fallback run must receive no events');
 });
 
+test('#4284: a stale worktree writes no staleness breadcrumb to a fallback-attributed run', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  advance(main, 3);
+  const runDir = scratchDir('ct-wts-run-');
+  const out = post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), ownedRun: { dir: runDir, attribution: 'fallback' } }));
+  assert.ok(out.json && typeof out.json.systemMessage === 'string', 'precondition: the staleness check ran and warned');
+  assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'a fallback run must receive no events');
+});
+
 test('#4284: win32 longpaths breadcrumb is written to a session-attributed run', () => {
   const { main } = setupProject();
   const wt = harnessWorktreeOf(main);
