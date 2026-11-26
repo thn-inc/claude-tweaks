@@ -14,15 +14,21 @@
 // are not covered by another queue-pull pass. So one live check exists here: the trusted driver
 // escalation marker, read in one batched call. Two refusals sit outside the three registries:
 // eligibility's `['not eligible']` fallback (steps.js; reachable only for a verdict with no
-// reasons, which evaluateRecordEligibility never returns when `eligible` is false) and the reviewer
-// reason it appends (`reviewerGateReason`, decided by the predicate from pulled data).
+// reasons, which evaluateRecordEligibility never returns when `eligible` is false), admission's
+// `['not admitted']` fallback (steps.js; unreachable, since evaluateAdmission sets
+// `admitted = reasons.length === 0`), and the reviewer reason eligibility appends
+// (`reviewerGateReason`, decided by the predicate from pulled data).
 // `REASONS.escalated` is classed `driverRoutable` because `eligibilityOptions` never sets
 // `escalated`, so the same options refuse it identically on both sides.
 //
 // Classes: 'driverRoutable' = decided from pulled data by the predicate; 'pull' = another
-// queue-pull filter or pass removes the record first (the eligibility filter for grants, `bot:*`
-// and open state; `blocked`/`unlanded-blocker` for blockers; `open-pr` for linked PRs);
-// 'live-check' = this pass's marker read.
+// queue-pull filter or pass genuinely removes the record first (the eligibility filter for grants,
+// `bot:*` labels and open state; the `open-pr` pass for a linked PR it read); 'self-clearing' = a
+// refusal only the live fetch can raise that ends without anyone acting (an unreadable fact reads
+// fine on a later fetch, or the open blocker closes and releases the hold), so an excluded record
+// is never starved by it: blocker and linked-PR facts are not reliably filtered by the pull (a
+// failed linked-PR query keeps the record; native blockers are read only under work-links: native,
+// while the driver always reads native dependencies); 'live-check' = this pass's marker read.
 //
 // Do not require ../dispatch/queue-pull at top level: express/queue.js documents a require cycle
 // (budget.js requires queue-pull), and the driver modules are required lazily below.
@@ -32,7 +38,8 @@ const { spawnSync } = require('child_process');
 const { hasDriverEscalationMarker } = require('../driver/settle');
 
 const BIN_DIR = path.join(__dirname, '..', '..');
-const CLI_TIMEOUT_MS = 60000;
+// The same bound as queue-pull.js's CLI_TIMEOUT_MS (not imported: a require cycle, see above).
+const CLI_TIMEOUT_MS = 300000 + 5000;
 const MAX_BUFFER = 64 * 1024 * 1024;
 
 // Explicit, not derived from the registries: a refusal added later is unclassified here until someone
@@ -41,13 +48,13 @@ const LIVE_FETCH_AUDIT = Object.freeze({
   noBuildGrant: 'pull',
   parked: 'pull',
   blocked: 'pull',
-  openBlocker: 'pull',
+  openBlocker: 'self-clearing',
   openPR: 'pull',
   notOpen: 'pull',
-  blockerFactsUnreadable: 'pull',
-  prFactsUnreadable: 'pull',
-  stateUnreadable: 'pull',
-  labelsUnreadable: 'pull',
+  blockerFactsUnreadable: 'self-clearing',
+  prFactsUnreadable: 'self-clearing',
+  stateUnreadable: 'self-clearing',
+  labelsUnreadable: 'self-clearing',
   routingOff: 'driverRoutable',
   splitOdd: 'driverRoutable',
   splitUnreadable: 'driverRoutable',
@@ -109,9 +116,11 @@ function driverLaneExclusions({ groups, policy, runner, readComments, stderr = p
     if (Array.isArray(g) && g.length === 1 && policy.driverRoutable(g[0])) candidates.push(g[0].number);
   }
   if (candidates.length === 0) return [];
-  const read = readComments(candidates);
+  let read;
+  try { read = readComments(candidates); } catch (err) { read = { ok: false, cause: errText(err) }; }
   if (!read || read.ok !== true) {
-    stderr.write(`Warning: driver-lane comment read failed — no driver-lane exclusions this pull: ${read && read.cause}\n`);
+    const cause = (read && read.cause) || 'no result';
+    stderr.write(`Warning: driver-lane comment read failed — no driver-lane exclusions this pull: ${cause}\n`);
     return [];
   }
   const entries = [];
@@ -161,7 +170,7 @@ function runFromFiles({ groupsPath, exclusionsPath, transport, stderr = process.
   const runner = readDriverRunner({ resolvePolicy: deps.resolvePolicy, stderr });
   if (runner !== 'script') return [];
   const groups = JSON.parse(fs.readFileSync(groupsPath, 'utf8'));
-  const policy = expressQueuePolicy({ resolvePolicy: deps.resolvePolicy, stderr });
+  const policy = expressQueuePolicy({ resolvePolicy: deps.resolvePolicy, stderr: (s) => stderr.write(s) });
   const readComments = transport === 'files'
     ? () => ({ ok: false, cause: 'comment read unavailable on the files transport' })
     : spawnCommentReader({ spawnCli: deps.spawnCli || realSpawnCli, cwd: process.cwd(), env: process.env });

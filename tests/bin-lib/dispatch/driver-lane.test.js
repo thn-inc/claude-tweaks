@@ -149,7 +149,7 @@ test('spawnCommentReader: comma-joins numbers, parses stdout, maps failures to a
 });
 
 test('AC8.1 every eligibility and admission refusal reason is classified', () => {
-  const WORDS = new Set(['driverRoutable', 'pull', 'live-check']);
+  const WORDS = new Set(['driverRoutable', 'pull', 'self-clearing', 'live-check']);
   const keys = [...Object.keys(ADMISSION_REASONS), ...Object.keys(REASONS), ...Object.keys(BOUND_REASONS)];
   for (const k of keys) assert.ok(WORDS.has(LIVE_FETCH_AUDIT[k]), `reason ${k} is unclassified in LIVE_FETCH_AUDIT`);
   const known = new Set(keys);
@@ -157,4 +157,95 @@ test('AC8.1 every eligibility and admission refusal reason is classified', () =>
   assert.ok(Object.isFrozen(LIVE_FETCH_AUDIT));
   assert.equal(LIVE_FETCH_AUDIT.escalatedByDriver, 'live-check');
   assert.equal(LIVE_FETCH_AUDIT.commentsUnreadable, 'live-check');
+});
+
+test('self-clearing rows: live-only unreadable facts and the open blocker', () => {
+  for (const k of ['openBlocker', 'blockerFactsUnreadable', 'prFactsUnreadable', 'stateUnreadable', 'labelsUnreadable']) assert.equal(LIVE_FETCH_AUDIT[k], 'self-clearing', k);
+  for (const k of ['noBuildGrant', 'parked', 'blocked', 'openPR', 'notOpen']) assert.equal(LIVE_FETCH_AUDIT[k], 'pull', k);
+});
+
+test('a throwing readComments takes the comment-read-failed Warning, nothing excluded', () => {
+  const { lines, stderr } = collector();
+  const out = driverLaneExclusions({ groups: [[rec(1, true)]], policy: policy(), runner: 'script', stderr, readComments: () => { throw new Error('reader blew up'); } });
+  assert.deepEqual(out, []);
+  assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: reader blew up\n']);
+});
+
+test('a reader returning no result or no cause prints the fixed cause, never null or undefined', () => {
+  for (const bad of [undefined, null, { ok: false }]) {
+    const { lines, stderr } = collector();
+    driverLaneExclusions({ groups: [[rec(1, true)]], policy: policy(), runner: 'script', stderr, readComments: () => bad });
+    assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: no result\n']);
+  }
+});
+
+test('readDriverRunner: an invalid entry reads session', () => {
+  const { stderr } = collector();
+  assert.equal(readDriverRunner({ resolvePolicy: () => ({ 'express-driver-runner': { value: 'script', source: 'default', invalid: true } }), stderr }), 'session');
+});
+
+// ---- runFromFiles through its injectable deps ----
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { runFromFiles } = require('../../../plugin/bin/lib/dispatch/driver-lane');
+
+const BODY = ['## Current State', '', 'x.', '', '## Deliverables', '', '- Add.', '', '## Acceptance Criteria', '', '- Present.', '',
+  '## Release Note', '', 'Adds.', '', '## Technical Approach', '', '### Key Files', '',
+  '- `plugin/skills/init/claude-md-template.md` (modify)', '- `plugin/skills/init/rules-template.md` (modify)', ''].join('\n');
+const issueOf = (number, labels) => ({ number, body: BODY, labels: labels.map((name) => ({ name })) });
+const ROUTABLE = ['risk:low', 'size:medium', 'ceremony:fast-lane', 'type:task'];
+const VALUES = {
+  'express-driver-runner': 'script', 'express-lane': false, 'express-driver': 'on', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text',
+  'integration-model': 'pr-first', 'merge-sensitive-paths': [], 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 3, 'express-driver-review': 'beyond-express',
+};
+const resolver = (values = VALUES) => (keys) => Object.fromEntries(keys.map((k) => [k, { value: values[k], source: 'policy' }]));
+
+function fixture(groups) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-lane-'));
+  const groupsPath = path.join(dir, 'groups.json');
+  fs.writeFileSync(groupsPath, JSON.stringify(groups));
+  return { dir, groupsPath, exclusionsPath: path.join(dir, 'exclusions.json') };
+}
+
+test('runFromFiles happy path appends a driver-lane entry through appendExclusion', () => {
+  const f = fixture([[issueOf(20, ROUTABLE)], [issueOf(21, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task'])]]);
+  const { lines, stderr } = collector();
+  const calls = [];
+  const spawnCli = (name, args) => { calls.push([name, args]); return { status: 0, stdout: '{"20":{"comments":[],"complete":true}}', stderr: '' }; };
+  const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'gh', stderr, deps: { resolvePolicy: resolver(), spawnCli } });
+  assert.deepEqual(out, [{ reason: 'driver-lane', records: [20], detail: { runner: 'script' } }]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.exclusionsPath, 'utf8')), out);
+  assert.deepEqual(calls, [['resolve-record-comments.js', ['20']]]);
+  assert.deepEqual(lines, ['driver-lane: left to the script job: #20\n']);
+});
+
+test('runFromFiles: a failed second read prints the Warning, does not throw, appends nothing', () => {
+  const f = fixture([[issueOf(20, ROUTABLE)]]);
+  const { lines, stderr } = collector();
+  const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'gh', stderr, deps: { resolvePolicy: resolver(), spawnCli: () => ({ status: 3, stdout: '', stderr: 'fetch failed\n' }) } });
+  assert.deepEqual(out, []);
+  assert.equal(fs.existsSync(f.exclusionsPath), false);
+  assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: fetch failed\n']);
+});
+
+test('runFromFiles: the files transport never spawns and reports the read failed', () => {
+  const f = fixture([[issueOf(20, ROUTABLE)]]);
+  const { lines, stderr } = collector();
+  const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'files', stderr, deps: { resolvePolicy: resolver(), spawnCli: () => { throw new Error('spawned'); } } });
+  assert.deepEqual(out, []);
+  assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: comment read unavailable on the files transport\n']);
+});
+
+test('runFromFiles: a policy-layer warning path writes through a function, never throws', () => {
+  const f = fixture([[issueOf(20, ROUTABLE)]]);
+  const { lines, stderr } = collector();
+  const failing = (keys) => {
+    if (keys.length === 1 && keys[0] === 'express-driver-runner') return { 'express-driver-runner': { value: 'script', source: 'policy' } };
+    throw new Error('policy boom');
+  };
+  const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'gh', stderr, deps: { resolvePolicy: failing, spawnCli: () => { throw new Error('spawned'); } } });
+  assert.deepEqual(out, []);
+  assert.ok(lines.some((l) => l.startsWith('express-lane: policy read failed')), lines.join('|'));
 });
