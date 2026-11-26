@@ -12,6 +12,7 @@ const path = require('path');
 const { isAncestorOrSelf } = require('../path-guard');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
 const { stripHeredocBodies } = require('../hooks/git-command');
+const { SESSION_NOUN, AGENT_NOUN, ISOLATION_CLAUSE, escapeRegex } = require('../hooks/harness-refusal');
 
 const TURN_CLASSES = Object.freeze(['edit', 'read', 'explore', 'procedure', 'bookkeeping', 'orientation', 'verify', 'guard-refusal', 'dispatch', 'other']);
 // The classes whose turns are process overhead rather than the work itself.
@@ -24,7 +25,12 @@ const CEREMONY_CLASSES = Object.freeze(['procedure', 'bookkeeping', 'orientation
 // is externally sized, and an unbounded `\S+.*` backtracked quadratically on
 // one ([IL-162]). The permission text quotes the denied command before "has
 // been denied", so its gap is sized to the scan window, not to a short command.
-const GUARD_REFUSAL_RE = /This session is isolated in the worktree|PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,1500}has been denied/;
+// The isolation alternative is composed from harness-refusal.js's nouns and clause
+// (session or agent subject), so a wording update lands once.
+const GUARD_REFUSAL_RE = new RegExp(
+  '(?:' + escapeRegex(SESSION_NOUN) + '|' + escapeRegex(AGENT_NOUN) + ')' + escapeRegex(ISOLATION_CLAUSE)
+  + '|' + /PreToolUse:\S{1,64} hook error|Permission to use \S{1,64}[^\n]{0,1500}has been denied/.source,
+);
 const REFUSAL_SCAN_CHARS = 2048;
 
 // A Read counts as procedure loading when it targets a skill file — the
