@@ -9,7 +9,7 @@ const cp = require('node:child_process');
 const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
-const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
+const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, sharedCauseOf, countsTowardLaunchStreak } = worker;
 const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, LENS_REPLY_SCHEMA, lensReviewerSettings, lensAdmittedFormsNote, lensGitEnv } = require(path.join(LIB, 'driver', 'roles.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
@@ -66,7 +66,7 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
 });
 
 test('AC5: the envelope field names are pinned', () => {
-  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId']);
+  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId', 'apiError']);
 });
 
 test('the envelope carries the result object\'s session_id as sessionId', async (t) => {
@@ -1710,4 +1710,96 @@ test('#6002 Gotcha: live probe — three implementer launches on Standard at --e
     if (env.status === 'ok' && env.result && env.result.status === 'done' && greeted === 'Hello Ann!') valid++;
   }
   assert.strictEqual(valid, 3);
+});
+
+// #6118: the shared-cause classification of an implementer envelope.
+const API_ERROR_RESULT = { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', result: 'Invalid API key · Fix external API key' };
+const apiErrorOut = (over = {}) => ({ code: 1, stdout: JSON.stringify({ ...API_ERROR_RESULT, ...over }) });
+async function launchApiError(t, over) {
+  const { runner } = fakeRunner(apiErrorOut(over));
+  return launchWorker(base(t), { runner });
+}
+
+test('#6118 AC5.1, AC5.2: an api_error result object carries apiError and stays fail/exit', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 401, api_error_type: 'authentication_error' });
+  assert.strictEqual(env.status, 'fail');
+  assert.strictEqual(env.reason, 'exit');
+  assert.deepStrictEqual(env.apiError, { status: 401, type: 'authentication_error' });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118 AC5.1: the not-logged-in shape is shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: null, result: 'Not logged in · Please run /login' });
+  assert.deepStrictEqual(env.apiError, { status: null, type: null });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118 AC5.1: a rate limit is shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 429, api_error_type: 'rate_limit_error' });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118: a status or a type alone is enough for shared-cause', async (t) => {
+  assert.strictEqual(sharedCauseOf(await launchApiError(t, { api_error_status: 403 })), true);
+  assert.strictEqual(sharedCauseOf(await launchApiError(t, { api_error_status: 500, api_error_type: 'permission_error' })), true);
+});
+
+test('#6118 a 529 overloaded api_error is not shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 529, api_error_type: 'overloaded_error' });
+  assert.strictEqual(sharedCauseOf(env), false);
+  assert.strictEqual(countsTowardLaunchStreak(env), true);
+});
+
+test('#6118: a non-integer status or a non-string type is read as null', async (t) => {
+  const env = await launchApiError(t, { api_error_status: '401', api_error_type: '' });
+  assert.deepStrictEqual(env.apiError, { status: null, type: null });
+});
+
+test('#6118 launch-error is shared-cause and counts', async (t) => {
+  const { runner } = fakeRunner({}, { spawnError: new Error('spawn claude ENOENT') });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.reason, 'launch-error');
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), true);
+  assert.strictEqual(countsTowardLaunchStreak(env), true);
+});
+
+test('#6118 no terminal_reason means apiError null', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ ...OK, is_error: true, result: 'x' }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), false);
+  const { runner: ok } = fakeRunner(okOut());
+  assert.strictEqual((await launchWorker(base(t), { runner: ok })).apiError, null);
+});
+
+test('#6118 the result text is never read', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), false);
+});
+
+test('#6118 streak counting by reason', () => {
+  const table = [
+    [{ status: 'fail', reason: 'exit' }, true],
+    [{ status: 'fail', reason: 'launch-error' }, true],
+    [{ status: 'timeout', reason: 'wall-clock-ceiling' }, false],
+    [{ status: 'fail', reason: 'spend-ceiling' }, false],
+    [{ status: 'fail', reason: 'schema' }, false],
+    [{ status: 'ok', reason: null }, false],
+    [null, false],
+    [undefined, false],
+  ];
+  for (const [env, want] of table) assert.strictEqual(countsTowardLaunchStreak(env), want, JSON.stringify(env));
+  assert.strictEqual(sharedCauseOf(null), false);
+  assert.strictEqual(sharedCauseOf(undefined), false);
+});
+
+test('#6118 AC5.3: the worker.js header records the probe', () => {
+  const text = readText(path.join(LIB, 'driver', 'worker.js'));
+  const i = text.indexOf('// - Shared cause (#6118)');
+  assert.notStrictEqual(i, -1, 'the Shared cause (#6118) probe bullet');
+  const bullet = text.slice(i, text.indexOf('\n//\n', i));
+  for (const needle of ['2026-11-26', '2.1.325', 'darwin']) assert.ok(bullet.includes(needle), needle);
 });
