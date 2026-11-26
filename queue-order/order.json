@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T14:55:22.797Z",
+  "computedAt": "2026-11-26T16:20:52.300Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -21,6 +21,11 @@
       {
         "number": 5070,
         "updatedAt": "2026-11-15T15:09:46Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 5053,
+        "updatedAt": "2026-11-26T16:20:02Z",
         "state": "OPEN"
       },
       {
@@ -261,11 +266,6 @@
       {
         "number": 4443,
         "updatedAt": "2026-11-24T06:08:53Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4433,
-        "updatedAt": "2026-11-26T13:18:02Z",
         "state": "OPEN"
       },
       {
@@ -539,6 +539,16 @@
         "state": "OPEN"
       },
       {
+        "number": 3468,
+        "updatedAt": "2026-11-26T16:19:36Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 3467,
+        "updatedAt": "2026-11-26T16:19:34Z",
+        "state": "OPEN"
+      },
+      {
         "number": 2724,
         "updatedAt": "2026-11-24T18:48:53Z",
         "state": "OPEN"
@@ -767,6 +777,90 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: dispatch drain 2026-11-02T205244-dispatch-standalone — six plan-review stops with no answer path\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nVerified 2026-11-03 against `plugin/` on main (identical in installed 6.160.3).\n\n- **No answer path.** At a dispatched build's plan-review HARD-GATE (`plugin/skills/build/plan-review.md:129-133`) the build posts a `<!-- plan-review-question -->` comment telling the human to answer by editing the record body (\"the next build materializes the body, not comments\"). No skill or CLI writes an answer into the body; every surface (`_shared/work-record.md:205-207`, `backlog/refine-mode.md:241`, `backlog/refine-lanes.md:67`, `backlog/attention-mode.md:306`, `dispatch/reporting.md:27`) tells the human to do it by hand.\n- **No waiting state on a typed drain.** `bot:blocked` and grant removal happen only under `DISPATCH_HEADLESS=1` (`plan-review.md:131`), which `dispatch/task-prompt.md:141` sets only for scheduled Routine firings. A human-typed drain leaves no label, so `/backlog attention` shows the record only as a generic `stuck:open-pr` row (`attention-mode.md:82-91,308,345-349`) and `/help` (`help/status-scan.md:415`) does not count it.\n- **No answer detection.** `bin/lib/dispatch/resume-eligibility.js` never checks whether the question was answered; reconcile has no answer detection; `dispatch/resume.md:3` says resume is human-typed only.\n- **Resume is the only way back.** The stop keeps the draft PR open (`plan-review.md:133`, `dispatch/settle-and-merge.md:113`), so the queue pull's open-pr exclusion (`dispatch/queue-pull-script.md:9,385`, `dispatch/open-pr-exclusion-report.md:24`) keeps the record out until the PR closes; only `dispatch resume #N` (#4588) restarts it. No design note says why the draft is kept, and the next build re-reviews from scratch anyway.\n- **Stale remedy text.** `plan-review.md:133` (\"the next dispatch re-materializes the spec\") and `dispatch/reporting.md:27` (\"re-run /claude-tweaks:dispatch #{n}\") name a command the open-pr exclusion refuses.\n- **Observed.** A 9-group bare drain on 2026-11-02/03 stopped six records (#4292, #4333, #4344, #4350, #4395, #4439) at plan review; all six sat resume-eligible but unanswered, with nothing surfacing the questions.\n\nRelated: #4958 (open — plan review can stop round after round; convergence only), #4588 (closed — added `dispatch resume`), #4849 (closed — resume and dispatch refusing each other), #4673 (closed).\n\n## Deliverables\n\n**Answer by reply.** A trusted reply (OWNER/MEMBER/COLLABORATOR, `_shared/pr-run-comments.md` Trusted authors) to the `plan-review-question` comment is folded into the record body as a dated `## Plan-review answers ({date})` section by an ingest step (a `bin/` CLI plus the skill step that calls it), before the next build materializes the body. A human body edit keeps working. Only replies to the question comment count, never arbitrary comments.\n\n**Waiting state.** Every plan-review needs-human stop, headless or human-typed, applies one label (`needs:answer`, bootstrapped per `_shared/label-bootstrap.md` and added to `_shared/work-record.md`'s label table and permission matrix) and removes it once answered. `/backlog attention` renders a dedicated row quoting the question and how to answer; `/help` counts it.\n\n**Answered detection and automatic restart.** An \"answered\" predicate (the body carries an answers section dated after the latest question comment, or an ingestable trusted reply exists) is added to resume eligibility. Bare `/claude-tweaks:dispatch`'s queue pull re-admits an answered, resume-eligible record and dispatches it through `resume.md`'s path (Steps 3-8) instead of excluding it as open-pr. Unanswered records stay excluded.\n\n**Text fixes.** `plan-review.md:133` and `dispatch/reporting.md:27` name `/claude-tweaks:dispatch resume #N` (or the automatic path); `dispatch/design-notes.md` records why the plan-review stop keeps the draft PR.\n\n## Acceptance Criteria\n\nA trusted reply to the question comment, then a bare dispatch, ends with the record body carrying the answers section and the build resuming on its existing draft PR with no human command; an untrusted reply or a non-reply comment changes nothing.\n\nA human-typed drain's plan-review stop leaves the record labelled `needs:answer`; `/backlog attention` lists it with the question text; the label is removed when the answer is ingested.\n\n`dispatch-resume.js` (or the eligibility module) reports answered vs unanswered; queue-pull tests cover answered (re-admitted), unanswered (excluded), and answered-but-ineligible (excluded with the resume refusal line).\n\nNo skill text tells the human to re-run plain `/claude-tweaks:dispatch #N` for a record with an open draft PR.\n\n`npm test` passes.\n\n## Release Note\n\nPlan-review questions can be answered by replying to the question comment, and answered records restart automatically on the next dispatch.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/plan-review.md` — label the stop, point at the reply path, fix the stale remedy\n- `plugin/skills/dispatch/queue-pull-script.md` — re-admit answered, resume-eligible records\n- `plugin/skills/dispatch/resume.md` — run from the queue for an answered record\n- `plugin/skills/dispatch/reporting.md` — fix the stale re-run remedy\n- `plugin/skills/dispatch/open-pr-exclusion-report.md` — answered vs unanswered remedy\n- `plugin/skills/dispatch/design-notes.md` — record why the stop keeps the draft PR\n- `plugin/skills/dispatch/task-prompt.md` — label applies on typed drains too\n- `plugin/skills/backlog/attention-mode.md` — dedicated needs:answer row quoting the question\n- `plugin/skills/help/status-scan.md` — count needs:answer\n- `plugin/skills/_shared/work-record.md` — needs:answer label row and permission matrix\n- `plugin/bin/dispatch-resume.js` — report answered state\n- `plugin/bin/lib/dispatch/resume-eligibility.js` — answered predicate\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-03T10:01:09Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 5053,
+        "state": "OPEN",
+        "title": "Plan-review needs-human stops have no answer path, no waiting state and no restart",
+        "updatedAt": "2026-11-26T16:20:02Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -6635,6 +6729,162 @@
           "grants": {
             "build": true,
             "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: 6ebb484d71cc753d74ca967edfa6f45f3e41fe83\n\nOrigin: #3405 build ruling (ledger row 11)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n#3405 cross-checks the workflow runs that already exist for the PR head sha (`gh run list --commit`), so a registered-but-incomplete run reads pending. A `pull_request` run GitHub has not created yet is invisible to both the rollup and the runs list, so a push-triggered run alone can still read green in that first moment. The obvious fix, requiring at least one head run with `event: pull_request` whenever the repo has PR CI (`hasPullRequestCi`), was declined during the build because it would hold path-filtered PRs (no PR workflow triggers) pending until the 15-minute park.\n\n## Deliverables\n\n- [ ] Choose a rule that closes the pre-creation window without parking path-filtered PRs, for example a short settle delay after the head's push, or reading the workflow definitions' path filters against the PR's changed files.\n- [ ] Implement it in `classify.js`/`pr-checks.js` and Step 2.5's prose, with a test for the path-filtered case.\n\n**Decision** (2026-11-26, maintainer, recorded by the orchestrating session; answers Deliverable 1): **a 60-second settle window.** When the repo has PR CI (`hasPrCi`) and the head commit has no `pull_request`/`pull_request_target` run yet, the PR reads `pending` until 60 seconds after the earliest workflow run GitHub created for that head sha, under any event. When no run exists at all, the head commit's committer date stands in. After the window, the absence of a PR-event run means none applies (the path-filtered case), and the existing rollup and head runs decide.\n\n- **Evidence:** over the last 25 merged PRs (read 2026-11-26), GitHub created the `test` `pull_request` run 2 to 19 seconds after the push. In 9 of the 25, the push-only `track-issue-fixes` run had already completed 1 to 17 seconds before that, so a read in that gap saw only green. #5153's ready-run check closes this window only for workflows that skip draft PRs, and it reports `not-applicable` in this repository.\n- **Cost:** a normal PR waits nothing extra. A path-filtered PR waits 60 seconds once.\n- **Rejected:** matching workflow path filters against the PR's changed files. It would re-implement GitHub's branches/paths/paths-ignore/types semantics, and every divergence would be a false green or a false hold.\n- **Shares `classify.js` with #3467:** build the two one after the other, never in parallel.\n\n## Acceptance Criteria\n\n- A PR whose `pull_request` run has not been created yet does not read green.\n- A PR whose path filters match no PR workflow still reads green once its push runs complete.\n\n_Filed by `wrap-up` via specShapedBody._\n\n## Release Note\n\nPipeline merges wait for a pull_request workflow that GitHub has not created yet.\n\n_Filed by `wrap-up` via specShapedBody._",
+        "createdAt": "2026-10-17T20:43:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 3468,
+        "state": "OPEN",
+        "title": "A pull_request workflow run not yet created still leaves a partial rollup green at the merge gate",
+        "updatedAt": "2026-11-26T16:19:36Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: 6ebb484d71cc753d74ca967edfa6f45f3e41fe83\n\nOrigin: review of #3405 (three lenses reported it; the behavior mirrors the pre-existing rollup rule)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/bin/lib/pr-checks/classify.js` treats only `FAILURE`, `TIMED_OUT`, `ERROR` and `STARTUP_FAILURE` as failing (`FAILING_CONCLUSIONS`, pinned equal to `_shared/pr-first-merge.md` Step 2.5's list by `tests/pr-check-gate-conformance.test.js`). A completed check or head run whose conclusion is `CANCELLED`, `ACTION_REQUIRED` or `STALE` is therefore neither red nor pending, so a PR whose `test` run was cancelled reads green and can merge without the suite having passed. #3405 extended the same rule to the head-sha workflow runs (`classify.test.js` pins a cancelled head run as green); the rollup behavior pre-dates it.\n\n## Deliverables\n\n- [ ] Decide the policy: which non-success conclusions block a merge (cancelled, action_required, stale), weighing false parks on runs superseded by a newer push (`test.yml` sets `cancel-in-progress: true`, but those runs belong to older shas, not the head).\n- [ ] Apply it to `FAILING_CONCLUSIONS`, Step 2.5's prose list, and the head-run path together, with tests.\n\n**Decision** (2026-11-26, maintainer, recorded by the orchestrating session; answers Deliverable 1): **hold, don't fail.** On the PR head commit, when the newest run of a check (grouped by check name, newest by start time, ties by id) concluded `CANCELLED`, `ACTION_REQUIRED` or `STALE`, `classifyRollup` returns `pending`: not red, not green. The PR then follows the existing pending path (wait, then park at the bound). `SKIPPED` stays green-compatible. A cancelled run followed by a successful rerun of the same check still reads green, because only the newest run counts.\n\n- **Why pending and not red:** nothing failed, so the remedy is a rerun, not a fix round. Red would send an agent into a fix round for a non-failure.\n- **Evidence:** across the last 150 merged PRs (read 2026-11-26), no head commit carried a cancelled, action_required or stale conclusion, so false holds cost about nothing. The same PRs carried 204 `SKIPPED` conclusions (the fix-label jobs), which is why skipped must stay green. `test.yml`'s `cancel-in-progress` cancels runs of older shas only, and the rollup is read at the head.\n- **AC amendment:** the conformance pin keeps `FAILING_CONCLUSIONS` equal to Step 2.5's prose list, and gains a second pinned list for these held conclusions, equal between `classify.js` and the prose. The existing `UNVERIFIED_CONCLUSIONS` (#5153) minus `SKIPPED` is the starting set.\n\n## Acceptance Criteria\n\n- A `cancelled` `test` check or head run at the PR head no longer reads green (per the decided policy).\n- The prose list, `FAILING_CONCLUSIONS` and the conformance pin stay equal.\n\n_Filed by `wrap-up` via specShapedBody._\n\n## Release Note\n\nPipeline merges no longer treat a cancelled CI run as passing.\n\n_Filed by `wrap-up` via specShapedBody._",
+        "createdAt": "2026-10-17T20:43:24Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 3467,
+        "state": "OPEN",
+        "title": "Merge-verification classifies a cancelled or action_required CI run as green",
+        "updatedAt": "2026-11-26T16:19:34Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
           },
           "bot": {
             "inProgress": false,
