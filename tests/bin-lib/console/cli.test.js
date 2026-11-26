@@ -1036,7 +1036,7 @@ test('--recheck-merge with no late verdict prints merge and writes nothing', asy
   const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
   const r = await recheck(fx);
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.out, /recheck-merge merge — /);
+  assert.match(r.out, /recheck-merge merge — .*\(stored: merge\)\n$/);
   assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
   assert.strictEqual(recheckLines(fx).length, 0);
 });
@@ -1045,7 +1045,7 @@ test('--recheck-merge with no console.json (local-merge) judges decisions.md alo
   const clean = mainCheckoutWithRun({ decisions: `${rmLine(7)}\n` });
   const a = await recheck(clean);
   assert.strictEqual(a.code, 0, a.err);
-  assert.match(a.out, /recheck-merge merge — /);
+  assert.match(a.out, /recheck-merge merge — .*\(stored: none\)\n$/);
   const late = mainCheckoutWithRun({ decisions: `${rmLine(7, 'needs-human')}\n` });
   const b = await recheck(late);
   assert.strictEqual(b.code, 0, b.err);

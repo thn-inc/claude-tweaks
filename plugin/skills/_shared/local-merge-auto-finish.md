@@ -91,7 +91,7 @@ it literally into the next call; never carry it in a shell variable across calls
    as the Park branch below: nothing has been merged yet, so `pending-review` is the correct outcome.
 
    2a. **Re-check the merge-check verdict (#5833)** — a needs-human verdict logged after the console
-   resolved, or one never logged, must not reach `close-run`. Run, as its own call, with `{run-dir}`
+   resolved, or, when the console stored `merge`, one never logged, must not reach `close-run`. Run, as its own call, with `{run-dir}`
    pasted as in step 2:
 
    ```bash

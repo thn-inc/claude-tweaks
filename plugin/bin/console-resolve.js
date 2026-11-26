@@ -125,8 +125,9 @@
 // Eighth shape (#5833): `--run <dir> --recheck-merge` — the merge site's re-read of the console's merge half
 // against the decisions.md as it stands now (lib/console/resolve.js's recheckMerge). It takes no other flag than
 // --run and needs no ceiling. Everything runs under `{run}/.console.lock` (fail closed). stdout is exactly one line,
-// `console-resolve.js: recheck-merge merge — …` (no needs-human, malformed or unconfirmed merge-check verdict: merge
-// may proceed, nothing written) or `console-resolve.js: recheck-merge leave-open — {late verdict}` (do not merge).
+// `console-resolve.js: recheck-merge merge — … (stored: {merge|leave-open|none})` (no needs-human, malformed or
+// unconfirmed merge-check verdict: merge may proceed, nothing written; the suffix names console.json's stored
+// resolution so `merge` here is never read as authorization while console.json reads `leave-open`) or `console-resolve.js: recheck-merge leave-open — {late verdict}` (do not merge).
 // Both exit 0; EVERY other exit means "do not merge". On a hit it logs one `Merge re-check:` AUTO line (skipped when
 // one naming the same verdict is already there) and, when console.json recorded `merge`, rewrites it to
 // `leave-open`. An absent console.json is the local-merge case (decisions.md judged alone, console.json never
@@ -135,6 +136,8 @@
 // anchored, the lock not taken, decisions.md or console.json unreadable (absent is empty / the local-merge case), an
 // unexpected throw inside the lock, or a write failed (the line may have landed), 5 console.json present but
 // unparseable or not an object (nothing written).
+// `.console.lock` excludes other console.json writers but not decisions.md verdict writers (`.decisions.lock`), so
+// the re-check is a read at the routing point, not a hold through the merge.
 // The resolve shape names a stale merge half on stderr (`merge half stale — {reason}`) and carries `mergeStale` in
 // `--json` output when non-null; console.json's byte shape is unchanged.
 'use strict';
@@ -1069,7 +1072,7 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       }
       const re = recheckMerge(merge, decisions, mergeStale);
       if (!re.hit) {
-        stdout('console-resolve.js: recheck-merge merge — no needs-human, malformed or unconfirmed merge-check verdict in decisions.md\n');
+        stdout(`console-resolve.js: recheck-merge merge — no needs-human, malformed or unconfirmed merge-check verdict in decisions.md (stored: ${merge && typeof merge.resolution === 'string' ? merge.resolution : 'none'})\n`);
         return 0;
       }
       if (!recheckLogged(decisions, re.lateVerdict)) {
