@@ -29,7 +29,7 @@
 - A resolve returning `null`/`undefined` — `unresolvedError` maps it to `no result`; counts as a failure (same code path; no extra test).
 - An entry written before this change (no `residueRetries` field, or a non-integer one) is treated as 0 (covered: every test seeds via `recordResidueFailure`, which writes no counter).
 - A kept entry whose resolve later lands is dropped with no further counting (covered: Task 1 test "a kept entry is dropped once a later pass's resolve lands").
-- `recordResidueFailure` on a still-tracked entry must not wipe `residueRetries` — it rebuilds the entry and carries only `lastResidueError` forward today. Not reachable for a gone path (no failure is recorded against a path that is gone), so no change; noted for the reviewer.
+- A path that comes back after a kept failure: prune skips an entry whose path exists, so `residueRetries` sits unchanged while the path is present. A later `recordResidueSuccess` drops the whole entry, and a later `recordResidueFailure` rebuilds it carrying only `lastResidueError` forward — either way the counter resets, so a path that disappears again starts counting from 0. Only a path that comes back and is never touched again keeps its count (cumulative). No code change; state this in the `pruneResidueFailures` header comment beside the bound.
 
 ---
 
@@ -45,6 +45,7 @@
 - Modify if red: `tests/bin-lib/reconcile/archive-merged.test.js` — any existing test that seeds an escalated gone-path entry with a failing resolve and asserts `listResidueFailures(root)` is `[]` now sees the entry kept; update that assertion to the kept entry (`residueRetries === 1`), naming #4209. Step 4's run shows which, if any.
 - Modify: `plugin/bin/lib/reconcile/archive-merged.js` — comment only, ~:2960-2968 ("then drops the entry whatever that retry returns", "(the entry is dropped either way)") — reword to the new contract.
 - Modify: `docs/reconcile-checks.md` — the **Residue pruning** paragraph (~:310-320): "a resolution failure still drops the cache entry" and "retried once by the same pass's prune, then dropped" — reword to: a failed resolve keeps the entry (`residueRetries` counted on it) and later passes retry it, dropping it on the pass that records the 5th failed retry (`RESIDUE_RETRY_LIMIT`).
+- Modify: `docs/journeys/preview-reconcile-and-see-why-an-escalation-failed-4180.md` — `:54` ("`at: null` marks a failure from this pass's prune of a path that no longer exists. That entry is already dropped from the cache…"): reword so `at: null` marks a prune failure whose entry this pass dropped at the `RESIDUE_RETRY_LIMIT`-th (5th) failed retry, while a kept entry's prune failure is reported once, from its `lastResidueError`, with a numeric `at`. `:58` (drop conditions): add "or its 5th failed prune retry (`RESIDUE_RETRY_LIMIT`)".
 - No change: `plugin/bin/lib/reconcile/residue-summary.js`; `plugin/bin/lib/reconcile/issue-list-cache.js:12` (names the function only).
 - Test: `tests/bin-lib/reconcile/cache.test.js`, `tests/reconcile-archive-residue.test.js`
 
@@ -88,7 +89,7 @@ Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/reconcile/cache.js plugin/bin/lib/reconcile/index.js plugin/bin/lib/reconcile/archive-merged.js docs/reconcile-checks.md tests/bin-lib/reconcile/cache.test.js tests/reconcile-archive-residue.test.js
+git add plugin/bin/lib/reconcile/cache.js plugin/bin/lib/reconcile/index.js plugin/bin/lib/reconcile/archive-merged.js docs/reconcile-checks.md docs/journeys/preview-reconcile-and-see-why-an-escalation-failed-4180.md tests/bin-lib/reconcile/cache.test.js tests/reconcile-archive-residue.test.js
 # plus tests/bin-lib/reconcile/archive-merged.test.js only if Step 4 required a change there
 git commit -m "Keep an escalated residue entry whose prune resolve failed — bounded retries, refs #4209"
 ```
