@@ -231,11 +231,11 @@ One further flag is keyed to the **entry path**, not to any verdict: when this p
 
 ```bash
 node -e "const {writeRecord}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  writeRecord(process.argv[1], { title: process.argv[2], body: process.argv[3], facets: JSON.parse(process.argv[4]) });
-" -- "$RECORD_PATH" "$TITLE" "$SHAPED_BODY" "$FACETS_JSON"
+  writeRecord(process.argv[1], { title: process.argv[2], body: require('fs').readFileSync(process.argv[3], 'utf8'), facets: JSON.parse(process.argv[4]) });
+" -- "$RECORD_PATH" "$TITLE" "$SPECIFY_SHAPED_BODY" "$FACETS_JSON"
 ```
 
-then commit — a local record is a tracked file, unlike a GitHub issue edit. Run `### Risk flags` step 5 once `writeRecord` succeeds, except that with no run dir its `## Gotchas` bullet is appended to `$SHAPED_BODY` before the `writeRecord` call above. On a comma-list batch, commit **once per record**, immediately after that record's `writeRecord` — never leave some records written and uncommitted while the next one is being shaped:
+then commit — a local record is a tracked file, unlike a GitHub issue edit. Run `### Risk flags` step 5 once `writeRecord` succeeds, except that with no run dir its `## Gotchas` bullet is appended to the checked session-tmp body file (`$SPECIFY_SHAPED_BODY`, after the `--check`) before the `writeRecord` call above. On a comma-list batch, commit **once per record**, immediately after that record's `writeRecord` — never leave some records written and uncommitted while the next one is being shaped:
 
 ```bash
 git add "$RECORD_PATH"
