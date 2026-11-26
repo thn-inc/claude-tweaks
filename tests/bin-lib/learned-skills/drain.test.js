@@ -21,16 +21,20 @@ const GOOD_FILES = [{ path: '.claude/skills/x/SKILL.md' }];
 const OK = [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' }];
 const RUNNING = [{ name: 't', status: 'IN_PROGRESS', conclusion: null }];
 
+// #3468 settle window: the PR's createdAt and the head's committer date default to long before the fake clock.
+const LONG_AGO = '2020-01-01T00:00:00Z';
+const CLOCK0 = 1_700_000_000_000;
+const iso = (offsetMs) => new Date(CLOCK0 + offsetMs).toISOString();
 const view = (o = {}) => ({
   number: 1, state: 'OPEN', isDraft: false, mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', headRefOid: SHA('a'),
-  statusCheckRollup: OK, title: 't', body: MARKER, ...o,
+  statusCheckRollup: OK, title: 't', body: MARKER, createdAt: LONG_AGO, ...o,
 });
 const pr = (number, o = {}) => ({ number, headRefName: `learned-skills/run-${number}`, isCrossRepository: false, body: `${MARKER}\nrefs #6112`, ...o });
 
 // prs: the `pr list` answer. views[n]: a view, or an array answered in order (the last one repeats).
-function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, mergeThrows = {}, viewThrows = {}, ciGate = 0, listThrows = null, rebuild } = {}) {
+function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, mergeThrows = {}, viewThrows = {}, ciGate = 0, listThrows = null, rebuild, committedAt = LONG_AGO } = {}) {
   const calls = [];
-  const clock = { t: 1_700_000_000_000, sleeps: [] };
+  const clock = { t: CLOCK0, sleeps: [] };
   const seq = {};
   const gh = (args) => {
     calls.push(args);
@@ -53,6 +57,10 @@ function harness({ prs = [], views = {}, runs = {}, files = {}, ready = {}, merg
       const out = v[Math.min(seq[n], v.length - 1)];
       seq[n] += 1;
       return JSON.stringify(withFiles(out));
+    }
+    if (a === 'api' && /^repos\/[^/]+\/[^/]+\/commits\//.test(b)) {
+      if (committedAt instanceof Error) throw committedAt;
+      return `${committedAt}\n`;
     }
     if (a === 'run' && b === 'list') return JSON.stringify(runs[args[args.indexOf('--commit') + 1]] || []);
     if (a === 'pr' && b === 'merge') {
@@ -686,4 +694,59 @@ test('AC1.1 AC1.2: drain rebuilds the second of two double-append PRs (real git)
   const diff = fx.sh(fx.clone, ['diff', 'origin/main', 'origin/learned-skills/B']);
   const added = diff.split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---) /.test(l));
   assert.deepEqual(added, ['+- b']);
+});
+
+// #3468: the PR-event settle window, fed to classifyRollup through the drain's own clock and reads.
+const pushRun = (offsetMs) => ({ workflowName: 'CI', status: 'completed', conclusion: 'success', event: 'push', createdAt: iso(offsetMs) });
+
+test('AC1.1: a learned-skills PR with push-only runs inside the window is pending', () => {
+  const h = harness({ prs: [pr(6300)], runs: { [SHA('a')]: [pushRun(-10_000)] } });
+  const out = drain(base(), h.deps);
+  assert.deepEqual(out.merged, []);
+  assert.deepEqual(out.leftOpen, [{ pr: 6300, reason: 'pending' }]);
+  assert.equal(h.merges().length, 0);
+});
+
+test('AC2.1: a learned-skills PR with push-only runs is green after the window', () => {
+  const h = harness({ prs: [pr(6301)], runs: { [SHA('a')]: [pushRun(-70_000)] } });
+  assert.deepEqual(drain(base(), h.deps).merged, [6301]);
+});
+
+test('AC1.1: a learned-skills PR opened after its head was pushed is pending until 60 s after its createdAt', () => {
+  const young = harness({ prs: [pr(6302)], views: { 6302: view({ number: 6302, createdAt: iso(-10_000) }) } });
+  assert.deepEqual(drain(base(), young.deps).leftOpen, [{ pr: 6302, reason: 'pending' }]);
+  assert.equal(young.merges().length, 0);
+  assert.ok(young.calls.some((c) => c[0] === 'api'), 'an empty head-run list reads the committer date');
+  const aged = harness({ prs: [pr(6302)], views: { 6302: view({ number: 6302, createdAt: iso(-70_000) }) } });
+  assert.deepEqual(drain(base(), aged.deps).merged, [6302]);
+});
+
+test('AC1.1: a failed committer-date read or a missing createdAt keeps the PR pending, never an error', () => {
+  const failed = harness({ prs: [pr(6303)], committedAt: new Error('gh api failed') });
+  assert.deepEqual(drain(base(), failed.deps).leftOpen, [{ pr: 6303, reason: 'pending' }]);
+  const noCreated = harness({ prs: [pr(6304)], views: { 6304: view({ number: 6304, createdAt: undefined }) } });
+  assert.deepEqual(drain(base(), noCreated.deps).leftOpen, [{ pr: 6304, reason: 'pending' }]);
+  assert.equal(failed.merges().length + noCreated.merges().length, 0);
+});
+
+test('a head run list that is not empty does not read the committer date', () => {
+  const h = harness({ prs: [pr(6305)], runs: { [SHA('a')]: [{ ...pushRun(-70_000), event: 'pull_request' }] } });
+  assert.deepEqual(drain(base(), h.deps).merged, [6305]);
+  assert.ok(!h.calls.some((c) => c[0] === 'api'));
+});
+
+test('AC1.1: a settling learned-skills PR reading BLOCKED watches, never arms', () => {
+  const blocked = view({ number: 6306, mergeStateStatus: 'BLOCKED' });
+  const h = harness({ prs: [pr(6306)], views: { 6306: blocked }, runs: { [SHA('a')]: [pushRun(-10_000)] } });
+  const out = drain(base({ ownPr: 6306, mergeVerification: 'merge-when-green' }), h.deps);
+  assert.deepEqual(out.armed, []);
+  assert.ok(h.clock.sleeps.length >= 1, 'it watched');
+  assert.ok(h.merges().every((m) => !m.includes('--auto')));
+  assert.deepEqual(out.merged, [6306]);
+});
+
+test('classifyPr: a settle window reads pending only when the clock input is passed', () => {
+  const runs = [pushRun(-10_000)];
+  assert.equal(classifyPr(view(), runs, { state: 'met' }), 'green');
+  assert.equal(classifyPr(view(), runs, { state: 'met' }, { now: CLOCK0, committedAt: null }), 'pending');
 });
