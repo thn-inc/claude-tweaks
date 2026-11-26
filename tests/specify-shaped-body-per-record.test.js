@@ -60,7 +60,11 @@ test('AC1.2: no site keeps a fixed session-wide filename', () => {
 });
 
 test('every pre-write check passes --record {n}', () => {
-  assert.match(fence, /--check "\$SPECIFY_SHAPED_BODY" --record \{n\} \|\| exit\s*$/m);
+  const checkLines = fence.split('\n').filter((l) => l.includes('compose-record.js" --check'));
+  assert.ok(checkLines.length >= 1, 'no compose-record.js --check line in the fence');
+  for (const l of checkLines) {
+    assert.match(l, /--check "\$SPECIFY_SHAPED_BODY" --record \{n\} \|\| exit\s*$/, `check line lacks --record {n} or bare exit: ${l}`);
+  }
   assert.ok(planning.includes('--check "{body}" --record {n}'));
 });
 
