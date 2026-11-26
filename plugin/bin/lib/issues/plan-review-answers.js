@@ -27,11 +27,29 @@ function str(value) {
   return typeof value === 'string' ? value : '';
 }
 
+// A question needs a parseable createdAt: it dates the section heading and bounds the replies.
+function hasDate(comment) {
+  return !Number.isNaN(Date.parse(comment && comment.createdAt));
+}
+
+// text cites url as a whole link: the next character is not a digit, so
+// `#issuecomment-123` does not count as citing `#issuecomment-12`.
+function citesUrl(text, url) {
+  if (!url) return false;
+  let from = 0;
+  for (;;) {
+    const at = text.indexOf(url, from);
+    if (at === -1) return false;
+    if (!/\d/.test(text.charAt(at + url.length))) return true;
+    from = at + 1;
+  }
+}
+
 // The newest trusted comment whose body starts with the marker, or null.
 function findQuestion(comments) {
   let best = null;
   for (const c of Array.isArray(comments) ? comments : []) {
-    if (!c || !isTrustedComment(c)) continue;
+    if (!c || !isTrustedComment(c) || !hasDate(c)) continue;
     if (!str(c.body).trimStart().startsWith(QUESTION_MARKER)) continue;
     if (best === null || time(c) >= time(best)) best = c;
   }
@@ -41,7 +59,7 @@ function findQuestion(comments) {
 // The reply body with the leading `/answer` token (and one following space) removed from
 // its first non-blank line, trimmed.
 function answerText(comment) {
-  const lines = str(comment && comment.body).split('\n');
+  const lines = str(comment && comment.body).replace(/\r\n?/g, '\n').split('\n');
   const i = lines.findIndex((l) => l.trim() !== '');
   if (i === -1) return '';
   lines[i] = lines[i].replace(/^\s*\/answer ?/i, '');
@@ -68,7 +86,7 @@ function answeredState({ comments, body }) {
   const question = findQuestion(comments);
   if (!question) return { state: 'no-question', question: null, replies: [], pending: [] };
   const replies = findAnswerReplies(comments, question);
-  const pending = replies.filter((r) => !(r.url && text.includes(r.url)));
+  const pending = replies.filter((r) => !citesUrl(text, r.url));
   return { state: replies.length > 0 ? 'answered' : 'unanswered', question, replies, pending };
 }
 
@@ -109,12 +127,12 @@ function addOne(body, question, reply) {
 // A reply whose URL is already in the body is skipped; no pending reply -> body unchanged.
 function appendAnswers(body, question, replies) {
   const original = str(body);
+  if (!hasDate(question)) return original;
   const crlf = original.includes('\r\n');
   let text = crlf ? original.replace(/\r\n/g, '\n') : original;
   let changed = false;
   for (const reply of replies || []) {
-    if (reply.url && original.includes(reply.url)) continue;
-    if (reply.url && text.includes(reply.url)) continue;
+    if (citesUrl(text, reply.url)) continue;
     text = addOne(text, question, reply);
     changed = true;
   }

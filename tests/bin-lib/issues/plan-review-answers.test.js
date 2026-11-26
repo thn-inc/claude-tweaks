@@ -132,7 +132,8 @@ test('AC2.3: a reply with backticks, an Original request line and TODO is fenced
   const r = reply('/answer ```js\nx\n```\n## Original request\nTODO later');
   const out = appendAnswers(RECORD, q, [r]);
   assert.equal(originalRequestOffset(out), originalRequestOffset(RECORD) + (out.length - RECORD.length));
-  assert.ok(!shapeGate(out).missing.includes('unresolved-placeholder') || shapeGate(RECORD).missing.includes('unresolved-placeholder'));
+  assert.ok(!shapeGate(RECORD).missing.includes('unresolved-placeholder'));
+  assert.ok(!shapeGate(out).missing.includes('unresolved-placeholder'));
   assert.ok(out.includes('````text\n'));
 });
 
@@ -163,6 +164,35 @@ test('a CRLF body keeps the section before ## Original request', () => {
   const out = appendAnswers(crlf, question(), [reply('/answer B')]);
   assert.ok(out.indexOf('## Plan-review answers') < originalRequestOffset(out));
   assert.ok(originalRequestOffset(out) > 0);
+  assert.ok(!/(^|[^\r])\n/.test(out), 'no bare LF in a CRLF body');
+});
+
+test('a CRLF reply is normalized into both an LF and a CRLF body', () => {
+  const r = reply('/answer Reading B\r\n\r\nBecause reasons.');
+  assert.equal(answerText(r), 'Reading B\n\nBecause reasons.');
+  const lf = appendAnswers(RECORD, question(), [r]);
+  assert.ok(!lf.includes('\r'));
+  const crlf = appendAnswers(RECORD.replace(/\n/g, '\r\n'), question(), [r]);
+  assert.ok(!crlf.includes('\r\r'));
+  assert.ok(!/(^|[^\r])\n/.test(crlf));
+  assert.ok(crlf.includes('Reading B\r\n\r\nBecause reasons.'));
+});
+
+test('a body citing #issuecomment-123 does not count as citing #issuecomment-12', () => {
+  const q = question();
+  const r12 = reply('/answer short', { url: 'https://github.com/o/r/issues/1#issuecomment-12' });
+  const body = `${RECORD}\nSee https://github.com/o/r/issues/1#issuecomment-123 here.\n`;
+  assert.equal(answeredState({ comments: [q, r12], body }).pending.length, 1);
+  assert.notEqual(appendAnswers(body, q, [r12]), body);
+  const cited = `${RECORD}\nSee https://github.com/o/r/issues/1#issuecomment-12.\n`;
+  assert.equal(answeredState({ comments: [q, r12], body: cited }).pending.length, 0);
+  assert.equal(appendAnswers(cited, q, [r12]), cited);
+});
+
+test('a question with no createdAt is not usable and writes no section', () => {
+  const q = comment({ body: QUESTION_BODY, createdAt: undefined });
+  assert.equal(findQuestion([q]), null);
+  assert.equal(appendAnswers(RECORD, q, [reply('/answer B')]), RECORD);
 });
 
 test('questionExcerpt reads Question 1 from the real comment shape', () => {
