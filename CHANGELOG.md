@@ -53,6 +53,43 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.180.0](https://github.com/thn-inc/claude-tweaks/compare/v6.179.0...v6.180.0) (2026-11-26)
+
+
+### Features
+
+* Bundle a run's to-be-filed follow-up proposals that… ([#6283](https://github.com/thn-inc/claude-tweaks/issues/6283)) ([bbd1ed0](https://github.com/thn-inc/claude-tweaks/commit/bbd1ed018ab333ad4d327095dde9877b2c6fd4e8))
+* Close dead runs in report-only mode, show only orphaned… ([#3977](https://github.com/thn-inc/claude-tweaks/issues/3977)) ([6860817](https://github.com/thn-inc/claude-tweaks/commit/68608178fa207fe6226f8463be69169c42115801))
+* Count only no-work fail/exit launches toward drive.js… ([#6321](https://github.com/thn-inc/claude-tweaks/issues/6321)) ([ab982ed](https://github.com/thn-inc/claude-tweaks/commit/ab982eda627f7759e47cb20b30239200df44a558))
+* Decide /flow's double whole-branch review from measured… ([#3381](https://github.com/thn-inc/claude-tweaks/issues/3381)) ([db5a082](https://github.com/thn-inc/claude-tweaks/commit/db5a08247e46bb1483bfd626e6bfb4e6d7478cc2))
+* End a drive.js --budget run when workers cannot launch… ([#6118](https://github.com/thn-inc/claude-tweaks/issues/6118)) ([f3ec6ef](https://github.com/thn-inc/claude-tweaks/commit/f3ec6efcc1faf68c438ae946323c466484f21568))
+* Give drive.js --budget the drain-overlap hold, with its… ([#6117](https://github.com/thn-inc/claude-tweaks/issues/6117)) ([0c840c8](https://github.com/thn-inc/claude-tweaks/commit/0c840c892f4cc7d3f04d9aacac50c25c7223f87a))
+* Let dispatch's session drain leave driver-routable… ([#6119](https://github.com/thn-inc/claude-tweaks/issues/6119)) ([7b6db33](https://github.com/thn-inc/claude-tweaks/commit/7b6db33f98a3583b80154e1febb104a2ed7a6206))
+* Re-check open follow-ups whose Key Files a run changed… ([#6284](https://github.com/thn-inc/claude-tweaks/issues/6284)) ([f709706](https://github.com/thn-inc/claude-tweaks/commit/f709706f509c72a4480ebb37fded952bc18a0fab))
+* Record a run's tokens by model, list-price cost and… ([#6009](https://github.com/thn-inc/claude-tweaks/issues/6009)) ([5c8d9e8](https://github.com/thn-inc/claude-tweaks/commit/5c8d9e8678fc6bc1e3f26055e79abbeeef8247dd))
+* Ship the express lane on by default — express-lane… ([#4591](https://github.com/thn-inc/claude-tweaks/issues/4591)) ([d8a948b](https://github.com/thn-inc/claude-tweaks/commit/d8a948bd9fbcaa8b1b1b029671b6218650183fe6))
+* test: the QA pass stamp has no bookkeeping-only… ([#5643](https://github.com/thn-inc/claude-tweaks/issues/5643)) ([0441a96](https://github.com/thn-inc/claude-tweaks/commit/0441a96b52907452f5327ae22df26004e251d989))
+* verify.js: a wholly operational record still runs every… ([#6102](https://github.com/thn-inc/claude-tweaks/issues/6102)) ([6b6b796](https://github.com/thn-inc/claude-tweaks/commit/6b6b796d4858f1a79934380f4ddf9ff7bdb764c4))
+* verify.js: CI-sourced verdicts fall back to a local run… ([#5234](https://github.com/thn-inc/claude-tweaks/issues/5234)) ([4ee54f4](https://github.com/thn-inc/claude-tweaks/commit/4ee54f4f25838698adbd27c287affb27694a617e))
+
+
+### Bug Fixes
+
+* A CI-answered verify run waits minutes in the full slot… ([#5368](https://github.com/thn-inc/claude-tweaks/issues/5368)) ([ba42370](https://github.com/thn-inc/claude-tweaks/commit/ba42370257961cac921375b3814aaa157239dd9e))
+* A per-task implementer blocks on a verify.js slot a… ([#5257](https://github.com/thn-inc/claude-tweaks/issues/5257)) ([913ed40](https://github.com/thn-inc/claude-tweaks/commit/913ed4018b13f835b7b71ae429e5d4462cd80ac2))
+* build: Working Directory Discipline tells dispatchers to… ([#4442](https://github.com/thn-inc/claude-tweaks/issues/4442)) ([55ea7ab](https://github.com/thn-inc/claude-tweaks/commit/55ea7abf23a0b15f21d641909b9a1847aa8f07f8))
+* reconcile: pruneResidueFailures drops an escalated entry… ([#4209](https://github.com/thn-inc/claude-tweaks/issues/4209)) ([44818b6](https://github.com/thn-inc/claude-tweaks/commit/44818b6a202471fea30335a7995f5810da5b89a6))
+* review: effort size proxy counts prose, plan and run-dir… ([#5148](https://github.com/thn-inc/claude-tweaks/issues/5148)) ([2dca780](https://github.com/thn-inc/claude-tweaks/commit/2dca780c1564001abb3729080e047387f525930c))
+* specify: one session-wide shaped-body temp file lets a… ([#4746](https://github.com/thn-inc/claude-tweaks/issues/4746)) ([0384548](https://github.com/thn-inc/claude-tweaks/commit/038454835d6f376c13fc6b47e6ad45a9f6004b26))
+* verify.js CI source: one transient gh timeout drops every… ([#5437](https://github.com/thn-inc/claude-tweaks/issues/5437)) ([0614127](https://github.com/thn-inc/claude-tweaks/commit/0614127246b31aac43d47cb42cea3365c456a58e))
+* verify.js waits out its CI window on a HEAD that was… ([#5800](https://github.com/thn-inc/claude-tweaks/issues/5800)) ([278860c](https://github.com/thn-inc/claude-tweaks/commit/278860c43467ce0b6768941f8583474212eb0595))
+* Windows regression: 1 test file(s) newly failing after… ([#3995](https://github.com/thn-inc/claude-tweaks/issues/3995)) ([c023614](https://github.com/thn-inc/claude-tweaks/commit/c023614fc6142dd6a83623547691c97ab78dd53c))
+* Windows regression: 1 test file(s) newly failing after… ([#6181](https://github.com/thn-inc/claude-tweaks/issues/6181)) ([1bb94cf](https://github.com/thn-inc/claude-tweaks/commit/1bb94cfdba9d447c93bfe573df119984791489b2))
+* Windows regression: 1 test file(s) newly failing after… ([#6239](https://github.com/thn-inc/claude-tweaks/issues/6239)) ([eb4c79d](https://github.com/thn-inc/claude-tweaks/commit/eb4c79dc4a14b83260ff47c6ec2bb8a6c89c371d))
+* Windows: the core.longpaths breadcrumb lands in a… ([#4284](https://github.com/thn-inc/claude-tweaks/issues/4284)) ([03c1d27](https://github.com/thn-inc/claude-tweaks/commit/03c1d27279fac94b326db80614ec5fa31f0f94a7))
+* wrap-up: a created standalone run dir halted at "Stop and… ([#4312](https://github.com/thn-inc/claude-tweaks/issues/4312)) ([4dfbf3e](https://github.com/thn-inc/claude-tweaks/commit/4dfbf3e9bd7dbce638ab23c8f07c5d968dab08c9))
+* wrap-up: Branch finish merges on a console.json merge… ([#5833](https://github.com/thn-inc/claude-tweaks/issues/5833)) ([a3b6e0b](https://github.com/thn-inc/claude-tweaks/commit/a3b6e0bdfc68115e060708df7008712db08fc240))
+
 ## [6.179.0](https://github.com/thn-inc/claude-tweaks/compare/v6.178.0...v6.179.0) (2026-11-24)
 
 
