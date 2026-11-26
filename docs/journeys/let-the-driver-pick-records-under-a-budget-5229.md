@@ -2,6 +2,8 @@
 files:
   - plugin/bin/drive.js
   - plugin/bin/lib/driver/budget.js
+  - plugin/bin/lib/driver/worker.js
+  - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/claim-exit.js
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/steps.js
@@ -16,7 +18,7 @@ files:
 **Persona:** a maintainer, or the hub acting on their behalf, with a queue of authorized `auto:build` records and no time to choose among them. They want the driver to take the next few eligible records itself, in the queue's own order, and to say afterwards how many it drove, how many it passed over and why it stopped. Picking a record by hand would be wasted effort.
 **Goal:** run one command with a budget and get back the usual per-record event lines for each driven record, followed by one summary line that accounts for every record the run handled.
 **Entry point:** `node plugin/bin/drive.js --budget 3` (or `--budget all`, optionally with `--no-settle`) in the main checkout of a repository whose `.claude-tweaks/policy.yml` enables `express-driver`.
-**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted`, and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
+**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted` (or `worker-stop`, when implementer launches cannot launch: the run ends early with `status: stop` and exit 0), and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
 
 ## Steps
 
@@ -57,6 +59,7 @@ files:
   - A driven record takes the whole per-record path, its `review` and `merge` steps included wherever the policy turns them on, so its final line can carry `merged` or `armed` as well as `pending-review`, `express-escalated` or `blocked`. Every one of them counts `driven`: the summary has no per-outcome counter, so each record's final line is where its outcome is read.
   - A refusal, a pre-screen skip, a contested claim (`claim-targets.js` exit 3) and any other per-record claim failure cost nothing, and the loop goes on. The other failures are exits 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint.
   - A claim stop ends the whole run, because every later claim would meet the same cause: exit 7 is `permission-stop`, and exits 2 and 6 are `claim-stop`. That record gets the claim row's settle, and the rest of the budget goes unused.
+  - An implementer launch that cannot launch ends the run as `worker-stop` (#6118): at once when its cause is shared (a launch error, or an authentication, permission, rate-limit or not-logged-in failure), or after two counting launch failures in a row. The record gets a marker-free `shared-cause` comment for a shared cause, and the first record of a two-in-a-row streak has its escalation comment deleted.
   - The run keeps its own list of the PRs it has opened (`dispatch-drain-prs.json` in its `drive-{ts}-{pid}` session temp directory, written `[]` before the first record) and hands it, with the latest pull's `dispatch-near-dup-pairs.json` when one exists, to every record it drives. So a record's merge step holds the merge (`pending-review`, reason `drain-overlap` or `near-duplicate`) while a PR this run opened earlier is still open and shares a changed path or closes a strong near-duplicate partner, as a dispatch drain does. Only this run's own PRs are listed.
   - A list the run cannot trust (a failed write, or a driven record that returned no final line) makes every later record hold as `in-flight-unreadable`, with one stderr line naming the cause. The list file is left in place when the run ends.
 - **Red flags:**
@@ -74,9 +77,9 @@ files:
 - **Should understand:**
   - `status` follows from `ended`:
     - `ok` for `budget`, `exhausted` and `policy-refused`;
-    - `stop` for `permission-stop` and `claim-stop`;
+    - `stop` for `permission-stop`, `claim-stop` and `worker-stop`;
     - `fail` for `pull-failed`, which also exits 1.
-  - `detail` names the exit code and record for a claim stop, and the first line of the failure for a failed pull.
+  - `detail` names the exit code and record for a claim stop, the record or records and closed reason for a `worker-stop`, and the first line of the failure for a failed pull.
   - `express-driver: off` refuses before any pull. A `policy` stop line comes first, then a summary with `ended: policy-refused`, then exit 0.
   - The summary is stdout only. It is never written to a run directory's jsonl.
   - Fields are added and never renamed.
@@ -102,4 +105,5 @@ files:
 - The plan review settled three questions (PRC1–3 in the spec): claim exits 2 and 6 end the run (`claim-stop`); the queue pull's side effects are accepted as dispatch has them; and no summary line is written on the exit-1 and interrupt paths.
 - Updated at the wrap-up of #5229. Step 2 now names the `pre-screen skipped #N` stderr line the review fix added (b73613a45). Step 3 now says a driven record can also end `merged` or `armed`, since the driver's `review` and `merge` steps landed upstream after this journey was written.
 - Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`, which holds what each `claim-targets.js` exit means. Step 3's counters and run-ending stops are read from its table, so a change there now flags this journey. No step changed.
+- Updated during the build of #6118 (run `2026-11-26T065910-record-6118`): the run can end `worker-stop` when implementer launches cannot launch (a shared-cause launch, or two counting launch failures in a row). `files:` now lists `worker.js`, which classifies the launch, and `settle.js`, which settles that stop without the escalation marker and deletes the first record's escalation comment in a two-record stop.
 - Updated during the build of #6117 (run `2026-11-26T053027-record-6117`). Step 3 now says the run keeps its own drain-PR list and the pull's near-duplicate pairs, so each driven record's merge gets the drain-overlap hold, and fails closed to `in-flight-unreadable`; step 1 adds the two hold flags to the usage errors. `files:` adds `plugin/bin/lib/driver/merge.js`, which reads the list.
