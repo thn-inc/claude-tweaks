@@ -157,3 +157,23 @@ test('#6010 F7: an empty-string role falls back to roleOf, an empty model id fal
   assert.deepEqual(Object.keys(roles), ['implementer']);
   assert.deepEqual(roles.implementer.models, { sonnet: 1, unknown: 1 });
 });
+
+test('#6010 F1 exact: absent, non-array or unmapped driver events give exact outputs', () => {
+  const d = { lane: 'driver' };
+  assert.equal(deriveRoles({ manifest: d }), null);
+  assert.equal(deriveRoles({ manifest: d, events: {} }), null);
+  assert.equal(deriveRoles({ manifest: d, events: [{ step: 'plan', model: 'x' }] }), null);
+  assert.equal(deriveRoles({ manifest: d, events: [{ step: 'worker', usage: 'x' }] }), null);
+  assert.deepEqual(deriveRoles({ manifest: d, events: [{ step: 'plan', model: 'x' }, { step: 'worker', usage: 'x' }, { step: 'worker', model: 'm', effort: 'low' }] }),
+    { implementer: { agents: 1, models: { m: 1 }, efforts: { low: 1 } } });
+});
+
+test('#6010 F1 exact: a null entry in an item usageRows is skipped', () => {
+  const roles = deriveRoles({ manifest: { lane: 'standard' }, items: [{ description: 'implement x', transcriptModel: 'm', tokens: { input: 1 }, usageRows: [null, { role: 'assistant', turnStart: true, effort: 'high' }] }] });
+  assert.deepEqual(roles, { implementer: { agents: 1, models: { m: 1 }, efforts: { high: 1 } } });
+});
+
+test('#6010: a session row with an empty-string model adds no model key', () => {
+  const roles = deriveRoles({ manifest: { lane: 'standard' }, rows: [{ role: 'assistant', turnStart: true, model: '' }] });
+  assert.deepEqual(roles, { session: { agents: 1, models: {}, efforts: { unknown: 1 } } });
+});

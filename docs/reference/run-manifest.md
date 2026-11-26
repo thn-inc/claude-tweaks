@@ -156,7 +156,7 @@ The tip of the integration branch the run builds on, read once at mint, not the 
         "medium": 5
       },
       "models": {
-        "claude-sonnet-5-5": 2
+        "claude-opus-4-7": 2
       }
     },
     "session": {

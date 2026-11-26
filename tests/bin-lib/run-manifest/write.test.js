@@ -565,3 +565,16 @@ test('#6010 F2: roles from a partial close is replaced when the cost group upgra
   assert.deepEqual(fillRunManifest(dir, { cost: grp(false), roles: ROLES_C }).changed, []);
   assert.equal(manifestBytes(dir), bytes);
 });
+
+test('#6010: roles stored beside an unread (all-null) cost group is not replaced when a read group arrives', () => {
+  const tok = { input: 1, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 };
+  const unread = { tokensByModel: null, costUsd: null, priceDate: null, unpricedModels: null, costPartial: null };
+  const read = { tokensByModel: { m: tok }, costUsd: 1, priceDate: '2026-11-03', unpricedModels: [], costPartial: false };
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  fillRunManifest(dir, { cost: unread, roles: ROLES_A });
+  const r = fillRunManifest(dir, { cost: read, roles: ROLES_B });
+  assert.ok(!r.changed.includes('roles'));
+  assert.ok(r.changed.includes('costUsd'));
+  assert.deepEqual(readManifest(dir).roles, ROLES_A);
+});
