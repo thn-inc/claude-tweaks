@@ -220,8 +220,9 @@ command stands in for `auto:build` (below).
   regardless of classification, machinery removes all `auto:*` labels and adds `bot:blocked` —
   the record needs a human re-grant to run again. `/build` Common Step 1.6's plan review
   revokes nothing on a needs-human stop: it adds `needs:answer` and keeps the grants
-  (`build/plan-review.md`); resolution: reply on the question comment, or add a `**Decision**`
-  paragraph to the body and run `/claude-tweaks:dispatch resume #N`.
+  (`build/plan-review.md`); resolution: a human's reply on the question comment whose first line
+  starts `/answer`, or add a `**Decision**` paragraph to the body and run
+  `/claude-tweaks:dispatch resume #N`.
 - `auto:*` labels are only ever originated by an interactive human session, with **one
   machine-origination path**: `/claude-tweaks:backlog refine`'s headless posture
   (`backlog/refine-headless.md`, reached via `--source routine|sweep`, or the deprecated `grant`
