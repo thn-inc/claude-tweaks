@@ -1,8 +1,8 @@
 # manifest.json — what a run started under
 
-`manifest.json` is a per-run file of run-start facts: the plugin version that produced the run, the lane and ceremony profile it took, a fingerprint of the resolved policy, the integration tip it builds on, and the model profile. It is one small JSON object at `{run-dir}/manifest.json`, written by claude-tweaks code only — no skill instructs a model to write it.
+`manifest.json` is a per-run file of run-start facts — the plugin version that produced the run, the lane and ceremony profile it took, a fingerprint of the resolved policy, the integration tip it builds on, and the model profile — plus close-out fields filled when the run closes: tokens by model, the list-price cost in dollars, elapsed minutes and the close time (#6009). It is one small JSON object at `{run-dir}/manifest.json`, written by claude-tweaks code only — no skill instructs a model to write it.
 
-The code is `plugin/bin/lib/run-manifest/write.js` (`initRunManifest`, `fillRunManifest`, `MANIFEST_VERSION`, `LANES`, `CEREMONY_PROFILES`) and `plugin/bin/lib/run-manifest/facts.js` (`gatherFacts`, `FORGE_DERIVED_POLICY_KEYS`, `canonicalJson`). `tests/bin-lib/run-manifest/write.test.js` pins the key set, `v`, the fill rules and the unknown-field round trip; `tests/bin-lib/run-manifest/facts.test.js` pins the fact gathering; `tests/hooks-resolve-run-dir-cli.test.js` pins that `resolve-run-dir --create` still prints exactly the directory path.
+The code is `plugin/bin/lib/run-manifest/write.js` (`initRunManifest`, `fillRunManifest`, `MANIFEST_VERSION`, `LANES`, `CEREMONY_PROFILES`) and `plugin/bin/lib/run-manifest/facts.js` (`gatherFacts`, `FORGE_DERIVED_POLICY_KEYS`, `canonicalJson`), `plugin/bin/lib/run-manifest/cost.js` (`deriveRunCost`: the close-out fields from a run's token sources) and `plugin/bin/lib/pricing/prices.js` (`PRICES`, `priceRequest`, `priceAggregate`). The close path is `fillManifestAtClose` in `plugin/bin/lib/timing/at-close.js`. `tests/bin-lib/run-manifest/write.test.js` pins the key set, `v`, the fill rules and the unknown-field round trip; `tests/bin-lib/run-manifest/facts.test.js` pins the fact gathering; `tests/hooks-resolve-run-dir-cli.test.js` pins that `resolve-run-dir --create` still prints exactly the directory path.
 
 Added in #5903. It is not the multi-spec `manifest.yml` (the parent run's spec list, `plugin/bin/lib/flow/manifest.js`), and not the acceptance packet's `packet-inputs/manifest.json`.
 
@@ -22,7 +22,7 @@ Added in #5903. It is not the multi-spec `manifest.yml` (the parent run's spec l
 
 ## Fields
 
-Nine fields. `v` is `1` (`MANIFEST_VERSION`).
+Sixteen fields: nine run-start facts and seven close-out fields (#6009), all at `v: 1` (`MANIFEST_VERSION`); no earlier field was renamed or retyped.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -35,8 +35,15 @@ Nine fields. `v` is `1` (`MANIFEST_VERSION`).
 | `policyHash` | string, nullable | `sha256:` and 64 hex digits: a fingerprint of the resolved policy at mint (see `policyHash`). `null` when the policy cannot be read. |
 | `baseCommit` | string, nullable | The 40-hex tip of the integration branch at mint (see `baseCommit`). `null` with no remote ref or no git. |
 | `modelProfile` | object, nullable | `{ "stance": "economy\|default\|max-rigor", "ceiling": "<profile name>\|null" }` from the resolved `model-stance` and `model-ceiling` (`ceiling` is `null` when unset). `null` when the policy cannot be read. |
+| `tokensByModel` | object, nullable | `{ "<model id>": { "input", "output", "cacheRead", "cacheWrite5m", "cacheWrite1h" } }`, summed over every token source read. `null` when none was read. |
+| `costUsd` | number, nullable | List-price dollars for the priced models, rounded once to cents after summing. `null`, never `0`, when no token source was read. |
+| `priceDate` | string, nullable | The `PRICES.date` the cost used (`plugin/bin/lib/pricing/prices.js`). |
+| `unpricedModels` | string[], nullable | Model ids counted in `tokensByModel` but not priced (an id the table does not know). |
+| `costPartial` | boolean, nullable | `true` when some token source could not be read, so `costUsd` is a lower bound. |
+| `minutes` | number, nullable | Elapsed minutes from the run's start (the mint's `createdAt`, or the first event for a fill-created manifest) to `closedAt`, one decimal. |
+| `closedAt` | string, nullable | ISO-8601 UTC time the run closed, not the time of the fill: `run-state.json`'s `updatedAt` once its status is `clean`, else the last event timestamp the timing derivation saw, else `null`. |
 
-The writer of each field is in the next table. A fill accepts the four fact fields only in these shapes and ignores anything else: `pluginVersion` a non-empty string, `policyHash` as above, `baseCommit` 40 lowercase hex, `modelProfile` an object whose `stance` is one of the three names and whose `ceiling` is a string or `null`.
+The writer of each field is in the next table. A fill accepts the four fact fields only in these shapes and ignores anything else (the close-out fields have their own rules under Cost and close-out fields): `pluginVersion` a non-empty string, `policyHash` as above, `baseCommit` 40 lowercase hex, `modelProfile` an object whose `stance` is one of the three names and whose `ceiling` is a string or `null`.
 
 ### Writers per field
 
@@ -47,6 +54,7 @@ The writer of each field is in the next table. A fill accepts the four fact fiel
 | `setConfigLever` | `plugin/bin/lib/set-config/write.js`, when the key written is `ceremony-profile` | `ceremonyProfile`. The Manifesto, the express lane's `configSet` (which writes `ceremony-profile=fast-lane`) and a ceremony-escape-hatch downgrade all write the key through it, and a later value overwrites the earlier one. |
 | Express gate | `runGate` in `plugin/bin/lib/express/cli.js`, when `--run` is given and every record's verdict is `eligible: true` | `lane: express`. An ineligible verdict leaves the lane untouched. |
 | Driver adoption | `adoptRun` in `plugin/bin/lib/driver/adopt.js`, on a successful `--run` adoption of a dispatch-minted run (the driver mints nothing there, so the mint left `unknown`) | `lane: driver`. |
+| Close path | `fillManifestAtClose` in `plugin/bin/lib/timing/at-close.js` (`close-run`, `teardown-run`, `archiveRunDir`'s phase write, the detached token pass; `fillKeptManifest` for a `kept` close) | `tokensByModel`, `costUsd`, `priceDate`, `unpricedModels`, `costPartial`, `minutes`, `closedAt`. A multi-spec `spec-N/` child gets no fill from this path. |
 
 No current fill site passes `pluginVersion`, `policyHash`, `baseCommit` or `modelProfile`; the module would set one of them only while it is still `null`.
 
@@ -56,6 +64,20 @@ No current fill site passes `pluginVersion`, `policyHash`, `baseCommit` or `mode
 - **Ignore fields you do not know.** A reader must not fail on a key it has not seen.
 - **Check both locations.** Archival moves the whole run directory, so the manifest travels to `{pipelines}/archive/{run-id}/manifest.json` with the rest. A reader must not assume the live path.
 - **A fill can create the file.** A manifest created by a fill (a run minted before this shipped, or an adopted run whose mint left none) carries only the filled fields: `v`, `runId`, `createdAt` (the fill's time), the filled field or fields, and every other field `null` (`lane` is `unknown` unless filled). A fill gathers no facts.
+
+## Cost and close-out fields
+
+Derived by `deriveRunCost` at close, from the same transcripts the token pass reads, and filled by `fillManifestAtClose`.
+
+- **Absent means unknown.** A close-out field the close could not derive is not written as `null`; a manifest that predates this, or one whose run has not closed, simply lacks the key. A reader reads an absent key as `null` (unknown), never as `0`.
+- **`null`, never `0`.** `costUsd` is `null` when no token source was read. A row whose five token fields are all `0` is skipped (no `tokensByModel` key, no `unpricedModels` entry).
+- **List-price equivalents.** Dollars are what the tokens would cost at list price, not a bill: subscription use costs nothing per token. `priceDate` names the price table's date.
+- **Priced per request.** A transcript row is priced by `priceRequest` on its own model, with the Haiku long-prompt rate for a request over 100k input tokens. A row with no cache-write split prices its whole write at the 5-minute rate. A dispatch item's `tier` is never used; the row's `model` is.
+- **Sources.** Session lanes read transcript rows plus the `tokens` of each headless lens-worker item in `timing.json`'s dispatch list. The driver lane reads the `usage` object on each `driver-events.jsonl` step line (the worker and review lines, and since #6009 the `merge-check` and `merge-acceptance` lines).
+- **Aggregates price at base rates.** A whole-session aggregate (a driver step `usage`, a lens worker's `tokens`) is priced by `priceAggregate` at the model family's base per-token rates, never the Haiku long-prompt rate, so Haiku cost from aggregate sources is a lower bound.
+- **`costPartial`.** `true` when a source named a model but could not be read (a missing transcript, a worker with no `tokens`, a driver line with a model but no `usage`). A partial group is still written, with `costPartial: true`.
+- **One upgrade.** The cost group is written while the stored `costUsd` is `null` or absent, and replaced once when the stored group is `costPartial: true` and the new one is complete (`costPartial: false`). A complete group is never rewritten. A `kept` close (`fillKeptManifest`) may make that one upgrade; `timing.json` is not rewritten on that path.
+- **Fill-only-null for the rest.** `minutes` and `closedAt` are set once and never overwritten, so closing a run again changes nothing. The cost group's valid shapes are all-null ("unread") or fully typed ("read"); a fill ignores any other shape.
 
 ## Lane
 
@@ -101,19 +123,34 @@ The tip of the integration branch the run builds on, read once at mint, not the 
 {
   "baseCommit": "0123456789abcdef0123456789abcdef01234567",
   "ceremonyProfile": "standard",
+  "closedAt": "2026-11-19T08:02:10.000Z",
+  "costPartial": false,
+  "costUsd": 4.82,
   "createdAt": "2026-11-19T07:31:30.000Z",
   "lane": "standard",
+  "minutes": 30.7,
   "modelProfile": {
     "ceiling": null,
     "stance": "default"
   },
   "pluginVersion": "6.174.0",
   "policyHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "priceDate": "2026-11-03",
   "runId": "2026-11-19T073130-spec-5903",
+  "tokensByModel": {
+    "claude-opus-4-7": {
+      "cacheRead": 9200000,
+      "cacheWrite1h": 0,
+      "cacheWrite5m": 310000,
+      "input": 52000,
+      "output": 61000
+    }
+  },
+  "unpricedModels": [],
   "v": 1
 }
 ```
 
 ## Compatibility
 
-A field is added, never renamed or retyped. A new field is added to the module, to this page and to `tests/bin-lib/run-manifest/write.test.js` in the same change; a reader ignores fields it does not know, which `write.test.js` pins with a `v: 2` object that carries an unknown key through a fill. Removing a field, or changing a field's type or meaning, requires a `v` bump and a note here. Current version: 1; no earlier version has been released.
+A field is added, never renamed or retyped. A new field is added to the module, to this page and to `tests/bin-lib/run-manifest/write.test.js` in the same change; a reader ignores fields it does not know, which `write.test.js` pins with a `v: 2` object that carries an unknown key through a fill. Removing a field, or changing a field's type or meaning, requires a `v` bump and a note here. Current version: 1; no earlier version has been released. The seven close-out fields (#6009) were added at `v: 1`.
