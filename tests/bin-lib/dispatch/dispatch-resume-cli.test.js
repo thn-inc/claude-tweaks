@@ -696,12 +696,22 @@ test('AC5.1: --queue refuses a record without auto:build even when the typed com
   const r = exec(env, ['--issue', String(N), '--queue']);
   assert.equal(r.code, 3, r.lines.join('\n'));
   assert.equal(r.json.reason, 'not-granted');
+  assert.equal(r.json.line, `#${N} lacks auto:build — grant it with /claude-tweaks:backlog refine #${N}, then run /claude-tweaks:dispatch resume #${N}`);
   assert.equal(env.calls.typed.length, 0, 'readTypedCommand never called');
+});
+
+test('--queue with --bound-run exits 2 before any dep is touched', () => {
+  for (const argv of [['--issue', String(N), '--queue', '--bound-run', '/x'], ['--issue', String(N), '--bound-run', '/x', '--queue']]) {
+    const env = typedEnv(['ready', 'auto:build']);
+    const r = exec(env, argv);
+    assert.equal(r.code, 2, argv.join(' '));
+    assert.match(r.err, /--queue has no effect with --bound-run/);
+    assert.deepStrictEqual(env.calls.gh, []);
+  }
 });
 
 test('AC5.2: without --queue the typed behaviour is unchanged', () => {
   const argv = ['--issue', String(N)];
-  assert.ok(!argv.includes('--queue'));
   const env = typedEnv(['ready']);
   const r = exec(env, argv);
   assert.equal(r.code, 0, r.lines.join('\n'));

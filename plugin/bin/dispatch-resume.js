@@ -38,7 +38,8 @@
 //   close-run for a crashed one; an unknown or other-host owner's line names how to settle that run).
 // Exit codes (a CLI-specific vocabulary — the verdict is data on stdout, no exit 1 at all):
 //   0  eligible, or {concurrent:false}
-//   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
+//   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir, and
+//      --queue with --bound-run, where it has no effect),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (closing-PR read, truncated connection included, label or blocker
@@ -202,6 +203,7 @@ function parseArgs(argv) {
       o.issue = Number(v);
     } else o.boundRun = v;
   }
+  if (o.queue && o.boundRun !== null && !o.help) return { error: '--queue has no effect with --bound-run' };
   return o;
 }
 
