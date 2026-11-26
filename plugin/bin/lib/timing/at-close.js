@@ -239,6 +239,9 @@ function closedAtOf(runState, events) {
 }
 
 // The run's start for `minutes`: the manifest's createdAt when the mint wrote it, else the first event.
+// A manifest a fill created carries the fill's own clock in createdAt, which would make `minutes` about 0,
+// so createdAt counts only when the manifest has a mint-written fact (pluginVersion, policyHash, baseCommit)
+// or agrees with run-state.json's createdAt within one minute (the spec's close-path `runStartAt` rule, #6009).
 function runStartAtOf(manifest, runState, events) {
   const m = isObj(manifest) ? manifest : null;
   const mintFacts = m && ['pluginVersion', 'policyHash', 'baseCommit'].some((k) => m[k] != null);
@@ -302,7 +305,14 @@ async function fillKeptManifest(dir, { env, homeDir, deadlineAt }) {
     const own = ownTranscripts(base.runState, { env, homeDir, runId: path.basename(dir), runRoot: runRootOf(dir) });
     if (!own.paths.length) return fillManifestAtClose(dir, { base });
     const costDeadlineAt = Math.min(deadlineAt, Date.now() + module.exports.KEPT_COST_BOUND_MS);
-    const c = await module.exports.deriveCloseCost(dir, base, own, { deadlineAt: costDeadlineAt });
+    let c;
+    try {
+      c = await module.exports.deriveCloseCost(dir, base, own, { deadlineAt: costDeadlineAt });
+    } catch (err) {
+      // A throw in the cost re-derive must not cost the manifest its closedAt/minutes: fill the times alone.
+      warnManifestFailure(err);
+      return fillManifestAtClose(dir, { base });
+    }
     const withCost = !c.deadlineHit && c.costRows !== null;
     fillManifestAtClose(dir, { base, costRows: c.costRows, withCost });
   } catch (err) {
@@ -401,7 +411,7 @@ function writePhaseTimingSync(runDir) {
   if (result.status === 'written' && filled) fillManifestAtClose(dir, { base: filled });
   else if (result.status === 'kept') {
     // A kept close reads no transcript: its times are filled from a fresh derive (fill-only-null).
-    try { const fresh = derivePhaseTiming(dir); if (fresh.ok) fillManifestAtClose(dir, { base: fresh }); } catch { /* best-effort */ }
+    try { const fresh = derivePhaseTiming(dir); if (fresh.ok) fillManifestAtClose(dir, { base: fresh }); } catch (err) { warnManifestFailure(err); }
   }
   finish(dir, result, { deadlineAt: closeDeadlineAt, boundMs });
   return { status: result.status, skip: result.skip };

@@ -46,6 +46,9 @@ function costRowsFrom(costRows) {
     if (!isObject(t)) continue;
     if (typeof t.path === 'string') seen.add(realOf(t.path, cwd));
     if (t.rows > 0 || t.note === undefined || t.note === null) out.sourcesRead += 1;
+    // Coupling: this note text is produced by run-timing.js ("transcript not found (...)") and the item-level
+    // "transcript not readable" below by transcript.js; rewording either makes a missing transcript read as
+    // complete cost. at-close.test.js's deleted-agent-transcript cases pin the item-level one.
     else if (typeof t.note === 'string' && t.note.startsWith('transcript not found')) out.sourcesUnread += 1;
   }
   for (const item of items) {
@@ -142,7 +145,12 @@ function deriveRunCost({ rows, aggregates, sourcesRead, sourcesUnread, events, m
     const key = u.model ?? 'unknown';
     const n = { model: key };
     for (const f of TOKEN_FIELDS) n[f] = Number(u[f]) || 0;
-    const sum = tokensByModel[key] || (tokensByModel[key] = { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+    // The key is a model id read from a transcript: own-property lookup and defineProperty keep an id such as
+    // `__proto__` or `constructor` an ordinary entry instead of reaching Object.prototype.
+    if (!Object.prototype.hasOwnProperty.call(tokensByModel, key)) {
+      Object.defineProperty(tokensByModel, key, { value: { input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 }, enumerable: true, writable: true, configurable: true });
+    }
+    const sum = tokensByModel[key];
     for (const f of TOKEN_FIELDS) sum[f] += n[f];
     usd += pricer(n).usd;
   };

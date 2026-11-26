@@ -65,6 +65,16 @@ test('AC3.1: an unknown model id is listed and adds nothing', () => {
   assert.equal(out.costUsd, cents(priceRequest(mapped(priced)).usd));
 });
 
+test('a model id naming an Object.prototype member stays an own entry and pollutes nothing', () => {
+  const row = (model, messageId) => ({ model, messageId, inputTokens: 5, outputTokens: 7, cacheRead: 0, cacheCreate: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+  const out = deriveRunCost(sessionInput([row('__proto__', 'a'), row('constructor', 'b'), row('__proto__', 'c')]));
+  assert.deepEqual(Object.keys(out.tokensByModel).sort(), ['__proto__', 'constructor']);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(out.tokensByModel, '__proto__').value, { input: 10, output: 14, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+  assert.deepEqual(out.tokensByModel.constructor, { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
+  assert.equal({}.input, undefined);
+  assert.deepEqual(out.unpricedModels, ['__proto__', 'constructor']);
+});
+
 test('AC4.1: no transcript resolved gives costUsd null', () => {
   const cost = costRowsFrom({ rows: [], transcripts: [{ path: '/nowhere/a.jsonl', rows: 0, note: 'transcript not found (ENOENT: /nowhere/a.jsonl)' }], items: [] });
   assert.equal(cost.sourcesRead, 0);

@@ -1786,6 +1786,39 @@ test('AC8.6+AC8.7: a kept close over a partial stored group upgrades it once tra
   }
 });
 
+test('a kept close whose cost re-derive throws still fills closedAt and minutes', async () => {
+  const root = tmpRoot();
+  try {
+    const { cfg, wt, runDir, env } = manifestRun(root, { transcripts: false });
+    const subDir = agentSession(cfg, wt, SID, [{ id: 'a1', usage: OTHER }]);
+    writeTranscript(cfg, wt, [A, B]);
+    fs.rmSync(path.join(subDir, 'agent-a1.jsonl'));
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    const stored = readManifestJson(runDir);
+    assert.equal(stored.costPartial, true);
+    delete stored.closedAt;
+    delete stored.minutes;
+    fs.writeFileSync(manifestFile(runDir), JSON.stringify(stored));
+    const realWrite = process.stderr.write;
+    let warned = '';
+    process.stderr.write = (s) => { warned += String(s); return true; };
+    try {
+      await withStub(atClose, 'deriveCloseCost', async () => { throw new Error('boom'); }, async () => {
+        assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+      });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    const m = readManifestJson(runDir);
+    assert.equal(typeof m.closedAt, 'string');
+    assert.equal(typeof m.minutes, 'number');
+    assert.equal(m.costPartial, true);
+    assert.match(warned, /run-manifest: .*boom/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('AC8.8: a kept close over a complete stored group reads no transcript rows for cost', async () => {
   const root = tmpRoot();
   try {
