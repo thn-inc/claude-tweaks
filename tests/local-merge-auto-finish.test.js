@@ -116,3 +116,15 @@ const SKILL_GRAPH = readText(path.join(ROOT, 'docs', 'skill-graph.md'));
 test('skill-graph.md documents the new local-merge-auto-finish.md edge(s)', () => {
   assert.match(SKILL_GRAPH, /local-merge-auto-finish\.md/);
 });
+
+// --- #5833: the no-prompt finish re-checks the merge-check verdict before step 3 ---
+
+test('AC1.1 (local-merge): the no-prompt finish re-checks with --recheck-merge before the pre-merge checks', () => {
+  const text = read();
+  const proc = text.slice(text.indexOf('## Procedure'), text.indexOf('## Interactive mode is unaffected'));
+  const at = proc.indexOf('--recheck-merge');
+  assert.ok(at !== -1, 'the Procedure must run --recheck-merge');
+  assert.ok(at < proc.indexOf('**Pre-merge checks**'), '--recheck-merge must precede step 3 (**Pre-merge checks**)');
+  const step = proc.slice(proc.indexOf('2a.'), proc.indexOf('3. **Pre-merge checks**')).replace(/\s+/g, ' ');
+  assert.match(step, /Park\*\* branch below with no re-stamp/);
+});
