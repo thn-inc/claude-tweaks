@@ -10,7 +10,9 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 const { sectionOf } = require('./helpers/conformance-asserts');
-const { HEAD_RUN_FIELDS } = require('../plugin/bin/lib/pr-checks/classify');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
+const { HEAD_RUN_FIELDS, PR_EVENT_SETTLE_MS } = require('../plugin/bin/lib/pr-checks/classify');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const GATE_FILE = path.join(SKILLS, '_shared', 'pr-first-merge.md');
@@ -127,6 +129,91 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
   assert.ok(rc0.includes('not yet `completed` **or held**'), 'the RC=0 bullet names a held head run as resuming the bounded watch');
   const rc1 = section.slice(section.indexOf('- `RC=1`'), section.indexOf('- `RC=3`'));
   assert.ok(rc1.includes('{pr-checks-json-path}') && rc1.includes('FAILING_CONCLUSIONS') && !rc1.includes('`fail` rows'), 'the RC=1 bullet takes names from the --json rows in FAILING_CONCLUSIONS, never gh\'s fail bucket');
+});
+
+// #3468: the PR-event settle window. The prose twin of classify.js's prEventSettle.
+const CLASSIFY_JS = path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'pr-checks', 'classify.js');
+function step25Of(gateText) {
+  return gateText.slice(gateText.indexOf('## Step 2.5: Merge-verification gate'), gateText.indexOf('## Step 3:'));
+}
+function watchZeroArm(section) {
+  const watch = section.slice(section.indexOf('DEADLINE='), section.indexOf('\n```', section.indexOf('DEADLINE=')));
+  return watch.slice(watch.indexOf('0)'), watch.indexOf('1)'));
+}
+
+test('#3468: Step 2.5 states the settle window and its code twin', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const lines = section.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('- ') && l.includes('prEventSettle'));
+  assert.ok(at !== -1, 'Step 2.5 carries a classification bullet naming prEventSettle');
+  const bullet = lines.slice(at, lines.findIndex((l, i) => i > at && l.startsWith('- '))).join('\n');
+  for (const needle of ['`pull_request_target`', 'prEventSettle', `${PR_EVENT_SETTLE_MS / 1000} seconds`, '{pr-created-at}', '{head-committed-at}']) {
+    assert.ok(bullet.includes(needle), `settle bullet missing "${needle}"`);
+  }
+  const heldAt = lines.findIndex((l) => l.includes('(held; code twin `HELD_CONCLUSIONS`)'));
+  const emptyAt = lines.findIndex((l) => l.startsWith('- An **empty rollup**'));
+  assert.ok(heldAt !== -1 && emptyAt !== -1 && heldAt < at && at < emptyAt, 'the settle bullet sits after the held bullet and before the empty-rollup bullet');
+  // A settle-only pending never arms --auto (Task 3's driver rule): the merge-when-green row says so.
+  const mwg = lines.find((l) => l.startsWith('| `merge-when-green` |'));
+  assert.ok(mwg && mwg.includes('settle window'), 'the merge-when-green pending column names the settle window');
+  const appendix = read('_shared', 'pr-first-merge-appendix.md');
+  const why = sectionOf(appendix, '## PR-event settle window (#3468)');
+  for (const needle of ['path filter', 'clock', 'skew']) assert.ok(why.includes(needle), `appendix settle section missing "${needle}"`);
+});
+
+test('#3468: Step 2.5\'s state read requests createdAt', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const read0 = section.split('\n').find((l) => l.startsWith('gh pr view {pr-number}') && l.includes('statusCheckRollup'));
+  assert.ok(read0, 'Step 2.5 carries the Read-state-first gh pr view line');
+  const fields = read0.slice(read0.indexOf('--json ') + '--json '.length).split(/\s/)[0].split(',');
+  assert.ok(fields.includes('createdAt'), `the state read's --json list must include createdAt: ${fields.join(',')}`);
+});
+
+// Runs the 0) arm's PENDING_RUNS node -e program against a temp runs file, exactly as the fence passes its arguments.
+function pendingCount(line, runs, headCommittedAt, prCreatedAt) {
+  const start = line.indexOf('node -e "') + 'node -e "'.length;
+  const program = line.slice(start, line.indexOf('" --', start));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settle-watch-'));
+  try {
+    const file = path.join(dir, 'runs.json');
+    fs.writeFileSync(file, JSON.stringify(runs));
+    const r = spawnSync(process.execPath, ['-e', program, '--', file, CLASSIFY_JS, headCommittedAt, prCreatedAt], { encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('#3468: the watch 0) arm counts an open settle window as pending', () => {
+  const zeroBranch = watchZeroArm(step25Of(readText(GATE_FILE)));
+  const line = zeroBranch.split('\n').find((l) => l.includes('PENDING_RUNS=$('));
+  assert.ok(line, 'the 0) arm carries the PENDING_RUNS line');
+  for (const needle of ['prEventSettle(', '"{head-committed-at}"', '"{pr-created-at}"']) {
+    assert.ok(line.includes(needle), `PENDING_RUNS line missing ${needle}`);
+  }
+  const now = new Date().toISOString();
+  const push = { databaseId: 1, name: 'track', workflowName: 'track', status: 'completed', conclusion: 'success', url: 'u', startedAt: now, event: 'push', createdAt: now };
+  const pr = { ...push, databaseId: 2, name: 'test', workflowName: 'test', event: 'pull_request' };
+  const secondAgo = new Date(Date.now() - 1000).toISOString();
+  assert.notEqual(pendingCount(line, [push], '', secondAgo), '0', 'a push-only head inside the window counts as pending');
+  assert.notEqual(pendingCount(line, [push], '', ''), '0', 'an unreadable PR created-at fails closed to pending');
+  assert.equal(pendingCount(line, [push, pr], '', secondAgo), '0', 'a pull_request run ends the window');
+  // Go-red control: the same line without the settle term reads the push-only head as zero pending.
+  const term = line.slice(line.indexOf('+c.prEventSettle('), line.indexOf('.settling', line.indexOf('+c.prEventSettle(')) + '.settling'.length);
+  assert.ok(term.startsWith('+c.prEventSettle(') && term.endsWith('.settling'), 'the live line carries the settle term the control removes');
+  const without = line.replace(term, '');
+  assert.notEqual(without, line);
+  assert.equal(pendingCount(without, [push], '', secondAgo), '0', 'without the settle term a push-only head reads zero pending');
+});
+
+test('#3468: the RC=0 bullet resumes the watch on an open settle window', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  const held = rc0.indexOf('not yet `completed` **or held**');
+  assert.ok(held !== -1, 'RC=0 bullet keeps the held clause');
+  const resumes = rc0.indexOf('resumes the bounded watch', held);
+  assert.ok(resumes !== -1 && rc0.slice(held, resumes).includes('settle window'), 'the RC=0 bullet names the open settle window beside held runs as resuming the watch');
 });
 
 // #5153 AC7.2: every clause of the watch's ready-run edit, one message each, so a mutation control

@@ -1109,6 +1109,19 @@ test('--run: the settle pending line names the window', () => {
   assert.ok(fs.readFileSync(decisionsOf(closed.runDir), 'utf8').includes('no pull_request run yet (settle window until unknown)'));
 });
 
+test('the settle pending phrase appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
+  // Take the phrase from gateEntry's own output (until unreadable), so the pin follows the code, not a copy.
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const line = fs.readFileSync(decisionsOf(runDir), 'utf8');
+  const m = /\((no pull_request run yet \(settle window until )unknown\)\)/.exec(line);
+  assert.ok(m, line);
+  assert.ok(prose.includes(`'${m[1]}{until or unknown})' when only prEventSettle holds it`), 'pr-check-gate.md must name the settle-window caveat gateEntry writes');
+});
+
 test('USAGE names prEventSettle? among the envelope keys', () => {
   const { main } = fixture(null);
   const h = makeDeps(main);
