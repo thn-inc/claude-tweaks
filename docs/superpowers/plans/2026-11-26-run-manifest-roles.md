@@ -18,7 +18,7 @@
 - Driver-lane role names are keys of `ROLES` in `plugin/bin/lib/driver/roles.js` (`implementer`, `reviewer`, `merge-check`, `acceptance`, ...).
 - An effort string outside `low`/`medium`/`high`/`max` is kept as the string seen. A missing effort is `unknown`, never inferred from a profile.
 - `manifest.lane` selects the source: `driver` reads driver step lines only; every other lane reads transcript rows/items only.
-- Nothing in the close path may throw because of `roles`: a failure is one stderr line, and `closedAt`/`minutes`/cost still fill.
+- Nothing in the close path may throw because of `roles`: a `deriveRoles` that throws is one stderr line, `roles` stays unset, and `closedAt`/`minutes`/cost still fill. A `roles` value passed to `fillRunManifest` that fails the shape check leaves the existing manifest untouched (no field written that call) with one stderr line — the spec's Deliverable 2 sentence as written (plan review, settled after an answered round).
 - Every existing `readUsage` test passes unchanged.
 - Model ids and effort strings come from transcripts: build count objects with `Object.fromEntries` over a `Map` (or the `defineProperty` pattern `cost.js` uses), so an id such as `__proto__` is an ordinary own key.
 - Governing skill `.claude/skills/transcript-payload-verification/SKILL.md` (applies to Task 1's transcript read), quoted verbatim: "**Treat the transcript's real payloads as the reference shape** — not the type declaration — when writing the parsing/handling code. If the two disagree, the transcript wins for what to implement against; the type declaration is worth noting as the documented-but-inaccurate contract, so a future reader isn't tempted to "fix" the code back toward it." and "**Still write defensively.** Verifying against one session's transcript only confirms the current harness/SDK version's behavior — it doesn't guarantee future stability. Parse defensively (never throw on an unexpected shape) regardless of what the transcript showed". The other project skills naming these files (`timing-procedure-read-counting` — procedure-read rows; `shared-contract-extraction` — `mergeUsage`; `windows-checkout-test-parity` — path separators; `pre-tool-use-gate-exemptions`; `driver-step-addition` — `adopt.js`'s lane fill) govern code this plan does not change.
@@ -30,7 +30,7 @@ Waived plugin/bin/lib/timing/derive.js: read only — Task 2 requires `roleOf`; 
 
 - **Effort location.** The spec's Current State says assistant lines carry effort at `message.output_config.effort`. A survey of 14,878 transcripts (main and `subagents/agent-*.jsonl`) on this machine found **zero** assistant lines with that field. Effort is recorded on the `type: "api-request"` line written before each request, at `params.output_config.effort` (`params.model` beside it), e.g. `{"type":"api-request","timestamp":"…","version":"2.1.325","querySource":"repl_main_thread","params":{"model":"claude-opus-5-5","output_config":{"effort":"high"},…}}`; subagent files carry `querySource: "agent:builtin:general-purpose"` and their own effort (`medium` observed). Every assistant turn's lines follow its request's `api-request` line. So an assistant row's effort is the effort of the most recent preceding `api-request` line in the same file.
 - **Driver step lines carry no `role` field.** The role is implied by `step`: `worker` → `implementer` (including the review fix round's `fix: true` relaunch), `review` → `reviewer`, `merge-check` → `merge-check`, `merge-acceptance` → `acceptance`. Effort is the line's own `effort` field (#5942), model its `model` field (#5917); older lines lack both.
-- **`deriveRoles` input.** `timing.json` holds no main-session rows, so `deriveRoles` takes the same inputs as `deriveRunCost` (`{ manifest, rows, items, events }`), not `{ timing, events }`.
+- **`deriveRoles` input.** `timing.json` holds no main-session rows, so `deriveRoles` takes `{ manifest, rows, items, events }`, not `{ timing, events }`. On session lanes `rows` and `items` are the **raw** `costRows.rows` and `costRows.items` (`collectRunUsage`'s output), never the `input.rows` that `costRowsFrom(costRows)` builds for `deriveRunCost` — that list already has every item's `usageRows` appended and carries no `items` key, so it would put subagent turns into `session` and leave every `roleOf` role empty. `costRows.rows` holds the run's own transcripts plus, on a dispatched run, its Task-call transcripts (`ownTranscripts`); those together are the one `session` (`agents: 1`), and subagent transcripts (the items) are excluded (plan review, settled after an answered round).
 - **Sparse `effort` key.** `transcript.test.js` line 216 deep-equals a whole assistant row; an always-present `effort: null` key would change that existing test. Following the `asks`/`answers` precedent in the same function, `effort` is present only on an assistant row whose request recorded one; absent reads as "no effort recorded".
 - **Driver worker transcripts are not resolved at close.** The driver lane's close fill reads only `driver-events.jsonl` (at-close.js: "Not deadline-gated: the driver lane's cost reads only the local driver-events.jsonl"); resolving each worker's transcript by `sessionId` would add unbounded transcript reads to that path. The spec marks it optional; the driver lane records the launch's `model` and `effort`, else `unknown`. Documented in `docs/reference/run-manifest.md`.
 - **No `derive.js` change.** The per-agent effort tally is computed in `roles.js` from each item's `usageRows` (already on the pre-strip items `costRows.items` carries), so `timing.json`'s byte-pinned goldens (`tests/bin-lib/timing/golden.test.js`) do not change.
@@ -109,6 +109,8 @@ git commit -m "Read each turn's effort from the transcript — refs #6010"
 
 ### Task 2: `deriveRoles` in `plugin/bin/lib/run-manifest/roles.js`
 
+**Review risk:** high — branches on computed state (lane source selection, per-item classification, driver launch detection).
+
 **Files:**
 - Create: `plugin/bin/lib/run-manifest/roles.js`
 - Test: `tests/bin-lib/run-manifest/roles.test.js` (new)
@@ -121,7 +123,7 @@ Rules (pure, no fs):
 - Effort tally of a row list: count rows with `role === 'assistant' && turnStart === true`; key = `row.effort` when a non-empty string, else `'unknown'`.
 - **Session lanes** (`manifest.lane !== 'driver'`, including a null manifest):
   - `session`: from `rows` — only when at least one assistant turn exists: `{ agents: 1, models: { <each distinct row.model that is a string and not '<synthetic>'>: 1 }, efforts: tally(rows) }`.
-  - Each item: role = `item.role` if a string, else `roleOf(item.description)`. `agents += 1`. Model: `'unknown'` when `item.tokens` is not an object (transcript unreadable), else `item.rawModel ?? item.transcriptModel ?? item.metaModel ?? 'unknown'`; `models[model] += 1`. Efforts: add `tally(item.usageRows)` when `usageRows` is an array; otherwise add nothing.
+  - Each item: role = `item.role` if a string, else `roleOf(item.description)`. `agents += 1`. Model: `'unknown'` when `item.tokens` is not an object (transcript unreadable), else `item.rawModel ?? item.transcriptModel ?? item.metaModel ?? 'unknown'`; `models[model] += 1`. Efforts: add `tally(item.usageRows)` when `usageRows` is an array; when `usageRows` is not an array but `item.tokens` is an object (a headless lens worker, `kind: 'worker'`, read from `worker-dispatches.jsonl`, which records no turns and no effort), add `unknown: 1` — the spec's "a role with no recorded effort says `unknown`"; when `item.tokens` is not an object (transcript unreadable), add nothing.
   - No session entry and no items → `null`.
 - **Driver lane** (`manifest.lane === 'driver'`): each `events` object whose `step` is a key of `DRIVER_STEP_ROLES` and that is a launch (own `model` non-empty string, or `usage` an object): role = `DRIVER_STEP_ROLES[step]`; `agents += 1`; `models[line.model || 'unknown'] += 1`; `efforts[line.effort as non-empty string, else 'unknown'] += 1` (driver efforts count launches; no turns are read). No launch → `null`.
 - `validRoles(v)`: `v` is a plain object, and every value is a plain object with `agents` a non-negative integer and `models`/`efforts` plain objects whose values are all non-negative integers.
@@ -146,6 +148,7 @@ test('#6010 AC4.1: driver lane, implementer launch on sonnet and reviewer on opu
 });
 test('#6010 AC6.1: the main session appears as session with its own model ids and effort counts', ...); // rows from readUsage over a 2-turn high + 1-turn medium fixture -> { agents: 1, models: { 'claude-opus-5-5': 1 }, efforts: { high: 2, medium: 1 } }
 test('#6010: an unreadable-transcript item counts under model unknown and adds no efforts', ...); // { description: 'implement task 1', role: 'implementer', rawModel: 'sonnet', tokens: null } -> { agents: 1, models: { unknown: 1 }, efforts: {} }
+test('#6010: a headless lens worker item (no usageRows) counts one unknown effort', ...); // { kind: 'worker', description: 'lens 2', role: 'lens reviewer', metaModel: 'claude-sonnet-5-5', tokens: { input: 1 } } -> { agents: 1, models: { 'claude-sonnet-5-5': 1 }, efforts: { unknown: 1 } }
 test('#6010: a driver line effort is kept as seen, a fix relaunch counts as implementer, lane selects the source', ...); // worker effort 'xhigh' and worker fix:true -> implementer agents 2, efforts { xhigh: 1, unknown: 1 }; driver manifest ignores rows/items; session manifest ignores events
 test('#6010: __proto__ as a model id and as an effort is an own key', ...); // assert Object.hasOwn(roles.implementer.models, '__proto__') and Object.getPrototypeOf({}) untouched
 test('#6010: no source -> null', ...); // session lane with rows [] and items []; driver lane with only non-launch lines
@@ -181,6 +184,8 @@ git commit -m "Derive each role's models and efforts for the run manifest — re
 
 ### Task 3: Fill `roles` at close and document it
 
+**Review risk:** high — changes the close path's unlocked read-modify-write of `manifest.json` (shared mutable state) and branches on `withCost`, fill-only-null and the shape-check outcome.
+
 **Files:**
 - Modify: `plugin/bin/lib/run-manifest/write.js` (`fillRunManifest`, header comment, exports)
 - Modify: `plugin/bin/lib/timing/at-close.js` (`fillManifestAtClose`, header comment)
@@ -189,7 +194,7 @@ git commit -m "Derive each role's models and efforts for the run manifest — re
 
 **Interfaces:**
 - Consumes: Task 2's `deriveRoles`, `validRoles`.
-- Produces: `fillRunManifest(runDir, { roles })` stores `roles` only while `manifest.roles == null` and `validRoles(roles)`; a non-null, non-undefined `roles` that fails `validRoles` is not stored and writes one stderr line `claude-tweaks: run-manifest: roles failed the shape check, not written\n` (via `d.stderr`), while the other passed fields still apply. `fillManifestAtClose` passes `roles` whenever it derives cost (`withCost`).
+- Produces: `fillRunManifest(runDir, { roles })` stores `roles` only while `manifest.roles == null` and `validRoles(roles)`; a non-null, non-undefined `roles` that fails `validRoles` leaves the existing manifest untouched — checked before any field is applied, nothing written that call, `{ changed: [] }` — with one stderr line `claude-tweaks: run-manifest: roles failed the shape check, manifest left untouched\n` (via `d.stderr`). `fillManifestAtClose` passes `roles` whenever it derives cost (`withCost`). A close that takes the complete-cost kept path (`fillManifestAtClose(dir, { base })`, at-close.js's `complete` branch) or the times-only paths derives no `roles`: a run first closed by an earlier release, or one whose `roles` derive threw, keeps `roles` null — accepted and documented in `docs/reference/run-manifest.md` (re-deriving there would add the transcript reads that path exists to avoid).
 
 Proof(public-contract): `manifest.json` gains only the additive nullable `roles` key at `v: 1` — the at-close test asserts every pre-existing manifest field is byte-for-byte unchanged after the fill and that a second close changes nothing, and `docs/reference/run-manifest.md` documents the key, its role names and their sources.
 
@@ -198,12 +203,14 @@ Proof(public-contract): `manifest.json` gains only the additive nullable `roles`
 `write.test.js`:
 ```js
 test('#6010: fillRunManifest stores roles fill-only-null', ...); // first fill -> changed includes 'roles'; second fill with a different valid roles -> changed excludes 'roles', file unchanged
-test('#6010: an invalid roles is not stored, one stderr line, other fields still fill', ...); // fields { closedAt: '2026-11-26T12:00:00.000Z', roles: { x: { agents: -1, models: {}, efforts: {} } } } -> changed ['closedAt'], stderr has exactly one line matching /roles failed the shape check/
+test('#6010: an invalid roles leaves the existing manifest untouched with one stderr line', ...); // fields { closedAt: '2026-11-26T12:00:00.000Z', roles: { x: { agents: -1, models: {}, efforts: {} } } } -> changed [], manifest.json byte-identical to before, stderr has exactly one line matching /roles failed the shape check/
 ```
 `at-close.test.js` (reuse the helpers the AC6.1 test at line 1624 uses):
 ```js
 test('#6010 AC5.1 AC5.2: after the close path fills a fixture run, manifest.json carries roles and every other field unchanged; closing again changes nothing', async () => {
-  // fixture main transcript with api-request effort lines; assert manifest.roles.session.efforts deep-equals the fixture's turn counts,
+  // fixture main transcript with api-request effort lines plus one subagent (implementer) transcript with its own effort;
+  // assert manifest.roles.session.efforts deep-equals the main transcript's turn counts only (subagent turns excluded),
+  // and manifest.roles.implementer is present with the subagent's model and efforts,
   // every key present before the close (v, runId, createdAt, lane, ...) has its prior value, and a second close leaves the file byte-identical
 });
 test('#6010: a roles derive that throws still fills closedAt, minutes and the cost group', async () => {
@@ -221,9 +228,9 @@ Expected: FAIL after Step 1 (`roles` is never written)
 
 - [ ] **Step 3: Implement**
 
-`write.js`: after the cost group block, the `roles` fill described in Interfaces; add `roles` to the header comment's fill list. `at-close.js` `fillManifestAtClose`: inside `if (withCost)`, derive `roles` with `deriveRoles({ manifest, rows, items, events })` from the same inputs the cost derive receives (driver: `input.events`; session lanes: `costRows.rows` and `costRows.items`) inside its own `try`/`catch` that calls `warnManifestFailure` and leaves `roles` unset; set `fields.roles` when non-null. Add one sentence to the module header naming `roles` (#6010).
+`write.js`: after the cost group block, the `roles` fill described in Interfaces; add `roles` to the header comment's fill list. `at-close.js` `fillManifestAtClose`: inside `if (withCost)`, derive `roles` with `deriveRoles({ manifest, rows, items, events })` — driver: `input.events`; session lanes: the **raw** `costRows.rows` and `costRows.items`, never `input.rows` (which `costRowsFrom` has already extended with every item's `usageRows`) — inside its own `try`/`catch` that calls `warnManifestFailure` and leaves `roles` unset; set `fields.roles` when non-null. Add one sentence to the module header naming `roles` (#6010).
 
-`docs/reference/run-manifest.md`: add `roles` to the field table (object, nullable, added at `v: 1`, filled at close on the token paths, fill-only-null) and a `### roles` section stating: role names (`session`, the `roleOf` names, the driver role names from `plugin/bin/lib/driver/roles.js` via the step mapping `worker`→`implementer`, `review`→`reviewer`, `merge-check`→`merge-check`, `merge-acceptance`→`acceptance`) and where each comes from; `models` counts agents, `efforts` counts turns (launches on the driver lane); effort is read from each transcript's `api-request` lines (`params.output_config.effort`), and `unknown` means the transcript (or the driver launch line) recorded no effort; an agent whose transcript could not be read counts under model `unknown` with no efforts; driver worker transcripts are not resolved at close; renaming a driver role changes these keys.
+`docs/reference/run-manifest.md`: add `roles` to the field table (object, nullable, added at `v: 1`, filled at close on the token paths, fill-only-null) and a `### roles` section stating: role names (`session`, the `roleOf` names, the driver role names from `plugin/bin/lib/driver/roles.js` via the step mapping `worker`→`implementer`, `review`→`reviewer`, `merge-check`→`merge-check`, `merge-acceptance`→`acceptance`) and where each comes from; `models` counts agents, `efforts` counts turns (launches on the driver lane); effort is read from each transcript's `api-request` lines (`params.output_config.effort`), and `unknown` means the transcript (or the driver launch line) recorded no effort; an agent whose transcript could not be read counts under model `unknown` with no efforts; a headless lens worker (no turns recorded) counts one `unknown` effort; `session` is the run's own transcript plus, on a dispatched run, its Task-call transcripts, as one agent; driver worker transcripts are not resolved at close; `roles` is derived only on a close that derives cost, so a run whose cost group was already complete (first closed by an earlier release) keeps `roles` null; an invalid `roles` leaves the manifest untouched; renaming a driver role changes these keys.
 
 - [ ] **Step 4: Run tests to verify they pass, plus the neighbouring suites**
 
