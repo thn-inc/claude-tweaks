@@ -7434,6 +7434,13 @@ test('#6118 AC8.1: a streak-second launch failure settles marker-free', async ()
   open.launchStreak = 1;
   assert.equal((await driveRecord(7, open, timeout.deps)).final.stop.sharedCause, false);
   assert.ok(recordCommentBodies(timeout)[0].endsWith(ESC_MARKER));
+  // AC2.1 (#6321): a ran-and-failed fail/exit does not count, so an open streak still settles it with the ordinary escalation.
+  const ran = harness({ worker: { ...EXIT_FAIL, apiDurationMs: 958 }, script: [commentUrl(44)] });
+  const ranShared = await policyOnce(ran);
+  ranShared.launchStreak = 1;
+  assert.equal((await driveRecord(7, ranShared, ran.deps)).final.stop.sharedCause, false);
+  const ranBodies = recordCommentBodies(ran);
+  assert.ok(ranBodies[0].endsWith(ESC_MARKER) && !ranBodies[0].includes(SC_MARKER), ranBodies[0]);
 });
 
 test('#6118 red tests after an ok launch settle ordinarily', async () => {
