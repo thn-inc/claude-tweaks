@@ -176,7 +176,9 @@ test('AC8.1: docs/skill-graph.md states the /build → /backlog edge once, in th
 // pin reads only the explaining passage — a line (`line`) or a blank-line-delimited
 // paragraph (`para`) starting at `head` — so it goes red when that passage loses the
 // pointer, not when some other line mentions it. `pointer: false` passages (the
-// LABELS_JSON description, a 100-char cap) only get the old-cause ban.
+// LABELS_JSON description, a 100-char cap) only get the old-cause ban. A `segment` passage is
+// one inline code span, from `head` (which opens it) to its closing backtick.
+const BLOCKED_RENDER_SEGMENT = '`Blocked: **{N}**';
 const BLOCKED_CONSUMERS = [
   [path.join('plugin', 'skills', '_shared', 'work-record.md'), '| **Bot state** |', 'line', true],
   [path.join('plugin', 'skills', '_shared', 'work-record.md'), '  `transient`-classified one preserves it.', 'para', true],
@@ -190,8 +192,9 @@ const BLOCKED_CONSUMERS = [
   [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', false],
   [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', false],
   [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), '2. **Blocked** —', 'line', false],
-  // The render line now also carries the awaiting-answer count (#5053 D8), whose text names "plan-review answer"
-  // on purpose, so the line cannot be held to the retired-cause ban; item 2 above is the Blocked explanation.
+  // The render line also carries the awaiting-answer count (#5053 D8), whose text names "plan-review answer"
+  // on purpose, so only its `Blocked: **{N}** …` code span (`segment`) is held to the retired-cause ban.
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), BLOCKED_RENDER_SEGMENT, 'segment', false],
   [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', true],
   [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', true],
 ];
@@ -211,9 +214,28 @@ const OLD_BLOCKED_CAUSES = [
 function passage(text, head, mode) {
   const start = text.indexOf(head);
   assert.ok(start >= 0, `passage head not found: ${head}`);
+  if (mode === 'segment') {
+    const close = text.indexOf('`', start + 1);
+    assert.ok(close > start && !text.slice(start, close).includes('\n'), `segment not closed on its line: ${head}`);
+    return text.slice(start, close + 1);
+  }
   const end = text.indexOf(mode === 'line' ? '\n' : '\n\n', start);
   return text.slice(start, end < 0 ? undefined : end);
 }
+
+test('go-red: the Blocked render segment is guarded, and only that segment', () => {
+  const triage = read('plugin', 'skills', '_shared', 'github-pr-scan-triage.md');
+  const seg = passage(triage, BLOCKED_RENDER_SEGMENT, 'segment');
+  assert.ok(seg.endsWith('(retry ceiling)`'), `unexpected Blocked segment: ${seg}`);
+  for (const old of OLD_BLOCKED_CAUSES) {
+    const planted = triage.replace(seg, `${seg.slice(0, -1)} or ${old}\``);
+    assert.notStrictEqual(planted, triage);
+    assert.deepStrictEqual(blockedProblems(passage(planted, BLOCKED_RENDER_SEGMENT, 'segment'), false), [`still names the retired cause "${old}"`], old);
+  }
+  // the sibling Awaiting-answer segment names "plan-review answer" by design and stays outside the slice
+  assert.ok(triage.includes('`Awaiting answer: **{N}** records awaiting a plan-review answer`'), 'Awaiting answer segment moved');
+  assert.deepStrictEqual(blockedProblems(seg, false), []);
+});
 
 // Returns the problems found in one passage; each carries its own message.
 function blockedProblems(text, wantsPointer) {

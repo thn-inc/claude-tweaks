@@ -172,8 +172,9 @@ reader filters on it and names any marker comment it skips.
 The worklist rule: a headless unit skips any open record carrying a `needs:*` label — a genuine
 open choice (`needs:definition`), a proposal awaiting a human decision (`needs:decision`) or a plan-review
 question awaiting an answer (`needs:answer`) is never a candidate for further autonomous action until a
-human resolves it; the bare-drain sweep (`dispatch/answered-resumes.md`) resolves `needs:answer` only from a trusted human reply. Every headless
-eligibility/candidate filter cites this rule rather than restating the label list:
+human resolves it; the bare-drain sweep (`dispatch/answered-resumes.md`) resolves `needs:answer` only
+from a trusted human reply. Every headless eligibility/candidate filter cites this rule rather than
+restating the label list:
 `bin/lib/issues/grant-gate.js`'s Gate 1c, `specify/next-mode.md`'s Eligibility query, and
 `tidy/step-1-records.md`'s record-scoped shapes.
 

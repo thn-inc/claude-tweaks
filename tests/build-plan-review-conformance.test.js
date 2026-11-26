@@ -354,6 +354,30 @@ test('AC6.2: the headless branch adds no bot:blocked and removes no auto:* label
   assert.deepStrictEqual(ac6Problems(needsHumanLive(), ac6Facts('AC6.2')), []);
 });
 
+// AC6.2 over the whole subsection, not only the headless line: no branch of the needs-human stop
+// may write bot:blocked (the waiting state is needs:answer).
+const BOT_BLOCKED_MSG = 'the needs-human subsection names bot:blocked';
+const assertNoBotBlocked = (section) => {
+  assert.ok(section.includes('needs:answer'), 'needs-human subsection slice is empty or lost its waiting label');
+  assert.ok(!section.includes('bot:blocked'), BOT_BLOCKED_MSG);
+};
+
+test('AC6.2: no line of the needs-human subsection names bot:blocked', () => {
+  assertNoBotBlocked(needsHumanLive());
+});
+
+test('AC6.2 control: bot:blocked planted off the headless line, or in the base excerpt, goes red', () => {
+  const live = needsHumanLive();
+  const parallel = ac6Line(live, AC6_LINES.parallel);
+  assert.ok(parallel, 'no parallel-wave line');
+  const planted = live.replace(parallel, `${parallel} Then add \`bot:blocked\`.`);
+  assert.notStrictEqual(planted, live);
+  assert.throws(() => assertNoBotBlocked(planted), { message: BOT_BLOCKED_MSG });
+  const trailing = `${live.trimEnd()}\n\nA stop also adds \`bot:blocked\`.\n`;
+  assert.throws(() => assertNoBotBlocked(trailing), { message: BOT_BLOCKED_MSG });
+  assert.throws(() => assertNoBotBlocked(`${BASE_NEEDS_HUMAN}\nneeds:answer`), { message: BOT_BLOCKED_MSG });
+});
+
 test('AC6.3: the question instruction names the /answer reply and /claude-tweaks:dispatch resume #{n}', () => {
   assert.deepStrictEqual(ac6Problems(needsHumanLive(), ac6Facts('AC6.3')), []);
 });

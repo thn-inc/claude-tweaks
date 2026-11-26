@@ -14,7 +14,7 @@ files:
 
 # Answer a Plan-Review Question Before the Build Starts
 
-**Persona:** claude-tweaks user building a spec-shaped record — typing `/claude-tweaks:flow #{n}` themselves, typing `/claude-tweaks:dispatch #{n}`, or finding a record a scheduled dispatch drain left `bot:blocked`.
+**Persona:** claude-tweaks user building a spec-shaped record — typing `/claude-tweaks:flow #{n}` themselves, typing `/claude-tweaks:dispatch #{n}`, or finding a record a dispatch drain left `needs:answer` (or `bot:blocked`, for a record a headless drain stopped before `needs:answer` shipped).
 **Goal:** When the plan review before Task 1 finds that the spec leaves a decision undecided, make that decision once, in the place the build will read it, so the build proceeds (or resumes) on the answer instead of guessing.
 **Entry point:** A Spec Mode `/claude-tweaks:build` reaching Common Step 1.6, after the plan audit and before any implementer is dispatched.
 **Success state:** Either the review amends the in-run spec or plan on its own and the build continues with no question asked, or the human sees each undecided question with its two readings, picks one (or stops), and the answer lands in the spec the later phases judge against — with the record's own history carrying it.
@@ -67,7 +67,7 @@ files:
   - Its plan review is a **converged round** (#4958): the record carries the trusted question comment and its body was edited after it. A fresh reviewer may still find new gaps, but each one that some reading settles without altering a criterion or contradicting a recorded decision is settled by the build itself — appended under `## Plan Review Clarifications` as `Settled by plan review after an answered round:` with the reading not taken, and listed at the Wrap-Up Review Console. Only a gap no reading can settle that way stops the build again.
   - A record re-picked before anyone edited its body is not converged: it stops on the same question rather than having it settled for you.
   - Under `planning-decisions: asked-classes` the converged-round rule does not apply: a gap your recorded decision already answers is settled with a `Decided by the user at planning:` line and never asked again, and a hard-to-undo gap you answered without adding its risk flag still gets the flag added, so the implementing plan owes the proof.
-- **Red flags:** The resumed run asking a new question that a reading could have settled without touching a criterion or a recorded decision; a settled gap missing from the Review Console; a `bot:blocked` record re-dispatched without the question being answered first.
+- **Red flags:** The resumed run asking a new question that a reading could have settled without touching a criterion or a recorded decision; a settled gap missing from the Review Console; a `needs:answer` record re-dispatched without the question being answered first.
 
 ## Origin
 - Created during build of #3377, part of the "Build dispatch cost shape" decomposition (origin #3229) — in a measured 10-task build, 3 of the 5 Important final-review findings were spec or plan gaps found only after all the code was written.
