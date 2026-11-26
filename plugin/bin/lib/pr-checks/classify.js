@@ -85,7 +85,15 @@ function prEventSettle({ hasPrCi, headRuns, headCommittedAt, prCreatedAt, now } 
   const prAnchor = Date.parse(prCreatedAt);
   if (!Number.isFinite(runAnchor) || !Number.isFinite(prAnchor)) return { settling: true, until: null };
   const until = Math.max(prAnchor, runAnchor) + PR_EVENT_SETTLE_MS;
+  // Past the Date range (8.64e15 ms) the end cannot be formatted: fail closed like an unreadable anchor.
+  if (!Number.isFinite(until) || until > 8.64e15) return { settling: true, until: null };
   return { settling: now < until, until: new Date(until).toISOString() };
+}
+
+// The head commit's committer-date read (the window's start when no head run exists), shared by
+// pr-checks.js, the driver merge gate and the drain; each caller keeps its own call and null-on-failure.
+function headCommittedAtArgs(repoSlug, sha) {
+  return ['api', `repos/${repoSlug}/commits/${sha}`, '--jq', '.commit.committer.date'];
 }
 
 // Conclusions of a run that verified nothing: its jobs were skipped, it was
@@ -279,4 +287,4 @@ function applyBaseComparison(verdict, base) {
   return { ...verdict, state, failing, baseSha: base.sha };
 }
 
-module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, PR_EVENTS, PR_EVENT_SETTLE_MS, prEventSettle, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };
+module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, PR_EVENTS, PR_EVENT_SETTLE_MS, prEventSettle, headCommittedAtArgs, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };

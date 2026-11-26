@@ -39,7 +39,7 @@
 const path = require('path');
 const { realDeps: lsRealDeps, firstStderrLine } = require('./learned-skills');
 const { drainPath } = require('./layout');
-const { classifyRollup, normalizeEntry, normalizeHeadRun, HEAD_RUN_FIELDS, HELD_CONCLUSIONS } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, normalizeHeadRun, HEAD_RUN_FIELDS, HELD_CONCLUSIONS, headCommittedAtArgs } = require('../pr-checks/classify');
 const { MERGE_GATE_WATCH_SECONDS } = require('../ci-health/constants');
 const { defaultDeps: readyRunDefaultDeps, resolveReadyRun } = require('../pr-checks/ready-run');
 const { rebuild: realRebuild } = require('./rebuild');
@@ -240,7 +240,7 @@ function drain(opts, overrides = {}) {
     // failed read is null, which classify.js keeps pending (never a throw, never read-failed).
     let committedAt = null;
     if (headRuns.length === 0) {
-      try { committedAt = String(deps.gh(['api', `repos/${repo}/commits/${view.headRefOid}`, '--jq', '.commit.committer.date'])).trim() || null; } catch { committedAt = null; }
+      try { committedAt = String(deps.gh(headCommittedAtArgs(repo, view.headRefOid))).trim() || null; } catch { committedAt = null; }
     }
     return { view, headRuns, ready, ...judgePr(view, headRuns, ready, { now: deps.now(), committedAt }) };
   };

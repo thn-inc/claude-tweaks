@@ -716,7 +716,7 @@ test('AC1.1: a learned-skills PR opened after its head was pushed is pending unt
   const young = harness({ prs: [pr(6302)], views: { 6302: view({ number: 6302, createdAt: iso(-10_000) }) } });
   assert.deepEqual(drain(base(), young.deps).leftOpen, [{ pr: 6302, reason: 'pending' }]);
   assert.equal(young.merges().length, 0);
-  assert.ok(young.calls.some((c) => c[0] === 'api'), 'an empty head-run list reads the committer date');
+  assert.deepEqual(young.calls.filter((c) => c[0] === 'api'), [['api', `repos/${REPO}/commits/${SHA('a')}`, '--jq', '.commit.committer.date']], 'an empty head-run list reads the committer date');
   const aged = harness({ prs: [pr(6302)], views: { 6302: view({ number: 6302, createdAt: iso(-70_000) }) } });
   assert.deepEqual(drain(base(), aged.deps).merged, [6302]);
 });

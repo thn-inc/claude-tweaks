@@ -1096,6 +1096,26 @@ test('an empty head-run list reads the committer date via gh api commits/{sha}',
   }
 });
 
+test('without PR CI the committer-date read is skipped', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, hasPullRequestCi: () => false, gh: settleGh({ runs: [], calls }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal(h.json().state, 'green');
+});
+
+test('a failed runs read skips the committer-date read', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const gh = settleGh({ runs: [], calls });
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: (args) => { if (args[0] === 'run') { calls.push(args); throw new Error('HTTP 502'); } return gh(args); } });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some((a) => a[0] === 'run'), true);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal('prEventSettle' in h.json(), false);
+});
+
 test('--run: the settle pending line names the window', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh() });

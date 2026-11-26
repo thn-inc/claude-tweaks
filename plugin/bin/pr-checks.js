@@ -60,7 +60,7 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { classifyRollup, failingNamesAt, applyBaseComparison, HEAD_RUN_FIELDS } = require('./lib/pr-checks/classify');
+const { classifyRollup, failingNamesAt, applyBaseComparison, HEAD_RUN_FIELDS, headCommittedAtArgs } = require('./lib/pr-checks/classify');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
@@ -244,7 +244,7 @@ function classifyPr(deps, n, localHead, audit) {
   // #3468: the settle window's start when no workflow run exists for the head sha yet. A failed or
   // empty read leaves it null, which classify.js reads as an unreadable anchor: pending, never read-failed.
   if (hasPrCi && Array.isArray(headRuns) && headRuns.length === 0) {
-    try { input.headCommittedAt = String(deps.gh(['api', `repos/{owner}/{repo}/commits/${headRefOid}`, '--jq', '.commit.committer.date'])).trim() || null; } catch { input.headCommittedAt = null; }
+    try { input.headCommittedAt = String(deps.gh(headCommittedAtArgs('{owner}/{repo}', headRefOid))).trim() || null; } catch { input.headCommittedAt = null; }
   }
   if (ready) {
     // The wait set is ready-run.js's readyWaitSet: a draft-skip workflow without a ready trigger is folded in

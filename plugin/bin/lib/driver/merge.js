@@ -24,7 +24,7 @@ const {
 } = require('./events');
 const { reduceDetail, canonicalWorktreePath, apiTarget } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
-const { classifyRollup, normalizeEntry, HEAD_RUN_FIELDS } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, HEAD_RUN_FIELDS, headCommittedAtArgs } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 const { widenings } = require('../express/eligibility');
@@ -620,7 +620,7 @@ function gateReads(s, word) {
   let committedAt = null;
   if (runs.length === 0) {
     try {
-      committedAt = String(deps.gh(['api', `repos/${ctx.repo}/commits/${read.headRefOid}`, '--jq', '.commit.committer.date'])).trim() || null;
+      committedAt = String(deps.gh(headCommittedAtArgs(ctx.repo, read.headRefOid))).trim() || null;
     } catch {
       committedAt = null;
     }
