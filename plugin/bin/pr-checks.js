@@ -16,7 +16,7 @@
 // cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
-// awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
+// held?:[{name,url,conclusion}] (checks whose newest run was cancelled, action_required or stale; state pending), awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
 // headRunCount?, logged? (--run only)}. headRunCount is the number of workflow runs the
 // head-runs read listed for headRefOid (one page of 100), present only when that read
 // succeeded -- drive.js's CI step reads it rather than listing the runs itself. state

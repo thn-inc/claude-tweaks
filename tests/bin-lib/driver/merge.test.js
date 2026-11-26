@@ -1256,6 +1256,8 @@ test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs
     ['a head run not completed', { runs: [{ ...GREEN_RUN, status: 'in_progress', conclusion: '' }] }],
     ['ready-run awaiting', { readyRun: { state: 'awaiting', failing: [], draftSkipWithoutReadyTrigger: [] } }],
     ['a status context PENDING', { prState: { statusCheckRollup: [{ context: 'ci/x', state: 'PENDING' }] } }],
+    ['a held rollup entry (CANCELLED), #3467', { prState: { statusCheckRollup: [{ ...GREEN_CHECK, conclusion: 'CANCELLED' }] } }],
+    ['a held head run (cancelled), #3467', { runs: [{ ...GREEN_RUN, conclusion: 'cancelled' }] }],
   ];
   for (const [name, over] of pendings) {
     const h = mergeHarness(over);

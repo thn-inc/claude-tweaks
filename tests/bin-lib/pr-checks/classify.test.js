@@ -168,13 +168,12 @@ test('REST rows order by run_started_at, then created_at, ties by id', () => {
   assert.deepEqual(bothOrders(restRow('success', { created_at: T1, id: 7 }), restRow('cancelled', { created_at: T1, id: 6 })), ['green', 'green']);
 });
 
-test('the same run in gh and REST shape orders as one', () => {
+test('a gh-shaped cancelled run older than a REST-shaped success of the same check reads green: the REST time is parsed', () => {
   const r = gate([
     { ...hr('test', 'completed', 'cancelled'), startedAt: T1, databaseId: 9 },
-    { name: 'test', status: 'completed', conclusion: 'cancelled', run_started_at: T1, id: 9 },
+    { name: 'test', status: 'completed', conclusion: 'success', run_started_at: T2, id: 5 },
   ]);
-  assert.equal(r.state, 'pending');
-  assert.equal(r.held.length, 1);
+  assert.equal(r.state, 'green');
 });
 
 test('cross-source: a cancelled rollup job and a newer successful head run of the same name read green', () => {
@@ -209,9 +208,12 @@ test('a held check whose newer run is in progress is pending and named once', ()
   assert.equal('held' in r, false);
 });
 
-test('held sits after pending and before awaitingReadyRun in the result', () => {
+test('a held check and an awaiting ready-run both reach the result alongside pending', () => {
   const r = classifyRollup({ rollup: [run('test', 'COMPLETED', 'CANCELLED')], headRefOid: HEAD, localHead: HEAD, hasPrCi: true, readySince: '2026-11-11T00:45:28Z', readyWorkflows: ['.github/workflows/ci.yml'] });
-  assert.deepEqual(Object.keys(r).filter((k) => ['pending', 'held', 'awaitingReadyRun'].includes(k)), ['pending', 'held', 'awaitingReadyRun']);
+  assert.equal(r.state, 'pending');
+  assert.deepEqual(r.pending, ['test']);
+  assert.equal(r.held.length, 1);
+  assert.deepEqual(r.awaitingReadyRun, ['.github/workflows/ci.yml']);
 });
 
 test('HELD_CONCLUSIONS is the unverified set minus SKIPPED', () => {
@@ -225,6 +227,7 @@ test('a nameless held row is held (fail closed), a nameless non-held row is skip
   assert.equal(r.state, 'pending');
   assert.equal(r.held[0].name, null);
   assert.equal(r.held[0].conclusion, 'CANCELLED');
+  assert.ok(r.pending.includes(null), 'a nameless held row reaches pending as null; pr-checks.js renders it as unnamed');
   const h = classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [{ status: 'completed', conclusion: 'cancelled' }] });
   assert.equal(h.state, 'pending');
   assert.equal(h.held[0].name, null);

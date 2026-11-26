@@ -62,7 +62,7 @@ function result(state, headRefOid, extra = {}) {
 
 const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
-// The one --json field list every head-run reader (`gh run list --commit`) requests: heldChecks orders a check's rows by start time then id.
+// The --json field list the head-run readers that feed classifyRollup request: heldChecks orders a check's rows by start time then id. (The base-tip and ci-gate-record reads feed other consumers and keep their own lists.)
 const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt';
 
 // Conclusions of a run that verified nothing: its jobs were skipped, it was
