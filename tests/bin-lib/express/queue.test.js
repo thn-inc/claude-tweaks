@@ -486,9 +486,18 @@ test('#6119: driverRoutable accepts what keepSingleton keeps under the driver ha
   const p = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-lane': false }).resolvePolicy });
   const standard = medium(20, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task']);
   assert.equal(p.driverRoutable(medium(20)), true);
-  assert.equal(p.driverRoutable(medium(20)), p.keepSingleton(medium(20)));
   assert.equal(p.driverRoutable(standard), false);
-  assert.equal(p.keepSingleton(standard), false);
+  // Other refusals: size:high under `on`, and an odd number under `split`; each gate agrees record by record.
+  const split = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-lane': false, 'express-driver': 'split' }).resolvePolicy });
+  const cases = [
+    [p, medium(20), true], [p, standard, false],
+    [p, medium(21, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task']), false],
+    [split, medium(10), true], [split, medium(11), false],
+  ];
+  for (const [policyUnderTest, record, expected] of cases) {
+    assert.equal(policyUnderTest.driverRoutable(record), expected, `driverRoutable #${record.number}`);
+    assert.equal(policyUnderTest.keepSingleton(record), policyUnderTest.driverRoutable(record), `keepSingleton #${record.number}`);
+  }
 });
 
 test('#6119: driverRoutable never throws: a throwing check answers false, silently', () => {
