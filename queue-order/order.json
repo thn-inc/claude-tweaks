@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T11:50:19.366Z",
+  "computedAt": "2026-11-26T13:40:53.368Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -9,13 +9,8 @@
         "state": "OPEN"
       },
       {
-        "number": 6119,
-        "updatedAt": "2026-11-26T09:02:40Z",
-        "state": "OPEN"
-      },
-      {
         "number": 6010,
-        "updatedAt": "2026-11-26T08:11:23Z",
+        "updatedAt": "2026-11-26T12:21:25Z",
         "state": "OPEN"
       },
       {
@@ -86,11 +81,6 @@
       {
         "number": 4786,
         "updatedAt": "2026-11-02T06:57:09Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4746,
-        "updatedAt": "2026-11-26T10:55:06Z",
         "state": "OPEN"
       },
       {
@@ -209,16 +199,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4524,
-        "updatedAt": "2026-10-30T04:29:01Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4523,
-        "updatedAt": "2026-11-26T11:19:52Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4522,
         "updatedAt": "2026-10-30T04:28:53Z",
         "state": "OPEN"
@@ -295,7 +275,7 @@
       },
       {
         "number": 4433,
-        "updatedAt": "2026-10-28T18:38:51Z",
+        "updatedAt": "2026-11-26T13:18:02Z",
         "state": "OPEN"
       },
       {
@@ -578,8 +558,8 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nAdds, to a run's `manifest.json`, the model and effort each role in the run actually ran at: the session that walked the run, implementers, task reviewers, lens reviewers, the whole-branch and plan reviewers, and, in the driver lane, the implementer, reviewer, merge-check and acceptance workers. The design (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, `## Phase 11`) lists \"lane, model and effort per role\" among the run facts; lane shipped with #5903, and this record adds the rest. Phases 9, 14 and 15 change which model and effort each role runs at and judge each change over 20 runs, so each run has to record what each role ran at, not what policy asked for: the design's own evidence found that effort followed the session rather than the profile for 60% of subagent turns.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Setting a role's model or effort. #5941 and #5942 set effort on launches; this record only records it.\n- Tokens and cost: record #6009 \"Record a run's tokens by model, list-price cost and minutes in its manifest\", which this one extends.\n- Dispatch reading the field: a change in thn-inc/dispatch, as for the cost fields.\n- Reclassifying the role vocabulary. Roles come from the existing `roleOf` table in `plugin/bin/lib/timing/derive.js` and the driver's role names; an agent `roleOf` cannot place stays `unlabelled`.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #6009 | Record a run's tokens by model, list-price cost and minutes in its manifest | this decomposition; adds the close-path fill this record extends, in the same files (the manifest stays `v: 1`) |\n| #5967 | Read transcript usage through one shared max-per-message.id reader | open, ready; adds `message.id` and the cache-write split to `readUsage` rows in the same function this record extends, and its `message.id` dedupe keeps streamed duplicate lines from inflating the `efforts` turn counts; reached through #6009, which it blocks on |\n| #5942 | Launch driver workers at the effort their role's profile names | open, ready; the driver launch's `--effort` exists only after it, so before it a driver role's effort comes from the worker transcript or is `unknown`; not a block |\n| #5647 | Attribute dispatched runs' subagent transcripts to timing.json token totals | open, ready; a dispatched run's subagents are found only after it lands |\n\n## Current State\n\n- `plugin/bin/lib/timing/derive.js` `aggregateDispatches(items)` (around line 506) maps each subagent dispatch item to `{ ...d, tier, rawModel, role: roleOf(d.description) }` and buckets them `byTier` and `byRole`. `roleOf` (line 502) uses a regex table (line 494 on): `re-review`, `whole-branch review`, `plan review`, `task review`, `lens reviewer`, `implementer`, else `unlabelled`.\n- `plugin/bin/lib/timing/transcript.js` `readUsage` returns per-row `model`, token counts and turn classes; it reads no effort field. `plugin/bin/lib/timing/run-timing.js` `collectDispatches` reads each subagent transcript under the run session's `subagents/` directory.\n- The effort a turn ran at is recorded in the transcript: the design's evidence section counted it per turn for 8 to 19 November 2026 (\"from the effort each transcript turn records\"), and probed on this checkout's transcript directory on 2026-11-21, assistant lines carry it at `message.output_config.effort`: `\"high\"` on a main-session file's turns and `\"medium\"` on a subagent transcript's turns (a `grep -o` of `\"output_config\":{...}` over one main-session file and the session's `subagents/*.jsonl`).\n- Driver lane: each worker launch's result carries the launched `model` (`plugin/bin/lib/driver/steps.js` line 727, `extra.model`), its `usage` and its `sessionId`; the role is the step's role (`plugin/bin/lib/driver/roles.js`). After #5942 a launch also passes `--effort`.\n- After record #6009, the close path (`plugin/bin/lib/timing/at-close.js`) fills close-out fields through `fillRunManifest`, from `plugin/bin/lib/run-manifest/cost.js`, at `v: 1`: `docs/reference/run-manifest.md`'s Compatibility section adds a field without a version bump. This record adds `roles` to that same fill, also with no bump.\n\n## Deliverables\n\n- [ ] `readUsage` additively returns each row's effort (`null` when the line records none), with no change to the fields its callers read, and the subagent dispatch items carry an `efforts` tally (`{ \"<level>\": turns }`) beside `rawModel`.\n- [ ] `plugin/bin/lib/run-manifest/roles.js` (new): `deriveRoles({ timing, events })` returns `roles`: `{ \"<role>\": { agents, models: { \"<model id>\": agents }, efforts: { \"<level>\": turns } } }`. Session lanes: one `session` role from the main-session rows (`agents: 1`, its model ids and efforts; subagent rows are excluded), plus one entry per `roleOf` role over the dispatch items, where `agents` counts every dispatch item, an agent whose transcript could not be read counts in `agents` under model `unknown` and adds no efforts, and an agent's model is the `rawModel` `aggregateDispatches` already derives. Driver lane: one entry per driver role from the worker step events (the step event the launch writes to `events.jsonl`, carrying `role`, the launched `model`, `usage` and `sessionId`): model and effort come from the worker's transcript when its `sessionId` resolves (what ran), else `model` from the launch and effort from the launch's `--effort` when set, else `unknown`. `manifest.lane` selects the source, so a run is single-lane and `roles` holds one lane's names: a `driver` run reads events only, every other lane reads `timing` only. A transcript effort outside `low`/`medium`/`high`/`max` is kept as the string seen, since the set is illustrative, and a `roles` value that fails the shape check leaves the existing manifest untouched with one stderr line.\n- [ ] `fillRunManifest` accepts `roles`, fill-only-null with a shape check, in the close-path fill record #6009 adds.\n- [ ] `docs/reference/run-manifest.md` documents `roles`: the role names and where each comes from, that `efforts` counts turns while `models` counts agents, and that `unknown` means the transcript recorded no effort.\n- [ ] Tests: `tests/bin-lib/run-manifest/roles.test.js`, and transcript fixtures with and without the effort field.\n\n## Acceptance Criteria\n\n1. `readUsage` over a fixture transcript whose assistant lines carry an effort of `high` on two turns and `medium` on one returns those efforts per row; over a fixture with no effort field it returns `null` per row, and every existing `readUsage` test passes unchanged.\n2. `deriveRoles` over a fixture timing with three implementer dispatches (two on `claude-sonnet-5-5` at `medium`, one on `claude-opus-5-5` at `high`) and one dispatch described `lens 3a` returns `implementer: { agents: 3, models: { \"claude-sonnet-5-5\": 2, \"claude-opus-5-5\": 1 }, efforts: {…} }` with the effort turn counts from the fixtures, and `lens reviewer: { agents: 1, … }`.\n3. A dispatch whose description no `roleOf` pattern matches counts under `unlabelled`.\n4. A driver-lane fixture `events.jsonl` with an implementer launch on `sonnet` and a reviewer launch on `opus`, neither with an effort, gives `implementer` and `reviewer` entries with those models and `efforts: { unknown: 1 }` each when no worker transcript resolves.\n5. After the close path fills a fixture run, `manifest.json` carries `roles` and every other field unchanged; closing again changes nothing.\n6. The main session appears as `session` with its own model ids and effort counts.\n\n## Release Note\n\nEvery pipeline run now records the model and reasoning effort each of its roles actually ran at in its run manifest.\n\n## Technical Approach\n\nRecord what ran, read from the transcripts and driver events, not from policy: the same data the timing pass already reads, plus one more field per transcript line. Roles reuse `roleOf` so the manifest and `timing.json`'s `byRole` buckets name roles the same way.\n\nDecided while specifying: `efforts` counts turns, because one agent can change effort between turns and the design's effort evidence is per turn; `models` counts agents, since an agent runs on one model; a role with no recorded effort says `unknown` rather than inferring it from the profile, since the evidence shows the profile and the recorded effort differ.\n\n### Data / API Surface\n\n`manifest.json` gains `roles` (object, nullable; added at `v: 1`, no version bump): `{ \"<role>\": { \"agents\": number, \"models\": { \"<model id>\": number }, \"efforts\": { \"<effort level as the transcript records it, or \\\"unknown\\\">\": number } } }`. Role names: `session`, the `roleOf` names (`implementer`, `task review`, `lens reviewer`, `whole-branch review`, `plan review`, `re-review`, `unlabelled`), and the driver role names from `plugin/bin/lib/driver/roles.js`.\n\n`deriveRoles({ timing, events }) -> roles`\n\n### Key Files\n\n- `plugin/bin/lib/timing/transcript.js` — `readUsage` returns each row's effort\n- `plugin/bin/lib/timing/derive.js` — dispatch items carry an `efforts` tally\n- `plugin/bin/lib/run-manifest/roles.js` — new: `deriveRoles`\n- `plugin/bin/lib/run-manifest/write.js` — accept `roles`\n- `plugin/bin/lib/timing/at-close.js` — pass `roles` in the close-path fill\n- `docs/reference/run-manifest.md` — document `roles`\n- `tests/bin-lib/run-manifest/roles.test.js` — new\n\n## Gotchas\n\n- The effort field path is confirmed on this checkout (Current State), but it is Claude Code's transcript format and can change: Task 0 re-reads one main-session and one subagent transcript, records the field path, values and Claude Code version in the test fixture's header, and a test fails when a fixture transcript with assistant turns yields no effort at all, so a format change shows as a red test and not as a quiet `unknown` everywhere. Where a subagent transcript lacks the field, record `unknown` and say so in `docs/reference/run-manifest.md`.\n- `roleOf`'s patterns place the description `lens 3a` under `lens reviewer` (`^((review|delta) )?lens \\d`, `plugin/bin/lib/timing/derive.js`), so AC2's fixture holds.\n- Driver role names are a manifest contract once this lands: renaming one in `plugin/bin/lib/driver/roles.js` changes `roles` keys, so a rename names this record in its description.\n- #5967 also adds fields to `readUsage` (`message.id`, the cache-write split). Add the effort field the same additive way and rebase on it; never rename or reshape an existing row field.\n- Driver role names must come from `plugin/bin/lib/driver/roles.js`, not a second list typed here.\n- A worker transcript lives under the worker's own session id; resolving it is optional. A worker whose transcript is not found records `unknown`, never a guessed effort.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-11:record-each-role-s-model-and-effort-in-the-run-manifest -->\nwork-fingerprint: pipeline-economy-phase-11:record-each-role-s-model-and-effort-in-the-run-manifest\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
-        "createdAt": "2026-11-21T17:37:46Z",
+        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\nPhase 13's done-when is measured, not just built. This record runs `drive.js --budget` as a Dispatch script job in this repository, with dispatch's session drain leaving driver records to it, and measures whether the main session's share of cost for driver records goes to zero. It also documents the launch line a script job needs, since a script job runs outside any Claude session and has no `CLAUDE_PLUGIN_ROOT`.\n\n## Non-Goals\n\n- Dispatch-side code. The job is created through Dispatch's existing script-job type (a `command`, no model).\n- Changing a default. `express-driver-runner` stays `session` by default. This repository opts in, per the design's 20-run rule.\n\n## Prerequisites\n\n- Phase 7's #6019 and #6020 (under parent #6017) and Phase 8's #5571 merged: the blockers on this record. #6021 was removed as a blocker on 2026-11-26 on the maintainer's go: its guard 1 verdict is already worse and its trial values were reverted (#6229), so its guard 3 read cannot change the admission this trial runs under. Caveat: this trial's PRs merge inside #6021's guard 3 window (read on or after 2026-12-08).\n- This phase's other three sub-issues merged and released, and the release installed: the drain-overlap hold, the worker stop and the session drain's exclusion.\n\n## Current State\n\n- No script job runs the driver. The 12 November driver runs were started by hand, and dispatch routes driver records from a model session (`plugin/skills/dispatch/driver-route.md`).\n- `docs/driver.md` says a launcher must leave stdin a pipe or set `CC_HUB_RUN`, so that the driver never reads a job runner as a person at a terminal. It gives no launch line.\n- The installed plugin's path changes with every version (`~/.claude/plugins/cache/claude-tweaks-marketplace/claude-tweaks/{version}/`). `plugin/bin/lib/installed-plugins.js` reads `~/.claude/plugins/installed_plugins.json`.\n\n## Deliverables\n\n- [ ] `docs/driver.md` gains a section on running the driver as a script job. It gives a launch command that finds the installed plugin root from `installed_plugins.json` (never a pinned version path), runs from the main checkout, sets `CC_HUB_RUN=1`, leaves stdin a pipe, and passes `--budget <n>`. It also lists what the job's environment needs: `gh` and `git` on `PATH`, a Claude login the worker env allow-list passes (`CLAUDE_CONFIG_DIR`), and Node 18 or later.\n- [ ] This repository's `.claude-tweaks/policy.yml` sets `express-driver-runner: script`.\n- [ ] A Dispatch script job for this repository, on a schedule, running that command. Its name, schedule and budget are recorded in this record's closing comment.\n- [ ] Before the trial count starts, one smoke firing with `--budget 1` confirms the host: the worker launches and authenticates (no `worker-stop`), the run ran from the main checkout, and stdin was a pipe with `CC_HUB_RUN=1` set. A failed smoke firing is fixed before the 20-record count starts and is not counted in it.\n- [ ] A trial over the first 20 records the job drives, or 14 days, whichever comes first. The report, in the closing comment, gives: driven records and outcomes, from the jobs' summary lines; the main-session cost attributed to driver-admitted records over the window (`tools/pipeline-cost-report.js`, expected 0); whether every admitted record was driven or carries a logged reason (#6012's funnel section); `worker-stop` and `drain-overlap` occurrences; and the three quality guards against the design's baseline.\n- [ ] An abort and revert rule. The trial stops early when guard 1 or guard 3 regresses against the baseline, or when two firings in a row end `worker-stop`. To revert, disable the Dispatch job and set `express-driver-runner` back to `session` in `.claude-tweaks/policy.yml`, and record it with the reason in the closing comment.\n\n## Acceptance Criteria\n\n- [ ] The launch line in `docs/driver.md` runs `drive.js --help` successfully from a shell with no Claude session variables. Verify: run it and paste the output into the closing comment.\n- [ ] Over the trial window, no dispatch session transcript holds a `drive.js` call for a record the job could take. Verify: the cost report's funnel and session sections, quoted in the closing comment.\n- [ ] Every job firing ends with a `budget` summary line whose `ended` is one of the documented values. Verify: the job runs' output, quoted per firing.\n- [ ] The guards are no worse than baseline: guard 1 from `/claude-tweaks:review` on each driven PR, as #6021 does it, and guard 3 read 14 days after the last merge. Verify: numbers in the closing comment.\n- [ ] The smoke firing's summary line is quoted in the closing comment and shows `driven` 1 and an `ended` other than `worker-stop`. Verify: the closing comment.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\nCreate the job with Dispatch's `create_job` (`type: script`, `command`, the repository's id, a schedule). Keep the budget small at first (for example 3 per firing) so a defect costs a few records, not the queue. Read results from the summary line and the cost report, not from model transcripts: the point is that no model session walked the queue.\n\nOrder: confirm the version `installed_plugins.json` reports on the job host carries `express-driver-runner`, then merge the policy change, then enable the job. The Dispatch repository id comes from `list_repos`. The host is the machine that runs the Dispatch runner and holds the subscription login, with `CLAUDE_CONFIG_DIR` set in the job's environment. A first schedule such as hourly with `--budget 3` is a starting point, not a requirement. A record the job could take is one the cost report's funnel counts as admitted. The closing comment is posted when the trial window ends. Guard 3 is read 14 days after the last merge and posted as an addendum comment, and the record closes after that addendum. Guard baselines are the design's `### Quality guards` section, with guard 2 handled as the design's Phase 7 trial does.\n\n### Key Files\n\n- `docs/driver.md`: modify (script-job section)\n- `.claude-tweaks/policy.yml`: modify (`express-driver-runner: script`)\n- `plugin/bin/lib/installed-plugins.js`: read (how the installed root is found)\n- `tools/pipeline-cost-report.js`: read (the measures)\n\n## Gotchas\n\n- #5259 (open): workers get only `ENV_ALLOW` (`PATH`, `HOME`, `USER`, `TMPDIR`, `LANG`, `CLAUDE_CONFIG_DIR`), so a job host that authenticates through environment variables launches every worker unauthenticated. Run the job on a host with a subscription login reachable through `CLAUDE_CONFIG_DIR`. With the worker stop merged, a wrong host ends the run `worker-stop` rather than escalating records.\n- A job runner that gives `drive.js` a terminal on stdin and sets none of the session variables reads as a person, so naming would count as `typed`. `CC_HUB_RUN=1` prevents that. Keep it in the launch line.\n- The policy change lands in committed config, which installed builds read. Merge it only once the release carrying `express-driver-runner` is installed, or an older build reads an unknown key.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-13:budget-script-job-trial -->\nwork-fingerprint: pipeline-economy-phase-13:budget-script-job-trial\n",
+        "createdAt": "2026-11-23T07:18:39Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -600,10 +580,10 @@
             "color": "8B5CF6"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -624,10 +604,10 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6010,
+        "number": 6120,
         "state": "OPEN",
-        "title": "Record each role's model and effort in the run manifest",
-        "updatedAt": "2026-11-26T08:11:23Z",
+        "title": "Run drive.js --budget as a Dispatch script job in this repository and measure the main-session share",
+        "updatedAt": "2026-11-26T05:12:08Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2720,84 +2700,6 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate (#3819 ledger item 6)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`tools/guard-refusals/transcripts.js` line 31 (`REFUSAL_TAIL = 'Refusing to run'`) and `tools/guard-refusals/trace.js` line 49 (`clauseOf`'s `text.indexOf('Refusing to run', start)`) restate the signature prefix instead of deriving it from `REFUSAL_SIGNATURES` in `plugin/bin/lib/hooks/harness-refusal.js`. They are correct today only because both signatures share that prefix, so a reworded or prefix-less signature would silently undercount. Found by the #3819 review (lens 3e); the files are maintainer-side tools that diff does not touch.\n\n**Related:** #4523, #4525\n\n## Deliverables\n\n- [ ] Derive the refusal tail the two tools search for from `REFUSAL_SIGNATURES` (or export one helper from `harness-refusal.js`) and use it in `transcripts.js` and `trace.js`.\n- [ ] Add a test that fails when a signature without the shared prefix is added to `REFUSAL_SIGNATURES` but the tools do not pick it up.\n\n## Acceptance Criteria\n\nA test adds a synthetic signature lacking \"Refusing to run\" to the exported list and the tools' scan counts a transcript line carrying it.\n\n`grep -n -F \"'Refusing to run'\" tools/guard-refusals/transcripts.js tools/guard-refusals/trace.js` returns nothing (run first against the current tree, where it matches lines 31 and 49).\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tools/guard-refusals/transcripts.js` — derive the refusal tail\n- `tools/guard-refusals/trace.js` — derive the refusal prefix\n- `plugin/bin/lib/hooks/harness-refusal.js` — export the derivation helper if needed\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-10-28T18:52:05Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4524,
-        "state": "OPEN",
-        "title": "Derive the guard-refusals tools' refusal prefix from REFUSAL_SIGNATURES instead of restating it",
-        "updatedAt": "2026-10-30T04:29:01Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: ledger resolve gate (#3819 ledger item 2)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#3819 counts the agent-noun and worktree-gone isolation refusals as `wd-guard-refusal` events with `actor`/`variant`, but two cases can still miss the parent run's `friction-events.js` read. A dispatched agent's refusal from its own still-live isolation worktree is written to an ad-hoc run dir keyed to that worktree, and `findAdHocRunsBySessionId` (`plugin/bin/lib/hooks/context.js` around line 650) skips a same-session ad-hoc dir whose worktree still exists, so the event is merged only after the worktree is removed. A worktree-gone refusal with no trusted owned run has no listed cwd, so `resolveDenialRunDir` lands it on the dropped fallback guess. #3819 pinned the reachable path in a test and states the limit in reflect's Friction lens; fixing it changes ownership resolution shared by every denial site, which is past the fix-now criteria.\n\n## Deliverables\n\n- [ ] Decide the fix site: writer-side (`resolveDenialRunDir`/ownership in `plugin/bin/lib/hooks/context.js`) or reader-side (the union step in `plugin/bin/friction-events.js` and `findAdHocRunsBySessionId`), and record the choice.\n- [ ] Implement it so an agent-actor refusal from a live isolation worktree and a worktree-gone refusal both appear in the owning run's friction events.\n- [ ] Update the \"lower bound\" wording in `plugin/skills/reflect/full-mode.md`'s Friction lens and in `docs/journeys/count-dispatched-agents-isolation-refusals-3819.md` to match.\n\n## Acceptance Criteria\n\nA test creates a same-session ad-hoc run dir whose worktree still exists, logs an agent-actor `wd-guard-refusal` into it, and `friction-events.js --run {parent}` returns that event.\n\nA test logs a worktree-gone refusal with no owned run and the event is returned for the run it belongs to rather than dropped.\n\n`npm test` passes.\n\n## Release Note\n\nReflect's Friction lens stops under-counting dispatched agents' isolation refusals for the run that dispatched them.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/context.js` — ownership resolution for denial run dirs and ad-hoc dir merge\n- `plugin/bin/friction-events.js` — union step, if the reader-side fix is chosen\n- `plugin/skills/reflect/full-mode.md` — drop the lower-bound caveat once fixed\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-10-28T18:51:57Z",
         "labels": [
@@ -3657,84 +3559,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: Review Console, human-approved — #4285 low-confidence review findings and hindsight (run 2026-10-26T131247-spec-4290-4285-4396, PR #4427)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4285 added `tests/helpers/path-stub.js` (`STUB_SKIP`, `installStub`, `pathWithOnly`). It chose which tests skip on win32 from one Windows run's failing list. The rule the windows-checkout-test-parity skill now states is different: judge each test by whether it writes a stub and whether its assertion depends on that stub running. A failing list never shows a test that passes vacuously, so the two selections differ.\n\nA scripted audit of the six installStub suites found 22 stub-installing tests with no `STUB_SKIP`. They are in `tests/reconcile.test.js` at 1463-1581 (reconcileWithAsyncMerge), 2961/2970/2995 (reconcileWithRecordedResolver) and 3125-3258 (the #4180 dryRunFixture group), plus `tests/bin-lib/reconcile/prune-remote.test.js:407` and `tests/bin-lib/reconcile/reap-merged.test.js` at 168/250/572/746/810. The stub never runs on windows-latest, so several of these pass vacuously. Their assertions are things only the stub can make true or false: `ghCalls() === ''`, `fetchCalls` deep-equal to `[]`, and the batch-fail fallback path. A review agent no-op'd the stub on reconcile 3125 and 1469 and on prune-remote 407, and each still printed `ok 1`. reap-merged 746/810 skip on a chmod reason (`MID_DELETE_SKIP`), not on `STUB_SKIP`.\n\nSingle-stub `gh` wrappers outside the helper still hand-roll the install, so their temp dirs leak and their win32 skip reasons differ: `tests/bin-lib/reconcile/archive-merged.test.js` (105/141), `tests/console-execute.test.js:469`, `tests/bin-lib/timing/cli.test.js:523` and `tests/hooks-resolve-console.test.js:82`. In reap-merged.test.js:287 the stub is installed before a worktree-lock call that can throw, outside the try that restores it.\n\nThe helper's own pin suite has two gaps. `tests/path-stub-helper.test.js:86` is titled as a PATHEXT test, but the binary lookup never consults PATHEXT, and no case excludes a `gh.CMD`. The `STUB_SKIP` pin at :28 reduces to `=== false` off win32.\n\n## Deliverables\n\n- Go through the 22 tests one at a time. Add `{ skip: STUB_SKIP }` where the assertion depends on the stub running. Where a test keeps running on win32, add a comment saying its assertions hold whatever answers on PATH. reap-merged 746/810 skip with the stub reason when the stub is what fails there.\n- Move the single-stub hand-rolled wrappers listed above onto `installStub` with `STUB_SKIP`. The multi-stub wrappers the parity skill names stay hand-rolled.\n- Move reap-merged.test.js:287's stub install inside the try that restores it.\n- In `tests/path-stub-helper.test.js`, retitle the :86 test to what the lookup actually does, add an excluded-`gh.CMD` case, and give the :28 pin a win32 assertion by injecting the platform.\n\n## Acceptance Criteria\n\n- AC1.1: re-running the stub-dependence audit over the installStub suites reports no stub-installing test that lacks both `STUB_SKIP` and a comment explaining why it holds on win32.\n- AC1.2: a `windows-regression.yml` run on the branch lists no newly failing file, and each test that newly skips reports `# SKIP win32: execFile resolves only .exe/.com on PATH, so a script stub is never spawned` in `verify-logs/tests.log`.\n- AC2.1: none of the listed single-stub wrappers writes its own temp dir or PATH entry any more (a grep for `mkdtemp` beside `PATH =` in those files comes back empty).\n- AC3.1: `tests/path-stub-helper.test.js` has a case where an excluded `gh.CMD` on PATH makes `pathWithOnly` exclude that directory, and a win32 `STUB_SKIP` assertion.\n\n## Release Note\n\nInternal: tests that fake `git`/`gh` now skip on Windows whenever their result depends on the fake running, instead of passing without testing anything.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/reconcile.test.js` — STUB_SKIP on the stub-dependent tests\n- `tests/bin-lib/reconcile/prune-remote.test.js` — STUB_SKIP on the batch-fail fallback test\n- `tests/bin-lib/reconcile/reap-merged.test.js` — STUB_SKIP on stub-dependent tests; stub install inside the try\n- `tests/bin-lib/reconcile/archive-merged.test.js` — single-stub gh helpers onto installStub\n- `tests/console-execute.test.js` — gh stub onto installStub\n- `tests/bin-lib/timing/cli.test.js` — gh stub onto installStub\n- `tests/hooks-resolve-console.test.js` — gh stub onto installStub\n- `tests/path-stub-helper.test.js` — retitle the PATHEXT test, add a gh.CMD exclude case and a win32 STUB_SKIP pin\n\n_Filed by `wrap-up` (Review Console, human-approved) via specShapedBody._",
-        "createdAt": "2026-10-26T16:54:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4433,
-        "state": "OPEN",
-        "title": "Windows stub tests: skip the stub-dependent tests #4285 left running and move hand-rolled gh stubs onto installStub",
-        "updatedAt": "2026-10-28T18:38:51Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
@@ -8286,12 +8110,6 @@
     ]
   ],
   "excluded": [
-    {
-      "number": 6120,
-      "blockedBy": [
-        6119
-      ]
-    },
     {
       "number": 4627,
       "blockedBy": [
