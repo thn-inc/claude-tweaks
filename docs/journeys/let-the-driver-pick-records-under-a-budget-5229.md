@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/steps.js
   - plugin/bin/lib/driver/events.js
+  - plugin/bin/lib/driver/merge.js
   - plugin/bin/lib/dispatch/queue-pull.js
   - plugin/bin/lib/express/eligibility.js
 ---
@@ -26,7 +27,8 @@ files:
 - **Should understand:**
   - `--budget` and named records are exclusive. Each of these is a usage error, exits 2, and makes no call at all (no policy read, no `gh`):
     - `--budget 0`, a negative or non-integer value, an empty value, or `--budget` as the last argument;
-    - `--budget` given twice, or beside a named record.
+    - `--budget` given twice, or beside a named record;
+    - `--in-flight-prs` or `--near-dup-pairs` beside `--budget`: the loop builds both inputs itself (step 3).
   - `--no-settle` applies to each driven record exactly as it does for a named run.
 - **Red flags:** a bad budget value that reaches the policy read or `gh`; `--budget 2 #12` silently driving #12.
 
@@ -55,11 +57,15 @@ files:
   - A driven record takes the whole per-record path, its `review` and `merge` steps included wherever the policy turns them on, so its final line can carry `merged` or `armed` as well as `pending-review`, `express-escalated` or `blocked`. Every one of them counts `driven`: the summary has no per-outcome counter, so each record's final line is where its outcome is read.
   - A refusal, a pre-screen skip, a contested claim (`claim-targets.js` exit 3) and any other per-record claim failure cost nothing, and the loop goes on. The other failures are exits 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint.
   - A claim stop ends the whole run, because every later claim would meet the same cause: exit 7 is `permission-stop`, and exits 2 and 6 are `claim-stop`. That record gets the claim row's settle, and the rest of the budget goes unused.
+  - The run keeps its own list of the PRs it has opened (`dispatch-drain-prs.json` in its `drive-{ts}-{pid}` session temp directory, written `[]` before the first record) and hands it, with the latest pull's `dispatch-near-dup-pairs.json` when one exists, to every record it drives. So a record's merge step holds the merge (`pending-review`, reason `drain-overlap` or `near-duplicate`) while a PR this run opened earlier is still open and shares a changed path or closes a strong near-duplicate partner, as a dispatch drain does. Only this run's own PRs are listed.
+  - A list the run cannot trust (a failed write, or a driven record that returned no final line) makes every later record hold as `in-flight-unreadable`, with one stderr line naming the cause. The list file is left in place when the run ends.
 - **Red flags:**
   - A refused or contested record that consumed budget.
   - The loop continuing after a claim-targets exit 2, 6 or 7.
   - A pre-screened record that triggered a live fetch.
   - A `merged` or `armed` record counted anywhere but `driven`.
+  - A record merged while a PR this run opened earlier is still open and changes the same files.
+  - A later record running unheld after the list failed to write.
 
 ### 4. Read the summary — the last line
 - **URL:** the final stdout line `{ ts, run: null, record: null, step: "budget", status, ms, detail?, budget, driven, refused, skipped, contested, claimFailed, permissionStopped, ended }`
@@ -96,3 +102,4 @@ files:
 - The plan review settled three questions (PRC1–3 in the spec): claim exits 2 and 6 end the run (`claim-stop`); the queue pull's side effects are accepted as dispatch has them; and no summary line is written on the exit-1 and interrupt paths.
 - Updated at the wrap-up of #5229. Step 2 now names the `pre-screen skipped #N` stderr line the review fix added (b73613a45). Step 3 now says a driven record can also end `merged` or `armed`, since the driver's `review` and `merge` steps landed upstream after this journey was written.
 - Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`, which holds what each `claim-targets.js` exit means. Step 3's counters and run-ending stops are read from its table, so a change there now flags this journey. No step changed.
+- Updated during the build of #6117 (run `2026-11-26T053027-record-6117`). Step 3 now says the run keeps its own drain-PR list and the pull's near-duplicate pairs, so each driven record's merge gets the drain-overlap hold, and fails closed to `in-flight-unreadable`; step 1 adds the two hold flags to the usage errors. `files:` adds `plugin/bin/lib/driver/merge.js`, which reads the list.

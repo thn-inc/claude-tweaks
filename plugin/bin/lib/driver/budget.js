@@ -27,15 +27,29 @@
 // or malformed pull (a group that is not an array or is empty, a member that is not an object with a
 // positive integer `number`), or a ranking that throws, is `pull-failed` (exit 1), never an empty queue.
 //
-// Every effect goes through `deps`: this module makes no file call and spawns nothing. The
-// queue-pull module's own stdout (Warnings, AUTO lines) is routed to deps.stderr, so the
-// driver's stdout carries JSON event lines only. The event sink is never bound to a run
-// directory: these run-level lines go to stdout alone.
+// Every effect goes through `deps`: this module makes no file call and spawns nothing. The loop
+// keeps its own drain-PR list (`dispatch-drain-prs.json`, the PRs it opened, rewritten whole after
+// each driven record) and hands it, plus the latest pull's `dispatch-near-dup-pairs.json` when
+// that file exists, to every record it drives through `shared`, so the merge step's drain-overlap
+// hold applies as it does in a dispatch drain. A list that cannot be trusted (a failed write, a
+// record that returned no final line or threw) makes every later record hold as
+// in-flight-unreadable. The list file is left in place when the run ends, beside the pull's own
+// session files in the same session directory. The queue-pull module's own stdout (Warnings,
+// AUTO lines) is routed to deps.stderr, so the driver's stdout carries JSON event lines only.
+// The event sink is never bound to a run directory: these run-level lines go to stdout alone.
+const path = require('node:path');
 const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorText } = require('./events');
 const { STEPS, eligibilityOptions } = require('./steps');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { groupIsExcluded } = require('../dispatch/exclusions');
 const { CLAIM_KIND, readClaimExit } = require('./claim-exit');
+const { sessionTmpRoot } = require('../session-tmp');
+
+const DRAIN_PRS_FILE = 'dispatch-drain-prs.json';
+// A path that never exists: merge.js maps a failed read of the list to in-flight-unreadable.
+const DRAIN_PRS_MISSING_FILE = 'dispatch-drain-prs.missing.json';
+// The queue pull's strong near-duplicate pairs, written under the same session directory.
+const NEAR_DUP_PAIRS_FILE = 'dispatch-near-dup-pairs.json';
 
 // The pull's exclusion reasons whose groups stay in the pulled groups yet are never selectable
 // (rankNext skips them too): the queue-pull module's own list, never a copy. `firing` is this
@@ -156,6 +170,39 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
 
   const sessionId = `drive-${formatTimestamp(deps.date())}-${deps.pid}`;
   const moduleDeps = { stdout: deps.stderr, stderr: deps.stderr };
+  const root = sessionTmpRoot(sessionId);
+  const listPath = path.join(root, DRAIN_PRS_FILE);
+  const missingPath = path.join(root, DRAIN_PRS_MISSING_FILE);
+  const pairsPath = path.join(root, NEAR_DUP_PAIRS_FILE);
+  // The PRs this run opened, and whether the list can no longer be trusted (sticky).
+  const drainPrs = [];
+  let listBroken = false;
+  const breakList = (why, consequence = 'every later driven record holds as in-flight-unreadable') => {
+    if (listBroken) return;
+    listBroken = true;
+    deps.stderr(`drive.js: ${why}; ${consequence}\n`);
+  };
+  let rootMade = false;
+  const writeList = (what) => {
+    if (listBroken) return;
+    try {
+      if (!rootMade) {
+        deps.mkdirSync(root, { recursive: true });
+        rootMade = true;
+      }
+      deps.writeFile(listPath, JSON.stringify(drainPrs));
+    } catch (err) {
+      breakList(`drain-PR list ${what} failed (${listPath}): ${errorText(err)}`);
+    }
+  };
+  // A throwing existence check counts as present: merge.js then reads the file and holds.
+  const pairsPresent = () => {
+    try {
+      return deps.lstatType(pairsPath).type !== 'missing';
+    } catch {
+      return true;
+    }
+  };
   // The ranking's in-memory `firing` set, and each record's pre-screen verdict by number.
   const attempted = new Set();
   const verdicts = new Map();
@@ -190,6 +237,8 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     }
   };
 
+  writeList('first write');
+
   for (;;) {
     await yieldToEventLoop();
     if (shared.interrupted) return 0;
@@ -199,6 +248,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     } catch (err) {
       return pullFailed(err);
     }
+    shared.nearDupPairsFile = pairsPresent() ? pairsPath : null;
     await yieldToEventLoop();
     if (shared.interrupted) return 0;
 
@@ -220,7 +270,22 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
         countSkipped(n);
         continue;
       }
-      const facts = await driveOne(n);
+      shared.inFlightPrsFile = listBroken ? missingPath : listPath;
+      let facts;
+      try {
+        facts = await driveOne(n);
+      } catch (err) {
+        breakList(`#${n} threw before returning its final line`, 'the run ends');
+        throw err;
+      }
+      // Appended only after the record's own merge step has run.
+      if (!facts || !facts.final) {
+        // An interrupt before the record's first step also yields no final line; the loop returns just below.
+        if (!shared.interrupted) breakList(`#${n} returned no final line`);
+      } else if (Number.isSafeInteger(facts.final.pr) && facts.final.pr > 0) {
+        drainPrs.push({ number: facts.final.pr });
+        writeList(`append for #${n}`);
+      }
       // A signal queued during the record's last synchronous call is delivered only when the
       // event loop turns (run.js's named-record loop does the same after driveRecord).
       await yieldToEventLoop();

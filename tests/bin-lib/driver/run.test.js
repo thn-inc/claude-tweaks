@@ -8476,6 +8476,11 @@ test('#5232 the hold flags are in the usage text', () => {
   assert.equal(newShared().nearDupPairsFile, null);
 });
 
+test('#6117 USAGE says --budget applies the hold with its own list', () => {
+  assert.match(USAGE, /--budget[^\n]*holds the merge[^\n]*own list/);
+  assert.match(USAGE, /not with --budget or --check/);
+});
+
 // --- drive.js --check (#5232) -----------------------------------------------------------
 
 const realEvaluateAdmission = evaluateAdmission;

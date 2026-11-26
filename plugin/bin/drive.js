@@ -11,16 +11,18 @@
 //   Usage: drive.js #N [#M…]
 //          drive.js --help | -h
 //          drive.js --no-settle #N [#M…]   (the caller settles stops: the final line carries settle: left-to-caller and the stop object)
-//          drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record)
+//          drive.js [--no-settle] --budget <n|all>   (picks records from the dispatch queue and drives up to n of them, or all that are admitted; --no-settle applies to each driven record; each record's merge step holds the merge when a PR this run opened earlier is still open and shares a changed path or closes a near-duplicate partner (the loop's own list, dispatch-drain-prs.json in the run's session temp directory, plus the latest pull's dispatch-near-dup-pairs.json))
 //          drive.js --check #N   (prints the admission verdict as one JSON line; no write of any kind)
-//          drive.js #N [--in-flight-prs <file>] [--near-dup-pairs <file>]   (holds the merge before mark-ready on a shared changed path with a PR in the JSON list <file>, or when such a PR closes a strong near-duplicate partner of the record named by the pairs <file>; an unreadable file or PR holds too; not with --budget or --check)
+//          drive.js #N [--in-flight-prs <file>] [--near-dup-pairs <file>]   (holds the merge before mark-ready on a shared changed path with a PR in the JSON list <file>, or when such a PR closes a strong near-duplicate partner of the record named by the pairs <file>; an unreadable file or PR holds too; not with --budget or --check, where the loop builds both inputs itself)
 //          drive.js #N --run <dir> --no-settle   (adopts the run directory <dir> and the linked worktree it is run from, minting and creating neither; requires --no-settle and one record)
 //
 // --in-flight-prs is the one flag whose absence takes the unsafe route, on purpose (spec AC9): with it
-// absent no overlap hold is applied, which is the standalone case of one record at a time. The caller
-// that runs a drain (dispatch's driver route) passes the list; a list it cannot read or build holds the
-// merge, never lets it through. Under --run a merged record keeps the adopted worktree and local branch
-// (the caller owns them); the remote branch is still deleted and the run closed.
+// absent no overlap hold is applied to a named record, which is the standalone case of one record at a
+// time. The callers that run a drain apply it: dispatch's driver route passes the list, and --budget
+// builds its own (the PRs this run opened, dispatch-drain-prs.json in the session temp directory); a list
+// either caller cannot read or build holds the merge, never lets it through. Under --run a merged record
+// keeps the adopted worktree and local branch (the caller owns them); the remote branch is still deleted
+// and the run closed.
 //
 // One JSON event line per step on stdout (and, once the run directory exists, in
 // {run-dir}/driver-events.jsonl); each record's final line carries its outcome word.
