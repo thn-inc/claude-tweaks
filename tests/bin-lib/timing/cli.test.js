@@ -654,7 +654,7 @@ test('#4029 M3: one context turn renders "over 1 turn", any other count "turns"'
   assert.ok(two.some((l) => l.includes(' tokens over 2 turns · ')), two.join('\n'));
 });
 
-// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only timing.json and the --json budget.
 test('#4029 M1: a rewrite without --check-budgets carries the existing budget verdict forward unchanged', async () => {
   const { root, dir, envPath } = budgetTree();
   assert.equal((await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets'])).status, 0);
@@ -804,7 +804,7 @@ test('#4029: a ceiling of 0 disables its budget and a disabled budget stages not
   assert.match(r.stdout, /^Budget \(fast-lane\): round-trips 10\/0 disabled/m);
 });
 
-// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the --json stdout.
 test('#4029: --check-budgets --json keeps stdout a single JSON document carrying the budget key', async () => {
   const { root, dir, envPath } = budgetTree();
   const r = await runIn(root, envPath, ['--run', dir, '--transcript', TC_SESSION, '--check-budgets', '--json']);
@@ -812,7 +812,7 @@ test('#4029: --check-budgets --json keeps stdout a single JSON document carrying
   assert.equal(JSON.parse(r.stdout).budget.staged !== null, true);
 });
 
-// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only the staged file, timing.json and the budget line.
+// Runs on win32: the open-record lookup fails open without the stub (see budgetTree); assertions read only timing.json and the staged dir.
 test('#4029: without --check-budgets timing.json has no budget key and is otherwise unchanged', async () => {
   const { root, dir, envPath } = budgetTree();
   const strip = (t) => { const { generatedAt, budget, ...rest } = t; return rest; };
