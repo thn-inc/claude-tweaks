@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `gh` through the injected `deps.gh`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T064111-record-6118/work/6118-spec.md` (worktree copy). Read it in full before any task.
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T065910-record-6118/work/6118-spec.md` (worktree copy). Read it in full before any task.
 
 Scope keywords: launch-error, worker-stop, DRIVER_ESCALATION_MARKER, apiTarget, claim-stop
 
@@ -28,7 +28,7 @@ Scope keywords: launch-error, worker-stop, DRIVER_ESCALATION_MARKER, apiTarget, 
 
 ## AC7 (revert-red) evidence — every task
 
-AC7.1, AC7.2: each task's Step 2 runs its new tests against the not-yet-changed source, which is the reverted state. Save that run's full output with a plain Bash redirect to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-26T064111-record-6118/evidence/task{N}-red.txt` (create the directory first with `mkdir -p`), and after Step 4 save the green run to `task{N}-green.txt` beside it. Quote the red run's `# fail` count in the task report. The controller writes one `AC evidence` decision line per task from these files. Task 3's tests span three source files; its red run proves the tests depend on the change as a whole, and the whole-branch review re-checks per file.
+AC7.1, AC7.2: each task's Step 2 runs its new tests against the not-yet-changed source, which is the reverted state. Save that run's full output with a plain Bash redirect to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-26T065910-record-6118/evidence/task{N}-red.txt` (create the directory first with `mkdir -p`), and after Step 4 save the green run to `task{N}-green.txt` beside it. Quote the red run's `# fail` count in the task report. The controller writes one `AC evidence` decision line per task from these files. Task 3's tests span three source files; its red run proves the tests depend on the change as a whole, and the whole-branch review re-checks per file.
 
 ## Governing project skills (quoted verbatim)
 
@@ -216,9 +216,10 @@ Proof(auth): Task 1's tests feed the two live-probed result objects (not logged 
 - Produces:
   - `ENDED.WORKER_STOP = 'worker-stop'`; `STATUS_BY_ENDED['worker-stop'] = 'stop'`; `finish` returns 0 for it.
   - Loop state per `runBudget` invocation: `streak` (0 or 1) and `streakFirst` (`{ n, reason, commentId }` or null). Before each `driveOne(n)`: `shared.launchStreak = streak`.
-  - After the record is counted (`classifyFacts`), and after the permission/claim stop checks, before the budget check:
-    - `facts.sharedCause === true` → `finish(WORKER_STOP, \`implementer launch on #${n} failed: ${reason} (shared cause)\`)`.
-    - `facts.implementerLaunch` non-null and counts → if `streak === 1`: when `streakFirst.commentId` is a safe integer, `deleteRecordComment(streakFirst.commentId, shared.ghRepo, deps)` in a try/catch; then `finish(WORKER_STOP, \`implementer launches on #${a} and #${n} both failed: ${reasonA}, ${reasonN}\`)` with `; could not delete the escalation comment on #${a}: ${firstLine(errorText(err))}` appended on a failed delete, or `; no escalation comment id on #${a} to delete` when settle ran (`shared.settle === true`) but no id was returned; each such note is also written to stderr as `drive.js: …\n`. Else `streak = 1`, `streakFirst = { n, reason, commentId: facts.escalationCommentId }`.
+  - After the record is counted (`classifyFacts`), and after the permission/claim stop checks, before the budget check. The two rules are evaluated together for the record that ends the run, never "shared-cause first, return" (spec **Decision**, plan review question 1: Reading B). Let `counts = facts.implementerLaunch != null && countsTowardLaunchStreak(facts.implementerLaunch)`:
+    - `counts && streak === 1` (whichever rule fires — the record may also be `sharedCause: true`): when `streakFirst.commentId` is a safe integer, `deleteRecordComment(streakFirst.commentId, shared.ghRepo, deps)` in a try/catch; then `finish(WORKER_STOP, \`implementer launches on #${a} and #${n} both failed: ${reasonA}, ${reasonN}\`)`, with ` (shared cause)` appended when `facts.sharedCause === true`, then `; could not delete the escalation comment on #${a}: ${firstLine(errorText(err))}` appended on a failed delete, or `; no escalation comment id on #${a} to delete` when settle ran (`shared.settle === true`) but no id was returned; each such note is also written to stderr as `drive.js: …\n`.
+    - Else `facts.sharedCause === true` → `finish(WORKER_STOP, \`implementer launch on #${n} failed: ${reason} (shared cause)\`)`.
+    - Else `counts` → `streak = 1`, `streakFirst = { n, reason, commentId: facts.escalationCommentId }`.
     - `facts.implementerLaunch` non-null and does not count → `streak = 0`, `streakFirst = null`.
     - `facts.implementerLaunch` null → streak unchanged.
   - `reason` values are the envelope's closed `reason` passed through `neutralize` (events.js).
@@ -230,6 +231,7 @@ Proof(auth): Task 1's tests feed the two live-probed result objects (not logged 
   - `#6118 AC4.1, AC4.2: cannot-complete and red tests neither count nor end the run`: facts with `implementerLaunch: { status: 'ok', reason: null }` and outcome `express-escalated` between two fail/exit records → no worker-stop.
   - `#6118 AC10.1, AC10.2: a timeout between two exit failures resets the streak`: exit, timeout, exit → no worker-stop.
   - `#6118 AC10.1, AC10.2: a record with no implementer launch leaves the streak unchanged`: exit, `implementerLaunch: null` (claimed, stopped before the worker), exit → `worker-stop` after the third.
+  - `#6118 Decision (Reading B): an open streak followed by a shared-cause launch deletes the first record's comment`: record 1 facts `fail`/`exit`, `sharedCause: false`, `escalationCommentId: 991`; record 2 facts `{ status: 'fail', reason: 'launch-error' }`, `sharedCause: true` → `ended: 'worker-stop'`, `driven: 2`, gh called once with `['api','-X','DELETE','repos/o/r/issues/comments/991', …]`, `detail` names `#{record 1}` and `#{record 2}` with `exit` and `launch-error`.
   - `#6118 a failed delete is named and never changes the exit code`: gh throws on the DELETE → exit 0, `ended: 'worker-stop'`, `detail` contains `could not delete the escalation comment on #`, stderr names it.
   - `#6118 --no-settle two-in-a-row attempts no delete`: `shared.settle = false`, two fail/exit, no comment ids → `worker-stop`, no gh call, no delete note.
   - AC6.1, AC6.2: update the pinned `STATUS_BY_ENDED` assertion (budget.test.js `AC9.5` and run.test.js near 7767–7768) to include `worker-stop` → `stop` and `ENDED.WORKER_STOP`.
