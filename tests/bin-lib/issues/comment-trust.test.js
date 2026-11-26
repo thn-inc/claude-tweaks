@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { spawnSync } = require('node:child_process');
+const { runJq } = require('../../helpers/run-jq');
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
   commentAssociation,
@@ -77,7 +78,7 @@ test('untrustedJqNote prints the same text as untrustedSkipNote, including a del
     { html_url: 'https://x/c5', user: null, author_association: 'CONTRIBUTOR' },
     { id: 6, user: { login: 'bot[bot]' } },
   ];
-  const r = spawnSync('jq', ['-r', `.comments[] | ${untrustedJqNote()}`], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+  const r = runJq(['-r', `.comments[] | ${untrustedJqNote()}`], JSON.stringify({ comments }));
   assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
   assert.strictEqual(r.stdout, `${comments.map((c) => untrustedSkipNote(c)).join('\n')}\n`);
   assert.ok(r.stdout.includes('by unknown (NONE)'), 'a deleted author prints unknown');
@@ -116,7 +117,7 @@ test('AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq
     // isTrustedComment — a fail-closed divergence; no transport emits both fields.
     { n: 11, authorAssociation: '', author_association: 'MEMBER' },
   ];
-  const r = spawnSync('jq', ['-c', `.comments[] | ${trustedJqSelect()} | .n`], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+  const r = runJq(['-c', `.comments[] | ${trustedJqSelect()} | .n`], JSON.stringify({ comments }));
   assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
   const kept = r.stdout.split('\n').filter(Boolean);
   assert.deepStrictEqual(kept, ['1', '2', '3', '4']);
