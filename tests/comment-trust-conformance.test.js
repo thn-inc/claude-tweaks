@@ -20,6 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { runJq } = require('./helpers/run-jq');
 
 const {
   TRUSTED_AUTHOR_ASSOCIATIONS,
@@ -461,16 +462,16 @@ for (const [file, doc, frozen] of JQ_READERS) {
       // A resolved untrusted lookalike is not a pending decision either way — it must not be noted.
       { id: 'IC_resolved', url: 'https://x/c/3', author: { login: 'eve' }, authorAssociation: 'NONE', body: `**Resolved:** done — 2026-10-17\n\n${marker}` },
     ];
-    const runJq = (line) => {
+    const runLine = (line) => {
       const program = jqProgram(line).replace(/\{unit\}/g, 'backlog-refine');
-      const r = spawnSync('jq', ['-r', program], { input: JSON.stringify({ comments }), encoding: 'utf8' });
+      const r = runJq(['-r', program], JSON.stringify({ comments }));
       assert.strictEqual(r.status, 0, `jq failed: ${r.stderr}`);
       return r.stdout;
     };
-    assert.strictEqual(runJq(idLine(doc)), 'IC_member\n', `${file}: only the MEMBER decision comment may be returned`);
-    assert.strictEqual(runJq(noteLine(doc)), `${untrustedSkipNote(comments[0])}\n`, `${file}: exactly the NONE comment is named`);
+    assert.strictEqual(runLine(idLine(doc)), 'IC_member\n', `${file}: only the MEMBER decision comment may be returned`);
+    assert.strictEqual(runLine(noteLine(doc)), `${untrustedSkipNote(comments[0])}\n`, `${file}: exactly the NONE comment is named`);
     // Go-red: the pre-change lookup returns the forged comment too.
-    assert.strictEqual(runJq(idLine(frozen)), 'IC_none\nIC_member\n', 'control must return the untrusted comment (proves the run discriminates)');
+    assert.strictEqual(runLine(idLine(frozen)), 'IC_none\nIC_member\n', 'control must return the untrusted comment (proves the run discriminates)');
   });
 }
 
