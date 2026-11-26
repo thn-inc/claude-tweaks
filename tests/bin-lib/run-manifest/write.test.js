@@ -8,7 +8,7 @@ const { scratchDir } = require('../../helpers/tmp-dir');
 const { chmodDenialSkip } = require('../../helpers/root');
 const { writeFileAtomic } = require('../../../plugin/bin/lib/atomic-write');
 const {
-  MANIFEST_FILE, MANIFEST_VERSION, LANES, CEREMONY_PROFILES, initRunManifest, fillRunManifest,
+  MANIFEST_FILE, MANIFEST_VERSION, LANES, CEREMONY_PROFILES, CLOSE_FIELDS, COST_GROUP, initRunManifest, fillRunManifest,
 } = require('../../../plugin/bin/lib/run-manifest/write');
 
 const FACTS = {
@@ -413,5 +413,103 @@ test('a directory holding only manifest.json still has no decisions.md, run-stat
   assert.deepEqual(fs.readdirSync(dir), [MANIFEST_FILE]);
   for (const name of ['decisions.md', 'run-state.json', 'config.yml']) {
     assert.equal(fs.existsSync(path.join(dir, name)), false, name);
+  }
+});
+
+const TOK = { input: 1, output: 2, cacheRead: 3, cacheWrite5m: 4, cacheWrite1h: 0 };
+const group = (over = {}) => ({
+  tokensByModel: { 'claude-opus-5-5': TOK }, costUsd: 1.25, priceDate: '2026-11-01', unpricedModels: [], costPartial: false, ...over,
+});
+const quiet = { stderr: () => {} };
+
+test('close-out vocabulary constants', () => {
+  assert.deepEqual(CLOSE_FIELDS, ['closedAt', 'minutes']);
+  assert.deepEqual(COST_GROUP, ['tokensByModel', 'costUsd', 'priceDate', 'unpricedModels', 'costPartial']);
+});
+
+test('AC8.1: a pre-change nine-field manifest filled at close gains the fields and keeps v 1 and its values', () => {
+  const dir = runDir('spec-9');
+  initRunManifest(dir, { lane: 'standard' }, { gatherFacts: gather(), now: () => new Date('2026-11-19T07:31:30.000Z'), stderr: () => {} });
+  const before = readManifest(dir);
+  assert.deepEqual(Object.keys(before), NINE_KEYS);
+  const out = fillRunManifest(dir, { closedAt: '2026-11-19T08:00:00.000Z', minutes: 28.5, cost: group() }, quiet);
+  assert.deepEqual(out.changed.sort(), ['closedAt', 'costPartial', 'costUsd', 'minutes', 'priceDate', 'tokensByModel', 'unpricedModels']);
+  const after = readManifest(dir);
+  assert.equal(after.v, 1);
+  for (const k of NINE_KEYS) assert.deepEqual(after[k], before[k]);
+  assert.equal(after.closedAt, '2026-11-19T08:00:00.000Z');
+  assert.equal(after.minutes, 28.5);
+  assert.deepEqual(after.tokensByModel, group().tokensByModel);
+  assert.equal(after.costUsd, 1.25);
+});
+
+test('AC8.2: MANIFEST_VERSION is still 1', () => {
+  assert.equal(MANIFEST_VERSION, 1);
+});
+
+test('AC8.3: a stored partial group is replaced by a later complete group', () => {
+  for (const stored of [group({ costPartial: true }), group({ costUsd: null, costPartial: false })]) {
+    const dir = runDir();
+    fillRunManifest(dir, { cost: stored }, quiet);
+    const next = group({ costUsd: 9.5 });
+    const out = fillRunManifest(dir, { cost: next }, quiet);
+    assert.ok(out.changed.includes('costUsd'));
+    assert.equal(readManifest(dir).costUsd, 9.5);
+    assert.equal(readManifest(dir).costPartial, false);
+  }
+});
+
+test('AC8.4: a stored complete group is not replaced by a later complete or partial group', () => {
+  const dir = runDir();
+  fillRunManifest(dir, { cost: group() }, quiet);
+  const before = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: 7 }) }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: 7, costPartial: true }) }, quiet), { changed: [] });
+  assert.equal(manifestBytes(dir), before);
+});
+
+test('AC8.5: a stored partial group is not replaced by another partial group', () => {
+  const dir = runDir();
+  fillRunManifest(dir, { cost: group({ costPartial: true }) }, quiet);
+  const before = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: 7, costPartial: true }) }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet), { changed: [] });
+  assert.equal(manifestBytes(dir), before);
+});
+
+test('an identical group writes nothing', () => {
+  const dir = runDir();
+  fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet);
+  const before = manifestBytes(dir);
+  assert.deepEqual(fillRunManifest(dir, { cost: group({ costUsd: null, costPartial: true }) }, quiet), { changed: [] });
+  assert.equal(manifestBytes(dir), before);
+});
+
+test('closedAt and minutes are fill-only-null', () => {
+  const dir = runDir();
+  fillRunManifest(dir, { closedAt: '2026-11-19T08:00:00.000Z', minutes: 3 }, quiet);
+  assert.deepEqual(fillRunManifest(dir, { closedAt: '2026-11-20T08:00:00.000Z', minutes: 9 }, quiet), { changed: [] });
+  assert.equal(readManifest(dir).closedAt, '2026-11-19T08:00:00.000Z');
+  assert.equal(readManifest(dir).minutes, 3);
+  const zero = runDir();
+  fillRunManifest(zero, { minutes: 0 }, quiet);
+  assert.equal(readManifest(zero).minutes, 0);
+  const bad = runDir();
+  assert.deepEqual(fillRunManifest(bad, { closedAt: 'not a date', minutes: -1 }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(bad, { closedAt: 5, minutes: Infinity }, quiet), { changed: [] });
+  assert.deepEqual(fillRunManifest(bad, { closedAt: null, minutes: null }, quiet), { changed: [] });
+});
+
+test('an invalid cost group is ignored', () => {
+  const bads = [
+    group({ costUsd: -1 }), group({ costUsd: NaN }), group({ costUsd: '1' }), group({ priceDate: 5 }),
+    group({ unpricedModels: [1] }), group({ unpricedModels: 'x' }), group({ costPartial: 'no' }),
+    group({ tokensByModel: { m: { ...TOK, input: -1 } } }), group({ tokensByModel: { m: { input: 1 } } }),
+    group({ tokensByModel: [TOK] }), { costUsd: 1 }, 'x', [],
+  ];
+  for (const bad of bads) {
+    const dir = runDir();
+    assert.deepEqual(fillRunManifest(dir, { cost: bad }, quiet), { changed: [] });
+    assert.equal(fs.existsSync(path.join(dir, MANIFEST_FILE)), false);
   }
 });
