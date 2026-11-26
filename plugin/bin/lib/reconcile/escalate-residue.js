@@ -436,9 +436,9 @@ function escalateResidue({
 // or resolved by some other means entirely) and was already escalated has an
 // open backlog record naming a path that no longer needs it. Comment (why)
 // then close — best-effort, mirrors escalateResidue's own never-throw
-// posture; cache.js drops the cache entry regardless of whether this
-// resolution succeeds (the path itself is gone either way, so it can never
-// fail or succeed again — see that call site's own comment).
+// posture; #4209: cache.js drops the cache entry once this resolution lands, or
+// after RESIDUE_RETRY_LIMIT failed retries, and keeps it for later passes in
+// between (see that call site's own comment).
 // #1811 Deliverable 4: the consolidated record names N paths, so resolving
 // ONE of them must never close the record out from under the OTHER,
 // still-genuinely-stuck paths it names. Removes just `targetPath` from the

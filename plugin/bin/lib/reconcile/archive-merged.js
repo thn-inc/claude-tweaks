@@ -2962,10 +2962,12 @@ function archiveMerged({
   // pass just archived has its structurally-stuck entry cleared (or kept on a
   // failed resolve) by trackArchiveResult's clearResidue (#4202); a kept
   // entry's path is now gone, so the call below retries its resolve in this
-  // same pass and then drops the entry whatever that retry returns. A real
+  // same pass; a landed retry drops the entry, a failed one keeps it (#4209)
+  // for later passes until the RESIDUE_RETRY_LIMIT-th failed retry. A real
   // GitHub write (closing an escalated record) belongs behind the same dry-run
   // guard every other outward write in this module already respects.
-  // #4180: its resolve failures come back (the entry is dropped either way) for the caller to report.
+  // #4180: its resolve failures come back (a kept entry also carries its own
+  // `lastResidueError`) for the caller to report.
   const residueErrors = dryRun ? [] : pruneResidueFailures(root, residueRepo, { runner }).failures;
 
   // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent

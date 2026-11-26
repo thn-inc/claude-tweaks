@@ -46,6 +46,12 @@ const SHARED_HEALTH_TTL_MS = 10 * 1000;
 // stronger signal (documented in the issue, not derived from measurement).
 const RESIDUE_ESCALATE_THRESHOLD = 3;
 
+// #4209: a gone-path escalated entry whose resolve keeps failing is kept and retried by later
+// passes; the pass that records this many failed retries drops it. Passes run roughly once per
+// session start (and other reconcile entry points), so the bound is approximate wall-clock-wise:
+// 5 rides out a multi-session gh outage, and a gh-absent machine gives up after 5 cheap ENOENT spawns.
+const RESIDUE_RETRY_LIMIT = 5;
+
 function cachePath(root) {
   return path.join(root, '.claude-tweaks', CACHE_FILENAME);
 }
@@ -62,7 +68,8 @@ function parseResidueIssueIndex(raw) {
 
 // -> { lastRunAt: number|null, claimShas: {[issueNumber]: string},
 //      residueFailures: {[reason:path]: {count, firstFailedAt, lastError, escalated,
-//        lastResidueError?: {op: 'escalate'|'resolve', reason, at}}},  (#4180, set by recordResidueError)
+//        lastResidueError?: {op: 'escalate'|'resolve', reason, at}, residueRetries?: number}},
+//        (#4180, set by recordResidueError; #4209 residueRetries counts failed resolve retries)
 //      lastHealthCheckOkAt: number|null, lastOriginHeadRepairFailedAt: number|null,
 //      prStates: {['n:N'|'b:branch']: {v, at}},  (#4032, pr-state-cache.js owns the shape)
 //      claimBlobs: {[blobSha]: content},  (#4032, release-merged.js: active claims' content by blob sha)
@@ -334,7 +341,7 @@ function unresolvedError(resolved) {
 // dropped only once the resolution landed (a throw or any other status keeps
 // it). #4202: two callers — #2724's ad-hoc exemption (path still exists, so
 // the next pass calls this again) and archive success (path now gone, so the
-// same pass's pruneResidueFailures retries the resolve once).
+// same pass's pruneResidueFailures retries the resolve; #4209: a failed retry keeps the entry for later passes).
 const RESIDUE_RESOLVED_STATUSES = new Set(['closed', 'path-removed', 'not-found', 'already-closed']);
 
 // #4180: the read-only twin of clearResidue's first branches — what a clear would do for this
@@ -435,12 +442,19 @@ function listResidueFailures(root) {
 // escalation streak. Reason-agnostic by design (#1811's `structurally-stuck`
 // prune shares this same call rather than duplicating it) — every entry, not
 // only `move-failed`, is checked the same way. Best-effort and never throws:
-// a resolution failure (gh absent, network) still drops the cache entry —
-// the path itself is gone either way — leaving the filed issue open for a
-// human to close manually later, same posture as escalateResidue's own
-// never-breaks-a-session contract. #4180: the entry is gone, so a failed resolve cannot ride on
-// it — the failures come back as `{ failures: [{ reason, path, op: 'resolve', error }] }` instead.
-function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, runner } = {}) {
+// #4209 — a resolution failure (gh absent, network) on an ESCALATED
+// entry keeps it, counting `residueRetries` and recording `lastResidueError`,
+// so a later pass retries the resolve instead of leaving the filed issue open
+// for good; the pass that records the RESIDUE_RETRY_LIMIT-th failed retry drops
+// it (bound rationale: see the constant). A non-escalated entry, or one whose
+// resolve landed, is dropped at once. A path that comes back resets the
+// counter, since `recordResidueSuccess` drops the entry and
+// `recordResidueFailure` rebuilds it carrying only `lastResidueError`; only a
+// path that returns and is never touched again keeps its count. #4180: the
+// failures still come back as
+// `{ failures: [{ reason, path, op: 'resolve', error }] }` — a kept entry's
+// failure also rides on its `lastResidueError`.
+function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, runner, now = Date.now() } = {}) {
   const cache = readCache(root);
   const failures = { ...cache.residueFailures };
   let changed = false;
@@ -450,16 +464,20 @@ function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, run
     const reason = sep === -1 ? key : key.slice(0, sep);
     const targetPath = sep === -1 ? '' : key.slice(sep + 1);
     if (!targetPath || fs.existsSync(targetPath)) continue;
-    delete failures[key];
     changed = true;
-    if (entry && entry.escalated) {
-      let failure = null;
-      try {
-        const resolved = resolve({ repo: residueRepo, reason, targetPath, runner, pathExists: ownedPathExists(root) });
-        if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
-      } catch (err) { failure = { error: residueErrorText(err) }; }
-      if (failure !== null) resolveFailures.push({ reason, path: targetPath, op: 'resolve', error: boundedError(failure.error, failure.detail) });
-    }
+    if (!(entry && entry.escalated)) { delete failures[key]; continue; }
+    let failure = null;
+    try {
+      const resolved = resolve({ repo: residueRepo, reason, targetPath, runner, pathExists: ownedPathExists(root) });
+      if (!resolved || !RESIDUE_RESOLVED_STATUSES.has(resolved.status)) failure = unresolvedError(resolved);
+    } catch (err) { failure = { error: residueErrorText(err) }; }
+    if (failure === null) { delete failures[key]; continue; }
+    const error = boundedError(failure.error, failure.detail);
+    resolveFailures.push({ reason, path: targetPath, op: 'resolve', error });
+    const priorRetries = Number.isInteger(entry.residueRetries) && entry.residueRetries > 0 ? entry.residueRetries : 0;
+    const retries = priorRetries + 1;
+    if (retries >= RESIDUE_RETRY_LIMIT) delete failures[key];
+    else failures[key] = { ...entry, residueRetries: retries, lastResidueError: { op: 'resolve', reason: error, at: now } };
   }
   if (changed) writeCache(root, { ...cache, residueFailures: failures });
   return { failures: resolveFailures };
@@ -467,6 +485,6 @@ function pruneResidueFailures(root, residueRepo, { resolve = resolveResidue, run
 
 module.exports = {
   readCache, writeCache, applyOwnerlessNonClean, applyRunDispositions, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS, cachePath,
-  RESIDUE_ESCALATE_THRESHOLD, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
+  RESIDUE_ESCALATE_THRESHOLD, RESIDUE_RETRY_LIMIT, residueKey, recordResidueFailure, recordResidueSuccess, clearResidue, listResidueFailures,
   recordResidueError, planClear, trackResidue, pruneResidueFailures, beginCacheBatch, commitCacheBatch,
 };
