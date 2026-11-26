@@ -16,7 +16,7 @@ files:
 **Persona:** a maintainer, or the hub acting on their behalf, with a queue of authorized `auto:build` records and no time to choose among them. They want the driver to take the next few eligible records itself, in the queue's own order, and to say afterwards how many it drove, how many it passed over and why it stopped. Picking a record by hand would be wasted effort.
 **Goal:** run one command with a budget and get back the usual per-record event lines for each driven record, followed by one summary line that accounts for every record the run handled.
 **Entry point:** `node plugin/bin/drive.js --budget 3` (or `--budget all`, optionally with `--no-settle`) in the main checkout of a repository whose `.claude-tweaks/policy.yml` enables `express-driver`.
-**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted`, and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
+**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted` (or a stop such as `worker-stop`), and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
 
 ## Steps
 
@@ -57,6 +57,7 @@ files:
   - A driven record takes the whole per-record path, its `review` and `merge` steps included wherever the policy turns them on, so its final line can carry `merged` or `armed` as well as `pending-review`, `express-escalated` or `blocked`. Every one of them counts `driven`: the summary has no per-outcome counter, so each record's final line is where its outcome is read.
   - A refusal, a pre-screen skip, a contested claim (`claim-targets.js` exit 3) and any other per-record claim failure cost nothing, and the loop goes on. The other failures are exits 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint.
   - A claim stop ends the whole run, because every later claim would meet the same cause: exit 7 is `permission-stop`, and exits 2 and 6 are `claim-stop`. That record gets the claim row's settle, and the rest of the budget goes unused.
+  - An implementer launch that cannot launch ends the run as `worker-stop` (#6118): at once when its cause is shared (a launch error, or an authentication, permission, rate-limit or not-logged-in failure), or after two counting launch failures in a row. The record gets a marker-free `shared-cause` comment for a shared cause, and the first record of a two-in-a-row streak has its escalation comment deleted.
   - The run keeps its own list of the PRs it has opened (`dispatch-drain-prs.json` in its `drive-{ts}-{pid}` session temp directory, written `[]` before the first record) and hands it, with the latest pull's `dispatch-near-dup-pairs.json` when one exists, to every record it drives. So a record's merge step holds the merge (`pending-review`, reason `drain-overlap` or `near-duplicate`) while a PR this run opened earlier is still open and shares a changed path or closes a strong near-duplicate partner, as a dispatch drain does. Only this run's own PRs are listed.
   - A list the run cannot trust (a failed write, or a driven record that returned no final line) makes every later record hold as `in-flight-unreadable`, with one stderr line naming the cause. The list file is left in place when the run ends.
 - **Red flags:**
@@ -74,9 +75,9 @@ files:
 - **Should understand:**
   - `status` follows from `ended`:
     - `ok` for `budget`, `exhausted` and `policy-refused`;
-    - `stop` for `permission-stop` and `claim-stop`;
+    - `stop` for `permission-stop`, `claim-stop` and `worker-stop`;
     - `fail` for `pull-failed`, which also exits 1.
-  - `detail` names the exit code and record for a claim stop, and the first line of the failure for a failed pull.
+  - `detail` names the exit code and record for a claim stop, the record or records and closed reason for a `worker-stop`, and the first line of the failure for a failed pull.
   - `express-driver: off` refuses before any pull. A `policy` stop line comes first, then a summary with `ended: policy-refused`, then exit 0.
   - The summary is stdout only. It is never written to a run directory's jsonl.
   - Fields are added and never renamed.
