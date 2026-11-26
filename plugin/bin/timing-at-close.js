@@ -3,6 +3,7 @@
 //   node bin/timing-at-close.js --run <run-dir> [--help]
 // The reconciler's archive path writes phase rows synchronously, then starts this CLI detached
 // (lib/timing/at-close.js's spawnTokenPass) to add token totals from the run's own transcript (a dispatched run also counts the Task-call transcripts naming it).
+// The same pass also fills the run's manifest.json (#6009): closedAt, minutes and the list-price cost group.
 // Sanctioned-writer exit codes: 0 timing.json written or kept (its path on stdout; a spec-N
 // child of a multi-record run gets a one-line note instead — the parent's file covers it);
 // 2 malformed invocation; 3 the run dir is missing, not a directory, or not anchored under the
