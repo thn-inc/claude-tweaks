@@ -87,7 +87,7 @@ function step25Section(text) {
 const STEP_25_FACTS = [
   [/Bare drain only: the `#N`, `#N,#M,\.\.\.`, `close-out` and `resume` forms never run it\./, 'only the bare form runs Step 2.5'],
   [/Read `answered-resumes\.md` in this skill's directory and follow it/, 'Step 2.5 reads answered-resumes.md'],
-  [/each eligible resume spends one `--budget` unit/, 'each eligible resume spends one --budget unit'],
+  [/each resumed record spends one `--budget` unit/, 'each resumed record spends one --budget unit'],
   [/The rest of `\{budget\}` goes to Step 3\./, 'the remaining budget goes to Step 3'],
 ];
 
@@ -164,6 +164,7 @@ test('AC4.2 order controls: swapping check/verdict or verdict/ingest goes red; a
 const LIST_FACTS = [
   [/`gh issue list --label needs:answer --state open --json number --limit \{backlog-fetch-limit\}`/, 'the needs:answer list command'],
   [/An empty list prints `\[\]` with exit 0, also when the label does not exist yet/, 'an empty list is not an error'],
+  [/skip this step and print `answered records not resumed: gh absent`/, 'the MCP-path skip prints a line'],
 ];
 const CHECK_FACTS = [
   [/Exit 3 \(no trusted `\/answer` reply yet, or no question comment\): leave the record untouched\./, 'check exit 3 leaves the record untouched'],
@@ -188,8 +189,9 @@ const VERDICT_FACTS = [
 const INGEST_FACTS = [
   [/On an eligible verdict \(exit 0\), run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/plan-review-answer\.js" --issue \{n\}`/, 'the ingest runs only on an eligible verdict'],
   [/run `resume\.md` Steps 3-8 for the record/, 'the sweep runs resume.md Steps 3-8'],
-  [/render the first call \(and the second, as for any group\) with `--headless` exactly when this firing is headless/, 'the sweep passes --headless exactly when the firing is headless'],
-  [/this resume spends one `--budget` unit/, 'an eligible resume spends one --budget unit'],
+  [/render the first call with `--headless` exactly when this firing is headless/, 'the sweep passes --headless on the first call exactly when the firing is headless'],
+  [/the second call never takes it, as for any group\./, 'the second call never takes --headless'],
+  [/This resume spends one `--budget` unit/, 'an eligible resume spends one --budget unit'],
   [/A non-zero ingest exit \(2 or 4\) prints its stderr line, dispatches nothing and spends nothing\./, 'a failed ingest spends nothing'],
 ];
 
@@ -211,6 +213,22 @@ test('AC4.3: no paragraph but the eligible branch spends a --budget unit', () =>
   assert.equal(unitSpendsOutsideIngest(planted), 1, 'control: a unit spent on the refused branch is counted');
 });
 
+test('step 5 control: --headless on the second call goes red on its own fact (the CLI refuses it there)', () => {
+  rewriteGoesRed(paragraphStarting(ANSWERED, P_INGEST), INGEST_FACTS, 'render the first call with', 'render the first call (and the second, as for any group) with', 'the sweep passes --headless on the first call exactly when the firing is headless');
+});
+
+// A stop after the ingest and before Step 7's dispatch re-adds needs:answer, so the next sweep retries.
+const P_STOPS = 'A stop inside Steps 3-8';
+const STOP_FACTS = [
+  [/A stop before Step 7 dispatches \(Step 3's staged-index or archive stop, Step 6a's stop\)/, 'names the pre-dispatch stops'],
+  [/re-add the label with `gh issue edit \{n\} --add-label needs:answer`/, 'a pre-dispatch stop re-adds needs:answer'],
+  [/the next sweep's check reads the record as answered \(exit 0\) and retries the resume/, 'the next sweep retries the record'],
+];
+test('answered-resumes.md: a stop before Step 7 dispatches re-adds needs:answer', () => {
+  pinFacts(paragraphStarting(ANSWERED, P_STOPS), STOP_FACTS);
+  rewriteGoesRed(paragraphStarting(ANSWERED, P_STOPS), STOP_FACTS, '--add-label needs:answer', '--remove-label needs:answer', 'a pre-dispatch stop re-adds needs:answer');
+});
+
 test('AC4.3 control: a refused verdict that spends budget goes red on its own fact', () => {
   rewriteGoesRed(paragraphStarting(ANSWERED, P_VERDICT), VERDICT_FACTS, 'spend nothing and write nothing.', 'spend one unit.', 'a refused verdict spends nothing and writes nothing');
 });
@@ -230,10 +248,13 @@ const STEP_2A_FACTS = [
   [/The bare-drain sweep runs this ingest itself and enters at Step 3\./, 'the sweep enters at Step 3'],
 ];
 
+const STEP_2_INGEST_MSG = 'Step 2 (the verdict) runs the ingest';
+const assertStep2RunsNoIngest = (text) => assert.ok(!paragraphStarting(text, R_STEP_2).includes('plan-review-answer'), STEP_2_INGEST_MSG);
+
 test("resume.md ingests only after Step 2's eligible verdict and Step 7 removes needs:answer", () => {
   requireOrder(RESUME, [R_VERDICT, R_INGEST, R_STEP_3]);
   pinFacts(paragraphStarting(RESUME, R_STEP_2A), STEP_2A_FACTS);
-  assert.ok(!paragraphStarting(RESUME, R_STEP_2).includes('plan-review-answer'), 'Step 2 (the verdict) runs the ingest');
+  assertStep2RunsNoIngest(RESUME);
 });
 
 test('resume.md order controls: swapping Step 2/2a or Step 2a/3 goes red; Step 2 planting the ingest is caught', () => {
@@ -244,7 +265,8 @@ test('resume.md order controls: swapping Step 2/2a or Step 2a/3 goes red; Step 2
   }
   const step2 = paragraphStarting(RESUME, R_STEP_2);
   const planted = RESUME.replace(step2, `${step2} Exit 3: run plan-review-answer.js first.`);
-  assert.ok(paragraphStarting(planted, R_STEP_2).includes('plan-review-answer'), 'control: a planted ingest in Step 2 is seen');
+  assert.notEqual(planted, RESUME);
+  assert.throws(() => assertStep2RunsNoIngest(planted), { message: STEP_2_INGEST_MSG });
 });
 
 const STEP_7_FACTS = [
@@ -264,10 +286,15 @@ test('resume.md Step 7 control: a typed resume allowed to pass --headless goes r
 });
 
 const ENTRY_FACTS = [[/A human types it, or the bare-drain sweep \(`answered-resumes\.md`, `SKILL\.md` Step 2\.5\) runs it for an answered record/, 'resume.md names its two entries']];
+const RETIRED_ENTRY_MSG = 'the retired human-only entry clause survives';
+const assertNoRetiredEntry = (text) => assert.ok(!text.includes('never fired by a Routine'), RETIRED_ENTRY_MSG);
 test('resume.md names both entries, and no longer says it is never fired by a Routine', () => {
   pinFacts(RESUME, ENTRY_FACTS);
-  assert.ok(!RESUME.includes('never fired by a Routine'), 'the retired human-only entry clause survives');
-  assert.ok(`${RESUME} never fired by a Routine`.includes('never fired by a Routine'), 'control');
+  assertNoRetiredEntry(RESUME);
+  // control: the pre-change entry clause, restored into the live text, goes red
+  const restored = RESUME.replace('A human types it, or the bare-drain sweep', 'It is typed by a human, never fired by a Routine. Or the bare-drain sweep');
+  assert.notEqual(restored, RESUME);
+  assert.throws(() => assertNoRetiredEntry(restored), { message: RETIRED_ENTRY_MSG });
 });
 
 // ---- task-prompt.md: the one exception to "no call of a resume carries DISPATCH_HEADLESS=1" -----
@@ -290,10 +317,19 @@ test('task-prompt.md control: widening the exception to a typed resume goes red 
 
 const OPEN_PR_FACTS = [
   [/A named record carrying `needs:answer` \(its labels from the `#N` form's own fetch\) renders this line in place of that one/, 'a needs:answer record takes its own line'],
-  [/`#\{N\} awaits a plan-review answer on its draft PR #\{pr\} — reply \/answer on its question comment, or add a \*\*Decision\*\* paragraph to the body and run \/claude-tweaks:dispatch resume #\{N\}`/, 'the needs:answer line'],
+  [/`#\{N\} awaits a plan-review answer on its draft PR #\{pr\} — reply \/answer on its question comment`/, 'the needs:answer line (always rendered)'],
+  [/Run the same `dispatch-resume\.js --issue \{N\}` verdict first\./, 'the needs:answer line runs the verdict'],
+  [/Only its `exit 0` appends `, or add a \*\*Decision\*\* paragraph to the body and run \/claude-tweaks:dispatch resume #\{N\}`/, 'the resume half renders only on an eligible verdict'],
+  [/any other exit renders that line unchanged, so the resume half is named only when resume would accept the record\./, 'any other exit renders the /answer half alone'],
 ];
-test('open-pr report: a needs:answer record renders the awaits-an-answer line', () => {
+test('open-pr report: a needs:answer record renders the awaits-an-answer line, the resume half only on an eligible verdict', () => {
   pinFacts(OPEN_PR, OPEN_PR_FACTS);
+});
+
+test('open-pr report control: an unconditional resume half goes red on its own fact', () => {
+  rewriteGoesRed(OPEN_PR, OPEN_PR_FACTS, 'Only its `exit 0` appends', 'It always appends', 'the resume half renders only on an eligible verdict');
+  // the old single-line render, resume half inline, no longer matches the always-rendered line
+  rewriteGoesRed(OPEN_PR, OPEN_PR_FACTS, 'reply /answer on its question comment`', 'reply /answer on its question comment, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{N}`', 'the needs:answer line (always rendered)');
 });
 
 const DESIGN_FACTS = [

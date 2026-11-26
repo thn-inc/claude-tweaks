@@ -132,7 +132,7 @@ The `bot:*` filter here is the cheap label-based pre-filter — labels are proje
 
 ### Step 2.5: Answered resumes (bare form only)
 
-Bare drain only: the `#N`, `#N,#M,...`, `close-out` and `resume` forms never run it. Read `answered-resumes.md` in this skill's directory and follow it: it resumes each `needs:answer` record a trusted human has answered, oldest question first, and each eligible resume spends one `--budget` unit. The rest of `{budget}` goes to Step 3.
+Bare drain only: the `#N`, `#N,#M,...`, `close-out` and `resume` forms never run it. Read `answered-resumes.md` in this skill's directory and follow it: it resumes each `needs:answer` record a trusted human has answered, oldest question first, and each resumed record spends one `--budget` unit. The rest of `{budget}` goes to Step 3.
 
 ### Step 3: Select
 
