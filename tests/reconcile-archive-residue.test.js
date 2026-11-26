@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const { STRUCTURALLY_STUCK_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { formatSummary } = require('../plugin/bin/lib/reconcile/format-summary');
-const { recordResidueFailure, recordResidueError, listResidueFailures, RESIDUE_ESCALATE_THRESHOLD, cachePath } = require('../plugin/bin/lib/reconcile/cache');
+const { recordResidueFailure, recordResidueError, listResidueFailures, RESIDUE_ESCALATE_THRESHOLD, RESIDUE_RETRY_LIMIT, cachePath, readCache, writeCache } = require('../plugin/bin/lib/reconcile/cache');
 const { structurallyStuckBody } = require('../plugin/bin/lib/reconcile/escalate-residue');
 const { reconcile } = require('../plugin/bin/lib/reconcile');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
@@ -559,6 +559,11 @@ test('#4180 reconcile: an over-budget return after archive still reports a prune
   const { root, run } = dryRunFixture();
   const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
   recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY', threshold: 1 }); // escalated, path absent
+  // #4209: a failed resolve keeps the entry until the RESIDUE_RETRY_LIMIT-th failed retry — seed the one before it.
+  const seeded = readCache(root);
+  const key = Object.keys(seeded.residueFailures).find((k) => k.endsWith(gone));
+  seeded.residueFailures[key] = { ...seeded.residueFailures[key], residueRetries: RESIDUE_RETRY_LIMIT - 1 };
+  writeCache(root, seeded);
   const budgetMod = require('../plugin/bin/lib/reconcile/budget');
   const originalBudget = budgetMod.createBudget;
   budgetMod.createBudget = () => ({
@@ -579,6 +584,20 @@ test('#4180 reconcile: an over-budget return after archive still reports a prune
     { reason: 'move-failed', path: gone, op: 'resolve', at: null },
   );
   assert.equal(typeof r.residueErrors[0].error, 'string');
+});
+
+test('#4209 reconcile: a kept entry\'s failed prune resolve is reported once in residueErrors', async () => {
+  const { root, run } = dryRunFixture();
+  const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4209');
+  recordResidueFailure(root, 'move-failed', gone, { lastError: 'EBUSY', threshold: 1 }); // escalated, path absent
+  const r = await run({});
+  const kept = listResidueFailures(root).find((e) => e.path === gone);
+  assert.ok(kept, 'the failed resolve kept the entry');
+  assert.equal(kept.residueRetries, 1);
+  const reported = r.residueErrors.filter((e) => e.path === gone);
+  assert.equal(reported.length, 1);
+  assert.equal(reported[0].op, 'resolve');
+  assert.equal(typeof reported[0].at, 'number');
 });
 
 test('#4180 reconcile: residueErrors is null when there is no repo', async () => {

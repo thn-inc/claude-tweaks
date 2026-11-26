@@ -22,7 +22,7 @@ const path = require('node:path');
 const {
   neutralize, errorText, firstLine, CLI_TIMEOUT_MS, MERGE_STEP_NAMES,
 } = require('./events');
-const { reduceDetail, canonicalWorktreePath } = require('./settle');
+const { reduceDetail, canonicalWorktreePath, apiTarget } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
 const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
@@ -1494,14 +1494,6 @@ function teardown(s) {
   logDecision(s, 'Step 4 (teardown)', `teardown: ${notes.join('; ')}`, 'AUTO', 'n/a');
   emit(s, 'merge-teardown', s.pmFailures.length > failedBefore ? 'fail' : 'ok', `${notes.join('; ')}${logNote(s, failuresBefore)}`);
   return gone ? WORKTREE.GONE : WORKTREE.KEPT;
-}
-
-// ctx.repo is the run's `--repo` slug, host-qualified off github.com (`{host}/owner/name`,
-// repo-resolve.js resolveRepoTarget). A REST path takes the bare owner/name, so the host is split
-// off and travels as --hostname, which also keeps ghOptions from injecting another host.
-function apiTarget(repo) {
-  const parts = String(repo || '').split('/');
-  return parts.length === 3 ? { slug: `${parts[1]}/${parts[2]}`, host: ['--hostname', parts[0]] } : { slug: String(repo || ''), host: [] };
 }
 
 // Ports Step 5: the remote branch delete, only once the worktree is gone and never for the

@@ -9,7 +9,7 @@ const cp = require('node:child_process');
 const crypto = require('node:crypto');
 const LIB = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib');
 const worker = require(path.join(LIB, 'driver', 'worker.js'));
-const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32 } = worker;
+const { launchWorker, buildEnv, conformsTo, ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, sharedCauseOf, countsTowardLaunchStreak } = worker;
 const { RESULT_SCHEMA, REVIEW_RESULT_SCHEMA, MERGE_CHECK_RESULT_SCHEMA, ACCEPTANCE_RESULT_SCHEMA, ROLES, DRIVER_ROLE_PROFILES, SANDBOX_PROBED_PLATFORMS, implementerSettings, toolchainReadPaths, LENS_REPLY_SCHEMA, lensReviewerSettings, lensAdmittedFormsNote, lensGitEnv } = require(path.join(LIB, 'driver', 'roles.js'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
@@ -63,10 +63,11 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
   assert.strictEqual(env.costUsd, OK.total_cost_usd);
   assert.strictEqual(env.spendOverrun, false);
   assert.strictEqual(env.detail, null);
+  assert.strictEqual(env.apiDurationMs, OK.duration_api_ms);
 });
 
-test('AC5: the envelope field names are pinned', () => {
-  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId']);
+test('AC5, AC3.1 (#6321): the envelope field names are pinned', () => {
+  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId', 'apiError', 'apiDurationMs']);
 });
 
 test('the envelope carries the result object\'s session_id as sessionId', async (t) => {
@@ -1710,4 +1711,167 @@ test('#6002 Gotcha: live probe — three implementer launches on Standard at --e
     if (env.status === 'ok' && env.result && env.result.status === 'done' && greeted === 'Hello Ann!') valid++;
   }
   assert.strictEqual(valid, 3);
+});
+
+// #6118: the shared-cause classification of an implementer envelope.
+const API_ERROR_RESULT = { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', result: 'Invalid API key · Fix external API key' };
+const apiErrorOut = (over = {}) => ({ code: 1, stdout: JSON.stringify({ ...API_ERROR_RESULT, ...over }) });
+async function launchApiError(t, over) {
+  const { runner } = fakeRunner(apiErrorOut(over));
+  return launchWorker(base(t), { runner });
+}
+
+test('#6118 AC5.1, AC5.2: an api_error result object carries apiError and stays fail/exit', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 401, api_error_type: 'authentication_error' });
+  assert.strictEqual(env.status, 'fail');
+  assert.strictEqual(env.reason, 'exit');
+  assert.deepStrictEqual(env.apiError, { status: 401, type: 'authentication_error' });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118 AC5.1: the not-logged-in shape is shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: null, result: 'Not logged in · Please run /login' });
+  assert.deepStrictEqual(env.apiError, { status: null, type: null });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118 AC5.1: a rate limit is shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 429, api_error_type: 'rate_limit_error' });
+  assert.strictEqual(sharedCauseOf(env), true);
+});
+
+test('#6118: a status or a type alone is enough for shared-cause', async (t) => {
+  assert.strictEqual(sharedCauseOf(await launchApiError(t, { api_error_status: 403 })), true);
+  assert.strictEqual(sharedCauseOf(await launchApiError(t, { api_error_status: 500, api_error_type: 'permission_error' })), true);
+});
+
+test('#6118 a 529 overloaded api_error is not shared-cause', async (t) => {
+  const env = await launchApiError(t, { api_error_status: 529, api_error_type: 'overloaded_error' });
+  assert.strictEqual(sharedCauseOf(env), false);
+  assert.strictEqual(countsTowardLaunchStreak(env), false);
+  const noWork = await launchApiError(t, { api_error_status: 529, api_error_type: 'overloaded_error', duration_api_ms: 0 });
+  assert.strictEqual(countsTowardLaunchStreak(noWork), true);
+});
+
+test('#6118: a non-integer status or a non-string type is read as null', async (t) => {
+  const env = await launchApiError(t, { api_error_status: '401', api_error_type: '' });
+  assert.deepStrictEqual(env.apiError, { status: null, type: null });
+});
+
+test('#6118 launch-error is shared-cause and counts', async (t) => {
+  const { runner } = fakeRunner({}, { spawnError: new Error('spawn claude ENOENT') });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.reason, 'launch-error');
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), true);
+  assert.strictEqual(countsTowardLaunchStreak(env), true);
+});
+
+test('#6118 no terminal_reason means apiError null', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ ...OK, is_error: true, result: 'x' }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), false);
+  const { runner: ok } = fakeRunner(okOut());
+  assert.strictEqual((await launchWorker(base(t), { runner: ok })).apiError, null);
+});
+
+test('#6118 the result text is never read', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login' }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.strictEqual(env.apiError, null);
+  assert.strictEqual(sharedCauseOf(env), false);
+});
+
+test('#6118 streak counting by reason', () => {
+  const table = [
+    [{ status: 'fail', reason: 'exit' }, false],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: 0 }, true],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: 958 }, false],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: null }, false],
+    [{ status: 'fail', reason: 'spend-ceiling', apiDurationMs: 0 }, false],
+    [{ status: 'fail', reason: 'launch-error', apiDurationMs: null }, true],
+    [{ status: 'fail', reason: 'launch-error' }, true],
+    [{ status: 'timeout', reason: 'wall-clock-ceiling' }, false],
+    [{ status: 'fail', reason: 'spend-ceiling' }, false],
+    [{ status: 'fail', reason: 'schema' }, false],
+    [{ status: 'ok', reason: null }, false],
+    [null, false],
+    [undefined, false],
+  ];
+  for (const [env, want] of table) assert.strictEqual(countsTowardLaunchStreak(env), want, JSON.stringify(env));
+  assert.strictEqual(sharedCauseOf(null), false);
+  assert.strictEqual(sharedCauseOf(undefined), false);
+});
+
+test('#6118 sharedCauseOf reads apiError only on a failed envelope', () => {
+  const apiError = { status: 401, type: 'authentication_error' };
+  assert.strictEqual(sharedCauseOf({ status: 'ok', reason: null, apiError }), false);
+  assert.strictEqual(sharedCauseOf({ status: 'timeout', reason: 'wall-clock-ceiling', apiError }), false);
+  assert.strictEqual(sharedCauseOf({ status: 'fail', reason: 'exit', apiError }), true);
+});
+
+test('#6118 AC5.3: the worker.js header records the probe', () => {
+  const text = readText(path.join(LIB, 'driver', 'worker.js'));
+  const i = text.indexOf('// - Shared cause (#6118)');
+  assert.notStrictEqual(i, -1, 'the Shared cause (#6118) probe bullet');
+  const bullet = text.slice(i, text.indexOf('\n//\n', i));
+  for (const needle of ['2026-11-26', '2.1.325', 'darwin']) assert.ok(bullet.includes(needle), needle);
+});
+
+// #6321: only a fail/exit launch that made no successful API request counts toward the streak.
+const NO_WORK_RESULT = { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', num_turns: 1, duration_api_ms: 0 };
+
+test('AC1.1 (#6321): a ran-and-failed error_max_turns result does not count', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 2, duration_api_ms: 958 }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.deepStrictEqual([env.status, env.reason, env.apiDurationMs], ['fail', 'exit', 958]);
+  assert.strictEqual(countsTowardLaunchStreak(env), false);
+  assert.strictEqual(sharedCauseOf(env), false);
+});
+
+test('AC1.2 (#6321): the probed no-work shapes count', async (t) => {
+  const shapes = [{ api_error_status: 404, api_error_type: 'not_found_error' }, { api_error_status: 400, api_error_type: 'invalid_request_error' }, {}];
+  for (const shape of shapes) {
+    const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ ...NO_WORK_RESULT, ...shape }) });
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.apiDurationMs, 0, JSON.stringify(shape));
+    assert.strictEqual(countsTowardLaunchStreak(env), true, JSON.stringify(shape));
+  }
+});
+
+test('AC1.3 (#6321): a missing or invalid duration_api_ms reads null and does not count', async (t) => {
+  const withoutDuration = { ...NO_WORK_RESULT };
+  delete withoutDuration.duration_api_ms;
+  const outs = [withoutDuration, { ...NO_WORK_RESULT, duration_api_ms: '0' }, { ...NO_WORK_RESULT, duration_api_ms: -1 }].map((obj) => ({ code: 1, stdout: JSON.stringify(obj) }));
+  outs.push({ code: 1, stdout: 'not json' });
+  for (const out of outs) {
+    const { runner } = fakeRunner(out);
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.reason, 'exit', out.stdout);
+    assert.strictEqual(env.apiDurationMs, null, out.stdout);
+    assert.strictEqual(countsTowardLaunchStreak(env), false, out.stdout);
+  }
+});
+
+test('AC1.x (#6321): the worker.js header records the no-work probe', () => {
+  const text = readText(path.join(LIB, 'driver', 'worker.js'));
+  const i = text.indexOf('// - No-work launches (#6321)');
+  assert.notStrictEqual(i, -1, 'the No-work launches (#6321) probe bullet');
+  const bullet = text.slice(i, text.indexOf('\n//\n', i));
+  for (const needle of ['2026-11-26', '2.1.325', 'darwin', 'duration_api_ms', 'num_turns']) assert.ok(bullet.includes(needle), needle);
+});
+
+test('AC4.1 (#6321): live probe — a worker that ran reports apiDurationMs above 0 and does not count; a not-logged-in one reports 0 and counts', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const prompt = 'Use no tool. Reply with the single word ready.';
+  const launch = (tweak) => launchWorker({ role: 'implementer', cwd: tmp(t), settingsDir: tmp(t), prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 } }, { runner: (call) => { tweak(call); return worker.defaultRunner(call); } });
+  const ran = await launch((call) => { call.args.push('--max-turns', '1'); });
+  const noLogin = await launch((call) => { call.options.env.CLAUDE_CONFIG_DIR = tmp(t); });
+  for (const [label, e] of [['max-turns-1', ran], ['not-logged-in', noLogin]]) {
+    t.diagnostic(label + ': ' + ['status=' + e.status, 'reason=' + e.reason, 'turns=' + e.turns, 'apiDurationMs=' + e.apiDurationMs, 'costUsd=' + e.costUsd].join(' '));
+  }
+  assert.ok(ran.apiDurationMs > 0, JSON.stringify(ran));
+  assert.strictEqual(countsTowardLaunchStreak(ran), false);
+  assert.strictEqual(noLogin.apiDurationMs, 0, JSON.stringify(noLogin));
+  assert.strictEqual(countsTowardLaunchStreak(noLogin), true);
 });
