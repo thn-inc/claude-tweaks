@@ -57,6 +57,37 @@ In the driver a record is named only when it is one of `drive.js`'s own record a
 
 The `admission` event line carries `authority` (`label`, `typed` or `none`). When admission refuses the grant and the answer is `none` with reason words, the stop's detail is the unchanged refusal text followed by `; typed command not accepted: ` and the words joined with `, `, as the queue pull's line joins them (for example `record lacks auto:build; typed command not accepted: not-named`). An answer with no reason words, or a stop that does not include the grant refusal, adds nothing.
 
+## Running it as a script job
+
+A Dispatch script job is a job with a shell `command` and no model: it runs outside any Claude session, so nothing sets `CLAUDE_PLUGIN_ROOT` and `drive.js` has no plugin root to be found by. The job's `command` is therefore a launch line that finds the root itself, then runs the drain. `{main checkout}` and `{n}` are the two placeholders; everything else is literal.
+
+```sh
+cd "{main checkout}" && ROOT="$(node -e '
+const fs = require("fs"), os = require("os"), path = require("path");
+const file = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "plugins", "installed_plugins.json");
+const list = JSON.parse(fs.readFileSync(file, "utf8")).plugins["claude-tweaks@claude-tweaks-marketplace"] || [];
+const lib = (e) => e && typeof e.installPath === "string" && path.join(e.installPath, "bin", "lib", "installed-plugins.js");
+const boot = list.map(lib).find((p) => p && fs.existsSync(p));
+const entry = boot && require(boot).selectEntry(list, process.cwd(), { realpath: fs.realpathSync.native, readFile: fs.readFileSync });
+if (!entry) { console.error("claude-tweaks is not installed for " + process.cwd() + " in " + file); process.exit(1); }
+process.stdout.write(entry.installPath);
+')" && true | CC_HUB_RUN=1 node "$ROOT/bin/drive.js" --budget {n}
+```
+
+Each part has one reason:
+
+- `cd "{main checkout}"`: the driver reads policy and the queue from the working directory, and `--budget` works from the main checkout, never a linked worktree.
+- `true |` and `CC_HUB_RUN=1`: `drive.js` must not read as a person at a terminal. A job runner that gives it a terminal on stdin and sets none of the session variables reads as a person (see "Build authority", the launcher paragraph), so the line leaves stdin a pipe and sets `CC_HUB_RUN`. Under `--budget` no record is named, so each one still needs `auto:build`.
+- The `node -e` block: it picks the installed build's root with `selectEntry` from `plugin/bin/lib/installed-plugins.js`, the first-applicable-entry rule Claude Code applies to `installed_plugins.json` (under `CLAUDE_CONFIG_DIR`, default `~/.claude`). The block first loads that module from the first listed entry that has it, so the rule used is the installed build's own. No entry for this checkout exits 1 with the error on stderr, and `&&` then runs nothing.
+
+The line needs a POSIX shell: it uses `&&`, `$(…)`, a pipe and nested quotes. When the job runner passes its `command` to a shell, the line is the command. When it does not, save the line to a file on the job host and make the command `sh {file}`.
+
+The job host needs:
+
+- Node 18 or later, `git` and `gh` on `PATH`, with `gh` authenticated, and the `claude` CLI on `PATH`.
+- The claude-tweaks plugin installed, so that `installed_plugins.json` under the config directory has an entry that applies to the main checkout.
+- A subscription login for the `claude` CLI that is reachable through `CLAUDE_CONFIG_DIR` (or `HOME`). Workers get only `ENV_ALLOW` (`PATH`, `HOME`, `USER`, `TMPDIR`, `LANG`, `CLAUDE_CONFIG_DIR`) from the job's environment (#5259, open), so a host that authenticates through other environment variables, such as an API key, launches every worker unauthenticated. The first launch then fails as a shared cause and the run ends `worker-stop` (see "Picking records: `--budget`").
+
 ## Picking records: `--budget`
 
 `--budget <n|all>` picks the records itself instead of taking names. The loop is `plugin/bin/lib/driver/budget.js`'s `runBudget`; the queue-pull module and ranking are `plugin/bin/lib/dispatch/queue-pull.js`'s.
