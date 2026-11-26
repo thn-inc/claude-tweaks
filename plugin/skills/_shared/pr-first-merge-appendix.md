@@ -37,10 +37,12 @@ Named rationale and history moved out of `pr-first-merge.md`'s operative head (#
 - **Step 2, why this procedure may undraft.** GitHub blocks merging (auto or immediate) on a draft PR by default, and this procedure only runs after both authorization and content-judgment layers already passed.
 - **Step 2.5, why `merge-when-green`/`wait` imply PR CI.** `_shared/policy-schema-coverage.md`'s coverage block derives those values only when a `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is expected.
 - **Step 3 item 1, why not an immediate merge.** The immediate merge is exactly the race both values exist to close.
+- **Step 3 item 2, why no auto-merge is left to arm.** It was already ruled out by reaching item 2 from branch 1, or `--auto` itself is not what failed — a plain `--squash` attempt hit this directly.
 - **Step 3 item 5, why the conservative branch.** The conservative branch is always safe, while guessing wrong on a real failure (e.g. treating a genuine conflict as a transient blip and retrying) is not.
 - **Step 3, why `{title-arg}` is pasted verbatim.** It is already POSIX single-quoted, so a `$(…)`, backtick, or `'` in the title stays inert.
 - **The shape, what the merge no longer needs.** No `close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree conflict procedure.
 - **Conflict path, why re-enter Step 2.5.** The pushed head has its own CI to read before any merge.
+- **Conflict path, how a human resolves it.** Check out the branch, resolve, push — no scratch-worktree ceremony.
 - **Red path, why it never prompts.** A park is a HARD-GATE-class stop written as park-and-surface: the `_shared/auto-mode-contract.md` strict rule holds, so there is never a mid-pipeline prompt; the human-facing surface is dispatch's resume confirmation (`dispatch/SKILL.md`, "Confirm before resuming").
 - **Red path, why names never go inline.** Check names come from the PR's own workflow YAML (third-party-controlled on a fork PR).
 - **Bounded watch, why head runs are counted from the saved file.** The worktree guard refuses a `--jq` program inside the loop (`_shared/scratch-worktree.md` §7).
@@ -63,7 +65,7 @@ Cited from Step 2.5's settle bullet. GitHub creates a PR's `pull_request` workfl
 - **Evidence.** Over the last 25 merged PRs (read 2026-11-26), GitHub created the `test` `pull_request` run 2 to 19 seconds after the push. In 9 of the 25, the push-only `track-issue-fixes` run had already completed 1 to 17 seconds before that, so a read in that gap saw only green. #5153's ready-run check closes this window only for workflows that skip draft PRs, and it reports `not-applicable` in this repository.
 - **Cost.** A normal PR waits nothing extra. A path-filtered PR waits 60 seconds once.
 - **Never arms `--auto`.** A read pending only on the settle window takes the `wait` row even when `mergeStateStatus` is `BLOCKED`: an armed merge lands as soon as the forge's required checks pass, and those need not include the PR workflow GitHub has not created yet, so arming would end the window early.
-- **The bounded watch assumes PR CI.** Its `0)` arm passes `hasPrCi: true` under every lever it runs under. Under a derived `off` on a repo with no PR workflow, that costs at most one 60-second wait, never a park.
+- **The bounded watch assumes PR CI.** Its `0)` arm passes `hasPrCi: true` under every lever it runs under, and so do the driver merge gate and the learned-skills drain (`bin/lib/driver/merge.js`'s `classify`, `bin/lib/learned-skills/drain.js`'s `judgePr`). Under a derived `off` on a repo with no PR workflow, each costs at most one 60-second wait, never a park.
 - **Accepted residual: clock skew** (plan review, #3468). `now` is the local clock, while the anchor is GitHub's `createdAt` or the committer's date, so local-clock skew of more than the window can shorten or lengthen it. Not taken: reading `now` from GitHub's own clock. The pending bound still parks a window that never closes.
 - **Rejected: matching workflow path filters against the PR's changed files.** It would re-implement GitHub's `branches`/`paths`/`paths-ignore`/`types` semantics, and every divergence would be a false green or a false hold.
 

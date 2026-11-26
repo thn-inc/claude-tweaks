@@ -222,6 +222,39 @@ test('#3468: the RC=0 bullet resumes the watch on an open settle window', () => 
   assert.ok(resumes !== -1 && rc0.slice(held, resumes).includes('settle window'), 'the RC=0 bullet names the open settle window beside held runs as resuming the watch');
 });
 
+// #3468 review M11: the settle window lengthens the watch, so the RC=0 re-read routes a conflicting PR to
+// the Conflict path before any merge (driver merge.js rereadThenMerge: isConflicting before mergeCall).
+function assertRc0RoutesConflict(gateText) {
+  const section = step25Of(gateText);
+  const rc0 = section.slice(section.indexOf('`RC=0` → **green**'), section.indexOf('`RC=1` (a check failed'));
+  const reread = rc0.match(/--json ([a-zA-Z,]+)`\)/);
+  assert.ok(reread && reread[1].split(',').includes('mergeable'), 'RC=0 re-read: the --json list must include mergeable');
+  const conflict = rc0.indexOf('`DIRTY`/`CONFLICTING` → **Conflict path**');
+  assert.ok(conflict !== -1, 'RC=0 re-read: a DIRTY/CONFLICTING re-read must take the Conflict path');
+  assert.ok(conflict < rc0.indexOf('otherwise merge via Step 3'), 'RC=0 re-read: the Conflict path is taken before the merge');
+}
+
+test('#3468: the RC=0 re-read routes a conflicting PR to the Conflict path', () => {
+  const gate = readText(GATE_FILE);
+  assertRc0RoutesConflict(gate);
+  const clause = '`DIRTY`/`CONFLICTING` → **Conflict path**; ';
+  assert.ok(gate.includes(clause), 'control needs the live clause');
+  assert.throws(() => assertRc0RoutesConflict(gate.replace(clause, '')), /Conflict path/);
+});
+
+// #3468 review M12: the generic pending bullet precedes the conflict carve-outs, while every code twin
+// takes the conflict before a pending verdict, so a lead-in states conflict-first for the whole list.
+const CONFLICT_FIRST = '`DIRTY`/`CONFLICTING` takes the **Conflict path** before every **pending** rule below.';
+
+test('#3468: the classification list leads with conflict-first over pending', () => {
+  const section = step25Of(readText(GATE_FILE));
+  const lead = section.indexOf(CONFLICT_FIRST);
+  const list = section.indexOf('Classify from the three reads, in this order:');
+  const pending = section.indexOf('- Any entry with `status` not `COMPLETED`');
+  assert.ok(lead !== -1, 'Step 2.5 carries the conflict-first lead-in');
+  assert.ok(lead < list && list < pending, 'the lead-in sits before the classification list and its first pending bullet');
+});
+
 // #5153 AC7.2: every clause of the watch's ready-run edit, one message each, so a mutation control
 // can prove the clause it removed is the clause that throws.
 function assertReadyRunWatchClauses(gateText) {

@@ -48,7 +48,7 @@ First, run `_shared/pr-checklist-refresh.md`'s "Pre-merge title/description refr
 an unconditional `AUTO` step, never a stop — so the title and phase checklist are current before
 the merge attempt below.
 
-A re-entry onto an already-undrafted PR must not re-issue the undraft call blind. Read state first:
+A re-entry onto an already-undrafted PR (why: appendix "Rationale notes") must not re-issue the undraft call blind. Read state first:
 
 ```bash
 gh pr view {pr-number} --repo {owner}/{repo} --json isDraft -q .isDraft
@@ -134,7 +134,7 @@ A non-zero exit or output with no `state` is the `state-read-failed` report.
 
 **`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green — completed, never pending. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
 
-Classify from the three reads, in this order:
+`DIRTY`/`CONFLICTING` takes the **Conflict path** before every **pending** rule below. Classify from the three reads, in this order:
 
 - The command failed, or its output is not parseable JSON with the five fields other than `createdAt` → report
   (`pending-review`, reason `state-read-failed`) and stop — never merge on a state this gate could
@@ -221,11 +221,11 @@ done
 
 Head runs are counted from the saved file, never a `--jq` program (`_shared/scratch-worktree.md` §7).
 
-- `RC=0` → **green** — every reported check passed **and** every head run completed. Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
+- `RC=0` → **green** — every reported check passed **and** every head run completed. Re-read state (`gh pr view … --json state,mergeStateStatus,mergeable,headRefOid`)
   and the head runs and ready run (the same reads as above): if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
-  — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
+  — never merge blind; `DIRTY`/`CONFLICTING` → **Conflict path**; a failing head run takes the Red path, reason `check-failed:{names}` (names from
   its `workflowName`s); a head run not yet `completed` **or held** (or an open settle window) resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
@@ -359,9 +359,8 @@ the result:
 
 2. **Command failed with a checks-pending or checks-failing signature** (stderr contains
    `not mergeable` alongside `required status check`, `review`, or `checks`): checks are red or
-   still running and this repo has no auto-merge to arm around it (already ruled out by reaching
-   here from branch 1, or `--auto` itself isn't what failed — a plain `--squash` attempt hit this
-   directly). → **degrade to ready+comment** (Step 5), outcome `pending-review`. If Step 2.5's
+   still running and this repo has no auto-merge to arm around it (why: appendix "Rationale notes").
+   → **degrade to ready+comment** (Step 5), outcome `pending-review`. If Step 2.5's
    state read had shown `mergeStateStatus: BLOCKED` with a green rollup, this rejection is the
    Forge-cooperation case — arm `--auto` per Step 2.5 (the forge holds the merge until it is
    satisfied) instead of degrading to ready+comment; item 2's degrade applies to the remaining
@@ -428,7 +427,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 - **Conflict markers remain**: this is what "unresolvable headlessly" means — stop, do not
   attempt resolution. Leave the PR ready (already undrafted, never re-drafted) with a comment
   explaining the conflict, and report outcome `pending-review`. A human resolves it the ordinary
-  way — check out the branch, resolve, push — no scratch-worktree ceremony.
+  way (how: appendix "Rationale notes").
 - **Attended branch (merge mode only).** A human-confirmed merge (`/claude-tweaks:wrap-up #{n} merge`)
   resolves instead of stopping — procedure in `wrap-up/merge-mode.md`'s `## Conflict`. Every other
   caller keeps the stop-at-markers bullet above.
