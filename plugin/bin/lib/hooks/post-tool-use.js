@@ -343,6 +343,14 @@ function stampAdHocRunDir(ctx) {
   } catch { /* never break a session over bookkeeping */ }
 }
 
+// Shared writer for the two breadcrumbs below: a 'fallback' ownedRun is a
+// guessed, unrelated run (#2783), so it never receives an event (#4284). An
+// absent attribution stays trusted, per ctxLib.isTrustedOwnedRun.
+function appendOwnedRunEvent(ctx, type, data) {
+  if (!ctxLib.isTrustedOwnedRun(ctx.ownedRun)) return;
+  ctxLib.appendEvent(ctx.ownedRun.dir, type, data, ctx.ownedRun.attribution);
+}
+
 // Log-tier breadcrumb, gated on ctx.ownedRun.dir exactly like the commit
 // breadcrumbs in run() below — never a durable trace when no run dir
 // resolves. `result` distinguishes "checked, clean" from "checked, stale"
@@ -350,9 +358,7 @@ function stampAdHocRunDir(ctx) {
 // criterion this exists for is a reader of events.jsonl being able to tell
 // those three apart, not just "clean" from "everything else".
 function logWorktreeStalenessEvent(ctx, data) {
-  const ownedRun = ctx.ownedRun || {};
-  if (!ownedRun.dir) return;
-  ctxLib.appendEvent(ownedRun.dir, 'worktree-staleness', data, ownedRun.attribution);
+  appendOwnedRunEvent(ctx, 'worktree-staleness', data);
 }
 
 // Windows `core.longpaths` proactive nudge (#1782, warn tier). `_shared/
@@ -367,9 +373,7 @@ function logWorktreeStalenessEvent(ctx, data) {
 // staleness check's own #307 Non-Goals: this hook never sets the config
 // itself, only reads it and reports.
 function logWindowsLongpathsEvent(ctx, data) {
-  const ownedRun = ctx.ownedRun || {};
-  if (!ownedRun.dir) return;
-  ctxLib.appendEvent(ownedRun.dir, 'windows-longpaths', data, ownedRun.attribution);
+  appendOwnedRunEvent(ctx, 'windows-longpaths', data);
 }
 
 function checkWindowsLongpaths(ctx) {
