@@ -90,6 +90,50 @@ Three conventions follow from how this repo works, and all are visible below:
 * wrap-up: a created standalone run dir halted at "Stop and… ([#4312](https://github.com/thn-inc/claude-tweaks/issues/4312)) ([4dfbf3e](https://github.com/thn-inc/claude-tweaks/commit/4dfbf3e9bd7dbce638ab23c8f07c5d968dab08c9))
 * wrap-up: Branch finish merges on a console.json merge… ([#5833](https://github.com/thn-inc/claude-tweaks/issues/5833)) ([a3b6e0b](https://github.com/thn-inc/claude-tweaks/commit/a3b6e0bdfc68115e060708df7008712db08fc240))
 
+### Highlights
+* A project can now leave driver-ready records to a scheduled `drive.js --budget` job, so dispatch sessions no longer pick them up.
+* Shaping several records in one session (including sweeps) can no longer write one record's body onto another.
+* Internal: friction events no longer count command output that merely quotes a refusal.
+* Every pipeline run now records its token use by model, its list-price cost and its minutes in its run manifest when it closes.
+* Internal: timing breakdowns count a dispatched agent's worktree-isolation refusal as a guard-refusal turn, like the session one.
+* An unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.
+* A budget-driven driver run no longer stops early, or deletes an escalation comment, when two records in a row fail on their own work.
+* Reconcile no longer forgets a stuck run directory's escalation when GitHub is briefly unreachable.
+* Windows: the `core.longpaths` breadcrumb no longer lands in an unrelated pipeline run's `events.jsonl` after an ad-hoc EnterWorktree.
+* A budget-driven driver run now stops when workers cannot launch, instead of escalating every remaining record out of the driver lane.
+* Fix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.
+* A budget-driven driver run now holds a merge that overlaps a PR the same run opened earlier, as a dispatch drain does.
+* A standalone wrap-up paused at the Review Console can be resumed later with `/claude-tweaks:wrap-up resume`.
+* Wrap-up now proposes closing or narrowing open follow-up records that a run's changes appear to have resolved, with the evidence quoted, for a human to approve.
+* The Review Console now files a run's follow-up findings that touch the same files as one record with a checklist per finding, instead of one record each.
+* A pipeline's QA step no longer re-runs browser stories after a commit that only touched bookkeeping files such as the run ledger: the QA pass stamp now treats that commit the way the test runner's stamp already does.
+* The express lane is now on by default: small, low-risk records that already carry an `auto:merge` grant build, test and merge in one agent. Set `express-lane: false` in `.claude-tweaks/policy.yml` to turn it off.
+* A declaration can list small test suites under `subsetLaneSuites`, so a verification whose only local suite is one of them no longer waits behind whole-suite runs for a full-lane slot.
+* A fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.
+* Follow-up records filed from ledger rulings, residue sweeps, visual reviews, reflections and CLAUDE.md budget checks now list the files they touch, so related follow-ups can be grouped and built together.
+* Take CI-sourced verification verdicts even when the only uncommitted files are bookkeeping or generated paths the scope declaration already marks as running no checks.
+* Decided from measured data whether the build's final branch review and the review step overlap enough to merge them, and recorded the result.
+* The Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.
+* On a project whose verify-scope declaration takes suites from CI but has no impact map, the first scoped verification in a new worktree now checks only what the branch changed since the integration branch, so a branch of non-code files runs no test suite.
+* Review sizes a change by its code, not by the pipeline's own spec, plan, ledger and lockfile files, so small changes no longer get the heaviest reviews.
+* Records filed from a review follow-up now list the files the finding names under Key Files, so a one-file fix takes the micro-plan fast path and shows up in dispatch's file-overlap checks.
+* Stop a scoped verification at once when HEAD has not been pushed, instead of running the whole suite locally while CI could answer after a push.
+* Records filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks. The `ceremony:*` label now decides lane eligibility for these records too: a capture judged `standard` leaves the driver lane by default, and one judged `fast-lane` becomes eligible for the express lane.
+* Slice the review lens and subagent composed bundles down to the sections their prompts cite, so each child loads less.
+* A build's per-task implementers no longer stop and wait for a human ruling when another session's test run holds the machine's test slot; they run their focused tests and carry on.
+* No user-facing change. Maintainer-side: the post-merge Windows check now closes its own regression records once their test files pass again on main, so already-fixed records stop reaching the build queue.
+* Build, test and tidy no longer tell their helper agents to use a `cd … &&` command form that the worktree guard refuses, which removes repeated refused-and-retried commands in worktree runs.
+* A run-ledger commit after build's scoped verification no longer re-runs the impact-selected test suite: the test step re-stamps the new commit without running anything.
+* Closes out four stale-ledger findings whose ledgers were already cleaned up.
+* `tools/test-impact.js fetch` no longer replaces a fresher, clean local test-impact map with an older CI map.
+* Fewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.
+* High-effort reviews no longer dispatch debate judges for unrelated findings that only sit near each other.
+* Retry a timed-out GitHub read up to three times before a CI-sourced verification falls back to running the suite locally.
+* Review no longer runs its lens reviewers on a pipeline run that changed only its own bookkeeping files.
+* Stop the wrap-up fact pack from printing its whole content into the session; it now prints one summary line and keeps the facts in its file.
+* Added a dry-run report of runs that could be closed automatically, trimmed the unfinished-runs banner to runs that really need attention, and made sessions archive their own scratch run when they end.
+* No user-facing change. Fixes a test that failed on Windows checkouts only.
+
 ## [6.179.0](https://github.com/thn-inc/claude-tweaks/compare/v6.178.0...v6.179.0) (2026-11-24)
 
 
