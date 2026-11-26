@@ -9445,3 +9445,13 @@ test('#6118 a HEAD-moved stop after a fail/exit envelope neither counts nor is s
   assert.deepEqual(ctxs[0].implementerLaunch, { status: 'fail', reason: 'exit', sharedCause: false, counts: false });
   assert.deepEqual([facts.implementerLaunch, facts.sharedCause], [{ status: 'fail', reason: 'exit', counts: false }, false]);
 });
+
+test('#6118 an index-flag stop after a fail/exit envelope neither counts nor is shared-cause', async () => {
+  const ctxs = [];
+  const envelope = { ...ENVELOPE, status: 'fail', reason: 'exit', result: null, apiError: { status: 401, type: 'authentication_error' } };
+  const h = harness({ script: [nthCall(isFlagRead, 2, NEW_FLAG_INDEX), [isImplementerLaunch, envelope]] });
+  const facts = await driveRecord(7, newShared(), h.deps, [grabCtx(ctxs), ...STEPS]);
+  assert.equal(lastLine(h).stop.detail, ONE_NEW);
+  assert.deepEqual(ctxs[0].implementerLaunch, { status: 'fail', reason: 'exit', sharedCause: false, counts: false });
+  assert.deepEqual([facts.implementerLaunch, facts.sharedCause], [{ status: 'fail', reason: 'exit', counts: false }, false]);
+});

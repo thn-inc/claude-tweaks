@@ -867,6 +867,8 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile,
   }
   // The first launch's verdict (#6118), for driveRecord's facts: set once per record, and only when an envelope
   // arrived. A HEAD or index-flag stop is the record's own failure, so it neither counts nor is shared-cause.
+  // "First launch that returned an envelope" equals "first launch" only because every no-envelope or early-return path
+  // ends the record before any relaunch or fix round (relaunch.js TRIGGERS need an enveloped ok launch).
   const recordLaunch = (sharedCause, counts) => {
     if (ctx.implementerLaunch === null) ctx.implementerLaunch = { status: envelope.status, reason: envelope.reason ?? null, sharedCause, counts };
   };
