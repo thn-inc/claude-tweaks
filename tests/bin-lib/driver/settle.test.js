@@ -757,6 +757,8 @@ test('#6118 commentIdFromUrl and deleteRecordComment', async () => {
     assert.throws(() => deleteRecordComment(bad, 'o/r', deps), String(bad));
   }
   assert.equal(seen.length, 2, 'a refused id makes no gh call');
+  assert.throws(() => deleteRecordComment(1.5, 'o/r', deps), { message: 'deleteRecordComment: comment id is not a safe integer (number)' });
+  assert.throws(() => deleteRecordComment('5', 'o/r', deps), { message: 'deleteRecordComment: comment id is not a safe integer (string)' });
   assert.throws(() => deleteRecordComment(7, 'o/r', { gh: () => { throw new Error('HTTP 404'); } }), /HTTP 404/);
 });
 

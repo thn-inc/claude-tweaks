@@ -144,7 +144,7 @@ function apiTarget(repo) {
 // Deletes one of the record's comments by id (the budget loop removes the driver's own escalation comment, #6118).
 // An id that is not a safe integer is refused before any call; a gh failure throws to the caller.
 function deleteRecordComment(id, ghRepo, deps) {
-  if (!Number.isSafeInteger(id)) throw new Error(`deleteRecordComment: comment id must be a safe integer, got ${typeof id}`);
+  if (!Number.isSafeInteger(id)) throw new Error(`deleteRecordComment: comment id is not a safe integer (${typeof id})`);
   const target = apiTarget(ghRepo);
   deps.gh(['api', '-X', 'DELETE', `repos/${target.slug}/issues/comments/${id}`, ...target.host]);
 }
