@@ -111,7 +111,9 @@ invoke the same procedure.
 
 Halt before applying. Leave the run directory intact. User resumes with `/claude-tweaks:wrap-up resume` (re-reads the same run directory and re-presents the console).
 
-**Logging the terminal decision:** Immediately after the terminal `AskUserQuestion` resolves (when Approve all / Approve all + merge / Override / Stop is chosen), log `AUTO {time} — Review Console: terminal decision {approve-all|approve-all-merge|leave-pr-open|override|stop}. Reversibility: n/a.` to `decisions.md`, naming whichever of the four options (three under `local-merge`) was chosen.
+The stop record is what makes a created standalone run resumable: the SessionEnd hook never stamps a created standalone dir (no owning session, so `fallback`), so `resume-halted-run.md` finds it by the `Review Console: terminal decision stop` line below plus `createdBy: "wrap-up-standalone"` with `status: active`. Write that line before halting, so it exists when the session ends.
+
+**Logging the terminal decision:** Immediately after the terminal `AskUserQuestion` resolves (when Approve all / Approve all + merge / Override / Stop is chosen), log `AUTO {time} — Review Console: terminal decision {approve-all|approve-all-merge|leave-pr-open|override|stop}. Reversibility: n/a.` to `decisions.md`, naming whichever of the four options (three under `local-merge`) was chosen. For Stop, this is the stop record `resume-halted-run.md` keys on.
 
 ## Hard requirements
 
