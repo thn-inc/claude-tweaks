@@ -56,6 +56,7 @@ files:
 - Updated at wrap-up of #5228 (run `2026-11-14T212212-spec-5228`): the entry point and step 1 add the read-only `merge-check` and `acceptance` judgment roles, and step 3 names their result schemas.
 - Updated during build of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 1 says `testCommand` is optional and that the driver passes only a targeted runner.
 - Updated during build of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 1 says every driver launch names a policy-chosen model and refuses a role with none, and step 5 adds the per-role live probe.
+- Updated during build of #6321 (run `2026-11-26T090936-record-6321`): step 3's envelope field list adds `sessionId`, `apiError` and `apiDurationMs`, and its Action says a `fail`/`exit` counts toward the driver's two-in-a-row rule only when `apiDurationMs` is 0.
 - Updated at wrap-up of #5915 (run `2026-11-19T062113-spec-5915-5917`): step 5's smoke test runs the driver's targeted test command instead of `npm test`.
 - Updated at wrap-up of #5917 (run `2026-11-19T062113-spec-5915-5917`): step 4 says `launchTracked` returns the model beside the envelope and attaches it to a launcher throw.
 - Updated during build of #5942 (run `2026-11-21T171056-spec-5941-5942`): step 1 adds the `--effort` flag and its refusal of an unknown level, and step 4 says `launchTracked` also returns and attaches the `effort`.
