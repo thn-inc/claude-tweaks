@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T081348-record-5833/work/5833-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T082958-record-5833/work/5833-spec.md`
 
 Scope keywords: needsHumanVerdict, mergeResolution, recheck-merge
 
