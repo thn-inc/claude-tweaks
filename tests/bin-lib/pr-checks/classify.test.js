@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, heldChecks, normalizeEntry, normalizeHeadRun, classifyRollup, failingNamesAt, applyBaseComparison } = require('../../../plugin/bin/lib/pr-checks/classify');
+const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, normalizeEntry, normalizeHeadRun, classifyRollup, failingNamesAt, applyBaseComparison } = require('../../../plugin/bin/lib/pr-checks/classify');
 
 const HEAD = 'a'.repeat(40);
 const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion, detailsUrl: `https://ci.example/${name}` });
@@ -182,6 +182,11 @@ test('cross-source: a cancelled rollup job and a newer successful head run of th
   assert.equal(gate([hrAt('test', 'success', { startedAt: T2 })], rollup).state, 'green');
 });
 
+test('cross-source: a cancelled rollup job newer than a successful head run of the same name reads pending', () => {
+  const rollup = [{ ...run('test', 'COMPLETED', 'CANCELLED'), startedAt: T2 }, ...GREEN_ROLLUP];
+  assert.equal(gate([hrAt('test', 'success', { startedAt: T1 })], rollup).state, 'pending');
+});
+
 test('a skipped head run stays green', () => {
   assert.equal(gate([hr('test', 'completed', 'skipped')]).state, 'green');
 });
@@ -207,7 +212,6 @@ test('a held check whose newer run is in progress is pending and named once', ()
 test('held sits after pending and before awaitingReadyRun in the result', () => {
   const r = classifyRollup({ rollup: [run('test', 'COMPLETED', 'CANCELLED')], headRefOid: HEAD, localHead: HEAD, hasPrCi: true, readySince: '2026-11-11T00:45:28Z', readyWorkflows: ['.github/workflows/ci.yml'] });
   assert.deepEqual(Object.keys(r).filter((k) => ['pending', 'held', 'awaitingReadyRun'].includes(k)), ['pending', 'held', 'awaitingReadyRun']);
-  assert.ok(Object.keys(r).indexOf('held') > Object.keys(r).indexOf('pending'));
 });
 
 test('HELD_CONCLUSIONS is the unverified set minus SKIPPED', () => {
@@ -670,6 +674,5 @@ test('#5153 normalizeHeadRun reads a REST html_url when there is no url, so a RE
 });
 
 test('HEAD_RUN_FIELDS carries start time and id for newest-per-check ordering', () => {
-  const { HEAD_RUN_FIELDS } = require('../../../plugin/bin/lib/pr-checks/classify');
   assert.equal(HEAD_RUN_FIELDS, 'databaseId,name,workflowName,status,conclusion,url,startedAt');
 });

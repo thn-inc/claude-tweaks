@@ -63,7 +63,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    PR_SCAN_OPEN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-open.json)"
    gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url,statusCheckRollup --limit {resolved-limit} > "$PR_SCAN_OPEN"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "
-     // Only rollup-green PRs get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
+     // Only OK-or-held rollups get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
      const { execFileSync } = require('child_process');
      const PR_CHECKS = require('path').join(process.env.PLUGIN_ROOT, 'bin', 'pr-checks.js');
      const NON_BLOCKING = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);

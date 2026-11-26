@@ -171,14 +171,14 @@ function repoWideItem1Slice() {
   return prScanSlice('1. **Open PRs**', '2. **Unresolved threads per open PR**', 'repo-wide item 1');
 }
 
-test('AC1.1: pr-scan repo-wide item 1 calls pr-checks.js --pr only for rollup-green PRs', () => {
+test('AC1.1: pr-scan repo-wide item 1 calls pr-checks.js --pr only for OK-or-held rollups', () => {
   const slice = repoWideItem1Slice();
   assert.match(slice, /gh pr list --state open --json [^\n]*statusCheckRollup[^\n]*--limit \{resolved-limit\}/, 'the open-PR list fetches statusCheckRollup');
   assert.ok(slice.includes('PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "'), 'the CI script receives the plugin root through the environment');
   assert.ok(!slice.includes('gh pr checks'), 'the gh pr checks read is retired');
 });
 
-test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pending', () => {
+test('AC1.1: item 1 CI script maps a pending head run under an OK-or-held rollup to pending', () => {
   const scripts = nodeEScripts(repoWideItem1Slice());
   assert.strictEqual(scripts.length, 1, 'item 1 has one CI script');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-display-ci-item1-'));

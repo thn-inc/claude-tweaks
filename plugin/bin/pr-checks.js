@@ -163,7 +163,7 @@ function gateEntry(out) {
   }
   if (state === 'pending' || state === 'stale') {
     const awaiting = Array.isArray(out.awaitingReadyRun) && out.awaitingReadyRun.length ? `no run since ready: ${out.awaitingReadyRun.join(', ')}` : null;
-    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.map((n) => (typeof n === 'string' ? n : 'unnamed')).join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
   }
   if (DEGRADED.includes(state)) {
     return { status: 'SKIP', reversibility: 'n/a', text: `condition: pr-checks.js ${state}${out.reason ? `: ${out.reason}` : ''} → fallback: local verification only` };

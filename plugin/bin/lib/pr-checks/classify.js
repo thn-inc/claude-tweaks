@@ -62,12 +62,13 @@ function result(state, headRefOid, extra = {}) {
 
 const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
+// The one --json field list every head-run reader (`gh run list --commit`) requests: heldChecks orders a check's rows by start time then id.
+const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt';
+
 // Conclusions of a run that verified nothing: its jobs were skipped, it was
 // cancelled or left waiting for approval, or GitHub marked it stale.
 // The held subset is the part of that set a check may not stay green on (#3467):
 // SKIPPED stays green-compatible, the rest read pending.
-// The one --json field list every head-run reader (`gh run list --commit`) requests: heldChecks orders a check's rows by start time then id.
-const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt';
 const HELD_CONCLUSIONS = Object.freeze(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);
 const UNVERIFIED_CONCLUSIONS = Object.freeze(['SKIPPED', ...HELD_CONCLUSIONS]);
 
