@@ -1602,3 +1602,197 @@ test('AC1.1 dispatches scope is per directory: the own-slug directory keeps its 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- manifest fill at close (#6009) ----
+const { initRunManifest } = require('../../../plugin/bin/lib/run-manifest/write');
+
+const manifestFile = (runDir) => path.join(runDir, 'manifest.json');
+const readManifestJson = (runDir) => JSON.parse(fs.readFileSync(manifestFile(runDir), 'utf8'));
+const MINT = { pluginVersion: '6.174.0', policyHash: `sha256:${'a'.repeat(64)}`, baseCommit: 'b'.repeat(40), modelProfile: { stance: 'default', ceiling: null } };
+
+// A closed run (real closeRunState stamp) with a minted manifest and its transcript.
+function manifestRun(root, { transcripts = true } = {}) {
+  const cfg = path.join(root, 'cfg');
+  const wt = path.join(root, 'wt');
+  const runDir = closedRun(root, 'run', wt);
+  assert.equal(initRunManifest(runDir, { cwd: root, lane: 'standard' }, { gatherFacts: () => ({ ...MINT }), now: () => new Date(Date.now() - 60000) }).written, true);
+  if (transcripts) writeTranscript(cfg, wt, [A, B]);
+  return { cfg, wt, runDir, env: { CLAUDE_CONFIG_DIR: cfg } };
+}
+
+test('AC6.1: after a token-total timing write the manifest has v 1, non-null costUsd, tokensByModel, minutes, closedAt, and every pre-existing field unchanged', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    const before = readManifestJson(runDir);
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    const after = readManifestJson(runDir);
+    assert.equal(after.v, 1);
+    for (const k of Object.keys(before)) assert.deepStrictEqual(after[k], before[k], k);
+    assert.equal(typeof after.costUsd, 'number');
+    assert.deepStrictEqual(Object.keys(after.tokensByModel), ['claude-test']);
+    assert.equal(after.costPartial, false);
+    assert.equal(typeof after.minutes, 'number');
+    assert.equal(typeof after.closedAt, 'string');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.2: closedAt is the close\'s run-state stamp, not the test\'s clock', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    const rs = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+    assert.equal(rs.status, 'clean');
+    const realNow = Date.now;
+    const later = realNow() + 3 * 3600 * 1000;
+    Date.now = () => later;
+    try { await writeTimingAtClose(runDir, { env }); } finally { Date.now = realNow; }
+    assert.equal(readManifestJson(runDir).closedAt, rs.updatedAt);
+    assert.notEqual(readManifestJson(runDir).closedAt, new Date(later).toISOString());
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC6.3: closing again changes nothing in the manifest', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    await writeTimingAtClose(runDir, { env });
+    assert.equal(typeof readManifestJson(runDir).costUsd, 'number');
+    const bytes = fs.readFileSync(manifestFile(runDir), 'utf8');
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
+    assert.equal(writePhaseTimingSync(runDir).status, 'kept');
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC7.1: a spec-N child gets no fill, and a fill into a non-object manifest leaves it untouched with one stderr line', async () => {
+  const root = tmpRoot();
+  try {
+    const parent = path.join(root, 'parent');
+    const child = path.join(parent, 'spec-1');
+    fs.mkdirSync(child, { recursive: true });
+    fs.writeFileSync(path.join(parent, 'run-state.json'), '{}');
+    writeEvents(child);
+    assert.equal((await writeTimingAtClose(child, { env: {} })).status, 'not-top-level');
+    assert.equal(fs.existsSync(manifestFile(child)), false);
+
+    const { runDir, env } = manifestRun(root);
+    fs.writeFileSync(manifestFile(runDir), '[1,2]\n');
+    const lines = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (chunk) => { lines.push(String(chunk)); return true; };
+    try { await writeTimingAtClose(runDir, { env }); } finally { process.stderr.write = realWrite; }
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), '[1,2]\n');
+    assert.equal(lines.filter((l) => l.startsWith('claude-tweaks: run-manifest:')).length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC8.12: a fill-created manifest takes minutes from the first event, and minutes null with no events', () => {
+  const root = tmpRoot();
+  try {
+    const { runDir } = manifestRun(root, { transcripts: false });
+    fs.rmSync(manifestFile(runDir));
+    writePhaseTimingSync(runDir);
+    const m = readManifestJson(runDir);
+    // closedAt is the close's run-state stamp, the first event is 2026-11-16T10:00:00Z.
+    const expected = Math.round((Date.parse(m.closedAt) - Date.parse('2026-11-16T10:00:00.000Z')) / 6000) / 10;
+    assert.equal(m.minutes, expected);
+
+    const bare = path.join(root, 'bare');
+    fs.mkdirSync(bare);
+    fs.writeFileSync(path.join(bare, 'run-state.json'), JSON.stringify({ status: 'active' }));
+    assert.equal(initRunManifest(bare, { cwd: root }, { gatherFacts: () => ({ ...MINT }) }).written, true);
+    writePhaseTimingSync(bare);
+    // No event and no clean stamp: nothing to fill, so the keys stay unset (read as null).
+    assert.equal(readManifestJson(bare).minutes ?? null, null);
+    assert.equal(readManifestJson(bare).closedAt ?? null, null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fills the archive twin when the run dir moved', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    const twin = path.join(path.dirname(runDir), 'archive', path.basename(runDir));
+    const realRead = transcript.readUsage;
+    transcript.readUsage = async (p, o) => {
+      fs.mkdirSync(path.dirname(twin), { recursive: true });
+      fs.renameSync(runDir, twin);
+      return realRead(p, o);
+    };
+    try {
+      assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    } finally {
+      transcript.readUsage = realRead;
+    }
+    assert.equal(fs.existsSync(runDir), false);
+    assert.equal(typeof readManifestJson(twin).costUsd, 'number');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('phase-rows-only write fills closedAt and minutes only', () => {
+  const root = tmpRoot();
+  try {
+    const { runDir } = manifestRun(root, { transcripts: false });
+    assert.equal(writePhaseTimingSync(runDir).status, 'written');
+    const m = readManifestJson(runDir);
+    assert.equal(typeof m.closedAt, 'string');
+    assert.equal(typeof m.minutes, 'number');
+    assert.equal('costUsd' in m, false);
+    assert.equal('tokensByModel' in m, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC8.6+AC8.7: a kept close over a partial stored group upgrades it once transcripts are readable, timing.json byte-identical', async () => {
+  const root = tmpRoot();
+  try {
+    const { cfg, wt, runDir, env } = manifestRun(root, { transcripts: false });
+    const subDir = agentSession(cfg, wt, SID, [{ id: 'a1', usage: OTHER }]);
+    writeTranscript(cfg, wt, [A, B]);
+    const agentFile = path.join(subDir, 'agent-a1.jsonl');
+    const held = fs.readFileSync(agentFile);
+    fs.rmSync(agentFile);
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    assert.equal(readManifestJson(runDir).costPartial, true);
+    const timingBytes = fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8');
+    fs.writeFileSync(agentFile, held);
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+    assert.equal(readManifestJson(runDir).costPartial, false);
+    assert.equal(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'), timingBytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC8.8: a kept close over a complete stored group reads no transcript rows for cost', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    await writeTimingAtClose(runDir, { env });
+    assert.equal(readManifestJson(runDir).costPartial, false);
+    const bytes = fs.readFileSync(manifestFile(runDir), 'utf8');
+    let calls = 0;
+    await withStub(atClose, 'deriveCloseCost', async () => { calls += 1; return { costRows: null, deadlineHit: false }; }, async () => {
+      assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+    });
+    assert.equal(calls, 0);
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
