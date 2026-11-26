@@ -132,8 +132,9 @@
 // `leave-open`. An absent console.json is the local-merge case (decisions.md judged alone, console.json never
 // created). When console.json recorded `merge` the stale set is always derived from the run's members (never
 // stored), and members that cannot be read are a hit (`members-unresolved`). Exit 0 judged, 2 malformed, 3 --run not
-// anchored, the lock not taken, decisions.md unreadable (absent is empty), or a write failed (the line may have
-// landed), 5 console.json present but unparseable (nothing written).
+// anchored, the lock not taken, decisions.md or console.json unreadable (absent is empty / the local-merge case), an
+// unexpected throw inside the lock, or a write failed (the line may have landed), 5 console.json present but
+// unparseable or not an object (nothing written).
 // The resolve shape names a stale merge half on stderr (`merge half stale — {reason}`) and carries `mergeStale` in
 // `--json` output when non-null; console.json's byte shape is unchanged.
 'use strict';
@@ -144,7 +145,7 @@ const { execFileSync } = require('child_process');
 const { resolveAll, renderStoredTable, recheckMerge, readMembers } = require('./lib/console/resolve');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { stackVerdicts } = require('./lib/staged-patch/stack-check');
-const { appendEntry, formatEntry } = require('./lib/log-decision/append');
+const { appendEntry, formatEntry, parseEntry } = require('./lib/log-decision/append');
 const { resolvePolicyConfig, parseFlatLines, EMPTY_LIST_RE } = require('./lib/policy-schema');
 const { UPSTREAM_FILING_TARGET, ownedOwnersList, ownerContextFromOrigin, parseTargetRepo, upstreamFilingRoute, parseStagedUpstream } = require('./lib/issues/upstream-ownership');
 const { effectiveCeiling, bookkeepingPermissions } = require('./lib/issues/autonomy');
@@ -183,7 +184,7 @@ function issueUrlRepo(url) {
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]  (exit 6: carried decision facts could not be written)\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged|pending|carried --reason <text> [--ledger <path>]  (carried and --ledger: control mode only, --ledger on a ledger-record-* or bundle-* id, else exit 2; exit 5 refused incl. a refused ledger path; exit 6 carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --check-repair <file> [--full]\n'
-  + '       console-resolve.js --run <dir> --recheck-merge  (takes no other flag; stdout `recheck-merge merge` or `recheck-merge leave-open`, both exit 0, every other exit means do not merge; exit 2 malformed, 3 unanchored, lock or decisions.md unreadable or a write failed, 5 console.json unparseable)\n'
+  + '       console-resolve.js --run <dir> --recheck-merge  (takes no other flag; stdout `recheck-merge merge` or `recheck-merge leave-open`, both exit 0, every other exit means do not merge; exit 2 malformed, 3 unanchored, lock not taken, decisions.md or console.json unreadable, or a write failed, 5 console.json unparseable)\n'
   + '       console-resolve.js --run <dir> --ceiling  (read-only; takes no other flag; exit 3 unanchored or policy unreadable)\n'
   + '       console-resolve.js --run <dir> --converge <items.json>  (takes no other flag; exit 2 malformed items file, 3 unanchored or decisions.md unwritable, 6 a carried fact could not be written)\n'
   + '       console-resolve.js --run <dir> --memory-write <target> --memory-dir <dir> --content-file <file>  (takes no other flag; exit 2 malformed or unreadable content file, 3 unanchored or a write failed, 5 memory write refused: target outside or unresolvable in the memory dir, or memory dir unreadable)\n'
@@ -1014,15 +1015,25 @@ const RECHECK_TEXT = {
 
 // One `Merge re-check:` line per late verdict: a repeat call logs nothing more.
 function recheckLogged(decisions, lateVerdict) {
-  return decisions.split(/\r?\n/).some((ln) => ln.includes('Merge re-check: ') && ln.includes(lateVerdict));
+  return decisions.split(/\r?\n/).some((ln) => {
+    const entry = parseEntry(ln);
+    if (!entry || !(entry.location === 'Merge re-check' || entry.location.endsWith(' — Merge re-check'))) return false;
+    // Strip only the trailing `Reversibility:` field formatEntry appended; the late verdict may carry its own.
+    const text = entry.action.replace(/\.?\s*Reversibility: [^.]*\.$/, '');
+    return text.endsWith(lateVerdict) || text.endsWith(lateVerdict.replace(/\.$/, ''));
+  });
 }
 
 function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
   const consolePath = path.join(runDir, 'console.json');
   const decisionsPath = path.join(runDir, 'decisions.md');
+  const append = deps.appendEntry || appendEntry;
+  const writeAtomic = deps.writeFileAtomic || writeFileAtomic;
   let code = 0;
+  let locked = false;
   try {
     code = withLock(path.join(runDir, '.console.lock'), () => {
+      locked = true;
       let decisions = '';
       try { decisions = fs.readFileSync(decisionsPath, 'utf8'); } catch (err) {
         if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
@@ -1034,8 +1045,8 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       let raw = null;
       try { raw = fs.readFileSync(consolePath, 'utf8'); } catch (err) {
         if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-          stderr(`console-resolve.js: recheck-merge refused (console.json unreadable: ${oneLineNote(failureText(err))}) — nothing written\n`);
-          return 5;
+          stderr(`console-resolve.js: recheck-merge failed (console.json unreadable: ${oneLineNote(failureText(err))}) — not merging\n`);
+          return 3;
         }
       }
       if (raw !== null) {
@@ -1063,7 +1074,7 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       }
       if (!recheckLogged(decisions, re.lateVerdict)) {
         try {
-          appendEntry({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Merge re-check', text: `${RECHECK_TEXT[re.kind]}: ${re.lateVerdict}`, reversibility: 'n/a' }) });
+          append({ runDir, section: '/wrap-up', entry: formatEntry({ status: 'AUTO', now: now(), step: 'Merge re-check', text: `${RECHECK_TEXT[re.kind]}: ${re.lateVerdict}`, reversibility: 'n/a' }) });
         } catch (err) {
           stderr(`console-resolve.js: recheck-merge failed (decisions.md entry not written: ${oneLineNote(failureText(err))}) — not merging\n`);
           return 3;
@@ -1071,7 +1082,7 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       }
       if (re.changed) {
         try {
-          writeFileAtomic(consolePath, `${JSON.stringify({ ...data, merge: { ...re.merge, recheckedAt: new Date(now()).toISOString() } }, null, 2)}\n`);
+          writeAtomic(consolePath, `${JSON.stringify({ ...data, merge: { ...re.merge, recheckedAt: new Date(now()).toISOString() } }, null, 2)}\n`);
         } catch (err) {
           stderr(`console-resolve.js: recheck-merge failed (console.json not rewritten: ${oneLineNote(failureText(err))}) — not merging; the Merge re-check line has landed\n`);
           return 3;
@@ -1079,9 +1090,9 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
       }
       stdout(`console-resolve.js: recheck-merge leave-open — ${re.lateVerdict}\n`);
       return 0;
-    }, { failClosed: true, env: process.env });
+    }, { failClosed: true, env: deps.env || process.env });
   } catch (err) {
-    stderr(`console-resolve.js: recheck-merge failed (lock: ${oneLineNote(failureText(err))}) — not merging\n`);
+    stderr(`console-resolve.js: recheck-merge failed (${locked ? '' : 'lock: '}${oneLineNote(failureText(err))}) — not merging\n`);
     return 3;
   }
   return code;

@@ -1112,3 +1112,61 @@ test('parseArgs: --recheck-merge takes no other flag than --run', async () => {
   const { d } = baseDeps(fx, []);
   assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge', '--policy', 'console-auto'], d), 2);
 });
+
+test('--recheck-merge: a held console lock is exit 3 "lock", nothing written', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const lock = path.join(fx.runDir, '.console.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '50' } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(lock: .*\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(recheckLines(fx).length, 0);
+});
+
+test('--recheck-merge: a throwing append is exit 3 and console.json is unchanged', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { appendEntry: () => { throw new Error('append boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(decisions\.md entry not written: append boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+});
+
+test('--recheck-merge: a throwing console.json rewrite is exit 3 with the Merge re-check line already landed (append precedes the write)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, out, err } = baseDeps(fx, [], { writeFileAtomic: () => { throw new Error('write boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(console\.json not rewritten: write boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(recheckLines(fx).length, 1);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'merge');
+});
+
+test('--recheck-merge: an unexpected throw inside the lock is labelled without "lock:" and exits 3', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, err } = baseDeps(fx, [], { stdout: () => { throw new Error('stdout boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(stdout boom\) — not merging/);
+  assert.doesNotMatch(err(), /\(lock:/);
+});
+
+test('--recheck-merge: a console.json that cannot be read (not ENOENT) is exit 3', async () => {
+  const fx = mainCheckoutWithRun({});
+  fs.mkdirSync(path.join(fx.runDir, 'console.json'));
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 3);
+  assert.match(r.err, /recheck-merge failed \(console\.json unreadable: .*\) — not merging/);
+});
+
+test('--recheck-merge: the duplicate check parses entries — a stray line merely mentioning the verdict does not suppress the log line', async () => {
+  const verdict = rmLine(7, 'needs-human');
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${verdict}\n- AUTO 12:00:00 — Review Console: noted Merge re-check: ${verdict.replace(/^- /, '')}\n` });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(recheckLines(fx).filter((l) => /— Merge re-check: /.test(l)).length, 1);
+});
