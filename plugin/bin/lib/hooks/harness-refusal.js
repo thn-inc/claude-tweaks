@@ -7,7 +7,8 @@
 // were measured 2026-10-28 against Claude Code 2.1.302). This is the one place a
 // wording update lands: post-tool-use-failure.js (the regex, via
 // classifyRefusal), bash-prefilter.js (the signatures) and timing/turn-class.js
-// (the nouns and clause, for its guard-refusal class, #4521) derive from it.
+// (the nouns and clause, for its guard-refusal class, #4521) and
+// tools/guard-refusals/transcripts.js and trace.js (the signatures) derive from it.
 // tools/upstream-drift/manifest.yml's `claude-code` entry asserts each fragment
 // against the installed binary, and tests/harness-refusal-drift-pin.test.js keeps
 // that manifest and this module in lockstep.
