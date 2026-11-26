@@ -6,12 +6,13 @@ files:
   - plugin/bin/lib/issues/grant-gate.js
   - plugin/bin/stuck-open-prs.js
   - plugin/bin/lib/dispatch/stuck-open-pr.js
+  - plugin/bin/lib/issues/plan-review-answers.js
 ---
 
 # Review the Backlog Attention Queue
 
 **Persona:** A claude-tweaks maintainer doing a periodic backlog check-in, wanting to know what's waiting on a human decision before picking the next thing to build.
-**Goal:** See every open record that genuinely needs a human call — an undecided idea (`needs:definition`), a decision proposal nobody has answered (`needs:decision`, or any other `needs:*` marker), a solution nobody justified (`solution:unjustified`), a spec a machine wrote that nobody has reviewed or granted (`shaped:headless` with no `auto:build`), a record parked by a failed build (`bot:blocked`), a record parked by the merge-verification gate with its grants still intact (`bot:parked`), or a granted record stuck behind an open PR (`stuck:open-pr`) — ranked in one place, alongside a merge-lane circuit-breaker warning and a staged-tidy-proposals nudge when either applies, and know exactly what to do about each one.
+**Goal:** See every open record that genuinely needs a human call — an undecided idea (`needs:definition`), a decision proposal nobody has answered (`needs:decision`, or any other `needs:*` marker), a solution nobody justified (`solution:unjustified`), a spec a machine wrote that nobody has reviewed or granted (`shaped:headless` with no `auto:build`), a plan-review question waiting on an answer (`needs:answer`, shown with the question and its reply remedy, never also as `stuck:open-pr`), a record parked by a failed build (`bot:blocked`), a record parked by the merge-verification gate with its grants still intact (`bot:parked`), or a granted record stuck behind an open PR (`stuck:open-pr`) — ranked in one place, alongside a merge-lane circuit-breaker warning and a staged-tidy-proposals nudge when either applies, and know exactly what to do about each one.
 **Entry point:** A terminal with `/claude-tweaks:backlog attention` run bare.
 **Success state:** Up to two non-record lines (a tripped merge-lane breaker, staged tidy proposals awaiting `--approve`) followed by one ranked table (or an explicit "nothing needs attention" line) covering every classification with no duplicate rows, each carrying a concrete next command to run — the maintainer picks one and moves, without having to separately remember what each label means or re-derive its remedy.
 
