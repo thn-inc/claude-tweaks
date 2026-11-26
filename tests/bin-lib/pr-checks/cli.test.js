@@ -964,7 +964,7 @@ test('docs/plugin-structure.md: the pr-checks.js row carries USAGE\'s envelope a
   const row = docs.split('\n').find((l) => l.startsWith('node plugin/bin/pr-checks.js '));
   assert.deepEqual(docsRowDrift(row, usage), []);
   // Controls: the pre-fix envelope (no awaitingReadyRun?) and a row without the ready-run read each go red alone.
-  const noKey = row.replace('pending, awaitingReadyRun?, headRefOid', 'pending, headRefOid');
+  const noKey = row.replace('held?, awaitingReadyRun?, headRefOid', 'held?, headRefOid');
   assert.notEqual(noKey, row);
   assert.equal(docsRowDrift(noKey, usage).length, 1);
   assert.match(docsRowDrift(noKey, usage)[0], /^envelope /);
