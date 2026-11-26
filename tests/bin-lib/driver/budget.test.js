@@ -806,6 +806,14 @@ test('#6118 AC3.1, AC3.3, AC8.1, AC8.2: two fail/exit launches in a row end the 
   assert.match(summary.detail, /both failed: exit, exit/);
 });
 
+test('AC2.2 (#6321): two ran-and-failed exit launches in a row end neither run nor streak and keep the escalation comment', async () => {
+  const ranFailed = { status: 'fail', reason: 'exit', counts: false };
+  const { summary, ghCalls, streaks } = await workerRun([LAUNCH_FAIL('exit', { implementerLaunch: ranFailed, escalationCommentId: 991 }), { ...LAUNCH_FAIL('exit'), implementerLaunch: ranFailed }], { count: 3 });
+  assert.equal(summary.ended, 'exhausted');
+  assert.equal(ghCalls.length, 0);
+  assert.deepEqual(streaks, [0, 0, 0]);
+});
+
 test('#6118 AC3.2, AC3.3: one fail then an ok does not end it', async () => {
   const { summary, f } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_OK], { count: 3 });
   assert.deepEqual([summary.ended, summary.status], ['exhausted', 'ok']);
