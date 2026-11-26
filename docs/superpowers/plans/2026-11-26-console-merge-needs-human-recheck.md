@@ -23,6 +23,7 @@ Scope keywords: needsHumanVerdict, mergeResolution, recheck-merge
 - `review-console-section-addition` project skill: this change adds no section and no new resolution value. `leave-open` already exists, so none of that skill's registration sites apply.
 - Do not use `**` bold inside the Branch finish paragraph of `execution-and-verification.md`. `tests/wrap-up-branch-finish-after-execution.test.js`'s `paragraph()` treats ` **` as the paragraph end.
 - `plugin/skills/wrap-up/review-console.md` is 45,883 B against the 52,500 B `RAIL_BYTES` rail (87%). Keep the prose added there under 1,000 B.
+- `plugin/skills/dispatch/settle-and-merge.md` is 51,128 B, which leaves 1,372 B of headroom (plan-audit `nearCeiling`). Its Task 3 reword must not grow the file by more than 200 B.
 - Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
 - Project maturity `established`: "For any task modifying pre-existing behavior, write a full characterization test covering edge cases before changing it — published or external consumers may depend on them."
 
