@@ -33,6 +33,7 @@ const { writeIdentity } = require('./helpers/git-fixtures');
 // (tests/reconcile-archive-residue.test.js) installs its own counting stub on top.
 require('../plugin/bin/lib/declined-learning/store').pruneDeclines = () => 0;
 
+// Runs on win32: the git shim only logs fetch argv and execs real git; these assertions read module-stub calls and real git state, never that log.
 test('AC2 (#3630): dispatch-style checks release,archive,reap sees the asynchronously merged commit at archive time', async () => {
   const { r, seenAtArchive } = await reconcileWithAsyncMerge(['release', 'archive', 'reap']);
   assert.equal(seenAtArchive.hasMerge, true, 'localHasMerge must see the merge — no local-behind-merge from a missing fetch');
@@ -457,6 +458,7 @@ function dryRunFixture() {
   return { root, run, ghCalls: () => (fs.existsSync(ghLog) ? fs.readFileSync(ghLog, 'utf8') : '') };
 }
 
+// Runs on win32: the cache and residuePlan assertions hold whatever gh answers; the zero-gh-calls check reads the shim's log, never written there, so it alone is guarded.
 test('#4180 AC1.1: reconcile --dry-run over a past-threshold stuck run dir makes zero gh calls and leaves reconcile-cache.json byte-identical', async () => {
   const { root, run, ghCalls } = dryRunFixture();
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-01-01T000000-record-4180');
@@ -476,11 +478,12 @@ test('#4180 AC1.1: reconcile --dry-run over a past-threshold stuck run dir makes
     (r.runs || []).some((x) => x.runDir === runDir && x.action === 'skipped' && ['no-worktree', 'no-branch', 'no-pr'].includes(x.reason)),
     `the fixture dir must skip for a structurally-stuck reason, got ${JSON.stringify(r.runs)}`,
   );
-  assert.equal(ghCalls(), '', 'a dry run makes no gh call');
+  if (!STUB_SKIP) assert.equal(ghCalls(), '', 'a dry run makes no gh call');
   assert.deepEqual(fs.readFileSync(cachePath(root)), before, 'a dry run leaves the cache byte-identical');
   assert.deepEqual(r.residuePlan, [{ action: 'would-escalate', reason: 'structurally-stuck', path: runDir, count: RESIDUE_ESCALATE_THRESHOLD }]);
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4180 AC2.1: a recorded resolve failure appears in reconcile JSON residueErrors', async () => {
   const { root, run } = dryRunFixture();
   const p = path.join(root, 'a.txt'); // an existing path: the prune leaves the entry alone
@@ -493,6 +496,7 @@ test('#4180 AC2.1: a recorded resolve failure appears in reconcile JSON residueE
   assert.equal(r.residuePlan, null);
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4180 reconcile: a dry run with nothing stuck reports residuePlan [] and a real run reports null', async () => {
   const { run } = dryRunFixture();
   const dry = await run({ dryRun: true });
@@ -503,6 +507,7 @@ test('#4180 reconcile: a dry run with nothing stuck reports residuePlan [] and a
   assert.deepEqual(real.residueErrors, []);
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4180 reconcile: a dry run writes no cache file at all; a real run stamps it', async () => {
   const { root, run } = dryRunFixture();
   await run({ dryRun: true });
@@ -555,6 +560,7 @@ test('#4180 repairOriginHead: dryRun never runs set-head or stamps a failure, an
 // that trips once the archive check's prune has dropped the gone path's entry returns before
 // finalize; the prune failure (its entry is gone, so only this pass's memory holds it) must still
 // reach the result, with `at: null`.
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4180 reconcile: an over-budget return after archive still reports a prune resolve failure in residueErrors', async () => {
   const { root, run } = dryRunFixture();
   const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4180');
@@ -586,6 +592,7 @@ test('#4180 reconcile: an over-budget return after archive still reports a prune
   assert.equal(typeof r.residueErrors[0].error, 'string');
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4209 reconcile: a kept entry\'s failed prune resolve is reported once in residueErrors', async () => {
   const { root, run } = dryRunFixture();
   const gone = path.join(root, '.claude-tweaks', 'pipelines', 'gone-4209');
@@ -609,6 +616,7 @@ test('#4180 reconcile: residueErrors is null when there is no repo', async () =>
 
 // #4180: the declined-learning prune rewrites its store (and takes a lock directory), so a dry
 // run skips it; a real pass still runs it exactly once.
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4180 reconcile: a dry run skips the declined-learning prune; a real run still runs it', async () => {
   const { run } = dryRunFixture();
   const store = require('../plugin/bin/lib/declined-learning/store');
@@ -643,6 +651,7 @@ function ownerlessFixture() {
   return { ...fx, mk, owned, cacheJson };
 }
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4421 AC6.2 AC7.1: a pass over only owner-block runs reports 0 on the result, the summary line and the cache, and stamps ownerlessNonCleanZeroSince', async () => {
   const { run, owned, cacheJson } = ownerlessFixture();
   owned(2);
@@ -660,6 +669,7 @@ test('#4421 AC6.2 AC7.1: a pass over only owner-block runs reports 0 on the resu
   assert.equal(cacheJson().ownerlessNonCleanZeroSince, stamp, 'the zero-since stamp is kept byte-equal');
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#3977 a real pass persists the disposition report and stamps reportOnlyPassAt; a dry run writes none', async () => {
   const { run, owned, cacheJson, root } = ownerlessFixture();
   owned(2); // owner blocks with no heartbeat — run-liveness reads them `unknown`
@@ -693,6 +703,7 @@ test('#3977 formatSummary renders one would-close line per entry with evidence, 
   assert.doesNotMatch(formatSummary({ skipped: [], runDispositions: null }), /would close|orphaned|unknown liveness/);
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4421 AC6.3: a later pass with a count above 0 clears ownerlessNonCleanZeroSince', async () => {
   const { run, owned, mk, cacheJson } = ownerlessFixture();
   owned(2);
@@ -706,6 +717,7 @@ test('#4421 AC6.3: a later pass with a count above 0 clears ownerlessNonCleanZer
   assert.equal('ownerlessNonCleanZeroSince' in cacheJson(), false);
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4421 AC6.4: a skipped pass leaves both fields absent', async () => {
   const { root, run, owned, mk } = ownerlessFixture();
   owned(1);
@@ -745,6 +757,7 @@ function seedOwnerlessCache(root) {
   fs.writeFileSync(cachePath(root), JSON.stringify({ ownerlessNonClean: 0, ownerlessNonCleanZeroSince: '2026-10-01T00:00:00.000Z' }));
 }
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4421: an over-budget return after archive ran persists ownerlessNonClean and clears a standing ownerlessNonCleanZeroSince', async () => {
   const { root, run, mk, cacheJson } = ownerlessFixture();
   for (let i = 1; i <= 3; i++) mk(`2026-10-26T10000${i}-record-${i}`, { status: 'active' }); // owner-less, non-clean
@@ -759,6 +772,7 @@ test('#4421: an over-budget return after archive ran persists ownerlessNonClean 
   assert.equal(cacheJson().lastRunAt ?? null, null, 'finalize still owns the freshness stamp');
 });
 
+// Runs on win32: the gh shim only logs and exits 1; these assertions read the cache, run dirs and residue state, which hold when real gh answers instead (a probe exec'ing real gh kept the file green).
 test('#4421: an over-budget return that never ran archive leaves a persisted ownerlessNonClean and its zero-since stamp untouched', async () => {
   for (const [label, nth, checks] of [
     ['budget exceeded before archive', 1, ['archive']],
