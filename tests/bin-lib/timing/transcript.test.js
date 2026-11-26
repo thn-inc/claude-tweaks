@@ -1583,3 +1583,67 @@ test('readDispatches items keep their kept rows internally', async () => {
   assert.equal(clipped.items[0].usageRows.length, 3);
   assert.equal(clipped.items[0].usageRows.reduce((s, r) => s + r.inputTokens, 0), clipped.items[0].tokens.input);
 });
+
+// #6010 effort fixtures, format probed 2026-11-26 on Claude Code 2.1.302/2.1.322/2.1.325: effort is on type "api-request" lines at params.output_config.effort, never on assistant lines.
+function reqLine(ts, effort) {
+  return JSON.stringify({ type: 'api-request', timestamp: ts, version: '2.1.325', querySource: 'repl_main_thread', params: { model: 'claude-opus-5-5', output_config: effort === undefined ? undefined : { effort } } });
+}
+function effortFile(lines) {
+  const f = path.join(scratchDir('ct-effort-'), 's.jsonl');
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  return f;
+}
+const EFF_MODEL = 'claude-opus-5-5';
+
+test('#6010 AC1.1: readUsage gives each assistant row the effort of the api-request line before it (high on two turns, medium on one)', async () => {
+  const f = effortFile([
+    reqLine('2026-11-26T10:00:00.000Z', 'high'),
+    aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:02.000Z', 'high'),
+    aLine('assistant', '2026-11-26T10:00:03.000Z', 'm2', EFF_MODEL, [1, 1, 0, 0]),
+    aLine('assistant', '2026-11-26T10:00:04.000Z', 'm2', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:05.000Z', 'medium'),
+    aLine('assistant', '2026-11-26T10:00:06.000Z', 'm3', EFF_MODEL, [1, 1, 0, 0]),
+    aLine('user', '2026-11-26T10:00:07.000Z'),
+  ]);
+  const rows = await readUsage(f);
+  const a = rows.filter((r) => r.role === 'assistant');
+  assert.deepEqual(a.map((r) => r.effort), ['high', 'high', 'high', 'medium']);
+  assert.equal('effort' in rows.find((r) => r.role === 'user'), false);
+});
+
+test('#6010 AC1.2: no api-request effort -> no effort key on any row (reads as null: row.effort ?? null)', async () => {
+  const f = effortFile([
+    reqLine('2026-11-26T10:00:00.000Z'),
+    aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0]),
+    aLine('assistant', '2026-11-26T10:00:02.000Z', 'm2', EFF_MODEL, [1, 1, 0, 0]),
+  ]);
+  for (const r of await readUsage(f)) assert.equal('effort' in r, false);
+  const g = effortFile([aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0])]);
+  for (const r of await readUsage(g)) assert.equal('effort' in r, false);
+});
+
+test('#6010: a non-string or empty effort is not recorded', async () => {
+  const f = effortFile([
+    reqLine('2026-11-26T10:00:00.000Z', {}),
+    aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:02.000Z', null),
+    aLine('assistant', '2026-11-26T10:00:03.000Z', 'm2', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:04.000Z', ''),
+    aLine('assistant', '2026-11-26T10:00:05.000Z', 'm3', EFF_MODEL, [1, 1, 0, 0]),
+  ]);
+  for (const r of await readUsage(f)) assert.equal('effort' in r, false);
+});
+
+test('#6010 format guard: the probed-format fixture yields an effort on at least one assistant turn', async () => {
+  const f = effortFile([
+    reqLine('2026-11-26T10:00:00.000Z', 'medium'),
+    aLine('assistant', '2026-11-26T10:00:01.000Z', 'm1', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:02.000Z', 'medium'),
+    aLine('assistant', '2026-11-26T10:00:03.000Z', 'm2', EFF_MODEL, [1, 1, 0, 0]),
+    reqLine('2026-11-26T10:00:04.000Z', 'medium'),
+    aLine('assistant', '2026-11-26T10:00:05.000Z', 'm3', EFF_MODEL, [1, 1, 0, 0]),
+  ]);
+  const rows = await readUsage(f);
+  assert.ok(rows.some((r) => r.role === 'assistant' && typeof r.effort === 'string'), 'transcript format changed: no assistant turn has an effort');
+});
