@@ -128,7 +128,10 @@ function addOne(body, question, reply) {
   const date = str(question.createdAt).slice(0, 10);
   const section = [`${SECTION_TITLE} (${date})`, '', questionLine, '', ...block].join('\n');
   const off = originalRequestOffset(body);
-  const gap = (s) => (s === '' || s.endsWith('\n\n') ? '' : s.endsWith('\n') ? '\n' : '\n\n');
+  const gap = (s) => {
+    if (s === '' || s.endsWith('\n\n')) return '';
+    return s.endsWith('\n') ? '\n' : '\n\n';
+  };
   if (off === -1) return `${body}${gap(body)}${section}\n`;
   const before = body.slice(0, off);
   return `${before}${gap(before)}${section}\n\n${body.slice(off)}`;
