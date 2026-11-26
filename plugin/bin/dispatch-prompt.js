@@ -18,7 +18,7 @@
 // unparseable, a resolver failed, a placeholder left, prompt over the MAX_PROMPT_BYTES sanity bound
 // or with no valid chunk split, --resume-verdict unreadable or not JSON, --out or the registry
 // unwritable or a stale part not removable); 2 malformed invocation (an invalid --next-steps, no --out and no session id, a
-// resume combined with a second call/--headless/several issues/an ineligible verdict) or a --run
+// resume combined with a second call/several issues/an ineligible verdict) or a --run
 // that is missing or refused. On exit 1/2 nothing is written to --out or its parts and nothing is
 // appended to the registry, except two cases, both exit 1 after --out and its parts were written
 // and with nothing appended (the prompt was never recorded, so the gate would deny it): a stale
@@ -156,7 +156,6 @@ function run(argv, deps = {}) {
   if (o.headless && call !== 'first') return usageError('--headless applies to the first call only');
   if (o.resumeVerdict) {
     if (call !== 'first') return usageError('--resume-verdict applies to the first call only');
-    if (o.headless) return usageError('--resume-verdict excludes --headless (a resume is human-typed)');
     if (issues.length !== 1) return usageError('--resume-verdict needs exactly one issue');
   }
 
