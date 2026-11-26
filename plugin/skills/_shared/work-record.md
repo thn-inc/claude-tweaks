@@ -50,7 +50,7 @@ Stage vocabulary is exactly these three words — **backlog** (absence of stage 
 | **Scoring** | `risk:low\|medium\|high` × `size:low\|medium\|high` | Labels — at most one of each family |
 | **Stage** | backlog (no label) \| `parked` \| `ready` | Labels — backlog is the absence of stage labels |
 | **Authorization** | `auto:build`, `auto:merge`, `auto:merge-pending` | Labels — human-granted, except `auto:merge-pending` (machine-only waypoint, see Grant semantics) — absence of all three is the default not-authorized state |
-| **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling, or a plan-review question awaits a human answer (`build/plan-review.md`) — grants revoked either way; `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
+| **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling — grants revoked (a plan-review question is `needs:answer`, never this label); `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
 | **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested`, read alongside their `accept:pending` \| `accept:approved` \| `accept:changes-requested` twins — or no label | Labels — both spellings are read, most-conservative-wins (Acceptance semantics below); `/claude-tweaks:accept` writes `accept:*` only, removing a present `demo:*` twin (the permission matrix's `/accept` row), and so does the pipeline driver's `accept:pending` (its Driver row); every other writer still adds `demo:pending` until its own switch, and the contract step (#4625) removes `demo:*`. A pending label is written by every actor the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `accept:approved`/`accept:changes-requested` by `/claude-tweaks:accept` alone; independent of Stage and of the issue's own open/closed state |
 | **Acceptance provenance** | `demo:approved-batch` (or its `accept:approved-batch` twin) — a modifier, always stacked alongside the approved label, never on its own | Label — written (as `accept:approved-batch`) only when `/claude-tweaks:accept` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
 
@@ -109,7 +109,7 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 | Structure (1) | `parent-issue` | `E99695` | Structure: parent issue — carries the acceptance gate for its sub-issues. Marks a `/claude-tweaks:specify` decomposition parent — the only thing that makes it enumerable for `/claude-tweaks:tidy`'s `parent-gate` sweep (`_shared/github-pr-scan-acceptance.md`); never carried by a sub-issue |
 | Justification (1) | `solution:unjustified` | `F9D0C4` | Marks a record whose stated problem names a solution that was never traded off; stamped by `/specify` via `/claude-tweaks:challenge`'s `framing-check`, absent means the framing read clean. Non-gating: the remedy is a one-line human call — `/claude-tweaks:challenge #{n}` resolves it in one step (supply evidence or accept the risk); re-running `/specify #N` also clears it, but only if the re-shape changes the framing itself. Pre-rename spelling `framing:baked` stays readable forever (`[IL-85]`), never emitted |
 | Compatibility (1) | `breaking` | `8B0000` | Presence-only, like `solution:unjustified`: the record's Acceptance Criteria name a contract change (CLAUDE.md's expand-contract discipline). Stamped by `/specify` shaping mode from that AC language, or by hand — never inferred from a diff; absent means "not breaking". Read by `bin/lib/release/subject.js`'s merge-subject composer (`!` suffix + `BREAKING CHANGE:` footer sourced from the record's `## Breaking Change` section) |
-| Definition (2) | `needs:definition`, `needs:decision` | `7057FF` | Marks a record naming a genuine open choice with no tradeoff made yet (`needs:definition`, stamped by `/capture`/`/feedback` at filing time — a content judgment), or a record where a headless unit proposed an action it may not take alone (`needs:decision` — the proposal and its command are in the record's newest unresolved decision comment; stamped by `/backlog refine`'s Grant lane, in either posture — interactively, or the headless posture's gate-4 refusal, see `backlog/grant-lane-decision.md`) |
+| Definition (3) | `needs:definition`, `needs:decision`, `needs:answer` | `7057FF` | Marks a record naming a genuine open choice with no tradeoff made yet (`needs:definition`, stamped by `/capture`/`/feedback` at filing time — a content judgment), a record where a headless unit proposed an action it may not take alone (`needs:decision` — the proposal and its command are in the record's newest unresolved decision comment; stamped by `/backlog refine`'s Grant lane, in either posture — interactively, or the headless posture's gate-4 refusal, see `backlog/grant-lane-decision.md`), or a record whose `/build` plan review posted a question and is waiting on the answer (`needs:answer` — stamped by `/build` plan review, removed by `plan-review-answer.js` or `dispatch resume`) |
 | Provenance (1) | `shaped:headless` | `CFD3D7` | Marks a record shaped by `/specify`'s headless `next` unit with no human review of the resulting spec body — absent means either a human shaped it, or it predates this feature. Writer: `/specify` `next` mode only, applied in the same call as `ready` — never on an interactively-shaped record. Readers: the grant gate (`evaluateGrantGate`, #969), `/backlog attention`, and `/assess-agent-autonomy`'s `grant-check.md` Step 2 Judge (weighs this provenance toward a conservative verdict, #969). Never blocks an interactive human grant. |
 | Priority (3, optional) | `priority:high`, `priority:medium`, `priority:low` | `B60205` / `FBCA04` / `C2E0C6` | dispatch ordering |
 | Container (1) | `digest` | `EEEEEE` | marks the rolling digest issue container for below-materiality-floor deferred findings, per `_shared/materiality-floor.md` |
@@ -170,8 +170,9 @@ reader filters on it and names any marker comment it skips.
 ### Worklist rule
 
 The worklist rule: a headless unit skips any open record carrying a `needs:*` label — a genuine
-open choice (`needs:definition`) or a proposal awaiting a human decision (`needs:decision`) is
-never a candidate for further autonomous action until a human resolves it. Every headless
+open choice (`needs:definition`), a proposal awaiting a human decision (`needs:decision`) or a plan-review
+question awaiting an answer (`needs:answer`) is never a candidate for further autonomous action until a
+human resolves it; the bare-drain sweep (`dispatch/answered-resumes.md`) resolves `needs:answer` only from a trusted human reply. Every headless
 eligibility/candidate filter cites this rule rather than restating the label list:
 `bin/lib/issues/grant-gate.js`'s Gate 1c, `specify/next-mode.md`'s Eligibility query, and
 `tidy/step-1-records.md`'s record-scoped shapes.
@@ -217,10 +218,10 @@ command stands in for `auto:build` (below).
   a `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before retry; a
   `transient`-classified one preserves it. At the retry ceiling (`dispatch-retry-ceiling`),
   regardless of classification, machinery removes all `auto:*` labels and adds `bot:blocked` —
-  the record needs a human re-grant to run again. `/build` Common Step 1.6's plan-review
-  needs-human stop does the same in a headless dispatch, on its first occurrence
-  (`build/plan-review.md`); resolution: answer its `<!-- plan-review-question -->` comment on the
-  record body, then re-grant `auto:build` at `/claude-tweaks:backlog refine`.
+  the record needs a human re-grant to run again. `/build` Common Step 1.6's plan review
+  revokes nothing on a needs-human stop: it adds `needs:answer` and keeps the grants
+  (`build/plan-review.md`); resolution: reply on the question comment, or add a `**Decision**`
+  paragraph to the body and run `/claude-tweaks:dispatch resume #N`.
 - `auto:*` labels are only ever originated by an interactive human session, with **one
   machine-origination path**: `/claude-tweaks:backlog refine`'s headless posture
   (`backlog/refine-headless.md`, reached via `--source routine|sweep`, or the deprecated `grant`
