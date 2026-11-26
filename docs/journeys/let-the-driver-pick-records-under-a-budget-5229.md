@@ -2,6 +2,8 @@
 files:
   - plugin/bin/drive.js
   - plugin/bin/lib/driver/budget.js
+  - plugin/bin/lib/driver/worker.js
+  - plugin/bin/lib/driver/settle.js
   - plugin/bin/lib/driver/claim-exit.js
   - plugin/bin/lib/driver/run.js
   - plugin/bin/lib/driver/steps.js
@@ -103,4 +105,5 @@ files:
 - The plan review settled three questions (PRC1–3 in the spec): claim exits 2 and 6 end the run (`claim-stop`); the queue pull's side effects are accepted as dispatch has them; and no summary line is written on the exit-1 and interrupt paths.
 - Updated at the wrap-up of #5229. Step 2 now names the `pre-screen skipped #N` stderr line the review fix added (b73613a45). Step 3 now says a driven record can also end `merged` or `armed`, since the driver's `review` and `merge` steps landed upstream after this journey was written.
 - Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`, which holds what each `claim-targets.js` exit means. Step 3's counters and run-ending stops are read from its table, so a change there now flags this journey. No step changed.
+- Updated during the build of #6118 (run `2026-11-26T065910-record-6118`): the run can end `worker-stop` when implementer launches cannot launch (a shared-cause launch, or two counting launch failures in a row). `files:` now lists `worker.js`, which classifies the launch, and `settle.js`, which settles that stop without the escalation marker and deletes the first record's escalation comment in a two-record stop.
 - Updated during the build of #6117 (run `2026-11-26T053027-record-6117`). Step 3 now says the run keeps its own drain-PR list and the pull's near-duplicate pairs, so each driven record's merge gets the drain-overlap hold, and fails closed to `in-flight-unreadable`; step 1 adds the two hold flags to the usage errors. `files:` adds `plugin/bin/lib/driver/merge.js`, which reads the list.
