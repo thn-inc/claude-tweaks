@@ -13,7 +13,7 @@ const SLUG = 'o/r';
 let seq = 0;
 function comment(body, createdAt, over = {}) {
   seq += 1;
-  const c = {
+  return {
     body,
     createdAt,
     url: `https://github.com/o/r/issues/7#issuecomment-${1000 + seq}`,
@@ -21,8 +21,9 @@ function comment(body, createdAt, over = {}) {
     authorAssociation: 'OWNER',
     ...over,
   };
-  return c;
 }
+const header = (r) => `**Decision** (answer by @maintainer, ${r.url}):`;
+const headerCount = (body, r) => body.split('\n').filter((l) => l === header(r)).length;
 const question = (over = {}) => comment(`${QUESTION_MARKER}\n**Question 1. Which?**`, '2026-11-26T10:00:00Z', over);
 const reply = (text, over = {}) => comment(text, '2026-11-26T11:00:00Z', over);
 
@@ -53,8 +54,6 @@ function fixture({ comments, body = BODY, labels = [], failEdit = false, editNoo
     }
     throw new Error(`unexpected ${args.join(' ')}`);
   };
-  const out = [];
-  const err = [];
   const deps = {
     ghAvailable: () => !noGh,
     gh,
@@ -63,7 +62,7 @@ function fixture({ comments, body = BODY, labels = [], failEdit = false, editNoo
     removeFile: (file) => { removed.push(file); },
   };
   const edits = () => calls.filter((a) => a[0] === 'issue' && a[1] === 'edit');
-  return { state, calls, files, removed, deps, edits, out, err };
+  return { state, calls, files, removed, deps, edits };
 }
 
 function run(fx, argv) {
@@ -104,13 +103,48 @@ test('answered without the label present edits without --remove-label', () => {
 
 test('AC3.2: an already-ingested reply issues no edit and exits 0', () => {
   const a = reply('/answer A');
-  const fx = fixture({ comments: [question(), a], body: `${BODY}\nSee ${a.url}\n` });
+  const fx = fixture({ comments: [question(), a], body: `${BODY}\n${header(a)}\n` });
   const r = run(fx, ['--issue', '7']);
   assert.equal(r.code, 0);
   assert.equal(fx.edits().length, 0);
   assert.deepEqual(r.json.ingested, []);
   assert.equal(r.json.state, 'answered');
   assert.deepEqual(r.json.replies, [a.url]);
+});
+
+test('I1: a body citing the reply URL outside a Decision header still ingests it', () => {
+  const a = reply('/answer A');
+  const fx = fixture({ comments: [question(), a], body: `${BODY}\nSee ${a.url}\n` });
+  const r = run(fx, ['--issue', '7']);
+  assert.equal(r.code, 0);
+  assert.equal(fx.edits().length, 1);
+  assert.deepEqual(r.json.ingested, [a.url]);
+  assert.equal(headerCount(fx.state.body, a), 1);
+});
+
+test('I1: two replies that cross-quote each other\'s URLs are both written, exit 0', () => {
+  const a = reply('/answer A', { url: 'https://github.com/o/r/issues/7#issuecomment-300' });
+  const b = reply(`/answer B, as ${a.url} said`, { url: 'https://github.com/o/r/issues/7#issuecomment-301', createdAt: '2026-11-26T12:00:00Z' });
+  a.body = `/answer A, superseding ${b.url}`;
+  const fx = fixture({ comments: [question(), a, b] });
+  const r = run(fx, ['--issue', '7']);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.json.ingested, [a.url, b.url]);
+  assert.equal(headerCount(fx.state.body, a), 1);
+  assert.equal(headerCount(fx.state.body, b), 1);
+});
+
+test('I1: the read-back counts Decision header lines, not URL mentions', () => {
+  const a = reply('/answer A');
+  const fx = fixture({ comments: [question(), a] });
+  const edit = fx.deps.gh;
+  fx.deps.gh = (args) => {
+    const res = edit(args);
+    if (args[0] === 'issue' && args[1] === 'edit') fx.state.body += `\nSee ${a.url}\n`;
+    return res;
+  };
+  const r = run(fx, ['--issue', '7']);
+  assert.equal(r.code, 0);
 });
 
 test('AC3.3: unanswered exits 3 with no edit', () => {
@@ -140,6 +174,13 @@ test('an untrusted /answer reply is never ingested', () => {
   }
 });
 
+test('M1: a minimized /answer reply is never ingested', () => {
+  const fx = fixture({ comments: [question(), reply('/answer hidden', { isMinimized: true, minimizedReason: 'spam' })] });
+  const r = run(fx, ['--issue', '7']);
+  assert.equal(r.code, 3);
+  assert.equal(fx.edits().length, 0);
+});
+
 test('an untrusted question reads no-question', () => {
   const fx = fixture({ comments: [question({ authorAssociation: 'NONE' }), reply('/answer A')] });
   const r = run(fx, ['--issue', '7']);
@@ -160,13 +201,13 @@ test('AC3.4: a read-back missing the reply URL exits 4', () => {
   assert.equal(r.code, 4);
 });
 
-test('AC3.4: a read-back citing the URL twice exits 4', () => {
+test('AC3.4: a read-back carrying the Decision header twice exits 4', () => {
   const a = reply('/answer A');
   const fx = fixture({ comments: [question(), a] });
   const edit = fx.deps.gh;
   fx.deps.gh = (args) => {
     const res = edit(args);
-    if (args[0] === 'issue' && args[1] === 'edit') fx.state.body += `\n${a.url}\n`;
+    if (args[0] === 'issue' && args[1] === 'edit') fx.state.body += `\n${header(a)}\n`;
     return res;
   };
   const r = run(fx, ['--issue', '7']);

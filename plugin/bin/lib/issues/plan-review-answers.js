@@ -32,24 +32,34 @@ function hasDate(comment) {
   return !Number.isNaN(Date.parse(comment && comment.createdAt));
 }
 
-// text cites url as a whole link: the next character is not a digit, so
-// `#issuecomment-123` does not count as citing `#issuecomment-12`.
-function citesUrl(text, url) {
-  if (!url) return false;
-  let from = 0;
-  for (;;) {
-    const at = text.indexOf(url, from);
-    if (at === -1) return false;
-    if (!/\d/.test(text.charAt(at + url.length))) return true;
-    from = at + 1;
-  }
+// The one header line decisionBlock writes; the URL is the reply that block holds.
+const DECISION_HEADER_RE = /^\*\*Decision\*\* \(answer by @[^,\s]*, (\S+)\):$/;
+
+// The reply URL of every unfenced `**Decision** (answer by @…, {url}):` line in body, in order,
+// repeats kept. This, never a search of the whole body, is what "already ingested" reads: reply
+// text sits in the body too, so a reply quoting another reply's URL, or prose citing a comment,
+// must not count (#5053 final review I1). The read-back in bin/plan-review-answer.js counts these.
+function decisionHeaderUrls(body) {
+  const lines = str(body).replace(/\r\n?/g, '\n').split('\n');
+  const fenced = fencedLineMask(lines, { unclosedAsText: true });
+  const urls = [];
+  lines.forEach((line, i) => {
+    const m = fenced[i] ? null : DECISION_HEADER_RE.exec(line.trimEnd());
+    if (m) urls.push(m[1]);
+  });
+  return urls;
 }
 
-// The newest trusted comment whose body starts with the marker, or null.
+// A comment GitHub shows collapsed (hidden as spam, off-topic, outdated…) never counts.
+function isVisible(comment) {
+  return comment.isMinimized !== true;
+}
+
+// The newest trusted, visible comment whose body starts with the marker, or null.
 function findQuestion(comments) {
   let best = null;
   for (const c of Array.isArray(comments) ? comments : []) {
-    if (!c || !isTrustedComment(c) || !hasDate(c)) continue;
+    if (!c || !isVisible(c) || !isTrustedComment(c) || !hasDate(c)) continue;
     if (!str(c.body).trimStart().startsWith(QUESTION_MARKER)) continue;
     if (best === null || time(c) >= time(best)) best = c;
   }
@@ -72,21 +82,21 @@ function isAnswerShaped(comment) {
   return first !== undefined && ANSWER_RE.test(first.trimStart());
 }
 
-// Trusted, strictly after the question, `/answer`-shaped with text; oldest first.
+// Trusted, visible, strictly after the question, `/answer`-shaped with text; oldest first.
 function findAnswerReplies(comments, question) {
   if (!question) return [];
   const after = time(question);
   return (Array.isArray(comments) ? comments : [])
-    .filter((c) => c && c !== question && str(c.url) !== '' && isTrustedComment(c) && time(c) > after && isAnswerShaped(c) && answerText(c) !== '')
+    .filter((c) => c && c !== question && str(c.url) !== '' && isVisible(c) && isTrustedComment(c) && time(c) > after && isAnswerShaped(c) && answerText(c) !== '')
     .sort((a, b) => time(a) - time(b));
 }
 
 function answeredState({ comments, body }) {
-  const text = str(body);
   const question = findQuestion(comments);
   if (!question) return { state: 'no-question', question: null, replies: [], pending: [] };
   const replies = findAnswerReplies(comments, question);
-  const pending = replies.filter((r) => !citesUrl(text, r.url));
+  const ingested = new Set(decisionHeaderUrls(body));
+  const pending = replies.filter((r) => !ingested.has(r.url));
   return { state: replies.length > 0 ? 'answered' : 'unanswered', question, replies, pending };
 }
 
@@ -124,16 +134,19 @@ function addOne(body, question, reply) {
   return `${before}${gap(before)}${section}\n\n${body.slice(off)}`;
 }
 
-// A reply whose URL is already in the body is skipped; no pending reply -> body unchanged.
+// A reply that already has a Decision header (decisionHeaderUrls) is skipped; no pending reply ->
+// body unchanged.
 function appendAnswers(body, question, replies) {
   const original = str(body);
   if (!hasDate(question)) return original;
   const crlf = original.includes('\r\n');
   let text = crlf ? original.replace(/\r\n/g, '\n') : original;
+  const ingested = new Set(decisionHeaderUrls(text));
   let changed = false;
   for (const reply of replies || []) {
-    if (!str(reply.url) || citesUrl(text, reply.url)) continue;
+    if (!str(reply.url) || ingested.has(reply.url)) continue;
     text = addOne(text, question, reply);
+    ingested.add(reply.url);
     changed = true;
   }
   if (!changed) return original;
@@ -149,4 +162,4 @@ function questionExcerpt(question) {
   return rest.length ? rest[0].trim() : '';
 }
 
-module.exports = { QUESTION_MARKER, findQuestion, findAnswerReplies, answerText, answeredState, appendAnswers, questionExcerpt };
+module.exports = { QUESTION_MARKER, findQuestion, findAnswerReplies, answerText, answeredState, appendAnswers, questionExcerpt, decisionHeaderUrls };

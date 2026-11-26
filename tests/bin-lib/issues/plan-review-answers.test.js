@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  QUESTION_MARKER, findQuestion, findAnswerReplies, answerText, answeredState, appendAnswers, questionExcerpt,
+  QUESTION_MARKER, findQuestion, findAnswerReplies, answerText, answeredState, appendAnswers, questionExcerpt, decisionHeaderUrls,
 } = require('../../../plugin/bin/lib/issues/plan-review-answers');
 const { originalRequestOffset, shapeGate } = require('../../../plugin/bin/lib/issues/materialize-format');
 
@@ -27,6 +27,7 @@ function comment(opts = {}) {
     author: { login },
   };
   if (association !== undefined) c.authorAssociation = association;
+  if ('isMinimized' in opts) c.isMinimized = opts.isMinimized;
   return c;
 }
 const question = (over = {}) => comment({ body: QUESTION_BODY, createdAt: '2026-11-26T10:00:00Z', ...over });
@@ -178,15 +179,65 @@ test('a CRLF reply is normalized into both an LF and a CRLF body', () => {
   assert.ok(crlf.includes('Reading B\r\n\r\nBecause reasons.'));
 });
 
-test('a body citing #issuecomment-123 does not count as citing #issuecomment-12', () => {
+test('a Decision header for #issuecomment-123 does not count as ingesting #issuecomment-12', () => {
   const q = question();
   const r12 = reply('/answer short', { url: 'https://github.com/o/r/issues/1#issuecomment-12' });
-  const body = `${RECORD}\nSee https://github.com/o/r/issues/1#issuecomment-123 here.\n`;
+  const r123 = reply('/answer long', { url: 'https://github.com/o/r/issues/1#issuecomment-123' });
+  const body = appendAnswers(RECORD, q, [r123]);
   assert.equal(answeredState({ comments: [q, r12], body }).pending.length, 1);
   assert.notEqual(appendAnswers(body, q, [r12]), body);
-  const cited = `${RECORD}\nSee https://github.com/o/r/issues/1#issuecomment-12.\n`;
-  assert.equal(answeredState({ comments: [q, r12], body: cited }).pending.length, 0);
-  assert.equal(appendAnswers(cited, q, [r12]), cited);
+  const ingested = appendAnswers(RECORD, q, [r12]);
+  assert.equal(answeredState({ comments: [q, r12], body: ingested }).pending.length, 0);
+  assert.equal(appendAnswers(ingested, q, [r12]), ingested);
+});
+
+test('I1: two replies that cross-quote each other\'s URLs are both ingested', () => {
+  const q = question();
+  const a = reply('/answer A, superseding https://github.com/o/r/issues/1#issuecomment-301', { url: 'https://github.com/o/r/issues/1#issuecomment-300' });
+  const b = reply('/answer B, as https://github.com/o/r/issues/1#issuecomment-300 said', { url: 'https://github.com/o/r/issues/1#issuecomment-301', createdAt: '2026-11-26T12:00:00Z' });
+  const out = appendAnswers(RECORD, q, [a, b]);
+  assert.deepEqual(decisionHeaderUrls(out), [a.url, b.url]);
+  assert.equal(answeredState({ comments: [q, a, b], body: out }).pending.length, 0);
+  // the reverse order of ingest (b already in, a pending) still ingests a
+  const bOnly = appendAnswers(RECORD, q, [b]);
+  assert.deepEqual(answeredState({ comments: [q, a, b], body: bOnly }).pending, [a]);
+  assert.deepEqual(decisionHeaderUrls(appendAnswers(bOnly, q, [a, b])), [b.url, a.url]);
+});
+
+test('I1: a body citing a reply URL outside a Decision header does not count as ingested', () => {
+  const q = question();
+  const r = reply('/answer B');
+  const body = `${RECORD}\nSee ${r.url} here.\n`;
+  assert.deepEqual(answeredState({ comments: [q, r], body }).pending, [r]);
+  assert.notEqual(appendAnswers(body, q, [r]), body);
+});
+
+test('I1: a Decision header line inside a fence does not count as ingested', () => {
+  const q = question();
+  const r = reply('/answer B');
+  const body = `${RECORD}\n\`\`\`\n**Decision** (answer by @maintainer, ${r.url}):\n\`\`\`\n`;
+  assert.deepEqual(decisionHeaderUrls(body), []);
+  assert.deepEqual(answeredState({ comments: [q, r], body }).pending, [r]);
+  const unfenced = `${RECORD}\n**Decision** (answer by @maintainer, ${r.url}):\n`;
+  assert.deepEqual(decisionHeaderUrls(unfenced), [r.url]);
+  assert.deepEqual(decisionHeaderUrls(unfenced.replace(/\n/g, '\r\n')), [r.url]);
+});
+
+test('T1: appendAnswers skips a reply with no url', () => {
+  const noUrlReply = reply('/answer B');
+  delete noUrlReply.url;
+  assert.equal(appendAnswers(RECORD, question(), [noUrlReply]), RECORD);
+});
+
+test('M1: a minimized reply or question is not counted', () => {
+  const q = question();
+  const hidden = reply('/answer B', { isMinimized: true });
+  assert.equal(answeredState({ comments: [q, hidden], body: RECORD }).state, 'unanswered');
+  const shown = reply('/answer C', { isMinimized: false });
+  assert.deepEqual(answeredState({ comments: [q, hidden, shown], body: RECORD }).replies, [shown]);
+  const older = question({ createdAt: '2026-11-25T10:00:00Z' });
+  const newestHidden = question({ isMinimized: true });
+  assert.equal(findQuestion([older, newestHidden]), older);
 });
 
 test('a bare-CR first line is read as a line break', () => {

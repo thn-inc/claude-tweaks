@@ -5,19 +5,22 @@
 // unless --check, writes the folded body back with one `gh issue edit` and reads it back.
 //
 // Usage: plan-review-answer.js --issue <N> [--check] [--help]
-//   Stdout is one JSON line: {issue, state, question, questionCreatedAt, replies, ingested}
+//   On exit 0 or 3, stdout is one JSON line: {issue, state, question, questionCreatedAt, replies,
+//   ingested}; exits 2 and 4 print to stderr only, with nothing on stdout. A read-back exit 4 may
+//   follow a write that landed.
 //     state              'no-question' | 'unanswered' | 'answered'
 //     question           the question comment's URL, or null
 //     questionCreatedAt  the question comment's createdAt, or null
 //     replies            the URLs of every trusted `/answer` reply to that question
 //     ingested           the reply URLs this call wrote into the body ([] with --check, or when
-//                        every reply was already cited)
+//                        every reply already has its Decision header in the body)
 //   --check            read-only: report the state, never edit
 //   The write (only when a reply is pending and not --check): one
 //     gh issue edit <N> --repo <slug> --body-file <tmp> [--remove-label needs:answer]
 //   with --remove-label only when the read labels carry needs:answer. The body file lives under the
 //   session temp root and is removed afterwards. The edit is then read back: every pending reply URL
-//   must occur exactly once in the new body.
+//   must head exactly one unfenced `**Decision**` line in the new body (decisionHeaderUrls, the same
+//   parser that decided it was pending).
 // Exit codes (a CLI-specific vocabulary — Task 7's /dispatch relay branches on 0 and 3):
 //   0  answered: every reply is in the body (ingested now, or already)
 //   3  unanswered, or no trusted question (JSON on stdout)
@@ -30,7 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
-const { answeredState, appendAnswers } = require('./lib/issues/plan-review-answers');
+const { answeredState, appendAnswers, decisionHeaderUrls } = require('./lib/issues/plan-review-answers');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { sessionTmpPath, envTmpdir } = require('./lib/session-tmp');
@@ -121,18 +124,6 @@ function readIssue(deps, slug, issue, label) {
   };
 }
 
-// How many times text cites url as a whole link (the next character is not a digit).
-function countCitations(text, url) {
-  let n = 0;
-  let from = 0;
-  for (;;) {
-    const at = text.indexOf(url, from);
-    if (at === -1) return n;
-    if (!/\d/.test(text.charAt(at + url.length))) n += 1;
-    from = at + 1;
-  }
-}
-
 // ---- the write ----
 
 function ingest(ctx, rec, st) {
@@ -152,9 +143,10 @@ function ingest(ctx, rec, st) {
     try { deps.removeFile(file); } catch { /* best effort */ }
   }
   const after = readIssue(deps, slug, issue, 'read-back');
+  const headers = decisionHeaderUrls(after.body);
   for (const reply of st.pending) {
-    const n = countCitations(after.body, reply.url);
-    if (n !== 1) throw new Exit(4, `read-back: ${reply.url} occurs ${n} times in the new body, expected once`);
+    const n = headers.filter((url) => url === reply.url).length;
+    if (n !== 1) throw new Exit(4, `read-back: ${n} Decision header lines for ${reply.url} in the new body, expected one`);
   }
   return st.pending.map((r) => r.url);
 }
