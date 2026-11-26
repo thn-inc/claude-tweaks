@@ -124,7 +124,7 @@ gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,merge
 Then read the workflow runs for the PR head. (why: appendix "Rationale notes".) Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
 
 ```bash
-gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt
+gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt
 ```
 
 A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
@@ -205,7 +205,7 @@ while :; do
     RC=$(node -e "const c=require(process.argv[2]),s=require(process.argv[1]).map((x)=>x.state);console.log(s.some((x)=>c.FAILING_CONCLUSIONS.includes(x))?'1':s.some((x)=>c.HELD_CONCLUSIONS.includes(x))?'8':process.argv[3])" -- "{pr-checks-json-path}" "${CLAUDE_PLUGIN_ROOT}/bin/lib/pr-checks/classify.js" "$RC") || { RC=2; break; }
   fi
   case "$RC" in
-    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt > "{pr-runs-path}" || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt > "{pr-runs-path}" || { RC=2; break; }
        PENDING_RUNS=$(node -e "const c=require(process.argv[2]),r=require(process.argv[1]);console.log(r.filter((x)=>x.status!=='completed').length+c.heldChecks([],r).length)" -- "{pr-runs-path}" "${CLAUDE_PLUGIN_ROOT}/bin/lib/pr-checks/classify.js") || { RC=2; break; }
        node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid} > "{pr-ready-path}" || { RC=2; break; }
        READY=$(node -e "console.log(require(process.argv[1]).state||process.exit(2))" -- "{pr-ready-path}") || { RC=2; break; }

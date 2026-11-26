@@ -24,6 +24,9 @@
 //     ACTION_REQUIRED or STALE reads pending, not green — newest-per-check
 //     decides only this rule (red still wins on any failing row).
 //     tests/pr-check-gate-conformance.test.js pins HELD_CONCLUSIONS too.
+//   - `prEventSettle` (#3468): inside 60 s of the PR's createdAt / the earliest
+//     head run, with no PR-event run yet, the verdict is pending — GitHub may not
+//     have created the `pull_request` run. Opt-in via the `now` input; red wins.
 // Any failing check is red: statusCheckRollup does not mark which checks are
 // required, and the merge gate already treats every failing check as red.
 // The base comparison (#3258) is an addition the merge gate does not have: it
@@ -63,7 +66,27 @@ function result(state, headRefOid, extra = {}) {
 const PR_EVENTS = Object.freeze(['pull_request', 'pull_request_target']);
 
 // The --json field list the head-run readers that feed classifyRollup request: heldChecks orders a check's rows by start time then id. (The base-tip and ci-gate-record reads feed other consumers and keep their own lists.)
-const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt';
+const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt';
+
+// #3468 — GitHub creates the `pull_request` workflow run a beat after the push
+// runs, so a PR whose PR-event run does not exist yet can read green on push-only
+// runs. The window ends this long after the latest of the PR's createdAt and the
+// earliest run GitHub created for the head sha (any event); the head commit's
+// committer date stands in when no run exists. After it, no PR-event run means
+// none applies (a path-filtered PR). An unreadable anchor fails closed: until null.
+const PR_EVENT_SETTLE_MS = 60000;
+
+function prEventSettle({ hasPrCi, headRuns, headCommittedAt, prCreatedAt, now } = {}) {
+  if (!hasPrCi || !Number.isFinite(now) || !Array.isArray(headRuns)) return { settling: false, until: null };
+  const rows = headRuns.filter((r) => r && typeof r === 'object');
+  if (rows.some((r) => PR_EVENTS.includes(r.event))) return { settling: false, until: null };
+  const created = rows.map((r) => Date.parse(r.createdAt ?? r.created_at)).filter((t) => Number.isFinite(t));
+  const runAnchor = created.length > 0 ? Math.min(...created) : Date.parse(headCommittedAt);
+  const prAnchor = Date.parse(prCreatedAt);
+  if (!Number.isFinite(runAnchor) || !Number.isFinite(prAnchor)) return { settling: true, until: null };
+  const until = Math.max(prAnchor, runAnchor) + PR_EVENT_SETTLE_MS;
+  return { settling: now < until, until: new Date(until).toISOString() };
+}
 
 // Conclusions of a run that verified nothing: its jobs were skipped, it was
 // cancelled or left waiting for approval, or GitHub marked it stale.
@@ -169,7 +192,7 @@ function readyRunVerdict({ readySince, readyWorkflows, headRuns } = {}) {
   return verdict;
 }
 
-function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, readySince, readyWorkflows } = {}) {
+function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, readySince, readyWorkflows, now, headCommittedAt, prCreatedAt } = {}) {
   if (!Array.isArray(rollup) || typeof headRefOid !== 'string' || !headRefOid) {
     return result('read-failed', headRefOid, { reason: 'malformed-rollup' });
   }
@@ -203,8 +226,10 @@ function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, read
   const held = heldChecks(rollup, headRuns);
   const pending = [...new Set([...checks.filter((e) => e.status !== 'COMPLETED').map((e) => e.name), ...held.map((h) => h.name)])];
   const awaiting = readyActive ? readyRunVerdict({ readySince, readyWorkflows, headRuns }).awaiting : [];
-  if (pending.length > 0 || awaiting.length > 0 || held.length > 0) {
+  const settle = prEventSettle({ hasPrCi, headRuns, headCommittedAt, prCreatedAt, now });
+  if (pending.length > 0 || awaiting.length > 0 || held.length > 0 || settle.settling) {
     const extra = { pending };
+    if (settle.settling) extra.prEventSettle = { until: settle.until };
     if (held.length > 0) extra.held = held;
     if (awaiting.length > 0) extra.awaitingReadyRun = awaiting;
     return result('pending', headRefOid, extra);
@@ -254,4 +279,4 @@ function applyBaseComparison(verdict, base) {
   return { ...verdict, state, failing, baseSha: base.sha };
 }
 
-module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, PR_EVENTS, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };
+module.exports = { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, PR_EVENTS, PR_EVENT_SETTLE_MS, prEventSettle, normalizeEntry, normalizeHeadRun, readyRunVerdict, classifyRollup, failingNamesAt, applyBaseComparison };
