@@ -391,6 +391,29 @@ test('#2476: a real (non-forced) unset key still logs result: unset, distinct fr
   assert.notStrictEqual(events[0].result, 'check-failed');
 });
 
+// #4284: both breadcrumb writers share one trust gate — a guessed
+// (attribution: fallback) run never receives an event; a real one does.
+test('#4284: win32 longpaths breadcrumb is not written to a fallback-attributed run', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const runDir = scratchDir('ct-wlp-run-');
+  runnerLikeGlobalConfig(() => isolatedGitConfig(
+    () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir, attribution: 'fallback' } })),
+  ));
+  assert.ok(!fs.existsSync(path.join(runDir, 'events.jsonl')), 'a fallback run must receive no events');
+});
+
+test('#4284: win32 longpaths breadcrumb is written to a session-attributed run', () => {
+  const { main } = setupProject();
+  const wt = harnessWorktreeOf(main);
+  const runDir = scratchDir('ct-wlp-run-');
+  runnerLikeGlobalConfig(() => isolatedGitConfig(
+    () => post.run(enterWorktreeCtx(wt, { toolResponse: createdAt(wt, 'x'), platform: 'win32', ownedRun: { dir: runDir, attribution: 'session' } })),
+  ));
+  const events = readEvents(runDir).filter((e) => e.type === 'windows-longpaths');
+  assert.strictEqual(events.length, 1);
+});
+
 test('#3811: resolveWorktreePathViaPorcelain matches win32 forward-slash porcelain against a backslash cwd', () => {
   const porcelain = 'worktree D:/a/x\nbranch refs/heads/trunk\n\nworktree D:/a/x/feat\nbranch refs/heads/feat\n\n';
   const deps = { runGit: () => ({ stdout: porcelain, failure: null }), pathImpl: path.win32 };
