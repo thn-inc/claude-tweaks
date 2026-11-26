@@ -80,11 +80,10 @@ line via `log-decision.js` naming the state or the `commit.dirty` paths and its 
 merge a remote head that lacks this step's commit. Otherwise route on the Review Console's merge half: "Approve all +
 merge", or `console.json`'s `merge.resolution` `merge` (an attended "Approve all + merge" writes no `merge`
 object — once the session no longer holds the choice, `decisions.md`'s `Review Console: terminal
-decision approve-all-merge` line is the record) goes to the re-check below. Before merging on a
-stored `merge`, run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "$PIPELINE_RUN_DIR" --recheck-merge`
+decision approve-all-merge` line is the record) goes to the re-check below. Before merging, run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "$PIPELINE_RUN_DIR" --recheck-merge`
 (#5833): it re-reads `decisions.md` for a needs-human, malformed or still-missing `merge-check`
 verdict. Merge only when it exits 0 and prints `recheck-merge merge`. When it prints
-`recheck-merge leave-open`, the CLI has already logged the verdict and rewritten `console.json`,
+`recheck-merge leave-open`, the CLI has already logged the verdict and rewritten a stored `merge` to `leave-open`,
 so the run skips the merge and lands on `pending-review` as leave-open does. Any other exit skips
 the merge too, with one `SKIP` line via `log-decision.js` naming the exit. A merge the re-check
 confirms runs `_shared/pr-first-merge.md`'s procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,

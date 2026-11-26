@@ -309,7 +309,8 @@ function assertRecheckBeforeMerge(execText) {
   assert.ok(recheckAt !== -1, 'Branch finish must run --recheck-merge');
   assert.ok(recheckAt < finish.indexOf(MERGE), '--recheck-merge must precede the pr-first merge');
   assert.ok(finish.includes('prints `recheck-merge merge`'), 'Branch finish must merge only on `recheck-merge merge`');
-  assert.ok(finish.includes('skips the merge'), 'Branch finish must skip the merge on a leave-open or failed re-check');
+  assert.ok(finish.includes('Any other exit skips the merge too'), 'Branch finish must skip the merge on a failed re-check');
+  assert.ok(finish.includes('rewritten a stored `merge` to `leave-open`'), 'Branch finish must say what a leave-open hit rewrote');
 }
 
 test('AC1.1: Branch finish re-checks the merge half with --recheck-merge before running pr-first-merge', () => {
@@ -319,7 +320,7 @@ test('AC1.1: Branch finish re-checks the merge half with --recheck-merge before 
 test('go-red: a Branch finish without the --recheck-merge sentence fails the pin', () => {
   const exec = read('wrap-up/execution-and-verification.md');
   const finish = paragraph(exec, FINISH_H);
-  const start = finish.indexOf('Before merging on a stored `merge`');
+  const start = finish.indexOf('Before merging, run');
   const end = finish.indexOf(MERGE);
   assert.ok(start !== -1 && end > start, 'the recheck sentence must sit before the merge');
   const mutated = exec.replace(finish, finish.slice(0, start) + finish.slice(end));

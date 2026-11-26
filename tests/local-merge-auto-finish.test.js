@@ -127,4 +127,7 @@ test('AC1.1 (local-merge): the no-prompt finish re-checks with --recheck-merge b
   assert.ok(at < proc.indexOf('**Pre-merge checks**'), '--recheck-merge must precede step 3 (**Pre-merge checks**)');
   const step = proc.slice(proc.indexOf('2a.'), proc.indexOf('3. **Pre-merge checks**')).replace(/\s+/g, ' ');
   assert.match(step, /Park\*\* branch below with no re-stamp/);
+  assert.ok(step.includes('Proceed only on exit 0 printing `recheck-merge merge`'), 'the step proceeds only on exit 0 with `recheck-merge merge`');
+  assert.ok(step.includes('`merge-check verdict withheld the merge`'), 'the leave-open Park reason is pinned');
+  assert.ok(step.includes('`merge re-check failed (exit {code})`'), 'the failed-exit Park reason is pinned');
 });
