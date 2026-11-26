@@ -131,7 +131,7 @@ Then read the workflow runs for the PR head. (why: appendix "Rationale notes".) 
 gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt
 ```
 
-A failed or unparseable runs read is `state-read-failed`. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`).
+A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
 
 Then the ready-run read (#5153: the last `ReadyForReviewEvent`'s `createdAt`, the head's runs with `createdAt`, `event` and workflow `path`, and the head's workflow triggers):
 
@@ -141,7 +141,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid
 
 A non-zero exit or output with no `state` is the `state-read-failed` report.
 
-**`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
+**`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green — completed, never pending. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
 
 Classify from the three reads, in this order:
 
@@ -168,13 +168,11 @@ Classify from the three reads, in this order:
 - A check whose newest entry (rollup entries and head runs by name; newest by start time, then id; an unbreakable tie holds) completed with `conclusion` in `CANCELLED`, `ACTION_REQUIRED`, or `STALE` → **pending** (held; code twin `HELD_CONCLUSIONS`).
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
-  watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup
-  stays empty and waiting only parks it as `checks-pending-timeout` (#3607). Any other merge state
+  watch — waiting only parks it as `checks-pending-timeout` (#3607; why: appendix "Rationale notes"). Any other merge state
   depends on the lever: under `merge-when-green` or `wait` the repo has PR CI
   by construction (`_shared/policy-schema-coverage.md`'s coverage block derives those values only when a
   `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
-  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
-  seconds after a push, not instantly — and reads as **pending**, never green; under `off` it is
+  expected), so an empty rollup means the checks have not *reported yet* and reads as **pending**, never green; under `off` it is
   simply "no CI" and proceeds as green — derived `off` too, so a PR with no checks never waits.
 - Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`, and every head run `completed` without a failing conclusion) → **green**.
 
