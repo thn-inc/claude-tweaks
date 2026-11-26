@@ -695,7 +695,16 @@ test('deriveTiming returns costRows and timing.json stays unchanged', async () =
     assert.equal('costRows' in d.timing, false);
     for (const item of d.timing.dispatches.items || []) assert.equal('usageRows' in item, false);
     const none = await deriveTiming(dir, { transcriptPaths: [], wantTokens: false });
-    assert.equal(none.costRows ?? null, null);
+    assert.ok('costRows' in none);
+    assert.equal(none.costRows, null);
+    const late = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, deadlineAt: Date.now() - 1000 });
+    assert.equal(late.deadlineHit, true);
+    assert.ok('costRows' in late);
+    assert.equal(late.costRows, null);
+    const clipped = await deriveTiming(dir, { transcriptPaths: [transcript], cwd: dir, clipToRunWindow: true });
+    assert.equal(clipped.costRows.rows.length, 3);
+    assert.equal(clipped.costRows.rows.length, clipped.timing.transcripts[0].rows);
+    assert.equal(clipped.costRows.transcripts, clipped.timing.transcripts);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

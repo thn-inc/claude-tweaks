@@ -499,6 +499,7 @@ test('#4359 M4: timing.json dispatch items carry neither procedureFileRows nor t
     for (const item of t.dispatches.items) {
       assert.ok(!Object.hasOwn(item, 'procedureFileRows'), `${item.agentId} carries procedureFileRows`);
       assert.ok(!Object.hasOwn(item, 'transcriptPath'), `${item.agentId} carries transcriptPath`);
+      assert.ok(!Object.hasOwn(item, 'usageRows'), `${item.agentId} carries usageRows`);
     }
     assert.deepEqual(t.dispatches.items.find((i) => i.agentId === 'x').procedureFiles, { 'skills/review/SKILL.md': 1, 'skills/review/lenses.md': 1 });
     const p = Object.fromEntries(t.phases.map((x) => [x.phase, x]));
