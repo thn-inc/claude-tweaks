@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T105744-record-4523/work/4523-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T111714-record-4523/work/4523-spec.md` (re-materialized with the record's `## Decisions`: Reading B, both tasks `Review risk: high`, Task 2 updates the `docs/hooks.md` Bash prefilter bullet)
 
 ## Measurement (Deliverable 1, done before planning)
 
@@ -48,6 +48,8 @@ The two templates that were not reachable are template literals in the 2.1.325 b
 ### Task 1: Anchor the matcher and record the measurement
 
 **Role:** integration
+
+**Review risk:** high (protected hook path: `harness-refusal.js`; spec Decision 2)
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/harness-refusal.js` (header comment and `HARNESS_ISOLATION_REFUSAL_RE`)
@@ -92,8 +94,11 @@ git commit -m "Anchor HARNESS_ISOLATION_REFUSAL_RE at the start of error — quo
 
 **Role:** integration
 
+**Review risk:** high (protected hook path: `bash-prefilter.js`; spec Decision 2)
+
 **Files:**
 - Modify: `plugin/bin/lib/hooks/bash-prefilter.js` (the `require('./harness-refusal')` line, the comment above `failureCarriesRefusal`, `failureCarriesRefusal`, and its one call in `earlyGate`)
+- Modify: `docs/hooks.md:25` (the **Bash prefilter (#3074)** bullet's `post-tool-use-failure` sentence; spec Decision 3)
 - Test: `tests/hooks-harness-refusal.test.js`
 
 **Interfaces:**
@@ -111,6 +116,7 @@ Run: `node --test tests/hooks-harness-refusal.test.js`
 Expected: FAIL. The new test fails (`skip` is `false`, because the raw payload carries a signature).
 
 - [ ] **Step 3: Implement `failureCarriesRefusal(input)`** as the Interfaces block states. Widen the destructure to `const { SESSION_NOUN, AGENT_NOUN, REFUSAL_SIGNATURES } = require('./harness-refusal');`. Rewrite the comment above the function so it says the gate mirrors the matcher's start anchor (#4523): `error` must begin with a noun and carry a signature. Drop the "raw payload OR the parsed `error`" sentence, and keep "Unparseable input skips: the handler does nothing with it either."
+  - In `docs/hooks.md:25`, replace "it skips unless the payload (raw, or its parsed `error`) carries `Refusing to run it` or `Refusing to run there` (`REFUSAL_SIGNATURES`), one of the phrases every harness worktree-isolation refusal it logs contains." with "it skips unless the parsed `error` begins with a noun (`SESSION_NOUN` / `AGENT_NOUN`) and carries `Refusing to run it` or `Refusing to run there` (`REFUSAL_SIGNATURES`), the same start-of-`error` rule the anchored matcher applies (#4523); unparseable input skips, since the handler does nothing with it either."
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -120,7 +126,7 @@ Expected: PASS, all tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/bash-prefilter.js tests/hooks-harness-refusal.test.js
+git add plugin/bin/lib/hooks/bash-prefilter.js docs/hooks.md tests/hooks-harness-refusal.test.js
 git commit -m "Gate the failure prefilter on a noun-first error — keeps bash-prefilter consistent with the anchored matcher" -m "refs #4523"
 ```
 
@@ -130,7 +136,9 @@ git commit -m "Gate the failure prefilter on a noun-first error — keeps bash-p
 |---|---|
 | Deliverable 1 (measure, record in manifest) | Measurement section above; Task 1 Step 3 (manifest comment and module header) |
 | Deliverable 2 (anchor, or bound and say why) | Task 1 |
-| Deliverable 3 (prefilter consistent) | Task 2 |
+| Deliverable 3 (prefilter consistent) | Task 2 (code, and the `docs/hooks.md:25` bullet per Decision 3) |
+| Decision 1 (Reading B: `^`, no `m` flag; inference in the manifest comment) | Task 1 Steps 1 and 3 |
+| Decision 2 (`Review risk: high` on Tasks 1-2) | both task headers |
 | AC1.1 | Task 1 Step 1 (classifyRefusal and post-tool-use-failure), Task 2 Step 1 (prefilter) |
 | AC2.1 | existing per-template tests, kept unchanged in both tasks |
 | AC3.1 | `npm test` in /build Common Step 5 |
