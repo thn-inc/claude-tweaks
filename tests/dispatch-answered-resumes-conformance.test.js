@@ -192,7 +192,9 @@ const INGEST_FACTS = [
   [/render the first call with `--headless` exactly when this firing is headless/, 'the sweep passes --headless on the first call exactly when the firing is headless'],
   [/the second call never takes it, as for any group\./, 'the second call never takes --headless'],
   [/This resume spends one `--budget` unit/, 'an eligible resume spends one --budget unit'],
-  [/A non-zero ingest exit \(2 or 4\) prints its stderr line, dispatches nothing and spends nothing\./, 'a failed ingest spends nothing'],
+  [/An ingest exit 2 prints its stderr line, dispatches nothing and spends nothing\./, 'an ingest exit 2 spends nothing'],
+  [/An ingest exit 4 prints its stderr line and runs `gh issue edit \{n\} --add-label needs:answer`, since the write may have landed/, 'an ingest exit 4 re-adds needs:answer (I2)'],
+  [/It dispatches nothing and spends nothing\./, 'an ingest exit 4 spends nothing'],
 ];
 
 test('AC4.3: the refused branch spends nothing, and the eligible branch spends one --budget unit', () => {
@@ -213,20 +215,68 @@ test('AC4.3: no paragraph but the eligible branch spends a --budget unit', () =>
   assert.equal(unitSpendsOutsideIngest(planted), 1, 'control: a unit spent on the refused branch is counted');
 });
 
+// Frozen pre-fix sentence (final review I2): exit 4 was treated as exit 2, label left off.
+const PRE_I2_INGEST_FAILURE = 'A non-zero ingest exit (2 or 4) prints its stderr line, dispatches nothing and spends nothing.';
+test('step 5 control (I2): the pre-fix exit-4 sentence, or exit 4 without the re-add, goes red on its own fact', () => {
+  const ingest = paragraphStarting(ANSWERED, P_INGEST);
+  const exit4 = ingest.slice(ingest.indexOf('An ingest exit 4'), ingest.indexOf('It dispatches nothing and spends nothing.'));
+  assert.ok(exit4.length > 20, 'exit-4 sentence not found');
+  const reverted = ingest.replace(ingest.slice(ingest.indexOf('An ingest exit 2'), ingest.length), PRE_I2_INGEST_FAILURE);
+  assert.notEqual(reverted, ingest);
+  assert.ok(missingFactsOf(INGEST_FACTS)(reverted).includes('an ingest exit 4 re-adds needs:answer (I2)'));
+  rewriteGoesRed(ingest, INGEST_FACTS, 'and runs `gh issue edit {n} --add-label needs:answer`, since', ', since', 'an ingest exit 4 re-adds needs:answer (I2)');
+});
+
 test('step 5 control: --headless on the second call goes red on its own fact (the CLI refuses it there)', () => {
   rewriteGoesRed(paragraphStarting(ANSWERED, P_INGEST), INGEST_FACTS, 'render the first call with', 'render the first call (and the second, as for any group) with', 'the sweep passes --headless on the first call exactly when the firing is headless');
 });
 
 // A stop after the ingest and before Step 7's dispatch re-adds needs:answer, so the next sweep retries.
 const P_STOPS = 'A stop inside Steps 3-8';
-const STOP_FACTS = [
-  [/A stop before Step 7 dispatches \(Step 3's staged-index or archive stop, Step 6a's stop\)/, 'names the pre-dispatch stops'],
-  [/re-add the label with `gh issue edit \{n\} --add-label needs:answer`/, 'a pre-dispatch stop re-adds needs:answer'],
-  [/the next sweep's check reads the record as answered \(exit 0\) and retries the resume/, 'the next sweep retries the record'],
+// Every stop between the ingest and Step 7's dispatch, named once (T7b).
+const PRE_DISPATCH_STOPS = [
+  ["Step 3's staged-index or archive stop", 'step 3 stop'],
+  ["Step 4's mint failure", 'step 4 stop'],
+  ["Step 5's worktree add or entry failure", 'step 5 stop'],
+  ["Step 6's `record-worktree` failure", 'step 6 stop'],
+  ["Step 6a's stop", 'step 6a stop'],
+  ["Step 7's render failure", 'step 7 stop'],
 ];
-test('answered-resumes.md: a stop before Step 7 dispatches re-adds needs:answer', () => {
-  pinFacts(paragraphStarting(ANSWERED, P_STOPS), STOP_FACTS);
-  rewriteGoesRed(paragraphStarting(ANSWERED, P_STOPS), STOP_FACTS, '--add-label needs:answer', '--remove-label needs:answer', 'a pre-dispatch stop re-adds needs:answer');
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const stopListFacts = (lead) => PRE_DISPATCH_STOPS.map(([s, f]) => [new RegExp(`${lead}[^)]*${esc(s)}`), f]);
+const STOP_FACTS = [
+  ...stopListFacts('Every stop before Step 7 dispatches \\('),
+  [/re-add the label with `gh issue edit \{n\} --add-label needs:answer` before the stop ends the resume or the firing/, 'a pre-dispatch stop re-adds needs:answer'],
+  [/the next sweep's check reads the record as answered \(exit 0\) and retries the resume/, 'the next sweep retries the record'],
+  [/A stop after Step 7 dispatched leaves the record without `needs:answer`, so this firing's report names it for a human\./, 'a post-dispatch stop is reported for a human'],
+];
+// stopListFacts' patterns overlap (one list), so prove each stop by deleting only its own name.
+function assertStopListPinned(region, facts) {
+  assert.deepEqual(missingFactsOf(facts)(region), []);
+  for (const [name, fact] of PRE_DISPATCH_STOPS) {
+    const mutated = region.replace(name, 'another stop');
+    assert.notEqual(mutated, region, `control: "${name}" not found`);
+    assert.deepEqual(missingFactsOf(facts)(mutated), [fact]);
+  }
+}
+test('answered-resumes.md: every stop before Step 7 dispatches re-adds needs:answer, and a later stop is reported', () => {
+  const region = paragraphStarting(ANSWERED, P_STOPS);
+  assertStopListPinned(region, STOP_FACTS);
+  rewriteGoesRed(region, STOP_FACTS, '--add-label needs:answer', '--remove-label needs:answer', 'a pre-dispatch stop re-adds needs:answer');
+  rewriteGoesRed(region, STOP_FACTS, "so this firing's report names it for a human.", 'and nothing more.', 'a post-dispatch stop is reported for a human');
+});
+
+// T7c: a typed resume's own ingest, followed by a pre-dispatch stop, re-adds the label too.
+const R_STOP_FACTS = [
+  [/When the ingest exited 0 with a non-empty `ingested`, or exited 4 \(its write may have landed\)/, 'resume.md: the re-add applies after an ingest write'],
+  ...stopListFacts('a later stop before Step 7 dispatches \\('),
+  [/first re-adds the label with `gh issue edit \{N\} --add-label needs:answer`, so the bare-drain sweep retries the answered record\./, 'resume.md: a pre-dispatch stop re-adds needs:answer'],
+];
+test('resume.md Step 2a: a typed resume that stops after its ingest and before Step 7 re-adds needs:answer', () => {
+  const step2a = paragraphStarting(RESUME, R_STEP_2A);
+  assertStopListPinned(step2a, R_STOP_FACTS);
+  rewriteGoesRed(step2a, R_STOP_FACTS, 'first re-adds the label with `gh issue edit {N} --add-label', 'leaves the label off (`gh issue edit {N} --remove-label', 'resume.md: a pre-dispatch stop re-adds needs:answer');
+  rewriteGoesRed(step2a, R_STOP_FACTS, 'When the ingest exited 0 with a non-empty `ingested`, or exited 4 (its write may have landed)', 'When the ingest exited 0', 'resume.md: the re-add applies after an ingest write');
 });
 
 test('AC4.3 control: a refused verdict that spends budget goes red on its own fact', () => {

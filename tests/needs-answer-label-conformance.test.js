@@ -101,12 +101,38 @@ function matrixFacts(matrix) {
   if (!exec.includes('`needs:answer`')) out.push('Executors row adds needs:answer');
   if (!exec.includes('`build/plan-review.md`')) out.push('Executors row names plan-review.md');
   if (exec.includes('`bot:blocked` — `/build` only')) out.push('Executors row still lists bot:blocked as a plan-review write');
+  const [, adds = '', removes = ''] = dispatchCells(matrix);
+  if (!removes.includes('`needs:answer` (answered')) out.push('/dispatch Removes column removes needs:answer');
+  if (!adds.includes('`needs:answer` (**restore only**')) out.push('/dispatch Adds column restores needs:answer only');
   const disp = lineStarting(matrix, '| **`/dispatch`**').replace(/\s+/g, ' ');
-  if (!disp.includes('`needs:answer`')) out.push('/dispatch row removes needs:answer');
   if (!disp.includes('`plan-review-answer.js`')) out.push('/dispatch row names the ingest');
   if (!disp.includes('`dispatch resume`')) out.push('/dispatch row names dispatch resume');
   return out;
 }
+
+// The /dispatch row's cells: Actor, Adds, Removes, Never.
+function dispatchCells(matrix) {
+  const row = lineStarting(matrix, '| **`/dispatch`**').replace(/\s+/g, ' ');
+  return row.split('|').slice(1, -1).map((c) => c.trim());
+}
+
+test('T7a controls: the /dispatch Removes and restore-only Adds facts each go red alone', () => {
+  const matrix = read(MATRIX);
+  const row = lineStarting(matrix, '| **`/dispatch`**');
+  assert.equal(dispatchCells(matrix).length, 4, 'the /dispatch row must split into four cells');
+  const [, adds, removes] = row.split('|').slice(1, -1);
+  // needs:answer moved out of Removes (into Adds) keeps it in the row but not in its column
+  const removesEntry = removes.slice(removes.indexOf('`needs:answer` (answered'));
+  assert.ok(removesEntry.length > 20, 'Removes needs:answer entry not found');
+  const moved = matrix.replace(row, row.replace(removes, removes.replace(removesEntry, '')).replace(adds, `${adds.trimEnd()}, ${removesEntry.trim()} `));
+  assert.notEqual(moved, matrix);
+  assert.deepStrictEqual(matrixFacts(moved), ['/dispatch Removes column removes needs:answer']);
+  // the restore-only entry dropped from Adds, while Removes still names needs:answer
+  const restore = adds.slice(adds.indexOf(', `needs:answer` (**restore only**'));
+  const dropped = matrix.replace(row, row.replace(adds, adds.replace(restore, ' ')));
+  assert.notEqual(dropped, matrix);
+  assert.deepStrictEqual(matrixFacts(dropped), ['/dispatch Adds column restores needs:answer only']);
+});
 
 test('AC8.1: needs:answer is in label-bootstrap, the work-record label table and the permission matrix', () => {
   const bootstrap = read(BOOTSTRAP);
@@ -176,7 +202,6 @@ test('go-red: work-record pins each return exactly their own fact', () => {
 test('go-red: permission-matrix pins each return exactly their own fact', () => {
   const m = read(MATRIX);
   assert.deepStrictEqual(matrixFacts(mutateLine(m, '| **Executors**', '`needs:answer`', '`needs:x`')), ['Executors row adds needs:answer']);
-  assert.deepStrictEqual(matrixFacts(mutateLine(m, '| **`/dispatch`**', '`needs:answer`', '`needs:x`')), ['/dispatch row removes needs:answer']);
   assert.deepStrictEqual(matrixFacts(mutateLine(m, '| **`/dispatch`**', '`plan-review-answer.js`', '`x.js`')), ['/dispatch row names the ingest']);
   assert.deepStrictEqual(matrixFacts(mutate(m, '| **Executors** (`/flow`, `/build`) |', '| **Executors** (`/flow`, `/build`) | `bot:blocked` — `/build` only |')), ['Executors row still lists bot:blocked as a plan-review write']);
 });
