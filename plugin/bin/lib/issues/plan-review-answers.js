@@ -67,7 +67,7 @@ function answerText(comment) {
 }
 
 function isAnswerShaped(comment) {
-  const lines = str(comment && comment.body).split('\n');
+  const lines = str(comment && comment.body).replace(/\r\n?/g, '\n').split('\n');
   const first = lines.find((l) => l.trim() !== '');
   return first !== undefined && ANSWER_RE.test(first.trimStart());
 }
@@ -77,7 +77,7 @@ function findAnswerReplies(comments, question) {
   if (!question) return [];
   const after = time(question);
   return (Array.isArray(comments) ? comments : [])
-    .filter((c) => c && c !== question && isTrustedComment(c) && time(c) > after && isAnswerShaped(c) && answerText(c) !== '')
+    .filter((c) => c && c !== question && str(c.url) !== '' && isTrustedComment(c) && time(c) > after && isAnswerShaped(c) && answerText(c) !== '')
     .sort((a, b) => time(a) - time(b));
 }
 
@@ -132,7 +132,7 @@ function appendAnswers(body, question, replies) {
   let text = crlf ? original.replace(/\r\n/g, '\n') : original;
   let changed = false;
   for (const reply of replies || []) {
-    if (citesUrl(text, reply.url)) continue;
+    if (!str(reply.url) || citesUrl(text, reply.url)) continue;
     text = addOne(text, question, reply);
     changed = true;
   }

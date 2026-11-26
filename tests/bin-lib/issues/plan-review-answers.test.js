@@ -189,6 +189,23 @@ test('a body citing #issuecomment-123 does not count as citing #issuecomment-12'
   assert.equal(appendAnswers(cited, q, [r12]), cited);
 });
 
+test('a bare-CR first line is read as a line break', () => {
+  const q = question();
+  assert.equal(answeredState({ comments: [q, reply('\r/answer B')], body: RECORD }).state, 'answered');
+  assert.equal(answeredState({ comments: [q, reply('see\r/answer B')], body: RECORD }).state, 'unanswered');
+});
+
+test('a reply with no url is excluded from replies, so a second call stays byte-identical', () => {
+  const q = question();
+  const noUrl = reply('/answer B');
+  delete noUrl.url;
+  const s = answeredState({ comments: [q, noUrl], body: RECORD });
+  assert.equal(s.state, 'unanswered');
+  const once = appendAnswers(RECORD, q, s.replies);
+  assert.equal(once, RECORD);
+  assert.equal(appendAnswers(once, q, s.replies), once);
+});
+
 test('a question with no createdAt is not usable and writes no section', () => {
   const q = comment({ body: QUESTION_BODY, createdAt: undefined });
   assert.equal(findQuestion([q]), null);
