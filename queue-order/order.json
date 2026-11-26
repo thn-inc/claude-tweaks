@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T05:13:48.594Z",
+  "computedAt": "2026-11-26T06:40:09.502Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -16,11 +16,6 @@
       {
         "number": 6118,
         "updatedAt": "2026-11-26T05:12:04Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6117,
-        "updatedAt": "2026-11-26T05:12:02Z",
         "state": "OPEN"
       },
       {
@@ -430,7 +425,7 @@
       },
       {
         "number": 4337,
-        "updatedAt": "2026-10-31T09:58:09Z",
+        "updatedAt": "2026-11-26T06:39:48Z",
         "state": "OPEN"
       },
       {
@@ -446,11 +441,6 @@
       {
         "number": 4328,
         "updatedAt": "2026-11-03T00:03:52Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4312,
-        "updatedAt": "2026-10-31T09:58:34Z",
         "state": "OPEN"
       },
       {
@@ -613,8 +603,8 @@
   "groups": [
     [
       {
-        "body": "Surface: backend\nRisk-flags: none\n\n## Overview\n\n`drive.js --budget <n|all>` drives records one after another with no drain-overlap hold. Its merge step can mark a PR ready and merge it while a PR this same budget run opened earlier, still open (armed, held or at `pending-review`), changes the same files or closes a strong near-duplicate partner. Dispatch's driver route closes this gap by passing `--in-flight-prs` and `--near-dup-pairs` to each `drive.js` call, but `--budget` refuses both flags and builds no list of its own. This record makes the budget loop keep the list itself and hand it to every record it drives, so a drain run as a script job has the same hold a dispatch drain has.\n\n## Non-Goals\n\n- PRs opened by other sessions or other budget runs. A dispatch drain's merge-time hold lists only its own drain's PRs (`plugin/skills/dispatch/drain-pr-overlap.md` Step 6), and this keeps that scope.\n- Accepting `--in-flight-prs` or `--near-dup-pairs` beside `--budget`. The loop owns both inputs, so the flags stay refused there (exit 2).\n- Any change to the hold itself (`plugin/bin/lib/driver/merge.js`'s drain-overlap check and its reason words).\n\n## Prerequisites\n\n- Phase 7's #6019 and #6020 (under parent #6017) merged. #6021 and #5571 were removed as blockers on 2026-11-26 on the maintainer's go: this record's code needs neither (the design's Phase 13 lists them as phase ordering only), and #6021 stays open only for its guard 3 read.\n\n## Current State\n\n- `plugin/bin/lib/driver/run.js` `parseArgs` refuses `--in-flight-prs` / `--near-dup-pairs` with `--budget` (\"--in-flight-prs and --near-dup-pairs are exclusive with --budget\"), and `shared.inFlightPrsFile` / `shared.nearDupPairsFile` stay `null` for every record the loop drives.\n- `plugin/bin/lib/driver/merge.js` applies the hold only when `ctx.inFlightPrsFile` is set (`if (!ctx.inFlightPrsFile) return { ok: true }`). With it absent no hold is applied, which `drive.js`'s header calls the standalone case of one record at a time.\n- `plugin/bin/lib/driver/budget.js` `runBudget` calls `deps.queuePull` with `sessionId = drive-{ts}-{pid}`. The pull's `near-dup-pairs` pass writes `dispatch-near-dup-pairs.json` (strong pairs only, `[]` when none) under that session's temp directory, and nothing reads it.\n- `driveRecord` (`run.js`) already returns `final`, whose `pr` field carries the record's PR number when one was opened.\n\n## Deliverables\n\n- [ ] `runBudget` keeps a drain-PR list file at the session-tmp path `dispatch-drain-prs.json` for its own `sessionId` (`plugin/bin/lib/session-tmp.js`), written `[]` before the first driven record.\n- [ ] After each driven record whose final line carries a positive integer `pr`, the loop appends `{ \"number\": pr }` to that file.\n- [ ] When `driveOne` returns no final line (or throws), the loop treats the list as unreadable from then on, exactly as for a failed write: every later driven record holds as `in-flight-unreadable`, and one stderr line names the record. A record that opened a PR but left no final line can never let a later merge pass over that PR unheld.\n- [ ] Every record the loop drives runs with `shared.inFlightPrsFile` set to that file, and with `shared.nearDupPairsFile` set to the latest pull's `dispatch-near-dup-pairs.json` when that file exists (left `null` when it does not, as `plugin/skills/dispatch/driver-route.md` leaves the flag off).\n- [ ] When the first write or any append fails, every later record the loop drives holds as `in-flight-unreadable`, never runs unheld: point `shared.inFlightPrsFile` at a path that does not exist, and write one stderr line naming the failed write. A list that silently misses a PR would let an overlapping merge through.\n- [ ] `drive.js`'s header comment, `run.js`'s USAGE lines and `docs/driver.md` (\"Picking records: `--budget`\" and \"The drain-overlap hold\") say that `--budget` applies the hold with its own list, and why the two flags stay refused beside it.\n\n## Acceptance Criteria\n\n- [ ] With a fake queue of two records whose PRs share a changed path, the second record's merge step stops `pending-review` with reason `drain-overlap` naming the first record's PR, while that PR is open. Verify: a `tests/bin-lib/driver/budget.test.js` case asserts the second record's merge stop reason and the PR it names.\n- [ ] When the first record's PR is no longer `OPEN` at the second record's merge, the second record is not held. Verify: the same test with the first PR's fake state `MERGED`.\n- [ ] A strong near-duplicate pair in the pull's `dispatch-near-dup-pairs.json` holds the second record as `near-duplicate` when the first record's open PR closes its partner. Verify: a budget test with a pairs file and `closingIssuesReferences`.\n- [ ] A failed append makes every later driven record hold as `in-flight-unreadable`. Verify: a budget test whose injected write throws on the first append.\n- [ ] The first driven record runs with an `[]` list and is not held. Verify: a budget test asserts the first record's merge reaches the supplier.\n- [ ] `--budget` with `--in-flight-prs` still exits 2. Verify: the existing `run.test.js` case stays green.\n- [ ] Each new test fails when the change is reverted. Verify: revert the `budget.js` change, run `node --test tests/bin-lib/driver/budget.test.js` and see the new cases red.\n- [ ] A driven record that returns no final line makes every later driven record hold as `in-flight-unreadable`. Verify: a budget test whose fake `driveOne` returns `{ final: null }` for the first record.\n\n## Release Note\n\nA budget-driven driver run now holds a merge that overlaps a PR the same run opened earlier, as a dispatch drain does.\n\n## Technical Approach\n\nThe loop already has a session id and a temp directory, and the merge step already reads a file. So the loop writes the file dispatch would have written and sets the two `shared` fields that `--in-flight-prs` / `--near-dup-pairs` set for a named run. `merge.js` is unchanged. Every write goes through `deps` (budget.js makes no file call itself: add a `writeFile` dependency to `realDeps` if none exists, and inject it in tests). Resolve the path with `sessionTmpPath(sessionId, 'dispatch-drain-prs.json')`, the same helper and session id the queue pull uses for `dispatch-near-dup-pairs.json`, so both files sit in one directory.\n\nThe session id is the `sessionId` constant `runBudget` mints once per invocation and passes to every pull, so every pull and the list file share one directory. The loop holds the list as an in-memory array and rewrites the whole file after each append, and it is strictly sequential, so no reader sees a partial write. A failed write sets a sticky loop-level flag that overrides the per-record `shared.inFlightPrsFile` assignment for the rest of the invocation: the path is a sibling that does not exist (`dispatch-drain-prs.missing.json`), and `merge.js` already maps a `readFile` failure on the list to `in-flight-unreadable`. A held record is still driven up to its merge step and reported; the hold is the only change. The append reads `final.pr` whatever the record's stop class. `shared.nearDupPairsFile` is recomputed after every pull with an existence check and is `null` when the file is absent. Pair entries are `{ records: [a, b] }` record numbers that `merge.js` matches against each listed PR's `closingIssuesReferences`, so a pair naming a record outside this run holds nothing.\n\n### Data / API Surface\n\n- The file's shape is the subset `merge.js`'s `inFlightNumbers` reads: an array of `{ number }`. Dispatch's own list (`drain-pr-overlap.md` Step 5) carries `files` and `closingIssueNumbers` too. The driver re-reads both live (`gh pr view --json state,files,closingIssuesReferences`), so the loop does not need to store them.\n\n### Key Files\n\n- `plugin/bin/lib/driver/budget.js`: modify (list file, appends, `shared` fields per driven record)\n- `plugin/bin/lib/driver/run.js`: modify (USAGE text; `realDeps` write dependency if absent)\n- `plugin/bin/drive.js`: modify (header comment)\n- `plugin/bin/lib/session-tmp.js`: read (path helper)\n- `plugin/bin/lib/driver/merge.js`: read (the hold's file reader; unchanged)\n- `docs/driver.md`: modify\n- `tests/bin-lib/driver/budget.test.js`: modify\n\n## Gotchas\n\n- `shared` is one object for the whole invocation. Set the two fields before each `driveOne` call and never clear them between records, because the named-record path reads them from `shared`, not from `ctx`.\n- The record's own PR is in the list by the time a later record runs, which is harmless: `merge.js` ignores the own PR. But the list must be appended to only after `driveOne` returns, never before the record's own merge step.\n- The queue pull removes `dispatch-near-dup-pairs.json` at its start and rewrites it (#5409), so re-check whether it exists after each pull rather than once per invocation.\n- Open records touching the same files (informational, no blocker): #5884, #5661, #5659 (merge.js, settle.js, worker.js) and #5653, #5657 (run.js). Re-read each at build and rebase onto whichever has merged.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-13:budget-drain-overlap-hold -->\nwork-fingerprint: pipeline-economy-phase-13:budget-drain-overlap-hold\n",
-        "createdAt": "2026-11-23T07:18:23Z",
+        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nPhase 13's expected effect is that the main session's share of cost goes to zero for driver records. A `drive.js --budget` script job drives records with no model session, but a dispatch session drain started at the same time still selects the same driver-routable records and walks them through its driver route (`drive.js --check`, mint, bind, a background call, read the final line, settle), all from a model session. The two are kept apart only by the claim race. This record adds a policy value under which dispatch's session drain leaves driver-routable records to the script job and never selects them, while `drive.js --budget` still does.\n\n## Non-Goals\n\n- Starting or scheduling the script job. That is a Dispatch job (thn-inc/dispatch) set up by this phase's trial sub-issue.\n- Changing which records the driver admits: the predicate is the driver's own, never a copy.\n- Records in bundles: the queue pull already keeps a driver-routable record out of fast-lane bundles (#6011), so only singleton groups are affected.\n\n## Prerequisites\n\n- Phase 7's #6019 and #6020 (under parent #6017) merged. #6021 and #5571 were removed as blockers on 2026-11-26 on the maintainer's go: this record's code needs neither (the design's Phase 13 lists them as phase ordering only), and #6021 stays open only for its guard 3 read. The predicate this record reuses is the one #6011 built, and #6019 and #6020 change what it admits.\n- The budget loop's drain-PR list from this phase's first sub-issue merged, since this record also changes `runBudget`'s pull call.\n\n## Current State\n\n- `plugin/bin/lib/express/queue.js` `expressQueuePolicy` builds `driverRoutable(issue)`: routing, pre-screen eligibility, the reviewer gate and the widened-reviewer rule. It is used only as `keepSingleton`, to keep such records out of bundles.\n- `plugin/bin/lib/dispatch/queue-pull.js` `PASSES` is the ordered exclusion registry. `STAYING_EXCLUSION_REASONS` (the exclusions that keep a group in `dispatch-groups.json` but unselectable) is also `budget.js`'s `UNSELECTABLE_REASONS`, so a new staying exclusion would make the budget loop skip the same records too.\n- `plugin/bin/lib/driver/budget.js` calls `deps.queuePull({ …, omit: [] })`.\n- The driver's escalation marker is a trusted comment (`settle.js` `hasDriverEscalationMarker`), read by the driver's eligibility step from a live fetch with comments. The queue pull's data carries no comments, so `driverRoutable` cannot see it.\n- `express-driver` (`plugin/skills/_shared/policy-schema-express-driver.md`) is `off`, `split` or `on`, and is `policyOnly`.\n\n## Deliverables\n\n- [ ] A policy value naming who drives driver-routable records: `session` (default, today's behaviour) or `script`. Proposed name `express-driver-runner`, `policyOnly`, settled with `.claude/skills/policy-key-addition`. It has effect only when `express-driver` is `on` or `split`. Otherwise it is ignored, with one stderr line from the queue pull.\n- [ ] Under `script`, a queue-pull exclusion (proposed reason `driver-lane`) removes from dispatch's selectable groups every singleton group whose record `driverRoutable` accepts, added per `.claude/skills/dispatch-queue-exclusion-addition`, with its exclusion-report line.\n- [ ] A record carrying the trusted driver-escalation marker is never excluded. Comments are fetched only for the records the exclusion would remove, in one batched read. A failed read excludes nothing for those records (fail toward the session building them, which the driver's own `--check` then refuses back to today's path).\n- [ ] An accepted cost, stated in the schema row and in `driver-route.md`: when the comment read fails, those records stay selectable, so a session drain may route one through its driver route and race the script job for it. The claim (`claim-targets.js`) already ensures only one of the two builds it. The loser stops at the claim and builds nothing. No new test is added, because the claim's own tests cover the race.\n- [ ] `runBudget`'s pull omits that exclusion, so the budget loop still selects those records.\n- [ ] `plugin/skills/dispatch/driver-route.md`'s Closed rule gains the row for `script`: the route is never consulted for those records, because the pull never selects them.\n\n## Acceptance Criteria\n\n- [ ] Under `express-driver: on` and `script`, a pull over a fixture queue with one driver-routable singleton and one standard record selects only the standard record, and the exclusion lists the driver-routable one with reason `driver-lane`. Verify: a `tests/bin-lib/dispatch/queue-pull.test.js` case.\n- [ ] The same queue under `session` selects both, byte-identical to today's output. Verify: the same test file, and the existing parity tests stay green.\n- [ ] A driver-routable record with a trusted escalation-marker comment stays selectable under `script`, and one whose comment read fails also stays selectable. Verify: two queue-pull test cases with a fake comment reader.\n- [ ] `runBudget` under `script` still selects and drives the driver-routable record. Verify: a `tests/bin-lib/driver/budget.test.js` case asserting the pull was called with the exclusion omitted and the record driven.\n- [ ] Under `express-driver: off`, `script` changes nothing and prints one stderr line. Verify: a queue-pull test.\n- [ ] The policy key's schema row, its default and its `policyOnly` flag are pinned by the policy-schema tests. Verify: those tests.\n- [ ] Each new test fails when the change is reverted. Verify: revert each source file and run its test.\n- [ ] A test enumerates eligibility's refusal reasons and fails when one is neither visible to `driverRoutable` nor covered by the exclusion's live check. Verify: the test, and that adding a fake live-only reason turns it red.\n- [ ] Under `script`, a pull that excludes records prints the `driver-lane: left to the script job:` line naming them. Verify: a queue-pull test.\n\n## Release Note\n\nA project can now leave driver-ready records to a scheduled `drive.js --budget` job, so dispatch sessions no longer pick them up.\n\n## Technical Approach\n\nReuse `driverRoutable` from `expressQueuePolicy` as the exclusion's predicate: export it beside `keepSingleton` rather than rebuilding it, so bundling and the exclusion can never disagree. The exclusion runs only over singleton groups, after grouping. The marker check is the one fact the pull lacks. Fetching comments for the few records the exclusion would remove keeps the pull's cost flat for every project that leaves the value at `session`.\n\nThe key is `express-driver-runner` and the exclusion reason is `driver-lane`; both are final. Under `express-driver: on` and `split` the exclusion set is exactly the singleton groups `driverRoutable` accepts, since that predicate already encodes the routing mode. Under `off` the value is ignored, with one stderr line per pull, printed only when the value is `script`. `driver-lane` joins `STAYING_EXCLUSION_REASONS`, and `runBudget` passes `omit: ['driver-lane']` (the pull's `omit` option takes reasons or ids, `queue-pull.js` header), so the budget loop's own pull still selects those records although its `UNSELECTABLE_REASONS` is the same registry. The marker check uses `hasDriverEscalationMarker` as its only predicate. The comment read is an injected dependency of the pull, made once for all candidate records: a record whose read fails or returns partial data stays selectable. `driverRoutable` now gates two sites, bundling and this exclusion, and a comment at its definition names both.\n\n### Key Files\n\n- `plugin/bin/lib/express/queue.js`: modify (expose the predicate and the runner value)\n- `plugin/bin/lib/dispatch/queue-pull.js`: modify (the exclusion pass)\n- `plugin/bin/lib/dispatch/exclusions.js`: read or modify (exclusion helpers)\n- `plugin/bin/lib/driver/budget.js`: modify (omit the exclusion)\n- `plugin/bin/lib/driver/settle.js`: read (`hasDriverEscalationMarker`, `DRIVER_ESCALATION_MARKER`)\n- `plugin/skills/_shared/policy-schema-express-driver.md`: modify (the key's row)\n- `plugin/skills/dispatch/driver-route.md`: modify (Closed rule row)\n- `tests/bin-lib/dispatch/queue-pull.test.js`: modify\n- `tests/bin-lib/driver/budget.test.js`: modify\n\n## Gotchas\n\n- The starvation risk is the design's weakest point. A record that `driverRoutable` accepts from pulled data but the driver refuses on its live fetch would sit excluded from the session drain while the driver keeps refusing it. The marker is the known case and this record covers it. List any other live-fetch-only refusal reason in `steps.js`'s eligibility (open linked PRs and open blockers are already excluded by other passes) and cover each, or record why none exists.\n- The live-fetch audit is a deliverable, not a judgment left to the builder. List every refusal reason in `steps.js`'s eligibility step that needs live-fetched data `driverRoutable` cannot see. Cover each in the exclusion's live check, or record why none is needed. A test enumerates eligibility's refusal reasons and fails when one is neither visible to `driverRoutable` nor covered by the live check, so a reason added later cannot silently starve excluded records.\n- `script` with no script job running leaves driver-routable records unbuilt. That is the operator's choice, which is why the default is `session`. Say so in the schema row.\n- Under `script`, the exclusion report prints one warn-tier line per pull naming every record it excluded (`driver-lane: left to the script job: #a, #b`). A lane that no job is draining then shows in every dispatch firing. No staleness bound returns a record to the session pool, because that would undo the opt-in whenever the job runs less often than the bound.\n- `.claude/skills/dispatch-queue-exclusion-addition` lists the sites a new exclusion reason lands in. Read it before adding the pass.\n- #6062 (in progress) edits `plugin/bin/lib/express/queue.js` and `plugin/bin/lib/dispatch/queue-pull.js`, the same files: it is a blocker of this record, so build on its merged result.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-13:session-drain-driver-lane -->\nwork-fingerprint: pipeline-economy-phase-13:session-drain-driver-lane\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
+        "createdAt": "2026-11-23T07:18:34Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -659,14 +649,92 @@
             "color": "FEF2C0"
           }
         ],
-        "number": 6117,
+        "number": 6119,
         "state": "OPEN",
-        "title": "Give drive.js --budget the drain-overlap hold, with its own list of the run's PRs",
-        "updatedAt": "2026-11-26T05:12:02Z",
+        "title": "Let dispatch's session drain leave driver-routable records to a drive.js --budget script job",
+        "updatedAt": "2026-11-26T05:12:06Z",
         "facets": {
           "origin": null,
           "risk": "medium",
           "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: auth, public-contract\n\n## Overview\n\n`drive.js --budget` ends early only on a claim stop whose cause every later claim would meet (`claim-targets.js` exit 2, 6 or 7). A worker that cannot launch for a reason every later record would meet too gets no such stop: an expired login, an exhausted usage limit, a missing `claude` binary or an unauthenticated host. The loop goes on to the next record. Each record's pre-push stop is then settled as `express-escalated`, and settle posts the trusted `<!-- express-driver: escalated -->` comment, which keeps the driver from ever taking that record again until a person deletes the comment. Under `--budget all`, one expired login would escalate every admitted record out of the driver lane. A script job has no session to notice this. This record adds the missing stop, and settles the failure without the marker.\n\n## Non-Goals\n\n- Retrying or waiting for a usage limit to reset. The run ends, and the next scheduled firing tries again.\n- Changing what an ordinary per-record worker failure does: a worker that ran and failed its record (red tests, `cannot-complete`, a spend or wall-clock ceiling on one record) keeps today's settle.\n- Deciding how headless workers authenticate on env-authenticated hosts. That is #5259. This record only makes the failure stop the run cleanly.\n\n## Prerequisites\n\n- Phase 7's #6019 and #6020 (under parent #6017) merged. #6021 and #5571 were removed as blockers on 2026-11-26 on the maintainer's go: this record's code needs neither (the design's Phase 13 lists them as phase ordering only), and #6021 stays open only for its guard 3 read.\n- The budget loop's drain-PR list from this phase's first sub-issue merged, since both change `runBudget`.\n\n## Current State\n\n- `plugin/bin/lib/driver/budget.js`: `ENDED` is `budget`, `exhausted`, `permission-stop`, `claim-stop`, `pull-failed` and `policy-refused`. `classifyFacts` and the loop read only `claimed`, `claimExit` and `outcome`.\n- `plugin/bin/lib/driver/worker.js` classifies a launch into `status` (`ok`, `fail`, `timeout`) and `reason` (`wall-clock-ceiling`, `launch-error`, `spend-ceiling`, `exit`, `schema`). `launch-error` is a runner that threw, or a non-zero exit with no result object and an empty stdout. The free-text `result` string is never parsed. No reason names an auth failure or a usage limit.\n- `plugin/bin/lib/driver/settle.js`: a pre-push stop takes the `pre-push` row, whose escalate posts `commentFor('escalated', …)` ending in `DRIVER_ESCALATION_MARKER`. `hasDriverEscalationMarker` makes eligibility refuse the record on every later run.\n- `driveRecord` (`run.js`) returns `{ final, outcome, claimed, claimExit }`, with nothing about the worker envelope.\n\n## Deliverables\n\n- [ ] `driveRecord`'s facts gain the implementer launch's envelope `status` and `reason`, plus a `sharedCause` flag when the classification below says so (the first implementer launch's; `null` when no launch ran).\n- [ ] A shared-cause classification for an implementer launch, in one function: (a) reason `launch-error`; (b) a structured signal in the result object that the request was refused for authentication or a usage or rate limit. The field is found by a live probe at build, per `.claude/skills/headless-worker-launch`, and the free-text `result` is never parsed. If the probe finds no structured field, (b) is dropped and the `worker.js` header records that.\n- [ ] Repeats are capped. The marker-free settle comment carries its own fixed marker (`<!-- express-driver: shared-cause -->`). When a record that already carries a trusted shared-cause comment hits a shared-cause stop again on a later, separate run, it is settled with the ordinary escalation, marker included. A record that always crashes at launch therefore reaches a person after two firings, not never.\n- [ ] `runBudget` ends with a new `ended` value, `worker-stop` (status `stop`, exit 0, `detail` naming the record and the reason), when a driven record's launch is shared-cause, or when two consecutive driven records' implementer launches both ended in a non-`ok` envelope status.\n- [ ] When the run ends `worker-stop` by the two-in-a-row rule, the second record is settled marker-free. The loop also deletes the escalation comment that settle posted on the first record: the driver's own comment, by the id settle returns. Neither record leaves the lane. A failed delete is named on stderr and in the summary line's `detail`, and never changes the exit code.\n- [ ] Two kinds of implementer envelope count toward the two-in-a-row rule: reason `launch-error`, and status `fail` with reason `exit`. `timeout`, `spend-ceiling`, `wall-clock-ceiling` and `schema` are ordinary per-record failures and reset the streak. A driven record whose facts carry no implementer launch (it stopped before the worker step) neither counts nor resets it.\n- [ ] A record whose stop is shared-cause is settled without the driver-escalation marker, in every run (named or `--budget`): the claim is released, and the worktree and local branch this run created are removed. A `settle-*` event and one plain record comment, with no marker, say that the driver could not launch a worker and will try again. The record stays driver-eligible.\n- [ ] The marker-free settle reuses the existing `pre-push` row's cleanup unchanged: the claim release, and removal of the worktree and local branch by the ownership that row already reads. Only its escalate comment is replaced. A launch failure is pre-push, and the driver opens its PR only after `push`, so there is no draft PR or remote branch to close. A shared-cause stop on a record whose branch was pushed, or whose PR is recorded, is settled by the `blocked` row, as today.\n- [ ] `docs/driver.md` documents `worker-stop` (summary line `ended` and `status` table), the shared-cause rule, the two-in-a-row rule and the marker-free settle. `events.js`'s vocabulary and the pinning tests are updated in the same change, per `.claude/skills/driver-step-addition`.\n\n## Acceptance Criteria\n\n- [ ] A budget run whose first driven record's implementer launch returns `launch-error` ends `worker-stop` after that record, with the rest of the budget unused and later records not attempted. Verify: a `tests/bin-lib/driver/budget.test.js` case with a fake worker, asserting the summary line's `ended`, `status` and `driven`.\n- [ ] That record's settle posts no comment containing `<!-- express-driver: escalated -->`, releases the claim, and removes the worktree and branch. Verify: a `tests/bin-lib/driver/settle.test.js` (or run-level) case asserting the forge and git calls.\n- [ ] Two consecutive driven records whose implementer envelopes are `fail` with reason `exit` end the run `worker-stop` after the second. One `fail` followed by an `ok` does not end it. Verify: two budget test cases.\n- [ ] A worker that ran and returned `cannot-complete`, or red tests, neither counts toward the two-in-a-row rule nor ends the run. Verify: a budget test case.\n- [ ] (b), if the probe found a structured field: a fake result object carrying it is classified shared-cause. Verify: a `tests/bin-lib/driver/worker.test.js` case. The probe's date, CLI version and platform are recorded in the `worker.js` header.\n- [ ] `run.test.js`'s pinned `ended` → `status` mapping includes `worker-stop` → `stop`. Verify: the test.\n- [ ] Each new test fails when the change is reverted. Verify: revert each source file in turn and run its test file.\n- [ ] In a two-in-a-row stop, the first record's escalation comment is deleted and the second record carries no marker. Verify: a budget test asserting the delete call with the first comment's id.\n- [ ] A record that already carries a trusted shared-cause comment and hits a shared-cause stop again is escalated with the marker. Verify: a settle test.\n- [ ] A `timeout` between two `exit` failures resets the streak, and a record with no implementer launch leaves it unchanged. Verify: two budget test cases.\n\n## Release Note\n\nA budget-driven driver run now stops when workers cannot launch, instead of escalating every remaining record out of the driver lane.\n\n## Technical Approach\n\nClassify once in the worker module, where the envelope is built, and carry the verdict up through `ctx` to `driveRecord`'s facts. The loop then decides whether the run ends, as it already does for claim exits, and settle decides how the stopping record is cleaned up. The two-in-a-row rule is the fallback for causes no structured field shows: two consecutive launches failing before a record's own work is a stronger signal of a shared cause than of two bad records. The first of the two keeps its ordinary per-record settle (it cannot be known at the time), and that cost is documented.\n\nThe worker-stop `detail` names the record number and the closed `reason` value only, never the worker's `result` text. A record that took the #5997 relaunch is one record: the facts and the two-in-a-row counter use its first launch's envelope. The counter is per `runBudget` invocation and is never carried across firings. When (b) is dropped because the probe finds no structured field, an expired login or an exhausted limit reaches `worker-stop` only through the two-in-a-row rule, so the first such record is still escalated by the ordinary settle; `docs/driver.md` documents that cost. Before adding `worker-stop`, grep every reader of the summary line's `ended` and `status` for an exhaustive switch: a reader that does not know the value must treat it as a stop, never as a clean end.\n\n### Key Files\n\n- `plugin/bin/lib/driver/worker.js`: modify (shared-cause classification; header probe record)\n- `plugin/bin/lib/driver/steps.js`: modify (carry the envelope verdict onto `ctx`)\n- `plugin/bin/lib/driver/run.js`: modify (`driveRecord` facts; USAGE exit-code text)\n- `plugin/bin/lib/driver/budget.js`: modify (`worker-stop`, two-in-a-row rule)\n- `plugin/bin/lib/driver/settle.js`: modify (marker-free settle for a shared-cause stop)\n- `plugin/bin/lib/driver/events.js`: modify (vocabulary)\n- `docs/driver.md`: modify\n- `tests/bin-lib/driver/budget.test.js`: modify\n- `tests/bin-lib/driver/settle.test.js`: modify\n- `tests/bin-lib/driver/worker.test.js`: modify\n- `tests/bin-lib/driver/run.test.js`: modify\n\n## Gotchas\n\n- The implementer can launch twice per record: the one-profile-up relaunch, #5997. Classify on the first launch, and confirm at build that a `launch-error` never triggers the relaunch, which is for `cannot-complete` and red tests only. Two launches failing inside one record are one record, not two-in-a-row.\n- #6002 (effort ladder, open) also changes what a failed worker does. Check at build whether it has merged, and keep `launch-error` out of its escalation triggers.\n- The reviewer and the judgment workers launch too. A shared-cause failure there already fails closed (`needs-human`, `acceptance-not-completed`), so this record classifies only the implementer launch, which is the one that escalates.\n- The marker-free comment is forge-facing text: build it from a fixed template through `commentFor`'s closed-set path, never from the worker's detail.\n- Open records touching the same files (informational, no blocker): #6002 (events.js, launch.js, docs/driver.md), #5884, #5661, #5659 (merge.js, settle.js, worker.js), #5653, #5657 (run.js) and #5259 (worker.js, env-auth for workers). Re-read each at build and rebase onto whichever has merged.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-13:budget-worker-stop -->\nwork-fingerprint: pipeline-economy-phase-13:budget-worker-stop\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`, `Proof(public-contract): …`.\n",
+        "createdAt": "2026-11-23T07:18:28Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6118,
+        "state": "OPEN",
+        "title": "End a drive.js --budget run when workers cannot launch, and settle that stop without the escalation marker",
+        "updatedAt": "2026-11-26T05:12:04Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "high",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -5708,7 +5776,7 @@
         "number": 4337,
         "state": "OPEN",
         "title": "Make the failed-execution residue hint and refusal reason backend-neutral for local-files",
-        "updatedAt": "2026-10-31T09:58:09Z",
+        "updatedAt": "2026-11-26T06:39:48Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -5862,84 +5930,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #4138, #3972\n\nOrigin: build #4138 (final whole-branch review, Minor 8)\n\nDefer-reason: tangential\n\n## Current State\n\n`/claude-tweaks:wrap-up` Phase 1 mints a standalone run dir when nothing resolves and stamps `run-state.json` with `{\"status\":\"active\",\"createdBy\":\"wrap-up-standalone\"}` — no `sessionId`. #4138 made every exit after that mint close a created directory except the Review Console's \"Stop and re-engage\" halt (`wrap-up/review-console-interactive.md` \"On stop\"), which deliberately leaves it open for `/claude-tweaks:wrap-up resume`. But `resume` (`wrap-up/resume-halted-run.md`) only finds a run whose `run-state.json` has `status: interrupted`, and the SessionEnd hook (`plugin/bin/lib/hooks/session-end.js`) stamps `interrupted` only on a run attributed by ownership, never on a `fallback` guess. A created standalone wrap-up dir records no owning session, so it most likely stays `active` and `resume` can never find it. Unverified: probe the SessionEnd attribution for such a dir before building.\n\n## Deliverables\n\nConfirm the gap with a fixture: a created wrap-up standalone dir halted at Stop, then a session end, then `resume`. If confirmed, make the halt resumable — e.g. the \"On stop\" branch stamps the created directory so `resume` can find it (a sanctioned `hooks.js` writer, not a hand edit), or `resume` also accepts an `active` `createdBy: \"wrap-up-standalone\"` directory whose console was halted. Update `resume-halted-run.md` and the Stop branch to match.\n\n## Acceptance Criteria\n\nA created standalone wrap-up run halted at \"Stop and re-engage\" is found by `/claude-tweaks:wrap-up resume` in a later session, pinned by a test that fails before the fix. An inherited (pipeline) run's resume behavior is unchanged. `npm test` passes.\n\n## Release Note\n\nA standalone wrap-up paused at the Review Console can be resumed later with `/claude-tweaks:wrap-up resume`.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/resume-halted-run.md` — modify\n- `plugin/skills/wrap-up/review-console-interactive.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-25T15:23:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4312,
-        "state": "OPEN",
-        "title": "wrap-up: a created standalone run dir halted at \"Stop and re-engage\" cannot be resumed",
-        "updatedAt": "2026-10-31T09:58:34Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -8973,21 +8963,7 @@
       "number": 6120,
       "blockedBy": [
         6119,
-        6118,
-        6117,
-        5571
-      ]
-    },
-    {
-      "number": 6119,
-      "blockedBy": [
-        6117
-      ]
-    },
-    {
-      "number": 6118,
-      "blockedBy": [
-        6117
+        6118
       ]
     },
     {
