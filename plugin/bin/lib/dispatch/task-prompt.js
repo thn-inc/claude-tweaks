@@ -201,10 +201,10 @@ function renderTaskPrompt(text, opts) {
   if ((o.headless || o.resume) && call !== 'first') {
     throw new Error('--headless/--resume apply to the first call only');
   }
-  if (o.headless && o.resume) throw new Error('resume is human-typed: no DISPATCH_HEADLESS');
   if (o.headless || o.resume) {
     if (count(t, INVOKE) !== 2) throw new Error('first template lost its two invocation lines');
-    const flag = o.headless ? 'DISPATCH_HEADLESS=1' : `RESUME_PR="${o.resume.prUrl}"`;
+    // headless marker first; both together only for a sweep-originated resume (skill prose gates it)
+    const flag = [o.headless && 'DISPATCH_HEADLESS=1', o.resume && `RESUME_PR="${o.resume.prUrl}"`].filter(Boolean).join(' ');
     if (o.resume) renderResumeContext(o.resume);
     t = fill(t, INVOKE, fill(INVOKE, ' /claude-tweaks:flow', ` ${flag} /claude-tweaks:flow`));
   }

@@ -346,7 +346,10 @@ function resumeEligibility(input) {
   if (buildAuthority !== undefined) authority = buildAuthority === 'label' || buildAuthority === 'typed' ? buildAuthority : 'none';
   if (labelList.includes('bot:blocked') || authority === 'none') {
     const words = Array.isArray(authorityReasons) ? authorityReasons.filter((w) => typeof w === 'string' && w !== '') : [];
-    const notAccepted = words.length > 0 ? ` (typed command not accepted: ${words.join(', ')})` : '';
+    // ['not-named'] alone is the --queue sweep's own refusal of the stand-in, never a typed command
+    // the human made, so the line names no typed command.
+    const typedTried = words.length > 0 && !(words.length === 1 && words[0] === 'not-named');
+    const notAccepted = typedTried ? ` (typed command not accepted: ${words.join(', ')})` : '';
     if (labelList.includes('bot:blocked')) {
       return refuse('not-granted', `#${n} carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #${n}, then run ${resumeCmd}`);
     }

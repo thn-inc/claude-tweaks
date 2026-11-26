@@ -42,7 +42,7 @@ gh label list --search "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" -
   | grep -qx "claude-tweaks:bootstrapped-v{LABEL_BOOTSTRAP_VERSION}" && SKIP_BOOTSTRAP=true || SKIP_BOOTSTRAP=false
 ```
 
-`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `11`**. Bump it (and
+`{LABEL_BOOTSTRAP_VERSION}` is the literal integer below — **current value: `12`**. Bump it (and
 this literal) whenever a label is added to or removed from the canonical `LABELS_JSON` array
 below, **or whenever an existing label's description or color changes** (#1873 — a color-only
 convention update is exactly this case). A marker stamped under the old version no longer matches
@@ -125,7 +125,7 @@ rows, per the note below the array):
   ["auto:merge",        "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)", "1D76DB"],
   ["auto:merge-pending", "Grant: machine-granted merge trust awaiting its veto window (matures to auto:merge)", "1D76DB"],
   ["bot:in-progress",   "Bot state: an agent currently holds the claim on this record", "6A737D"],
-  ["bot:blocked",       "Bot state: retry ceiling hit, or a plan-review question awaits an answer — needs re-authorization", "6A737D"],
+  ["bot:blocked",       "Bot state: retry ceiling hit — needs re-authorization", "6A737D"],
   ["bot:parked",        "Bot state: merge-verification parked it (CI red/timed-out) — auto:* grants stay intact", "6A737D"],
   ["demo:pending",           "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:accept", "006B75"],
   ["demo:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
@@ -142,6 +142,7 @@ rows, per the note below the array):
   ["breaking",          "Compatibility: a contract change — merge subject gets ! and a BREAKING CHANGE: footer", "8B0000"],
   ["needs:definition",  "Undecided idea — must go through /specify's brainstorm redirect before reaching ready", "7057FF"],
   ["needs:decision",    "a headless unit proposed an action it may not take alone — see the newest decision comment", "7057FF"],
+  ["needs:answer",      "a plan-review question awaits a human answer — reply /answer on the question comment", "7057FF"],
   ["shaped:headless",   "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body", "CFD3D7"],
   ["priority:high",     "Priority: dispatch picks this band first", "B60205"],
   ["priority:medium",   "Priority: dispatch picks after priority:high", "FBCA04"],
