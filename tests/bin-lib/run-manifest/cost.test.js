@@ -120,6 +120,8 @@ test('AC5.1: driver lane prices worker step usage keyed by launched model', () =
     + priceAggregate({ model: 'opus', input: 20, output: 3000, cacheRead: 200000, cacheWrite5m: 10000, cacheWrite1h: 0 }).usd,
   );
   assert.equal(out.costUsd, expected);
+  assert.ok(out.costUsd > 0);
+  assert.deepEqual(out.unpricedModels, []);
   assert.equal(out.costPartial, false);
   const withNull = deriveRunCost({ rows: [], aggregates: [], sourcesRead: 0, sourcesUnread: 0, events: [...events, { step: 'worker', status: 'fail', model: 'sonnet', usage: null }], manifest: DRIVER, closedAt: null, runStartAt: null });
   assert.equal(withNull.costPartial, true);
@@ -168,6 +170,31 @@ test('driver lane: a launch line with model and no usage key makes costPartial t
   const out = deriveRunCost({ rows: [], aggregates: [], sourcesRead: 0, sourcesUnread: 0, events, manifest: DRIVER, closedAt: null, runStartAt: null });
   assert.equal(out.costPartial, true);
   assert.equal(typeof out.costUsd, 'number');
+});
+
+test('driver lane: a merge-check line with a model and no usage makes costPartial true', () => {
+  const events = [
+    { step: 'worker', status: 'ok', model: 'sonnet', usage: usage(1, 1000, 0, 0) },
+    { step: 'merge-check', status: 'stop', verdict: 'needs-human', floor: 'none', model: 'sonnet', effort: 'medium' },
+  ];
+  const out = deriveRunCost({ rows: [], aggregates: [], sourcesRead: 0, sourcesUnread: 0, events, manifest: DRIVER, closedAt: null, runStartAt: null });
+  assert.equal(out.costPartial, true);
+});
+
+test('driver lane: merge-check and merge-acceptance lines with usage are priced and leave costPartial false', () => {
+  const check = usage(9, 210, 3000, 400);
+  const accept = usage(12, 340, 5000, 800, [800, 0]);
+  const events = [
+    { step: 'merge-check', status: 'ok', verdict: 'auto-merge', floor: 'none', model: 'sonnet', effort: 'medium', usage: check },
+    { step: 'merge-acceptance', status: 'ok', route: 'try-it-only', model: 'sonnet', effort: null, usage: accept },
+  ];
+  const out = deriveRunCost({ rows: [], aggregates: [], sourcesRead: 0, sourcesUnread: 0, events, manifest: DRIVER, closedAt: null, runStartAt: null });
+  assert.equal(out.costPartial, false);
+  assert.deepEqual(out.tokensByModel.sonnet, { input: 21, output: 550, cacheRead: 8000, cacheWrite5m: 1200, cacheWrite1h: 0 });
+  assert.equal(out.costUsd, cents(
+    priceAggregate({ model: 'sonnet', input: 9, output: 210, cacheRead: 3000, cacheWrite5m: 400, cacheWrite1h: 0 }).usd
+    + priceAggregate({ model: 'sonnet', input: 12, output: 340, cacheRead: 5000, cacheWrite5m: 800, cacheWrite1h: 0 }).usd,
+  ));
 });
 
 test('driver lane: a never-launched review line (usage null, no model) leaves costPartial false', () => {

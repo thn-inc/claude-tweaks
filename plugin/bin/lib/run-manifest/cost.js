@@ -114,6 +114,8 @@ function deriveRunCost({ rows, aggregates, sourcesRead, sourcesUnread, events, m
     read = driver.read;
     unread = driver.unread;
   } else {
+    // Dedupe runs before the zero skip, so a zeroed row still claims its id: readUsage puts an id's merged
+    // usage on its first row, and when the run-window clip removed that row the request is outside the run.
     const ids = new Set();
     for (const r of Array.isArray(rows) ? rows : []) {
       if (!isObject(r)) continue;
