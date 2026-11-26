@@ -21,6 +21,15 @@
 // too; exits 3, 4 and 5, an exit 0 that claimed nothing, a killed claim and a failed mint are
 // per-record.
 //
+// Worker stop (#6118): an implementer launch that cannot launch ends the run `worker-stop`, read from
+// each record's `facts.implementerLaunch.counts` (never from event lines). A launch whose cause every
+// later launch would share (`facts.sharedCause`) ends it at once; otherwise two counting launch failures
+// in a row do, the counter being per invocation and never carried across firings. A launch that does not
+// count (a timeout, a HEAD move, a worker that ran) resets it; a record that never reached the implementer
+// leaves it unchanged. Both rules are judged together for the record that ends the run: the first record
+// of a streak is settled ordinarily (its escalation comment is posted), and the run deletes that comment
+// afterwards, so a shared cause leaves one marker-free comment, not two.
+//
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
 // record is selected twice in one invocation and a queue that never shrinks still ends. A failed
@@ -38,7 +47,8 @@
 // AUTO lines) is routed to deps.stderr, so the driver's stdout carries JSON event lines only.
 // The event sink is never bound to a run directory: these run-level lines go to stdout alone.
 const path = require('node:path');
-const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorText } = require('./events');
+const { STEP, BUDGET_STEP, createEventSink, yieldToEventLoop, firstLine, errorText, neutralize } = require('./events');
+const { deleteRecordComment } = require('./settle');
 const { STEPS, eligibilityOptions } = require('./steps');
 const { formatTimestamp } = require('../hooks/run-dir-resolve');
 const { groupIsExcluded } = require('../dispatch/exclusions');
@@ -61,6 +71,7 @@ const ENDED = Object.freeze({
   EXHAUSTED: 'exhausted',
   PERMISSION_STOP: 'permission-stop',
   CLAIM_STOP: 'claim-stop',
+  WORKER_STOP: 'worker-stop',
   PULL_FAILED: 'pull-failed',
   POLICY_REFUSED: 'policy-refused',
 });
@@ -70,6 +81,7 @@ const STATUS_BY_ENDED = Object.freeze({
   [ENDED.EXHAUSTED]: 'ok',
   [ENDED.PERMISSION_STOP]: 'stop',
   [ENDED.CLAIM_STOP]: 'stop',
+  [ENDED.WORKER_STOP]: 'stop',
   [ENDED.PULL_FAILED]: 'fail',
   [ENDED.POLICY_REFUSED]: 'ok',
 });
@@ -237,6 +249,35 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     }
   };
 
+  // The implementer-launch streak (0 or 1 counting failures so far) and the record that opened it.
+  let streak = 0;
+  let streakFirst = null;
+  const launchReason = (facts) => neutralize(String(facts.implementerLaunch.reason));
+  // Ends the run worker-stop. An open streak's first record was settled ordinarily; its escalation
+  // comment is deleted here, and a delete that cannot run or fails is named, never an exit code.
+  const workerStop = (facts, n) => {
+    const reasonN = launchReason(facts);
+    const shareNote = facts.sharedCause === true ? ' (shared cause)' : '';
+    if (streakFirst === null || facts.implementerLaunch.counts !== true) return finish(ENDED.WORKER_STOP, `implementer launch on #${n} failed: ${reasonN}${shareNote}`);
+    const a = streakFirst.n;
+    let detail = `implementer launches on #${a} and #${n} both failed: ${streakFirst.reason}, ${reasonN}${shareNote}`;
+    let note = null;
+    if (Number.isSafeInteger(streakFirst.commentId)) {
+      try {
+        deleteRecordComment(streakFirst.commentId, shared.ghRepo, deps);
+      } catch (err) {
+        note = `could not delete the escalation comment on #${a}: ${firstLine(errorText(err))}`;
+      }
+    } else if (shared.settle === true) {
+      note = `no escalation comment id on #${a} to delete`;
+    }
+    if (note !== null) {
+      detail += `; ${note}`;
+      deps.stderr(`drive.js: ${note}\n`);
+    }
+    return finish(ENDED.WORKER_STOP, detail);
+  };
+
   writeList('first write');
 
   for (;;) {
@@ -271,6 +312,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
         continue;
       }
       shared.inFlightPrsFile = listBroken ? missingPath : listPath;
+      shared.launchStreak = streak;
       let facts;
       try {
         facts = await driveOne(n);
@@ -298,6 +340,17 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
       // A cause every later claim would meet too (Plan Review Clarification 1) ends the run.
       if (facts.claimed !== true && readClaimExit(facts.claimExit).kind === CLAIM_KIND.SHARED_CAUSE) {
         return finish(ENDED.CLAIM_STOP, `claim-targets.js exit ${facts.claimExit} on #${n}`);
+      }
+      if (facts.implementerLaunch != null) {
+        const counts = facts.implementerLaunch.counts === true;
+        if ((counts && streak === 1) || facts.sharedCause === true) return workerStop(facts, n);
+        if (counts) {
+          streak = 1;
+          streakFirst = { n, reason: launchReason(facts), commentId: facts.escalationCommentId };
+        } else {
+          streak = 0;
+          streakFirst = null;
+        }
       }
       if (budget !== 'all' && counters.driven >= budget) return finish(ENDED.BUDGET);
     }

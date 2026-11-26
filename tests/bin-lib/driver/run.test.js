@@ -7846,8 +7846,8 @@ for (const code of [6, 2]) {
 }
 
 test('budget AC9.5: ENDED and STATUS_BY_ENDED are the full closed mapping', () => {
-  assert.deepEqual(ENDED, { BUDGET: 'budget', EXHAUSTED: 'exhausted', PERMISSION_STOP: 'permission-stop', CLAIM_STOP: 'claim-stop', PULL_FAILED: 'pull-failed', POLICY_REFUSED: 'policy-refused' });
-  assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
+  assert.deepEqual(ENDED, { BUDGET: 'budget', EXHAUSTED: 'exhausted', PERMISSION_STOP: 'permission-stop', CLAIM_STOP: 'claim-stop', WORKER_STOP: 'worker-stop', PULL_FAILED: 'pull-failed', POLICY_REFUSED: 'policy-refused' });
+  assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'worker-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
 });
 
 test('budget AC6.3: an empty queue ends exhausted through run()', async () => {

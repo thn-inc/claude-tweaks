@@ -379,7 +379,7 @@ test('classifyFacts: one counter per fact shape, a killed claim included', () =>
 });
 
 test('AC9.5: status follows ended', () => {
-  assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
+  assert.deepEqual(STATUS_BY_ENDED, { budget: 'ok', exhausted: 'ok', 'permission-stop': 'stop', 'claim-stop': 'stop', 'worker-stop': 'stop', 'pull-failed': 'fail', 'policy-refused': 'ok' });
   assert.deepEqual(Object.values(ENDED).sort(), Object.keys(STATUS_BY_ENDED).sort());
   assert.deepEqual(COUNTERS, ['driven', 'refused', 'skipped', 'contested', 'claimFailed', 'permissionStopped']);
   for (const o of [ENDED, STATUS_BY_ENDED, COUNTERS]) assert.ok(Object.isFrozen(o));
@@ -752,4 +752,126 @@ test('driveOne throwing marks the list broken before the throw propagates', asyn
   assert.equal(lines.length, 1);
   assert.match(lines[0], /the run ends$/);
   assert.doesNotMatch(lines[0], /every later/);
+});
+
+// ---- #6118: worker-stop ------------------------------------------------------------
+
+const LAUNCH_FAIL = (reason, extra = {}) => ({ ...DEFAULT_FACTS, implementerLaunch: { status: 'fail', reason, counts: true }, sharedCause: false, escalationCommentId: null, ...extra });
+const LAUNCH_OK = { ...DEFAULT_FACTS, implementerLaunch: { status: 'ok', reason: null, counts: false }, sharedCause: false, escalationCommentId: null };
+const LAUNCH_TIMEOUT = { ...DEFAULT_FACTS, implementerLaunch: { status: 'fail', reason: 'timeout', counts: false }, sharedCause: false, escalationCommentId: null };
+
+// A drain over admitted records; `plan[i]` is the facts for the i-th driven record (LAUNCH_OK past the plan).
+// Records every gh call and the launchStreak each driveOne saw.
+async function workerRun(plan, { count = plan.length + 1, budget = 'all', settle = true, gh = null } = {}) {
+  const numbers = Array.from({ length: count }, (_, i) => i + 1);
+  const f = fake({ pulls: [{ groups: singletons(...numbers), exclusions: [] }] });
+  const ghCalls = [];
+  f.deps.gh = (args) => {
+    ghCalls.push(args);
+    if (gh) return gh(args);
+    return '';
+  };
+  const shared = newShared();
+  shared.ghRepo = 'o/r';
+  shared.settle = settle;
+  const streaks = [];
+  const driveOne = async (n) => {
+    f.calls.driveOne.push(n);
+    streaks.push(shared.launchStreak);
+    return plan[f.calls.driveOne.length - 1] || LAUNCH_OK;
+  };
+  const code = await runBudget(budget, shared, f.deps, { driveOne, steps: f.steps });
+  return { f, code, ghCalls, streaks, summary: summaryOf(f) };
+}
+
+test('#6118 AC1.1, AC1.2: a shared-cause launch ends the run worker-stop', async () => {
+  const { f, code, summary, ghCalls } = await workerRun([{ ...LAUNCH_FAIL('launch-error'), sharedCause: true }], { count: 3, budget: 5 });
+  assert.equal(code, 0);
+  assert.deepEqual([summary.ended, summary.status, summary.driven], ['worker-stop', 'stop', 1]);
+  assert.equal(f.driven().length, 1);
+  assert.match(summary.detail, /#\d+/);
+  assert.match(summary.detail, /launch-error/);
+  assert.match(summary.detail, /shared cause/);
+  assert.equal(ghCalls.length, 0);
+});
+
+test('#6118 AC3.1, AC3.3, AC8.1, AC8.2: two fail/exit launches in a row end the run after the second', async () => {
+  const { f, code, summary, ghCalls, streaks } = await workerRun([LAUNCH_FAIL('exit', { escalationCommentId: 991 }), LAUNCH_FAIL('exit')], { count: 4 });
+  assert.equal(code, 0);
+  assert.deepEqual([summary.ended, summary.driven], ['worker-stop', 2]);
+  assert.equal(f.driven().length, 2);
+  assert.equal(ghCalls.length, 1);
+  assert.deepEqual(ghCalls[0].slice(0, 4), ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/991']);
+  assert.deepEqual(streaks, [0, 1]);
+  assert.match(summary.detail, /both failed: exit, exit/);
+});
+
+test('#6118 AC3.2, AC3.3: one fail then an ok does not end it', async () => {
+  const { summary, f } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_OK], { count: 3 });
+  assert.deepEqual([summary.ended, summary.status], ['exhausted', 'ok']);
+  assert.equal(f.driven().length, 3);
+});
+
+test('#6118 AC4.1, AC4.2: cannot-complete and red tests neither count nor end the run', async () => {
+  const escalated = { ...LAUNCH_OK, outcome: 'express-escalated' };
+  const { summary } = await workerRun([LAUNCH_FAIL('exit'), escalated, LAUNCH_FAIL('exit')], { count: 3 });
+  assert.equal(summary.ended, 'exhausted');
+});
+
+test('#6118 AC10.1, AC10.2: a timeout between two exit failures resets the streak', async () => {
+  const { summary } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_TIMEOUT, LAUNCH_FAIL('exit')], { count: 3 });
+  assert.equal(summary.ended, 'exhausted');
+});
+
+test('#6118 a HEAD-moved stop after a fail/exit envelope resets the streak', async () => {
+  const headMoved = { ...LAUNCH_FAIL('exit'), implementerLaunch: { status: 'fail', reason: 'exit', counts: false } };
+  const { summary } = await workerRun([LAUNCH_FAIL('exit'), headMoved, LAUNCH_FAIL('exit')], { count: 3 });
+  assert.equal(summary.ended, 'exhausted');
+});
+
+test('#6118 AC10.1, AC10.2: a record with no implementer launch leaves the streak unchanged', async () => {
+  const none = { ...DEFAULT_FACTS, implementerLaunch: null, sharedCause: null, escalationCommentId: null };
+  const { summary, f } = await workerRun([LAUNCH_FAIL('exit'), none, LAUNCH_FAIL('exit')], { count: 5 });
+  assert.equal(summary.ended, 'worker-stop');
+  assert.equal(f.driven().length, 3);
+});
+
+test('#6118 AC11.1, AC11.2, AC11.3 (Decision, Reading B): an open streak followed by a shared-cause launch deletes the first record\'s comment', async () => {
+  const { summary, ghCalls, f } = await workerRun([LAUNCH_FAIL('exit', { escalationCommentId: 991 }), { ...LAUNCH_FAIL('launch-error'), sharedCause: true }], { count: 4 });
+  assert.deepEqual([summary.ended, summary.driven], ['worker-stop', 2]);
+  assert.equal(f.driven().length, 2);
+  assert.equal(ghCalls.length, 1);
+  assert.deepEqual(ghCalls[0].slice(0, 4), ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/991']);
+  assert.match(summary.detail, /#1 and #2/);
+  assert.match(summary.detail, /exit, launch-error/);
+});
+
+test('#6118 a failed delete is named and never changes the exit code', async () => {
+  const { code, summary, f } = await workerRun([LAUNCH_FAIL('exit', { escalationCommentId: 991 }), LAUNCH_FAIL('exit')], {
+    count: 4, gh: () => { throw new Error('HTTP 404\nsecond line'); },
+  });
+  assert.equal(code, 0);
+  assert.equal(summary.ended, 'worker-stop');
+  assert.match(summary.detail, /could not delete the escalation comment on #1: HTTP 404$/);
+  assert.match(f.err, /drive\.js: could not delete the escalation comment on #1/);
+});
+
+test('#6118 a settled first record with no comment id names the gap', async () => {
+  const { summary, ghCalls, f } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_FAIL('exit')], { count: 4 });
+  assert.equal(ghCalls.length, 0);
+  assert.match(summary.detail, /no escalation comment id on #1 to delete/);
+  assert.match(f.err, /no escalation comment id on #1 to delete/);
+});
+
+test('#6118 --no-settle two-in-a-row attempts no delete', async () => {
+  const { summary, ghCalls, f } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_FAIL('exit')], { count: 4, settle: false });
+  assert.equal(summary.ended, 'worker-stop');
+  assert.equal(ghCalls.length, 0);
+  assert.doesNotMatch(summary.detail, /delete|comment id/);
+  assert.doesNotMatch(f.err, /escalation comment/);
+});
+
+test('#6118 the launch reason is neutralized in the detail', async () => {
+  const { summary } = await workerRun([{ ...LAUNCH_FAIL('see #123 `x`'), sharedCause: true }], { count: 2 });
+  assert.doesNotMatch(summary.detail, /#123|`/);
 });
