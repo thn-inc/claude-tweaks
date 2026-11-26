@@ -1,7 +1,9 @@
 'use strict';
 // The pipeline driver's `--budget <n|all>` loop (drive.js, record #5229). runBudget reads the
 // policy through the table's own policy step (an unreadable policy exits 1; `express-driver:
-// off` refuses before any pull), then loops: pull the dispatch queue (deps.queuePull), pre-screen
+// off` refuses before any pull), then loops: pull the dispatch queue (deps.queuePull, with
+// `omit: ['driver-lane']`: the session drain leaves driver-routable singletons to this loop under
+// `express-driver-runner: script`, so the loop must still select them), pre-screen
 // every record of every group the ranking could select (a group the pull excluded for an
 // UNSELECTABLE_REASONS reason is left alone) with the eligibility step's own call, rank
 // (deps.rankNext) against the pull's exclusions plus this invocation's in-memory `firing`
@@ -289,7 +291,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
     if (shared.interrupted) return 0;
     let pull;
     try {
-      pull = checkedPull(deps.queuePull({ transport: 'gh', sessionId, cwd: shared.mainRoot, env: deps.env, inputs: {}, omit: [] }, moduleDeps));
+      pull = checkedPull(deps.queuePull({ transport: 'gh', sessionId, cwd: shared.mainRoot, env: deps.env, inputs: {}, omit: ['driver-lane'] }, moduleDeps));
     } catch (err) {
       return pullFailed(err);
     }
