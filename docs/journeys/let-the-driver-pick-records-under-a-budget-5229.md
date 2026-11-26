@@ -16,7 +16,7 @@ files:
 **Persona:** a maintainer, or the hub acting on their behalf, with a queue of authorized `auto:build` records and no time to choose among them. They want the driver to take the next few eligible records itself, in the queue's own order, and to say afterwards how many it drove, how many it passed over and why it stopped. Picking a record by hand would be wasted effort.
 **Goal:** run one command with a budget and get back the usual per-record event lines for each driven record, followed by one summary line that accounts for every record the run handled.
 **Entry point:** `node plugin/bin/drive.js --budget 3` (or `--budget all`, optionally with `--no-settle`) in the main checkout of a repository whose `.claude-tweaks/policy.yml` enables `express-driver`.
-**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted` (or a stop such as `worker-stop`), and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
+**Success state:** the last stdout line is the `step: "budget"` summary. Its `ended` is `budget` or `exhausted` (or `worker-stop`, when implementer launches cannot launch: the run ends early with `status: stop` and exit 0), and its counters sum to every record the run handled. Each driven record has its own final line, as a named run would (journey `drive-a-named-record-to-a-draft-pr-5218`). The exit code is 0.
 
 ## Steps
 
