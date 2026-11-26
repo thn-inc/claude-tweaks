@@ -71,11 +71,13 @@ function quoteMidText(text) {
 test('AC1.1: classifyRefusal returns null for an error that quotes a refusal mid-text', () => {
   for (const [name, text] of FIXTURES) {
     assert.strictEqual(classifyRefusal(quoteMidText(text)), null, name);
+    assert.strictEqual(classifyRefusal('foo: ' + text), null, `${name} (single-line prefix)`);
   }
 });
 
+const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
+
 test('classifyRefusal: non-refusals return null', () => {
-  const editToolText = `This agent is isolated in the worktree ${WT}, so its writes are limited to that folder. This path is in a different worktree (/w). Edit the copy of this file under ${WT} instead.`;
   for (const text of ['Exit code 1\nfatal: not a git repository', undefined, 42, editToolText]) {
     assert.strictEqual(classifyRefusal(text), null);
   }
@@ -148,6 +150,14 @@ test('bash-prefilter earlyGate passes every refusal template to the handler', ()
   const escaped = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error: GONE_FIXED }).replace('Refusing', '\\u0052efusing');
   assert.ok(escaped.includes('\\u0052efusing'));
   assert.strictEqual(earlyGate('post-tool-use-failure', () => escaped).skip, false);
+});
+
+test('AC1.1: bash-prefilter earlyGate skips a failure whose error quotes a refusal mid-text', () => {
+  const gate = (text) => earlyGate('post-tool-use-failure', () => JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'x' }, error: text }));
+  for (const [name, text] of FIXTURES) {
+    assert.strictEqual(gate(quoteMidText(text)).skip, true, name);
+  }
+  assert.strictEqual(gate(editToolText).skip, true, 'editToolText');
 });
 
 test('harness-refusal: post-tool-use-failure re-exports the same RegExp object', () => {

@@ -30,7 +30,7 @@ const ISOLATION_CLAUSE = ' is isolated in the worktree ';
 const REFUSAL_SIGNATURE = 'Refusing to run it';
 const WORKTREE_GONE_SIGNATURE = 'Refusing to run there';
 
-// Signature tails, for a raw-substring prefilter.
+// Signature tails, for the prefilter's noun-first check on the parsed `error` (#4523).
 const REFUSAL_SIGNATURES = Object.freeze([REFUSAL_SIGNATURE, WORKTREE_GONE_SIGNATURE]);
 
 // Fragments: the two nouns, the isolation clause, then the two signatures.
