@@ -8,6 +8,8 @@ files:
   - plugin/skills/build/plan-review-asked-classes.md
   - plugin/skills/_shared/planning-decisions.md
   - plugin/bin/risk-flags.js
+  - plugin/bin/plan-review-answer.js
+  - plugin/skills/dispatch/answered-resumes.md
 ---
 
 # Answer a Plan-Review Question Before the Build Starts
@@ -46,19 +48,19 @@ files:
 
 ### 3. Answer on the record after a dispatched stop — GitHub issue
 - **URL:** the record's `<!-- plan-review-question -->` comment, linked from the dispatch report block
-- **Action:** Read each question and its two readings, then answer each one by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's **body**.
+- **Action:** Read each question and its two readings, then answer each one either by replying on the record with a comment whose first line starts `/answer` (the next bare `/claude-tweaks:dispatch` folds it into the body and resumes), or by adding a `**Decision**` paragraph (or an Acceptance Criterion) to the record's **body** and running `/claude-tweaks:dispatch resume #{n}`.
 - **Should feel:** Self-contained — the comment carries the finding, its evidence and both readings, so the answer needs no access to the build's worktree.
 - **Should understand:**
   - A dispatched build runs in a subagent that cannot ask, so it posts the question, stops before Task 1, and the dispatching session relays it; Settle releases the claim without counting a retry and the draft PR stays open.
   - The question also rides in the build's `BLOCKED` reply, so a failed comment post or label write still reaches the dispatch report — flagged there as a concern, never dropped.
   - The next build materializes the record body, not its comments — an answer left only as a comment does not reach it.
-  - A headless (Routine-fired) stop also adds `bot:blocked` and removes the record's `auto:*` grants; a human-typed dispatch keeps `auto:build`, so a later drain can re-pick the record until it is answered.
+  - A plan-review stop, headless or human-typed, adds `needs:answer` and keeps the record's grants: no `bot:blocked`, no grant removal. A bare drain resumes the record once a trusted `/answer` reply is folded into the body (#5053).
   - Under `planning-decisions: asked-classes`, the comment for a hard-to-undo question names the risk category and asks you to add it to the body's `Risk-flags:` line alongside the `**Decision**`.
 - **Red flags:** The draft PR closed as a failure tombstone; an attempt counted against `dispatch-retry-ceiling`; a stop whose question appears nowhere on the record.
 
 ### 4. Resume the build — terminal
-- **URL:** `/claude-tweaks:backlog refine` (only when the stop was headless), then `/claude-tweaks:dispatch #{n}`
-- **Action:** Re-grant `auto:build` if the headless stop removed it, then dispatch the record again.
+- **URL:** `/claude-tweaks:dispatch` (a bare drain resumes an answered record itself), or `/claude-tweaks:dispatch resume #{n}` after a body edit
+- **Action:** Nothing to re-grant: the stop kept the grants. Reply `/answer` and let the next bare drain resume the record, or, after a body `**Decision**`, run `/claude-tweaks:dispatch resume #{n}`.
 - **Should feel:** Like continuing, not starting over — the answered body is the new spec.
 - **Should understand:**
   - The resumed build re-materializes from the answered body; the earlier run's local worktree was removed by dispatch's ordinary first-call-failure teardown, and nothing from it is needed.
@@ -72,5 +74,6 @@ files:
 - Updated by #4958: a resumed build's plan review converges after one answered round instead of stopping round after round (10 plan-review attempts across 7 records in the 2026-10-31 dispatch firing produced no implementation), and dispatched questions ask for a `**Decision**` paragraph.
 - Updated by #6051: an opt-in `planning-decisions: asked-classes` policy value settles every needs-human gap except design-level, hard-to-undo and contradictory ones (#5292 counted 271 plan-review questions over 157 of 714 runs); the default `ask-all` leaves steps 1-4 exactly as described above.
 - Updated at the wrap-up of #6060: under `plan-at-specify: on`, a build that reuses the plan reviewed at specify skips this review, so step 1 names that skip beside the fast-lane and trivial-plan ones.
+- Updated by #5053: a plan-review stop parks the record under `needs:answer` instead of `bot:blocked`, keeps its grants, and takes a trusted `/answer` reply (folded into the body by the bare drain's Step 2.5 sweep or `plugin/bin/plan-review-answer.js`) or a body `**Decision**` plus `dispatch resume #N`.
 - Pinned by `tests/build-plan-review-conformance.test.js`, `tests/planning-decisions-conformance.test.js`, `tests/plan-review-hard-gate-conformance.test.js`, `tests/plan-review-dispatch-relay-conformance.test.js` and `tests/plan-review-convergence-conformance.test.js`.
 - Related: `merge-small-adjacent-tasks-at-plan-time-3379.md` and `add-a-fast-lane-skip-to-the-roster-1926.md`, other plan-time steps of the same build.

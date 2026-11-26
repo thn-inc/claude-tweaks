@@ -218,8 +218,8 @@ command stands in for `auto:build` (below).
   a `correctness`- or `ambiguous`-classified failure revokes `auto:merge` before retry; a
   `transient`-classified one preserves it. At the retry ceiling (`dispatch-retry-ceiling`),
   regardless of classification, machinery removes all `auto:*` labels and adds `bot:blocked` —
-  the record needs a human re-grant to run again. `/build` Common Step 1.6's plan review
-  revokes nothing on a needs-human stop: it adds `needs:answer` and keeps the grants
+  the record needs a human re-grant to run again. `/build` Common Step 1.6's
+  plan review revokes nothing on a needs-human stop: it adds `needs:answer` and keeps the grants
   (`build/plan-review.md`); resolution: a human's reply on the question comment whose first line
   starts `/answer`, or add a `**Decision**` paragraph to the body and run
   `/claude-tweaks:dispatch resume #N`.
