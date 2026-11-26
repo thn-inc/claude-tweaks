@@ -221,6 +221,10 @@ function readManifestOrNull(dir) {
   try { return JSON.parse(fs.readFileSync(path.join(dir, MANIFEST_FILE), 'utf8')); } catch { return null; }
 }
 
+function warnManifestFailure(err) {
+  try { process.stderr.write(`claude-tweaks: run-manifest: ${errText(err)}\n`); } catch { /* never break a close */ }
+}
+
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const stampOf = (e) => Date.parse(e && e.ts);
 const liveEvents = (events) => (Array.isArray(events) ? events : []).filter((e) => e && e.type !== 'worktree-reaped' && Number.isFinite(stampOf(e)));
@@ -270,7 +274,7 @@ function fillManifestAtClose(dir, { base, costRows = null, withCost = false } = 
     if (withCost) fields.cost = { tokensByModel: r.tokensByModel, costUsd: r.costUsd, priceDate: r.priceDate, unpricedModels: r.unpricedModels, costPartial: r.costPartial };
     fillRunManifest(dir, fields);
   } catch (err) {
-    try { process.stderr.write(`claude-tweaks: run-manifest: ${errText(err)}\n`); } catch { /* never break a close */ }
+    warnManifestFailure(err);
   }
 }
 
@@ -302,7 +306,7 @@ async function fillKeptManifest(dir, { env, homeDir, deadlineAt }) {
     const withCost = !c.deadlineHit && c.costRows !== null;
     fillManifestAtClose(dir, { base, costRows: c.costRows, withCost });
   } catch (err) {
-    try { process.stderr.write(`claude-tweaks: run-manifest: ${errText(err)}\n`); } catch { /* never break a close */ }
+    warnManifestFailure(err);
   }
 }
 
