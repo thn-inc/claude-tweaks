@@ -132,6 +132,7 @@ Expected: PASS.
 - Modify: `plugin/bin/lib/driver/merge.js` (`GATE_FIELDS` gains `createdAt`; `gateReads`: committer-date read when `runs` is empty; `classify`: `now`, `headCommittedAt`, `prCreatedAt: read.createdAt`)
 - Modify: `plugin/bin/lib/learned-skills/drain.js` (the per-PR `gh pr view` field list gains `createdAt`; `read`: committer-date read when `headRuns` is empty; `classifyPr`: `now`, `headCommittedAt`, `prCreatedAt: view.createdAt`)
 - Test: `tests/bin-lib/driver/merge.test.js`, `tests/bin-lib/learned-skills/drain.test.js`
+- Test: `tests/bin-lib/driver/run.test.js` (run in Step 4; edit only fixtures whose ordinary green PR now reads pending, as below — Check B hit)
 
 **Interfaces:**
 - Consumes: Task 1's `classifyRollup` inputs.
