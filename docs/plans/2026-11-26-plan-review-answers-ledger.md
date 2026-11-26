@@ -1,9 +1,0 @@
-# Open Items — Plan-review needs-human stops have no answer path, no waiting state and no restart
-
-| # | Phase | Item | Status | Resolution |
-|---|-------|------|--------|------------|
-| 1 | build | SDD ruling (procedural) carried as audit, not staged: Task 5's dangling attention-row promise left to Task 8's planned row (Task 8 added it; confirmed by its review and the final review) | observation | — |
-| 2 | build | SDD ruling — attention needs:answer row keeps the spec's unconditional dispatch resume remedy: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 3 | review/code | queue-pull.js:120 — an unanswered needs:answer record is held only by the fail-open open-pr exclusion; a failed or truncated open-PR fetch re-dispatches it and the build re-asks the question (tiebreak confirmed, medium). Fix-now fails: adding a needs:answer queue-pull exclusion reverses spec D11 (no second exclusion), a product/design call. Defer-reason: needs-human-decision; the gap is now stated in dispatch/design-notes.md | open | — |
-| 4 | review/code | task-prompt.js:207 — the code guard keeping DISPATCH_HEADLESS and RESUME_PR apart was removed; only skill prose now gates --headless on a sweep-originated resume (tiebreak-confirmed pair finding, medium) | observation | Not fixed, stated reason: the combination is now legitimate (a headless sweep resume), and the renderer cannot tell a sweep from a typed resume, so a code guard would refuse the valid case; recorded as an accepted Beneficial deviation in the spec (d1016b0d8c) |
-| 5 | review/code | Review fixes: legacy bot:blocked plan-review row keeps its write-the-answer-on-the-body hint; design-notes names the fail-open fetch gap; plan-review-answer.js header names its consumer; plugin-structure row names the CLI suite; answered-resumes control finds its ALLOWED entry by file | fixed | Fixed in a4a2c6798e; 309/309 targeted tests pass |
