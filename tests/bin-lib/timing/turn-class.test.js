@@ -65,6 +65,7 @@ const ROWS = [
   ['missing command', { name: 'Bash', input: {} }, 'other'],
   // guard refusals
   ['worktree isolation refusal', bash('git -C /r commit', { isError: true, resultText: 'This session is isolated in the worktree /r, but …' }), 'guard-refusal'],
+  ['agent isolation refusal', bash('git -C /r commit', { isError: true, resultText: 'This agent is isolated in the worktree /r, but …' }), 'guard-refusal'],
   ['permission denied refusal', { name: 'Write', input: {}, isError: true, resultText: 'Permission to use Write has been denied because …' }, 'guard-refusal'],
   ['permission denied refusal quoting a long command', bash('node x', { isError: true, resultText: `Permission to use Bash with command node ${'a'.repeat(400)} has been denied.` }), 'guard-refusal'],
   ['PreToolUse hook refusal', bash('git push', { isError: true, resultText: 'PreToolUse:Bash hook error: claude-tweaks: …' }), 'guard-refusal'],

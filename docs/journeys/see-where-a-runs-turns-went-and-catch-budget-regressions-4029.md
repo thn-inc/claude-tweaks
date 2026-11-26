@@ -35,6 +35,7 @@ files:
   - There are ten classes: `edit`, `read`, `explore`, `procedure`, `bookkeeping`, `orientation`, `verify`, `guard-refusal`, `dispatch`, `other`. Every call lands in exactly one.
   - Ceremony share is `procedure + bookkeeping + orientation + guard-refusal` over all calls, rounded from the integer counts.
   - A `Read` of a skill file is `procedure`, not `read`. A refused call is `guard-refusal` whatever tool it was.
+  - A worktree-isolation refusal counts as `guard-refusal` whether the harness names the session ("This session is isolated in the worktree") or a dispatched agent ("This agent is isolated in the worktree"). Both nouns come from `harness-refusal.js`, the same source the friction events use (#4521).
   - Context per turn is input plus cache-read plus cache-create tokens on each turn-start row, nearest-rank p50/p90. `subagents` counts agents: the `Agent` and `Task` calls in the span plus the workflow-script agents whose first transcript row falls in it (#5597). The `dispatch` turn class counts calls (`Agent`, `Task` and `Workflow`), so a run that starts agents through a workflow shows more `subagents` than `dispatch` calls; with no workflow agents the two match.
   - The summaries paste both lines verbatim, as `_shared/timing-render.md` says. A run whose transcript was not found prints neither.
 - **Red flags:**
@@ -81,4 +82,4 @@ files:
 
 ## Origin
 
-Built by #4029 (run `2026-10-24T193455-record-4029`). It extends the per-phase token axis from `see-which-phase-spent-the-tokens-1929.md`. #5597 (run `2026-11-16T003729-record-5597`) made `subagents` count workflow-script agents and classed a `Workflow` call as `dispatch`.
+Built by #4029 (run `2026-10-24T193455-record-4029`). It extends the per-phase token axis from `see-which-phase-spent-the-tokens-1929.md`. #5597 (run `2026-11-16T003729-record-5597`) made `subagents` count workflow-script agents and classed a `Workflow` call as `dispatch`. #4521 (run `2026-11-26T100536-record-4521`) made the agent-noun isolation refusal a `guard-refusal` turn.
