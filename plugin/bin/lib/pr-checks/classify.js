@@ -200,7 +200,7 @@ function classifyRollup({ rollup, headRefOid, localHead, hasPrCi, headRuns, read
     }
   }
   if (failing.length > 0) return result('red', headRefOid, { failing });
-  const held = heldChecks(rollup, headRuns || []);
+  const held = heldChecks(rollup, headRuns);
   const pending = [...new Set([...checks.filter((e) => e.status !== 'COMPLETED').map((e) => e.name), ...held.map((h) => h.name)])];
   const awaiting = readyActive ? readyRunVerdict({ readySince, readyWorkflows, headRuns }).awaiting : [];
   if (pending.length > 0 || awaiting.length > 0 || held.length > 0) {
