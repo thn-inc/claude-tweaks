@@ -85,6 +85,7 @@ files:
 - All steps were built in this session.
 - Updated by #3977: step 5 reads the report-only run-disposition lines.
 - Updated by #5393: step 3's `error` text leads with `gh`'s stderr and a short command, and never carries a flag value.
+- Updated by #4209: step 3's prune failures keep their entry for up to 5 failed retries (`RESIDUE_RETRY_LIMIT`), and each is reported once per pass.
 - Related records:
   - #2724 (first dry-run guard on the exempt clear)
   - #4202 (checkout-scoped gone-path predicate)
