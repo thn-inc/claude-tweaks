@@ -85,8 +85,8 @@ decision approve-all-merge` line is the record). An attended "Approve all + merg
 verdict. Merge only when it exits 0 and prints `recheck-merge merge`. When it prints
 `recheck-merge leave-open`, the CLI has already logged the verdict and rewritten a stored `merge` to `leave-open`,
 so the run skips the merge and lands on `pending-review` as leave-open does. Any other exit skips
-the merge too, with one `SKIP` line via `log-decision.js` naming the exit. A merge the re-check
-confirms runs `_shared/pr-first-merge.md`'s procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
+the merge too, with one `SKIP` line via `log-decision.js` naming the exit. An attended merge, or a stored `merge` the re-check
+confirms, runs `_shared/pr-first-merge.md`'s procedure — read as one composed bundle: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`,
 then read `$PIPELINE_RUN_DIR/context/merge.md` (source files directly if compose is unavailable).
 "Approve all, leave PR open", Override, and a console the empty-console fast path skipped carry
 no merge decision: they skip the merge, landing on `pending-review`. Then run cleanup items 4, 6,
