@@ -287,6 +287,7 @@ async function fillKeptManifest(dir, { env, homeDir, deadlineAt }) {
     const stored = readManifestOrNull(dir);
     const complete = isObj(stored) && stored.costPartial === false && typeof stored.costUsd === 'number';
     if (complete) return fillManifestAtClose(dir, { base });
+    // Not deadline-gated: the driver lane's cost reads only the local driver-events.jsonl.
     if (isObj(stored) && stored.lane === 'driver') return fillManifestAtClose(dir, { base, withCost: true });
     const own = ownTranscripts(base.runState, { env, homeDir, runId: path.basename(dir), runRoot: runRootOf(dir) });
     if (!own.paths.length) return fillManifestAtClose(dir, { base });
@@ -440,6 +441,8 @@ async function writeTimingAtClose(runDir, { tokens = true, env = {}, homeDir = o
     if (base) {
       try {
         ({ dir, result } = write(runDir, base.timing, `${failed}${PHASE_ONLY}`, Date.now() + module.exports.PHASE_LOCK_WAIT_MS, base.runState !== null));
+        // The phase rows landed: the manifest's times (never its cost, nothing was priced) follow.
+        if (result.status === 'written') fill = { base };
       } catch { /* the failed result above stands */ }
     }
   }

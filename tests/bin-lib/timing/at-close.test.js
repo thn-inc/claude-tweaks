@@ -1707,14 +1707,20 @@ test('AC8.12: a fill-created manifest takes minutes from the first event, and mi
     const expected = Math.round((Date.parse(m.closedAt) - Date.parse('2026-11-16T10:00:00.000Z')) / 6000) / 10;
     assert.equal(m.minutes, expected);
 
+    // AC8b: no manifest at all, an empty events.jsonl, a clean run-state stamped by the real closeRunState.
     const bare = path.join(root, 'bare');
     fs.mkdirSync(bare);
-    fs.writeFileSync(path.join(bare, 'run-state.json'), JSON.stringify({ status: 'active' }));
-    assert.equal(initRunManifest(bare, { cwd: root }, { gatherFacts: () => ({ ...MINT }) }).written, true);
+    fs.writeFileSync(path.join(bare, 'events.jsonl'), '');
+    ctxLib.writeRunState(bare, { sessionId: SID, worktree: path.join(root, 'wt'), status: 'active' });
+    assert.equal(closeRunState(bare, { explicit: true }).status, 'closed');
+    const stamp = JSON.parse(fs.readFileSync(path.join(bare, 'run-state.json'), 'utf8'));
+    assert.equal(stamp.status, 'clean');
+    // closeRunState logs its own close event; the fixture has none.
+    fs.writeFileSync(path.join(bare, 'events.jsonl'), '');
     writePhaseTimingSync(bare);
-    // No event and no clean stamp: nothing to fill, so the keys stay unset (read as null).
-    assert.equal(readManifestJson(bare).minutes ?? null, null);
-    assert.equal(readManifestJson(bare).closedAt ?? null, null);
+    const filled = readManifestJson(bare);
+    assert.equal(filled.closedAt, stamp.updatedAt);
+    assert.equal(filled.minutes ?? null, null);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1793,6 +1799,26 @@ test('AC8.8: a kept close over a complete stored group reads no transcript rows 
     assert.equal(calls, 0);
     assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a throw after the phase rows were derived still fills the manifest\'s times from the fallback write', async () => {
+  const root = tmpRoot();
+  const realRead = transcript.readUsage;
+  try {
+    const { runDir, env } = manifestRun(root);
+    // A reader result that is not an array throws inside deriveTiming, outside its per-transcript catch.
+    transcript.readUsage = async () => ({});
+    const r = await writeTimingAtClose(runDir, { env });
+    assert.equal(r.status, 'written');
+    assert.equal(r.tokens, false);
+    const m = readManifestJson(runDir);
+    assert.equal(m.closedAt, JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8')).updatedAt);
+    assert.equal(typeof m.minutes, 'number');
+    assert.equal('costUsd' in m, false);
+  } finally {
+    transcript.readUsage = realRead;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
