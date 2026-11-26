@@ -106,11 +106,11 @@ Resolve this firing's `$RUN_ID` once, before Step 2, via the standalone-auto run
 
 ### Step 2: Pull the authorized queue and group per record
 
-First action, before the pool is read: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile --json` — converges the main checkout toward origin (`bin/lib/reconcile`, #407) so the queue pull below reads already-current state instead of racing a stale mirror. `--json` is required here, not the plain `reconcile` default (#638's compact summary) — this call site parses the result's `console.ready` array below, which the compact default doesn't expose in a machine-readable shape. Dispatch runs from a worktree under `worktree-always`; the verb still converges the *main checkout's* mirror regardless (`mainCheckoutRoot` resolution). Use an explicit, generous timeout (150000ms+) — an unscoped sweep once took ~2 min, backgrounding and stranding a firing (#1543). Stays unscoped (no `--checks`): narrowing risks skipping a check queue-pull needs. Log the JSON result to `decisions.md`. When the result's `console.ready` array is non-empty, follow `_shared/console-execution.md` for each entry before continuing to the queue pull.
+First action, before the pool is read: `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" reconcile --json` — converges the main checkout toward origin (`bin/lib/reconcile`, #407) so the queue pull below reads already-current state instead of racing a stale mirror. `--json` is required (`queue-pull-notes.md`'s Reconcile call). Use an explicit, generous timeout (150000ms+) — an unscoped sweep once took ~2 min, backgrounding and stranding a firing (#1543). Stays unscoped (no `--checks`): narrowing risks skipping a check queue-pull needs. Log the JSON result to `decisions.md`. When the result's `console.ready` array is non-empty, follow `_shared/console-execution.md` for each entry before continuing to the queue pull.
 
 Common to every selection form — group membership must be computed over the full current pool *before* anything is claimed (per `_shared/issue-claims.md`'s group-claim rule: group membership is computed over **unclaimed** records only, so two racing firings converge on the same winner instead of splitting a group between them).
 
-The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + not already shipped by a `strong`-tier merged-PR mention (#1984) + no `unlanded`/`hollow` out-of-run blocker or malformed blocker declaration (#4792) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
+The queue: **open + `auto:build` + no `bot:*` + no open `Blocked by #N` dependency + no open linked PR (#1224) + not already shipped by a `strong`-tier merged-PR mention (#1984) + no `unlanded`/`hollow` out-of-run blocker or malformed blocker declaration (#4792) + not left to the script job (`driver-lane`, #6119) + unclaimed**. Dispatch never adds `auto:build`, `auto:merge`, or `ready` (the Auto-merge gate's promotion of an already-existing `auto:merge-pending` to `auto:merge` is maturation of a grant already present, not origination — see `settle-and-merge.md`) — see Anti-Patterns.
 
 **False-positive posture (#1984).** A record whose full deliverable set is already shipped, but
 whose resolving PR never carried a closing keyword, can only be excluded here when a **merged**
@@ -158,6 +158,8 @@ same convention as the reports above.
 **Oversized-group report (refs #1228).** See `oversized-group-report.md`, this skill's directory (groups over the size guard stay selectable via `#N`/`#N,#M,...`; not a gate).
 
 **Neighbour-in-flight report (refs #3278).** See `neighbour-in-flight-report.md`, this skill's directory (bare drain skips the record this firing; `#N`/`#N,#M,...` print the line and still dispatch).
+
+**Driver-lane report (refs #6119).** See `driver-lane-report.md`, this skill's directory (bare drain skips the record under `express-driver-runner: script`; `#N`/`#N,#M,...` still dispatch it).
 
 **Cross-PR root-cause overlap report (refs #1579).** See `cross-pr-overlap-report.md`, this skill's directory (warning only, never a gate).
 

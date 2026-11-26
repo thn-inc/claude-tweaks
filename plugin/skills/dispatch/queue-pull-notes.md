@@ -79,3 +79,16 @@ The rule's reason words. Resume and the driver (`drive.js`) print the same words
 | `ci` | Outside a session, `CI` is set | `grant it with /claude-tweaks:backlog refine #N` |
 
 **Fast-lane bundling and report pointers (moved from the script header, #6119).** The `oversized` bullet's bundling note: Before the size guard runs, `grouping.js`'s `bundleFastLaneSingletons` (#1910) merges up to `dispatch-fastlane-bundle-cap` (default 3, `policy.yml`) non-overlapping `ceremony:fast-lane` singleton groups — same merge-grant state (`auto:merge` together with `auto:build`), same `priority:*` band, oldest-first — into one multi-spec group each, so the pool `dispatch-groups.json` carries already reflects any bundling; it also writes `dispatch-fastlane-bundles.json` (`{records: number[]}[]`), naming exactly the groups this pass created, so the Reporting section can call out a fast-lane bundle distinctly from an ordinary single-record group. SKILL.md Step 3's Oversized-exclusion report surfaces the `oversized` entries too, and its Blocked-exclusion report reads the `target-missing` reason too, so every form's exclusion (or non-exclusion) is never silent.
+
+## Reconcile call
+
+`--json` is required on Step 2's `reconcile` call, not the plain default (#638's compact summary): the call site parses the result's `console.ready` array, which the compact default does not expose in a machine-readable shape. Dispatch runs from a worktree under `worktree-always`; the verb still converges the *main checkout's* mirror regardless (`mainCheckoutRoot` resolution).
+
+## Driver-lane pass (#6119)
+
+Under `express-driver-runner: script` (with `express-driver` `split` or `on`), a `drive.js --budget` script job drains driver-routable singletons, so the session drain leaves them alone: the `driver-lane` pass (`bin/lib/dispatch/driver-lane.js`) excludes each one with `reason: 'driver-lane'`, and prints `driver-lane: left to the script job: #a, #b`. Default `session` changes nothing.
+
+- **Position.** It sits after the removing passes and before neighbour-in-flight: a record an earlier pass removed is never checked, and a lane record never reaches the neighbour pool query. It is non-removing (`dispatch-groups.json` keeps the record), so `#N`/`#N,#M,...` still dispatch it and `runBudget` pulls with `omit: ['driver-lane']`, which is how the script job selects the records the session drain leaves.
+- **Cache hit.** It runs on a cache hit too: its inputs are the policy and the record's trusted driver escalation marker, which can change at any moment.
+- **Fail-open.** An unreadable `express-driver-runner` reads as `session` (one `Warning:` line), a failed batched comment read (`bin/resolve-record-comments.js`) or an unavailable predicate excludes nothing (one `Warning:` line each), and `express-driver-runner: script` while `express-driver` is `off` is ignored with one line. A broken pass leaves records with the session drain; it never strands one.
+- **Accepted race.** Both runners may select one record in the same instant. The claim lets only one builder build it, and no staleness bound returns a record to the session pool if the script job is not running; a lane no job drains shows in every firing's report (`driver-lane-report.md`).
