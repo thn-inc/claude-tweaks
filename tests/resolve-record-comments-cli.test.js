@@ -46,6 +46,16 @@ test('a comma list prints one number-keyed object from ONE runner call, comments
   });
 });
 
+test('an unread record (alias i8 null) is absent from the printed object, end to end', () => {
+  const deps = fakeDeps({
+    runner: () => JSON.stringify({ data: { repository: { i7: { comments: { totalCount: 1, nodes: [comment] } }, i8: null } } }),
+  });
+  assert.equal(run(['7,8'], deps), 0);
+  const printed = JSON.parse(deps.calls.stdout[0]);
+  assert.deepEqual(Object.keys(printed), ['7']);
+  assert.equal('8' in printed, false);
+});
+
 test('a thrown fetch (null repository) is exit 3 with nothing on stdout', () => {
   const deps = fakeDeps({ runner: () => JSON.stringify({ data: { repository: null } }) });
   assert.equal(run(['7'], deps), 3);

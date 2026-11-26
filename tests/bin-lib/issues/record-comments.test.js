@@ -42,6 +42,14 @@ test('fetchRecordComments: a null repository throws, naming the numbers', () => 
   assert.throws(() => fetchRecordComments({ numbers: [11, 22], owner: 'o', repo: 'r', runner }), /#11, #22/);
 });
 
+test('fetchRecordComments: GraphQL errors ride on the thrown message as a (GraphQL: ...) suffix', () => {
+  const runner = () => JSON.stringify({ data: { repository: null }, errors: [{ message: 'Could not resolve' }, { message: 'rate limited' }] });
+  assert.throws(
+    () => fetchRecordComments({ numbers: [11], owner: 'o', repo: 'r', runner }),
+    /#11 \(GraphQL: Could not resolve; rate limited\)$/,
+  );
+});
+
 test('fetchRecordComments: argv carries -f owner= and -f repo=, --hostname only for a GHE host', () => {
   const seen = [];
   const runner = (args) => { seen.push(args); return resp({ i1: { comments: { totalCount: 0, nodes: [] } } }); };
