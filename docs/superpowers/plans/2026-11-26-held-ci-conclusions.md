@@ -17,7 +17,7 @@ Scope keywords: UNVERIFIED_CONCLUSIONS, OK_CONCLUSIONS
 - Held conclusions are exactly `CANCELLED`, `ACTION_REQUIRED`, `STALE` (the existing `UNVERIFIED_CONCLUSIONS` minus `SKIPPED`), in that order.
 - `SKIPPED` stays green-compatible.
 - Only the newest run of a check counts: group by check name, newest by start time, ties broken by id. Start time is `startedAt`, then `run_started_at`, then `createdAt`, then `created_at` (the first one present). The id is `databaseId`, then `id`.
-- A held check makes the verdict `pending`, never `red`. Red (any `FAILING_CONCLUSIONS` entry) still wins first.
+- A held check makes the verdict `pending`, never `red`. Red (any `FAILING_CONCLUSIONS` entry) still wins first. Newest-per-check decides only the held rule: a `FAILURE`-class row stays red even when a newer success supersedes it. This is today's red behaviour, unchanged (spec, Plan Review Clarifications).
 - Family rule (spec): newest run per check name; `FAILING_CONCLUSIONS` → red; `HELD_CONCLUSIONS` → pending; `SUCCESS`/`NEUTRAL`/`SKIPPED` → green-compatible. There is one shared list, imported from `classify.js` or pinned to it, never a free-standing copy.
 - `FAILING_CONCLUSIONS` is unchanged and stays pinned equal to Step 2.5's red-bullet prose list.
 - The composed `merge` bundle (`pr-first-merge.md` + `pr-checklist-refresh.md`) measured 52,480 B against the 52,500 B rail at plan time. Across Tasks 5 and 6, `pr-first-merge.md`'s net growth must stay at or under 20 B. Pay for additions by moving rationale into `pr-first-merge-appendix.md`'s `## Rationale notes`, which no bundle composes.
@@ -143,6 +143,8 @@ git commit -m "Read head runs with start time and id from one field list — new
 
 ### Task 3: The learned-skills drain follows the held rule (Reading B)
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/learned-skills/drain.js:42` (import), `:58` (`OK_CONCLUSIONS` comment), `:94` (the second scan)
 - Test: `tests/bin-lib/learned-skills/drain.test.js`
@@ -184,18 +186,19 @@ git commit -m "Read held checks as pending in the learned-skills drain — one r
 - Test: `tests/display-ci-readers-conformance.test.js`
 
 **Interfaces:**
-- Consumes: `FAILING_CONCLUSIONS`, `HELD_CONCLUSIONS` from `plugin/bin/lib/pr-checks/classify` (test side only). The fence runs with `PLUGIN_ROOT` pointed at a stub root, so it cannot `require` `classify.js`. The set stays a literal and is pinned instead.
+- Consumes: `FAILING_CONCLUSIONS`, `HELD_CONCLUSIONS` from `plugin/bin/lib/pr-checks/classify` (test side only). The fence runs with `PLUGIN_ROOT` pointed at a stub root, so it cannot `require` `classify.js`. Both sets stay literals and are pinned instead.
+- Byte budget: `github-pr-scan.md` had 391 B of headroom at plan time, and the composed `pr-scan` bundle (`tidy/scan-procedures.md:295`) had 244 B. Keep the net growth under 200 B, and re-run `plan-audit.js` (Step 4) to confirm.
 
 - [ ] **Step 1: Write the failing tests**
-  - In the item 1 run-the-fence test, add PR `{ number: 8, title: 'h', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'CANCELLED' }] }` and expect `'#8 CI pending'`. Add PR 9 with `ACTION_REQUIRED`, expecting `'#9 CI pending'`. The `pr-checks.js` call list stays `['1','2','3','4','5']`.
-  - New test `the item 1 FAILURE set equals FAILING_CONCLUSIONS (code twin; held conclusions read pending)`: extract the `` FAILURE = new Set([...]) `` literal's quoted tokens from `repoWideItem1Slice()` and deep-equal them to `[...FAILING_CONCLUSIONS]`. Assert that no `HELD_CONCLUSIONS` token appears in them. Add a go-red control: with `'CANCELLED'` spliced back into the literal, the deep-equal fails.
+  - In the item 1 run-the-fence test, add three PRs. PR 8 has `[{ conclusion: 'SUCCESS' }, { conclusion: 'CANCELLED' }]` and PR 9 has `[{ conclusion: 'SUCCESS' }, { conclusion: 'ACTION_REQUIRED' }]`: their rollups hold only OK and held conclusions, so they now reach `pr-checks.js` and print its verdict. PR 10 has `[{ conclusion: 'CANCELLED' }, { conclusion: 'FAILURE' }]`. Extend the stub's state map with `8: 'pending'` and `9: 'green'`. Expected lines: `'#8 CI pending'`, `'#9 CI passing'` (newest-per-check is `pr-checks.js`'s call, not the pre-filter's), and `'#10 CI failing'`. The `pr-checks.js` call list becomes `['1','2','3','4','5','8','9']`.
+  - New test `the item 1 FAILURE set equals FAILING_CONCLUSIONS and HELD equals HELD_CONCLUSIONS (code twins)`: extract the quoted tokens of the `` FAILURE = new Set([...]) `` literal and the `` HELD = new Set([...]) `` literal from `repoWideItem1Slice()`. Deep-equal them to `[...FAILING_CONCLUSIONS]` and `[...HELD_CONCLUSIONS]`. Add a go-red control: with `'CANCELLED'` spliced back into the `FAILURE` literal, the deep-equal fails.
 
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/display-ci-readers-conformance.test.js`
 Expected: FAIL after Step 1. `#8 CI failing` is printed, and the set holds `CANCELLED`/`ACTION_REQUIRED`.
 
-- [ ] **Step 3: Implement.** Change line 70 to `const FAILURE = new Set(['FAILURE', 'TIMED_OUT', 'ERROR', 'STARTUP_FAILURE']);` (`FAILING_CONCLUSIONS`' order). Held conclusions then fall through to `'pending'` on the existing `else` branch. Item 9's `NON_BLOCKING` filter (`:186`) already reads held as non-green, so leave it as it is.
+- [ ] **Step 3: Implement.** Change line 70 to `const FAILURE = new Set(['FAILURE', 'TIMED_OUT', 'ERROR', 'STARTUP_FAILURE']);` (`FAILING_CONCLUSIONS`' order). Add `const HELD = new Set(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);` (`HELD_CONCLUSIONS`' order). Then widen the `pr-checks.js` pre-filter (`:75`) from "every check is `NON_BLOCKING`" to "every check is `NON_BLOCKING` or `HELD`". A rollup whose only non-OK checks are held is then judged by `pr-checks.js` (`classifyRollup`, newest per check) instead of the pre-filter. Update the pre-filter's comment to say so in a few words. Item 9's `NON_BLOCKING` filter (`:186`) already reads held as non-green, which is the fail-closed direction for an unarmed-PR candidate list, so leave it as it is.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -259,6 +262,8 @@ git commit -m "State the held-conclusion rule in Step 2.5 — pinned to HELD_CON
 
 ### Task 6: The Step 2.5 bounded watch treats a held check as still pending
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/skills/_shared/pr-first-merge.md:198-244` (the bounded-watch fence, its intro sentence and the `RC=0`/`RC=1` bullets)
 - Modify: `plugin/skills/_shared/pr-first-merge-appendix.md` (`## Rationale notes` and `## Signatures`: the gh source facts below)
@@ -280,7 +285,7 @@ The first step re-checks these on the installed gh: `gh --version`, then the two
 - [ ] **Step 1: Write the failing tests** in `tests/merge-watch-ready-run.test.js`. Extend the harness so the `gh` stub answers `pr checks … --json state` with the contents of `$CHECKS_JSON` (default `[]`) and answers plain `pr checks` with exit `$CHECKS_RC` (default 0). `run list` prints `$RUNS_JSON` (default `[]`). Copy the real `plugin/bin/lib/pr-checks/classify.js` into the stub root at `bin/lib/pr-checks/classify.js`. Then add these tests, each in bash and zsh like the file's existing ones:
   - `a lone cancelled check (gh exit 0) keeps watching until the bound`: `CHECKS_RC=0`, `CHECKS_JSON=[{"state":"CANCELLED"}]`, `DATE_MODE=jump` → final `RC=124`.
   - `ACTION_REQUIRED (gh exit 1) keeps watching, not red`: `CHECKS_RC=1`, `CHECKS_JSON=[{"state":"ACTION_REQUIRED"}]`, `DATE_MODE=jump` → `RC=124`.
-  - `a real failure beside a held check is still red`: `CHECKS_RC=1`, `CHECKS_JSON=[{"state":"ACTION_REQUIRED"},{"state":"FAILURE"}]` → `RC=1` on the first pass.
+  - `a real failure beside a held check is still red, naming only the failing check`: `CHECKS_RC=1`, `CHECKS_JSON=[{"name":"a","state":"ACTION_REQUIRED"},{"name":"b","state":"FAILURE"}]` → `RC=1` on the first pass. The names the `RC=1` bullet parks with come from `{pr-checks-json-path}`'s rows whose state is in `FAILING_CONCLUSIONS`, so they are `b` only, never `a`. Pin it with a conformance assertion on the `RC=1` bullet's wording.
   - `a held newest head run keeps watching`: `CHECKS_RC=0`, `RUNS_JSON` holds one `test` run, completed and cancelled, with `startedAt`/`databaseId` → `RC=124` under `DATE_MODE=jump`.
   - `a cancelled head run superseded by a newer success breaks green`: `RUNS_JSON` holds `test` cancelled at T1 and `test` success at T2 > T1 → `RC=0` on the first pass.
   - `a failed --json read stops the watch`: the stub exits non-zero for `pr checks … --json` → `RC=2`.
@@ -294,10 +299,11 @@ Run: `node --test tests/merge-watch-ready-run.test.js tests/merge-verification-g
 Expected: FAIL. The cancelled case breaks green (`RC=0`) and the `ACTION_REQUIRED` case breaks red (`RC=1`).
 
 - [ ] **Step 3: Edit the fence and its prose**
-  - Right after the `no checks reported` line, add one guarded re-read, which runs only when `RC` is 0 or 1. It runs `gh pr checks {pr-number} --repo {owner}/{repo} --json state > "{pr-checks-json-path}"` (a failure gives `RC=2; break`). Then a `node -e` over the saved file and `classify.js` prints the new `RC`: `1` when any state is in `FAILING_CONCLUSIONS`, else `8` when any state is in `HELD_CONCLUSIONS`, else the unchanged `RC`. A failed `node` gives `RC=2; break`. Add `PR_CHECKS_JSON=pr-checks-{n}.json` to Step 2.5's `session-tmp-resolve.js` line, and add `{pr-checks-json-path}` to the substitution sentence.
+  - Right after the `no checks reported` line, add one guarded re-read, which runs only when `RC` is 0 or 1. It runs `gh pr checks {pr-number} --repo {owner}/{repo} --json name,state > "{pr-checks-json-path}"` (a failure gives `RC=2; break`). Then a `node -e` over the saved file and `classify.js` prints the new `RC`: `1` when any state is in `FAILING_CONCLUSIONS`, else `8` when any state is in `HELD_CONCLUSIONS`, else the unchanged `RC`. A failed `node` gives `RC=2; break`. Add `PR_CHECKS_JSON=pr-checks-{n}.json` to Step 2.5's `session-tmp-resolve.js` line, and add `{pr-checks-json-path}` to the substitution sentence.
   - In the `0)` arm, change the runs read to `--json databaseId,name,workflowName,status,conclusion,url,startedAt` (the `HEAD_RUN_FIELDS` value). `PENDING_RUNS` then becomes the not-completed count plus `heldChecks([], rows).length` (`require` of `classify.js` via `process.argv`). Keep the line reading counts from the saved file, with no `--jq`.
   - Update the exit-code sentence above the fence to state the held mapping in one clause, and move the gh-source facts above into the appendix (`## Signatures` for the observed exit codes, `## Rationale notes` for the why), with a pointer left in the gate.
-  - In the `RC=0` bullet, a head run not yet `completed` **or held** resumes the bounded watch at the same `DEADLINE`.
+  - In the `RC=0` bullet, a head run not yet `completed` **or held** resumes the bounded watch at the same `DEADLINE`. In the `RC=1` bullet, the names come from the `{pr-checks-json-path}` rows whose state is in `FAILING_CONCLUSIONS`, in place of the `fail` rows of `{pr-checks-path}` (gh buckets `ACTION_REQUIRED` as `fail`).
+  - Known fail-closed divergence, stated in the appendix's `## Rationale notes`, not fixed in the fence. The watch's held mapping reads `gh pr checks` states, which gh deduplicates newest-per-check within the rollup only. A cancelled rollup job whose newer run of the same name exists only as a head run, and not in the rollup, keeps the watch waiting until the bound. It then parks as `checks-pending-timeout`, whose remedy is a rerun, never a merge. `classifyRollup` (Task 1) reads that case green. The fence takes the conservative direction because the merge bundle has no byte room for a cross-source comparison, and a rerun registers its check run in the rollup in the ordinary case.
   - Keep `pr-first-merge.md`'s net growth across Tasks 5 and 6 within the Global Constraints budget. Pay for it by moving Step 2.5 rationale (for example the paragraph under the fence about `--jq`, or the Read-state-first rationale) into the appendix.
 
 - [ ] **Step 4: Run the tests to verify they pass, then check the byte rails**
