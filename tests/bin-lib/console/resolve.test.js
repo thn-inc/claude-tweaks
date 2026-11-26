@@ -2475,3 +2475,96 @@ describe('default exec bound (#5050)', () => {
     assert.strictEqual(probe('git', { CLAUDE_TWEAKS_GIT_TIMEOUT_MS: undefined }).git[0], 30000);
   });
 });
+
+describe('merge half stale until a merge-check verdict is logged (#5833)', () => {
+  const { recheckMerge } = require(MOD);
+  const { verdictText } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'dispatch', 'merge-verdict'));
+  const NOW = new Date(2026, 8, 6, 12, 0, 0);
+  const passLine = (n) => formatEntry({ status: 'AUTO', now: NOW, step: 'Auto-merge short-circuit', text: verdictText(n), reversibility: 'n/a' });
+  const needsHumanLine = (n) => formatEntry({ status: 'AUTO', now: NOW, step: 'Auto-merge short-circuit', text: verdictText(n, 'needs-human'), reversibility: 'n/a' });
+  const unparsedLine = (n) => passLine(n).replace(/\. Reversibility: n\/a\./, ' — extra. Reversibility: n/a.');
+  const recheckLine = formatEntry({ status: 'AUTO', now: NOW, step: 'Merge re-check', text: '#7 merge withheld at merge time (needs-human): assess-agent-autonomy needs-human', reversibility: 'n/a' });
+  const run = (decisions, headers = [7]) => resolveAll({ runDir: fixture({ decisions, headers }), policy: 'console-auto', deps: deps() });
+  const MERGE = { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+
+  test('AC2.1: with the short-circuit applicable and no merge-check verdict logged yet, the merge half is marked stale, not resolved', () => {
+    const r = run('');
+    assert.deepStrictEqual(r.mergeStale.unconfirmed, [7]);
+    assert.match(r.mergeStale.reason, /#7: no confirmed merge-check verdict in decisions\.md yet \(latest: none\)/);
+    const re = recheckMerge(r.merge, '', r.mergeStale);
+    assert.strictEqual(re.hit, true);
+    assert.strictEqual(re.kind, 'unconfirmed');
+  });
+
+  test('AC3.1: a passing verdict logged before the resolve still resolves merge, reason unchanged, no mergeStale', () => {
+    const r = run(passLine(7));
+    assert.deepStrictEqual(r.merge, MERGE);
+    assert.strictEqual(r.mergeStale, null);
+  });
+
+  test('an unparsed pass line, or a verdict for another record, leaves member #7 unconfirmed', () => {
+    const a = run(unparsedLine(7));
+    assert.deepStrictEqual(a.mergeStale.unconfirmed, [7]);
+    assert.match(a.mergeStale.reason, /latest: unparsed/);
+    assert.deepStrictEqual(run(passLine(70)).mergeStale.unconfirmed, [7]);
+  });
+
+  test('a bundle is stale until every member has a confirmed verdict', () => {
+    assert.deepStrictEqual(run(passLine(7), [7, 8]).mergeStale.unconfirmed, [8]);
+    assert.strictEqual(run(`${passLine(7)}\n${passLine(8)}`, [7, 8]).mergeStale, null);
+  });
+
+  test('recheckMerge: a needs-human line logged after merge flips it to leave-open and names the line', () => {
+    const line = needsHumanLine(7);
+    const re = recheckMerge(MERGE, `${passLine(7)}\n${line}\n`, null);
+    assert.strictEqual(re.hit, true);
+    assert.strictEqual(re.kind, 'needs-human');
+    assert.strictEqual(re.changed, true);
+    assert.strictEqual(re.lateVerdict, line.replace(/^- /, ''));
+    assert.deepStrictEqual(re.merge, { resolution: 'leave-open', reason: `merge withheld at merge time (needs-human): ${re.lateVerdict}`, recheckedFrom: 'merge' });
+  });
+
+  test('recheckMerge: an unparsed verdict line is a hit', () => {
+    const re = recheckMerge(MERGE, `${unparsedLine(7)}\n`, null);
+    assert.strictEqual(re.kind, 'unparsed');
+    assert.strictEqual(re.lateVerdict, '#7 merge-check verdict line unparsed');
+    assert.strictEqual(re.changed, true);
+  });
+
+  test('recheckMerge: a stale member whose pass verdict was logged after the resolve is no hit, one still missing is a hit', () => {
+    const stale = { unconfirmed: [7] };
+    const ok = recheckMerge(MERGE, `${passLine(7)}\n`, stale);
+    assert.strictEqual(ok.hit, false);
+    assert.deepStrictEqual(ok.merge, MERGE);
+    const miss = recheckMerge(MERGE, '', stale);
+    assert.strictEqual(miss.hit, true);
+    assert.strictEqual(miss.kind, 'unconfirmed');
+    assert.strictEqual(miss.lateVerdict, '#7 has no confirmed merge-check verdict at merge time (latest: none)');
+  });
+
+  test('recheckMerge ignores its own Merge re-check line', () => {
+    for (const [decisions, stale] of [[`${passLine(7)}\n${needsHumanLine(7)}\n`, null], [`${unparsedLine(7)}\n`, null], ['', { unconfirmed: [7] }]]) {
+      const first = recheckMerge(MERGE, decisions, stale);
+      const second = recheckMerge(MERGE, `${decisions}${recheckLine}\n`, stale);
+      assert.strictEqual(second.kind, first.kind);
+      assert.strictEqual(second.lateVerdict, first.lateVerdict);
+    }
+  });
+
+  test('recheckMerge: a hit with no stored merge (null) or a stored leave-open reports hit:true, changed:false', () => {
+    const stale = { unconfirmed: [7] };
+    const lo = { resolution: 'leave-open', reason: 'x' };
+    const a = recheckMerge(null, '', stale);
+    assert.deepStrictEqual([a.hit, a.changed, a.merge], [true, false, null]);
+    const b = recheckMerge(lo, '', stale);
+    assert.deepStrictEqual([b.hit, b.changed, b.merge], [true, false, lo]);
+  });
+
+  test('recheckMerge: a clean merge (only a pass line) and empty decisions with no mergeStale are no hit', () => {
+    for (const d of [`${passLine(7)}\n`, '']) {
+      const re = recheckMerge(MERGE, d, null);
+      assert.deepStrictEqual([re.hit, re.kind, re.changed, re.lateVerdict], [false, null, false, null]);
+      assert.deepStrictEqual(re.merge, MERGE);
+    }
+  });
+});
