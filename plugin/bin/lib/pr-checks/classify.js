@@ -72,6 +72,10 @@ const HEAD_RUN_FIELDS = 'databaseId,name,workflowName,status,conclusion,url,star
 const HELD_CONCLUSIONS = Object.freeze(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);
 const UNVERIFIED_CONCLUSIONS = Object.freeze(['SKIPPED', ...HELD_CONCLUSIONS]);
 
+function isHeldRow(row) {
+  return row.status === 'COMPLETED' && HELD_CONCLUSIONS.includes(row.conclusion);
+}
+
 // #3467 — checks whose newest row is held. Rows from the rollup and the head
 // runs share one ordering key [start time, id]; the first present of startedAt,
 // run_started_at, createdAt, created_at is the time, `databaseId ?? id` the id,
@@ -90,7 +94,7 @@ function heldChecks(rollup, headRuns) {
       const row = normalize(raw);
       if (!row.name) {
         // A nameless row cannot be grouped or ordered: a held one is its own check (fail closed); any other is skipped.
-        if (row.status === 'COMPLETED' && HELD_CONCLUSIONS.includes(row.conclusion)) namelessHeld.push({ name: null, url: row.url, conclusion: row.conclusion });
+        if (isHeldRow(row)) namelessHeld.push({ name: null, url: row.url, conclusion: row.conclusion });
         continue;
       }
       const startedAt = [raw.startedAt, raw.run_started_at, raw.createdAt, raw.created_at].find((v) => v !== undefined && v !== null && v !== '');
@@ -105,7 +109,7 @@ function heldChecks(rollup, headRuns) {
   for (const entries of groups.values()) {
     const max = entries.reduce((m, e) => (e.key[0] > m[0] || (e.key[0] === m[0] && e.key[1] > m[1]) ? e.key : m), [-Infinity, -Infinity]);
     const top = entries.filter((e) => e.key[0] === max[0] && e.key[1] === max[1]);
-    const hit = top.find((e) => e.row.status === 'COMPLETED' && HELD_CONCLUSIONS.includes(e.row.conclusion));
+    const hit = top.find((e) => isHeldRow(e.row));
     if (hit) held.push({ name: hit.row.name, url: hit.row.url, conclusion: hit.row.conclusion });
   }
   return [...held, ...namelessHeld];
