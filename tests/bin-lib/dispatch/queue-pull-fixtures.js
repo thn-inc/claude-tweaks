@@ -2,7 +2,7 @@
 // #5227: scenario builders and the one gh answer table both sides of the queue-pull parity
 // suite read. `scenario.gh` is a list of entries, each one of:
 //   { argv: string[], stdout, stderr?, status?, effect? }  -- matched by exact argv equality
-//   { graphql: 'linked'|'native'|'landing'|'foreign', aliases: { <alias>: node }, status?, stdout?, stderr?, effect? }
+//   { graphql: 'linked'|'native'|'landing'|'foreign'|'comments', aliases: { <alias>: node }, status?, stdout?, stderr?, effect? }
 // A graphql entry matches an `api graphql` call whose query is that kind (the signature of the
 // query builder in plugin/bin/lib), and answers with only the aliases the query requests; a
 // requested alias the entry lacks makes the call a miss (an explicit null is GitHub's not-found). A
@@ -45,6 +45,7 @@ const GRAPHQL_KINDS = {
   native: { query: /blockedBy\(first:/, alias: /\b(i\d+)\s*:\s*issue\(/g, inRepository: true },
   landing: { query: /CLOSED_EVENT/, alias: /\b(b\d+)\s*:\s*issue\(/g, inRepository: true },
   foreign: { query: /\bc\d+\s*:\s*repository\(/, alias: /\b(c\d+)\s*:\s*repository\(/g, inRepository: false },
+  comments: { query: /comments\(last: 100\)/, alias: /\b(i\d+)\s*:\s*issue\(/g, inRepository: true },
 };
 
 function validateEntry(entry, i) {
@@ -559,6 +560,36 @@ function SFast() {
   };
 }
 
+// SDriver (#6119): the driver-lane pass's scenario. express-driver is on and express-driver-runner is script, so the
+// session drain leaves #9201 (driver-routable, no comments) to the script job; #9202 is routable too but carries a
+// trusted driver escalation marker, so it stays selectable; #9203 is a plain record the driver would not route.
+function SDriver() {
+  const { DRIVER_ESCALATION_MARKER } = require('../../../plugin/bin/lib/driver/settle');
+  const routable = ['auto:build', 'ready', 'ceremony:fast-lane', 'risk:low', 'size:medium', 'type:task'];
+  const body = (n) => withBody(n).replace(`- \`plugin/bin/fixture-${n}.js\``, `- \`plugin/skills/init/claude-md-template-${n}.md\``);
+  const records = [
+    ghRecord(9201, { body: body(9201), labels: routable }),
+    ghRecord(9202, { body: body(9202), labels: routable }),
+    ghRecord(9203, { body: withBody(9203) }),
+  ];
+  const marker = { body: `escalated\n${DRIVER_ESCALATION_MARKER}`, authorAssociation: 'OWNER', url: 'https://example.invalid/c/1', author: { login: 'owner' } };
+  const thread = (nodes) => ({ comments: { totalCount: nodes.length, nodes } });
+  return {
+    name: 'SDriver',
+    policy: {
+      'express-lane': false, 'work-links': 'body-text', 'integration-model': 'pr-first', 'merge-sensitive-paths': '[]', 'express-driver': 'on',
+      'express-driver-runner': 'script', 'express-driver-max-size': 'medium', 'express-driver-max-key-files': 3, 'express-driver-review': 'beyond-express',
+    },
+    origin: { branches: { main: {} } },
+    gh: [
+      { argv: QUEUE_ARGV, stdout: JSON.stringify(records) + '\n' },
+      { argv: OPEN_NUMBERS_ARGV, stdout: '[{"number":9201},{"number":9202},{"number":9203}]\n' },
+      { graphql: 'comments', aliases: { i9201: thread([]), i9202: thread([marker]) } },
+      ...tailGh([9201, 9202, 9203]),
+    ],
+  };
+}
+
 // --- fault overlays (Task 9: AC4 fetch failures, AC7.2 files inputs, the D1 reproduction) ---------
 //
 // Each overlay makes one fetch fail on both sides through the shared table: a gh entry with
@@ -756,6 +787,9 @@ const FAULTS = [
   { id: 'F-writeback', pass: 'write-back', scenario: () => Object.assign(P1(), { gitFail: [['push']] }) },
   { id: 'F-corrupt', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-exclusions') },
   { id: 'F-groups', pass: '(stop)', scenario: () => effectOn(P1(), 'linked', 'corrupt-groups') },
+  // #6119: the driver-lane pass's comment read fails (it fails open) / its append meets a corrupt exclusions file (it stops).
+  { id: 'F-driver-lane-read', pass: 'driver-lane', scenario: () => failGraphql(SDriver(), 'comments') },
+  { id: 'F-driver-lane-corrupt', pass: '(stop)', scenario: () => effectOn(SDriver(), 'comments', 'corrupt-exclusions') },
 ];
 
 // FILES_FAULTS (files transport): { id, input, mode, pass, scenario(), agent(base agent files) ->
@@ -930,7 +964,7 @@ function agentInputs(scenario) {
 
 module.exports = {
   DEFAULT_REMOTE_URL, GRAPHQL_KINDS, ghAnswer, applyEffect, gitSubArgv, gitFailMatch, isGetUrlOrigin, shimTable, fakeRun,
-  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, fakeSpawnCli, agentInputs,
+  ghLabel, ghRecord, SPEC_BODY, QUEUE_ARGV, OPEN_NUMBERS_ARGV, IN_FLIGHT_ARGV, OPEN_PRS_ARGV, writeInput, DEP_SEARCH_8000, withBody, S0, S1, S2, SEmpty, SMalformed, SPortable, SFast, SDriver, fakeSpawnCli, agentInputs,
   LANDING_COMMIT, PORTABLE_SLUG,
   REPO_SLUG, linkedNode, linkedOutput, mention, WEAK_PR_FILES, tailGh, IN_FLIGHT_7001, OPEN_PR_41, LIVE_CLAIM,
   SHostileTarget, FAULTS, FILES_FAULTS, D1Second, D1Third, EmptyAfterS1, S1LiveDep, S1OpenDeps, failGh, NOT_JSON, GH_FAULT_STDERR, contentsApiArgv,

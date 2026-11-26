@@ -53,6 +53,87 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.180.0](https://github.com/thn-inc/claude-tweaks/compare/v6.179.0...v6.180.0) (2026-11-26)
+
+
+### Features
+
+* Bundle a run's to-be-filed follow-up proposals that… ([#6283](https://github.com/thn-inc/claude-tweaks/issues/6283)) ([bbd1ed0](https://github.com/thn-inc/claude-tweaks/commit/bbd1ed018ab333ad4d327095dde9877b2c6fd4e8))
+* Close dead runs in report-only mode, show only orphaned… ([#3977](https://github.com/thn-inc/claude-tweaks/issues/3977)) ([6860817](https://github.com/thn-inc/claude-tweaks/commit/68608178fa207fe6226f8463be69169c42115801))
+* Count only no-work fail/exit launches toward drive.js… ([#6321](https://github.com/thn-inc/claude-tweaks/issues/6321)) ([ab982ed](https://github.com/thn-inc/claude-tweaks/commit/ab982eda627f7759e47cb20b30239200df44a558))
+* Decide /flow's double whole-branch review from measured… ([#3381](https://github.com/thn-inc/claude-tweaks/issues/3381)) ([db5a082](https://github.com/thn-inc/claude-tweaks/commit/db5a08247e46bb1483bfd626e6bfb4e6d7478cc2))
+* End a drive.js --budget run when workers cannot launch… ([#6118](https://github.com/thn-inc/claude-tweaks/issues/6118)) ([f3ec6ef](https://github.com/thn-inc/claude-tweaks/commit/f3ec6efcc1faf68c438ae946323c466484f21568))
+* Give drive.js --budget the drain-overlap hold, with its… ([#6117](https://github.com/thn-inc/claude-tweaks/issues/6117)) ([0c840c8](https://github.com/thn-inc/claude-tweaks/commit/0c840c892f4cc7d3f04d9aacac50c25c7223f87a))
+* Let dispatch's session drain leave driver-routable… ([#6119](https://github.com/thn-inc/claude-tweaks/issues/6119)) ([7b6db33](https://github.com/thn-inc/claude-tweaks/commit/7b6db33f98a3583b80154e1febb104a2ed7a6206))
+* Re-check open follow-ups whose Key Files a run changed… ([#6284](https://github.com/thn-inc/claude-tweaks/issues/6284)) ([f709706](https://github.com/thn-inc/claude-tweaks/commit/f709706f509c72a4480ebb37fded952bc18a0fab))
+* Record a run's tokens by model, list-price cost and… ([#6009](https://github.com/thn-inc/claude-tweaks/issues/6009)) ([5c8d9e8](https://github.com/thn-inc/claude-tweaks/commit/5c8d9e8678fc6bc1e3f26055e79abbeeef8247dd))
+* Ship the express lane on by default — express-lane… ([#4591](https://github.com/thn-inc/claude-tweaks/issues/4591)) ([d8a948b](https://github.com/thn-inc/claude-tweaks/commit/d8a948bd9fbcaa8b1b1b029671b6218650183fe6))
+* test: the QA pass stamp has no bookkeeping-only… ([#5643](https://github.com/thn-inc/claude-tweaks/issues/5643)) ([0441a96](https://github.com/thn-inc/claude-tweaks/commit/0441a96b52907452f5327ae22df26004e251d989))
+* verify.js: a wholly operational record still runs every… ([#6102](https://github.com/thn-inc/claude-tweaks/issues/6102)) ([6b6b796](https://github.com/thn-inc/claude-tweaks/commit/6b6b796d4858f1a79934380f4ddf9ff7bdb764c4))
+* verify.js: CI-sourced verdicts fall back to a local run… ([#5234](https://github.com/thn-inc/claude-tweaks/issues/5234)) ([4ee54f4](https://github.com/thn-inc/claude-tweaks/commit/4ee54f4f25838698adbd27c287affb27694a617e))
+
+
+### Bug Fixes
+
+* A CI-answered verify run waits minutes in the full slot… ([#5368](https://github.com/thn-inc/claude-tweaks/issues/5368)) ([ba42370](https://github.com/thn-inc/claude-tweaks/commit/ba42370257961cac921375b3814aaa157239dd9e))
+* A per-task implementer blocks on a verify.js slot a… ([#5257](https://github.com/thn-inc/claude-tweaks/issues/5257)) ([913ed40](https://github.com/thn-inc/claude-tweaks/commit/913ed4018b13f835b7b71ae429e5d4462cd80ac2))
+* build: Working Directory Discipline tells dispatchers to… ([#4442](https://github.com/thn-inc/claude-tweaks/issues/4442)) ([55ea7ab](https://github.com/thn-inc/claude-tweaks/commit/55ea7abf23a0b15f21d641909b9a1847aa8f07f8))
+* reconcile: pruneResidueFailures drops an escalated entry… ([#4209](https://github.com/thn-inc/claude-tweaks/issues/4209)) ([44818b6](https://github.com/thn-inc/claude-tweaks/commit/44818b6a202471fea30335a7995f5810da5b89a6))
+* review: effort size proxy counts prose, plan and run-dir… ([#5148](https://github.com/thn-inc/claude-tweaks/issues/5148)) ([2dca780](https://github.com/thn-inc/claude-tweaks/commit/2dca780c1564001abb3729080e047387f525930c))
+* specify: one session-wide shaped-body temp file lets a… ([#4746](https://github.com/thn-inc/claude-tweaks/issues/4746)) ([0384548](https://github.com/thn-inc/claude-tweaks/commit/038454835d6f376c13fc6b47e6ad45a9f6004b26))
+* verify.js CI source: one transient gh timeout drops every… ([#5437](https://github.com/thn-inc/claude-tweaks/issues/5437)) ([0614127](https://github.com/thn-inc/claude-tweaks/commit/0614127246b31aac43d47cb42cea3365c456a58e))
+* verify.js waits out its CI window on a HEAD that was… ([#5800](https://github.com/thn-inc/claude-tweaks/issues/5800)) ([278860c](https://github.com/thn-inc/claude-tweaks/commit/278860c43467ce0b6768941f8583474212eb0595))
+* Windows regression: 1 test file(s) newly failing after… ([#3995](https://github.com/thn-inc/claude-tweaks/issues/3995)) ([c023614](https://github.com/thn-inc/claude-tweaks/commit/c023614fc6142dd6a83623547691c97ab78dd53c))
+* Windows regression: 1 test file(s) newly failing after… ([#6181](https://github.com/thn-inc/claude-tweaks/issues/6181)) ([1bb94cf](https://github.com/thn-inc/claude-tweaks/commit/1bb94cfdba9d447c93bfe573df119984791489b2))
+* Windows regression: 1 test file(s) newly failing after… ([#6239](https://github.com/thn-inc/claude-tweaks/issues/6239)) ([eb4c79d](https://github.com/thn-inc/claude-tweaks/commit/eb4c79dc4a14b83260ff47c6ec2bb8a6c89c371d))
+* Windows: the core.longpaths breadcrumb lands in a… ([#4284](https://github.com/thn-inc/claude-tweaks/issues/4284)) ([03c1d27](https://github.com/thn-inc/claude-tweaks/commit/03c1d27279fac94b326db80614ec5fa31f0f94a7))
+* wrap-up: a created standalone run dir halted at "Stop and… ([#4312](https://github.com/thn-inc/claude-tweaks/issues/4312)) ([4dfbf3e](https://github.com/thn-inc/claude-tweaks/commit/4dfbf3e9bd7dbce638ab23c8f07c5d968dab08c9))
+* wrap-up: Branch finish merges on a console.json merge… ([#5833](https://github.com/thn-inc/claude-tweaks/issues/5833)) ([a3b6e0b](https://github.com/thn-inc/claude-tweaks/commit/a3b6e0bdfc68115e060708df7008712db08fc240))
+
+### Highlights
+* A project can now leave driver-ready records to a scheduled `drive.js --budget` job, so dispatch sessions no longer pick them up.
+* Shaping several records in one session (including sweeps) can no longer write one record's body onto another.
+* Internal: friction events no longer count command output that merely quotes a refusal.
+* Every pipeline run now records its token use by model, its list-price cost and its minutes in its run manifest when it closes.
+* Internal: timing breakdowns count a dispatched agent's worktree-isolation refusal as a guard-refusal turn, like the session one.
+* An unattended run no longer merges a PR whose merge check asked for a human, even when the check finished after the Review Console resolved.
+* A budget-driven driver run no longer stops early, or deletes an escalation comment, when two records in a row fail on their own work.
+* Reconcile no longer forgets a stuck run directory's escalation when GitHub is briefly unreachable.
+* Windows: the `core.longpaths` breadcrumb no longer lands in an unrelated pipeline run's `events.jsonl` after an ad-hoc EnterWorktree.
+* A budget-driven driver run now stops when workers cannot launch, instead of escalating every remaining record out of the driver lane.
+* Fix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.
+* A budget-driven driver run now holds a merge that overlaps a PR the same run opened earlier, as a dispatch drain does.
+* A standalone wrap-up paused at the Review Console can be resumed later with `/claude-tweaks:wrap-up resume`.
+* Wrap-up now proposes closing or narrowing open follow-up records that a run's changes appear to have resolved, with the evidence quoted, for a human to approve.
+* The Review Console now files a run's follow-up findings that touch the same files as one record with a checklist per finding, instead of one record each.
+* A pipeline's QA step no longer re-runs browser stories after a commit that only touched bookkeeping files such as the run ledger: the QA pass stamp now treats that commit the way the test runner's stamp already does.
+* The express lane is now on by default: small, low-risk records that already carry an `auto:merge` grant build, test and merge in one agent. Set `express-lane: false` in `.claude-tweaks/policy.yml` to turn it off.
+* A declaration can list small test suites under `subsetLaneSuites`, so a verification whose only local suite is one of them no longer waits behind whole-suite runs for a full-lane slot.
+* A fast-lane, low-size record that touches up to three implementation files now builds from a one-task plan instead of the full planning path.
+* Follow-up records filed from ledger rulings, residue sweeps, visual reviews, reflections and CLAUDE.md budget checks now list the files they touch, so related follow-ups can be grouped and built together.
+* Take CI-sourced verification verdicts even when the only uncommitted files are bookkeeping or generated paths the scope declaration already marks as running no checks.
+* Decided from measured data whether the build's final branch review and the review step overlap enough to merge them, and recorded the result.
+* The Review Console no longer asks you to ratify SDD rulings that only record build procedure; those are logged for audit instead.
+* On a project whose verify-scope declaration takes suites from CI but has no impact map, the first scoped verification in a new worktree now checks only what the branch changed since the integration branch, so a branch of non-code files runs no test suite.
+* Review sizes a change by its code, not by the pipeline's own spec, plan, ledger and lockfile files, so small changes no longer get the heaviest reviews.
+* Records filed from a review follow-up now list the files the finding names under Key Files, so a one-file fix takes the micro-plan fast path and shows up in dispatch's file-overlap checks.
+* Stop a scoped verification at once when HEAD has not been pushed, instead of running the whole suite locally while CI could answer after a push.
+* Records filed by `/claude-tweaks:capture` reach `/claude-tweaks:flow` with their ceremony already decided, so runs skip redundant ceremony checks. The `ceremony:*` label now decides lane eligibility for these records too: a capture judged `standard` leaves the driver lane by default, and one judged `fast-lane` becomes eligible for the express lane.
+* Slice the review lens and subagent composed bundles down to the sections their prompts cite, so each child loads less.
+* A build's per-task implementers no longer stop and wait for a human ruling when another session's test run holds the machine's test slot; they run their focused tests and carry on.
+* No user-facing change. Maintainer-side: the post-merge Windows check now closes its own regression records once their test files pass again on main, so already-fixed records stop reaching the build queue.
+* Build, test and tidy no longer tell their helper agents to use a `cd … &&` command form that the worktree guard refuses, which removes repeated refused-and-retried commands in worktree runs.
+* A run-ledger commit after build's scoped verification no longer re-runs the impact-selected test suite: the test step re-stamps the new commit without running anything.
+* Closes out four stale-ledger findings whose ledgers were already cleaned up.
+* `tools/test-impact.js fetch` no longer replaces a fresher, clean local test-impact map with an older CI map.
+* Fewer refused Bash calls in worktree builds: implementer and reviewer agents dispatched by /claude-tweaks:build are now told the harness shell constraint up front.
+* High-effort reviews no longer dispatch debate judges for unrelated findings that only sit near each other.
+* Retry a timed-out GitHub read up to three times before a CI-sourced verification falls back to running the suite locally.
+* Review no longer runs its lens reviewers on a pipeline run that changed only its own bookkeeping files.
+* Stop the wrap-up fact pack from printing its whole content into the session; it now prints one summary line and keeps the facts in its file.
+* Added a dry-run report of runs that could be closed automatically, trimmed the unfinished-runs banner to runs that really need attention, and made sessions archive their own scratch run when they end.
+* No user-facing change. Fixes a test that failed on Windows checkouts only.
+
 ## [6.179.0](https://github.com/thn-inc/claude-tweaks/compare/v6.178.0...v6.179.0) (2026-11-24)
 
 

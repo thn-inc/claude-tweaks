@@ -350,15 +350,17 @@ const CLOSED_ROWS = [
     /\| today's path \(the express gate when `express-lane` resolves `true`, else the normal path\); one `SKIP` line/, 'AC4.2: a --check that does not admit → today\'s path plus one SKIP'],
   ['| `--check` admits |',
     /\| `drive\.js \{n\} --run "\{minted-run-dir\}" --no-settle --in-flight-prs "\{drain-prs\}"` runs as one background Bash call [^|]*; no express gate call is made for this record \|/, 'AC5.1: admits → drive.js --run as one background call, no express gate'],
+  ['| bare drain, `split` or `on`, `express-driver-runner: script`, record is a driver-routable singleton |',
+    /\| the route is not consulted for a record the queue pull excluded as `driver-lane` \(`queue-pull-notes\.md`\), because bare drain's ranking never selects it\. A named form \(`#N`, `#N,#M,\.\.\.`\) still reaches the `--check` row above \|/, '#6119: bare drain under express-driver-runner: script → route not consulted for a driver-lane record, named form still reaches --check'],
   ['| a bundle group |',
     /\| today's path; the route is never consulted\. The queue pull keeps a record the driver would take out of bundles \(`bin\/lib\/express\/queue\.js`'s `keepSingleton`\), so a bundle has no member the driver would take \|/, 'a bundle group → today\'s path, never consulted'],
 ];
 const missingRowsOf = (rows) => (text) => rows.filter(([prefix, pattern]) => !pattern.test(lineStartingWith(text, prefix))).map(([, , fact]) => fact);
 
-test('driver-route.md: the Closed rule has exactly its five rows, each with its result', () => {
+test('driver-route.md: the Closed rule has exactly its six rows, each with its result', () => {
   const section = closedRule(routeText());
   const rows = section.split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| State |'));
-  assert.equal(rows.length, 5, `expected five Closed rule rows, found ${rows.length}`);
+  assert.equal(rows.length, 6, `expected six Closed rule rows, found ${rows.length}`);
   assert.deepEqual(missingRowsOf(CLOSED_ROWS)(section), []);
   assert.match(section, /A state not listed here is refused with one line naming the state, and the record takes today's path\./);
 });
@@ -371,10 +373,10 @@ test('go-red control: each Closed rule result stripped from its row, or moved to
   }
   // Move-out: swap the results of the first and last rows.
   const first = lineStartingWith(section, CLOSED_ROWS[0][0]);
-  const last = lineStartingWith(section, CLOSED_ROWS[4][0]);
+  const last = lineStartingWith(section, CLOSED_ROWS[CLOSED_ROWS.length - 1][0]);
   const cell = (l) => l.slice(l.lastIndexOf(' |', l.length - 3) + 2);
   const swapped = mutate(mutate(section, first, first.replace(cell(first), cell(last))), last, last.replace(cell(last), cell(first)));
-  assert.deepEqual(missingRowsOf(CLOSED_ROWS)(swapped), [CLOSED_ROWS[0][2], CLOSED_ROWS[4][2]]);
+  assert.deepEqual(missingRowsOf(CLOSED_ROWS)(swapped), [CLOSED_ROWS[0][2], CLOSED_ROWS[CLOSED_ROWS.length - 1][2]]);
 });
 
 test('driver-route.md: the order is mint → --check → bind without --dispatch → --run', () => {

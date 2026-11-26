@@ -153,7 +153,7 @@ const LOGGING_PINS = [
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site specify --removed {removed}'],
   ['Risk flags step 3', 'stamping', item3, 'logs nothing: a removal is logged in step 5, once the record write lands'],
   ['Compose --check paragraph', 'stamping', (t) => checkParagraph(t.stamping), 'Once `gh issue edit` succeeds, `### Risk flags` step 5 logs the removals; a failed edit logs none'],
-  ['Compose local-files commit line', 'stamping', (t) => localCommitLine(t.stamping), 'Run `### Risk flags` step 5 once `writeRecord` succeeds, except that with no run dir its `## Gotchas` bullet is appended to `$SHAPED_BODY` before the `writeRecord` call above'],
+  ['Compose local-files commit line', 'stamping', (t) => localCommitLine(t.stamping), 'Run `### Risk flags` step 5 once `writeRecord` succeeds, except that with no run dir its `## Gotchas` bullet is appended to the checked session-tmp body file (`$SPECIFY_SHAPED_BODY`, after the `--check`) before the `writeRecord` call above'],
   // Final review residual: a non-zero log-removals exit prints no envelope, so it falls back to comments and never fails the record.
   // #4619: the record is the one durable removal log the diff tripwire reads, so the comment is posted always under github-issues.
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'always, with or without a run dir'],

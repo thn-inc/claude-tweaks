@@ -36,13 +36,13 @@ files:
 
 ### 2. Watch it choose — the queue pull and the pre-screen
 - **URL:** stderr while the run starts. Per-record event lines on stdout appear only for records the loop hands to the per-record path.
-- **Action:** let the loop pull the queue and rank it. Each round is a fresh pull, followed by the module's `next` ranking. The order is dispatch's own, and the grouping is the one dispatch applies under the project's `express-lane` and `express-driver` values (with `express-driver` `split` or `on`, a fast-lane record the driver would take stays a singleton, #6011).
+- **Action:** let the loop pull the queue and rank it. Each round is a fresh pull (which omits the `driver-lane` exclusion, so the driver-routable records a session drain leaves to this loop are still selected), followed by the module's `next` ranking. The order is dispatch's own, and the grouping is the one dispatch applies under the project's `express-lane` and `express-driver` values (with `express-driver` `split` or `on`, a fast-lane record the driver would take stays a singleton, #6011).
 - **Should feel:** cheap where it can be. Records that the pulled data already rules out cost no live fetch, no claim and no budget.
 - **Should understand:**
   - The pre-screen calls the eligibility function with the per-record path's own options. It can skip a record but never admit one: an admitted record still goes through fetch, eligibility, admission and claim.
   - A record whose pulled data the pre-screen cannot read takes the full path, and stderr says `drive.js: pre-screen could not read #N (…); taking the full path`.
   - Each counted pre-screen skip writes `drive.js: pre-screen skipped #N (…); no live fetch` to stderr, naming the eligibility reasons. A skipped record leaves no event line, so this line is where to learn which records the summary's `skipped` counted and why.
-  - A group the pull excluded as `oversized` or `neighbour-in-flight` is never pre-screened or counted.
+  - A group the pull excluded as `oversized`, `neighbour-in-flight` or `driver-lane` (which this loop's own pull omits) is never pre-screened or counted.
   - The queue pull's own side effects are the ones dispatch's pull has: decision lines and Close proposals in the newest `dispatch-standalone` run directory, and a rewrite of the queue-order cache. Its stdout chatter goes to the driver's stderr, so stdout stays JSON lines only.
 - **Red flags:**
   - A record driven out of the ranking's order, or driven twice in one invocation.
@@ -108,3 +108,4 @@ files:
 - Updated during the build of #6118 (run `2026-11-26T065910-record-6118`): the run can end `worker-stop` when implementer launches cannot launch (a shared-cause launch, or two counting launch failures in a row). `files:` now lists `worker.js`, which classifies the launch, and `settle.js`, which settles that stop without the escalation marker and deletes the first record's escalation comment in a two-record stop.
 - Updated during the build of #6117 (run `2026-11-26T053027-record-6117`). Step 3 now says the run keeps its own drain-PR list and the pull's near-duplicate pairs, so each driven record's merge gets the drain-overlap hold, and fails closed to `in-flight-unreadable`; step 1 adds the two hold flags to the usage errors. `files:` adds `plugin/bin/lib/driver/merge.js`, which reads the list.
 - Updated during the build of #6321 (run `2026-11-26T090936-record-6321`): step 3 says only a no-work launch (a launch error, or `fail`/`exit` with `apiDurationMs` 0) counts toward the two-in-a-row `worker-stop`, so records that ran and failed keep their escalation. No `files:` change.
+- Updated during the build of #6119 (run `2026-11-26T085819-record-6119`): step 2 says each round's pull omits the `driver-lane` exclusion, so the records a session drain leaves to this loop under `express-driver-runner: script` are still selected here. No `files:` change.

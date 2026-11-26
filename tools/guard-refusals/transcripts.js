@@ -8,7 +8,7 @@
 // any entry type (a 2.1.302 `api-request-blob` echoes the request) are inspected, and a fork's
 // transcript opens with its parent's whole history, so a call is identified by its `tool_use_id`
 // and counted once: the first occurrence wins. A refusal is an `is_error` tool_result whose text holds
-// ISOLATION_CLAUSE and then `Refusing to run`: a successful result that merely quotes the message (a
+// ISOLATION_CLAUSE and then one of REFUSAL_SIGNATURES: a successful result that merely quotes the message (a
 // `cat` of harness-refusal.js, a grep, a record body) is not one.
 //
 // Rows (#5587). Every `is_error` result whose text `classifyGuard` names a guard is a row, for any tool: the
@@ -33,10 +33,9 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { ISOLATION_CLAUSE } = require('../../plugin/bin/lib/hooks/harness-refusal');
+const { ISOLATION_CLAUSE, REFUSAL_SIGNATURES } = require('../../plugin/bin/lib/hooks/harness-refusal');
 const { classifyReason } = require('./trace');
 
-const REFUSAL_TAIL = 'Refusing to run';
 const RUN_ID = /\.claude-tweaks\/pipelines\/(\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*)/g;
 const FIRST_TS = /"timestamp":"(\d{4}-\d{2}-\d{2}T[\d:.]+Z)"/;
 const FIRST_TS_LINES = 20;
@@ -152,7 +151,7 @@ function classifyGuard(text) {
   const at = text.indexOf(ISOLATION_CLAUSE);
   if (at !== -1) {
     const after = at + ISOLATION_CLAUSE.length;
-    if (text.indexOf(REFUSAL_TAIL, after) !== -1) return 'harness-command';
+    if (REFUSAL_SIGNATURES.some((s) => text.indexOf(s, after) !== -1)) return 'harness-command';
     if (text.indexOf(FILE_REFUSAL_TAIL, after) !== -1) return 'harness-file';
   }
   if (!PLUGIN_DENIAL.test(text)) return null;

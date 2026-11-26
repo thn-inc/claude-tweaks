@@ -876,7 +876,7 @@ test('Final fix 2: the origin-set carve-out\'s in-place write counts as created 
 
 test('Final fix 3 + 6: the body write is shape-checked first, and a Plan: line removal sends the re-fetched forge body', () => {
   pinned(decomposition(), [
-    f('compose-record.js" --check "{body}"` first, as `shaping-mode-stamping.md`\'s Compose-then-write-once runs it'),
+    f('compose-record.js" --check "{body}" --record {n}` first, as `shaping-mode-stamping.md`\'s Compose-then-write-once runs it'),
     f('Detail `write failed: pre-write shape check ({reason})`'),
     f('sends the forge body re-fetched just before it with only its `Plan:` line removed, never `{body}`'),
     f('which after a planning failure already carries the `## Overview` that `## Per-record step`\'s step 1 inserted'),

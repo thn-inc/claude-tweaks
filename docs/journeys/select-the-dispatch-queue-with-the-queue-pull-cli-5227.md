@@ -2,6 +2,7 @@
 files:
   - plugin/bin/queue-pull.js
   - plugin/bin/lib/dispatch/queue-pull.js
+  - plugin/bin/lib/dispatch/driver-lane.js
   - plugin/skills/dispatch/queue-pull-script.md
   - plugin/skills/dispatch/next-ranking.md
   - plugin/skills/dispatch/mcp-transport.md
@@ -38,7 +39,7 @@ files:
 
 ### 2. Pick the next group
 - **URL:** `plugin/bin/queue-pull.js --rank [--priority high|medium|low]`; `plugin/bin/lib/dispatch/queue-pull.js` (`rankNext`, `rankFromFiles`)
-- **Action:** The maintainer runs `--rank`. It drops every group with a member under an `oversized`, `firing` or `neighbour-in-flight` entry, takes each group's best member (priority band, then oldest `createdAt`) as its representative, applies the optional `--priority` filter, and writes the top group or `null` to `dispatch-next-pick.json`.
+- **Action:** The maintainer runs `--rank`. It drops every group with a member under an `oversized`, `firing`, `driver-lane` or `neighbour-in-flight` entry, takes each group's best member (priority band, then oldest `createdAt`) as its representative, applies the optional `--priority` filter, and writes the top group or `null` to `dispatch-next-pick.json`.
 - **Should feel:** Silent and exact. Stdout stays empty, because the pick is a whole group of full records that must not reach an agent's context. The pick matches `next-ranking.md` expression for expression.
 - **Should understand:** A missing or unreadable `dispatch-exclusions.json` reads as no exclusions, as the script reads it. An unknown `--priority` value exits 1 instead of quietly picking nothing. Omit the flag when no filter is wanted, because an empty value exits 1 too.
 - **Red flags:** Anything on stdout from `--rank`. A pick that differs from the script's for snake_case `created_at` timestamps, which means the alias step was skipped.
@@ -78,6 +79,7 @@ files:
 - Updated during #5312: a failed open-PR list for the cross-PR overlap report prints one Warning instead of failing open silently.
 - Updated during #5313: a failed shipped-pass `gh pr view` writes `files: null` and prints one Warning per affected non-predating weak record instead of reading as `[]` silently; the fail-open line count is no longer "zero or one per failed fetch".
 - Updated during #5315: a queue record whose `labels` is not an array is excluded as `malformed-blocker` with one Warning, and that pull writes no queue-order cache, instead of stopping the whole pull; step 1 no longer lists it among the defects reproduced on purpose.
+- Updated during the build of #6119 (run `2026-11-26T085819-record-6119`): under `express-driver-runner: script` the pull excludes driver-routable singletons as `driver-lane` (a staying reason, so `--rank` skips them), and step 2 names it. `files:` adds `plugin/bin/lib/dispatch/driver-lane.js`, which holds the pass and its batched comment read.
 - Updated during #5316: the target-missing Close proposal stages as `dispatch-target-missing-{n}.md` instead of under a random extensionless suffix, and a failed proposal write stages nothing for that record.
 - Updated during #5317: the target-missing Close proposal's staged `gh issue comment` passes its body as one single-quoted word, so shell syntax in a named path is posted verbatim instead of run.
 - Updated during #5409: the module and the script remove the five session files written after their step's fallible work at pull start, so a step that throws on a re-pull leaves its file absent instead of an earlier pull's copy.

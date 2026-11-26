@@ -25,8 +25,8 @@ present, no `bot:blocked`) do not change on a claim-contest/in-flight/claims-bra
 or a pre-retry-ceiling build/test failure, so without this the same firing's very next iteration
 re-selects the identical group and reproduces the identical stop. A claim-permission-denied stop
 or a render-failure stop never reaches this filter: each ends the firing (`SKILL.md`'s Claim
-permission stop and Render-failure stop, #5255). All three reasons are checked
-together, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call
+permission stop and Render-failure stop, #5255). All four reasons are checked
+together, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'driver-lane', 'neighbour-in-flight'])` call
 — no separate key derivation for each.
 
 ```bash
@@ -47,7 +47,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$PRIORITY_FILTER" "$DISPATCH
   // iteration, and 'next''s single-iteration alias never needs the firing
   // reason at all.
   const entries = readExclusions(process.argv[3]);
-  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight']));
+  const eligibleGroups = groups.filter((g) => !groupIsExcluded(g, entries, ['oversized', 'firing', 'driver-lane', 'neighbour-in-flight']));
   const representative = (g) => g.slice().sort((a, b) =>
     bandOf(a) - bandOf(b) || new Date(a.createdAt) - new Date(b.createdAt))[0];
   const priorityFilter = process.argv[1] || null; // '--priority' value, or unset

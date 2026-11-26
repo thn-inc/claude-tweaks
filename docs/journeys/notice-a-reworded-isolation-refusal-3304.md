@@ -8,6 +8,8 @@ files:
   - tools/upstream-drift/checks.js
   - tools/upstream-drift/run.js
   - tests/harness-refusal-drift-pin.test.js
+  - tools/guard-refusals/transcripts.js
+  - tools/guard-refusals/trace.js
 ---
 
 # Notice a Reworded Isolation Refusal
@@ -39,7 +41,7 @@ files:
 
 ### 3. Re-derive the wording and update in one place: a branch
 - **URL:** `plugin/bin/lib/hooks/harness-refusal.js`, `tools/upstream-drift/manifest.yml`
-- **Action:** the maintainer captures a real refusal from the new Claude Code and updates the fragment constants. `HARNESS_ISOLATION_REFUSAL_RE`, `classifyRefusal` and the prefilter's `REFUSAL_SIGNATURES` all follow automatically. They then update the claude-code entry's must-match values to match.
+- **Action:** the maintainer captures a real refusal from the new Claude Code and updates the fragment constants. `HARNESS_ISOLATION_REFUSAL_RE`, `classifyRefusal`, the prefilter's `REFUSAL_SIGNATURES` and the `tools/guard-refusals/` measurement (`transcripts.js` classifies a refusal, and `trace.js` cuts its clause, at any entry of `REFUSAL_SIGNATURES`, #4524) all follow automatically. They then update the claude-code entry's must-match values to match.
 - **Should feel:** a one-file code change plus its manifest twin, with the test suite saying when the two disagree.
 - **Should understand:** `tests/harness-refusal-drift-pin.test.js` fails until every fragment in `REFUSAL_FRAGMENTS` appears in some claude-code must-match. `tests/hooks-harness-refusal.test.js` pins the regex source, so a wording change also updates that expectation deliberately. `plugin/skills/reflect/full-mode.md`'s transcript-grep literals are pinned to `REFUSAL_SIGNATURE` and `WORKTREE_GONE_SIGNATURE` too.
 - **Red flags:**
@@ -52,3 +54,4 @@ files:
 - Related specs: #2783 (the post-tool-use-failure hook), #3074 (the Bash prefilter's refusal signature gate)
 - Updated during build of #3820: step 1 now reflects the claude-code entry's `report-upgrades: false` opt-out (validated in `manifest.js`, honored by `run.js`'s `hasUpgrade`), so a version lag alone is neither a finding nor a reason the entry is due
 - Updated during build of #3819: step 1 now asserts nine literals (the `This agent` noun, the worktree-gone `Refusing to run there` signature and its two template anchors added), and step 3 names `classifyRefusal` and `REFUSAL_SIGNATURES`
+- Updated during build of #4524: step 3 names the guard-refusals tools among the signature derivers, so a reworded or prefix-less signature no longer needs a tool edit

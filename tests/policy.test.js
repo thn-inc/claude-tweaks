@@ -357,6 +357,26 @@ test('planning-decisions resolves ask-all when unset and when invalid (#6051)', 
 const PLAN_AT_SPECIFY_CONFLICT_LINE = 'resolve-policy: warning: plan-at-specify is on but planning-decisions is ask-all — using "off"; set planning-decisions: asked-classes to plan at /claude-tweaks:specify\n';
 const resolvePlanAtSpecify = (opts) => require('../plugin/bin/lib/policy-schema').resolvePolicyKeys(['plan-at-specify'], opts)['plan-at-specify'];
 
+test('#6119 express-driver-runner: enum session|script, default session, policyOnly, factory-refused', () => {
+  const { POLICY_KEYS, resolvePolicyKeys } = require('../plugin/bin/lib/policy-schema');
+  const { FACTORY_REFUSED_KEYS } = require('../plugin/bin/lib/policy-factory');
+  const K = 'express-driver-runner';
+  const row = POLICY_KEYS.find((k) => k.key === K);
+  assert.ok(row, 'express-driver-runner row exists');
+  assert.strictEqual(row.type, 'enum');
+  assert.deepStrictEqual(row.values, ['session', 'script']);
+  assert.strictEqual(row.default, 'session');
+  assert.strictEqual(row.policyOnly, true);
+  assert.strictEqual(row.tier, 'advanced');
+  assert.ok(FACTORY_REFUSED_KEYS.includes(K));
+  const read = (policyRaw) => resolvePolicyKeys([K], { policyRaw })[K];
+  assert.deepStrictEqual(read(''), { value: 'session', source: 'default' });
+  assert.strictEqual(read('express-driver-runner: script\n').value, 'script');
+  const bad = read('express-driver-runner: Script\n');
+  assert.strictEqual(bad.value, 'session');
+  assert.strictEqual(bad.invalid, true);
+});
+
 test('learned-skills-auto-merge is policyOnly, advanced, merge-safety, default false, factory-settable (#6109)', () => {
   const K = 'learned-skills-auto-merge';
   const row = require('../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === K);
