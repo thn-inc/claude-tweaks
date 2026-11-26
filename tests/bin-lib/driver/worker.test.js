@@ -1841,12 +1841,9 @@ test('AC1.2 (#6321): the probed no-work shapes count', async (t) => {
 });
 
 test('AC1.3 (#6321): a missing or invalid duration_api_ms reads null and does not count', async (t) => {
-  const outs = [];
-  for (const v of [undefined, '0', -1]) {
-    const obj = { ...NO_WORK_RESULT };
-    if (v === undefined) delete obj.duration_api_ms; else obj.duration_api_ms = v;
-    outs.push({ code: 1, stdout: JSON.stringify(obj) });
-  }
+  const withoutDuration = { ...NO_WORK_RESULT };
+  delete withoutDuration.duration_api_ms;
+  const outs = [withoutDuration, { ...NO_WORK_RESULT, duration_api_ms: '0' }, { ...NO_WORK_RESULT, duration_api_ms: -1 }].map((obj) => ({ code: 1, stdout: JSON.stringify(obj) }));
   outs.push({ code: 1, stdout: 'not json' });
   for (const out of outs) {
     const { runner } = fakeRunner(out);

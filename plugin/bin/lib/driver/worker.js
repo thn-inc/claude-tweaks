@@ -360,6 +360,12 @@ function readApiError(obj) {
   };
 }
 
+// The result object's duration_api_ms when it is a finite number at least 0, else null.
+function readApiDurationMs(obj) {
+  if (!obj || typeof obj.duration_api_ms !== 'number') return null;
+  return Number.isFinite(obj.duration_api_ms) && obj.duration_api_ms >= 0 ? obj.duration_api_ms : null;
+}
+
 // True when the launch failed for a cause every later record would meet (see the header).
 function sharedCauseOf(env) {
   if (!env || typeof env !== 'object') return false;
@@ -396,7 +402,7 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     detail,
     sessionId: obj && typeof obj.session_id === 'string' && obj.session_id !== '' ? obj.session_id : null,
     apiError: readApiError(obj),
-    apiDurationMs: obj && typeof obj.duration_api_ms === 'number' && Number.isFinite(obj.duration_api_ms) && obj.duration_api_ms >= 0 ? obj.duration_api_ms : null,
+    apiDurationMs: readApiDurationMs(obj),
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 
