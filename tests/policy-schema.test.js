@@ -43,9 +43,9 @@ test('POLICY_KEYS entries are unique', () => {
   assertLastBump(__filename);
   // Changes only with a recorded reason. Recompute by counting the merged list,
   // never by summing either side's delta (IL-99); history is `git log -L`.
-  // Last bump: 124 -> 125, #6109
-  assert.strictEqual(POLICY_KEYS.length, 125);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 125);
+  // Last bump: 125 -> 126, #6119
+  assert.strictEqual(POLICY_KEYS.length, 126);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 126);
 });
 
 test('AC1.1, AC2.1: express-lane defaults on and a project opts out (#4025, #4591)', () => {
