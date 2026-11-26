@@ -16,7 +16,7 @@
 // cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
-// held?:[{name,url,conclusion}] (checks whose newest run was cancelled, action_required or stale; state pending), awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
+// held?:[{name,url,conclusion}] (checks whose newest run was cancelled, action_required or stale; state pending), awaitingReadyRun?:[workflow file], prEventSettle?:{until} (#3468: state pending inside the 60 s window for the pull_request run to appear; until null when the PR's createdAt or the head sha's first run / committer date could not be read), headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
 // headRunCount?, logged? (--run only)}. headRunCount is the number of workflow runs the
 // head-runs read listed for headRefOid (one page of 100), present only when that read
 // succeeded -- drive.js's CI step reads it rather than listing the runs itself. state
@@ -71,7 +71,8 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, held?, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
+  + '  prints {state, failing, pending, held?, awaitingReadyRun?, prEventSettle?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
+  + '  prEventSettle: {until} while a green push-only read is inside the 60 s window for the PR-event run to appear (until null: an anchor was unreadable);\n'
   + '  headRunCount: the head sha\'s workflow-run count, present only when the head-runs read succeeded;\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
@@ -163,7 +164,8 @@ function gateEntry(out) {
   }
   if (state === 'pending' || state === 'stale') {
     const awaiting = Array.isArray(out.awaitingReadyRun) && out.awaitingReadyRun.length ? `no run since ready: ${out.awaitingReadyRun.join(', ')}` : null;
-    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.map((n) => (typeof n === 'string' ? n : 'unnamed')).join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
+    const settling = out.prEventSettle ? `no pull_request run yet (settle window until ${out.prEventSettle.until ?? 'unknown'})` : null;
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.map((n) => (typeof n === 'string' ? n : 'unnamed')).join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || settling || 'no check reported yet'))}) — passed with caveat` };
   }
   if (DEGRADED.includes(state)) {
     return { status: 'SKIP', reversibility: 'n/a', text: `condition: pr-checks.js ${state}${out.reason ? `: ${out.reason}` : ''} → fallback: local verification only` };
@@ -201,7 +203,7 @@ function report(deps, body, audit = null) {
 // occur and the reported localHead stays null.
 function classifyPr(deps, n, localHead, audit) {
   let view;
-  try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup,baseRefName'])); } catch (e) {
+  try { view = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt'])); } catch (e) {
     return report(deps, { state: 'read-failed', pr: n, localHead, reason: `gh pr view failed: ${errText(e)}` }, audit);
   }
   // The full 40-char sha: an abbreviated --commit lists no runs (#3405).
@@ -238,7 +240,12 @@ function classifyPr(deps, n, localHead, audit) {
   }
   let hasPrCi = false;
   try { hasPrCi = Boolean(deps.hasPullRequestCi(repoRoot)); } catch { hasPrCi = false; }
-  const input = { rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns };
+  const input = { rollup: view && view.statusCheckRollup, headRefOid, localHead: compareHead, hasPrCi, headRuns, now: deps.now(), prCreatedAt: (view && view.createdAt) ?? null };
+  // #3468: the settle window's start when no workflow run exists for the head sha yet. A failed or
+  // empty read leaves it null, which classify.js reads as an unreadable anchor: pending, never read-failed.
+  if (hasPrCi && Array.isArray(headRuns) && headRuns.length === 0) {
+    try { input.headCommittedAt = String(deps.gh(['api', `repos/{owner}/{repo}/commits/${headRefOid}`, '--jq', '.commit.committer.date'])).trim() || null; } catch { input.headCommittedAt = null; }
+  }
   if (ready) {
     // The wait set is ready-run.js's readyWaitSet: a draft-skip workflow without a ready trigger is folded in
     // with the ready ones (Reading B). With no post-ready run it is awaiting (pending); once a later push has
