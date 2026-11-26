@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `node:assert/strict`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T115118-record-6010/work/6010-spec.md` (record #6010)
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T121035-record-6010/work/6010-spec.md` (record #6010; its `**Decision**` paragraph settles the sparse `effort` key — Reading B)
 
 ## Global Constraints
 
