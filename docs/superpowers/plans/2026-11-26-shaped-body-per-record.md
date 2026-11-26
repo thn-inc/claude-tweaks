@@ -32,6 +32,7 @@ Scope keywords: specify-shaped-body, specify-prior-body, specify-risk-answers, S
 - A CRLF body file (`<!-- composed-for: #7 -->\r\n...`) is accepted for `--record 7`, and the stripped file keeps the rest byte-for-byte. Pinned in Task 1.
 - A dashed local-files id (`2026-01-foo`) matches `--record 2026-01-foo`; `#45` must not match `--record 4` or `--record 456` (whole-id compare, not prefix). Pinned in Task 1.
 - A shape failure under `--record` (exit 4) leaves the file unchanged, marker included, so a fixed retry can still check it. Pinned in Task 1.
+- Planning's `{body}` carries the marker through `planning.md`'s per-record steps (`plan-lane`, `plan-audit.js --spec`, `plan-store.js write/check --spec-file`, the `Plan:` line insertion above the first `##` heading). Probed: `specHash` (`bin/lib/issues/plan-line.js`) is identical for a body with and without a leading marker, since it hashes from `## Overview` on; the marker is preamble, so the `Plan:` line still lands in the metadata block below it. Pinned in Task 3 (`specHash` equality).
 - The born-ready probe (`--check` without `--record`) on a marked body exits 0 and leaves the file byte-identical, so the later `cmp -s` of shaped vs prior files still reports unchanged when both carry the marker. Pinned in Task 1 (no-`--record` case) and Task 2's prose (both files written with the marker).
 
 ---
@@ -76,7 +77,7 @@ Expected: FAIL (`--record` is an unknown argument today, so the new cases exit 2
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/compose-record/cli.test.js tests/exit-code-conformance.test.js tests/cli-entry-conformance.test.js tests/bin-lib/release-note-repair/detect.test.js`
+Run: `node --test tests/bin-lib/compose-record/cli.test.js tests/bin-lib/exit-code-conformance.test.js tests/bin-lib/cli-entry-conformance.test.js tests/bin-lib/release-note-repair/detect.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Update docs.** `docs/plugin-structure.md`'s command line becomes `--check <body-file> [--record <id>]`, adding: with `--record`, exit 6 refuses a body whose first-line `<!-- composed-for: #{id} -->` marker is missing, malformed, or names another record, and a pass strips the marker in place (#4746). Journey line ~109: one added sentence saying the same. Keep the rest of both lines unchanged.
@@ -91,6 +92,7 @@ git commit -m "Add compose-record --check --record marker guard — refuses anot
 ### Task 2: Key the shaping temp files by record id and write/check the marker at every write site
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/specify/shaping-mode-stamping.md` (`:57` Risk flags naming + `session-tmp-resolve.js` args; the github-issues Compose-then-write-once paragraph above the fence (~`:198`); the fence `:204-208`; the exit-handling paragraph `:221`; the local-files paragraph `:230`)
@@ -121,7 +123,8 @@ Expected: FAIL after Step 1, on the two changed assertions.
   - `:230` local-files paragraph: the body is written with the same first-line marker, and `run the same \`compose-record.js --check\` first` gains `, with \`--record {n}\`,` right after `first` (keep the pinned phrase intact).
   - `shaping-mode.md:79`: the path becomes `specify-shaped-body-{n}.md`; the fetched body is written with the marker `<!-- composed-for: #{n} -->` as its first line, and its unmodified copy (`{tmp-prior-body}`) carries the same first line, so `cmp -s` still compares like with like. The probe call stays `--check "$SPECIFY_SHAPED_BODY"` with no `--record`: it is a read-only shape probe, not a write, and the marker check runs at Compose-then-write-once's pre-write `--check`. Say that in one clause.
   - `planning.md:185` step 1: the re-fetched body is written with its first line the marker `<!-- composed-for: #{n} -->`; same for the `specify-plan-unplan-{n}.md` body in step 3.
-  - `planning.md:187` step 3: `--check "{body}"` becomes `--check "{body}" --record {n}`; a non-zero exit (6 included) writes nothing, as today. The `specify-plan-unplan-{n}.md` write runs the same `--check --record {n}` first, so its marker is stripped before the write.
+  - `planning.md:187` step 3: `--check "{body}"` becomes `--check "{body}" --record {n}`; a non-zero exit (6 included) writes nothing, as today. The `specify-plan-unplan-{n}.md` write runs the same `--check --record {n}` first, so its marker is stripped before the write; a non-zero exit there (4 or 6) writes nothing for that sub-issue, its stale `Plan:` line stays on the forge, and it is a failed body write with the same Detail `write failed: pre-write shape check ({reason})`. That body is the forge body re-fetched just before, which already passed the shape gate, so exit 4 there means the forge body itself regressed and blocking is correct (fail-closed).
+  - `shaping-mode-stamping.md:66` (batch pre-pass): each record's `specify-risk-body-{n}.md` is written with that record's marker as its first line too, and the per-record loop composes the record's body into `specify-shaped-body-{n}.md`, marker first, before `settle` runs on it; the pre-write `--check --record {n}` always reads `specify-shaped-body-{n}.md` (or planning's `{body}` copy of it), never the pre-pass file.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -151,6 +154,7 @@ git commit -m "Key specify shaping temp files by record id and check the compose
   - `every pre-write check passes --record {n}`: the fence's check line matches `/--check "\$SPECIFY_SHAPED_BODY" --record \{n\} \|\| exit\s*$/m`; `planning.md` contains `--check "{body}" --record {n}`.
   - `AC2.1: shaping two records back to back in one session writes each its own body` (regression): extract the filename literal from the fence's `sessionTmpPath(process.env.CLAUDE_CODE_SESSION_ID, '([^']+)')`; for `4549` and `4550` substitute `{n}` and resolve through `session-tmp-resolve.js`'s `run(['--value', name], { env: { CLAUDE_CODE_SESSION_ID: 'same-session', TMPDIR: tmp }, stdout, stderr })` (one shared session id; match that CLI's actual deps keys). Write body A (marker `#4549`) to 4549's path, then body B (marker `#4550`) to 4550's path. Assert the paths differ, then run `compose-record.js` `run(['--check', p4549, '--record', '4549'])` → 0 and `p4550`/`4550` → 0, and assert each file now holds its own body text without a marker. On today's fixed filename both names resolve to one path and the assertions go red.
   - `AC3.1: a cross-wired body is refused before the write`: body A's file checked with `--record 4550` → 6, stderr names `#4549` and `#4550`, file unchanged.
+  - `the marker does not change the plan spec hash`: `specHash(body) === specHash('<!-- composed-for: #9 -->\n' + body)` for a body with `## Overview`.
   - `the marker survives risk-flags settle`: write marker `#9` + a shaped body to a temp file and an unmarked copy as prior; run `risk-flags.js`'s `run(['settle', '--body-file', f, '--prior-body-file', p, '--headless'], deps)` (match its actual deps shape); assert line 1 is still the marker, then `--check f --record 9` → 0.
 
 - [ ] **Step 2: Run the test**
