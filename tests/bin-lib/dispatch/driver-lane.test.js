@@ -202,15 +202,16 @@ const VALUES = {
 };
 const resolver = (values = VALUES) => (keys) => Object.fromEntries(keys.map((k) => [k, { value: values[k], source: 'policy' }]));
 
-function fixture(groups) {
+function fixture(groups, t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'driver-lane-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const groupsPath = path.join(dir, 'groups.json');
   fs.writeFileSync(groupsPath, JSON.stringify(groups));
   return { dir, groupsPath, exclusionsPath: path.join(dir, 'exclusions.json') };
 }
 
-test('runFromFiles happy path appends a driver-lane entry through appendExclusion', () => {
-  const f = fixture([[issueOf(20, ROUTABLE)], [issueOf(21, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task'])]]);
+test('runFromFiles happy path appends a driver-lane entry through appendExclusion', (t) => {
+  const f = fixture([[issueOf(20, ROUTABLE)], [issueOf(21, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task'])]], t);
   const { lines, stderr } = collector();
   const calls = [];
   const spawnCli = (name, args) => { calls.push([name, args]); return { status: 0, stdout: '{"20":{"comments":[],"complete":true}}', stderr: '' }; };
@@ -221,8 +222,8 @@ test('runFromFiles happy path appends a driver-lane entry through appendExclusio
   assert.deepEqual(lines, ['driver-lane: left to the script job: #20\n']);
 });
 
-test('runFromFiles: a failed second read prints the Warning, does not throw, appends nothing', () => {
-  const f = fixture([[issueOf(20, ROUTABLE)]]);
+test('runFromFiles: a failed second read prints the Warning, does not throw, appends nothing', (t) => {
+  const f = fixture([[issueOf(20, ROUTABLE)]], t);
   const { lines, stderr } = collector();
   const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'gh', stderr, deps: { resolvePolicy: resolver(), spawnCli: () => ({ status: 3, stdout: '', stderr: 'fetch failed\n' }) } });
   assert.deepEqual(out, []);
@@ -230,16 +231,16 @@ test('runFromFiles: a failed second read prints the Warning, does not throw, app
   assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: fetch failed\n']);
 });
 
-test('runFromFiles: the files transport never spawns and reports the read failed', () => {
-  const f = fixture([[issueOf(20, ROUTABLE)]]);
+test('runFromFiles: the files transport never spawns and reports the read failed', (t) => {
+  const f = fixture([[issueOf(20, ROUTABLE)]], t);
   const { lines, stderr } = collector();
   const out = runFromFiles({ groupsPath: f.groupsPath, exclusionsPath: f.exclusionsPath, transport: 'files', stderr, deps: { resolvePolicy: resolver(), spawnCli: () => { throw new Error('spawned'); } } });
   assert.deepEqual(out, []);
   assert.deepEqual(lines, ['Warning: driver-lane comment read failed — no driver-lane exclusions this pull: comment read unavailable on the files transport\n']);
 });
 
-test('runFromFiles: a policy-layer warning path writes through a function, never throws', () => {
-  const f = fixture([[issueOf(20, ROUTABLE)]]);
+test('runFromFiles: a policy-layer warning path writes through a function, never throws', (t) => {
+  const f = fixture([[issueOf(20, ROUTABLE)]], t);
   const { lines, stderr } = collector();
   const failing = (keys) => {
     if (keys.length === 1 && keys[0] === 'express-driver-runner') return { 'express-driver-runner': { value: 'script', source: 'policy' } };
