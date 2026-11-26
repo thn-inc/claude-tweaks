@@ -485,6 +485,14 @@ test('AC3.1: formatResidueLines names the default-selection console-filings.js r
   assert.ok(lines.some((l) => l.endsWith(`; file each printed \`file\` entry and log it as '{item} filed as #{n} (work-fingerprint {fp})', hand-log any \`logFailures\` item as '{item} already filed as #{n} (work-fingerprint {fp})' (the CLI logs each \`deduped\` entry itself; a \`drop\` item's re-run logs its digested line instead), via log-decision.js \`--run\` that console's dir, per wrap-up/review-console.md's Can't-tell filings)`)), lines.join('\n'));
 });
 
+test('a local-files backend names the local-store listing, no gh command, in the filing-pending hint (#4337)', () => {
+  const dir = tmpRun();
+  plannedFilingConsole(dir, '');
+  const lines = formatResidueLines(readRunResidue(dir), { pluginRoot: '/p', backend: 'local-files' });
+  assert.ok(lines.some((l) => l.startsWith("      (<issues.json>: the local store's records as [{number: id, body}];")), lines.join('\n'));
+  assert.ok(!lines.some((l) => l.includes('gh issue list')), lines.join('\n'));
+});
+
 test('consoleRerunCommand is the default (unattended) selection, names no --only and omits node without a plugin root (#4679)', () => {
   assert.strictEqual(
     consoleRerunCommand({ consoleDir: '/r' }),

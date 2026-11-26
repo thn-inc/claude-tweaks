@@ -21,6 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { readWorkBackend } = require('../work-backend');
 
 const UNRESOLVED_RESOLUTIONS = new Set(['pending', 'keep-staged']);
 // #4172: a PR console's item whose filing or reverse failed is residue too; its
@@ -310,7 +311,7 @@ function pendingKindOf(resolution) {
 // pointer — a malformed item must never throw and hide every other banner.
 // `printed` is one console's state ({ rerun, kinds }): the re-run command prints once per console, and each
 // pending kind's remedy once, however many items of either kind it holds.
-function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds: new Set() }) {
+function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds: new Set() }, backend = null) {
   const hasId = typeof item.id === 'string' && item.id !== '';
   const lines = [`  - ${hasId ? item.id : '(no id)'} — ${shown(item.section)}: ${item.resolution} (${shown(item.reason)})`];
   if (!hasId) return lines;
@@ -345,8 +346,11 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
     if (!printed.kinds.has(kind)) {
       printed.kinds.add(kind);
       const lead = first ? '' : 'same re-run; ';
+      const listing = backend === 'local-files'
+        ? "the local store's records as [{number: id, body}]"
+        : 'gh issue list --state all --json number,body --limit <N>';
       lines.push(kind === 'filing'
-        ? `      (${lead}<issues.json>: gh issue list --state all --json number,body --limit <N>; <comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
+        ? `      (${lead}<issues.json>: ${listing};<comments.json>: the materiality digest's comments; ${FILING_LOG_REMEDY})`
         : `      (${lead}<comments.json>: the materiality digest's comments; ${digestLogRemedy({ consoleDir, pluginRoot })})`);
     }
   }
@@ -355,8 +359,10 @@ function itemLines(item, consoleDir, pluginRoot, printed = { rerun: false, kinds
 
 // One header per run; `maxItems` caps item lines across the whole run, not
 // per console. With several consoles each gets a `(relative path)` sub-line.
-function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, maxItems = 5 }) {
+function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, maxItems = 5, backend = null }) {
   if (!consoles || consoles.length === 0) return [];
+  // The callers pass no backend: the project's CLAUDE.md (cwd) names it, as session-residue.js reads it.
+  if (backend === null) backend = readWorkBackend(process.cwd());
   const single = consoles.length === 1;
   const total = consoles.reduce((n, c) => n + c.items.length, 0);
   const lines = [`- ${path.basename(dir)}: ${total} item(s) no human has reviewed${single ? ` (${path.relative(dir, consoles[0].path)})` : ''}`];
@@ -368,7 +374,7 @@ function formatResidueLines({ dir, consoles, missingOnly = [] }, { pluginRoot, m
     const printed = { rerun: false, kinds: new Set() };
     for (const item of c.items) {
       if (count >= maxItems) break;
-      lines.push(...itemLines(item, consoleDir, pluginRoot, printed));
+      lines.push(...itemLines(item, consoleDir, pluginRoot, printed, backend));
       count += 1;
     }
   }

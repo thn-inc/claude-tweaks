@@ -72,7 +72,7 @@ for a human instead:
 node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "{item-run-dir}" --set-item '{name}' --resolution keep-staged --reason '{why}'
 ```
 
-`{name}` is the item's staged filename; `{why}` is `record create failed (exit {code})` or
+`{name}` is the item's staged filename; `{why}` is `record create failed` (append ` (exit {code})` only under `github-issues`, where `gh` gives one) or
 `shadow-dup-proposal.js exited {code}`. The item then reads as residue — `console-residue.js` and
 the session-start notice list it with its `cat` line, and archival refuses the run until a human
 acknowledges it. An exit 5 whose message names `no console.json` means there is no auto-resolved
