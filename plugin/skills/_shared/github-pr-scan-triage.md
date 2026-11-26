@@ -4,11 +4,11 @@ Split from `_shared/github-pr-scan.md` (#4820) when that file reached the Read-l
 
 ## Scope: `triage-queue` (consumed by /help Stage 4.6)
 
-Three cheap counts for the dashboard's Triage Queue section. This scope exists so `/help` never hand-writes its own query for these numbers — see the fix this closes: Stage 4.6 previously computed "pending authorization" without excluding `bot:blocked` records, so a blocked record counted as both pending AND blocked on the same dashboard.
+Four cheap counts for the dashboard's Triage Queue section. This scope exists so `/help` never hand-writes its own query for these numbers — see the fix this closes: Stage 4.6 previously computed "pending authorization" without excluding `bot:blocked` records, so a blocked record counted as both pending AND blocked on the same dashboard.
 
 **Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope's rows, never suppressed, and render a floor count as `{N}+`.
 
-**Transport split (see `_shared/github-pr-scan.md`'s Transport section):** items 1 and 2 are issue-backed and run unchanged on either transport. Item 3's commits-endpoint query has no MCP equivalent — on `gh`-absent it degrades individually (omit the "Auto-merged this week" line rather than the whole scope).
+**Transport split (see `_shared/github-pr-scan.md`'s Transport section):** items 1, 2 and 4 are issue-backed and run unchanged on either transport. Item 3's commits-endpoint query has no MCP equivalent — on `gh`-absent it degrades individually (omit the "Auto-merged this week" line rather than the whole scope).
 
 1. **Pending authorization** — `ready` ∧ no `auto:*` ∧ no `bot:*` (`bot:in-progress`, `bot:blocked`, or `bot:parked`). Origin-agnostic: matches `/claude-tweaks:backlog refine`'s own `ready`-queue pull (`skills/backlog/refine-mode.md`), which tiers no health-skill origin specially — every `ready` record, with or without a `by:*` label, is in scope.
 
@@ -55,5 +55,6 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
 
    The commits endpoint defaults to the default branch when no `sha=` param is given — correct regardless of which branch/worktree `/help` itself runs from under `worktree-always`. `SINCE` is computed via `node`, not shell `date` arithmetic, which differs between BSD/macOS and GNU date.
 <!-- /when -->
+4. **Awaiting a plan-review answer** — `gh issue list --label needs:answer --state open --json number --limit {resolved-limit} -q 'length'`
 
-Render as three lines: `Pending authorization: **{N}** records awaiting your decision` / `Blocked: **{N}** records blocked (retry ceiling, or a plan-review question awaiting an answer)` / `Auto-merged this week: **{N}** auto-merges` — omit any line whose count is 0.
+Render as four lines: `Pending authorization: **{N}** records awaiting your decision` / `Blocked: **{N}** records blocked (retry ceiling)` / `Awaiting answer: **{N}** records awaiting a plan-review answer` / `Auto-merged this week: **{N}** auto-merges` — omit any line whose count is 0.

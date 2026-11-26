@@ -488,7 +488,7 @@ const RELAY_FACTS = [
   'quotes the exit code and the first stderr line from that call\'s `Prompt render failed:` `REFUSED` line',
   'says the firing stopped',
   'lists any named records after it as not attempted',
-  'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then re-run `/claude-tweaks:dispatch #{n}` (when #{n} still has an open draft PR, that command\'s open-PR line names the next step).',
+  'It closes with the remedy on its own line: fix the named cause (the template, a policy value or the environment), then run `/claude-tweaks:dispatch #{n}` again (when #{n} still has an open draft PR, that command\'s open-PR line names the next step).',
 ];
 const PUSH_CASE = 'for a headless render-failure stop (a firing that passes `--headless`, `task-prompt.md`; one notification naming the record and the stderr line';
 function assertRelay(reporting) {
