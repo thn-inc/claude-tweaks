@@ -28,8 +28,9 @@
 // count (a timeout, a HEAD move, a worker that ran) resets it; a record that never reached the implementer
 // leaves it unchanged. Both rules are judged together for the record that ends the run: the first record
 // of a streak is settled ordinarily (its escalation comment is posted), and the run deletes that comment
-// afterwards, so a worker stop leaves the first record without an escalation comment. A shared-cause launch that does not count still
-// takes the two-record path when a streak is open: no record leaves the driver lane over a cause every record would meet.
+// afterwards, so a worker stop leaves the first record without an escalation comment. A shared-cause
+// launch that does not count still takes the two-record path when a streak is open: no record leaves
+// the driver lane over a cause every record would meet.
 //
 // Termination: every member of every handled group, and every member of a selectable group whose
 // members the pre-screen all skips, joins the in-memory `firing` set handed to the ranking, so no
