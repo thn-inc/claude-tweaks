@@ -16,7 +16,7 @@
 // cannot occur. Exactly one of --run / --pr is required.
 //
 // Prints one JSON line: {state, failing:[{name,url,inherited?}], pending:[name],
-// awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
+// held?:[{name,url,conclusion}] (checks whose newest run was cancelled, action_required or stale; state pending), awaitingReadyRun?:[workflow file], headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?,
 // headRunCount?, logged? (--run only)}. headRunCount is the number of workflow runs the
 // head-runs read listed for headRefOid (one page of 100), present only when that read
 // succeeded -- drive.js's CI step reads it rather than listing the runs itself. state
@@ -60,7 +60,7 @@
 'use strict';
 
 const { execFileSync } = require('child_process');
-const { classifyRollup, failingNamesAt, applyBaseComparison } = require('./lib/pr-checks/classify');
+const { classifyRollup, failingNamesAt, applyBaseComparison, HEAD_RUN_FIELDS } = require('./lib/pr-checks/classify');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
@@ -71,7 +71,7 @@ const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-checks.js --run <run-dir> [--section "/<skill>"] | --pr <n> [--help]\n'
   + '  --pr <n> classifies a PR by number with no run dir: local HEAD is not compared (the PR\'s own head stands in), localHead is null, never stale, never no-pr\n'
-  + '  prints {state, failing, pending, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
+  + '  prints {state, failing, pending, held?, awaitingReadyRun?, headRefOid, localHead, pr, reason?, baseBranch?, baseSha?, baseReason?, headRunCount?, logged? (--run only)};\n'
   + '  headRunCount: the head sha\'s workflow-run count, present only when the head-runs read succeeded;\n'
   + '  baseBranch: the branch compared on a red read -- the PR\'s own base, else the integration branch;\n'
   + '  state: red | inherited-red | pending | stale | green | no-ci | read-failed | no-pr | gh-absent\n'
@@ -163,7 +163,7 @@ function gateEntry(out) {
   }
   if (state === 'pending' || state === 'stale') {
     const awaiting = Array.isArray(out.awaitingReadyRun) && out.awaitingReadyRun.length ? `no run since ready: ${out.awaitingReadyRun.join(', ')}` : null;
-    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
+    return { status: 'AUTO', reversibility: 'high', text: `PR #${pr} checks ${state} at ${short(out.headRefOid)} (${out.pending.length ? out.pending.map((n) => (typeof n === 'string' ? n : 'unnamed')).join(', ') : (state === 'stale' ? 'HEAD not yet pushed' : (awaiting || 'no check reported yet'))}) — passed with caveat` };
   }
   if (DEGRADED.includes(state)) {
     return { status: 'SKIP', reversibility: 'n/a', text: `condition: pr-checks.js ${state}${out.reason ? `: ${out.reason}` : ''} → fallback: local verification only` };
@@ -217,7 +217,7 @@ function classifyPr(deps, n, localHead, audit) {
   // so a transient runs-read failure must not turn `stale` into `read-failed`.
   if (typeof headRefOid === 'string' && headRefOid && headRefOid === compareHead) {
     try {
-      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']));
+      const rows = JSON.parse(deps.gh(['run', 'list', '--commit', headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]));
       if (!Array.isArray(rows)) throw new Error('not a JSON array');
       headRuns = rows;
     } catch (e) {

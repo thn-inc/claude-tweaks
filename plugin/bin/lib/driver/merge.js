@@ -24,7 +24,7 @@ const {
 } = require('./events');
 const { reduceDetail, canonicalWorktreePath, apiTarget } = require('./settle');
 const { confirmFromFile } = require('../dispatch/merge-verdict');
-const { classifyRollup, normalizeEntry } = require('../pr-checks/classify');
+const { classifyRollup, normalizeEntry, HEAD_RUN_FIELDS } = require('../pr-checks/classify');
 const { ensureLabelPayload } = require('../issues/labels');
 const { LABELS } = require('../issues/record-vocabulary');
 const { widenings } = require('../express/eligibility');
@@ -562,7 +562,6 @@ function markReady(s) {
 const GATE_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup';
 // `mergeable` rides on the re-read too (AC6: conflicting "on any read"), beyond the prose's three fields.
 const REREAD_FIELDS = 'state,mergeStateStatus,mergeable,headRefOid';
-const RUN_FIELDS = 'name,workflowName,status,conclusion,url';
 // The ready-run.js states classify reads; `read-failed`, and any state not named here, is a read failure.
 const READY_RUN_USED = ['not-applicable', 'met', 'awaiting', 'red', 'draft-skip-without-ready-trigger'];
 const LEVER_VALUES = ['merge-when-green', 'wait'];
@@ -609,7 +608,7 @@ function gateReads(s, word) {
   if (read.state !== 'OPEN' || read.headRefOid !== ctx.head || isConflicting(read)) return { read, runs: null, ready: null };
   let runs;
   try {
-    runs = parseJson(deps.gh(['run', 'list', '--repo', ctx.repo, '--commit', read.headRefOid, '--limit', '100', '--json', RUN_FIELDS]));
+    runs = parseJson(deps.gh(['run', 'list', '--repo', ctx.repo, '--commit', read.headRefOid, '--limit', '100', '--json', HEAD_RUN_FIELDS]));
   } catch (err) {
     return fail(`head-runs read failed: ${errorText(err)}`);
   }

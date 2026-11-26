@@ -26,6 +26,7 @@ const { realDeps } = require(path.join(LIB, 'driver', 'run'));
 const { MODEL_POLICY_KEYS, roleModel } = require(path.join(LIB, 'driver', 'launch.js'));
 const { DRIVER_ROLE_PROFILES } = require(path.join(LIB, 'driver', 'roles.js'));
 const { PROFILES } = require(path.join(LIB, 'model-profiles', 'profiles.js'));
+const { HEAD_RUN_FIELDS } = require(path.join(LIB, 'pr-checks', 'classify'));
 const { resolvePolicyKeys } = require(path.join(LIB, 'policy-schema.js'));
 
 const MAIN_NOW = new Date(2026, 10, 13, 9, 0, 0);
@@ -971,7 +972,7 @@ test('AC4.2: the gate reads state, the head runs and ready-run, each as specifie
   const g = h.calls.findIndex(isGateRead);
   assert.deepEqual(h.calls[g].args, ['pr', 'view', '9', '--repo', 'o/r', '--json', GATE_FIELDS]);
   assert.deepEqual(h.calls[g + 1].args,
-    ['run', 'list', '--repo', 'o/r', '--commit', CTX.head, '--limit', '100', '--json', 'name,workflowName,status,conclusion,url']);
+    ['run', 'list', '--repo', 'o/r', '--commit', CTX.head, '--limit', '100', '--json', HEAD_RUN_FIELDS]);
   const rr = h.calls[g + 2];
   assert.equal(base(rr.args[0]), 'ready-run.js');
   assert.deepEqual(rr.args.slice(1), ['--pr', '9', '--sha', CTX.head]);
@@ -1255,6 +1256,8 @@ test('AC8.2: merge-when-green pending with BLOCKED arms; pending with CLEAN runs
     ['a head run not completed', { runs: [{ ...GREEN_RUN, status: 'in_progress', conclusion: '' }] }],
     ['ready-run awaiting', { readyRun: { state: 'awaiting', failing: [], draftSkipWithoutReadyTrigger: [] } }],
     ['a status context PENDING', { prState: { statusCheckRollup: [{ context: 'ci/x', state: 'PENDING' }] } }],
+    ['a held rollup entry (CANCELLED), #3467', { prState: { statusCheckRollup: [{ ...GREEN_CHECK, conclusion: 'CANCELLED' }] } }],
+    ['a held head run (cancelled), #3467', { runs: [{ ...GREEN_RUN, conclusion: 'cancelled' }] }],
   ];
   for (const [name, over] of pendings) {
     const h = mergeHarness(over);

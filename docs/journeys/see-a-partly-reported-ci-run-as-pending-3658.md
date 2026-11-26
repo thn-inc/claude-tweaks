@@ -22,11 +22,12 @@ files:
 
 ### 2. /tidy classifies every open PR's CI
 - **URL:** `plugin/skills/_shared/github-pr-scan.md` `repo-wide` item 1
-- **Action:** Run `/claude-tweaks:tidy`. Item 1 lists open PRs with `statusCheckRollup` and prints `#{n} CI {status}` per PR. Only PRs whose rollup already reads green get a `pr-checks.js --pr` call. A PR whose rollup already shows a failing or in-progress entry is classified from the rollup with no extra call.
+- **Action:** Run `/claude-tweaks:tidy`. Item 1 lists open PRs with `statusCheckRollup` and prints `#{n} CI {status}` per PR. Only PRs whose rollup entries are all passing or held (`CANCELLED`, `ACTION_REQUIRED`, `STALE`) get a `pr-checks.js --pr` call, because only the newest run of each check decides whether a held one still holds the PR. A PR whose rollup already shows a failing (`FAILURE`, `ERROR`, `TIMED_OUT`, `STARTUP_FAILURE`) or in-progress entry is classified from the rollup with no extra call.
 - **Should feel:** Bounded. The extra calls go only to the PRs whose verdict could still change.
-- **Should understand:** A rollup-green PR with a head run still in progress reads `CI pending`, so it lands in the `CI failing/pending or changes requested` finding instead of `awaiting review`. `CI unavailable` lands in neither finding.
-- **Red flags:** An `awaiting review` row whose CI is still running; a `pr-checks.js` call for a PR whose rollup is already red; a failed read counted as passing.
+- **Should understand:** A rollup-green PR with a head run still in progress reads `CI pending`, so it lands in the `CI failing/pending or changes requested` finding instead of `awaiting review`. `CI unavailable` lands in neither finding. A PR whose newest run of a check was cancelled, waiting on approval or stale reads `CI pending`, not `CI failing`: nothing failed, so it needs a rerun, not a fix (#3467). A cancelled run that a newer successful run of the same check replaced does not hold the PR.
+- **Red flags:** An `awaiting review` row whose CI is still running; a `pr-checks.js` call for a PR whose rollup is already red; a failed read counted as passing; a PR listed `CI failing` only because a run was cancelled.
 
 ## Origin
 - Created during `/claude-tweaks:build` of record #3658 (2026-10-21): `current-pr` item 3 and `repo-wide` item 1 now read CI through `bin/pr-checks.js --pr` instead of `gh pr checks`, so a partly reported run reads pending in both.
+- Updated during wrap-up of #3467: /tidy's rollup pre-filter no longer counts `CANCELLED` or `ACTION_REQUIRED` as failing; a rollup of passing or held entries goes to `pr-checks.js`, which reads a held newest run as pending.
 - Related: `docs/journeys/stop-a-run-on-its-own-red-pr-check-3013.md` (the same reader on a run's own PR); `docs/journeys/settle-a-batch-of-parked-prs.md` (the #3469 display reader).

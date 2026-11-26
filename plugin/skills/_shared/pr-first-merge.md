@@ -8,9 +8,7 @@ short-circuit, `wrap-up/merge-mode.md`, `flow/worktree-merge.md`'s reconciliatio
 **The shape:** ready → merge-verification gate (Step 2.5: state read; red parks; pending waits or
 arms only when the forge holds it) → local acceptance park (Step 2.9) → `gh pr merge --auto` (arm) → degrade to immediate merge →
 degrade to ready+comment. `gh pr merge` needs no local checkout, so the cwd-pinned Task call that
-holds authorization, `merge-check`, and acceptance labeling runs the merge itself — no
-`close-run`-before-merge relief, branch-switch guard, push-from-worktree rule or scratch-worktree
-conflict procedure.
+holds authorization, `merge-check`, and acceptance labeling runs the merge itself.
 
 ## Precondition
 
@@ -20,7 +18,7 @@ local-merge section instead of this procedure.
 
 ## Never rewrite the integration branch
 
-Never force-push to, `git reset`, `commit-tree`-and-push, or otherwise rewrite the published `{integration-branch}` on `origin`, on any outcome and for any reason, including repairing a botched merge message. The PR's recorded `mergeCommit`, merged-PR landed-proofs and release tooling key on the commit GitHub created, so a rewrite orphans them and re-authors that commit (#3325 → `9c9f5e722`, #3347). On a malformed merge message (stray text, duplicated body, missing `Fixes` line), leave the commit as landed, log per `_shared/auto-decision-log.md` `AUTO {HH:MM:SS} — Step 3: merge commit {sha} message malformed ({defect}); left as landed, integration branch not rewritten. Reversibility: n/a.` to `decisions.md`, and report `DONE_WITH_CONCERNS` naming the sha and defect for a human. This covers the published branch only: `local-merge`'s undo of an unpushed local merge, and a local ref realigned *to* origin (`_shared/git-discipline.md`), are not rewrites of it.
+Never force-push to, `git reset`, `commit-tree`-and-push, or otherwise rewrite the published `{integration-branch}` on `origin`, on any outcome and for any reason, including repairing a botched merge message (#3325). On a malformed merge message (stray text, duplicated body, missing `Fixes` line), leave the commit as landed, log per `_shared/auto-decision-log.md` `AUTO {HH:MM:SS} — Step 3: merge commit {sha} message malformed ({defect}); left as landed, integration branch not rewritten. Reversibility: n/a.` to `decisions.md`, and report `DONE_WITH_CONCERNS` naming the sha and defect for a human. This covers the published branch only: `local-merge`'s undo of an unpushed local merge, and a local ref realigned *to* origin (`_shared/git-discipline.md`), are not rewrites of it.
 
 ## Step 1: Acceptance labeling — before the merge, unconditionally
 
@@ -67,9 +65,7 @@ onto an already-undrafted PR must not re-issue the undraft call blind. Read stat
 gh pr view {pr-number} --repo {owner}/{repo} --json isDraft -q .isDraft
 ```
 
-`true` → undraft it. GitHub blocks merging (auto or immediate) on a draft PR by default, and this
-is the one procedure in the plugin that is allowed to clear that protection, since it only runs
-after both authorization and content-judgment layers already passed:
+`true` → undraft it; this is the one procedure in the plugin allowed to clear a draft's merge block:
 
 ```bash
 gh pr ready {pr-number} --repo {owner}/{repo}
@@ -112,11 +108,11 @@ as `wait` for this merge and log `AUTO … Step 2.5: lever unresolved ("{raw}") 
 Never as `off`: an unreadable lever must not skip the wait.
 
 **Read state first — never parse stderr first.** Before any merge attempt, regardless of value, resolve this step's scratch paths (`_shared/session-tmp-root.md`)
-and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`
+and substitute the printed `PR_CHECKS`/`PR_RUNS`/`PARK_COMMENT`/`PR_READY`/`GATE_START`/`PR_CHECKS_JSON` literals for `{pr-checks-path}`/`{pr-runs-path}`/`{park-comment-path}`/`{pr-ready-path}`/`{gate-start-path}`/`{pr-checks-json-path}`
 below (`_shared/scratch-worktree.md` §7):
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json GATE_START=gate-start-{n}.txt
+node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" PR_CHECKS=pr-checks-{n}.txt PR_RUNS=pr-runs-{n}.json PARK_COMMENT=park-comment-{n}.md PR_READY=pr-ready-{n}.json GATE_START=gate-start-{n}.txt PR_CHECKS_JSON=pr-checks-{n}.json
 ```
 
 Then, on entry from the top only, record the pass start (`date +%s > "{gate-start-path}"`; a mid-pass re-read never repeats it) and read state:
@@ -125,10 +121,10 @@ Then, on entry from the top only, record the pass start (`date +%s > "{gate-star
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
 ```
 
-Then read the workflow runs for the PR head. The rollup lists only the checks GitHub has registered so far, so a partial rollup — some workflows reported, others not yet registered — reads green while a sibling workflow is still pending. Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
+Then read the workflow runs for the PR head. (why: appendix "Rationale notes".) Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
 
 ```bash
-gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url
+gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt
 ```
 
 A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
@@ -165,15 +161,12 @@ Classify from the three reads, in this order:
   `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**.
+- A check whose newest entry (rollup entries and head runs by name; newest by start time, then id; an unbreakable tie holds) completed with `conclusion` in `CANCELLED`, `ACTION_REQUIRED`, or `STALE` → **pending** (held; code twin `HELD_CONCLUSIONS`).
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
-  watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup
-  stays empty and waiting only parks it as `checks-pending-timeout` (#3607). Any other merge state
+  watch — waiting only parks it as `checks-pending-timeout` (#3607; why: appendix "Rationale notes"). Any other merge state
   depends on the lever: under `merge-when-green` or `wait` the repo has PR CI
-  by construction (`_shared/policy-schema-coverage.md`'s coverage block derives those values only when a
-  `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
-  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
-  seconds after a push, not instantly — and reads as **pending**, never green; under `off` it is
+  by construction (`_shared/policy-schema-coverage.md`), so an empty rollup means the checks have not *reported yet* and reads as **pending**, never green; under `off` it is
   simply "no CI" and proceeds as green — derived `off` too, so a PR with no checks never waits.
 - Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`, and every head run `completed` without a failing conclusion) → **green**.
 
@@ -199,16 +192,21 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ci-gate-record.js" --pr {pr-number} --head-sha {
 (Fixed by design, not a policy key — `pr-first-merge-appendix.md`'s "Rationale notes"; `900` is `MERGE_GATE_WATCH_SECONDS` in `bin/lib/ci-health/constants.js`.) Poll
 `gh pr checks` and key on its exit code — captured (Task 0): `0` all green, `8` at least one check
 still pending, `1` at least one check failed — so a red result at any minute takes the Red path
-immediately:
+immediately. gh exits `0` for `CANCELLED` and `1` for `ACTION_REQUIRED`, so on `0`/`1` the loop re-reads
+`--json name,state`: `FAILING_CONCLUSIONS` → `1`, `HELD_CONCLUSIONS` → `8` (appendix Signatures (g)):
 
 ```bash
 DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
   grep -qx "no checks reported on the '.*' branch" "{pr-checks-path}" && RC=8  # none registered yet
+  if [ "$RC" -le 1 ]; then                                   # gh exits 0 for CANCELLED, 1 for ACTION_REQUIRED: re-read by state
+    gh pr checks {pr-number} --repo {owner}/{repo} --json name,state > "{pr-checks-json-path}" || { RC=2; break; }
+    RC=$(node -e "const c=require(process.argv[2]),s=require(process.argv[1]).map((x)=>x.state);console.log(s.some((x)=>c.FAILING_CONCLUSIONS.includes(x))?'1':s.some((x)=>c.HELD_CONCLUSIONS.includes(x))?'8':process.argv[3])" -- "{pr-checks-json-path}" "${CLAUDE_PLUGIN_ROOT}/bin/lib/pr-checks/classify.js" "$RC") || { RC=2; break; }
+  fi
   case "$RC" in
-    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
-       PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
+    0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt > "{pr-runs-path}" || { RC=2; break; }
+       PENDING_RUNS=$(node -e "const c=require(process.argv[2]),r=require(process.argv[1]);console.log(r.filter((x)=>x.status!=='completed').length+c.heldChecks([],r).length)" -- "{pr-runs-path}" "${CLAUDE_PLUGIN_ROOT}/bin/lib/pr-checks/classify.js") || { RC=2; break; }
        node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid} > "{pr-ready-path}" || { RC=2; break; }
        READY=$(node -e "console.log(require(process.argv[1]).state||process.exit(2))" -- "{pr-ready-path}") || { RC=2; break; }
        [ "$READY" = red ] || [ "$READY" = draft-skip-without-ready-trigger ] && { RC=3; break; }
@@ -225,18 +223,17 @@ while :; do
 done
 ```
 
-The head runs are counted from the saved file, never through a `gh … --jq` program: the worktree
-guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` §7).
+Head runs are counted from the saved file, never a `--jq` program (`_shared/scratch-worktree.md` §7).
 
 - `RC=0` → **green** — every reported check passed **and** every head run completed. Re-read state (`gh pr view … --json state,mergeStateStatus,headRefOid`)
   and the head runs and ready run (the same reads as above): if
   `headRefOid` changed since the first read (a new push landed) or `state` is not `OPEN`, re-enter this
   step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`)
   — never merge blind; a failing head run takes the Red path, reason `check-failed:{names}` (names from
-  its `workflowName`s); a head run not yet `completed` resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) (outcome `merged`,
+  its `workflowName`s); a head run not yet `completed` **or held** resumes the bounded watch at the same `DEADLINE`, as does an `awaiting` ready-run read (`awaitingReadyRun`); any other ready-run state routes per Step 2.5; otherwise merge via Step 3's immediate `--squash` form (CI-gate record, then re-run its composer call) (outcome `merged`,
   then Step 4).
 - `RC=1` (a check failed during the watch) → **Red path**, reason `check-failed:{names}` (names from
-  the `fail` rows of `{pr-checks-path}`).
+  the `{pr-checks-json-path}` rows whose state is in `FAILING_CONCLUSIONS`; gh's `fail` bucket also holds `ACTION_REQUIRED`).
 - `RC=3` (ready-run `red` or `draft-skip-without-ready-trigger`) → **Red path**, reason from `{pr-ready-path}`: `check-failed:{names}` or `draft-skip-without-ready-trigger:{files}`.
 - `RC=124` (still pending at the bound) → **Red path** with reason `checks-pending-timeout` —
   reserved for checks, head runs or an awaited ready run still pending at the bound.
@@ -253,13 +250,12 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    `Parked by merge-verification ({value}): {failing check names — or "checks still pending after 15m" for checks-pending-timeout, or "{files} skips drafts with no ready_for_review trigger — add ready_for_review to its types (_shared/ci-skips-drafts.md)" for draft-skip-without-ready-trigger} on PR #{n}. {resume}`
    `{resume}`: `Resume once green.`; for draft-skip-without-ready-trigger, `Resume once its workflow is fixed or a post-ready run lands.`
    Compose that body to a temp file and post it with `--body-file` — never inline the names into a
-   shell string. Check names come from the PR's own workflow YAML (third-party-controlled on a fork
-   PR):
+   shell string:
    ```bash
    printf 'Parked by merge-verification (%s): %s on PR #%s. %s\n' "$VALUE" "$REASON" "$PR" "$RESUME" > "{park-comment-path}"
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
-   (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
+   (`$RESUME` holds `{resume}`; `$REASON` holds the check names — from `{pr-checks-json-path}`'s `FAILING_CONCLUSIONS` rows, or the failing
    head runs' `workflowName`s — or the pending-timeout or draft-skip phrase — passed as a `printf` argument, never expanded inside the format string, never a quoted literal: with file names in it, Write the body to `{park-comment-path}` instead. A timeout whose last ready-run read named `awaitingReadyRun` appends ` (no run since ready: {files})`; `unparsed`: ` ({files} unparsed: _shared/ci-skips-drafts.md)`. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
    Then the **CI-gate record** call above with `--verdict timeout-park` for `checks-pending-timeout`, else `--verdict red`.
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
@@ -331,8 +327,7 @@ merge (its stderr names the reason). `{subject-dir}` is a literal path — resol
 `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{key}`
 (`{key}` is `{pr-number}` at a pr-first fence, the first number of `{issues}` at a local-merge fence; session-scoped,
 `_shared/session-tmp-root.md`) and paste the path inside the printed `SUBJECT_DIR="…"` quotes. `{title-arg}` is the
-composer's one stdout line pasted verbatim — already POSIX single-quoted, so a `$(…)`, backtick, or
-`'` in the title stays inert.
+composer's one stdout line pasted verbatim — already POSIX single-quoted.
 
 **This call always either arms or performs the merge — `--auto` never blocks or polls.** Classify
 the result:
@@ -367,7 +362,7 @@ the result:
      ```
 
    - under `merge-when-green` or `wait` — do not merge immediately: degrade to Step 2.5's `wait`
-     row instead (the immediate merge is exactly the race both values exist to close; `wait`
+     row instead (`wait`
      reaching here at all means arming was never its path — it lands in the same bounded watch).
 
    This either succeeds (→ outcome `merged`, go to Step 4) or fails on one of the signatures
@@ -393,9 +388,7 @@ the result:
 
 5. **Command failed with anything else, or an error this procedure doesn't recognize**: →
    **degrade to ready+comment** (Step 5), outcome `pending-review`. Never guess at an unfamiliar
-   error's meaning — the conservative branch is always safe (the PR stays ready, a human decides),
-   while guessing wrong on a real failure (e.g. treating a genuine conflict as a transient blip and
-   retrying) is not.
+   error's meaning (the PR stays ready, a human decides).
 
 6. **Command succeeded**: confirm which of the two happened —
 
@@ -438,7 +431,7 @@ git -C "{worktree-path}" merge origin/{integration-branch}
 
 - **Clean** (no conflict markers): push and retry the merge once, from the top of Step 3 — or,
   when this path was entered from Step 2.5 (no merge attempted yet), re-enter Step 2.5 from the top
-  instead: the pushed head has its own CI to read before any merge:
+  instead:
 
   ```bash
   git -C "{worktree-path}" push origin {branch}
