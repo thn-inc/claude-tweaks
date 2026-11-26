@@ -4,7 +4,9 @@
 // it to the pure verdict (lib/dispatch/resume-eligibility.js); the verdict, not this file, decides
 // what is eligible. Every read is read-only — resume mints, archives and binds in its own steps.
 //
-// Usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]
+// Usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--queue] [--help]
+//   --queue      a bare-drain sweep resumes the record: build authority is the real auto:build label only
+//                (resolveBuildAuthority gets named:false, so the typed-command stand-in never applies).
 //   (verdict)    Stdout is one JSON line. The PR is whichever open PR closes the record, on any head;
 //                the stalled worktree is derived from that PR's head.
 //     eligible → {eligible:true, issue, prUrl, prNumber, headRefName, priorRunId, priorRunDir,
@@ -86,9 +88,10 @@ const {
   ownMarkerRunId,
 } = require('./lib/dispatch/resume-eligibility');
 
-const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
+const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--queue] [--help]\n'
   + '  prints one JSON line: {eligible:true,…} (exit 0) or\n'
   + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName[, liveRun]} (exit 3)\n'
+  + '  --queue            a queue-picked resume: the record must carry the real auto:build label, never the typed-command stand-in\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
   + '                     or {concurrent:true, reason, line[, liveRun]} (exit 3)\n'
   + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 read failure (transient, or an unlistable pipelines dir)\n';
@@ -186,10 +189,11 @@ const realDeps = {
 // ---- argv ----
 
 function parseArgs(argv) {
-  const o = { issue: null, boundRun: null, help: false };
+  const o = { issue: null, boundRun: null, queue: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
+    if (a === '--queue') { o.queue = true; continue; }
     if (a !== '--issue' && a !== '--bound-run') return { error: `unknown argument: ${a}` };
     const v = argv[++i];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
@@ -646,7 +650,7 @@ function runVerdict(ctx) {
   const authority = resolveBuildAuthority({
     number: issue,
     labels: record.labels,
-    named: true,
+    named: !ctx.queue,
     env: deps.env,
     typedCommand: () => deps.readTypedCommand({ number: issue, env: deps.env, now: new Date(deps.now()), tmpdir: envTmpdir(deps.env) }),
     // Never the terminal route (only drive.js is run at a terminal): outside a session this answers none.
@@ -759,6 +763,7 @@ function run(argv, deps) {
     const ctx = {
       deps,
       issue: opts.issue,
+      queue: opts.queue,
       mainRoot,
       root: path.join(mainRoot, '.claude-tweaks', 'pipelines'),
     };

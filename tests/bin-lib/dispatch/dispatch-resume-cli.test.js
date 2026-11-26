@@ -691,6 +691,39 @@ test('#5584 AC10: an ungranted ready record resumes on an accepted typed command
   assert.equal(opts.tmpdir, '/t/tmp');
 });
 
+test('AC5.1: --queue refuses a record without auto:build even when the typed command would answer typed', () => {
+  const env = typedEnv(['ready']);
+  const r = exec(env, ['--issue', String(N), '--queue']);
+  assert.equal(r.code, 3, r.lines.join('\n'));
+  assert.equal(r.json.reason, 'not-granted');
+  assert.equal(env.calls.typed.length, 0, 'readTypedCommand never called');
+});
+
+test('AC5.2: without --queue the typed behaviour is unchanged', () => {
+  const argv = ['--issue', String(N)];
+  assert.ok(!argv.includes('--queue'));
+  const env = typedEnv(['ready']);
+  const r = exec(env, argv);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 1);
+});
+
+test('--queue with a granted record is eligible', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  const r = exec(env, ['--issue', String(N), '--queue']);
+  assert.equal(r.code, 0, r.lines.join('\n'));
+  assert.equal(r.json.eligible, true);
+  assert.equal(env.calls.typed.length, 0);
+});
+
+test('--queue takes no value: --queue x exits 2', () => {
+  const env = typedEnv(['ready', 'auto:build']);
+  const r = exec(env, ['--issue', String(N), '--queue', 'x']);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /unknown argument: x/);
+});
+
 test('#5584 AC10: an ungranted record whose typed command is refused -> not-granted naming the reason', () => {
   const env = typedEnv(['ready'], { answer: 'none', reason: 'expired' });
   const r = exec(env);
