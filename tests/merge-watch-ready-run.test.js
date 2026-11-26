@@ -76,9 +76,12 @@ function sandbox() {
   };
   return { dir, paths };
 }
-function substitute(fence, paths) {
+// #3468: the settle-window anchors default to long past, so the window is closed unless a test opens it.
+const PAST = '2026-01-01T00:00:00Z';
+function substitute(fence, paths, anchors = {}) {
   let s = fence.split('{owner}/{repo}').join('o/r');
   s = s.split('{pr-number}').join('7').split('{headRefOid}').join(SHA);
+  s = s.split('{head-committed-at}').join(anchors.headCommittedAt ?? PAST).split('{pr-created-at}').join(anchors.prCreatedAt ?? PAST);
   for (const [k, v] of Object.entries(paths)) s = s.split(k).join(v);
   assert.doesNotMatch(s, /\{[a-z-]+\}/, 'an unsubstituted placeholder survives in the fence');
   return s;
@@ -92,9 +95,9 @@ function run(shell, script, dir, env) {
   assert.equal(r.error, undefined, `${shell.name} failed to spawn`);
   return r;
 }
-function runWatch(shell, fence, readySeq, extraEnv = {}) {
+function runWatch(shell, fence, readySeq, extraEnv = {}, anchors = {}) {
   const { dir, paths } = sandbox();
-  const script = `${STUBS}\n${substitute(fence, paths)}\necho "RC=$RC"`;
+  const script = `${STUBS}\n${substitute(fence, paths, anchors)}\necho "RC=$RC"`;
   const r = run(shell, script, dir, { READY_SEQ: readySeq, ...extraEnv });
   const m = /^RC=(\d+)$/m.exec(r.stdout);
   assert.ok(m, `${shell.name}: no RC line.\nstdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
@@ -208,6 +211,15 @@ for (const shell of SHELLS) {
   t('a cancelled head run superseded by a newer success breaks green', () => {
     const r = runWatch(shell, FENCE, 'met', watchEnv({ CHECKS_RC: '0', RUNS_JSON: js([headRun(1, 'cancelled', T1), headRun(2, 'success', T2)]) }));
     assert.equal(r.rc, 0);
+  });
+
+  // #3468: a push-only green head inside the PR-event settle window keeps watching; once the window closes it breaks green.
+  t('an open settle window keeps watching until the bound; a closed one breaks green', () => {
+    const pushRun = { ...headRun(1, 'success', T1), event: 'push', createdAt: T1 };
+    const env = watchEnv({ CHECKS_RC: '0', RUNS_JSON: js([pushRun]) });
+    assert.equal(runWatch(shell, FENCE, 'met', env, { prCreatedAt: new Date().toISOString() }).rc, 124);
+    assert.equal(runWatch(shell, FENCE, 'met', env, { prCreatedAt: '' }).rc, 124, 'an unreadable PR created-at fails closed');
+    assert.equal(runWatch(shell, FENCE, 'met', env).rc, 0);
   });
 
   t('a failed --json read stops the watch', () => {

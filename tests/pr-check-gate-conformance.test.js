@@ -107,6 +107,17 @@ test('the Step 2.5 head-run read requests HEAD_RUN_FIELDS', () => {
   assert.ok(exec.split('\n').some((l) => l.includes(`--limit 100 --json ${HEAD_RUN_FIELDS}`)), 'release/execute.md carries the same field list');
 });
 
+test('#3468: the release PR read feeds the settle window: createdAt and the committer-date read', () => {
+  const exec = read('plugin/skills/release/execute.md');
+  const view = exec.split('\n').find((l) => l.startsWith('gh pr view {releasePr.value.number} --repo {owner}/{repo} --json ') && l.includes('statusCheckRollup'));
+  assert.ok(view, 'release PR view read found');
+  assert.ok(view.split('--json ')[1].split(',').includes('createdAt'), 'release PR view requests createdAt ({pr-created-at})');
+  const commit = 'gh api repos/{owner}/{repo}/commits/{headRefOid} --jq .commit.committer.date';
+  assert.ok(MERGE.split('\n').includes(commit), 'Step 2.5 carries the committer-date read');
+  assert.ok(exec.split('\n').includes(commit), 'release/execute.md carries the same committer-date read ({head-committed-at})');
+  assert.ok(exec.includes('{head-committed-at}') && exec.includes('{pr-created-at}'), 'release names both settle anchors');
+});
+
 const PR_CHECKS = read('plugin/bin/pr-checks.js');
 
 test('AC1.1: inherited-red passes with a caveat and an AUTO line naming the base sha and checks', () => {

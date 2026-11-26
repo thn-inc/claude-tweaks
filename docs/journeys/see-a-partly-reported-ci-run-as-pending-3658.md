@@ -17,7 +17,7 @@ files:
 - **URL:** `plugin/skills/_shared/github-pr-scan.md` `current-pr` item 3
 - **Action:** Run `/claude-tweaks:help` on the PR's branch. The scan runs `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-checks.js" --pr {number}` and counts from its `state`: `red`/`inherited-red` → failing, `pending` → pending, `green`/`no-ci` → passing, `read-failed`/`gh-absent` → `CI unavailable`.
 - **Should feel:** Trustworthy at a glance — the row only says nothing is pending once nothing is.
-- **Should understand:** `pr-checks.js` lists the head sha's workflow runs alongside the rollup, so a run the rollup has not registered yet still counts as pending. A failed read says `CI unavailable` and makes no claim either way.
+- **Should understand:** `pr-checks.js` lists the head sha's workflow runs alongside the rollup, so a run the rollup has not registered yet still counts as pending. A run GitHub has not created yet cannot be listed. So with PR CI and no `pull_request`/`pull_request_target` run on the head, the PR also reads pending until 60 seconds after the later of the PR's opening and the head's first workflow run (the settle window, #3468). After that window, a path-filtered PR with only push runs reads passing. A failed read says `CI unavailable` and makes no claim either way.
 - **Red flags:** `0 failing, 0 pending` while `gh run list --commit {head-sha}` still lists an in-progress run; a `read-failed` read rendered as passing.
 
 ### 2. /tidy classifies every open PR's CI
@@ -30,4 +30,5 @@ files:
 ## Origin
 - Created during `/claude-tweaks:build` of record #3658 (2026-10-21): `current-pr` item 3 and `repo-wide` item 1 now read CI through `bin/pr-checks.js --pr` instead of `gh pr checks`, so a partly reported run reads pending in both.
 - Updated during wrap-up of #3467: /tidy's rollup pre-filter no longer counts `CANCELLED` or `ACTION_REQUIRED` as failing; a rollup of passing or held entries goes to `pr-checks.js`, which reads a held newest run as pending.
+- Updated during build of #3468 (PR-event settle window): `pr-checks.js` now reads a head with PR CI and no PR-event run as pending for up to 60 seconds after the later of the PR's `createdAt` and the head's first run (the commit date when it has none), so a just-pushed PR does not read passing before GitHub creates its `pull_request` run.
 - Related: `docs/journeys/stop-a-run-on-its-own-red-pr-check-3013.md` (the same reader on a run's own PR); `docs/journeys/settle-a-batch-of-parked-prs.md` (the #3469 display reader).

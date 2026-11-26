@@ -8,6 +8,11 @@ const { run, parseArgs } = require('../../../plugin/bin/pr-checks');
 const { HEAD_RUN_FIELDS } = require('../../../plugin/bin/lib/pr-checks/classify');
 
 const HEAD = 'c'.repeat(40);
+// #3468: the settle window reads the clock and the PR's createdAt. Ordinary fixtures model a PR created
+// long before the injected clock, so the window is closed and each keeps testing what it tested.
+const OLD_ISO = '2026-11-26T09:00:00Z';
+const NOW = Date.parse('2026-11-26T12:00:00Z');
+const isCommitterRead = (a) => a[0] === 'api' && a[2] === '--jq' && a[3] === '.commit.committer.date';
 
 const created = [];
 test.after(() => {
@@ -55,6 +60,7 @@ function makeDeps(main, over = {}) {
     },
     // The default reads as "no ready event": no requirement, so every pre-#5153 test is unchanged.
     readyRun: () => ({ readySince: null, workflows: [], headRuns: [] }),
+    now: () => NOW,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     ...over,
@@ -104,7 +110,7 @@ test('red at HEAD: reads pr.number from run-state.json and reports the failing c
   assert.equal(j.pr, 7);
   assert.equal(j.localHead, HEAD);
   assert.deepEqual(j.failing, [{ name: 'test', url: 'https://ci.example/test' }]);
-  assert.deepEqual(h.ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName']);
+  assert.deepEqual(h.ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
 });
 
 test('no pr in run-state.json is no-pr and never calls gh (local-merge / standalone fail-open)', () => {
@@ -288,7 +294,7 @@ function prDeps(main, over = {}) {
 function prGh(headRun, ghCalls = []) {
   return (args) => {
     ghCalls.push(args);
-    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }], baseRefName: 'main' });
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [{ name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' }], baseRefName: 'main', createdAt: OLD_ISO });
     return JSON.stringify([headRun]);
   };
 }
@@ -319,7 +325,7 @@ test('AC1.1: --pr reads a green rollup with an in-progress head run as pending',
   assert.ok(j.pending.includes('test'));
   assert.equal(j.pr, 7);
   assert.equal(j.localHead, null);
-  assert.deepEqual(ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName']);
+  assert.deepEqual(ghCalls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
   const runCall = ghCalls.find((a) => a[0] === 'run');
   assert.ok(runCall.includes('--commit'));
   assert.equal(runCall[runCall.indexOf('--commit') + 1], HEAD);
@@ -327,7 +333,7 @@ test('AC1.1: --pr reads a green rollup with an in-progress head run as pending',
 
 test('--pr green when rollup and head runs are complete', () => {
   const { main } = fixture(null);
-  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'u' }) });
+  const h = prDeps(main, { gh: prGh({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'u', event: 'pull_request' }) });
   assert.equal(run(['--pr', '7'], h.deps), 0);
   const j = h.json();
   assert.equal(j.state, 'green');
@@ -438,7 +444,7 @@ test('an unresolvable integration branch is plain red and makes no gh api call',
     assert.equal(run(['--run', runDir], h.deps), 0);
     assert.equal(h.json().state, 'red');
     assert.ok(h.json().baseReason);
-    assert.equal(f.calls.some((a) => a[0] === 'api'), false);
+    assert.equal(f.calls.some((a) => a[0] === 'api' && !isCommitterRead(a)), false);
   }
 });
 
@@ -461,10 +467,10 @@ test('green, pending and stale verdicts never read the base tip', () => {
   for (const [state, { headRefOid, rollup }] of Object.entries(rollups)) {
     const { main, runDir } = fixture({ pr: { number: 7 } });
     const calls = [];
-    const h = makeDeps(main, { integrationBranch: () => 'main', gh: (args) => { calls.push(args); return args[0] === 'pr' ? JSON.stringify({ headRefOid, statusCheckRollup: rollup }) : '[]'; } });
+    const h = makeDeps(main, { integrationBranch: () => 'main', gh: (args) => { calls.push(args); if (isCommitterRead(args)) return `${OLD_ISO}\n`; return args[0] === 'pr' ? JSON.stringify({ headRefOid, statusCheckRollup: rollup, createdAt: OLD_ISO }) : '[]'; } });
     assert.equal(run(['--run', runDir], h.deps), 0);
     assert.equal(h.json().state, state);
-    assert.equal(calls.some((a) => a[0] === 'api'), false);
+    assert.equal(calls.some((a) => a[0] === 'api' && !isCommitterRead(a)), false);
   }
 });
 
@@ -591,7 +597,10 @@ test('a workflow failing at the base tip only as a run row is inherited; a super
 // _shared/github-pr-scan.md, dispatch/settle-parked.md and the wrap-up pack parse them.
 const PASS = { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' };
 const RUNNING = { __typename: 'CheckRun', name: 'test', status: 'IN_PROGRESS', conclusion: '' };
-const viewGh = (view, runs = '[]') => (args) => (args[0] === 'pr' ? JSON.stringify(view) : runs);
+const viewGh = (view, runs = '[]') => (args) => {
+  if (args[0] === 'pr') return JSON.stringify({ createdAt: OLD_ISO, ...view });
+  return isCommitterRead(args) ? `${OLD_ISO}\n` : runs;
+};
 const STATE_OVERRIDES = {
   green: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [PASS] }) }),
   pending: () => ({ gh: viewGh({ headRefOid: HEAD, statusCheckRollup: [RUNNING] }) }),
@@ -964,7 +973,7 @@ test('docs/plugin-structure.md: the pr-checks.js row carries USAGE\'s envelope a
   const row = docs.split('\n').find((l) => l.startsWith('node plugin/bin/pr-checks.js '));
   assert.deepEqual(docsRowDrift(row, usage), []);
   // Controls: the pre-fix envelope (no awaitingReadyRun?) and a row without the ready-run read each go red alone.
-  const noKey = row.replace('held?, awaitingReadyRun?, headRefOid', 'held?, headRefOid');
+  const noKey = row.replace('held?, awaitingReadyRun?, prEventSettle?, headRefOid', 'held?, headRefOid');
   assert.notEqual(noKey, row);
   assert.equal(docsRowDrift(noKey, usage).length, 1);
   assert.match(docsRowDrift(noKey, usage)[0], /^envelope /);
@@ -981,7 +990,7 @@ test('the pending gate-line phrase "no run since ready" appears in _shared/pr-ch
 
 // headRunCount (#5277): the head-runs read's row count rides the envelope whenever that read
 // succeeded, so drive.js's CI step can tell "no run on this sha" from "runs unreadable".
-const HEAD_RUN = { name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'https://ci.example/run' };
+const HEAD_RUN = { name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', url: 'https://ci.example/run', event: 'pull_request' };
 
 test('headRunCount: a successful head-runs read puts its row count and the head sha on the envelope, in both modes', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
@@ -1015,4 +1024,127 @@ test('headRunCount: a failed ready-run read after a good head-runs read still ca
   assert.equal(h.json().state, 'read-failed');
   assert.equal(h.json().headRunCount, 1);
   assert.equal(h.json().headRefOid, HEAD);
+});
+
+// #3468: the PR-event settle window. pr-checks.js passes the clock (deps.now), the PR's createdAt
+// and, only when the head sha has no workflow run, the head commit's committer date.
+const SETTLE_CREATED = '2026-11-26T10:00:00Z';
+const SETTLE_T0 = Date.parse(SETTLE_CREATED);
+const PUSH_RUN = { databaseId: 1, name: 'CI', workflowName: 'CI', status: 'completed', conclusion: 'success', url: 'u', startedAt: SETTLE_CREATED, event: 'push', createdAt: SETTLE_CREATED };
+const COMMIT_CALL = ['api', `repos/{owner}/{repo}/commits/${HEAD}`, '--jq', '.commit.committer.date'];
+
+function settleGh({ view = {}, runs = [PUSH_RUN], commit = SETTLE_CREATED, calls = [] } = {}) {
+  return (args) => {
+    calls.push(args);
+    if (args[0] === 'pr') return JSON.stringify({ headRefOid: HEAD, statusCheckRollup: [PASS], createdAt: SETTLE_CREATED, ...view });
+    if (args[0] === 'run') return JSON.stringify(runs);
+    if (args[0] === 'api') { if (commit instanceof Error) throw commit; return `${commit}\n`; }
+    throw new Error('unexpected gh ' + args.join(' '));
+  };
+}
+
+test('AC1.1: --pr with a green push-only rollup inside the window prints pending with prEventSettle', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh() });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.state, 'pending');
+  assert.deepEqual(j.prEventSettle, { until: new Date(SETTLE_T0 + 60000).toISOString() });
+});
+
+test('AC2.1: --pr with a green push-only rollup after the window prints green', () => {
+  const { main } = fixture(null);
+  const h = prDeps(main, { now: () => SETTLE_T0 + 61000, gh: settleGh() });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(h.json().state, 'green');
+  assert.equal('prEventSettle' in h.json(), false);
+});
+
+test('the PR view read requests createdAt and passes it as prCreatedAt', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { now: () => SETTLE_T0 + 61000, gh: settleGh({ calls }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.deepEqual(calls[0], ['pr', 'view', '7', '--json', 'headRefOid,statusCheckRollup,baseRefName,createdAt']);
+  // A view with no createdAt and push-only runs fails closed: pending, until null.
+  const noCreated = prDeps(main, { now: () => SETTLE_T0 + 3600000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--pr', '7'], noCreated.deps), 0);
+  assert.equal(noCreated.json().state, 'pending');
+  assert.deepEqual(noCreated.json().prEventSettle, { until: null });
+});
+
+test('an empty head-run list reads the committer date via gh api commits/{sha}', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const empty = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ runs: [], calls }) });
+  assert.equal(run(['--pr', '7'], empty.deps), 0);
+  assert.equal(calls.filter((a) => a[0] === 'api').length, 1);
+  assert.deepEqual(calls.find((a) => a[0] === 'api'), COMMIT_CALL);
+  assert.equal(empty.json().state, 'pending');
+  assert.deepEqual(empty.json().prEventSettle, { until: new Date(SETTLE_T0 + 60000).toISOString() });
+  // Only when the runs list is empty: a run on the sha anchors the window, so no commit read.
+  const withRun = [];
+  const some = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ calls: withRun }) });
+  assert.equal(run(['--pr', '7'], some.deps), 0);
+  assert.equal(withRun.some((a) => a[0] === 'api'), false);
+  // A throwing or empty read fails closed to pending, until null -- never read-failed.
+  for (const commit of [new Error('HTTP 502'), '']) {
+    const h = prDeps(main, { now: () => SETTLE_T0 + 3600000, gh: settleGh({ runs: [], commit }) });
+    assert.equal(run(['--pr', '7'], h.deps), 0);
+    assert.equal(h.json().state, 'pending', String(commit));
+    assert.deepEqual(h.json().prEventSettle, { until: null }, String(commit));
+  }
+});
+
+test('without PR CI the committer-date read is skipped', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, hasPullRequestCi: () => false, gh: settleGh({ runs: [], calls }) });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal(h.json().state, 'green');
+});
+
+test('a failed runs read skips the committer-date read', () => {
+  const { main } = fixture(null);
+  const calls = [];
+  const gh = settleGh({ runs: [], calls });
+  const h = prDeps(main, { now: () => SETTLE_T0 + 30000, gh: (args) => { if (args[0] === 'run') { calls.push(args); throw new Error('HTTP 502'); } return gh(args); } });
+  assert.equal(run(['--pr', '7'], h.deps), 0);
+  assert.equal(calls.some((a) => a[0] === 'run'), true);
+  assert.equal(calls.some(isCommitterRead), false);
+  assert.equal('prEventSettle' in h.json(), false);
+});
+
+test('--run: the settle pending line names the window', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh() });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  assert.equal(h.json().state, 'pending');
+  const text = fs.readFileSync(decisionsOf(runDir), 'utf8');
+  assert.ok(text.includes(`no pull_request run yet (settle window until ${new Date(SETTLE_T0 + 60000).toISOString()})`), text);
+  const closed = fixture({ pr: { number: 7 } });
+  const unknown = makeDeps(closed.main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--run', closed.runDir, '--section', '/test'], unknown.deps), 0);
+  assert.ok(fs.readFileSync(decisionsOf(closed.runDir), 'utf8').includes('no pull_request run yet (settle window until unknown)'));
+});
+
+test('the settle pending phrase appears in _shared/pr-check-gate.md (prose twin of gateEntry)', () => {
+  const { readText } = require('../../helpers/read-skill');
+  const prose = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'skills', '_shared', 'pr-check-gate.md'));
+  // Take the phrase from gateEntry's own output (until unreadable), so the pin follows the code, not a copy.
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { now: () => SETTLE_T0 + 30000, gh: settleGh({ view: { createdAt: undefined } }) });
+  assert.equal(run(['--run', runDir, '--section', '/test'], h.deps), 0);
+  const line = fs.readFileSync(decisionsOf(runDir), 'utf8');
+  const m = /\((no pull_request run yet \(settle window until )unknown\)\)/.exec(line);
+  assert.ok(m, line);
+  assert.ok(prose.includes(`'${m[1]}{until or unknown})' when only prEventSettle holds it`), 'pr-check-gate.md must name the settle-window caveat gateEntry writes');
+});
+
+test('USAGE names prEventSettle? among the envelope keys', () => {
+  const { main } = fixture(null);
+  const h = makeDeps(main);
+  assert.equal(run(['--help'], h.deps), 0);
+  assert.match(h.out.join(''), /prints \{[^}]*prEventSettle\?[^}]*\}/);
 });

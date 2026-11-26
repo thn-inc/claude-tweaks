@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, heldChecks, normalizeEntry, normalizeHeadRun, classifyRollup, failingNamesAt, applyBaseComparison } = require('../../../plugin/bin/lib/pr-checks/classify');
+const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, PR_EVENT_SETTLE_MS, prEventSettle, headCommittedAtArgs, heldChecks, normalizeEntry, normalizeHeadRun, classifyRollup, failingNamesAt, applyBaseComparison } = require('../../../plugin/bin/lib/pr-checks/classify');
 
 const HEAD = 'a'.repeat(40);
 const run = (name, status, conclusion) => ({ __typename: 'CheckRun', name, status, conclusion, detailsUrl: `https://ci.example/${name}` });
@@ -677,5 +677,122 @@ test('#5153 normalizeHeadRun reads a REST html_url when there is no url, so a RE
 });
 
 test('HEAD_RUN_FIELDS carries start time and id for newest-per-check ordering', () => {
-  assert.equal(HEAD_RUN_FIELDS, 'databaseId,name,workflowName,status,conclusion,url,startedAt');
+  assert.equal(HEAD_RUN_FIELDS, 'databaseId,name,workflowName,status,conclusion,url,startedAt,event,createdAt');
+  assert.equal(PR_EVENT_SETTLE_MS, 60000);
+});
+
+// #3468 — the PR-event settle window.
+const T0 = Date.parse('2026-11-26T10:00:00Z');
+const SETTLE_ROLLUP = [run('track', 'COMPLETED', 'SUCCESS')];
+const prRun = (createdAt) => ({ name: 'test', workflowName: 'test', status: 'completed', conclusion: 'success', event: 'pull_request', createdAt });
+const pushRun = (createdAt) => ({ ...prRun(createdAt), name: 'track', workflowName: 'track', event: 'push' });
+const PR_OPENED = '2026-11-26T09:59:00Z';
+const settle = (over) => classifyRollup({ rollup: SETTLE_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [pushRun('2026-11-26T10:00:00Z')], prCreatedAt: PR_OPENED, now: T0 + 30000, ...over });
+const at = (hms) => Date.parse(`2026-11-26T${hms}Z`);
+
+test('AC1.1: a completed push run with no pull_request run yet reads pending inside the 60 s window', () => {
+  const v = settle();
+  assert.equal(v.state, 'pending');
+  assert.equal(v.prEventSettle.until, '2026-11-26T10:01:00.000Z');
+});
+
+test('AC2.1: a path-filtered PR (push runs only) reads green once the window has passed', () => {
+  const v = settle({ now: T0 + 60001 });
+  assert.equal(v.state, 'green');
+  assert.equal('prEventSettle' in v, false);
+});
+
+test('the window closes at exactly 60 s', () => {
+  assert.equal(settle({ now: T0 + 60000 }).state, 'green');
+});
+
+test('a pull_request head run ends the settle rule', () => {
+  assert.equal(settle({ headRuns: [pushRun('2026-11-26T10:00:00Z'), prRun('2026-11-26T10:00:01Z')], now: T0 + 1000 }).state, 'green');
+});
+
+test('a pull_request_target head run ends the settle rule', () => {
+  assert.equal(settle({ headRuns: [pushRun('2026-11-26T10:00:00Z'), { ...prRun('2026-11-26T10:00:01Z'), event: 'pull_request_target' }], now: T0 + 1000 }).state, 'green');
+});
+
+test('the window anchors on the earliest run under any event', () => {
+  const both = [pushRun('2026-11-26T10:00:20Z'), pushRun('2026-11-26T10:00:05Z')];
+  assert.equal(settle({ headRuns: both, now: at('10:01:06') }).state, 'green');
+  assert.equal(settle({ headRuns: both, now: at('10:01:04') }).state, 'pending');
+  assert.equal(settle({ headRuns: [pushRun('2026-11-26T10:00:20Z')], now: at('10:01:06') }).state, 'pending');
+});
+
+test('AC1.1: a PR opened after its head was pushed: the window starts at the PR\'s createdAt', () => {
+  const o = { headRuns: [pushRun('2026-11-26T10:00:00Z')], prCreatedAt: '2026-11-26T10:05:00Z' };
+  const v = settle({ ...o, now: at('10:05:30') });
+  assert.equal(v.state, 'pending');
+  assert.equal(v.prEventSettle.until, '2026-11-26T10:06:00.000Z');
+  assert.equal(settle({ ...o, now: at('10:06:01') }).state, 'green');
+});
+
+test('with no head run, the PR\'s createdAt still caps the committer date from below', () => {
+  const v = settle({ rollup: [{ context: 'ext', state: 'SUCCESS' }], headRuns: [], headCommittedAt: '2026-11-26T10:00:00Z', prCreatedAt: '2026-11-26T10:05:00Z', now: at('10:05:30') });
+  assert.equal(v.state, 'pending');
+});
+
+test('a missing or unparseable prCreatedAt fails closed', () => {
+  const far = at('12:00:00');
+  for (const prCreatedAt of [undefined, null, 'not-a-date']) {
+    const v = settle({ prCreatedAt, now: far });
+    assert.equal(v.state, 'pending');
+    assert.equal(v.prEventSettle.until, null);
+    assert.equal(settle({ prCreatedAt, now: far, headRuns: [pushRun('2026-11-26T10:00:00Z'), prRun('2026-11-26T10:00:01Z')] }).state, 'green');
+  }
+});
+
+test('snake_case created_at rows anchor the window', () => {
+  const row = { name: 'x', event: 'push', status: 'completed', conclusion: 'success', created_at: '2026-11-26T10:00:00Z' };
+  assert.equal(settle({ headRuns: [row], now: T0 + 30000 }).state, 'pending');
+  assert.equal(settle({ headRuns: [row], now: T0 + 61000 }).state, 'green');
+});
+
+test('no head run at all: the committer date stands in', () => {
+  const o = { rollup: [{ context: 'ext', state: 'SUCCESS' }], headRuns: [], headCommittedAt: '2026-11-26T10:00:00Z' };
+  assert.equal(settle({ ...o, now: T0 + 59000 }).state, 'pending');
+  assert.equal(settle({ ...o, now: T0 + 61000 }).state, 'green');
+});
+
+test('prEventSettle: rows with no parseable createdAt fall back to the committer date, else fail closed', () => {
+  const headRuns = [{ name: 'track', event: 'push', status: 'completed', conclusion: 'success' }];
+  assert.deepEqual(prEventSettle({ hasPrCi: true, headRuns, headCommittedAt: null, prCreatedAt: PR_OPENED, now: T0 }), { settling: true, until: null });
+  const v = settle({ headRuns, headCommittedAt: null });
+  assert.equal(v.state, 'pending');
+  assert.equal(v.prEventSettle.until, null);
+  assert.equal(settle({ headRuns, headCommittedAt: '2026-11-26T10:00:00Z', now: T0 + 61000 }).state, 'green');
+});
+
+test('red wins inside the settle window', () => {
+  const bad = { ...pushRun('2026-11-26T10:00:00Z'), conclusion: 'failure' };
+  assert.equal(settle({ headRuns: [bad], now: T0 + 1000 }).state, 'red');
+});
+
+test('without PR CI the settle rule never applies', () => {
+  assert.equal(settle({ hasPrCi: false, now: T0 }).state, 'green');
+});
+
+test('the rule is inactive without a clock', () => {
+  assert.equal(settle({ now: undefined }).state, 'green');
+});
+
+test('the rule is inactive without a runs read, even with a clock', () => {
+  assert.deepEqual(prEventSettle({ hasPrCi: true, headRuns: undefined, prCreatedAt: PR_OPENED, now: T0 }), { settling: false, until: null });
+  assert.equal(settle({ headRuns: undefined, now: T0 }).state, 'green');
+});
+
+test('an anchor whose window end overflows the Date range fails closed instead of throwing', () => {
+  const max = '+275760-09-13T00:00:00.000Z';
+  assert.deepEqual(prEventSettle({ hasPrCi: true, headRuns: [], headCommittedAt: max, prCreatedAt: PR_OPENED, now: T0 }), { settling: true, until: null });
+  assert.deepEqual(prEventSettle({ hasPrCi: true, headRuns: [pushRun('2026-11-26T10:00:00Z')], prCreatedAt: max, now: T0 }), { settling: true, until: null });
+  const v = settle({ headRuns: [], rollup: [{ context: 'ext', state: 'SUCCESS' }], headCommittedAt: max });
+  assert.equal(v.state, 'pending');
+  assert.equal(v.prEventSettle.until, null);
+});
+
+test('headCommittedAtArgs builds the head commit\'s committer-date read', () => {
+  assert.deepEqual(headCommittedAtArgs('o/r', HEAD), ['api', `repos/o/r/commits/${HEAD}`, '--jq', '.commit.committer.date']);
+  assert.deepEqual(headCommittedAtArgs('{owner}/{repo}', HEAD), ['api', `repos/{owner}/{repo}/commits/${HEAD}`, '--jq', '.commit.committer.date']);
 });
