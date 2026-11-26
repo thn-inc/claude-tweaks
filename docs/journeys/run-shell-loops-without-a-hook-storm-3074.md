@@ -50,6 +50,7 @@ files:
 - Updated during build of #3989. The redirect check now skips heredoc bodies fed to non-shell programs (Step 2). See `run-a-heredoc-node-script-from-the-main-checkout-3989.md`.
 - Updated during build of #4149. Heredoc stripping became an allowlist of data readers, so a body fed to anything else (`make -f -`, `at`, a shell) stays visible. `hasFileRedirection` now walks `forEachShellSegment`, the same walk `fileWriteTargets` uses: it reads the outer text and each kept body as its own chunk, so a redirect inside a kept body still sends the call down the full path (Step 2).
 - Updated during build of #4028. A skipped pre-tool-use Bash call can now print the guard normalizer's `updatedInput` JSON (Step 2). See `docs/hooks.md`'s guard normalizer bullet.
+- Updated during build of #4523. The `post-tool-use-failure` skip now reads the parsed `error`: it must begin with a refusal noun and carry a signature, so quoted refusal text in command output skips (Step 2).
 - Updated during build of #3819. The post-tool-use-failure skip now passes either refusal signature, `Refusing to run it` or the worktree-gone `Refusing to run there` (Step 2).
 - Updated during build of #4548. The pre-tool-use prefilter also covers the process-kill words (Step 2). See `keep-sibling-sessions-processes-alive-through-a-dispatched-build-4548.md`.
 - Related journeys: `recover-from-a-bookkeeping-stamp-deny.md` (another deny the same pre-tool-use hook issues).
