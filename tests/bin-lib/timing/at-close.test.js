@@ -1987,3 +1987,81 @@ test('a throw after the phase rows were derived still fills the manifest\'s time
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- roles at close (#6010) ----
+function effortTranscript(cfg, wt, efforts, sid = SID) {
+  const dir = path.join(cfg, 'projects', transcript.slugForCwd(wt));
+  fs.mkdirSync(dir, { recursive: true });
+  const lines = [];
+  efforts.forEach((e, i) => {
+    lines.push(JSON.stringify({ type: 'api-request', timestamp: `2026-11-16T10:0${i + 1}:00.000Z`, params: { output_config: { effort: e } } }));
+    lines.push(JSON.stringify({ timestamp: `2026-11-16T10:0${i + 1}:30.000Z`, message: { role: 'assistant', id: `m${i}`, model: 'claude-test', content: [], usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 5, cache_creation_input_tokens: 5 } } }));
+  });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), lines.join('\n') + '\n');
+  return dir;
+}
+
+function subagentTranscript(slugDir, sid, id, description, effort) {
+  const subDir = path.join(slugDir, sid, 'subagents');
+  fs.mkdirSync(subDir, { recursive: true });
+  fs.writeFileSync(path.join(subDir, `agent-${id}.meta.json`), JSON.stringify({ spawnDepth: 1, description }));
+  const first = JSON.stringify({ type: 'user', message: { role: 'user', content: 'go' } });
+  const req = JSON.stringify({ type: 'api-request', timestamp: '2026-11-16T10:05:00.000Z', params: { output_config: { effort } } });
+  const row = JSON.stringify({ timestamp: '2026-11-16T10:05:30.000Z', message: { role: 'assistant', id: `s-${id}`, model: 'claude-sub', content: [], usage: { input_tokens: 5, output_tokens: 5, cache_read_input_tokens: 5, cache_creation_input_tokens: 5 } } });
+  fs.writeFileSync(path.join(subDir, `agent-${id}.jsonl`), [first, req, row].join('\n') + '\n');
+}
+
+test('#6010 AC5.1 AC5.2: after the close path fills a fixture run, manifest.json carries roles and every other field unchanged; closing again changes nothing', async () => {
+  const root = tmpRoot();
+  try {
+    const { cfg, wt, runDir, env } = manifestRun(root, { transcripts: false });
+    const slugDir = effortTranscript(cfg, wt, ['high', 'high', 'low']);
+    subagentTranscript(slugDir, SID, 'impl1', 'Implement task 1', 'medium');
+    const before = readManifestJson(runDir);
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    const after = readManifestJson(runDir);
+    for (const k of Object.keys(before)) assert.deepStrictEqual(after[k], before[k], k);
+    assert.deepStrictEqual(after.roles.session.efforts, { high: 2, low: 1 });
+    assert.equal(after.roles.session.agents, 1);
+    assert.deepStrictEqual(after.roles.implementer, { agents: 1, models: { 'claude-sub': 1 }, efforts: { medium: 1 } });
+    const bytes = fs.readFileSync(manifestFile(runDir), 'utf8');
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#6010: a roles derive that throws still fills closedAt, minutes and the cost group', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = manifestRun(root);
+    const errs = [];
+    const realWrite = process.stderr.write;
+    process.stderr.write = (s) => { errs.push(String(s)); return true; };
+    try {
+      await withStub(require('../../../plugin/bin/lib/run-manifest/roles'), 'deriveRoles', () => { throw new Error('boom roles'); }, () => writeTimingAtClose(runDir, { env }));
+    } finally { process.stderr.write = realWrite; }
+    const m = readManifestJson(runDir);
+    assert.equal(m.roles, undefined);
+    assert.equal(typeof m.closedAt, 'string');
+    assert.equal(typeof m.minutes, 'number');
+    assert.equal(typeof m.costUsd, 'number');
+    assert.ok(errs.some((e) => /boom roles/.test(e)), errs.join('|'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#6010: driver lane at the close path records roles from driver-events.jsonl', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = driverRun(root, [
+      { step: 'worker', status: 'ok', model: 'sonnet', effort: 'medium', usage: SONNET_USAGE },
+    ]);
+    await writeTimingAtClose(runDir, { env });
+    assert.deepStrictEqual(readManifestJson(runDir).roles, { implementer: { agents: 1, models: { sonnet: 1 }, efforts: { medium: 1 } } });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

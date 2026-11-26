@@ -9,6 +9,8 @@
 //                     The close fills `closedAt` and `minutes` (fill-only-null) and the cost group
 //                     (#6009) as one unit: written while no cost is stored, upgraded once from a
 //                     partial or null-cost group to a complete one, never after a complete group.
+//                     It also fills `roles` (#6010, model and effort per role) fill-only-null; a
+//                     `roles` that fails the shape check leaves the whole manifest untouched.
 //
 // Nothing here throws and nothing changes a caller's outcome: a failed write is dropped with one
 // stderr line. manifest.json is not run initialization — it carries none of the files (decisions.md,
@@ -24,6 +26,7 @@ const path = require('path');
 const { writeFileAtomic } = require('../atomic-write');
 const { canonicalJson, gatherFacts } = require('./facts');
 const { leverValues } = require('../set-config/write');
+const { validRoles } = require('./roles');
 
 const MANIFEST_FILE = 'manifest.json';
 const MANIFEST_VERSION = 1;
@@ -174,6 +177,12 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
     const input = fields || {};
     const changed = [];
 
+    // A malformed roles is the caller's bug: nothing is applied, so the manifest is never half-updated.
+    if (input.roles != null && !validRoles(input.roles)) {
+      d.stderr('claude-tweaks: run-manifest: roles failed the shape check, manifest left untouched\n');
+      return { changed: [] };
+    }
+
     for (const key of FILL_ONLY_NULL) {
       const value = input[key];
       if (value === undefined || value === null || manifest[key] != null || !FILL_VALID[key](value)) continue;
@@ -209,6 +218,11 @@ function fillRunManifest(runDir, fields = {}, deps = {}) {
         manifest[key] = group[key];
         changed.push(key);
       }
+    }
+
+    if (input.roles != null && manifest.roles == null) {
+      manifest.roles = input.roles;
+      changed.push('roles');
     }
 
     if (changed.length > 0) d.writeFileAtomic(file, serialize(manifest));

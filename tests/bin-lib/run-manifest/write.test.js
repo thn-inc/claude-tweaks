@@ -526,3 +526,28 @@ test('an invalid cost group is ignored', () => {
     assert.equal(fs.existsSync(path.join(dir, MANIFEST_FILE)), false);
   }
 });
+
+const ROLES_A = { implementer: { agents: 1, models: { sonnet: 1 }, efforts: { medium: 1 } } };
+const ROLES_B = { reviewer: { agents: 2, models: { opus: 2 }, efforts: { high: 3 } } };
+
+test('#6010: fillRunManifest stores roles fill-only-null', () => {
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  assert.deepEqual(fillRunManifest(dir, { roles: ROLES_A }).changed, ['roles']);
+  assert.deepEqual(readManifest(dir).roles, ROLES_A);
+  const bytes = manifestBytes(dir);
+  assert.ok(!fillRunManifest(dir, { roles: ROLES_B }).changed.includes('roles'));
+  assert.equal(manifestBytes(dir), bytes);
+});
+
+test('#6010: an invalid roles leaves the existing manifest untouched with one stderr line', () => {
+  const dir = runDir();
+  initRunManifest(dir, { cwd: dir, lane: 'standard' }, { gatherFacts: gather() });
+  const before = manifestBytes(dir);
+  const c = collector();
+  const r = fillRunManifest(dir, { closedAt: '2026-11-26T12:00:00.000Z', roles: { x: { agents: -1, models: {}, efforts: {} } } }, { stderr: c.stderr });
+  assert.deepEqual(r.changed, []);
+  assert.equal(manifestBytes(dir), before);
+  assert.equal(c.lines.length, 1);
+  assert.match(c.lines[0], /roles failed the shape check/);
+});

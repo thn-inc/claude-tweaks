@@ -22,7 +22,7 @@ Added in #5903. It is not the multi-spec `manifest.yml` (the parent run's spec l
 
 ## Fields
 
-Sixteen fields: nine run-start facts and seven close-out fields (#6009), all at `v: 1` (`MANIFEST_VERSION`); no earlier field was renamed or retyped.
+Seventeen fields: nine run-start facts and eight close-out fields (seven from #6009, `roles` from #6010), all at `v: 1` (`MANIFEST_VERSION`); no earlier field was renamed or retyped.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -41,6 +41,7 @@ Sixteen fields: nine run-start facts and seven close-out fields (#6009), all at 
 | `unpricedModels` | string[], nullable | Model ids counted in `tokensByModel` but not priced (an id the table does not know). |
 | `costPartial` | boolean, nullable | `true` when some token source could not be read, so `costUsd` is a lower bound. |
 | `minutes` | number, nullable | Elapsed minutes from the run's start (the mint's `createdAt`, or the first event for a fill-created manifest) to `closedAt`, one decimal. |
+| `roles` | object, nullable | `{ "<role>": { "agents", "models", "efforts" } }`: the model and effort each role ran with (see `roles`). Added at `v: 1`, filled at close on the token paths, fill-only-null. |
 | `closedAt` | string, nullable | ISO-8601 UTC time the run closed, not the time of the fill: `run-state.json`'s `updatedAt` once its status is `clean`, else the last event timestamp the timing derivation saw, else `null`. |
 
 The writer of each field is in the next table. A fill accepts the four fact fields only in these shapes and ignores anything else (the close-out fields have their own rules under Cost and close-out fields): `pluginVersion` a non-empty string, `policyHash` as above, `baseCommit` 40 lowercase hex, `modelProfile` an object whose `stance` is one of the three names and whose `ceiling` is a string or `null`.
@@ -54,7 +55,7 @@ The writer of each field is in the next table. A fill accepts the four fact fiel
 | `setConfigLever` | `plugin/bin/lib/set-config/write.js`, when the key written is `ceremony-profile` | `ceremonyProfile`. The Manifesto, the express lane's `configSet` (which writes `ceremony-profile=fast-lane`) and a ceremony-escape-hatch downgrade all write the key through it, and a later value overwrites the earlier one. |
 | Express gate | `runGate` in `plugin/bin/lib/express/cli.js`, when `--run` is given and every record's verdict is `eligible: true` | `lane: express`. An ineligible verdict leaves the lane untouched. |
 | Driver adoption | `adoptRun` in `plugin/bin/lib/driver/adopt.js`, on a successful `--run` adoption of a dispatch-minted run (the driver mints nothing there, so the mint left `unknown`) | `lane: driver`. |
-| Close path | `fillManifestAtClose` in `plugin/bin/lib/timing/at-close.js` (`close-run`, `teardown-run`, `archiveRunDir`'s phase write, the detached token pass; `fillKeptManifest` for a `kept` close) | `tokensByModel`, `costUsd`, `priceDate`, `unpricedModels`, `costPartial`, `minutes`, `closedAt`. A multi-spec `spec-N/` child gets no fill from this path. |
+| Close path | `fillManifestAtClose` in `plugin/bin/lib/timing/at-close.js` (`close-run`, `teardown-run`, `archiveRunDir`'s phase write, the detached token pass; `fillKeptManifest` for a `kept` close) | `tokensByModel`, `costUsd`, `priceDate`, `unpricedModels`, `costPartial`, `minutes`, `closedAt`, and `roles` (only on a close that derives cost). A multi-spec `spec-N/` child gets no fill from this path. |
 
 No current fill site passes `pluginVersion`, `policyHash`, `baseCommit` or `modelProfile`; the module would set one of them only while it is still `null`.
 
@@ -78,6 +79,18 @@ Derived by `deriveRunCost` at close, from the same transcripts the token pass re
 - **`costPartial`.** `true` when a source named a model but could not be read (a missing transcript, a worker with no `tokens`, a driver line with a model but no `usage`). A partial group is still written, with `costPartial: true`.
 - **One upgrade.** The cost group is written while the stored `costUsd` is `null` or absent, and replaced once when the stored group is `costPartial: true` and the new one is complete (`costPartial: false`). A complete group is never rewritten. A `kept` close (`fillKeptManifest`) may make that one upgrade; `timing.json` is not rewritten on that path.
 - **Fill-only-null for the rest.** `minutes` and `closedAt` are set once and never overwritten, so closing a run again changes nothing. The cost group's valid shapes are all-null ("unread") or fully typed ("read"); a fill ignores any other shape.
+
+## `roles`
+
+Model and effort per role (#6010), derived at close by `deriveRoles` in `plugin/bin/lib/run-manifest/roles.js` and stored by `fillRunManifest` only while `roles` is null. The only change to `manifest.json` is this additive nullable key at `v: 1`.
+
+- **Shape.** `{ "<role>": { "agents": n, "models": { "<model id>": n }, "efforts": { "<effort>": n } } }`. `models` counts agents; `efforts` counts turns (launches on the driver lane, where no turns are read).
+- **Role names, session lanes.** `session` is the run's own transcript plus, on a dispatched run, its Task-call transcripts, as one agent. Every dispatched agent is named by `roleOf` (`plugin/bin/lib/timing/derive.js`) from its description, e.g. `implementer`, `lens reviewer`, `unlabelled`. Driver worker transcripts are not resolved at close.
+- **Role names, driver lane.** Each launch line in `driver-events.jsonl` maps through `DRIVER_STEP_ROLES` (`plugin/bin/lib/driver/roles.js` steps): `worker` to `implementer`, `review` to `reviewer`, `merge-check` to `merge-check`, `merge-acceptance` to `acceptance`. Renaming a driver role changes these keys.
+- **Model.** The transcript model id, else the dispatch alias; `unknown` when neither is recorded. An agent whose transcript could not be read counts under model `unknown` with no efforts. A headless lens worker (no turns recorded) counts one `unknown` effort.
+- **Effort.** Read from each transcript's `api-request` lines (`params.output_config.effort`); `unknown` means the transcript (or the driver launch line) recorded no effort.
+- **Only on a cost-deriving close.** `roles` is derived only where the cost group is, so a run whose cost group was already complete (first closed by an earlier release), or whose `roles` derive threw (one stderr line, the rest of the fill still lands), keeps `roles` null. Re-deriving there would add the transcript reads that path exists to avoid.
+- **Invalid is refused whole.** A `roles` that fails the shape check leaves the manifest untouched, with one stderr line.
 
 ## Lane
 
@@ -153,4 +166,4 @@ The tip of the integration branch the run builds on, read once at mint, not the 
 
 ## Compatibility
 
-A field is added, never renamed or retyped. A new field is added to the module, to this page and to `tests/bin-lib/run-manifest/write.test.js` in the same change; a reader ignores fields it does not know, which `write.test.js` pins with a `v: 2` object that carries an unknown key through a fill. Removing a field, or changing a field's type or meaning, requires a `v` bump and a note here. Current version: 1; no earlier version has been released. The seven close-out fields (#6009) were added at `v: 1`.
+A field is added, never renamed or retyped. A new field is added to the module, to this page and to `tests/bin-lib/run-manifest/write.test.js` in the same change; a reader ignores fields it does not know, which `write.test.js` pins with a `v: 2` object that carries an unknown key through a fill. Removing a field, or changing a field's type or meaning, requires a `v` bump and a note here. Current version: 1; no earlier version has been released. The seven close-out fields (#6009) and `roles` (#6010) were added at `v: 1`.
