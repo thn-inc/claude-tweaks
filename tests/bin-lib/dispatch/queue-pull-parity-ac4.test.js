@@ -102,7 +102,7 @@ describe('#5227 parity (AC4 fetch failures)', { skip: oracleSkip(), timeout: 600
   });
 
   test('AC4.4: the oracle stops on exactly the observed stop set, and every other fault exits 0', () => {
-    const STOP_SET = ['F-claim-neighbour-stop', 'F-claim-stop', 'F-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
+    const STOP_SET = ['F-claim-neighbour-stop', 'F-claim-stop', 'F-corrupt', 'F-driver-lane-corrupt', 'F-groups', 'F-opennum', 'F-queue'];
     assert.deepEqual(FAULTS.filter((f) => R[f.id].oracle.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the oracle');
     assert.deepEqual(FAULTS.filter((f) => R[f.id].module.status !== 0).map((f) => f.id).sort(), STOP_SET, 'the module');
     for (const f of FAULTS) {

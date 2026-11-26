@@ -44,7 +44,7 @@ const PINNED_GIT_DATE = '2026-11-12T12:00:00Z';
 const ORACLE_TIMEOUT_MS = 120_000;
 const STREAM_CAP_BYTES = 64 * 1024;
 const BASH_CANDIDATES = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/bin/bash', '/usr/bin/bash'];
-const REPORTED_LINE = /^(AUTO — dispatch: |- AUTO \d{2}:\d{2}:\d{2} — |Warning: |dispatch: queue-pull stopped -- |Queue-order cache |express-lane: |resolve-policy: )/;
+const REPORTED_LINE = /^(AUTO — dispatch: |- AUTO \d{2}:\d{2}:\d{2} — |Warning: |dispatch: queue-pull stopped -- |Queue-order cache |express-lane: |resolve-policy: |driver-lane: )/;
 
 // --- skip, extraction ---------------------------------------------------------
 

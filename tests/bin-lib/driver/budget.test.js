@@ -208,10 +208,25 @@ test('AC6.3: an empty queue ends with zero driven', async () => {
   assert.deepEqual(f.driven(), []);
   // A per-invocation session, the policy step's main root, and the caller's env.
   const { options } = f.calls.queuePull[0];
-  assert.deepEqual(options, { transport: 'gh', sessionId: 'drive-2026-11-13T090807-4242', cwd: '/main', env: f.deps.env, inputs: {}, omit: [] });
+  assert.deepEqual(options, { transport: 'gh', sessionId: 'drive-2026-11-13T090807-4242', cwd: '/main', env: f.deps.env, inputs: {}, omit: ['driver-lane'] });
   assert.deepEqual(f.calls.appendFile, [], 'no file write');
   // The drain-PR list is written empty before the loop, so an empty queue still writes it.
   assert.deepEqual(f.calls.writeFile, [[LIST_PATH, '[]']]);
+});
+
+test('AC4.1 / AC4.2 runBudget under script omits driver-lane and drives the driver-routable record', async () => {
+  const groups = [[pulled(7)]];
+  // What the real pull returns: the omit option skips the driver-lane pass's appends.
+  const pullFor = (options) => ({ groups, exclusions: options.omit.includes('driver-lane') ? [] : [{ reason: 'driver-lane', records: [7], detail: {} }] });
+  const f = fake({ queuePull: (options) => pullFor(options) });
+  assert.equal(await run(f), 0);
+  assert.deepEqual(f.calls.queuePull[0].options, { transport: 'gh', sessionId: 'drive-2026-11-13T090807-4242', cwd: '/main', env: f.deps.env, inputs: {}, omit: ['driver-lane'] });
+  assert.deepEqual(f.driven(), [7], 'the driver-routable record is driven');
+  // The same group carrying a driver-lane entry is unselectable (UNSELECTABLE_REASONS by derivation): the omit is what lets it through.
+  const g = fake({ pulls: [{ groups, exclusions: [{ reason: 'driver-lane', records: [7], detail: {} }] }] });
+  assert.equal(await run(g), 0);
+  assert.deepEqual(g.driven(), [], 'not driven');
+  assert.deepEqual(g.calls.eligibility, [], 'not pre-screened');
 });
 
 test('AC6.4: a top record the pre-screen rules out is skipped once and the run reaches the records below it', async () => {

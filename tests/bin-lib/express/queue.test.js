@@ -481,6 +481,93 @@ test('#6020: the express half keeps a protected Key File record only when the re
   assert.equal(expressQueuePolicy({ resolvePolicy: policy({ ...base, 'protected-paths': 'infra/**' }).resolvePolicy }).keepSingleton(hooks), true);
 });
 
+// #6119: the driver predicate is exposed so the driver-lane queue exclusion shares the bundling answer.
+test('#6119: driverRoutable accepts what keepSingleton keeps under the driver half and refuses a standard record', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-lane': false }).resolvePolicy });
+  const standard = medium(20, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task']);
+  assert.equal(p.driverRoutable(medium(20)), true);
+  assert.equal(p.driverRoutable(standard), false);
+  // Other refusals: size:high under `on`, and an odd number under `split`; each gate agrees record by record.
+  const split = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-lane': false, 'express-driver': 'split' }).resolvePolicy });
+  const cases = [
+    [p, medium(20), true], [p, standard, false],
+    [p, medium(21, ['risk:low', 'size:high', 'ceremony:fast-lane', 'type:task']), false],
+    [split, medium(10), true], [split, medium(11), false],
+  ];
+  for (const [policyUnderTest, record, expected] of cases) {
+    assert.equal(policyUnderTest.driverRoutable(record), expected, `driverRoutable #${record.number}`);
+    assert.equal(policyUnderTest.keepSingleton(record), policyUnderTest.driverRoutable(record), `keepSingleton #${record.number}`);
+  }
+});
+
+test('#6119: driverRoutable never throws: a throwing check answers false, silently', () => {
+  const sink = stderrSink();
+  const p = expressQueuePolicy({ resolvePolicy: policy(DRIVER_POLICY).resolvePolicy, stderr: sink.stderr });
+  const malformed = { number: 8, body: BODY_TWO_KEYS, get labels() { throw new Error('labels unreadable'); } };
+  assert.equal(p.driverRoutable(malformed), false);
+  assert.equal(p.driverRoutable(null), false);
+  assert.deepEqual(sink.lines, []);
+});
+
+test('#6119: driverOn and routing follow express-driver; off, split and on', () => {
+  for (const [value, on] of [['on', true], ['split', true], ['off', false]]) {
+    const p = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': value }).resolvePolicy });
+    assert.equal(p.driverOn, on, value);
+    assert.equal(p.routing, value);
+    assert.equal(typeof p.driverRoutable, 'function');
+  }
+  const off = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': 'off' }).resolvePolicy });
+  assert.equal(off.driverRoutable(medium(20)), false);
+});
+
+test('#6119: a failing second read leaves driverOn false but routing as read', () => {
+  let n = 0;
+  const resolvePolicy = (keys) => {
+    n += 1;
+    if (n === 2) throw new Error('policy.yml unreadable');
+    return policy(DRIVER_POLICY).resolvePolicy(keys);
+  };
+  const p = expressQueuePolicy({ resolvePolicy, stderr: () => {} });
+  assert.equal(p.driverOn, false);
+  assert.equal(p.routing, 'on');
+  assert.equal(p.driverRoutable(medium(20)), false);
+});
+
+test('#6119: driver modules failing to load leaves driverOn false but routing as read', () => {
+  const resolvePolicy = (keys) => Object.fromEntries(keys.map((k) => [k, k === 'merge-sensitive-paths'
+    ? { get value() { throw new Error('sensitive paths unreadable'); }, source: 'policy' }
+    : { value: { ...DRIVER_POLICY, 'express-lane': false }[k], source: 'policy' }]));
+  const p = expressQueuePolicy({ resolvePolicy, stderr: () => {} });
+  assert.equal(p.driverOn, false);
+  assert.equal(p.routing, 'on');
+  assert.equal(p.driverRoutable(medium(20)), false);
+});
+
+test('#6119: routing is null when the first read throws or the value is unrecognised', () => {
+  const thrown = expressQueuePolicy({ resolvePolicy: () => { throw new Error('boom'); }, stderr: () => {} });
+  assert.equal(thrown.routing, null);
+  assert.equal(thrown.driverOn, false);
+  assert.equal(thrown.driverRoutable(medium(20)), false);
+  const unknown = expressQueuePolicy({ resolvePolicy: policy({ ...DRIVER_POLICY, 'express-driver': 'sometimes' }).resolvePolicy, stderr: () => {} });
+  assert.equal(unknown.routing, null);
+  assert.equal(unknown.driverOn, false);
+});
+
+test('#6119: the lanes-off shape carries routing off and a false predicate', () => {
+  const p = expressQueuePolicy({ resolvePolicy: policy({ 'express-lane': false, 'express-driver': 'off', 'dispatch-fastlane-bundle-cap': 3, 'work-links': 'body-text' }).resolvePolicy });
+  assert.equal(p.routing, 'off');
+  assert.equal(p.driverOn, false);
+  assert.equal(p.driverRoutable(medium(20)), false);
+});
+
+test('#6119: the grouping fingerprint is byte-identical to the pre-change value and no runner key joined the inputs', () => {
+  assert.equal(groupingFingerprint({ ...FP_BASE }), '28d04dfb763abfe1');
+  assert.equal(groupingFingerprint({}), '4f53cda18c2baa0c');
+  assert.equal(fpOf(FP_BASE).fingerprint, '28d04dfb763abfe1');
+  assert.ok(!GROUPING_INPUTS.includes('express-driver-runner'));
+  assert.equal(GROUPING_INPUTS.length, 12);
+});
+
 test('#6020: the driver half keeps a protected Key File record only when the resolved list does not protect it', () => {
   const hooks = { number: 31, body: BODY.replace('plugin/skills/init/claude-md-template.md', 'plugin/hooks/x.js'), labels: ELIGIBLE.labels };
   const base = {

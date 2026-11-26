@@ -37,7 +37,9 @@ function groupingFingerprint(values) {
 }
 
 // The disabled shape (fail toward bundling), carrying the fingerprint of whatever was read.
-const disabled = (fingerprint) => Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint, keepSingleton: () => false });
+// Every shape carries `driverOn`, `driverRoutable` and `routing` (the express-driver value read; null when unread or
+// unrecognised), so a consumer can tell routing `off` from a driver half that failed to build.
+const disabled = (fingerprint, routing = null) => Object.freeze({ enabled: false, grouping: groupingMode(false), fingerprint, keepSingleton: () => false, driverOn: false, driverRoutable: () => false, routing });
 const DISABLED = disabled(groupingFingerprint({}));
 
 const collapse = (value) => String(value).replace(/\s+/g, ' ');
@@ -55,7 +57,7 @@ const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
   }
 }));
 
-// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, fingerprint, keepSingleton }.
+// deps: { resolvePolicy?, stderr? } -> { enabled, grouping, fingerprint, keepSingleton, driverOn, driverRoutable, routing }.
 // `fingerprint` is groupingFingerprint over every value the resolver calls returned, the
 // queue-order cache's key beside the `grouping` stamp (#6062): a policy change that leaves
 // the queue unchanged must not replay a stale order. Only a throwing resolver call carries
@@ -77,9 +79,9 @@ const valuesOf = (keys, result, failed) => Object.fromEntries(keys.map((k) => {
 function expressQueuePolicy(deps = {}) {
   const resolvePolicy = deps.resolvePolicy || defaultResolvePolicy;
   const stderr = deps.stderr || ((s) => process.stderr.write(s));
-  const readFailed = (keys, err) => {
+  const readFailed = (keys, err, readRouting = null) => {
     stderr(`express-lane: policy read failed (${keys.join(', ')}), fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
-    return DISABLED;
+    return readRouting === null ? DISABLED : disabled(DISABLED.fingerprint, readRouting);
   };
 
   let expressOn;
@@ -98,7 +100,7 @@ function expressQueuePolicy(deps = {}) {
     return disabled(groupingFingerprint(read));
   }
   const driverOn = routing !== 'off';
-  if (!expressOn && !driverOn) return disabled(groupingFingerprint(read));
+  if (!expressOn && !driverOn) return disabled(groupingFingerprint(read), routing);
 
   let expressOpts;
   let policy;
@@ -117,7 +119,7 @@ function expressQueuePolicy(deps = {}) {
       expressOpts = { enabled: true, integrationModel: need('integration-model'), sensitivePaths: sensitivePathsOf({ value: read['merge-sensitive-paths'] }), protectedPathGlobs: protectedPathGlobsOf(policy['protected-paths']) };
     }
   } catch (err) {
-    return readFailed(SECOND_KEYS, err);
+    return readFailed(SECOND_KEYS, err, routing);
   }
   let driver;
   if (driverOn) {
@@ -137,12 +139,13 @@ function expressQueuePolicy(deps = {}) {
       };
     } catch (err) {
       stderr(`express-driver: driver modules failed to load, fast-lane bundling unchanged this pull: ${oneLine(err)}\n`);
-      return disabled(groupingFingerprint(read));
+      return disabled(groupingFingerprint(read), routing);
     }
   }
 
-  // The driver's own rules; any failure answers false.
-  const driverRoutable = (issue) => {
+  // The driver's own rules; any failure answers false. Two gates read it: bundling (`keepSingleton`, below) and
+  // the `driver-lane` queue-pull exclusion (through the never-throwing `driverRoutable` this policy returns).
+  const routableRaw = (issue) => {
     if (driver.routingReason(routing, issue.number) !== null) return false;
     if (driver.preScreen(issue, driver.eligibility, { evaluateRecordEligibility }).verdict !== 'pass') return false;
     const keyFiles = driver.extractKeyFiles(issue);
@@ -157,6 +160,10 @@ function expressQueuePolicy(deps = {}) {
     enabled: expressOn,
     grouping: groupingMode(expressOn, driverOn),
     fingerprint: groupingFingerprint(read),
+    driverOn,
+    // Silent on a throw: the consumer treats false as "not routable" (keepSingleton keeps its own stderr line).
+    driverRoutable: (issue) => { try { return driverOn && routableRaw(issue) === true; } catch { return false; } },
+    routing,
     keepSingleton: (issue) => {
       if (expressOn) {
         try {
@@ -167,7 +174,7 @@ function expressQueuePolicy(deps = {}) {
       }
       if (driverOn) {
         try {
-          return driverRoutable(issue);
+          return routableRaw(issue);
         } catch (err) {
           stderr(`express-driver: queue eligibility check failed for #${issue && issue.number}, fast-lane bundling unchanged for it: ${oneLine(err)}\n`);
         }
