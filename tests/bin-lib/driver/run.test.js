@@ -403,7 +403,7 @@ const ONE_NEW = 'skip-worktree or assume-unchanged newly set on 1 path(s) since 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
   status: 'ok', reason: null, result: { status: 'done', title: 'Add the loop', summary: 'Adds the loop.' },
-  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null,
+  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null, apiError: null,
 });
 
 const HEAD_SHA = 'a'.repeat(40);
@@ -7344,7 +7344,7 @@ test('budget: driveRecord on an interrupt before the first step has no final and
   const shared = await policyOnce(h);
   shared.interrupted = 'SIGINT';
   const facts = await driveRecord(7, shared, h.deps);
-  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null });
+  assert.deepEqual(facts, { final: null, outcome: null, claimed: false, claimExit: null, implementerLaunch: null, sharedCause: null });
 });
 
 test('budget: driveRecord on an interrupt after the run directory exists is claimed', async () => {
@@ -9403,4 +9403,45 @@ test('AC4.1, Deliverable 6 (driver half): --check reads protected-paths through 
   } finally {
     process.chdir(cwd);
   }
+});
+
+// #6118: the first implementer launch's verdict rides on ctx.implementerLaunch and out through driveRecord's facts.
+const grabCtx = (ctxs) => defineStep('grab', 'none', async (ctx) => { ctxs.push(ctx); return { status: 'ok' }; });
+const LAUNCH_ERROR = Object.freeze({ ...ENVELOPE, status: 'fail', reason: 'launch-error', result: null, detail: 'ENOENT: spawn claude ENOENT' });
+
+test('#6118 driveRecord facts carry the first implementer launch', async () => {
+  const failed = harness({ script: [[isImplementerLaunch, LAUNCH_ERROR]] });
+  const f = await driveRecord(7, newShared(), failed.deps);
+  assert.deepEqual([f.implementerLaunch, f.sharedCause], [{ status: 'fail', reason: 'launch-error', counts: true }, true]);
+  const ok = harness();
+  const o = await driveRecord(7, newShared(), ok.deps);
+  assert.deepEqual([o.implementerLaunch, o.sharedCause], [{ status: 'ok', reason: null, counts: false }, false]);
+  const refused = harness({ eligibility: { eligible: false, reasons: ['too big'] } });
+  const r = await driveRecord(7, newShared(), refused.deps);
+  assert.deepEqual([r.implementerLaunch, r.sharedCause], [null, null]);
+});
+
+test('#6118 a launch-error triggers no relaunch', async () => {
+  const h = relaunchRig({ policy: { 'model-effort': 'profile' }, first: LAUNCH_ERROR });
+  const facts = await driveRecord(7, newShared(), h.deps);
+  assert.equal(implementerCalls(h).length, 1);
+  assert.equal(lastLine(h).stop.step, STEP.worker);
+  assert.deepEqual([facts.implementerLaunch, facts.sharedCause], [{ status: 'fail', reason: 'launch-error', counts: true }, true]);
+});
+
+test('#6118 a relaunch never overwrites the first launch\'s facts', async () => {
+  const h = relaunchRig({ first: STUCK, second: LAUNCH_ERROR });
+  const facts = await driveRecord(7, newShared(), h.deps);
+  assert.equal(implementerCalls(h).length, 2);
+  assert.deepEqual([facts.implementerLaunch, facts.sharedCause], [{ status: 'ok', reason: null, counts: false }, false]);
+});
+
+test('#6118 a HEAD-moved stop after a fail/exit envelope neither counts nor is shared-cause', async () => {
+  const ctxs = [];
+  const envelope = { ...ENVELOPE, status: 'fail', reason: 'exit', result: null, apiError: { status: 401, type: 'authentication_error' } };
+  const h = harness({ script: [nthCall(isHeadRead, 2, `${OTHER_SHA}\n`), [isImplementerLaunch, envelope]] });
+  const facts = await driveRecord(7, newShared(), h.deps, [grabCtx(ctxs), ...STEPS]);
+  assert.equal(lastLine(h).stop.detail, movedDetail(HEAD_SHA, OTHER_SHA));
+  assert.deepEqual(ctxs[0].implementerLaunch, { status: 'fail', reason: 'exit', sharedCause: false, counts: false });
+  assert.deepEqual([facts.implementerLaunch, facts.sharedCause], [{ status: 'fail', reason: 'exit', counts: false }, false]);
 });

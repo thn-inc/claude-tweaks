@@ -1796,6 +1796,13 @@ test('#6118 streak counting by reason', () => {
   assert.strictEqual(sharedCauseOf(undefined), false);
 });
 
+test('#6118 sharedCauseOf reads apiError only on a failed envelope', () => {
+  const apiError = { status: 401, type: 'authentication_error' };
+  assert.strictEqual(sharedCauseOf({ status: 'ok', reason: null, apiError }), false);
+  assert.strictEqual(sharedCauseOf({ status: 'timeout', reason: 'wall-clock-ceiling', apiError }), false);
+  assert.strictEqual(sharedCauseOf({ status: 'fail', reason: 'exit', apiError }), true);
+});
+
 test('#6118 AC5.3: the worker.js header records the probe', () => {
   const text = readText(path.join(LIB, 'driver', 'worker.js'));
   const i = text.indexOf('// - Shared cause (#6118)');

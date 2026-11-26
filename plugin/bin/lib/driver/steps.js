@@ -113,7 +113,7 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { gateOriginRepo, resolveRepoTarget } = require('../repo-resolve');
 const { isTimeoutError } = require('../shared-primitives');
 const { fenceFor } = require('../markdown-blocks');
-const { buildEnv } = require('./worker');
+const { buildEnv, sharedCauseOf, countsTowardLaunchStreak } = require('./worker');
 const { assertTestCommand, SANDBOX_PROBED_PLATFORMS } = require('./roles');
 const { WIN32_CLAUDE_BIN, MODEL_POLICY_KEYS, MODEL_REFUSED_CODE, IMPLEMENTER_TIER_KEY, readCeilings, launchTracked, modelPolicyRefusal, roleLaunch } = require('./launch');
 const { openBlockerRefs } = require('../issues/record-dependencies');
@@ -865,11 +865,23 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile,
       ...(ctx.worker.sessionId !== null ? { sessionId: ctx.worker.sessionId } : {}),
     };
   }
+  // The first launch's verdict (#6118), for driveRecord's facts: set once per record, and only when an envelope
+  // arrived. A HEAD or index-flag stop is the record's own failure, so it neither counts nor is shared-cause.
+  const recordLaunch = (sharedCause, counts) => {
+    if (ctx.implementerLaunch === null) ctx.implementerLaunch = { status: envelope.status, reason: envelope.reason ?? null, sharedCause, counts };
+  };
   const headStop = headFail(before, headOf(deps, ctx.wt), extra);
-  if (headStop) return headStop;
+  if (headStop) {
+    if (hasEnvelope) recordLaunch(false, false);
+    return headStop;
+  }
   const flagStop = newIndexFlagStop(ctx, deps);
-  if (flagStop) return extra ? { ...flagStop, extra } : flagStop;
+  if (flagStop) {
+    if (hasEnvelope) recordLaunch(false, false);
+    return extra ? { ...flagStop, extra } : flagStop;
+  }
   if (!hasEnvelope) return { status: 'fail', detail: 'worker launch returned no envelope' };
+  recordLaunch(sharedCauseOf(envelope), countsTowardLaunchStreak(envelope));
   if (envelope.status !== 'ok') {
     const why = neutralize(envelope.detail);
     const kind = `${neutralize(String(envelope.status))}/${neutralize(String(envelope.reason))}`;
@@ -877,7 +889,8 @@ async function launchImplementerAndCheck(ctx, deps, { extraPrompt = '', profile,
     let lead = kind;
     if (kind === 'timeout/wall-clock-ceiling') lead = `${kind}: wall-clock ceiling of ${minutes} minutes reached`;
     else if (kind === 'fail/spend-ceiling') lead = `${kind}: spend ceiling of ${dollars} dollars reached`;
-    return { status: 'fail', detail: `${lead}${why ? `: ${why}` : ''}`, extra };
+    // `launchFailure` marks this stop for settle and the budget loop (#6118); defineStep does not emit it.
+    return { status: 'fail', detail: `${lead}${why ? `: ${why}` : ''}`, extra, launchFailure: true };
   }
   if (result && result.status === 'cannot-complete') {
     // `cannotComplete` marks this stop for the relaunch trigger (#5997, relaunchesOnCannotComplete) and carries

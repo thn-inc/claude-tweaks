@@ -216,7 +216,7 @@ function newShared() {
 // for its `auto:build` grant at admission; a record the --budget loop picked never is.
 function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null, implementerLaunch: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false, relaunch: null,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     workerTestCommand: undefined, workerTestMode: undefined,
@@ -498,7 +498,8 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
 
 // One record through the table; resolves to its final event (null when an interrupt landed
 // before its first step) plus the claim facts the budget loop counts from: whether the claim
-// was obtained and its run dir minted, and the claim step's exit code.
+// was obtained and its run dir minted, the claim step's exit code, and the first implementer launch's verdict
+// (#6118; null when no launch ran).
 async function driveRecord(record, shared, deps, steps = STEPS, { named = false } = {}) {
   const { final, ctx } = await driveWithCtx(record, shared, deps, steps, { named });
   return {
@@ -506,6 +507,8 @@ async function driveRecord(record, shared, deps, steps = STEPS, { named = false 
     outcome: final ? final.outcome : null,
     claimed: ctx.claimed === true && typeof ctx.runDir === 'string' && ctx.runDir !== '',
     claimExit: ctx.claimExit,
+    implementerLaunch: ctx.implementerLaunch === null ? null : { status: ctx.implementerLaunch.status, reason: ctx.implementerLaunch.reason, counts: ctx.implementerLaunch.counts },
+    sharedCause: ctx.implementerLaunch === null ? null : ctx.implementerLaunch.sharedCause,
   };
 }
 
