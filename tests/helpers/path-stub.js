@@ -17,6 +17,10 @@
 // installStub(name, script) is the shared way such a test installs its stub,
 // and its restore() removes the stub dir and only its own PATH entry, so
 // stubs can be restored in any order (an unset PATH is unset again).
+// stubSkipFor(platform) is the same skip value for an arbitrary platform string.
+// writeStubDir(name, script) writes the stub without touching process.env.PATH
+// and returns { dir, envPath, remove }, for a test that hands the stub to the
+// code under test through an injected `env.PATH`.
 //
 // pathWithOnly(names, { exclude }) serves the other shape: a test that needs
 // a PATH holding a real binary (e.g. `git`) but not another (e.g. `gh`). The
@@ -36,9 +40,12 @@ const os = require('node:os');
 const path = require('node:path');
 
 const STUB_SKIP_REASON = 'win32: execFile resolves only .exe/.com on PATH, so a script stub is never spawned';
-const STUB_SKIP = process.platform === 'win32' && STUB_SKIP_REASON;
+function stubSkipFor(platform) {
+  return platform === 'win32' && STUB_SKIP_REASON;
+}
+const STUB_SKIP = stubSkipFor(process.platform);
 
-function installStub(name, script) {
+function writeStubDir(name, script) {
   const dir = scratchDir('ct-stub-');
   const file = path.join(dir, name);
   try {
@@ -48,8 +55,14 @@ function installStub(name, script) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw err;
   }
+  const envPath = process.env.PATH !== undefined ? dir + path.delimiter + process.env.PATH : dir;
+  return { dir, envPath, remove: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+function installStub(name, script) {
+  const { dir, envPath, remove } = writeStubDir(name, script);
   const hadPath = process.env.PATH !== undefined;
-  process.env.PATH = hadPath ? dir + path.delimiter + process.env.PATH : dir;
+  process.env.PATH = envPath;
   let restored = false;
   return function restore() {
     if (restored) return;
@@ -59,7 +72,7 @@ function installStub(name, script) {
     if (at !== -1) rest.splice(at, 1);
     if (!hadPath && rest.length === 0) delete process.env.PATH;
     else process.env.PATH = rest.join(path.delimiter);
-    fs.rmSync(dir, { recursive: true, force: true });
+    remove();
   };
 }
 
@@ -153,7 +166,9 @@ function findColonPathJoins(text) {
 module.exports = {
   STUB_SKIP_REASON,
   STUB_SKIP,
+  stubSkipFor,
   installStub,
+  writeStubDir,
   pathWithOnly,
   findOnPath,
   findColonPathJoins,
