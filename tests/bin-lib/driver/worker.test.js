@@ -63,10 +63,11 @@ test('AC5: an ok result fills every envelope field from the result', async (t) =
   assert.strictEqual(env.costUsd, OK.total_cost_usd);
   assert.strictEqual(env.spendOverrun, false);
   assert.strictEqual(env.detail, null);
+  assert.strictEqual(env.apiDurationMs, OK.duration_api_ms);
 });
 
-test('AC5: the envelope field names are pinned', () => {
-  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId', 'apiError']);
+test('AC5, AC3.1 (#6321): the envelope field names are pinned', () => {
+  assert.deepStrictEqual(ENVELOPE_FIELDS, ['status', 'reason', 'result', 'usage', 'turns', 'denials', 'spendOverrun', 'costUsd', 'detail', 'sessionId', 'apiError', 'apiDurationMs']);
 });
 
 test('the envelope carries the result object\'s session_id as sessionId', async (t) => {
@@ -1747,7 +1748,9 @@ test('#6118: a status or a type alone is enough for shared-cause', async (t) => 
 test('#6118 a 529 overloaded api_error is not shared-cause', async (t) => {
   const env = await launchApiError(t, { api_error_status: 529, api_error_type: 'overloaded_error' });
   assert.strictEqual(sharedCauseOf(env), false);
-  assert.strictEqual(countsTowardLaunchStreak(env), true);
+  assert.strictEqual(countsTowardLaunchStreak(env), false);
+  const noWork = await launchApiError(t, { api_error_status: 529, api_error_type: 'overloaded_error', duration_api_ms: 0 });
+  assert.strictEqual(countsTowardLaunchStreak(noWork), true);
 });
 
 test('#6118: a non-integer status or a non-string type is read as null', async (t) => {
@@ -1782,7 +1785,12 @@ test('#6118 the result text is never read', async (t) => {
 
 test('#6118 streak counting by reason', () => {
   const table = [
-    [{ status: 'fail', reason: 'exit' }, true],
+    [{ status: 'fail', reason: 'exit' }, false],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: 0 }, true],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: 958 }, false],
+    [{ status: 'fail', reason: 'exit', apiDurationMs: null }, false],
+    [{ status: 'fail', reason: 'spend-ceiling', apiDurationMs: 0 }, false],
+    [{ status: 'fail', reason: 'launch-error', apiDurationMs: null }, true],
     [{ status: 'fail', reason: 'launch-error' }, true],
     [{ status: 'timeout', reason: 'wall-clock-ceiling' }, false],
     [{ status: 'fail', reason: 'spend-ceiling' }, false],
@@ -1809,4 +1817,64 @@ test('#6118 AC5.3: the worker.js header records the probe', () => {
   assert.notStrictEqual(i, -1, 'the Shared cause (#6118) probe bullet');
   const bullet = text.slice(i, text.indexOf('\n//\n', i));
   for (const needle of ['2026-11-26', '2.1.325', 'darwin']) assert.ok(bullet.includes(needle), needle);
+});
+
+// #6321: only a fail/exit launch that made no successful API request counts toward the streak.
+const NO_WORK_RESULT = { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', num_turns: 1, duration_api_ms: 0 };
+
+test('AC1.1 (#6321): a ran-and-failed error_max_turns result does not count', async (t) => {
+  const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 2, duration_api_ms: 958 }) });
+  const env = await launchWorker(base(t), { runner });
+  assert.deepStrictEqual([env.status, env.reason, env.apiDurationMs], ['fail', 'exit', 958]);
+  assert.strictEqual(countsTowardLaunchStreak(env), false);
+  assert.strictEqual(sharedCauseOf(env), false);
+});
+
+test('AC1.2 (#6321): the probed no-work shapes count', async (t) => {
+  const shapes = [{ api_error_status: 404, api_error_type: 'not_found_error' }, { api_error_status: 400, api_error_type: 'invalid_request_error' }, {}];
+  for (const shape of shapes) {
+    const { runner } = fakeRunner({ code: 1, stdout: JSON.stringify({ ...NO_WORK_RESULT, ...shape }) });
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.apiDurationMs, 0, JSON.stringify(shape));
+    assert.strictEqual(countsTowardLaunchStreak(env), true, JSON.stringify(shape));
+  }
+});
+
+test('AC1.3 (#6321): a missing or invalid duration_api_ms reads null and does not count', async (t) => {
+  const outs = [];
+  for (const v of [undefined, '0', -1]) {
+    const obj = { ...NO_WORK_RESULT };
+    if (v === undefined) delete obj.duration_api_ms; else obj.duration_api_ms = v;
+    outs.push({ code: 1, stdout: JSON.stringify(obj) });
+  }
+  outs.push({ code: 1, stdout: 'not json' });
+  for (const out of outs) {
+    const { runner } = fakeRunner(out);
+    const env = await launchWorker(base(t), { runner });
+    assert.strictEqual(env.reason, 'exit', out.stdout);
+    assert.strictEqual(env.apiDurationMs, null, out.stdout);
+    assert.strictEqual(countsTowardLaunchStreak(env), false, out.stdout);
+  }
+});
+
+test('AC1.x (#6321): the worker.js header records the no-work probe', () => {
+  const text = readText(path.join(LIB, 'driver', 'worker.js'));
+  const i = text.indexOf('// - No-work launches (#6321)');
+  assert.notStrictEqual(i, -1, 'the No-work launches (#6321) probe bullet');
+  const bullet = text.slice(i, text.indexOf('\n//\n', i));
+  for (const needle of ['2026-11-26', '2.1.325', 'darwin', 'duration_api_ms', 'num_turns']) assert.ok(bullet.includes(needle), needle);
+});
+
+test('AC4.1 (#6321): live probe — a worker that ran reports apiDurationMs above 0 and does not count; a not-logged-in one reports 0 and counts', { skip: !process.env.DRIVER_LIVE_SMOKE && 'set DRIVER_LIVE_SMOKE=1 to launch real workers (spends tokens)' }, async (t) => {
+  const prompt = 'Use no tool. Reply with the single word ready.';
+  const launch = (tweak) => launchWorker({ role: 'implementer', cwd: tmp(t), settingsDir: tmp(t), prompt, model: 'haiku', testCommand: 'node --test', ceilings: { wallClockMs: 180000, spendCeiling: 1 } }, { runner: (call) => { tweak(call); return worker.defaultRunner(call); } });
+  const ran = await launch((call) => { call.args.push('--max-turns', '1'); });
+  const noLogin = await launch((call) => { call.options.env.CLAUDE_CONFIG_DIR = tmp(t); });
+  for (const [label, e] of [['max-turns-1', ran], ['not-logged-in', noLogin]]) {
+    t.diagnostic(label + ': ' + ['status=' + e.status, 'reason=' + e.reason, 'turns=' + e.turns, 'apiDurationMs=' + e.apiDurationMs, 'costUsd=' + e.costUsd].join(' '));
+  }
+  assert.ok(ran.apiDurationMs > 0, JSON.stringify(ran));
+  assert.strictEqual(countsTowardLaunchStreak(ran), false);
+  assert.strictEqual(noLogin.apiDurationMs, 0, JSON.stringify(noLogin));
+  assert.strictEqual(countsTowardLaunchStreak(noLogin), true);
 });

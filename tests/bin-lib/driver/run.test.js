@@ -403,7 +403,7 @@ const ONE_NEW = 'skip-worktree or assume-unchanged newly set on 1 path(s) since 
 // The launcher's envelope for a worker that finished (worker.js's ENVELOPE_FIELDS).
 const ENVELOPE = Object.freeze({
   status: 'ok', reason: null, result: { status: 'done', title: 'Add the loop', summary: 'Adds the loop.' },
-  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null, apiError: null,
+  usage: { input_tokens: 10, output_tokens: 5 }, turns: 3, denials: [], spendOverrun: false, costUsd: 0.25, detail: null, sessionId: null, apiError: null, apiDurationMs: null,
 });
 
 const HEAD_SHA = 'a'.repeat(40);
@@ -7368,7 +7368,7 @@ test('budget: driveRecord on an interrupt after the run directory exists is clai
 const SC_MARKER = '<!-- express-driver: shared-cause -->';
 const ESC_MARKER = '<!-- express-driver: escalated -->';
 const SC_LAUNCH_ERROR = { status: 'fail', reason: 'launch-error', result: null, detail: 'ENOENT: spawn claude ENOENT' };
-const EXIT_FAIL = { status: 'fail', reason: 'exit', result: null, detail: 'exited 1' };
+const EXIT_FAIL = { status: 'fail', reason: 'exit', result: null, detail: 'exited 1', apiDurationMs: 0 };
 const recordCommentBodies = (h) => ghCallsOf(h).filter((c) => c.args[0] === 'issue' && c.args[1] === 'comment').map((c) => c.args[c.args.indexOf('--body') + 1]);
 const commentUrl = (id) => [on('gh', 'issue', 'comment'), `https://github.com/acme/widgets/issues/7#issuecomment-${id}\n`];
 
@@ -7394,6 +7394,16 @@ test('#6118 a shared-cause worker stop settles marker-free in a named run', asyn
   await run(['#7'], repeat.deps);
   assert.ok(recordCommentBodies(repeat)[0].endsWith(ESC_MARKER), recordCommentBodies(repeat)[0]);
   assert.equal(lastLine(repeat).stop.sharedCause, true, 'the stop is still shared-cause; only the comment escalates');
+});
+
+test('AC2.1 (#6321): driveRecord records a ran-and-failed launch as not counting and a no-work 404 as counting', async () => {
+  const ran = harness({ worker: { ...ENVELOPE, status: 'fail', reason: 'exit', result: null, detail: 'x', turns: 2, apiDurationMs: 958, apiError: null } });
+  const ranFacts = await driveRecord(7, newShared(), ran.deps);
+  assert.deepEqual(ranFacts.implementerLaunch, { status: 'fail', reason: 'exit', counts: false });
+  const noWork = harness({ worker: { ...ENVELOPE, status: 'fail', reason: 'exit', result: null, detail: 'x', turns: 1, apiDurationMs: 0, apiError: { status: 404, type: 'not_found_error' } } });
+  const noWorkFacts = await driveRecord(7, newShared(), noWork.deps);
+  assert.deepEqual(noWorkFacts.implementerLaunch, { status: 'fail', reason: 'exit', counts: true });
+  assert.equal(noWorkFacts.sharedCause, false);
 });
 
 test('#6118 AC8.1: a streak-second launch failure settles marker-free', async () => {
