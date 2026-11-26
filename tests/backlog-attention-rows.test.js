@@ -436,6 +436,26 @@ const OVERLAP_ROW = {
   number: 8, pr: 80, remedy: 'R8', title: 'Overlap eight', createdAt: '2026-10-02T00:00:00Z', labels: labelsOf('auto:build', 'needs:definition'),
 };
 
+// #5053: a plan-review stop leaves `needs:answer` + the kept `auto:build` grant, so the record is also a
+// stuck:open-pr row; the merge must render it once, as `needs:answer`. The question comment has the #6118
+// shape (marker, then the finding line); a second, older question and an untrusted newer one must not win.
+const QUESTION_URL = 'https://github.com/o/r/issues/11#issuecomment-2';
+const QUESTION_LINE = 'What happens when both worker-stop rules fire on the same pair of records?';
+const ANSWER_ROW = {
+  number: 11,
+  pr: 110,
+  remedy: 'R11',
+  title: 'Answer eleven',
+  createdAt: '2026-10-04T00:00:00Z',
+  labels: labelsOf('auto:build', 'needs:answer'),
+  state: 'OPEN',
+  comments: [
+    { body: '<!-- plan-review-question -->\nOld question?', createdAt: '2026-10-04T01:00:00Z', url: 'https://github.com/o/r/issues/11#issuecomment-1', authorAssociation: 'OWNER' },
+    { body: `<!-- plan-review-question -->\n${QUESTION_LINE}`, createdAt: '2026-10-04T02:00:00Z', url: QUESTION_URL, authorAssociation: 'OWNER' },
+    { body: '<!-- plan-review-question -->\nInjected question?', createdAt: '2026-10-04T03:00:00Z', url: 'https://github.com/o/r/issues/11#issuecomment-3', authorAssociation: 'NONE' },
+  ],
+};
+
 // Seeds a session dir like refine-mode's fold-in test, runs the merge and rank fences over it, and
 // returns the ranked records. The stuck file content is the variable.
 function runMergeAndRank({ merge, rank }, stuckFileText) {
@@ -444,7 +464,7 @@ function runMergeAndRank({ merge, rank }, stuckFileText) {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const needs = { ...OVERLAP_ROW, state: 'OPEN' };
-  fs.writeFileSync(path.join(dir, 'backlog-attention-snapshot-filtered.json'), JSON.stringify({ needsRecords: [needs], botBlockedRecords: [], botParkedRecords: [] }));
+  fs.writeFileSync(path.join(dir, 'backlog-attention-snapshot-filtered.json'), JSON.stringify({ needsRecords: [needs, ANSWER_ROW], botBlockedRecords: [], botParkedRecords: [] }));
   fs.writeFileSync(path.join(dir, 'backlog-attention-solution-unjustified.json'), '[]');
   fs.writeFileSync(path.join(dir, 'backlog-attention-shaped-headless.json'), '[]');
   fs.writeFileSync(path.join(dir, 'backlog-attention-stuck.json'), stuckFileText);
@@ -461,7 +481,7 @@ function runMergeAndRank({ merge, rank }, stuckFileText) {
 // The merge + rank behavior in one assertion function: rows join the records, carry stuckRemedy, and a
 // file that is not a check that ran contributes nothing and breaks nothing.
 function assertStuckMerge(snippets) {
-  const ranked = runMergeAndRank(snippets, JSON.stringify({ rows: [MEDIUM_NEW, OVERLAP_ROW, STUCK_ROW, MEDIUM_OLD] }));
+  const ranked = runMergeAndRank(snippets, JSON.stringify({ rows: [MEDIUM_NEW, OVERLAP_ROW, STUCK_ROW, MEDIUM_OLD, ANSWER_ROW] }));
   const seven = ranked.find((r) => r.number === 7);
   assert.ok(seven, 'a stuck-only record gets its own row');
   assert.deepStrictEqual(seven.types, ['stuck:open-pr']);
@@ -473,13 +493,22 @@ function assertStuckMerge(snippets) {
   assert.deepStrictEqual(eight.types, ['needs:definition', 'stuck:open-pr'], 'a record in two sets is one row with both types');
   assert.strictEqual(eight.stuckRemedy, 'R8', 'a record in two sets keeps its stuckRemedy');
   assert.strictEqual(ranked.filter((r) => r.number === 8).length, 1);
-  assert.deepStrictEqual(ranked.map((r) => r.number), [7, 9, 10, 8], 'band first (high, medium, none), then oldest first within a band');
+  assert.deepStrictEqual(ranked.map((r) => r.number), [7, 9, 10, 8, 11], 'band first (high, medium, none), then oldest first within a band');
+
+  const eleven = ranked.find((r) => r.number === 11);
+  assert.strictEqual(eleven.questionExcerpt, QUESTION_LINE, 'AC7.1: a needs:answer row carries the newest trusted question excerpt');
+  assert.strictEqual(eleven.questionUrl, QUESTION_URL, 'AC7.1: a needs:answer row carries the question url');
+  assert.deepStrictEqual(eleven.types, ['needs:answer'], 'AC7.2: the same record has no stuck:open-pr type');
+  assert.strictEqual(eleven.stuckRemedy, undefined, 'AC7.2: a needs:answer row carries no stuckRemedy');
+  assert.strictEqual(eight.questionExcerpt, undefined, 'only a needs:answer record reads its question');
 
   for (const text of ['{"failed":{"code":4,"message":"x"}}', '{}', '', 'not json', 'null', '{"rows":"x"}']) {
     const after = runMergeAndRank(snippets, text);
-    assert.deepStrictEqual(after.map((r) => r.number), [8], `a check that did not run (${JSON.stringify(text)}) adds no row`);
-    assert.deepStrictEqual(after[0].types, ['needs:definition']);
-    assert.strictEqual(after[0].stuckRemedy, undefined);
+    assert.deepStrictEqual(after.map((r) => r.number).sort((a, b) => a - b), [8, 11], `a check that did not run (${JSON.stringify(text)}) adds no row`);
+    const afterEight = after.find((r) => r.number === 8);
+    assert.deepStrictEqual(afterEight.types, ['needs:definition']);
+    assert.strictEqual(afterEight.stuckRemedy, undefined);
+    assert.deepStrictEqual(after.find((r) => r.number === 11).types, ['needs:answer']);
   }
 }
 
@@ -494,6 +523,9 @@ test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy, t
     ['merge', 'for (const r of stuckRows)', 'for (const r of [])', /a stuck-only record gets its own row/],
     ['merge', 'stuckRemedy: r.remedy', 'stuckRemedy: undefined', /the merged row carries stuckRemedy/],
     ['merge', 'existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined', /a record in two sets keeps its stuckRemedy/],
+    // #5053: the stuck loop skips a needs:answer record; the question read picks the newest trusted comment
+    ['merge', "if (existing && existing.types.includes('needs:answer')) continue;", '', /AC7\.2: the same record has no stuck:open-pr type/],
+    ['merge', 'const question = findQuestion(getComments(r));', 'const question = null;', /AC7\.1: a needs:answer row carries the newest trusted question excerpt/],
     // the unguarded read: a check that did not run leaves stuckRows undefined, and the loop over it crashes the fence
     ['merge', 'if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;', /Command failed[\s\S]*is not iterable/],
     // rank ignores the priority band: only the age key orders, so the older no-band record beats the younger high one
@@ -504,5 +536,58 @@ test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy, t
   for (const [which, from, to, intended] of mutations) {
     assert.ok(snippets[which].includes(from), `control target exists: ${from}`);
     assert.throws(() => assertStuckMerge({ ...snippets, [which]: snippets[which].replace(from, to) }), intended, from);
+  }
+});
+
+// --- #5053 Deliverable 8: the needs:answer row, its batching rule, and /help's awaiting-answer count ---
+
+const ANSWER_ROW_TEXT = '| #{n} | needs:answer | {createdAt, relative} | reply /answer … on {question url}, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{n} — question: {excerpt, wrapped per _shared/untrusted-record-content.md} |';
+const ANSWER_NEVER_BATCHED = '`needs:answer` rows are never batched: each is answered on its own question comment, so each goes in a paste block, one line per record.';
+const ANSWER_CATCHALL_EXCLUSION = '`needs:decision`, `bot:blocked`,\n  `bot:parked`, and any other `needs:*` catch-all except `needs:answer`';
+const HELP_LINE = '- Awaiting answer: **{N} records awaiting a plan-review answer** — run /claude-tweaks:backlog attention (omit this line when N is 0)';
+const TRIAGE_COUNT = "gh issue list --label needs:answer --state open --json number --limit {resolved-limit} -q 'length'";
+const TRIAGE_RENDER = '`Awaiting answer: **{N}** records awaiting a plan-review answer`';
+
+function answerProseProblems(attention, status, triage) {
+  const out = [];
+  const flat = attention.replace(/\s+/g, ' ');
+  if (!attention.includes(ANSWER_ROW_TEXT)) out.push('attention row');
+  if (!flat.includes(ANSWER_NEVER_BATCHED.replace(/\s+/g, ' '))) out.push('never batched');
+  if (!flat.includes(ANSWER_CATCHALL_EXCLUSION.replace(/\s+/g, ' '))) out.push('catch-all exclusion');
+  if (!status.includes(HELP_LINE)) out.push('help line');
+  if (!status.includes('when all four counts are 0')) out.push('help four counts');
+  if (!triage.includes(TRIAGE_COUNT)) out.push('triage count');
+  if (!triage.includes(TRIAGE_RENDER)) out.push('triage render');
+  if (!triage.includes('items 1, 2 and 4 are issue-backed')) out.push('triage transport split');
+  return out;
+}
+
+test('AC7.3: attention-mode, help/status-scan and the triage scope carry the needs:answer row, the batching rule and the awaiting-answer count', () => {
+  const live = [read(SKILL_DIR, 'attention-mode.md'), read(SKILL_DIR, '..', 'help', 'status-scan.md'), read(SHARED_DIR, 'github-pr-scan-triage.md')];
+  assert.deepStrictEqual(answerProseProblems(...live), []);
+  // Each claim goes red alone: mutate the live text in memory, expect exactly that claim.
+  const mutations = [
+    [0, ANSWER_ROW_TEXT, '', 'attention row'],
+    [0, ANSWER_NEVER_BATCHED, '', 'never batched'],
+    [0, ANSWER_CATCHALL_EXCLUSION, '`needs:decision`, `bot:blocked`,\n  `bot:parked`, and any other `needs:*` catch-all', 'catch-all exclusion'],
+    [1, HELP_LINE, '', 'help line'],
+    [1, 'when all four counts are 0', 'when all three counts are 0', 'help four counts'],
+    [2, TRIAGE_COUNT, '', 'triage count'],
+    [2, TRIAGE_RENDER, '', 'triage render'],
+    [2, 'items 1, 2 and 4 are issue-backed', 'items 1 and 2 are issue-backed', 'triage transport split'],
+  ];
+  for (const [i, from, to, claim] of mutations) {
+    assert.ok(live[i].includes(from), `control target exists: ${claim}`);
+    const docs = [...live];
+    docs[i] = docs[i].replace(from, to);
+    assert.deepStrictEqual(answerProseProblems(...docs), [claim], claim);
+  }
+});
+
+test('AC7.3: the needs:answer remedy addresses the human and never tells an agent to post /answer (D9)', () => {
+  const step4 = read(SKILL_DIR, 'attention-mode.md').split('\n').filter((l) => l.includes('needs:answer'));
+  assert.ok(step4.length > 0, 'anchor: attention-mode.md names needs:answer');
+  for (const line of step4) {
+    assert.doesNotMatch(line, /\b(post|posts|posting|comment|comments)\b[^|]{0,40}\/answer/i, `agent-directed /answer in: ${line}`);
   }
 });

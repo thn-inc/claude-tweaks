@@ -189,7 +189,9 @@ const BLOCKED_CONSUMERS = [
   [path.join('plugin', 'skills', 'backlog', 'SKILL.md'), '- A record hit its retry ceiling', 'line', true],
   [path.join('plugin', 'skills', '_shared', 'label-bootstrap.md'), '  ["bot:blocked",', 'line', false],
   [path.join('plugin', 'skills', 'help', 'status-scan.md'), '- Blocked: **', 'line', false],
-  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), 'Render as three lines:', 'line', false],
+  [path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md'), '2. **Blocked** —', 'line', false],
+  // The render line now also carries the awaiting-answer count (#5053 D8), whose text names "plan-review answer"
+  // on purpose, so the line cannot be held to the retired-cause ban; item 2 above is the Blocked explanation.
   [path.join('plugin', 'skills', '_shared', 'work-record-permission-matrix.md'), '| **Executors**', 'line', true],
   [path.join('docs', 'skill-graph.md'), '| `/dispatch` | `/tidy` Step 4.7', 'line', true],
 ];

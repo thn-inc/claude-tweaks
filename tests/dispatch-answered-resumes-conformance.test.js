@@ -397,6 +397,7 @@ const ALLOWED = [
   ['dispatch/reporting.md', 'reply `/answer …` on that question comment', "the plan-review relay's instruction to the human"],
   ['_shared/label-bootstrap.md', 'reply /answer on the question comment', 'the needs:answer label description, read by a human'],
   ['dispatch/open-pr-exclusion-report.md', 'reply /answer on its question comment', 'the rendered line a human reads'],
+  ['backlog/attention-mode.md', 'reply /answer … on {question url}', 'the rendered needs:answer row a human reads'],
   ['dispatch/answered-resumes.md', 'It never posts an `/answer` comment', 'a prohibition'],
 ];
 const unallowed = (hits) => hits.filter((h) => !ALLOWED.some(([file, anchor]) => h.file === file && h.sentence.includes(anchor)));

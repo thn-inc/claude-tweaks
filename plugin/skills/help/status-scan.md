@@ -277,7 +277,7 @@ Cheap counts only — detail stays `/claude-tweaks:backlog`'s and `/tidy`'s job,
 not `/help`'s. Skip silently (same fail-open detection ladder as Stage 4.5)
 when `gh` is unavailable, unauthenticated, or the repo has no GitHub remote.
 
-Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split from `_shared/github-pr-scan.md`, #4820). The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the three-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these three counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
+Scan per `_shared/github-pr-scan-triage.md`, **`triage-queue`** scope (split from `_shared/github-pr-scan.md`, #4820). The dispatcher inlines `_shared/forge-detection.md`'s Detection Ladder plus that file's `triage-queue` scope section and the four-line render format into this agent's prompt — subagents cannot read sibling files. This is the single source for these four counts; this stage does not compute them independently (previously it did, and its own version double-counted `status:blocked` issues inside "pending authorization" — the shared scope excludes them). Origin-agnostic: every `ready` record counts toward pending authorization regardless of origin (health-filed, captured, or human-filed, with or without a `by:*` label) — matching `/claude-tweaks:backlog refine`'s own origin-agnostic `ready`-queue pull, which tiers no health-skill origin specially.
 
 ## Stage 4.7: Acceptance Queue
 
@@ -409,10 +409,11 @@ claude-tweaks v{version} (Stage 0 — see its own section for the missing/unread
 
 ### Triage Queue
 
-*(Omit this section entirely when the GitHub scan was skipped, or when all three counts are 0.)*
+*(Omit this section entirely when the GitHub scan was skipped, or when all four counts are 0.)*
 
 - Pending authorization: **{N} records awaiting your decision** — run `/claude-tweaks:backlog refine` (omit this line when N is 0)
 - Blocked: **{N} records blocked** (retry ceiling) — run `/claude-tweaks:backlog refine` to review (omit this line when N is 0)
+- Awaiting answer: **{N} records awaiting a plan-review answer** — run /claude-tweaks:backlog attention (omit this line when N is 0)
 - Auto-merged this week: **{N} auto-merges** on the default branch in the last 7 days (omit this line when N is 0)
 
 ### Acceptance Queue

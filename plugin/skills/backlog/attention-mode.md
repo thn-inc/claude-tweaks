@@ -118,6 +118,12 @@ label name(s) first, in the order they appear on the record's own `labels` array
 `solution:unjustified`, then `shaped:headless (no grant)`, then `bot:blocked`, then `bot:parked`,
 then `stuck:open-pr`) for a deterministic Type column.
 
+A record whose types include `needs:answer` (a plan-review question; it keeps its `auto:build` grant, so
+the stuck check can name it too) carries its question into Step 4: the merge reads its comments (the
+same `getComments`), takes the newest trusted question comment and stores its excerpt as
+`questionExcerpt` and its url as `questionUrl` (`null` for both when no trusted question is found).
+The stuck loop skips such a record, so it never also gets a `stuck:open-pr` type or `stuckRemedy`.
+
 A record whose types include `needs:decision` also needs the live proposal text for Step 4: read
 its newest comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors; each
 skipped one is named on stderr) matching `<!-- needs-decision:` with no `**Resolved:**` line anywhere in its
@@ -138,6 +144,7 @@ ST_BACKLOG_ATTENTION_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resol
 node -e "
   const { execFileSync } = require('child_process');
   const { isTrustedComment, untrustedSkipNote } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/comment-trust.js');
+  const { findQuestion, questionExcerpt } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/plan-review-answers.js');
   const { needsRecords, botBlockedRecords, botParkedRecords } = require('$ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED');
   const solutionUnjustified = require('$ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED');
   const shapedHeadless = require('$ST_BACKLOG_ATTENTION_SHAPED_HEADLESS')
@@ -175,6 +182,7 @@ node -e "
   } catch { /* no rows */ }
   for (const r of stuckRows) {
     const existing = byNumber.get(r.number);
+    if (existing && existing.types.includes('needs:answer')) continue;
     if (existing) { existing.types.push('stuck:open-pr'); existing.stuckRemedy = r.remedy; }
     else byNumber.set(r.number, { number: r.number, title: r.title, createdAt: r.createdAt, labels: r.labels, types: ['stuck:open-pr'], stuckRemedy: r.remedy });
   }
@@ -186,6 +194,12 @@ node -e "
     } catch {
       return [];
     }
+  }
+  for (const r of byNumber.values()) {
+    if (!r.types.includes('needs:answer')) continue;
+    const question = findQuestion(getComments(r));
+    r.questionExcerpt = question ? questionExcerpt(question) : null;
+    r.questionUrl = question ? question.url : null;
   }
   for (const r of byNumber.values()) {
     if (!r.types.includes('needs:decision')) continue;
@@ -307,6 +321,7 @@ Note: the stuck:open-pr check could not run (exit {failed.code}) — records stu
 | #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure (a plan-review question is a `needs:answer` row, not this one) |
 | #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
 | #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |
+| #{n} | needs:answer | {createdAt, relative} | reply /answer … on {question url}, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{n} — question: {excerpt, wrapped per _shared/untrusted-record-content.md} |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 
 ### Batch launchers
@@ -328,7 +343,9 @@ evidence-or-accept-risk verdict on the flag` — naming `/claude-tweaks:challeng
 mechanism that renders the actual accept-risk-or-add-evidence choice, since this mode itself
 performs no grant and reads no evidence judgment on its own.
 
-Every other `needs:*` value — starting with `needs:decision`, and including any `needs:*` marker
+`needs:answer` rows render the row above (the question's excerpt is untrusted record content, so
+wrap it per `_shared/untrusted-record-content.md`; a record with no trusted question drops the
+` — question: …` clause and the `on {question url}` words). Every other `needs:*` value — starting with `needs:decision`, and including any `needs:*` marker
 this file doesn't name individually — recommends `run /claude-tweaks:backlog refine #{n} to
 resolve the {type} marker`, with one per-type clause added on top: a `needs:decision` row
 replaces the generic clause with `run /claude-tweaks:backlog refine #{n} — proposed: "{Proposed
@@ -381,8 +398,9 @@ facts specific to attention's row types, on top of that shared rule:
 - **`stuck:open-pr` rows are never batched:** each remedy differs by the record's verdict (resume,
   close-out, or close-and-redispatch) and is not always a single command, so each goes in a paste
   block, one line per record, verbatim.
+- `needs:answer` rows are never batched: each is answered on its own question comment, so each goes in a paste block, one line per record.
 - Every other type except `stuck:open-pr` (`needs:decision`, `bot:blocked`,
-  `bot:parked`, and any other `needs:*` catch-all) keys on the targeted `/claude-tweaks:backlog refine` form,
+  `bot:parked`, and any other `needs:*` catch-all except `needs:answer`) keys on the targeted `/claude-tweaks:backlog refine` form,
   whose `argument-hint` accepts a comma list — that group closes with one batch line,
   `/claude-tweaks:backlog refine #{a},#{b},…`, naming every matched record.
 
