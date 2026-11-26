@@ -7,7 +7,7 @@
 //
 // The envelope. Every launch resolves to one object with these fields, in this order
 // (ENVELOPE_FIELDS): status, reason, result, usage, turns, denials, spendOverrun,
-// costUsd, detail, sessionId. Fields may be added, never renamed. `status` is `ok`, `fail` or
+// costUsd, detail, sessionId, apiError. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
 // structured output when status is `ok` and null otherwise. `ok` means only that a
@@ -44,6 +44,18 @@
 // non-empty string (else the pre-minted id of a lens-reviewer launch, below, else null), and `spendOverrun` is true exactly when a spend
 // ceiling was given and the reported cost is above it. The free-text `result` string
 // is never parsed.
+//
+// Shared cause (#6118). `apiError` is `{ status, type }` exactly when a result object exists
+// and its `terminal_reason` is `api_error`, else null: `status` is `api_error_status` when
+// that is a safe integer, else null; `type` is `api_error_type` when that is a non-empty
+// string, else null. It never changes `status` or `reason`: an api_error result is still
+// `fail`/`exit`. `sharedCauseOf(envelope)` is true when the worker could not launch for a
+// cause every later record would meet: `reason` is `launch-error`, or `status` is `fail`,
+// `apiError` is set and its `type` is in SHARED_CAUSE_API_TYPES, or its `status` is in
+// SHARED_CAUSE_API_STATUSES, or both are null (the not-logged-in shape: no request was
+// made). Only these structured fields decide it, never the `result` text.
+// `countsTowardLaunchStreak(envelope)` is true for `launch-error` and for `fail`/`exit`, and
+// false for `ok`, `timeout`, `spend-ceiling` and `schema`.
 //
 // The runner contract. `runner({ file, args, options, input, platform })` returns
 // `{ pid, kill(signal), exited }`, where `exited` resolves to
@@ -138,6 +150,21 @@
 //   the change and replied `STATUS: DONE`. Re-run the three launches with the opt-in `#6002` live probe;
 //   the Agent-tool half has no node test (an Agent dispatch cannot run outside a session).
 //
+// - Shared cause (#6118). Probed on 2026-11-26 with Claude Code CLI 2.1.325 on macOS
+//   (darwin), launched from a process with no TTY, `env -i PATH HOME USER
+//   CLAUDE_CONFIG_DIR=<empty scratch dir>`, `claude -p --output-format json --safe-mode
+//   --model haiku`, stdin `/dev/null`:
+//   - Not logged in: exit 1; result object `type: "result"`, `subtype: "success"`,
+//     `is_error: true`, `terminal_reason: "api_error"`, `api_error_status: null`, no
+//     `api_error_type`, `duration_api_ms: 0`, `result: "Not logged in · Please run /login"`.
+//     Classified `fail`/`exit`.
+//   - `ANTHROPIC_API_KEY=sk-ant-bogus-000`: exit 1; the same shape with
+//     `api_error_status: 401`, `api_error_type: "authentication_error"`,
+//     `api_error_origin: "first_party"`, `result: "Invalid API key · Fix external API key"`.
+//     Classified `fail`/`exit`.
+//   - Not probed: a usage or rate limit. Its values (`rate_limit_error`, HTTP 429) are taken
+//     from the API's documented error types, not observed. Linux and Windows were not probed.
+//
 // Pre-minted session id (#6000 whole-branch review). A `lens-reviewer` launch passes
 // `--session-id <uuid>` (a fresh `crypto.randomUUID()` per launch; `composeArgs` appends it
 // last and refuses a non-UUID), so a worker with no result object (a timeout, a death by
@@ -203,7 +230,7 @@ const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainRe
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
-const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId'.split(' '));
+const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId apiError'.split(' '));
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
 const ENV_ALLOW_WIN32 = Object.freeze([...ENV_ALLOW, 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 
@@ -308,6 +335,34 @@ function describeError(err) {
   return String(err);
 }
 
+const SHARED_CAUSE_API_TYPES = Object.freeze(['authentication_error', 'permission_error', 'rate_limit_error']);
+const SHARED_CAUSE_API_STATUSES = Object.freeze([401, 403, 429]);
+
+// The api_error fields of a result object, or null when it is not an api_error result.
+function readApiError(obj) {
+  if (!obj || obj.terminal_reason !== 'api_error') return null;
+  return {
+    status: Number.isSafeInteger(obj.api_error_status) ? obj.api_error_status : null,
+    type: typeof obj.api_error_type === 'string' && obj.api_error_type !== '' ? obj.api_error_type : null,
+  };
+}
+
+// True when the launch failed for a cause every later record would meet (see the header).
+function sharedCauseOf(env) {
+  if (!env || typeof env !== 'object') return false;
+  if (env.reason === 'launch-error') return true;
+  if (env.status !== 'fail' || !env.apiError) return false;
+  const { status, type } = env.apiError;
+  if (type === null && status === null) return true;
+  return SHARED_CAUSE_API_TYPES.includes(type) || SHARED_CAUSE_API_STATUSES.includes(status);
+}
+
+// True when the envelope is a launch failure that counts toward a run of launch failures.
+function countsTowardLaunchStreak(env) {
+  if (!env || typeof env !== 'object') return false;
+  return env.reason === 'launch-error' || (env.status === 'fail' && env.reason === 'exit');
+}
+
 const KILL_GRACE_MS = 5000;
 const REAP_DEADLINE_MS = 5000;
 // The largest delay a timer takes; a larger one fires after 1 ms, killing the child at once.
@@ -327,6 +382,7 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     costUsd: cost,
     detail,
     sessionId: obj && typeof obj.session_id === 'string' && obj.session_id !== '' ? obj.session_id : null,
+    apiError: readApiError(obj),
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 
@@ -644,4 +700,4 @@ async function launchWorker(opts, deps = defaultDeps()) {
   }
 }
 
-module.exports = { ENVELOPE_FIELDS, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker, superviseChild, realToolchainDeps };
+module.exports = { ENVELOPE_FIELDS, SHARED_CAUSE_API_TYPES, SHARED_CAUSE_API_STATUSES, sharedCauseOf, countsTowardLaunchStreak, ENV_ALLOW, ENV_ALLOW_WIN32, KILL_GRACE_MS, REAP_DEADLINE_MS, buildEnv, conformsTo, defaultRunner, launchWorker, superviseChild, realToolchainDeps };

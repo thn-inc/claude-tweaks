@@ -60,7 +60,9 @@ files:
   - To let the driver take the record again, delete that comment.
   - The last call, `settle-close`, runs `hooks.js close-run --run {run-dir}`. `run-state.json` then reads `status: clean`, with `worktree` null; a worktree path the run had recorded is kept as `worktreeAtClose`. The run directory itself stays, because it holds the escalation line.
   - If the escalate call itself fails, nothing is removed, the run is not closed, and the stop is settled as `blocked`.
+  - A worker that could not launch for a shared cause (final line `stop.sharedCause: true`) runs the same calls, but the record comment is the fixed marker-free text ending `<!-- express-driver: shared-cause -->`, and the `settle-comment-record` line's detail says the driver could not launch a worker and will try again. Admission still takes the record on a later run. A second shared-cause stop on a record already carrying that trusted comment posts the ordinary escalation comment with the marker.
 - **Red flags:**
+  - A shared-cause stop whose record comment ends with `<!-- express-driver: escalated -->` while no trusted shared-cause comment was on the record.
   - A worktree or branch removed with no escalation line on record.
   - An escalated record driven again on the next run.
   - A worktree or branch that this run did not create being removed.
@@ -98,3 +100,4 @@ files:
 - Step 4's `none` versus `left-to-caller` follows the plan-review decision that a row with no calls settles `none` even under `--no-settle`.
 - Updated at wrap-up of #5219: Step 3 names the `settle-close` call the review fixes added to the end of the pre-push row, so a removed worktree no longer leaves the run active.
 - Updated at the wrap-up of the driver's claim-exit deepening (daa4a8f87): `files:` now lists `plugin/bin/lib/driver/claim-exit.js`. The settle reads from it whether a claim stop is contested (step 1's `none` row, step 2's exit-3 red flag) and whether a claim may have been written (step 2's TTL note), so a change there now flags this journey. No step changed.
+- Updated during the build of #6118 (run `2026-11-26T065910-record-6118`): Step 3 names the marker-free shared-cause settle of a worker that could not launch, its repeat cap, and a red flag for a shared-cause stop escalated with the marker.

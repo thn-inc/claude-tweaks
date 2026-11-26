@@ -95,7 +95,7 @@ const USAGE = [
   'exists, to {run-dir}/driver-events.jsonl); each record ends with a final line carrying',
   'its outcome: pending-review, express-escalated, blocked, refused, merged or armed. A record merges only when it carries auto:merge and auto:build and the merge-check and acceptance judgment workers both clear it.',
   'Exit codes (Combined-2):',
-  '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, or express-driver off), whatever each record\'s outcome',
+  '  0  every named record reached its final event, whatever its outcome; with --budget, the loop ended normally (budget spent, queue exhausted, a claim stop on claim-targets.js exit 2, 6 or 7, a worker stop when implementer launches cannot launch, or express-driver off), whatever each record\'s outcome',
   '  1  when the policy, or the run\'s repository or integration branch, cannot be resolved and no further record is attempted; with --budget, also a failed queue pull',
   '  2  malformed invocation (no record reference, a non-numeric one) or gh or git absent, or an internal error (run itself failed); a bad or repeated --budget value, or --budget with a named record; a missing, empty or repeated --run value, or --run without --no-settle, with more than one record, or with --budget or --check; with --in-flight-prs or --near-dup-pairs, a missing, empty, flag-shaped or repeated value, --budget or --check beside either, or --near-dup-pairs without --in-flight-prs',
   '  3  --run refused: the run directory is missing or not a run directory under the main checkout, or the working directory is not a linked worktree of it, or the run directory\'s run-state.json does not name that worktree, or the worktree has no branch; nothing written',
@@ -208,15 +208,17 @@ function parseArgs(argv) {
 // entry running or last run (null before the first), `inStep` is true while it is pending,
 // and `final` holds the final line an interrupt wrote. `interrupted` is the signal's name
 // once the handler has run, else false. `adopted` is adopt.js's ok result under --run, else null.
+// `launchStreak` is the --budget loop's count of consecutive driven records whose implementer launch
+// counted toward its two-in-a-row rule (#6118); 0 outside the loop.
 function newShared() {
-  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null, inFlightPrsFile: null, nearDupPairsFile: null };
+  return { policy: null, ref: null, mainRoot: null, repo: null, ghRepo: null, fatal: false, activeWorker: null, current: null, interrupted: false, settle: true, adopted: null, inFlightPrsFile: null, nearDupPairsFile: null, launchStreak: 0 };
 }
 
 // `named` (#5584): the record was given on drive.js's command line, so a typed command may stand in
 // for its `auto:build` grant at admission; a record the --budget loop picked never is.
 function newCtx(record, shared, { named = false } = {}) {
   return {
-    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null,
+    record, named: named === true, runId: null, runDir: null, wt: null, indexFlags: null, implementer: null, branch: null, claimed: false, claimExit: null, implementerLaunch: null,
     created: { worktree: false, branch: false }, pushed: false, configWritten: false, relaunch: null,
     pr: null, ci: null, ciWaitStartedAt: null, pushedAt: null, checkLogged: undefined, worker: null,
     workerTestCommand: undefined, workerTestMode: undefined,
@@ -246,7 +248,9 @@ const orNull = (v) => (v === undefined ? null : v);
 
 // The structured stop a settle (or a caller reading the final line) works from. Built here, once,
 // for both settle's input and the final line, so it never depends on the outcome. A pre-push
-// stop is one settle escalates, so its reason is the closed set escalate takes.
+// stop is one settle escalates, so its reason is the closed set escalate takes. `sharedCause` (#6118): the stop is
+// the implementer's launch failure, and that launch was shared-cause, or it counts toward the two-in-a-row rule
+// while a streak is open (ctx.shared.launchStreak): settle then posts the marker-free comment.
 function stopObject(ctx, stop) {
   const stopClass = stop ? stop.result.stopClass : STOP_CLASSES.NONE;
   return {
@@ -257,11 +261,19 @@ function stopObject(ctx, stop) {
     reason: stop ? (stopClass === STOP_CLASSES.PRE_PUSH ? toEscalationReason(stop.result.reason) : stop.result.reason) : null,
     detail: stop ? orNull(stop.result.detail) : null,
     checkLogged: orNull(ctx.checkLogged),
+    sharedCause: isSharedCauseStop(ctx, stop),
   };
 }
 
+function isSharedCauseStop(ctx, stop) {
+  const launch = ctx.implementerLaunch;
+  if (!stop || stop.result.launchFailure !== true || !launch) return false;
+  return launch.sharedCause === true || (ctx.shared.launchStreak >= 1 && launch.counts === true);
+}
+
 // What settle did for a record, as the final line reports it. `mode` is the `settle` word.
-const SETTLE_NONE = Object.freeze({ mode: 'none', row: null, failed: [], settledClass: null, unclassified: false, note: null });
+// `escalationCommentId` is the id of the escalation comment settle posted, else null (#6118).
+const SETTLE_NONE = Object.freeze({ mode: 'none', row: null, failed: [], settledClass: null, unclassified: false, note: null, escalationCommentId: null });
 const SETTLE_INTERRUPTED = Object.freeze({ ...SETTLE_NONE, mode: 'interrupted' });
 
 const KNOWN_CLASSES = new Set(Object.values(STOP_CLASSES));
@@ -362,10 +374,12 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
     stop: stopObj, record, runId: ctx.runId, runDir: ctx.runDir, wt: ctx.wt, branch: ctx.branch,
     pr, claimed: ctx.claimed, mainRoot: shared.mainRoot, ghRepo: shared.ghRepo, emit,
     interrupted: () => shared.interrupted,
+    comments: ctx.issue && Array.isArray(ctx.issue.comments) ? ctx.issue.comments : null,
   };
   const reported = (result, mode) => ({
     mode: result.interrupted ? 'interrupted' : mode, row: result.row, failed: result.failed,
     settledClass: result.settledClass, unclassified: result.unclassified, note: result.note,
+    escalationCommentId: result.escalationCommentId,
   });
   if (shared.settle === true) {
     const result = await settle(input, deps);
@@ -382,7 +396,7 @@ async function settleStop(ctx, stop, record, shared, sink, deps) {
   }
   return {
     mode: SETTLE_ROWS[plan.row].length > 0 ? 'left-to-caller' : 'none', row: plan.row, failed: [],
-    settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote,
+    settledClass: CLASS_BY_ROW[plan.row], unclassified: plan.unclassified, note: plan.unreadableNote, escalationCommentId: null,
   };
 }
 
@@ -411,8 +425,9 @@ function mirroredSink(sink, shared, deps) {
   return { ...sink, emit };
 }
 
-// One record through the table; resolves to `{ final, ctx }` — the final event (null when an
-// interrupt landed before its first step) and the record's context. `steps` is a test seam.
+// One record through the table; resolves to `{ final, ctx, settled }` — the final event (null when an
+// interrupt landed before its first step), the record's context and what settle did (absent when an
+// interrupt ended the record). `steps` is a test seam.
 async function driveWithCtx(record, shared, deps, steps, { named = false } = {}) {
   const sink = mirroredSink(createEventSink({ stdout: deps.stdout, appendFile: deps.appendFile }), shared, deps);
   const ctx = newCtx(record, shared, { named });
@@ -490,7 +505,7 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
       current.final = final;
       deps.terminate(shared.interrupted);
     }
-    return { final, ctx };
+    return { final, ctx, settled };
   } finally {
     shared.current = null;
   }
@@ -498,14 +513,18 @@ async function driveWithCtx(record, shared, deps, steps, { named = false } = {})
 
 // One record through the table; resolves to its final event (null when an interrupt landed
 // before its first step) plus the claim facts the budget loop counts from: whether the claim
-// was obtained and its run dir minted, and the claim step's exit code.
+// was obtained and its run dir minted, the claim step's exit code, and the first implementer launch's verdict
+// (#6118; null when no launch ran), and the id of the escalation comment settle posted (null when none).
 async function driveRecord(record, shared, deps, steps = STEPS, { named = false } = {}) {
-  const { final, ctx } = await driveWithCtx(record, shared, deps, steps, { named });
+  const { final, ctx, settled } = await driveWithCtx(record, shared, deps, steps, { named });
   return {
     final,
     outcome: final ? final.outcome : null,
     claimed: ctx.claimed === true && typeof ctx.runDir === 'string' && ctx.runDir !== '',
     claimExit: ctx.claimExit,
+    implementerLaunch: ctx.implementerLaunch === null ? null : { status: ctx.implementerLaunch.status, reason: ctx.implementerLaunch.reason, counts: ctx.implementerLaunch.counts },
+    sharedCause: ctx.implementerLaunch === null ? null : ctx.implementerLaunch.sharedCause,
+    escalationCommentId: settled ? settled.escalationCommentId : null,
   };
 }
 
