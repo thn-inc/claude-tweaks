@@ -90,4 +90,4 @@ function confirmFromFile(file, members) {
   return confirmPassingVerdicts(content, members);
 }
 
-module.exports = { VERDICT_STEPS, PASS_VERDICT, verdictText, verdictMarker, confirmPassingVerdicts, confirmFromFile };
+module.exports = { VERDICT_STEPS, PASS_VERDICT, verdictText, verdictMarker, latestVerdicts, confirmPassingVerdicts, confirmFromFile };
