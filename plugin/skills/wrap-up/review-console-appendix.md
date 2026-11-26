@@ -58,7 +58,9 @@ one whose finding or header is missing, duplicated or malformed, so the two cann
 before any prefix rule runs and resolves to `refused` — those rows are in the CLI's table like
 every other row, and a `refused` item is never applied, at any tier, per `refused-proposals.md`.
 The CLI also computes the merge half with both carve-outs (`merge.resolution` = `merge` |
-`leave-open`, with the reason — it **never** runs the merge itself), appends one decisions block
+`leave-open`, with the reason — it **never** runs the merge itself; a stored `merge` is not final
+until the merge site's `--recheck-merge` confirms every member's passing verdict, and the resolve
+names an unconfirmed half on stderr, #5833), appends one decisions block
 (`AUTO {time} — Review Console: Console auto-resolved {n} item(s) at unattended
 (console-resolve.js). Reversibility: per item.` plus one line per item), and writes
 `{run-dir}/console.json` (`{resolved: true, mode: 'auto-resolve', at, ceiling, items, merge, droppedByTiebreak, filings, digests}` —

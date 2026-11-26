@@ -31,7 +31,9 @@ test('#2783 repro: the harness refusal from an ad-hoc EnterWorktree session surv
   assert.strictEqual(atEnter.attribution, 'fallback', 'precondition: the bug\'s shape — only a guessed run resolves');
 
   post.run({
-    env: process.env,
+    // win32 + a hermetic unset core.longpaths reaches the windows-longpaths breadcrumb writer (#4284)
+    platform: 'win32',
+    env: { ...process.env, GIT_CONFIG_GLOBAL: path.join(main, 'no-such-gitconfig'), GIT_CONFIG_NOSYSTEM: '1' },
     input: { tool_name: 'EnterWorktree', tool_response: { content: `Created worktree at ${wt} on branch wt-branch. The session is now working in the worktree.` }, session_id: S, cwd: wt },
     cwd: wt,
     ownedRun: atEnter,

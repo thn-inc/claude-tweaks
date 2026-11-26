@@ -23,6 +23,7 @@ const { UPSTREAM_FILING_TARGET, upstreamFilingRoute, parseStagedUpstream } = req
 const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseEntry } = require('../log-decision/append');
+const { confirmPassingVerdicts, latestVerdicts } = require('../dispatch/merge-verdict');
 const { PHASE_EXIT_STEP } = require('../phase-exit/exit-record');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
@@ -483,6 +484,52 @@ function mergeResolution(snapshot, deps) {
     }
   }
   return { resolution: 'merge', reason: 'every member carries auto:build with auto:merge or a matured auto:merge-pending; no needs-human verdict' };
+}
+
+// #5833: a `merge` resolution persisted before the Auto-merge short-circuit logs its merge-check
+// verdict must not authorize a merge on its own. Null unless the half resolved `merge` and some member
+// still lacks a confirmed pass verdict in decisions.md.
+function mergeStaleFor(merge, snapshot) {
+  if (merge.resolution !== 'merge') return null;
+  const confirmed = confirmPassingVerdicts(snapshot.decisions, snapshot.members);
+  const unconfirmed = snapshot.members.filter((n) => !confirmed[Number(n)].confirmed);
+  if (!unconfirmed.length) return null;
+  const first = unconfirmed[0];
+  const latest = confirmed[Number(first)].latest;
+  return { unconfirmed, reason: `#${first}: no confirmed merge-check verdict in decisions.md yet (latest: ${latest || 'none'}) — the Auto-merge short-circuit applies, so the merge site re-checks before merging` };
+}
+
+const MERGE_RECHECK_LOCATION = 'Merge re-check';
+
+// Merge-site re-check of a stored merge half against the decisions.md as it stands now. The
+// re-check's own `Merge re-check` line is dropped first so it never matches itself.
+function recheckMerge(merge, decisions, mergeStale) {
+  const filtered = String(decisions).split(/\r?\n/).filter((ln) => {
+    const entry = parseEntry(ln);
+    return !(entry && (entry.location === MERGE_RECHECK_LOCATION || entry.location.endsWith(` — ${MERGE_RECHECK_LOCATION}`)));
+  }).join('\n');
+  let hit = null;
+  const line = needsHumanVerdict(filtered);
+  if (line) {
+    hit = { kind: 'needs-human', lateVerdict: line.replace(/^- /, '') };
+  } else {
+    for (const [n, v] of latestVerdicts(filtered)) {
+      if (v === 'unparsed') { hit = { kind: 'unparsed', lateVerdict: `#${n} merge-check verdict line unparsed` }; break; }
+    }
+    if (!hit && mergeStale && mergeStale.membersUnresolved === true) {
+      hit = { kind: 'unconfirmed', lateVerdict: 'members-unresolved: the run\'s members could not be read, so no merge-check verdict can be confirmed' };
+    }
+    if (!hit && mergeStale && Array.isArray(mergeStale.unconfirmed) && mergeStale.unconfirmed.length) {
+      const confirmed = confirmPassingVerdicts(filtered, mergeStale.unconfirmed);
+      const n = mergeStale.unconfirmed.find((m) => !confirmed[Number(m)].confirmed);
+      if (n !== undefined) hit = { kind: 'unconfirmed', lateVerdict: `#${n} has no confirmed merge-check verdict at merge time (latest: ${confirmed[Number(n)].latest || 'none'})` };
+    }
+  }
+  if (!hit) return { hit: false, kind: null, changed: false, lateVerdict: null, merge };
+  if (merge && merge.resolution === 'merge') {
+    return { hit: true, kind: hit.kind, changed: true, lateVerdict: hit.lateVerdict, merge: { resolution: 'leave-open', reason: `merge withheld at merge time (${hit.kind}): ${hit.lateVerdict}`, recheckedFrom: 'merge' } };
+  }
+  return { hit: true, kind: hit.kind, changed: false, lateVerdict: hit.lateVerdict, merge };
 }
 
 // ---- tiebreak verdicts are a finding's final outcome (#3949) ----
@@ -1066,6 +1113,7 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   }
   const sections = { cleanup: { ...SECTION_STANCES[SECTIONS.CLEANUP] } };
   const merge = mergeResolution(snapshot, deps);
+  const mergeStale = mergeStaleFor(merge, snapshot);
   const runId = runIdOf(runDir);
   const filings = planFilings({ items, findings: snapshot.findings, runId, unattended: true });
   // A finding filed and digested in one batch (two items sharing a fingerprint, `file` and `drop`): the record
@@ -1074,9 +1122,9 @@ function resolveAll({ runDir, policy, deps, controlMode }) {
   if (shadowed.size > 0) {
     items = items.map((it) => (shadowed.has(it.id) ? { ...it, resolution: 'filed', reason: UNATTENDED_SHADOWED_DROP_REASON } : it));
   }
-  const result = { ceiling: 'unattended', items, sections, merge, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, digests, snapshot, decisionFacts };
+  const result = { ceiling: 'unattended', items, sections, merge, mergeStale, droppedByTiebreak: droppedByTiebreak(snapshot.decisions), filings, digests, snapshot, decisionFacts };
   result.table = renderTable(result);
   return result;
 }
 
-module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingRoute, SDD_RULING_ROUTES, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys, DEBATE_CONVERGED_RE };
+module.exports = { CARRIED_RESOLUTION, CARRY_FROM, UNATTENDED_SHADOWED_DROP_REASON, decisionLineHash, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingRoute, SDD_RULING_ROUTES, RATIFY_FILES_RECORD_REASON, REFERENCE_REPAIR_REASONS, classifyStagedItem, readSnapshot, resolveAll, recheckMerge, readMembers, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs, findingKey, lineKeys, DEBATE_CONVERGED_RE };

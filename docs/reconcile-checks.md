@@ -313,11 +313,12 @@ whose tracked path no longer exists on disk: a path can never fail or succeed th
 must stop counting toward a fresh escalation streak. An entry that was already `escalated` also
 gets its filed backlog record resolved — `escalate-residue.js`'s `resolveResidue` comments ("no
 longer exists on disk — resolved by other means") and closes it, best-effort (a resolution failure
-still drops the cache entry; a per-path record is left for a human to close manually, while a path
+keeps the escalated entry, counting `residueRetries` on it, and later passes retry the resolve —
+the pass recording the 5th failed retry, `RESIDUE_RETRY_LIMIT`, drops it, #4209; a per-path record is left for a human to close manually, while a path
 left on the consolidated `structurally-stuck` record comes off at the next escalate or resolve edit
 a pass in this checkout makes — see the consolidated-escalation bullet below). A successful
 archive also resolves an escalated `structurally-stuck` entry, through `clearResidue` (#4202): it
-is kept on a failed resolve, retried once by the same pass's prune, then dropped. Escalation itself
+is kept on a failed resolve, retried by the same pass's prune, and, if that fails too, by later passes until the bound above drops it. Escalation itself
 (`escalateResidue`) now dedups against **closed** records too, not just open ones: a marker match
 that is already closed gets a comment + reopened rather than a duplicate filing — one record per
 path across its whole open/closed/reopened lifetime.

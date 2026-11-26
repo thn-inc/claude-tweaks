@@ -964,3 +964,209 @@ test('#4636: --check-repair with a --run outside the main checkout exits 3', asy
   assert.strictEqual(await run(['--run', shadow, '--check-repair', p], d), 3);
   assert.strictEqual(out(), '', 'a refused anchor never prints clear');
 });
+
+// ---- #5833: --recheck-merge ----
+
+const { verdictText } = require('../../../plugin/bin/lib/dispatch/merge-verdict');
+const { formatEntry } = require('../../../plugin/bin/lib/log-decision/append');
+
+const RM_NOW = new Date(2026, 8, 6, 12, 0, 0);
+const rmLine = (n, verdict) => formatEntry({ status: 'AUTO', now: RM_NOW, step: 'Auto-merge short-circuit', text: verdictText(n, verdict), reversibility: 'n/a' });
+const rmUnparsed = (n) => rmLine(n).replace(/\. Reversibility: n\/a\./, ' — extra. Reversibility: n/a.');
+const MERGE_JSON = (extra = {}) => `${JSON.stringify({ resolved: true, mode: 'auto-resolve', merge: { resolution: 'merge', reason: 'every member carries auto:build with auto:merge; no needs-human verdict' }, ...extra }, null, 2)}\n`;
+const recheckLines = (fx) => fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8').split('\n').filter((l) => /Merge re-check:/.test(l));
+
+async function recheck(fx) {
+  const { d, out, err } = baseDeps(fx, []);
+  const code = await run(['--run', fx.runDir, '--recheck-merge'], d);
+  return { code, out: out(), err: err() };
+}
+
+test('AC1.1: a needs-human verdict logged after console.json recorded merge — --recheck-merge resolves leave-open, rewrites console.json, logs one line', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — /);
+  const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(data.merge.resolution, 'leave-open');
+  assert.strictEqual(data.merge.recheckedFrom, 'merge');
+  assert.strictEqual(data.merge.recheckedAt, '2026-09-06T12:00:00.000Z');
+  assert.strictEqual(recheckLines(fx).length, 1);
+});
+
+test('AC2.1 (CLI): the resolve shape names the stale merge half on stderr, leaves console.json without mergeStale, and --recheck-merge then prints leave-open', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE });
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  const data = JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'));
+  assert.strictEqual(data.merge.resolution, 'merge');
+  assert.strictEqual('mergeStale' in data, false);
+  assert.match(err(), /console-resolve\.js: merge half stale — #7: no confirmed merge-check verdict/);
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — /);
+});
+
+test('the resolve shape prints no stale line when a pass verdict is logged', async () => {
+  const fx = mainCheckoutWithRun({ staged: THREE, decisions: `${rmLine(7)}\n` });
+  const { d, err } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--policy', 'console-auto'], d), 0);
+  assert.doesNotMatch(err(), /merge half stale/);
+});
+
+test('--recheck-merge is idempotent for every hit kind: a second run prints leave-open and logs nothing more', async () => {
+  const fixtures = {
+    'needs-human': mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` }),
+    unparsed: mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmUnparsed(7)}\n` }),
+    unconfirmed: mainCheckoutWithRun({ consoleJson: MERGE_JSON() }),
+  };
+  for (const [kind, fx] of Object.entries(fixtures)) {
+    const a = await recheck(fx);
+    assert.strictEqual(a.code, 0, `${kind}: ${a.err}`);
+    assert.match(a.out, /recheck-merge leave-open — /, kind);
+    const b = await recheck(fx);
+    assert.strictEqual(b.code, 0, `${kind}: ${b.err}`);
+    assert.match(b.out, /recheck-merge leave-open — /, kind);
+    assert.strictEqual(recheckLines(fx).length, 1, kind);
+  }
+});
+
+test('--recheck-merge with no late verdict prints merge and writes nothing', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge merge — .*\(stored: merge\)\n$/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(recheckLines(fx).length, 0);
+});
+
+test('--recheck-merge with no console.json (local-merge) judges decisions.md alone', async () => {
+  const clean = mainCheckoutWithRun({ decisions: `${rmLine(7)}\n` });
+  const a = await recheck(clean);
+  assert.strictEqual(a.code, 0, a.err);
+  assert.match(a.out, /recheck-merge merge — .*\(stored: none\)\n$/);
+  const late = mainCheckoutWithRun({ decisions: `${rmLine(7, 'needs-human')}\n` });
+  const b = await recheck(late);
+  assert.strictEqual(b.code, 0, b.err);
+  assert.match(b.out, /recheck-merge leave-open — /);
+  assert.strictEqual(recheckLines(late).length, 1);
+  assert.strictEqual(fs.existsSync(path.join(late.runDir, 'console.json')), false);
+});
+
+test('--recheck-merge fails closed: unparsable console.json is exit 5, an unreadable decisions.md is exit 3, nothing written', async () => {
+  const bad = mainCheckoutWithRun({ consoleJson: '{not json', decisions: `${rmLine(7, 'needs-human')}\n` });
+  const a = await recheck(bad);
+  assert.strictEqual(a.code, 5);
+  assert.doesNotMatch(a.out, /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(recheckLines(bad).length, 0);
+  assert.strictEqual(fs.readFileSync(path.join(bad.runDir, 'console.json'), 'utf8'), '{not json');
+  const dir = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  fs.rmSync(path.join(dir.runDir, 'decisions.md'));
+  fs.mkdirSync(path.join(dir.runDir, 'decisions.md'));
+  const before = fs.readFileSync(path.join(dir.runDir, 'console.json'), 'utf8');
+  const b = await recheck(dir);
+  assert.strictEqual(b.code, 3);
+  assert.match(b.err, /recheck-merge failed \(decisions\.md unreadable: .*\) — not merging/);
+  assert.strictEqual(fs.readFileSync(path.join(dir.runDir, 'console.json'), 'utf8'), before);
+});
+
+test('--recheck-merge: an absent decisions.md is empty content, not an error', async () => {
+  const fx = mainCheckoutWithRun({});
+  fs.rmSync(path.join(fx.runDir, 'decisions.md'));
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge merge — /);
+});
+
+test('--recheck-merge: a console.json recording merge, with no verdict line prints leave-open', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — #7 has no confirmed merge-check verdict/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'leave-open');
+});
+
+test('--recheck-merge: a console.json recording merge with a pass verdict logged prints merge; a stored mergeStale: null does not suppress the check', async () => {
+  const pass = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7)}\n` });
+  assert.match((await recheck(pass)).out, /recheck-merge merge — /);
+  const explicit = mainCheckoutWithRun({ consoleJson: MERGE_JSON({ mergeStale: null }) });
+  assert.match((await recheck(explicit)).out, /recheck-merge leave-open — /);
+});
+
+test('--recheck-merge: an old-format console.json whose members cannot be read fails closed with members-unresolved', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON() });
+  fs.rmSync(path.join(fx.runDir, 'work'), { recursive: true });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.out, /recheck-merge leave-open — members-unresolved/);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /Merge re-check: .*members-unresolved/);
+});
+
+test('parseArgs: --recheck-merge takes no other flag than --run', async () => {
+  assert.strictEqual(parseArgs(['--run', 'x', '--recheck-merge']).recheckMerge, true);
+  for (const extra of [['--policy', 'console-auto'], ['--dry-run'], ['--json'], ['--ceiling'], ['--full']]) {
+    assert.throws(() => parseArgs(['--run', 'x', '--recheck-merge', ...extra]), /--recheck-merge takes no other flag than --run/);
+  }
+  const fx = mainCheckoutWithRun({});
+  const { d } = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge', '--policy', 'console-auto'], d), 2);
+});
+
+test('--recheck-merge: a held console lock is exit 3 "lock", nothing written', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const lock = path.join(fx.runDir, '.console.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '50' } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(lock: .*\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+  assert.strictEqual(recheckLines(fx).length, 0);
+});
+
+test('--recheck-merge: a throwing append is exit 3 and console.json is unchanged', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const before = fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8');
+  const { d, out, err } = baseDeps(fx, [], { appendEntry: () => { throw new Error('append boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(decisions\.md entry not written: append boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8'), before);
+});
+
+test('--recheck-merge: a throwing console.json rewrite is exit 3 with the Merge re-check line already landed (append precedes the write)', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, out, err } = baseDeps(fx, [], { writeFileAtomic: () => { throw new Error('write boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(console\.json not rewritten: write boom\) — not merging/);
+  assert.doesNotMatch(out(), /recheck-merge (merge|leave-open)/);
+  assert.strictEqual(recheckLines(fx).length, 1);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(fx.runDir, 'console.json'), 'utf8')).merge.resolution, 'merge');
+});
+
+test('--recheck-merge: an unexpected throw inside the lock is labelled without "lock:" and exits 3', async () => {
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${rmLine(7, 'needs-human')}\n` });
+  const { d, err } = baseDeps(fx, [], { stdout: () => { throw new Error('stdout boom'); } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--recheck-merge'], d), 3);
+  assert.match(err(), /recheck-merge failed \(stdout boom\) — not merging/);
+  assert.doesNotMatch(err(), /\(lock:/);
+});
+
+test('--recheck-merge: a console.json that cannot be read (not ENOENT) is exit 3', async () => {
+  const fx = mainCheckoutWithRun({});
+  fs.mkdirSync(path.join(fx.runDir, 'console.json'));
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 3);
+  assert.match(r.err, /recheck-merge failed \(console\.json unreadable: .*\) — not merging/);
+});
+
+test('--recheck-merge: the duplicate check parses entries — a stray line merely mentioning the verdict does not suppress the log line', async () => {
+  const verdict = rmLine(7, 'needs-human');
+  const fx = mainCheckoutWithRun({ consoleJson: MERGE_JSON(), decisions: `${verdict}\n- AUTO 12:00:00 — Review Console: noted Merge re-check: ${verdict.replace(/^- /, '')}\n` });
+  const r = await recheck(fx);
+  assert.strictEqual(r.code, 0, r.err);
+  assert.strictEqual(recheckLines(fx).filter((l) => /— Merge re-check: /.test(l)).length, 1);
+});
