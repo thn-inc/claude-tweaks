@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `gh` CLI, Markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-26T162921-record-5053/work/5053-spec.md` (record #5053) — read it with this plan; its Decisions D1-D10 are binding.
+**Spec:** `.claude-tweaks/pipelines/2026-11-26T165125-record-5053/work/5053-spec.md` (record #5053) — read it with this plan; its Decisions D1-D12 are binding.
 
 The `plan-review-question` sweep was done by grep at authoring time (Task 5, Task 6, Task 9 Files blocks); the frozen fixture `tests/fixtures/plan-review-ask-all-6051.txt`, the 3666/6054 journeys (filename references only) and the 2026-11-17 design doc need no change.
 
@@ -30,7 +30,7 @@ The `plan-review-question` sweep was done by grep at authoring time (Task 5, Tas
 
 ## Review Focus
 
-1. **Answer ingested, then resume refused** — removing `needs:answer` before knowing resume will accept strands the record (open-pr exclusion, no waiting label). Task 7's sweep therefore runs `plan-review-answer.js --check`, then `dispatch-resume.js --queue`, and ingests (the write) only on an eligible verdict; a refused resume leaves body and label untouched. (Departure from Deliverable 5's literal order, logged at build time; AC4's "calls plan-review-answer.js before dispatch-resume.js --queue" still holds.) Pinned in Task 7's conformance test by order.
+1. **Answer ingested, then resume refused** — removing `needs:answer` before knowing resume will accept strands the record (open-pr exclusion, no waiting label). Task 7's sweep therefore runs `plan-review-answer.js --check`, then `dispatch-resume.js --queue`, and ingests (the write) only on an eligible verdict; a refused resume leaves body and label untouched (Deliverable 5 and D11). A typed `dispatch resume` follows the same rule: the ingest runs only after Step 2's eligible verdict (Deliverable 7). Pinned in Task 7's conformance test by order.
 2. **Two sessions ingest the same reply** — read-back counts each pending reply URL's occurrences and requires exactly one (Gotcha 3). Task 2 test: a read-back body citing the URL twice exits 4.
 3. **A `/answer` comment with nothing after the token** (or only whitespace) — not an answer: it reads `unanswered`, never an empty Decision block. Task 1 test.
 4. **CRLF record body** (a web-UI edit) — `## Original request\r` must still be found: `appendAnswers` normalizes `\r\n` to `\n` in the body it returns when it inserts, and returns the input unchanged when nothing is pending. Task 1 test.
@@ -95,7 +95,7 @@ The `plan-review-question` sweep was done by grep at authoring time (Task 5, Tas
 
 **Interfaces:**
 - Consumes: Task 1's `answeredState`, `appendAnswers`; `ghAvailable`, `ghOptions`, repo slug resolution as `plugin/bin/dispatch-resume.js`'s `realDeps` does (mirror its `gh` seam, `issueView` shape).
-- Produces: `run(argv: string[], deps) -> exitCode`, `realDeps`, exported; usage `plan-review-answer.js --issue <n> [--check] [--help]`. Stdout: one JSON line `{issue, state, question, replies, ingested}` where `question` is the question URL or null, `replies` the reply URLs, `ingested` the URLs written by this call (`[]` with `--check` or when already ingested).
+- Produces: `run(argv: string[], deps) -> exitCode`, `realDeps`, exported; usage `plan-review-answer.js --issue <n> [--check] [--help]`. Stdout: one JSON line `{issue, state, question, questionCreatedAt, replies, ingested}` where `question` is the question URL or null, `questionCreatedAt` the question comment's `createdAt` or null (Task 7 sorts by it, D5), `replies` the reply URLs, `ingested` the URLs written by this call (`[]` with `--check` or when already ingested).
 - Reads: `gh issue view {n} --repo {slug} --json body,labels,comments` (probed read-only 2026-11-26 on #4523: comments carry `author.login`, `authorAssociation`, `createdAt`, `url`; `lastEditedAt` is not a `gh issue view` field — not needed here).
 - Write (only when `pending` non-empty and not `--check`): one call `gh issue edit {n} --repo {slug} --body-file {tmp} [--remove-label needs:answer]` — `--remove-label` only when the read labels include `needs:answer`. Body file via `sessionTmpPath` (`plugin/bin/lib/session-tmp.js`), written with `fs.writeFileSync`, removed after.
 - Read-back: re-run the issue view; every pending URL must occur exactly once in the new body, else exit 4.
@@ -107,6 +107,7 @@ The `plan-review-question` sweep was done by grep at authoring time (Task 5, Tas
   - `AC3.3: unanswered exits 3 with no edit`; `no-question exits 3 with no edit`; `an untrusted /answer reply is never ingested` (Proof auth).
   - `AC3.4: a failed edit exits 4`; `a read-back missing the reply URL exits 4`; `a read-back citing the URL twice exits 4` (Review Focus 2); `a failed first read exits 4`.
   - `AC3.5: --check never edits` — answered + pending, exit 0, zero `edit` calls.
+  - `the JSON line carries questionCreatedAt` — the question's `createdAt` when one exists, `null` on `no-question`.
   - `an append over 65,536 characters writes nothing and exits 4` (Gotcha 2).
   - `usage errors exit 2` (missing/zero/non-integer `--issue`, unknown flag) and `gh absent exits 2`.
 
@@ -125,6 +126,7 @@ Proof(auth): `isTrustedComment` gates both the question and the reply — CONTRI
 ### Task 3: `dispatch-resume.js --queue`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/dispatch-resume.js` (`parseArgs`, `USAGE`, the `resolveBuildAuthority` call's `named`)
@@ -220,9 +222,9 @@ Each new AC6 pin goes red when reverted: assert with a frozen excerpt of the bas
 **Review risk:** high
 
 **Files:**
-- Create: `plugin/skills/dispatch/answered-resumes.md` — the Step 2.5 procedure: (1) `gh issue list --label needs:answer --state open --json number --limit {backlog-fetch-limit}` (probed 2026-11-26 with the label absent: prints `[]`, exit 0 — an empty list, not an error); (2) for each, `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-review-answer.js" --issue {n} --check` — exit 3 leave untouched, exit 2/4 print the stderr line and leave it, exit 0 keep with its `question` createdAt; (3) order the kept records by question createdAt, oldest first (D5); (4) while budget remains: `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n} --queue`; refused → print its `line` (or `remedy` under `resume.md` Step 2's rule), spend nothing, write nothing; eligible → `plan-review-answer.js --issue {n}` (the ingest); its exit 0 → run `resume.md` Steps 3-8 for the record with Step 2's verdict, rendering the first call with `--headless` exactly when this firing is headless (`task-prompt.md`'s "Before rendering this template" decision), counting one `--budget` unit; a non-zero ingest exit prints its stderr and spends nothing. The remaining budget goes to Step 3. Why the check-verdict-ingest order: Review Focus 1. Never posts an `/answer` comment (D9).
+- Create: `plugin/skills/dispatch/answered-resumes.md` — the Step 2.5 procedure: (1) `gh issue list --label needs:answer --state open --json number --limit {backlog-fetch-limit}` (probed 2026-11-26 with the label absent: prints `[]`, exit 0 — an empty list, not an error); (2) for each, `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-review-answer.js" --issue {n} --check` — exit 3 leave untouched, exit 2/4 print the stderr line and leave it, exit 0 keep with its JSON line's `questionCreatedAt` (Task 2); (3) order the kept records by `questionCreatedAt`, oldest first (D5); (4) while budget remains: `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n} --queue`; refused → print its `line` (or `remedy` under `resume.md` Step 2's rule), spend nothing, write nothing; eligible → `plan-review-answer.js --issue {n}` (the ingest); its exit 0 → run `resume.md` Steps 3-8 for the record with Step 2's verdict, rendering the first call with `--headless` exactly when this firing is headless (`task-prompt.md`'s "Before rendering this template" decision), counting one `--budget` unit; a non-zero ingest exit prints its stderr and spends nothing. The remaining budget goes to Step 3. Why the check-verdict-ingest order: Review Focus 1. Never posts an `/answer` comment (D9).
 - Modify: `plugin/skills/dispatch/SKILL.md` — add `### Step 2.5: Answered resumes (bare form only)` between Step 2 and Step 3: one short paragraph — bare drain only (never `#N`, `#N,#M,...`, `close-out`, `resume`), read `answered-resumes.md`, each eligible resume spends one `--budget` unit, the rest goes to Step 3. Net growth ≤ 0 within ~200 B headroom: cut an equal number of bytes of restatement in the same file (grep each cut phrase in `tests/` and `plugin/` first). The bare drain loop (line ~175) counts Step 2.5's resumes toward `{budget}`.
-- Modify: `plugin/skills/dispatch/resume.md` — line 3: typed by a human, or run by the bare-drain sweep (`answered-resumes.md`) for an answered record; Step 2: before the verdict, `plan-review-answer.js --issue {N}`; its exit never blocks; exit 2 or 4 prints the stderr line as a concern; Step 7: before dispatching, remove `needs:answer` when still present (`gh issue view {N} --json labels`, then `gh issue edit {N} --remove-label needs:answer`) (D7); the "never pass `--headless`" clause gains the sweep exception.
+- Modify: `plugin/skills/dispatch/resume.md` — line 3: typed by a human, or run by the bare-drain sweep (`answered-resumes.md`) for an answered record; after Step 2's verdict is eligible (exit 0) and before Step 3, `plan-review-answer.js --issue {N}`; a refused verdict runs no ingest and writes nothing (Deliverable 7, D11); the ingest's exit never blocks an eligible resume; exit 2 or 4 prints the stderr line as a concern; Step 7: before dispatching, remove `needs:answer` when still present (`gh issue view {N} --json labels`, then `gh issue edit {N} --remove-label needs:answer`) (D7); the "never pass `--headless`" clause gains the sweep exception.
 - Modify: `plugin/skills/dispatch/task-prompt.md` — Resume paragraph (line 151): the one exception to "no call of a resume carries `DISPATCH_HEADLESS=1`" is a sweep-originated resume in a headless firing (`answered-resumes.md`).
 - Modify: `plugin/skills/dispatch/open-pr-exclusion-report.md` — a named record carrying `needs:answer` renders `#{N} awaits a plan-review answer on its draft PR #{pr} — reply /answer on its question comment, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{N}` in place of the generic line (labels from the `#N` form's own fetch).
 - Modify: `plugin/skills/dispatch/design-notes.md` — new `## Why the plan-review stop keeps the draft PR` section: resume reuses the PR number, its body markers and session links, and the pushed plan commits; the open-pr exclusion holds an unanswered record out of the queue without a second exclusion; the next build re-reviews from scratch by design (#4958's converged round).
@@ -233,7 +235,7 @@ Each new AC6 pin goes red when reverted: assert with a frozen excerpt of the bas
   - `AC4.2: answered-resumes.md calls plan-review-answer.js before dispatch-resume.js --queue` — index of the first `plan-review-answer.js` < index of `dispatch-resume.js" --issue {n} --queue` < index of the ingest call without `--check` (Review Focus 1).
   - `AC4.3: only eligible resumes count against --budget` — the refused branch names "spend nothing"/"spends nothing"; the eligible branch names one `--budget` unit.
   - `AC10: no skill text instructs an agent to post an /answer comment` — no line in `plugin/skills/**` pairs `/answer` with `gh issue comment`/`add_issue_comment`/`post`.
-  - `resume.md Step 2 ingests before the verdict and Step 7 removes needs:answer`; `task-prompt.md names the sweep exception`.
+  - `resume.md ingests only after Step 2's eligible verdict and Step 7 removes needs:answer` — index of Step 2's verdict call (`dispatch-resume.js`) < index of the `plan-review-answer.js --issue {N}` ingest < index of `### Step 3`, and the refused branch names no ingest; `task-prompt.md names the sweep exception`.
 - [ ] **Step 2: Run to verify it fails** — `node --test tests/dispatch-answered-resumes-conformance.test.js` — Expected: FAIL (no `answered-resumes.md`).
 - [ ] **Step 3: Write/edit the prose files above.**
 - [ ] **Step 4: Run** — the Step 2 command plus `node --test tests/dispatch-resume-prose.test.js tests/dispatch-named-form-exclusion-reasons.test.js tests/no-dispatch-host-preflight-conformance.test.js tests/dispatch-prompt-cli-prose.test.js` and `node --test tests/bin-lib/skill-audit/` — Expected: PASS; `wc -c plugin/skills/dispatch/SKILL.md` ≤ 52,295.
