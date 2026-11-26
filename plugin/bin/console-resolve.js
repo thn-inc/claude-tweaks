@@ -1027,6 +1027,17 @@ function recheckLogged(decisions, lateVerdict) {
   });
 }
 
+// An absent file reads as `{ text: null }`; any other read failure is reported on stderr and returns null (exit 3).
+function readIfPresent(file, label, stderr) {
+  try {
+    return { text: fs.readFileSync(file, 'utf8') };
+  } catch (err) {
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return { text: null };
+    stderr(`console-resolve.js: recheck-merge failed (${label} unreadable: ${oneLineNote(failureText(err))}) — not merging\n`);
+    return null;
+  }
+}
+
 function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
   const consolePath = path.join(runDir, 'console.json');
   const decisionsPath = path.join(runDir, 'decisions.md');
@@ -1037,21 +1048,13 @@ function recheckMergeShape(runDir, { stdout, stderr, now, deps = {} }) {
   try {
     code = withLock(path.join(runDir, '.console.lock'), () => {
       locked = true;
-      let decisions = '';
-      try { decisions = fs.readFileSync(decisionsPath, 'utf8'); } catch (err) {
-        if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-          stderr(`console-resolve.js: recheck-merge failed (decisions.md unreadable: ${oneLineNote(failureText(err))}) — not merging\n`);
-          return 3;
-        }
-      }
+      const decisionsRead = readIfPresent(decisionsPath, 'decisions.md', stderr);
+      if (decisionsRead === null) return 3;
+      const decisions = decisionsRead.text === null ? '' : decisionsRead.text;
+      const consoleRead = readIfPresent(consolePath, 'console.json', stderr);
+      if (consoleRead === null) return 3;
+      const raw = consoleRead.text;
       let data = null;
-      let raw = null;
-      try { raw = fs.readFileSync(consolePath, 'utf8'); } catch (err) {
-        if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) {
-          stderr(`console-resolve.js: recheck-merge failed (console.json unreadable: ${oneLineNote(failureText(err))}) — not merging\n`);
-          return 3;
-        }
-      }
       if (raw !== null) {
         try { data = JSON.parse(raw); } catch { data = undefined; }
         if (data === undefined || data === null || typeof data !== 'object' || Array.isArray(data)) {
