@@ -754,7 +754,13 @@ test('#6118 commentIdFromUrl and deleteRecordComment', async () => {
     ['api', '-X', 'DELETE', 'repos/o/r/issues/comments/6'],
   ]);
   for (const bad of ['5', 1.5, null, undefined, Number.MAX_SAFE_INTEGER + 1, '5/../x']) {
-    assert.throws(() => deleteRecordComment(bad, 'o/r', deps), String(bad));
+    assert.throws(() => deleteRecordComment(bad, 'o/r', deps), (err) => {
+      assert.match(err.message, /^deleteRecordComment: comment id is not a safe integer \(\w+\)$/, String(bad));
+      assert.ok(err.message.endsWith(`(${typeof bad})`), String(bad));
+      // The value is never echoed (undefined's type name is its own string, so it is not checked).
+      if (bad !== undefined) assert.ok(!err.message.includes(String(bad)), `${String(bad)} echoed: ${err.message}`);
+      return true;
+    });
   }
   assert.equal(seen.length, 2, 'a refused id makes no gh call');
   assert.throws(() => deleteRecordComment(1.5, 'o/r', deps), { message: 'deleteRecordComment: comment id is not a safe integer (number)' });
