@@ -457,6 +457,34 @@ for (const [label, resolve] of [
   });
 }
 
+test('#4209 pruneResidueFailures: a kept entry\'s lastResidueError.reason equals the reported error, single-line and bounded', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-bounded-reason');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 250 + i });
+  }
+  const long = Array.from({ length: 20 }, (_, i) => `line ${i} of a long gh failure message`).join('\n');
+  assert.ok(long.length > 200 && long.includes('\n'));
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => { throw new Error(long); } });
+  const kept = listResidueFailures(root)[0];
+  assert.equal(kept.lastResidueError.reason, out.failures[0].error);
+  assert.ok(!kept.lastResidueError.reason.includes('\n'));
+});
+
+test('#4209 pruneResidueFailures: a corrupted negative residueRetries counts from zero, not as a head start', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-negative-retries');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 260 + i });
+  }
+  const cache = readCache(root);
+  const key = Object.keys(cache.residueFailures)[0];
+  cache.residueFailures[key].residueRetries = -20;
+  writeCache(root, cache);
+  pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: 'boom' }) });
+  assert.equal(listResidueFailures(root)[0].residueRetries, 1);
+});
+
 test('AC2.1 #4209 pruneResidueFailures: drops the entry on the pass that records the RESIDUE_RETRY_LIMIT-th failed retry, reporting every failed resolve', () => {
   assert.equal(RESIDUE_RETRY_LIMIT, 5);
   const root = tmpRoot();
