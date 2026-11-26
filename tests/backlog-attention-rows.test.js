@@ -70,7 +70,7 @@ test('attention-mode.md: render collapses to the three launchers (specify/challe
   // bot:blocked gets its own row with the refine launcher.
   assert.ok(
     source.includes(
-      '| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure (a plan-review question is a `needs:answer` row, not this one) |',
+      '| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure (a plan-review question is a `needs:answer` row, not this one — except a stop from before that label, which carries no `needs:answer`: write the answer on the record body first) |',
     ),
     'expected the bot:blocked row with its refine re-authorize launcher',
   );

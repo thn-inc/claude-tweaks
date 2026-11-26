@@ -318,7 +318,7 @@ Note: the stuck:open-pr check could not run (exit {failed.code}) — records stu
 | #{n} | needs:decision | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} — proposed: "{Proposed line, verbatim}" |
 | #{n} | solution:unjustified | {createdAt, relative} | run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 | #{n} | shaped:headless (no grant) | {createdAt, relative} | run /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped — no human has reviewed it) |
-| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure (a plan-review question is a `needs:answer` row, not this one) |
+| #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure (a plan-review question is a `needs:answer` row, not this one — except a stop from before that label, which carries no `needs:answer`: write the answer on the record body first) |
 | #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
 | #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |
 | #{n} | needs:answer | {createdAt, relative} | reply /answer … on {question url}, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{n} — question: {excerpt, wrapped per _shared/untrusted-record-content.md} |

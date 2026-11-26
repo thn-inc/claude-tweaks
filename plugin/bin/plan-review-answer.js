@@ -21,7 +21,7 @@
 //   session temp root and is removed afterwards. The edit is then read back: every pending reply URL
 //   must head exactly one unfenced `**Decision**` line in the new body (decisionHeaderUrls, the same
 //   parser that decided it was pending).
-// Exit codes (a CLI-specific vocabulary — Task 7's /dispatch relay branches on 0 and 3):
+// Exit codes (a CLI-specific vocabulary — dispatch/answered-resumes.md's relay branches on 0 and 3):
 //   0  answered: every reply is in the body (ingested now, or already)
 //   3  unanswered, or no trusted question (JSON on stdout)
 //   2  malformed invocation, or `gh` absent / the repo slug unresolved

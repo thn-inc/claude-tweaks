@@ -506,7 +506,8 @@ test('AC10 controls: a planted instruction is reported, and a doctored allowlist
     fs.rmSync(tmp, { recursive: true, force: true });
   }
   const live = postingSentences(SKILLS);
-  const dropped = live.filter((h) => !h.sentence.includes(ALLOWED[4][1]));
-  assert.notEqual(dropped.length, live.length, 'control: the answered-resumes.md entry has no live hit');
-  assert.deepEqual(staleAllowed(dropped), [`${ALLOWED[4][0]}: ${ALLOWED[4][1]}`]);
+  const entry = ALLOWED.find(([file]) => file === 'backlog/attention-mode.md');
+  const dropped = live.filter((h) => !h.sentence.includes(entry[1]));
+  assert.notEqual(dropped.length, live.length, 'control: the attention-mode.md entry has no live hit');
+  assert.deepEqual(staleAllowed(dropped), [`${entry[0]}: ${entry[1]}`]);
 });
