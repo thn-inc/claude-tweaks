@@ -56,7 +56,7 @@ files:
 - **Should feel:** Self-maintaining. The list only ever names dirs that are still stuck, and an emptied list closes the issue with no trip to the GitHub editor.
 - **Should understand:**
   - Every checkout of the repo shares this one record, because its fingerprint ignores the path. So a pass judges only paths inside its own run-dir tree. A path from another machine or another clone is never dropped, even though it is absent from this disk.
-  - A resolve that fails keeps the cache entry. The same pass's prune retries it once, then drops the entry.
+  - A resolve that fails keeps the cache entry. The same pass's prune retries it, and later passes keep retrying until the 5th failed retry (`RESIDUE_RETRY_LIMIT`) drops it (#4209).
   - Re-escalating a path the record already names makes no edit, so stale paths wait for the next real edit.
 - **Red flags:**
   - An archived dir still listed after the pass that archived it succeeded.
