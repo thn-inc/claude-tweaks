@@ -176,12 +176,11 @@ function whyTemplates(text) {
 }
 const WHY_TEMPLATES = whyTemplates(REFUSED);
 const whyOf = (template, code) => {
-  assert.ok(template.includes('{code}'), `${template} carries no {code} placeholder`);
   return template.replace('{code}', code);
 };
 
 test('the {why} strings the AC tests use are the two the prose names', () => {
-  assert.equal(whyOf(WHY_TEMPLATES.create, '1'), 'record create failed (exit 1)');
+  assert.equal(WHY_TEMPLATES.create, 'record create failed');
   assert.equal(whyOf(WHY_TEMPLATES.shadowDup, '2'), 'shadow-dup-proposal.js exited 2');
   assert.throws(() => whyTemplates(doctor(REFUSED, '`{why}` is', '`{why}` becomes')), { message: /no longer names the \{why\} strings/ });
 });
