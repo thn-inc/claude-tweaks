@@ -7,7 +7,7 @@
 //
 // The envelope. Every launch resolves to one object with these fields, in this order
 // (ENVELOPE_FIELDS): status, reason, result, usage, turns, denials, spendOverrun,
-// costUsd, detail, sessionId, apiError. Fields may be added, never renamed. `status` is `ok`, `fail` or
+// costUsd, detail, sessionId, apiError, apiDurationMs. Fields may be added, never renamed. `status` is `ok`, `fail` or
 // `timeout`; `reason` is null for `ok`, else one of `wall-clock-ceiling`,
 // `launch-error`, `spend-ceiling`, `exit` or `schema`. `result` is the worker's
 // structured output when status is `ok` and null otherwise. `ok` means only that a
@@ -54,8 +54,11 @@
 // `apiError` is set and its `type` is in SHARED_CAUSE_API_TYPES, or its `status` is in
 // SHARED_CAUSE_API_STATUSES, or both are null (the not-logged-in shape: no request was
 // made). Only these structured fields decide it, never the `result` text.
-// `countsTowardLaunchStreak(envelope)` is true for `launch-error` and for `fail`/`exit`, and
-// false for `ok`, `timeout`, `spend-ceiling` and `schema`.
+// `apiDurationMs` is the result object's `duration_api_ms` when that is a finite number at least
+// 0, else null (and null with no result object).
+// `countsTowardLaunchStreak(envelope)` is true for `launch-error`, and for `fail`/`exit` only when
+// `apiDurationMs` is 0 (the worker made no successful API request, #6321); a `fail`/`exit` with
+// `apiDurationMs` above 0 or null, and `ok`, `timeout`, `spend-ceiling` and `schema`, are false.
 //
 // The runner contract. `runner({ file, args, options, input, platform })` returns
 // `{ pid, kill(signal), exited }`, where `exited` resolves to
@@ -165,6 +168,16 @@
 //   - Not probed: a usage or rate limit. Its values (`rate_limit_error`, HTTP 429) are taken
 //     from the API's documented error types, not observed. Linux and Windows were not probed.
 //
+// - No-work launches (#6321). Probed 2026-11-26 with Claude Code CLI 2.1.325 on macOS (darwin),
+//   subscription login, no TTY, model alias `haiku`: the implementer through `launchWorker` with
+//   the real `defaultRunner`, wrapped to change one thing per case. `--max-turns 1`: exit 1,
+//   `error_max_turns`, `num_turns` 2, `duration_api_ms` 958 (the worker ran). Empty
+//   `CLAUDE_CONFIG_DIR`: `num_turns` 1, `duration_api_ms` 0. Model `claude-nonexistent-0-0`:
+//   404 `not_found_error`, `num_turns` 1, `duration_api_ms` 0. `ANTHROPIC_BASE_URL` at a local
+//   HTTP 400 server: 400 `invalid_request_error`, `num_turns` 1, `duration_api_ms` 0. `num_turns`
+//   was 1 on every no-work launch, so it does not tell the two kinds apart; `duration_api_ms`
+//   does. Linux and Windows were not probed. Re-run: the opt-in `AC4.1 (#6321)` live probe.
+//
 // Pre-minted session id (#6000 whole-branch review). A `lens-reviewer` launch passes
 // `--session-id <uuid>` (a fresh `crypto.randomUUID()` per launch; `composeArgs` appends it
 // last and refuses a non-UUID), so a worker with no result object (a timeout, a death by
@@ -230,7 +243,7 @@ const { ROLES, RESULT_SCHEMA, SANDBOX_PROBED_PLATFORMS, settingsFor, toolchainRe
 
 // One string, split: tests/git-status-optional-locks.test.js reads an array literal
 // that starts with 'status' as a git argument list.
-const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId apiError'.split(' '));
+const ENVELOPE_FIELDS = Object.freeze('status reason result usage turns denials spendOverrun costUsd detail sessionId apiError apiDurationMs'.split(' '));
 const ENV_ALLOW = Object.freeze(['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CLAUDE_CONFIG_DIR']);
 const ENV_ALLOW_WIN32 = Object.freeze([...ENV_ALLOW, 'USERPROFILE', 'USERNAME', 'APPDATA', 'LOCALAPPDATA', 'SystemRoot', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP']);
 
@@ -347,6 +360,12 @@ function readApiError(obj) {
   };
 }
 
+// The result object's duration_api_ms when it is a finite number at least 0, else null.
+function readApiDurationMs(obj) {
+  if (!obj || typeof obj.duration_api_ms !== 'number') return null;
+  return Number.isFinite(obj.duration_api_ms) && obj.duration_api_ms >= 0 ? obj.duration_api_ms : null;
+}
+
 // True when the launch failed for a cause every later record would meet (see the header).
 function sharedCauseOf(env) {
   if (!env || typeof env !== 'object') return false;
@@ -360,7 +379,7 @@ function sharedCauseOf(env) {
 // True when the envelope is a launch failure that counts toward a run of launch failures.
 function countsTowardLaunchStreak(env) {
   if (!env || typeof env !== 'object') return false;
-  return env.reason === 'launch-error' || (env.status === 'fail' && env.reason === 'exit');
+  return env.reason === 'launch-error' || (env.status === 'fail' && env.reason === 'exit' && env.apiDurationMs === 0);
 }
 
 const KILL_GRACE_MS = 5000;
@@ -383,6 +402,7 @@ function classify({ timedOut, timeoutDetail, spawnError, code, signal, stdout, s
     detail,
     sessionId: obj && typeof obj.session_id === 'string' && obj.session_id !== '' ? obj.session_id : null,
     apiError: readApiError(obj),
+    apiDurationMs: readApiDurationMs(obj),
   });
   const empty = typeof stdout !== 'string' || stdout.trim() === '';
 
