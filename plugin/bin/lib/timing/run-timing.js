@@ -318,8 +318,9 @@ async function deriveTiming(runDir, { transcriptPaths = [], notes = [], cwd, dea
   if (outNotes.length) timing.notes = outNotes;
   timing.dispatches = stripInternalFields(dispatches);
   timing.questions = deriveQuestions(rows);
-  // The cost derivation's inputs, never part of timing: the clipped rows, the transcript list, and the pre-strip items.
-  const costRows = { rows, transcripts, items: Array.isArray(dispatches.items) ? dispatches.items : [] };
+  // The cost derivation's inputs, never part of timing: the clipped rows, the transcript list, the pre-strip
+  // items, and the cwd the transcript paths were resolved against.
+  const costRows = { rows, transcripts, cwd: at, items: Array.isArray(dispatches.items) ? dispatches.items : [] };
   return { ok: true, timing, out, tokens, guard, notes: outNotes, deadlineHit: false, costRows };
 }
 

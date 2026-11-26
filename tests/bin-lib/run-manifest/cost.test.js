@@ -263,3 +263,13 @@ test('a synthetic zero-usage row adds no key', () => {
   assert.deepEqual(out.unpricedModels, []);
   assert.equal(out.costUsd, 0);
 });
+
+test('a relative transcript path resolves against the costRows cwd, so an item reaching the same file does not double-count it', async () => {
+  const dir = scratchDir('run-cost-');
+  const main = transcript(dir, 'main.jsonl', [line({ ts: '2026-11-26T10:00:00Z', id: 'm1', model: 'claude-opus-5-5', usage: usage(1, 10, 0, 40000) })]);
+  const rows = await readUsage(main);
+  assert.notEqual(path.resolve(process.cwd()), path.resolve(dir));
+  const cost = costRowsFrom({ rows, cwd: dir, transcripts: [{ path: 'main.jsonl', rows: rows.length }], items: [{ transcriptPath: main, usageRows: rows, notFound: null }] });
+  assert.equal(cost.rows.length, rows.length, 'the item reaching the same file adds no second copy of its rows');
+  assert.equal(cost.sourcesRead, 1);
+});

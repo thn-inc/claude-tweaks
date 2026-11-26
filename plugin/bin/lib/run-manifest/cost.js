@@ -17,7 +17,7 @@ const { PRICES, familyOf, priceRequest, priceAggregate } = require('../pricing/p
 const TOKEN_FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite5m', 'cacheWrite1h'];
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const realOf = (p) => canonicalRealpath(p) ?? path.resolve(p);
+const realOf = (p, cwd) => { const abs = path.resolve(cwd, p); return canonicalRealpath(abs) ?? abs; };
 
 // readUsage row -> the shape the pricers and tokensByModel take.
 function mapRow(r) {
@@ -32,17 +32,19 @@ function fromUsageMax(model, u) {
 const isZero = (u) => TOKEN_FIELDS.every((f) => !(Number(u[f]) > 0));
 
 // deriveTiming's costRows -> { rows, aggregates, sourcesRead, sourcesUnread }. A transcript-backed
-// item's rows join only when its transcript is not already one of the run's transcripts (by real path).
+// item's rows join only when its transcript is not already one of the run's transcripts (by real path;
+// relative paths resolve against costRows.cwd, as deriveTiming's reads did, else the process cwd).
 function costRowsFrom(costRows) {
   const out = { rows: [], aggregates: [], sourcesRead: 0, sourcesUnread: 0 };
   if (!isObject(costRows)) return out;
   const transcripts = Array.isArray(costRows.transcripts) ? costRows.transcripts : [];
   const items = Array.isArray(costRows.items) ? costRows.items : [];
+  const cwd = typeof costRows.cwd === 'string' ? costRows.cwd : process.cwd();
   if (Array.isArray(costRows.rows)) out.rows = costRows.rows.slice();
   const seen = new Set();
   for (const t of transcripts) {
     if (!isObject(t)) continue;
-    if (typeof t.path === 'string') seen.add(realOf(t.path));
+    if (typeof t.path === 'string') seen.add(realOf(t.path, cwd));
     if (t.rows > 0 || t.note === undefined || t.note === null) out.sourcesRead += 1;
     else if (typeof t.note === 'string' && t.note.startsWith('transcript not found')) out.sourcesUnread += 1;
   }
@@ -61,7 +63,7 @@ function costRowsFrom(costRows) {
     }
     if (typeof item.notFound === 'string' && item.notFound.includes('transcript not readable')) out.sourcesUnread += 1;
     if (!Array.isArray(item.usageRows) || typeof item.transcriptPath !== 'string') continue;
-    const real = realOf(item.transcriptPath);
+    const real = realOf(item.transcriptPath, cwd);
     if (seen.has(real)) continue;
     seen.add(real);
     out.rows = out.rows.concat(item.usageRows);

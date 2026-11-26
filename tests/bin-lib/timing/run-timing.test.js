@@ -690,6 +690,7 @@ test('deriveTiming returns costRows and timing.json stays unchanged', async () =
     assert.equal(d.costRows.rows.length, d.timing.transcripts.reduce((s, t) => s + t.rows, 0));
     assert.ok(d.costRows.rows.length > 0);
     assert.equal(d.costRows.transcripts, d.timing.transcripts);
+    assert.equal(d.costRows.cwd, dir);
     assert.ok(Array.isArray(d.costRows.items));
     assert.ok(d.costRows.rows.every((r) => 'messageId' in r && 'cacheWrite5m' in r));
     assert.equal('costRows' in d.timing, false);

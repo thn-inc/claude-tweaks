@@ -43,6 +43,12 @@ const TIMING_BOUND_MS = 60000;
 // transcript and holds the lock for milliseconds, so it never borrows the transcript bound.
 // (Read through module.exports at call time, like TIMING_BOUND_MS, so a test can shorten it.)
 const PHASE_LOCK_WAIT_MS = 2000;
+// The cap on a kept close's cost re-derive (ms), inside the close deadline: the re-derive shares that
+// deadline with finish's step-yield write, so an uncapped re-derive could spend the yield's time. The
+// trade-off: a kept re-derive that needs longer than the cap fills no cost this close (the stored group
+// stays partial; a later close retries), where an uncapped one would finish and drop the yield.
+// (Read through module.exports at call time, like TIMING_BOUND_MS, so a test can shorten it.)
+const KEPT_COST_BOUND_MS = 15000;
 
 const PHASE_ONLY = 'timing.json phase rows written without token totals';
 const NOTHING_WRITTEN = 'no timing.json written';
@@ -291,7 +297,8 @@ async function fillKeptManifest(dir, { env, homeDir, deadlineAt }) {
     if (isObj(stored) && stored.lane === 'driver') return fillManifestAtClose(dir, { base, withCost: true });
     const own = ownTranscripts(base.runState, { env, homeDir, runId: path.basename(dir), runRoot: runRootOf(dir) });
     if (!own.paths.length) return fillManifestAtClose(dir, { base });
-    const c = await module.exports.deriveCloseCost(dir, base, own, { deadlineAt });
+    const costDeadlineAt = Math.min(deadlineAt, Date.now() + module.exports.KEPT_COST_BOUND_MS);
+    const c = await module.exports.deriveCloseCost(dir, base, own, { deadlineAt: costDeadlineAt });
     const withCost = !c.deadlineHit && c.costRows !== null;
     fillManifestAtClose(dir, { base, costRows: c.costRows, withCost });
   } catch (err) {
@@ -483,4 +490,4 @@ function spawnTokenPass(runDir, { env } = {}) {
   }
 }
 
-module.exports = { TIMING_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, deriveCloseCost, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };
+module.exports = { TIMING_BOUND_MS, KEPT_COST_BOUND_MS, PHASE_LOCK_WAIT_MS, ownTranscripts, deriveCloseCost, isSpecChildDir, writeTimingAtClose, writeTimingAtCloseSafe, writePhaseTimingSync, writeStepYieldSafe, logTimingSkip, spawnTokenPass };

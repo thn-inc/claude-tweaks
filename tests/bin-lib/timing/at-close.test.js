@@ -1605,6 +1605,7 @@ test('AC1.1 dispatches scope is per directory: the own-slug directory keeps its 
 
 // ---- manifest fill at close (#6009) ----
 const { initRunManifest } = require('../../../plugin/bin/lib/run-manifest/write');
+const { priceAggregate } = require('../../../plugin/bin/lib/pricing/prices');
 
 const manifestFile = (runDir) => path.join(runDir, 'manifest.json');
 const readManifestJson = (runDir) => JSON.parse(fs.readFileSync(manifestFile(runDir), 'utf8'));
@@ -1799,6 +1800,137 @@ test('AC8.8: a kept close over a complete stored group reads no transcript rows 
     assert.equal(calls, 0);
     assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), bytes);
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A closed run with a minted `lane: driver` manifest and a driver-events.jsonl of `lines`.
+function driverRun(root, lines, { transcripts = false } = {}) {
+  const cfg = path.join(root, 'cfg');
+  const wt = path.join(root, 'wt');
+  const runDir = closedRun(root, 'run', wt);
+  assert.equal(initRunManifest(runDir, { cwd: root, lane: 'driver' }, { gatherFacts: () => ({ ...MINT }), now: () => new Date(Date.now() - 60000) }).written, true);
+  const eventsFile = path.join(runDir, 'driver-events.jsonl');
+  const write = (ls) => fs.writeFileSync(eventsFile, ls.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  write(lines);
+  if (transcripts) writeTranscript(cfg, wt, [A, B]);
+  return { runDir, env: { CLAUDE_CONFIG_DIR: cfg }, write };
+}
+const SONNET_USAGE = { input_tokens: 30, output_tokens: 12000, cache_read_input_tokens: 500000, cache_creation_input_tokens: 50000, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 50000 } };
+const OPUS_USAGE = { input_tokens: 20, output_tokens: 3000, cache_read_input_tokens: 200000, cache_creation_input_tokens: 10000 };
+const driverCents = (...us) => Math.round(us.reduce((t, u) => t + priceAggregate(u).usd, 0) * 100) / 100;
+const SONNET_TOKENS = { model: 'sonnet', input: 30, output: 12000, cacheRead: 500000, cacheWrite5m: 0, cacheWrite1h: 50000 };
+const OPUS_TOKENS = { model: 'opus', input: 20, output: 3000, cacheRead: 200000, cacheWrite5m: 10000, cacheWrite1h: 0 };
+
+test('driver lane at the close path: no transcripts, step usage priced by launched alias into the manifest', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = driverRun(root, [
+      { step: 'policy', status: 'ok' },
+      { step: 'worker', status: 'ok', model: 'sonnet', usage: SONNET_USAGE },
+      { step: 'review', status: 'ok', model: 'opus', usage: OPUS_USAGE },
+    ]);
+    assert.equal(readManifestJson(runDir).lane, 'driver');
+    const r = await writeTimingAtClose(runDir, { env });
+    assert.equal(r.tokens, false, 'no transcript, so timing.json carries no token totals');
+    const m = readManifestJson(runDir);
+    assert.deepStrictEqual(Object.keys(m.tokensByModel).sort(), ['opus', 'sonnet']);
+    assert.equal(m.costUsd, driverCents(SONNET_TOKENS, OPUS_TOKENS));
+    assert.ok(m.costUsd > 0);
+    assert.equal(m.costPartial, false);
+    assert.equal(typeof m.closedAt, 'string');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('driver lane, kept close: a partial driver group upgrades once the missing usage appears, timing.json byte-identical', async () => {
+  const root = tmpRoot();
+  try {
+    const lines = [
+      { step: 'worker', status: 'ok', model: 'sonnet', usage: SONNET_USAGE },
+      { step: 'review', status: 'ok', model: 'opus' },
+    ];
+    const { runDir, env, write } = driverRun(root, lines, { transcripts: true });
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+    const partial = readManifestJson(runDir);
+    assert.equal(partial.costPartial, true);
+    assert.equal(partial.costUsd, driverCents(SONNET_TOKENS));
+    const timingBytes = fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8');
+    write([lines[0], { ...lines[1], usage: OPUS_USAGE }]);
+    assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+    const m = readManifestJson(runDir);
+    assert.equal(m.costPartial, false);
+    assert.equal(m.costUsd, driverCents(SONNET_TOKENS, OPUS_TOKENS));
+    assert.deepStrictEqual(Object.keys(m.tokensByModel).sort(), ['opus', 'sonnet']);
+    assert.equal(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'), timingBytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A closed, kept run whose stored cost group is partial (a Task-call transcript missing at the first close).
+async function partialKeptRun(root) {
+  const { cfg, wt, runDir, env } = manifestRun(root, { transcripts: false });
+  const subDir = agentSession(cfg, wt, SID, [{ id: 'a1', usage: OTHER }]);
+  writeTranscript(cfg, wt, [A, B]);
+  const agentFile = path.join(subDir, 'agent-a1.jsonl');
+  const held = fs.readFileSync(agentFile);
+  fs.rmSync(agentFile);
+  assert.equal((await writeTimingAtClose(runDir, { env })).status, 'written');
+  assert.equal(readManifestJson(runDir).costPartial, true);
+  fs.writeFileSync(agentFile, held);
+  return { runDir, env };
+}
+
+test('KEPT_COST_BOUND_MS: the kept close\'s cost re-derive gets min(the close deadline, now + its own cap)', async () => {
+  const root = tmpRoot();
+  try {
+    const { runDir, env } = await partialKeptRun(root);
+    assert.ok(atClose.KEPT_COST_BOUND_MS > 0 && atClose.KEPT_COST_BOUND_MS < atClose.TIMING_BOUND_MS);
+    const seen = [];
+    await withStub(atClose, 'deriveCloseCost', async (d, b, o, { deadlineAt }) => { seen.push(deadlineAt); return { costRows: null, deadlineHit: false }; }, async () => {
+      const t0 = Date.now();
+      assert.equal((await writeTimingAtClose(runDir, { env })).status, 'kept');
+      assert.ok(seen[0] <= t0 + atClose.KEPT_COST_BOUND_MS + 1000, 'the re-derive deadline is capped well inside the close deadline');
+      assert.ok(seen[0] < t0 + atClose.TIMING_BOUND_MS - 1000);
+      await writeTimingAtClose(runDir, { env, boundMs: 50 });
+      assert.ok(seen[1] <= Date.now() + 50, 'a nearer close deadline still wins');
+    });
+    assert.equal(seen.length, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('KEPT_COST_BOUND_MS: a kept re-derive that hits its cap fills no cost and leaves the close result and timing.json unchanged', async () => {
+  const root = tmpRoot();
+  const real = transcript.readUsage;
+  const realCap = atClose.KEPT_COST_BOUND_MS;
+  try {
+    const { runDir, env } = await partialKeptRun(root);
+    const manifestBytes = fs.readFileSync(manifestFile(runDir), 'utf8');
+    const timingBytes = fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8');
+    let entered = false;
+    transcript.readUsage = () => { entered = true; return new Promise(() => {}); };
+    atClose.KEPT_COST_BOUND_MS = 100;
+    mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    let r;
+    try {
+      const p = writeTimingAtClose(runDir, { env });
+      for (let i = 0; i < 5000 && !entered; i++) await new Promise((res) => setImmediate(res));
+      assert.equal(entered, true, 'the hung reader was never reached');
+      mock.timers.tick(100);
+      r = await p;
+    } finally {
+      mock.timers.reset();
+    }
+    assert.deepStrictEqual(r, { status: 'kept', tokens: true, skip: null });
+    assert.equal(fs.readFileSync(manifestFile(runDir), 'utf8'), manifestBytes, 'no cost filled, nothing else changed');
+    assert.equal(fs.readFileSync(path.join(runDir, 'timing.json'), 'utf8'), timingBytes);
+  } finally {
+    transcript.readUsage = real;
+    atClose.KEPT_COST_BOUND_MS = realCap;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
