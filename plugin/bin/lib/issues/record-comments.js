@@ -9,7 +9,7 @@
 // --hostname for a non-github.com host — with one deliberate difference in
 // failure posture: a missing `i{n}` alias leaves that number out of the Map
 // instead of throwing, because the caller reads an absent entry as "comments
-// unread" and keeps the record excluded (fail closed). A missing `repository`
+// unread" and leaves the record selectable (fails toward the session drain). A missing `repository`
 // still throws, naming the numbers: nothing was read at all. Not pure
 // (network via the injected runner).
 'use strict';
