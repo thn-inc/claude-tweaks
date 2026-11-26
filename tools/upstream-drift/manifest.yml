@@ -400,6 +400,13 @@ dependencies:
   # Limit: literal substring matching cannot prove how a message is assembled, so
   # a change that keeps every asserted literal somewhere in the binary still
   # passes.
+  # Anchor (#4523): the matcher is anchored at `^` because `error` begins with the
+  #   noun; measured 2026-11-26 on 2.1.325 for the session guard and the `${noun}`
+  #   worktree-gone template (agent noun), 2026-10-28 on 2.1.302 for the agent
+  #   guard; the session-noun and fixed worktree-gone templates were not reachable
+  #   headless and rest on their noun-first literals. The literal assertions cannot
+  #   see a prefix the harness might add around a message, so a re-probe is the
+  #   only check.
   # The artifact is a single compiled binary (268 MB at 2.1.302) whose embedded
   # JS keeps its template literals verbatim. That is why `root` resolves the
   # binary file itself (no `root-suffix`) and every `upstream-path` is "." —

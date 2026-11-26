@@ -40,7 +40,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GUARDED_PROGRAM_WORDS, GH_PR_LIFECYCLE, forEachShellSegment, redirectRawTargets, resolveWriteTarget } = require('./git-command');
-const { REFUSAL_SIGNATURES } = require('./harness-refusal');
+const { SESSION_NOUN, AGENT_NOUN, REFUSAL_SIGNATURES } = require('./harness-refusal');
 
 // Both word sets come from git-command.js, where the parsers that key on these
 // words live (#3092): pre-tool-use runs every guard family, post-tool-use only the
@@ -169,13 +169,15 @@ function shouldRunFull(event, input) {
 // only acts on the harness worktree-isolation refusal, whose text always carries
 // one of these phrases (harness-refusal.js's REFUSAL_SIGNATURES, the tails of
 // post-tool-use-failure.js's HARNESS_ISOLATION_REFUSAL_RE; #3819 added the
-// worktree-gone one). Matched on the raw payload OR the parsed `error`, so a
-// JSON-escaped spelling still runs.
+// worktree-gone one). The gate mirrors the matcher's start anchor (#4523): the parsed
+// `error` must begin with a noun and carry a signature (a JSON-escaped spelling is
+// decoded in `error`).
 // Unparseable input skips: the handler does nothing with it either.
-function failureCarriesRefusal(raw, input) {
-  const carriesSignature = (text) => REFUSAL_SIGNATURES.some((signature) => text.includes(signature));
-  if (carriesSignature(raw)) return true;
-  return Boolean(input && typeof input.error === 'string' && carriesSignature(input.error));
+function failureCarriesRefusal(input) {
+  if (!input || typeof input !== 'object' || typeof input.error !== 'string') return false;
+  const { error } = input;
+  return (error.startsWith(SESSION_NOUN) || error.startsWith(AGENT_NOUN))
+    && REFUSAL_SIGNATURES.some((signature) => error.includes(signature));
 }
 
 // Reads stdin once — the caller must hand `raw` on to the full handler, since
@@ -197,7 +199,7 @@ function earlyGate(event, readRaw = () => fs.readFileSync(0, 'utf8'), deps = {})
   try { input = JSON.parse(raw); } catch { input = null; }
   if (isFailure) {
     let carries = true;
-    try { carries = failureCarriesRefusal(raw, input); } catch { carries = true; }
+    try { carries = failureCarriesRefusal(input); } catch { carries = true; }
     return { raw, skip: !carries };
   }
   // stdin is already drained, so `raw` must survive even if the decision throws.

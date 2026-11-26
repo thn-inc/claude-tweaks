@@ -39,7 +39,8 @@ files:
   - an ordinary failing command (e.g. `Exit code 128`) shows up as a guard refusal;
   - a denial lands in another session's run dir (that run's `events.jsonl` grows);
   - on Windows, a denial with no owned run dir leaves no `-adhoc-standalone` dir behind (the pre-#3811 failure);
-  - every failing Bash call becomes noticeably slower. The prefilter skips this hook unless the payload carries `Refusing to run it` or `Refusing to run there`.
+  - every failing Bash call becomes noticeably slower. The prefilter skips this hook unless the parsed `error` begins with `This session` or `This agent` and carries `Refusing to run it` or `Refusing to run there`;
+  - a failing command whose output merely quotes the refusal text (a failing test fixture, say) shows up as a guard refusal. The matcher is anchored at the start of `error`, so only a refusal the harness itself returned counts (#4523).
 
 ### 3. Remove the worktree: same session
 - **URL:** `ExitWorktree` with `action: "remove"`
@@ -69,6 +70,7 @@ files:
 - Updated during build of #3304: step 2's refusal text now lives in `plugin/bin/lib/hooks/harness-refusal.js`, and a Claude Code rewording surfaces as upstream drift (see `notice-a-reworded-isolation-refusal-3304.md`)
 - Updated during build of #3811: steps 1-2's porcelain worktree lookups now go through worktree-reap.js's shared `findWorktreeEntry`, so they match on Windows
 - Updated during build of #3819: step 2's event now carries `actor`/`variant`, and the prefilter passes either refusal signature
+- Updated during build of #4523: step 2's matcher and prefilter only count an `error` that begins with the refusal's noun, so quoted refusal text in command output is no longer logged
 - Updated during build of #4179: step 4 names the read window that reconcile's two ad-hoc sweeps bound (`adhoc-superseded` for a linked worktree, `adhoc-session-ended` for the main checkout)
 - Updated during build of #4704: step 4's worktree-path match, run from the main checkout itself, keeps only this session's ad-hoc dirs. A red flag names the cross-session leak it closed. Its review fix wave added the no-session-id stderr line; the changed-session-id limit now names the main-checkout case.
 - Updated during build of #4284: step 1's `worktree-staleness` and `windows-longpaths` breadcrumbs skip a `fallback`-guessed run, and a red flag names the sibling-run leak this closed on Windows.
