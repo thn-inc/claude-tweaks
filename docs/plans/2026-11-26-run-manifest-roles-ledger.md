@@ -7,3 +7,4 @@
 | 3 | build | SDD ruling — per-agent effort tally lives in roles.js, not on derive.js dispatch items: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 4 | build | SDD ruling — roles model id prefers the transcript model over the dispatch alias: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 5 | build | SDD ruling — final fix-wave residual fixed with one targeted fix and re-review: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 6 | build/skill | driver-step-addition skill: a new driver step that launches a worker now also needs a DRIVER_STEP_ROLES entry in plugin/bin/lib/run-manifest/roles.js (manifest roles keys are a contract), which the skill's site list does not name | observation | Skill enrichment candidate for wrap-up's Skills curation row |
