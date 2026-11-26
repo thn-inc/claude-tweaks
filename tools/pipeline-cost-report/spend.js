@@ -28,51 +28,21 @@ const path = require('path');
 const readline = require('readline');
 
 const PLUGIN_ROOT = path.join(__dirname, '..', '..', 'plugin');
-
-// [input, output, cache read, 5-minute cache write, 1-hour cache write]
-const PRICES = {
-  date: '2026-11-03',
-  families: {
-    fable: [8, 40, 0.2, 10, 16],
-    opus: [4, 20, 0.2, 5, 8],
-    sonnet: [2, 10, 0.1, 2.5, 4],
-    haiku: [0.1, 0.5, 0.01, 0.125, 0.2],
-  },
-};
+const { PRICES, familyOf, priceRequest } = require('../../plugin/bin/lib/pricing/prices.js');
 
 // Claude Code writes `<synthetic>` assistant lines (zero usage) for API errors such as usage_limit_reached. They are
 // kept in `requests` (zero cost) but are left out of every spend tally, `unpriced` included. They are not model
 // calls: they never serve as the previous call for the family or idle-gap check and never use up a pending
 // compaction marker. Any other unpriced id is a real call of an unknown family and stays in the chain.
 const SYNTHETIC_MODEL = '<synthetic>';
-const HAIKU_LONG_PROMPT = 100000;
-const HAIKU_LONG_MULTIPLIER = 5;
 const REWRITE_MIN_TOKENS = 40000;
 const IDLE_MS = 60 * 60 * 1000;
 const BUCKET_EDGES = [50000, 100000, 150000, 200000, 300000, 400000, 500000, 700000];
 const BUCKET_NAMES = ['<50', '50-100', '100-150', '150-200', '200-300', '300-400', '400-500', '500-700', '>700'];
 
-function familyOf(modelId) {
-  const id = typeof modelId === 'string' ? modelId : '';
-  for (const family of Object.keys(PRICES.families)) if (id.includes(family)) return family;
-  return 'unpriced';
-}
-
 function bucketOf(promptTokens) {
   const i = BUCKET_EDGES.findIndex((edge) => promptTokens < edge);
   return BUCKET_NAMES[i === -1 ? BUCKET_NAMES.length - 1 : i];
-}
-
-// u: { model, input, output, cacheRead, cacheWrite5m, cacheWrite1h } -> { usd, cacheWriteUsd, prompt, family }
-function priceRequest(u) {
-  const family = familyOf(u.model);
-  const prompt = u.input + u.cacheRead + u.cacheWrite5m + u.cacheWrite1h;
-  if (family === 'unpriced') return { usd: 0, cacheWriteUsd: 0, prompt, family };
-  const [pIn, pOut, pRead, pW5, pW1] = PRICES.families[family];
-  const k = family === 'haiku' && prompt > HAIKU_LONG_PROMPT ? HAIKU_LONG_MULTIPLIER : 1;
-  const cacheWriteUsd = ((u.cacheWrite5m * pW5 + u.cacheWrite1h * pW1) * k) / 1e6;
-  const usd = ((u.input * pIn + u.output * pOut + u.cacheRead * pRead) * k) / 1e6 + cacheWriteUsd;
-  return { usd, cacheWriteUsd, prompt, family };
 }
 
 function textOf(content) {
