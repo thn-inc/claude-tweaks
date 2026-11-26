@@ -271,7 +271,9 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
         note = `could not delete the escalation comment on #${a}: ${firstLine(errorText(err))}`;
       }
     } else if (shared.settle === true) {
-      note = `no escalation comment id on #${a} to delete`;
+      note = streakFirst.settleRow === 'blocked'
+        ? `no escalation comment id on #${a} to delete (settled by the blocked row: it carries a blocked comment and bot:blocked and has left the lane)`
+        : `no escalation comment id on #${a} to delete`;
     }
     if (note !== null) {
       detail += `; ${note}`;
@@ -348,7 +350,7 @@ async function runBudget(budget, shared, deps, { driveOne, steps = STEPS }) {
         if ((counts && streak === 1) || facts.sharedCause === true) return workerStop(facts, n);
         if (counts) {
           streak = 1;
-          streakFirst = { n, reason: launchReason(facts), commentId: facts.escalationCommentId };
+          streakFirst = { n, reason: launchReason(facts), commentId: facts.escalationCommentId, settleRow: facts.final ? facts.final.settleRow : null };
         } else {
           streak = 0;
           streakFirst = null;

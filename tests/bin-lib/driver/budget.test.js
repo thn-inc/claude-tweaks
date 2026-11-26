@@ -881,6 +881,12 @@ test('#6118 a settled first record with no comment id names the gap', async () =
   assert.match(f.err, /no escalation comment id on #1 to delete/);
 });
 
+test('#6118 a first record settled by the blocked row says so in the no-id note', async () => {
+  const { summary, f } = await workerRun([LAUNCH_FAIL('exit', { final: { settleRow: 'blocked' } }), LAUNCH_FAIL('exit')], { count: 4 });
+  assert.match(summary.detail, /no escalation comment id on #1 to delete \(settled by the blocked row: it carries a blocked comment and bot:blocked and has left the lane\)/);
+  assert.match(f.err, /settled by the blocked row/);
+});
+
 test('#6118 --no-settle two-in-a-row attempts no delete', async () => {
   const { summary, ghCalls, f } = await workerRun([LAUNCH_FAIL('exit'), LAUNCH_FAIL('exit')], { count: 4, settle: false });
   assert.equal(summary.ended, 'worker-stop');
