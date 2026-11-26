@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-26T16:28:34.034Z",
+  "computedAt": "2026-11-26T18:20:35.538Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 5053,
-        "updatedAt": "2026-11-26T16:27:36Z",
+        "updatedAt": "2026-11-26T16:53:40Z",
         "state": "OPEN"
       },
       {
@@ -440,7 +440,7 @@
       },
       {
         "number": 4264,
-        "updatedAt": "2026-11-26T16:22:34Z",
+        "updatedAt": "2026-11-26T16:39:53Z",
         "state": "OPEN"
       },
       {
@@ -545,7 +545,7 @@
       },
       {
         "number": 3467,
-        "updatedAt": "2026-11-26T16:26:38Z",
+        "updatedAt": "2026-11-26T16:59:49Z",
         "state": "OPEN"
       },
       {
@@ -777,96 +777,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: auth, public-contract\nRisk-flags-unconfirmed: true\n\n## Current State\n\n**Related:** #5172, #5337, #5510, #4958, #4588\n\nRe-verified 2026-11-26 against `origin/main` (`eaa89bea31`, installed 6.180.0). Two things changed since filing (2026-11-03): `dispatch resume #N` exists (#4588, `plugin/skills/dispatch/resume.md`, `plugin/bin/dispatch-resume.js` over `plugin/bin/lib/dispatch/resume-eligibility.js`), and the plan-review question now tells the human to answer with a `**Decision**` paragraph in the record body, which #4958's converged-round rule (`plugin/skills/build/plan-review.md`, `### Converged round`) reads as a recorded decision. Every gap below is still open on main.\n\n- **Answering means editing the body by hand.** The dispatched branch of `### Spec gap — needs-human` (`plan-review.md`) posts a `<!-- plan-review-question -->` comment and tells the human to add a `**Decision**` paragraph or an Acceptance Criterion to the body, because \"the next build materializes the body, not comments\". No skill or CLI writes an answer into the body. A reply comment is ignored.\n- **No waiting state on a typed drain.** Only under `DISPATCH_HEADLESS=1` does the stop add `bot:blocked` and remove `auto:build`/`auto:merge`/`auto:merge-pending` (`plan-review.md`, same branch; `dispatch/settle-and-merge.md`'s Plan-review needs-human special case). A typed drain leaves no label. `/claude-tweaks:backlog attention` shows such a record only as a generic `stuck:open-pr` row (`bin/stuck-open-prs.js`, `backlog/attention-mode.md`), and `help/status-scan.md`'s Blocked line counts only `bot:blocked`.\n- **The headless block defeats any automatic restart.** `bot:blocked` and the removed grant are the authorization-failure posture (retry ceiling). A plan-review question is not an authorization failure, yet after a headless stop a human must re-grant at `/claude-tweaks:backlog refine` before resume will accept the record (`resume.md` Step 2: `bot:blocked`, or no `auto:build`, refuses).\n- **Nothing restarts an answered record.** `resume.md` says resume \"is typed by a human, never fired by a Routine\". The kept draft PR keeps the record in the queue's `open-pr` exclusion (`dispatch/queue-pull-script.md`, `bin/lib/dispatch/queue-pull.js` `runOpenPr`), and no answer detection exists anywhere (`resume-eligibility.js`, reconcile, the queue pull).\n- **Stale remedy text.** `dispatch/reporting.md`'s \"Plan-review questions are relayed\" paragraph says \"then re-run `/claude-tweaks:dispatch #{n}`\", and `plan-review.md`'s Exit state says \"the next dispatch re-materializes the spec from the answered record\". The open-pr exclusion refuses `dispatch #N` while the draft PR is open (`dispatch/open-pr-exclusion-report.md`), so the only working command is `dispatch resume #N`. `_shared/work-record.md` (grant-revocation bullet), `_shared/github-pr-scan.md` (`bot:blocked` bullet), `backlog/refine-mode.md` and `backlog/refine-lanes.md` still describe the plan-review block as `bot:blocked` plus a body edit plus a re-grant.\n- **No design note** in `dispatch/design-notes.md` says why the plan-review stop keeps the draft PR.\n- **Observed.** 2026-11-02/03: six records (#4292, #4333, #4344, #4350, #4395, #4439) sat unanswered after a 9-group drain. 2026-11-26: run directories under `.claude-tweaks/pipelines/` (live and archived) show plan-review needs-human stops on at least nine records in one day (#6117, #6009, #6118, #5833, #4209, #4746, #6010, #4523, #4433). Three of them (#6118, #5833, #4523) needed a second run after the answer.\n\nOut of scope here: the in-terminal ask for a human-present dispatching session and folding requirement comments into the body (#5172, which reuses this record's section writer), a relay-held answer (#5510), and who made a body edit for the converged-round signal (#5337). The pipeline driver (`plugin/bin/drive.js`) composes no plan (`bin/lib/driver/plan-lane.js`), so it never reaches plan review and needs no change.\n\n## Deliverables\n\n1. **Answer-reply parser and section writer (new pure module).** `plugin/bin/lib/issues/plan-review-answers.js` exports:\n   - `findQuestion(comments)`: the newest comment whose body starts with `<!-- plan-review-question -->` and whose author is trusted (`isTrustedComment`, `bin/lib/issues/comment-trust.js`), or null.\n   - `findAnswerReplies(comments, question)`: trusted comments created strictly after `question.createdAt` whose first non-blank line starts with `/answer` (case-insensitive, followed by whitespace or end of line), oldest first.\n   - `answeredState({ comments, body })`: returns `{ state: 'answered' | 'unanswered' | 'no-question', question, replies, pending }`. `pending` lists the replies whose URL the body does not yet cite.\n   - `appendAnswers(body, question, replies)`: returns the new body, as the Section format Decision below lays out. It is idempotent: a reply URL the body already cites is skipped.\n2. **Ingest CLI (new).** `plugin/bin/plan-review-answer.js --issue <n> [--check]` follows the `gh-api-module-pattern` skill (injectable runner, `run(argv, deps)`). It fetches body, labels and comments, and prints one JSON line `{issue, state, question, replies, ingested}`. Without `--check`, when `pending` is non-empty, one `gh issue edit {n} --body-file {file} --remove-label needs:answer` call writes the new body and removes the label together (`--remove-label` only when the label is present). The CLI then re-fetches and confirms that every pending reply URL appears in the body. Exit codes: 0 answered (ingested now or already), 3 unanswered or no question, 2 usage error or `gh` absent, 4 a read, the write or the read-back failed (nothing reported as ingested). `--check` never writes.\n3. **Waiting state `needs:answer`.** Every branch of `plan-review.md` that posts a `<!-- plan-review-question -->` comment (the dispatched call, headless or typed, and the `parallel`-wave member) also adds `needs:answer`. Under `DISPATCH_HEADLESS=1` the stop no longer adds `bot:blocked` and no longer removes `auto:*` grants. It keeps the `PushNotification`. `settle-and-merge.md`'s special case is updated to match. Add the label to `_shared/label-bootstrap.md` (colour `7057FF`, description \"a plan-review question awaits a human answer — reply /answer on the question comment\"), to `_shared/work-record.md`'s label table (the Definition family) and to `_shared/work-record-permission-matrix.md`: `/build` plan review adds it; `plan-review-answer.js` and `dispatch resume` remove it; a human may remove it.\n4. **Question comment names the reply form.** The question comment's closing instruction offers two ways to answer: reply with a comment whose first line starts `/answer` (the next bare dispatch folds it into the body and resumes the build), or add a `**Decision**` paragraph to the body and run `/claude-tweaks:dispatch resume #{n}`. The `BLOCKED` reply and `dispatch/reporting.md`'s relay block carry the same two options.\n5. **Answered resumes in a bare drain.** A new `dispatch/answered-resumes.md` sub-file, run as `dispatch/SKILL.md`'s new Step 2.5 (bare drain only, after Step 2's queue pull and before Step 3's ranking), lists open records labelled `needs:answer` (`gh issue list --label needs:answer --state open`), oldest first. While budget remains, for each one:\n   1. Run `plan-review-answer.js --issue {n}`. On exit 3, leave the record untouched. On exit 2 or 4, print the stderr line and leave it.\n   2. On exit 0, run `dispatch-resume.js --issue {n} --queue`.\n   3. If that is eligible, run `resume.md` Steps 3-8 for the record. That counts one unit against `--budget`.\n   4. If it is refused, print its `line` (or its `remedy`, under `resume.md` Step 2's rule) and spend no budget.\n   The rest of the budget goes to Step 3 as today. `#N`, `#N,#M,...`, `close-out` and `resume` forms do not run Step 2.5.\n6. **`dispatch-resume.js --queue`.** A new flag that turns off the typed-command stand-in for `auto:build` (#5584's `resolveBuildAuthority` `typed` answer). Under `--queue` the record needs the real `auto:build` label, as any queue-picked record does. Without the flag, behaviour is unchanged.\n7. **Typed resume ingests first.** `resume.md` Step 2 runs `plan-review-answer.js --issue {N}` before the verdict. Its exit status never blocks resume; exit 2 or 4 prints the stderr line as a concern. Step 7, before dispatching, removes `needs:answer` when it is still present, because a typed resume is the human's statement that the record is answered. A sweep-originated resume (Step 2.5) passes `--headless` on its first call exactly when the firing itself is headless, and `task-prompt.md`'s Resume paragraph names this one exception to \"never pass `--headless`\".\n8. **Attention and help.** `backlog/attention-mode.md` gains a `needs:answer` row type. It quotes the first line of the newest question's first finding (wrapped per `_shared/untrusted-record-content.md`) with the remedy \"reply `/answer …` on {question url}, or add a **Decision** paragraph to the body and run /claude-tweaks:dispatch resume #{n}\". A record carrying `needs:answer` never also renders as `stuck:open-pr`. `help/status-scan.md` adds one line, **{N} records awaiting a plan-review answer** (omitted at 0), and its Blocked line drops the plan-review clause.\n9. **Text fixes.** `plan-review.md`'s Exit state, `dispatch/reporting.md`, `_shared/work-record.md`, `_shared/github-pr-scan.md`, `backlog/refine-mode.md` and `backlog/refine-lanes.md` describe the `needs:answer` path and name `/claude-tweaks:dispatch resume #N`. None of them tells the human to re-run plain `/claude-tweaks:dispatch #N` for a record with an open draft PR. `dispatch/open-pr-exclusion-report.md`'s line for a `needs:answer` record says it awaits a plan-review answer.\n10. **Design note.** `dispatch/design-notes.md` records why the plan-review stop keeps the draft PR: resume reuses the PR number, its body markers and session links, and the pushed plan commits. The open-pr exclusion is what holds an unanswered record out of the queue without a second exclusion. The next build re-reviews from scratch by design (#4958's converged round).\n11. **Docs.** `docs/plugin-structure.md`'s per-skill sub-file table lists `dispatch/answered-resumes.md`, and its CLI list names `plan-review-answer.js`.\n\n## Acceptance Criteria\n\n1. `tests/bin-lib/issues/plan-review-answers.test.js`: a trusted question plus a trusted `/answer` comment after it reads `answered`. Each of the following reads `unanswered`, and a record with no trusted question reads `no-question`:\n   - a `/answer` comment created before the newest question (after an older one);\n   - an untrusted author (`CONTRIBUTOR`, `NONE`);\n   - a trusted comment whose first non-blank line does not start with `/answer`, including `/answers` and a mid-line `/answer`;\n   - an untrusted question comment.\n2. The same file: `appendAnswers` inserts the section immediately before `## Original request` when one exists, and at the end otherwise. It fences a reply that holds a run of backticks, a `## Original request` line and the word `TODO` so that `originalRequestOffset` (`bin/lib/issues/materialize-format.js`) returns the same offset as before the append, and the placeholder gate does not fire on the reply text. A second call with the same replies returns the body byte-identical.\n3. `tests/plan-review-answer.test.js` (fake runner):\n   - answered with one pending reply issues exactly one `gh issue edit` carrying both `--body-file` and `--remove-label needs:answer`, and exits 0;\n   - an already-ingested reply issues no edit and exits 0;\n   - unanswered exits 3 with no edit;\n   - a failed edit or a read-back missing the reply URL exits 4;\n   - `--check` never edits.\n4. A bare dispatch on a record with an open draft PR, `needs:answer`, `auto:build`, a trusted question and a trusted `/answer` reply ends with the record body carrying the `## Plan-review answers` section, `needs:answer` removed and the build resumed on the same draft PR through `resume.md` Steps 3-8, with no human command. With an untrusted reply or a non-`/answer` comment instead, nothing changes and the record is not dispatched. A conformance test pins that `dispatch/SKILL.md` Step 2.5 runs only on the bare form, calls `plan-review-answer.js` before `dispatch-resume.js --queue`, and counts only eligible resumes against `--budget`.\n5. `dispatch-resume.js --issue {n} --queue` refuses a record without `auto:build` even when the build-authority rule would answer `typed`, and without `--queue` the existing typed behaviour is unchanged (tests in the existing `dispatch-resume` suite).\n6. `plan-review.md`'s dispatched and parallel-wave branches add `needs:answer`. The headless branch no longer adds `bot:blocked` or removes `auto:*` labels. The question comment's instruction names both the `/answer` reply and `/claude-tweaks:dispatch resume #{n}`. `tests/build-plan-review-conformance.test.js` or `tests/plan-review-dispatch-relay-conformance.test.js` pins all three, and each pin goes red when reverted.\n7. `/claude-tweaks:backlog attention` renders a `needs:answer` row with the question excerpt and the remedy, and the same record has no `stuck:open-pr` row (`tests/backlog-attention-rows.test.js`). `help/status-scan.md` carries the awaiting-answer line.\n8. `needs:answer` is in `_shared/label-bootstrap.md`, `_shared/work-record.md`'s label table and `_shared/work-record-permission-matrix.md`, and every test that pins those lists passes.\n9. `git grep -n \"re-run \\`/claude-tweaks:dispatch #\" plugin/skills` prints nothing, and no file under `plugin/skills` tells the human to re-grant `auto:build` after a plan-review stop.\n10. No skill text instructs an agent to post an `/answer` comment.\n11. `npm test -- --full` passes.\n\n## Release Note\n\nAnswer a plan-review question by replying `/answer …` on its comment, and the next dispatch folds the answer into the issue and resumes the build on its existing PR.\n\n## Technical Approach\n\nThe reply parser and section writer are one pure module so that #5172's terminal path can write the same section without a second implementation. The CLI is a thin `gh` shell over it. The waiting label replaces the headless `bot:blocked` block for this stop only. The restart is a separate bare-drain step that reuses `resume.md` unchanged from Step 3 on, so the queue pull and its fenced twin in `queue-pull-script.md` are not touched.\n\n**Decision** (D1 — what counts as a reply): GitHub issue comments are flat, so a \"reply\" is a trusted-author comment created after the newest trusted question comment whose first non-blank line starts with `/answer`. Quote-replies and arbitrary later comments do not count. Why: the form is fixed and greppable, a human can type it from a phone, and it keeps discussion comments out of the spec.\n\n**Decision** (D2 — waiting label): a new `needs:answer` label, not `needs:decision`. Why: `needs:decision` resolves by applying a `**Proposed:**` action at `/claude-tweaks:backlog refine` (`refine-record.md`), and a plan-review question has no action to apply. Specify's planning hold also lives on `needs:decision` and is answered by `/claude-tweaks:specify`, so a shared label would route one record to two answer paths.\n\n**Decision** (D3 — headless posture): the plan-review stop keeps `auto:build`/`auto:merge` and adds no `bot:blocked`. Why: the grants were human-given and the stop is not an authorization failure. The answer itself comes from a trusted human, and the resumed build re-runs plan review and every later gate. Keeping `bot:blocked` would make every headless stop need a re-grant, which defeats the restart.\n\n**Decision** (D4 — where the restart lives): a bare-drain Step 2.5 over `needs:answer` records, not a change to the queue pull's `open-pr` exclusion. Why: the exclusion is shared by the module and its fenced script twin, it feeds the open-pr report, and it is what keeps an unanswered record out. A label-keyed sweep touches neither, and it reuses `resume.md`'s eligibility verdict verbatim.\n\n**Decision** (D5 — budget and order): answered resumes run before the ranked queue, oldest question first, each eligible one consuming one budget unit. Why: they are already-started builds with a PR, a plan and an answer, so they are the cheapest to finish. A refused resume spends nothing, the same rule as a refused `drive.js --budget` record.\n\n**Decision** (D6 — section format): one section per question comment, placed before `## Original request`:\n\n```\n## Plan-review answers ({question createdAt, YYYY-MM-DD})\n\nQuestion: {question comment url}\n\n**Decision** (answer by @{login}, {reply url}):\n\n{fence}text\n{reply text with the leading /answer token removed}\n{fence}\n```\n\n`{fence}` is a backtick run one longer than the longest backtick run in the reply, and at least three long. A later reply to the same question appends another `**Decision**` block to that section. Why: the `**Decision**` paragraph is what #4958's converged round reads as a recorded decision. The fence keeps the human's text quoted rather than authored, so the placeholder gate and the `## Original request` boundary (`#1839`, `#4351`) treat it as content, with no checker change. The URL makes ingest idempotent.\n\n**Decision** (D7 — typed resume clears the label): `dispatch resume #N` removes `needs:answer` before dispatching, with or without a reply. Why: a human typing resume has answered on the body or chosen to re-run anyway. If plan review stops again, it re-adds the label.\n\n**Decision** (D8 — authority for a sweep-originated resume): `dispatch-resume.js --queue` requires the real `auto:build` label. Why: the sweep is a queue pick, not a typed command, and `drive.js --budget` applies the same rule to records its loop picks (`docs/driver.md`, Build authority).\n\n**Decision** (D9 — the plugin never authors an answer): no skill or CLI posts an `/answer` comment. Why: `comment-trust.js`'s trust limit (#3358) cannot tell the maintainer from an agent under the maintainer's account, the same reason `accept-verdict.js` refuses to author a verdict marker. #5172's terminal path writes the section into the body directly through `appendAnswers`.\n\n**Decision** (D10 — records stopped before this ships): no migration. Records already `bot:blocked` by the old headless rule keep the refine-and-resume path. A typed-drain stop without the label can be opted in by adding `needs:answer` by hand, which the sweep then picks up. Why: older builds still run in live sessions (expand-contract), and a back-fill would need to guess which `bot:blocked` records came from plan review.\n\n### Key Files\n\n- `plugin/bin/lib/issues/plan-review-answers.js` — new: question/reply detection, `answeredState`, `appendAnswers`\n- `plugin/bin/plan-review-answer.js` — new: ingest CLI (`--issue`, `--check`)\n- `tests/bin-lib/issues/plan-review-answers.test.js` — new: module tests\n- `tests/plan-review-answer.test.js` — new: CLI tests with a fake runner\n- `plugin/bin/dispatch-resume.js` — `--queue` flag\n- `plugin/bin/lib/dispatch/resume-eligibility.js` — typed stand-in off under `--queue`\n- `plugin/skills/build/plan-review.md` — label on every question-posting branch, no headless `bot:blocked`, reply instruction, Exit state text\n- `plugin/skills/dispatch/SKILL.md` — Step 2.5 (bare drain only)\n- `plugin/skills/dispatch/answered-resumes.md` — new: the Step 2.5 procedure\n- `plugin/skills/dispatch/resume.md` — ingest in Step 2, label removal in Step 7, sweep-originated posture\n- `plugin/skills/dispatch/task-prompt.md` — Resume paragraph's `--headless` exception\n- `plugin/skills/dispatch/settle-and-merge.md` — plan-review special case without `bot:blocked`\n- `plugin/skills/dispatch/reporting.md` — relay block's two answer options\n- `plugin/skills/dispatch/open-pr-exclusion-report.md` — awaiting-answer line\n- `plugin/skills/dispatch/design-notes.md` — why the draft PR is kept\n- `plugin/skills/backlog/attention-mode.md` — `needs:answer` row, no duplicate `stuck:open-pr` row\n- `plugin/skills/backlog/refine-mode.md` — plan-review text\n- `plugin/skills/backlog/refine-lanes.md` — plan-review text\n- `plugin/skills/help/status-scan.md` — awaiting-answer count\n- `plugin/skills/_shared/work-record.md` — label table row, grant-revocation bullet text\n- `plugin/skills/_shared/work-record-permission-matrix.md` — `needs:answer` writers\n- `plugin/skills/_shared/label-bootstrap.md` — `needs:answer` entry\n- `plugin/skills/_shared/github-pr-scan.md` — `bot:blocked` bullet text\n- `docs/plugin-structure.md` — sub-file and CLI listing\n- `tests/build-plan-review-conformance.test.js` — pins for D3 and the reply instruction\n- `tests/plan-review-dispatch-relay-conformance.test.js` — relay block's answer options\n- `tests/backlog-attention-rows.test.js` — `needs:answer` row\n\n## Gotchas\n\n- `appendAnswers` must use the repo's fence helpers (`bin/lib/markdown-blocks.js`), not a hand-rolled fence. An unclosed or too-short fence would let reply text end the authored scan early (#4351) or swallow `## Original request`.\n- GitHub caps an issue body at 65,536 characters. When the appended body would exceed it, the CLI exits 4 without writing and keeps `needs:answer`, and the human answers on the body and runs `dispatch resume #N`.\n- Two sessions can ingest the same reply at once. Idempotency by reply URL plus the read-back keeps the result single, but the read-back must count URL occurrences rather than only test for presence.\n- Ingesting edits the body, so `lastEditedAt` moves past the question comment and the next plan review reads the round as converged. That is correct here because a human answered. #5337's open question about automation edits is unaffected.\n- `bin/stuck-open-prs.js` builds the `stuck:open-pr` set. Excluding `needs:answer` records from the rendered stuck rows may need a change there, or in attention-mode's merge script, whichever owns the row dedupe.\n- The `dispatch-queue-exclusion-addition` skill does not apply: no queue exclusion is added (D4).\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`, `Proof(public-contract): …`.\n\n## Original request\n\nPlan-review needs-human stops have no answer path, no waiting state and no restart\n\nOrigin: dispatch drain 2026-11-02T205244-dispatch-standalone — six plan-review stops with no answer path\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nVerified 2026-11-03 against `plugin/` on main (identical in installed 6.160.3).\n\n- **No answer path.** At a dispatched build's plan-review HARD-GATE (`plugin/skills/build/plan-review.md:129-133`) the build posts a `<!-- plan-review-question -->` comment telling the human to answer by editing the record body (\"the next build materializes the body, not comments\"). No skill or CLI writes an answer into the body; every surface (`_shared/work-record.md:205-207`, `backlog/refine-mode.md:241`, `backlog/refine-lanes.md:67`, `backlog/attention-mode.md:306`, `dispatch/reporting.md:27`) tells the human to do it by hand.\n- **No waiting state on a typed drain.** `bot:blocked` and grant removal happen only under `DISPATCH_HEADLESS=1` (`plan-review.md:131`), which `dispatch/task-prompt.md:141` sets only for scheduled Routine firings. A human-typed drain leaves no label, so `/backlog attention` shows the record only as a generic `stuck:open-pr` row (`attention-mode.md:82-91,308,345-349`) and `/help` (`help/status-scan.md:415`) does not count it.\n- **No answer detection.** `bin/lib/dispatch/resume-eligibility.js` never checks whether the question was answered; reconcile has no answer detection; `dispatch/resume.md:3` says resume is human-typed only.\n- **Resume is the only way back.** The stop keeps the draft PR open (`plan-review.md:133`, `dispatch/settle-and-merge.md:113`), so the queue pull's open-pr exclusion (`dispatch/queue-pull-script.md:9,385`, `dispatch/open-pr-exclusion-report.md:24`) keeps the record out until the PR closes; only `dispatch resume #N` (#4588) restarts it. No design note says why the draft is kept, and the next build re-reviews from scratch anyway.\n- **Stale remedy text.** `plan-review.md:133` (\"the next dispatch re-materializes the spec\") and `dispatch/reporting.md:27` (\"re-run /claude-tweaks:dispatch #{n}\") name a command the open-pr exclusion refuses.\n- **Observed.** A 9-group bare drain on 2026-11-02/03 stopped six records (#4292, #4333, #4344, #4350, #4395, #4439) at plan review; all six sat resume-eligible but unanswered, with nothing surfacing the questions.\n\nRelated: #4958 (open — plan review can stop round after round; convergence only), #4588 (closed — added `dispatch resume`), #4849 (closed — resume and dispatch refusing each other), #4673 (closed).\n\n## Deliverables\n\n**Answer by reply.** A trusted reply (OWNER/MEMBER/COLLABORATOR, `_shared/pr-run-comments.md` Trusted authors) to the `plan-review-question` comment is folded into the record body as a dated `## Plan-review answers ({date})` section by an ingest step (a `bin/` CLI plus the skill step that calls it), before the next build materializes the body. A human body edit keeps working. Only replies to the question comment count, never arbitrary comments.\n\n**Waiting state.** Every plan-review needs-human stop, headless or human-typed, applies one label (`needs:answer`, bootstrapped per `_shared/label-bootstrap.md` and added to `_shared/work-record.md`'s label table and permission matrix) and removes it once answered. `/backlog attention` renders a dedicated row quoting the question and how to answer; `/help` counts it.\n\n**Answered detection and automatic restart.** An \"answered\" predicate (the body carries an answers section dated after the latest question comment, or an ingestable trusted reply exists) is added to resume eligibility. Bare `/claude-tweaks:dispatch`'s queue pull re-admits an answered, resume-eligible record and dispatches it through `resume.md`'s path (Steps 3-8) instead of excluding it as open-pr. Unanswered records stay excluded.\n\n**Text fixes.** `plan-review.md:133` and `dispatch/reporting.md:27` name `/claude-tweaks:dispatch resume #N` (or the automatic path); `dispatch/design-notes.md` records why the plan-review stop keeps the draft PR.\n\n## Acceptance Criteria\n\nA trusted reply to the question comment, then a bare dispatch, ends with the record body carrying the answers section and the build resuming on its existing draft PR with no human command; an untrusted reply or a non-reply comment changes nothing.\n\nA human-typed drain's plan-review stop leaves the record labelled `needs:answer`; `/backlog attention` lists it with the question text; the label is removed when the answer is ingested.\n\n`dispatch-resume.js` (or the eligibility module) reports answered vs unanswered; queue-pull tests cover answered (re-admitted), unanswered (excluded), and answered-but-ineligible (excluded with the resume refusal line).\n\nNo skill text tells the human to re-run plain `/claude-tweaks:dispatch #N` for a record with an open draft PR.\n\n`npm test` passes.\n\n## Release Note\n\nPlan-review questions can be answered by replying to the question comment, and answered records restart automatically on the next dispatch.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/plan-review.md` — label the stop, point at the reply path, fix the stale remedy\n- `plugin/skills/dispatch/queue-pull-script.md` — re-admit answered, resume-eligible records\n- `plugin/skills/dispatch/resume.md` — run from the queue for an answered record\n- `plugin/skills/dispatch/reporting.md` — fix the stale re-run remedy\n- `plugin/skills/dispatch/open-pr-exclusion-report.md` — answered vs unanswered remedy\n- `plugin/skills/dispatch/design-notes.md` — record why the stop keeps the draft PR\n- `plugin/skills/dispatch/task-prompt.md` — label applies on typed drains too\n- `plugin/skills/backlog/attention-mode.md` — dedicated needs:answer row quoting the question\n- `plugin/skills/help/status-scan.md` — count needs:answer\n- `plugin/skills/_shared/work-record.md` — needs:answer label row and permission matrix\n- `plugin/bin/dispatch-resume.js` — report answered state\n- `plugin/bin/lib/dispatch/resume-eligibility.js` — answered predicate\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-11-03T10:01:09Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 5053,
-        "state": "OPEN",
-        "title": "Plan-review needs-human stops have no answer path, no waiting state and no restart",
-        "updatedAt": "2026-11-26T16:27:36Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -5735,6 +5645,78 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: 3e3afc3a6fa361d526d7505e84e8a0b5022060d5\n\nOrigin: ledger resolve gate (wrap-up of #4183)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n- `plugin/skills/flow/claim-targets.md`'s exit-5 (claim-unverified) bullet (around line 293) still says the unverified target itself is never released by the CLI and is left exactly as the write left it. That is the pre-#2329 behavior.\n- `plugin/bin/lib/claim-targets/claim-targets.js` now retries the contents-API read-back (`verifyClaimLandedWithRetry`) and, on the default all-or-abort path, attempts to release the unverified target's own write (`stopOrSkip(..., releaseThisIssue = true)` into `releaseClaimedThisRun`), naming it in `released` or `releaseFailed`. `plugin/skills/_shared/issue-claims.md`'s Post-write verification paragraph already says so.\n- Found while building #4183, which fixed the same stale claim in `docs/journeys/act-on-a-contested-claim.md` step 3c. The skill file was outside that build's diff.\n\n## Deliverables\n\n- [ ] Rewrite the exit-5 bullet in `plugin/skills/flow/claim-targets.md` so it states the bounded contents-API read-back retry and the default all-or-abort release of the unverified target's own write (`released` / `releaseFailed`), and that `--keep-going` skips the release.\n- [ ] Re-read the rest of that file's exit-5 prose and the `## Flow: Claim unverified` card for any other statement that the target is never released.\n\n## Acceptance Criteria\n\n- `plugin/skills/flow/claim-targets.md` no longer says the unverified target is never released.\n- Its exit-5 text agrees with `plugin/skills/_shared/issue-claims.md`'s Post-write verification paragraph and `plugin/bin/lib/claim-targets/claim-targets.js`.\n- `npm test` passes, including every conformance suite that pins this file's prose.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/flow/claim-targets.md` — modify\n\n_Filed by `ledger resolve gate` via specShapedBody._",
+        "createdAt": "2026-10-25T12:20:42Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4264,
+        "state": "OPEN",
+        "title": "Fix flow/claim-targets.md exit-5 bullet: the unverified target is released on abort since #2329",
+        "updatedAt": "2026-11-26T16:39:53Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
