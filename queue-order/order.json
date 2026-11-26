@@ -1,13 +1,8 @@
 {
-  "computedAt": "2026-11-26T09:08:38.381Z",
+  "computedAt": "2026-11-26T11:50:19.366Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
-      {
-        "number": 6321,
-        "updatedAt": "2026-11-26T09:07:26Z",
-        "state": "OPEN"
-      },
       {
         "number": 6120,
         "updatedAt": "2026-11-26T05:12:08Z",
@@ -21,16 +16,6 @@
       {
         "number": 6010,
         "updatedAt": "2026-11-26T08:11:23Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 6009,
-        "updatedAt": "2026-11-26T08:41:30Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 5833,
-        "updatedAt": "2026-11-26T08:43:47Z",
         "state": "OPEN"
       },
       {
@@ -105,7 +90,7 @@
       },
       {
         "number": 4746,
-        "updatedAt": "2026-11-26T08:11:12Z",
+        "updatedAt": "2026-11-26T10:55:06Z",
         "state": "OPEN"
       },
       {
@@ -230,17 +215,12 @@
       },
       {
         "number": 4523,
-        "updatedAt": "2026-10-30T04:28:57Z",
+        "updatedAt": "2026-11-26T11:19:52Z",
         "state": "OPEN"
       },
       {
         "number": 4522,
         "updatedAt": "2026-10-30T04:28:53Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4521,
-        "updatedAt": "2026-10-30T04:28:48Z",
         "state": "OPEN"
       },
       {
@@ -469,11 +449,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4284,
-        "updatedAt": "2026-10-31T09:58:59Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4283,
         "updatedAt": "2026-11-03T08:34:14Z",
         "state": "OPEN"
@@ -531,11 +506,6 @@
       {
         "number": 4211,
         "updatedAt": "2026-11-24T14:15:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4209,
-        "updatedAt": "2026-11-26T09:07:33Z",
         "state": "OPEN"
       },
       {
@@ -606,6 +576,84 @@
     ]
   },
   "groups": [
+    [
+      {
+        "body": "Surface: backend\nRisk-flags: public-contract\n\n## Overview\n\nAdds, to a run's `manifest.json`, the model and effort each role in the run actually ran at: the session that walked the run, implementers, task reviewers, lens reviewers, the whole-branch and plan reviewers, and, in the driver lane, the implementer, reviewer, merge-check and acceptance workers. The design (`docs/superpowers/specs/2026-11-18-pipeline-economy-design.md`, `## Phase 11`) lists \"lane, model and effort per role\" among the run facts; lane shipped with #5903, and this record adds the rest. Phases 9, 14 and 15 change which model and effort each role runs at and judge each change over 20 runs, so each run has to record what each role ran at, not what policy asked for: the design's own evidence found that effort followed the session rather than the profile for 60% of subagent turns.\n\n**Complexity:** Medium\n**Estimated tasks:** 5\n\n## Non-Goals\n\n- Setting a role's model or effort. #5941 and #5942 set effort on launches; this record only records it.\n- Tokens and cost: record #6009 \"Record a run's tokens by model, list-price cost and minutes in its manifest\", which this one extends.\n- Dispatch reading the field: a change in thn-inc/dispatch, as for the cost fields.\n- Reclassifying the role vocabulary. Roles come from the existing `roleOf` table in `plugin/bin/lib/timing/derive.js` and the driver's role names; an agent `roleOf` cannot place stays `unlabelled`.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #6009 | Record a run's tokens by model, list-price cost and minutes in its manifest | this decomposition; adds the close-path fill this record extends, in the same files (the manifest stays `v: 1`) |\n| #5967 | Read transcript usage through one shared max-per-message.id reader | open, ready; adds `message.id` and the cache-write split to `readUsage` rows in the same function this record extends, and its `message.id` dedupe keeps streamed duplicate lines from inflating the `efforts` turn counts; reached through #6009, which it blocks on |\n| #5942 | Launch driver workers at the effort their role's profile names | open, ready; the driver launch's `--effort` exists only after it, so before it a driver role's effort comes from the worker transcript or is `unknown`; not a block |\n| #5647 | Attribute dispatched runs' subagent transcripts to timing.json token totals | open, ready; a dispatched run's subagents are found only after it lands |\n\n## Current State\n\n- `plugin/bin/lib/timing/derive.js` `aggregateDispatches(items)` (around line 506) maps each subagent dispatch item to `{ ...d, tier, rawModel, role: roleOf(d.description) }` and buckets them `byTier` and `byRole`. `roleOf` (line 502) uses a regex table (line 494 on): `re-review`, `whole-branch review`, `plan review`, `task review`, `lens reviewer`, `implementer`, else `unlabelled`.\n- `plugin/bin/lib/timing/transcript.js` `readUsage` returns per-row `model`, token counts and turn classes; it reads no effort field. `plugin/bin/lib/timing/run-timing.js` `collectDispatches` reads each subagent transcript under the run session's `subagents/` directory.\n- The effort a turn ran at is recorded in the transcript: the design's evidence section counted it per turn for 8 to 19 November 2026 (\"from the effort each transcript turn records\"), and probed on this checkout's transcript directory on 2026-11-21, assistant lines carry it at `message.output_config.effort`: `\"high\"` on a main-session file's turns and `\"medium\"` on a subagent transcript's turns (a `grep -o` of `\"output_config\":{...}` over one main-session file and the session's `subagents/*.jsonl`).\n- Driver lane: each worker launch's result carries the launched `model` (`plugin/bin/lib/driver/steps.js` line 727, `extra.model`), its `usage` and its `sessionId`; the role is the step's role (`plugin/bin/lib/driver/roles.js`). After #5942 a launch also passes `--effort`.\n- After record #6009, the close path (`plugin/bin/lib/timing/at-close.js`) fills close-out fields through `fillRunManifest`, from `plugin/bin/lib/run-manifest/cost.js`, at `v: 1`: `docs/reference/run-manifest.md`'s Compatibility section adds a field without a version bump. This record adds `roles` to that same fill, also with no bump.\n\n## Deliverables\n\n- [ ] `readUsage` additively returns each row's effort (`null` when the line records none), with no change to the fields its callers read, and the subagent dispatch items carry an `efforts` tally (`{ \"<level>\": turns }`) beside `rawModel`.\n- [ ] `plugin/bin/lib/run-manifest/roles.js` (new): `deriveRoles({ timing, events })` returns `roles`: `{ \"<role>\": { agents, models: { \"<model id>\": agents }, efforts: { \"<level>\": turns } } }`. Session lanes: one `session` role from the main-session rows (`agents: 1`, its model ids and efforts; subagent rows are excluded), plus one entry per `roleOf` role over the dispatch items, where `agents` counts every dispatch item, an agent whose transcript could not be read counts in `agents` under model `unknown` and adds no efforts, and an agent's model is the `rawModel` `aggregateDispatches` already derives. Driver lane: one entry per driver role from the worker step events (the step event the launch writes to `events.jsonl`, carrying `role`, the launched `model`, `usage` and `sessionId`): model and effort come from the worker's transcript when its `sessionId` resolves (what ran), else `model` from the launch and effort from the launch's `--effort` when set, else `unknown`. `manifest.lane` selects the source, so a run is single-lane and `roles` holds one lane's names: a `driver` run reads events only, every other lane reads `timing` only. A transcript effort outside `low`/`medium`/`high`/`max` is kept as the string seen, since the set is illustrative, and a `roles` value that fails the shape check leaves the existing manifest untouched with one stderr line.\n- [ ] `fillRunManifest` accepts `roles`, fill-only-null with a shape check, in the close-path fill record #6009 adds.\n- [ ] `docs/reference/run-manifest.md` documents `roles`: the role names and where each comes from, that `efforts` counts turns while `models` counts agents, and that `unknown` means the transcript recorded no effort.\n- [ ] Tests: `tests/bin-lib/run-manifest/roles.test.js`, and transcript fixtures with and without the effort field.\n\n## Acceptance Criteria\n\n1. `readUsage` over a fixture transcript whose assistant lines carry an effort of `high` on two turns and `medium` on one returns those efforts per row; over a fixture with no effort field it returns `null` per row, and every existing `readUsage` test passes unchanged.\n2. `deriveRoles` over a fixture timing with three implementer dispatches (two on `claude-sonnet-5-5` at `medium`, one on `claude-opus-5-5` at `high`) and one dispatch described `lens 3a` returns `implementer: { agents: 3, models: { \"claude-sonnet-5-5\": 2, \"claude-opus-5-5\": 1 }, efforts: {…} }` with the effort turn counts from the fixtures, and `lens reviewer: { agents: 1, … }`.\n3. A dispatch whose description no `roleOf` pattern matches counts under `unlabelled`.\n4. A driver-lane fixture `events.jsonl` with an implementer launch on `sonnet` and a reviewer launch on `opus`, neither with an effort, gives `implementer` and `reviewer` entries with those models and `efforts: { unknown: 1 }` each when no worker transcript resolves.\n5. After the close path fills a fixture run, `manifest.json` carries `roles` and every other field unchanged; closing again changes nothing.\n6. The main session appears as `session` with its own model ids and effort counts.\n\n## Release Note\n\nEvery pipeline run now records the model and reasoning effort each of its roles actually ran at in its run manifest.\n\n## Technical Approach\n\nRecord what ran, read from the transcripts and driver events, not from policy: the same data the timing pass already reads, plus one more field per transcript line. Roles reuse `roleOf` so the manifest and `timing.json`'s `byRole` buckets name roles the same way.\n\nDecided while specifying: `efforts` counts turns, because one agent can change effort between turns and the design's effort evidence is per turn; `models` counts agents, since an agent runs on one model; a role with no recorded effort says `unknown` rather than inferring it from the profile, since the evidence shows the profile and the recorded effort differ.\n\n### Data / API Surface\n\n`manifest.json` gains `roles` (object, nullable; added at `v: 1`, no version bump): `{ \"<role>\": { \"agents\": number, \"models\": { \"<model id>\": number }, \"efforts\": { \"<effort level as the transcript records it, or \\\"unknown\\\">\": number } } }`. Role names: `session`, the `roleOf` names (`implementer`, `task review`, `lens reviewer`, `whole-branch review`, `plan review`, `re-review`, `unlabelled`), and the driver role names from `plugin/bin/lib/driver/roles.js`.\n\n`deriveRoles({ timing, events }) -> roles`\n\n### Key Files\n\n- `plugin/bin/lib/timing/transcript.js` — `readUsage` returns each row's effort\n- `plugin/bin/lib/timing/derive.js` — dispatch items carry an `efforts` tally\n- `plugin/bin/lib/run-manifest/roles.js` — new: `deriveRoles`\n- `plugin/bin/lib/run-manifest/write.js` — accept `roles`\n- `plugin/bin/lib/timing/at-close.js` — pass `roles` in the close-path fill\n- `docs/reference/run-manifest.md` — document `roles`\n- `tests/bin-lib/run-manifest/roles.test.js` — new\n\n## Gotchas\n\n- The effort field path is confirmed on this checkout (Current State), but it is Claude Code's transcript format and can change: Task 0 re-reads one main-session and one subagent transcript, records the field path, values and Claude Code version in the test fixture's header, and a test fails when a fixture transcript with assistant turns yields no effort at all, so a format change shows as a red test and not as a quiet `unknown` everywhere. Where a subagent transcript lacks the field, record `unknown` and say so in `docs/reference/run-manifest.md`.\n- `roleOf`'s patterns place the description `lens 3a` under `lens reviewer` (`^((review|delta) )?lens \\d`, `plugin/bin/lib/timing/derive.js`), so AC2's fixture holds.\n- Driver role names are a manifest contract once this lands: renaming one in `plugin/bin/lib/driver/roles.js` changes `roles` keys, so a rename names this record in its description.\n- #5967 also adds fields to `readUsage` (`message.id`, the cache-write split). Add the effort field the same additive way and rebase on it; never rename or reshape an existing row field.\n- Driver role names must come from `plugin/bin/lib/driver/roles.js`, not a second list typed here.\n- A worker transcript lives under the worker's own session id; resolving it is optional. A worker whose transcript is not found records `unknown`, never a guessed effort.\n\n\n<!-- work-fingerprint: pipeline-economy-phase-11:record-each-role-s-model-and-effort-in-the-run-manifest -->\nwork-fingerprint: pipeline-economy-phase-11:record-each-role-s-model-and-effort-in-the-run-manifest\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(public-contract): …`.\n",
+        "createdAt": "2026-11-21T17:37:46Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 6010,
+        "state": "OPEN",
+        "title": "Record each role's model and effort in the run manifest",
+        "updatedAt": "2026-11-26T08:11:23Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": null,
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
     [
       {
         "body": "**Related:** #5383 (its wrap-up staged all three changes below; they are coupled, so they are filed together)\n\nOrigin: wrap-up of #5383 (staged/skills-1.patch, staged/skills-2.md, staged/reflect-1.md)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nBoth files of `.claude/skills/gh-api-module-pattern/` are over the 52,500-byte Read rail (`plugin/bin/lib/skill-audit/budgets.js` `RAIL_BYTES`), measured with `context-cost.js`'s `measuredBytes` at 33f635d03: `cli-wrapper-contract.md` 56,381 (over by 3,881), `SKILL.md` 53,799 (over by 1,299). Both were over before #5383, which grew them by 26 and 355 bytes. The `rail:` tests cover only the plugin's shipped skills, so CI never flags these.\n\n#5383's wrap-up found two additions `cli-wrapper-contract.md` needs, both of which grow it further:\n1. The relative-path and live-stdio rules. #5383's review fix wave (46a856cf1) resolved relative path arguments against `deps.cwd()` four different ways across five CLIs, and an unconditional `path.resolve(deps.cwd(), p)` broke a test because it read cwd for absolute paths too. release-local's hook needs inherited stdio for real callers, or an npm OTP prompt fails. The contract states neither rule.\n2. The env-only fixture proof in the conversion-proofs bullet sets `GIT_DIR` alone. That leaves `git rev-parse --show-toplevel` at the cwd repo (probed: `GIT_DIR` only prints A; `GIT_DIR` plus `GIT_WORK_TREE=<B>` prints B). The bullet also has no rule for observing the injected `cwd`: a stub that records `process.cwd()` per call, as #5383's digest-rollover AC6.1 fix does.\n\nThe diff staged for addition 2, from a real `git diff` (it applied cleanly at 33f635d03):\n\n```diff\ndiff --git a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\nindex e63de77d3..ffedfa987 100644\n--- a/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n+++ b/.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md\n@@ -2,7 +2,7 @@\n \n - Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract — an un-wrapped deps call is where #610's one post-review high landed.\n - **A CLI that tests call in-process meets the entry contract** (#5374; `plugin/bin/resolve-policy.js` is the worked example). It exports `run` and `realDeps`; `argv` is `process.argv.slice(2)`, and `run` returns an integer exit code or a Promise of one. The script entry is the file's last statement: `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);`. The standard io keys, each present only when the CLI uses it, are `stdout(text)`, `stderr(text)`, `cwd()`, `env` (a plain object, read-only), `stdin()` (the whole input as a string) and `homeDir()`. Above the guard and in everything `run` calls there is no `process.exitCode`, `process.exit()`, `process.chdir()` or write to `process.env`. A relative path is resolved against `deps.cwd()`, never left to `path.resolve` or `fs`. Every child process is started with a `cwd` derived from `deps.cwd()` and with `env: deps.env`, and a library function on the CLI's path takes that `env` as an option whose default is the inherited environment, so a `gh` or `git` stub on an injected `PATH` is not skipped. The process-wide timeout knobs are the named exception: `plugin/bin/lib/shared-primitives.js`'s shared `gh`/`git` timeouts read `CLAUDE_TWEAKS_GH_TIMEOUT_MS`, `CLAUDE_TWEAKS_GIT_TIMEOUT_MS` and the `gh-timeout-ms` / `git-timeout-ms` keys of the `policy.yml` at the real working directory once per process, and `plugin/bin/lib/hooks/git-exec.js`'s `runGit` reads `CT_HOOKS_GIT_TIMEOUT_MS` from the real `process.env`, by design; an in-process test cannot set them through `env`, so a test of those knobs is a `spawnCli` test. Tests call the CLI through `tests/helpers/run-cli.js` (`runCli`, or `runCliSync` for a synchronous `run`), passing an absolute `cliPath`; the helper fails the test on a leaked `process.exitCode`, working directory, `process.env` key, signal listener, direct stdout/stderr write, or an `os.homedir()` call under an injected home; each converted CLI keeps one or two `spawnCli` smoke tests for the script entry, shebang and exit code. The helper's `env` defaults to `{}` and is the whole environment the CLI sees, so a CLI that starts `git` or `gh` needs `PATH` (and `SystemRoot` on Windows) in the `env` the test passes. Module-level state under `plugin/bin` (the forge probe's memos, for example) survives between in-process calls in one test file; a case that depends on it passes `fresh: true`, which clears `require.cache` under `plugin/bin` first. The helper fails closed: after merging `realDeps` with the test's fakes, it replaces a key named in `FAIL_CLOSED_KEYS` (`runner`, `gh`, `ghAvailable`, `runHook`, `spawn`) that still holds the CLI's real value with a function that throws, and records the reach so a CLI that catches the throw still fails the test; `allowRealRunner: true` lifts it for one call. The list is by key name: a `realDeps` key that can start `gh` or an arbitrary command carries one of those names, and a record converting a CLI whose `realDeps` holds such a seam under another name (for example `execFileSync`, `runPremiseCheck`) adds that name to `FAIL_CLOSED_KEYS` in the same change. A git-only seam (`git`, `gitRunner`) is deliberately not on the list: it runs real git against the injected `cwd` and `env`, which is the behaviour under test. `tests/bin-lib/cli-entry-conformance.test.js` pins the three structural rules (exports `run`, has the guard, no `process.exitCode`/`process.exit(` above it) for every top-level `plugin/bin/*.js`, with a `NOT_YET` list that only shrinks; `hooks.js` is the standing exception (its entry calls `process.exit(code)` and it has a require-time prefilter).\n-- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n+- **Converting an existing CLI to the entry contract takes two proofs the tests-side journey does not cover.** `docs/journeys/call-a-plugin-bin-cli-in-process-from-a-test-5374.md` starts from a CLI that already meets the contract; the `plugin/bin` side of the change needs these first. (1) Pin the script's output with real-process tests committed before the split, so the split is checked against the old behavior and not against itself: #5374 committed five `resolve-policy.js` script cases in `tests/resolve-policy-entry.test.js` (8fa20f94e) before splitting the file into a core and a printing `run` (75fb7d40e). (2) Prove that each `git` or `gh` child on the CLI's path got the injected `env` with an env-only fixture, not by reading the call: two repos, A with no remote and B with an `origin` and a recorded `origin/HEAD`, the CLI's `cwd` in A and `GIT_DIR=<B>/.git` only in the injected `env`, so a child that inherits the real environment reads A and a child that got `env: deps.env` reads B's remote (`forgePair` in `tests/forge-probe-env.test.js` and `tests/resolve-policy-entry.test.js`). A child that finds the repository root with `git rev-parse --show-toplevel` is not moved by `GIT_DIR` alone: git then takes the working directory as the work tree and still prints A, so put `GIT_WORK_TREE=<B>` beside it in the injected `env`; a child that reads only the repository (`--absolute-git-dir`, `log`, `remote get-url`) follows `GIT_DIR` alone (AC6.1 in `tests/risk-flags-cli.test.js`, #5383). The `cwd` half needs its own observation: a test named for an injected `cwd` whose stub never reads it stays green with the child's `cwd` option deleted, so have the stub append `process.cwd()` to a file on each call and assert every entry equals the injected directory, both sides through `path.resolve(fs.realpathSync(…))` (`gh-cwd.txt` in `tests/digest-rollover-cli.test.js`'s AC6.1 data-call test, #5383). Strip `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` from the fixture's own setup `git` calls, so a variable the test runner inherited cannot point them at the wrong repo. Find the ambient reads on a CLI's path by running each documented invocation through `runCliSync` and through `spawnCli` against the same fixture, with an injected `cwd`, `env` and `HOME` that differ from the real ones, and comparing the two results, not by reading the code: the read audit for `resolve-policy.js` (#5374) missed sites in four successive passes (plan, plan review, whole-branch review, review phase).\n - **A fail-closed branch around an injected dependency needs one test of the real dependency's failure shape, not only a stub that throws.** A stub proves the wrapper catches a throw, not that the real dependency ever throws. `plugin/bin/dispatch-resume.js`'s run-dir listing is the example: `read('run dir listing', …)` mapped a throw to exit 4, but the real `listRunDirsWithState` swallows a `readdirSync` failure into an empty listing, so the branch was unreachable and an unlistable pipelines dir passed the bound-run scan as clean (verdict and `--bound-run` modes) and could report this session's own lock as a live sibling. #4809 added `listRunDirsFailClosed` and the tests that drive the real dependency.\n - `require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe. **This one is pinned mechanically, not by grep** — `tests/bin-lib/exit-code-conformance.test.js` (#1903) walks every `plugin/bin/**/*.js`, extracts the text each `require.main === module` guard governs, and fails on a direct `process.exit(...)` inside it. Three prior records (#1176, #1313, #1535) each closed one violation of this rule found by a manual sweep that missed another, which is why the sweep was replaced. A new guard needs no registration; a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code).\n - **Precisely, the scan reads only a file's *last* `require.main === module` guard, and only the text that guard governs** — `extractGuard` takes the last regex match, then either a balanced `{…}` block or the bare statement up to its `;`. A file may hold more than one guard: `bin/hooks.js` has its Bash prefilter fast path (#3074) ahead of the real entry point at the bottom. The last guard is the entry point, since a guard that short-circuits before it must appear first, so a direct `process.exit(...)` in an earlier guard is not checked. `hooks.js`'s prefilter exit is safe because nothing has been written to stdout yet. An exit placed outside any guard is invisible to the scan in a file that also exports something. `hooks.js`'s allowlist entry covers the entry-point guard's `main(...).then((code) => process.exit(code))`, and `tests/bin-lib/exit-code-conformance.test.js` pins that the scan selects that guard, not the prefilter one.\n```\n\n## Deliverables\n\n- [ ] Move one lazy bullet group out of `cli-wrapper-contract.md` into a sibling file in the skill directory, leaving a one-line pointer bullet (the `status-as-data.md` / `run-dir-boundary-guards.md` pattern). The in-process entry contract and conversion proofs (lines 4-5 at 33f635d03, about 5.3 KB) are the candidate, since both additions land there. Do the same for one lazy section of `SKILL.md`.\n- [ ] Repoint every reference that names a moved bullet: `git grep -n cli-wrapper-contract -- tests plugin docs .claude`, including `tests/helpers/run-cli.js`'s `CONTRACT` constant and `docs/plugin-structure.md`.\n- [ ] Add the two contract rules in the moved group: (a) resolve a relative path argument where `run` consumes it, `path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)`, so an absolute path never reads cwd; (b) a child that may prompt on a terminal (a release hook, npm publish) gets `stdio: 'inherit'` when `deps.stdout`/`deps.stderr` are `realDeps`' own, and injected io gets a piped capture routed through deps (release-local.js `run()`'s `live` check).\n- [ ] Apply the conversion-proofs change above (the `GIT_WORK_TREE` pairing and the cwd-recording stub).\n\n## Acceptance Criteria\n\n- [ ] `cli-wrapper-contract.md` and `SKILL.md` each measure at or below `RAIL_BYTES` with `context-cost.js`'s `measuredBytes`, including the additions.\n- [ ] `git grep -n -F 'path.isAbsolute(p) ? p : path.resolve(deps.cwd(), p)' -- .claude/skills/gh-api-module-pattern/` and `git grep -n -F 'GIT_WORK_TREE' -- .claude/skills/gh-api-module-pattern/` each print a line.\n- [ ] Every `cli-wrapper-contract` reference found by the grep above resolves to a file and a bullet that exist.\n- [ ] Full `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` — modify\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `tests/helpers/run-cli.js` — verify\n- `docs/plugin-structure.md` — verify\n\n_Filed by `capture` via specShapedBody._",
@@ -1577,84 +1625,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full from #4549/#4550/#4556 (multi-spec batch)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/specify/shaping-mode-stamping.md:182` resolves `$SPECIFY_SHAPED_BODY` as `sessionTmpPath(CLAUDE_CODE_SESSION_ID, 'specify-shaped-body.md')`, one fixed filename per session, falling back to `os.tmpdir()/specify-shaped-body.md`. `shaping-mode.md:75` reuses the same path for its `--check` probe.\n\nEvery record a session shapes therefore shares one body file. Sweep run `2026-10-30T154127-sweep-standalone` wrote #4559's body onto #4549, #4549's onto #4550, and #4555's onto #4556. #4559 and #4555 kept their own correct bodies. The misfiled bodies had to be reshaped by hand on 2026-10-31.\n\nProbe: `git grep -n -F -e 'specify-shaped-body' origin/main -- plugin` matched both lines above.\n\n## Deliverables\n\nKey the shaped-body temp file by record id (e.g. `specify-shaped-body-{N}.md`) at both resolve sites, so two records shaped in one session, or by sibling dispatches sharing a session id, never share a file.\n\nBefore the body write, check that the body file being written was composed for the record being written, failing loud on a mismatch rather than writing it.\n\nA regression test that shapes two records in one session and asserts each record receives its own body.\n\n## Acceptance Criteria\n\nBoth resolve sites name the record id in the temp filename; a conformance test pins the per-record form at each site and goes red on the fixed `specify-shaped-body.md` form.\n\nShaping two records back to back in one session writes each record its own body (regression test, red on the current fixed filename).\n\nA body file whose record id does not match the target record is refused before any write, with a message naming both ids.\n\n## Release Note\n\nShaping several records in one session (including sweeps) can no longer write one record's body onto another.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/specify/shaping-mode-stamping.md` — modify\n- `plugin/skills/specify/shaping-mode.md` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-31T15:41:22Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAADAM5AEA",
-            "name": "size:small",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 4746,
-        "state": "OPEN",
-        "title": "specify: one session-wide shaped-body temp file lets a sweep write a body onto the wrong record",
-        "updatedAt": "2026-11-26T08:11:12Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": null,
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -2828,84 +2798,6 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate (#3819 ledger item 3)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`HARNESS_ISOLATION_REFUSAL_RE` in `plugin/bin/lib/hooks/harness-refusal.js` has no start anchor, so a failed Bash command whose output merely quotes refusal text (a failing test fixture is the usual case) logs a false `wd-guard-refusal` event. The defect predates #3819; its widening to the agent-noun and worktree-gone signatures slightly enlarges the surface (final whole-branch review, minor 6). Anchoring at `^` is only safe if the hook's `error` always begins with the noun, which the 2026-10-28 agent probe confirmed for the agent template; the session and worktree-gone templates have not been measured.\n\n**Related:** #4524, #4525\n\n## Deliverables\n\n- [ ] Measure, with a headless probe like the one #3819 used, whether `error` begins with the noun for the session and worktree-gone templates, and record the result in `tools/upstream-drift/manifest.yml`.\n- [ ] Anchor the pattern at the start of `error` if all three begin with the noun; otherwise bound the match another way and say why.\n- [ ] Keep `bash-prefilter.js`'s signature check consistent with the matcher.\n\n## Acceptance Criteria\n\nA test passes a failed-command `error` that quotes a refusal in the middle of its text and expects no `wd-guard-refusal` event.\n\nThe existing tests for the session, agent and worktree-gone refusals still pass.\n\n`npm test` passes.\n\n## Release Note\n\nInternal: friction events no longer count command output that merely quotes a refusal.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/harness-refusal.js` — anchor the matcher\n- `plugin/bin/lib/hooks/bash-prefilter.js` — keep the prefilter signature check consistent\n- `tools/upstream-drift/manifest.yml` — record the per-template measurement\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-10-28T18:52:01Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4523,
-        "state": "OPEN",
-        "title": "Anchor HARNESS_ISOLATION_REFUSAL_RE so quoted refusal text in command output stops logging a false event",
-        "updatedAt": "2026-10-30T04:28:57Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: ledger resolve gate (#3819 ledger item 2)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#3819 counts the agent-noun and worktree-gone isolation refusals as `wd-guard-refusal` events with `actor`/`variant`, but two cases can still miss the parent run's `friction-events.js` read. A dispatched agent's refusal from its own still-live isolation worktree is written to an ad-hoc run dir keyed to that worktree, and `findAdHocRunsBySessionId` (`plugin/bin/lib/hooks/context.js` around line 650) skips a same-session ad-hoc dir whose worktree still exists, so the event is merged only after the worktree is removed. A worktree-gone refusal with no trusted owned run has no listed cwd, so `resolveDenialRunDir` lands it on the dropped fallback guess. #3819 pinned the reachable path in a test and states the limit in reflect's Friction lens; fixing it changes ownership resolution shared by every denial site, which is past the fix-now criteria.\n\n## Deliverables\n\n- [ ] Decide the fix site: writer-side (`resolveDenialRunDir`/ownership in `plugin/bin/lib/hooks/context.js`) or reader-side (the union step in `plugin/bin/friction-events.js` and `findAdHocRunsBySessionId`), and record the choice.\n- [ ] Implement it so an agent-actor refusal from a live isolation worktree and a worktree-gone refusal both appear in the owning run's friction events.\n- [ ] Update the \"lower bound\" wording in `plugin/skills/reflect/full-mode.md`'s Friction lens and in `docs/journeys/count-dispatched-agents-isolation-refusals-3819.md` to match.\n\n## Acceptance Criteria\n\nA test creates a same-session ad-hoc run dir whose worktree still exists, logs an agent-actor `wd-guard-refusal` into it, and `friction-events.js --run {parent}` returns that event.\n\nA test logs a worktree-gone refusal with no owned run and the event is returned for the run it belongs to rather than dropped.\n\n`npm test` passes.\n\n## Release Note\n\nReflect's Friction lens stops under-counting dispatched agents' isolation refusals for the run that dispatched them.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/context.js` — ownership resolution for denial run dirs and ad-hoc dir merge\n- `plugin/bin/friction-events.js` — union step, if the reader-side fix is chosen\n- `plugin/skills/reflect/full-mode.md` — drop the lower-bound caveat once fixed\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-10-28T18:51:57Z",
         "labels": [
@@ -2963,84 +2855,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (#3819 ledger item 1)\n\nDefer-reason: tangential\n\n## Current State\n\n#3819 widened the friction-event matcher (`plugin/bin/lib/hooks/harness-refusal.js`) to count the refusal a dispatched agent receives (\"This agent is isolated in the worktree ... Refusing to run it\"). The timing turn classifier is a separate consumer with its own copy of the pattern: `plugin/bin/lib/timing/turn-class.js` line 26 defines `GUARD_REFUSAL_RE` with the literal `This session is isolated in the worktree`, so a turn whose tool result carries the agent-noun refusal is classified by its tool instead of `guard-refusal`. Surfaced by plan review of #3819 and left out because it is a different feature (turn timing), not a friction event.\n\n## Deliverables\n\n- [ ] Make `GUARD_REFUSAL_RE` in `plugin/bin/lib/timing/turn-class.js` cover the agent-noun refusal, deriving the noun alternation from `SESSION_NOUN`/`AGENT_NOUN` in `plugin/bin/lib/hooks/harness-refusal.js` rather than adding a second literal.\n- [ ] Add a case to the turn-class tests showing an error result carrying the agent-noun refusal classifies as `guard-refusal`.\n\n## Acceptance Criteria\n\nA turn-class test feeds an error tool result beginning \"This agent is isolated in the worktree\" and expects `guard-refusal`; it fails when the `AGENT_NOUN` alternative is removed from the pattern.\n\n`npm test` passes.\n\n## Release Note\n\nInternal: timing breakdowns count a dispatched agent's worktree-isolation refusal as a guard-refusal turn, like the session one.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/timing/turn-class.js` — derive the guard-refusal pattern from the shared noun constants\n- `plugin/bin/lib/hooks/harness-refusal.js` — source of SESSION_NOUN/AGENT_NOUN (read only)\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-10-28T18:51:50Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4521,
-        "state": "OPEN",
-        "title": "Classify the agent-noun isolation refusal as a guard-refusal turn in the timing classifier",
-        "updatedAt": "2026-10-30T04:28:48Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -5882,90 +5696,6 @@
     ],
     [
       {
-        "body": "Origin: #2767 class split — classification of windows-regression run 40169646104 (main 6a41ebe3a)\n\nDefer-reason: genuinely-larger\n\n**Related:** #2767, #2783, #1782\n\n## Current State\n\n`logWindowsLongpathsEvent` (`plugin/bin/lib/hooks/post-tool-use.js:367`) writes to `ctx.ownedRun.dir` whenever that field is set. The ad-hoc stamp in the same file (`stampAdHocRunDir`, line 289) first checks `ctxLib.isTrustedOwnedRun(ctx.ownedRun)`, because \"a 'fallback' guess does not count (#2783)\". The breadcrumb writer has no such check, so an EnterWorktree in a checkout that holds an unrelated run dir writes the `windows-longpaths` event into that unrelated run. `checkWindowsLongpaths` (line 373) runs only when `ctx.platform || process.platform` is `win32` (line 375). On Linux CI this path never runs in the end-to-end repro.\n\n`tests/friction-adhoc-enterworktree-roundtrip.test.js:21` is #2783's own repro. It asserts that the run resolved at EnterWorktree is the `fallback` guess, which is the unrelated sibling run (line 31). It passes that run as `ctx.ownedRun` to `post.run` with no `platform` (lines 33-37). On Windows it fails at line 64 with `nothing may land in the unrelated sibling run`.\n\n`logWorktreeStalenessEvent` (line 350) has the same unguarded shape.\n\n1 test in 1 file fails on Windows (line numbers as of 988cc584d).\n\n### Failing tests\n\n- `tests/friction-adhoc-enterworktree-roundtrip.test.js:21` — #2783 repro: the harness refusal from an ad-hoc EnterWorktree session survives ExitWorktree remove\n\n## Deliverables\n\n- Route both breadcrumb writers, `logWindowsLongpathsEvent` and `logWorktreeStalenessEvent`, through one helper. The helper appends only when `ctxLib.isTrustedOwnedRun(ctx.ownedRun)` is true. A `fallback` guess gets nothing.\n- Keep #1782's breadcrumb for a run that is actually owned. Any non-`fallback` attribution (`context.js:771`) still receives the `windows-longpaths` event.\n\n## Acceptance Criteria\n\n1. AC1: `node --test tests/friction-adhoc-enterworktree-roundtrip.test.js tests/hooks-post-tool-use-worktree-staleness.test.js` passes on Linux.\n2. AC2: a Linux-runnable win32 repro through the existing `ctx.platform` seam. The roundtrip test's `post.run` call carries `platform: 'win32'`, so Linux CI covers the Windows path. It fails before the fix and passes after.\n3. AC3: unit pins in `tests/hooks-post-tool-use-worktree-staleness.test.js` with `platform: 'win32'`. With a `fallback` `ownedRun`, no `events.jsonl` is created in that dir. With a `session` `ownedRun`, exactly one `windows-longpaths` event lands there.\n4. AC4: go-red. Removing the trust check from the helper fails AC2 and AC3's fallback case.\n5. AC5: a `windows-regression.yml` dispatch on the branch shows `tests/friction-adhoc-enterworktree-roundtrip.test.js` with 0 failures of this class and no newly failing file.\n\n## Release Note\n\nWindows: the `core.longpaths` breadcrumb no longer lands in an unrelated pipeline run's `events.jsonl` after an ad-hoc EnterWorktree.\n\n## Gotchas\n\n- ASSUMPTION — verify at build: the event that landed in the sibling run on the Windows run was `windows-longpaths`. The log shows only the assertion message. The inference is that `checkWindowsLongpaths` is the only win32-only writer on this path. AC2 confirms or refutes it on Linux before any fix.\n- `stampAdHocRunDir` does not update `ctx.ownedRun`. Whether the freshly minted ad-hoc dir should receive the breadcrumb is a build-time decision. This record only requires that a fallback guess never does.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/post-tool-use.js` — one trust-gated breadcrumb helper used by both writers\n- `tests/friction-adhoc-enterworktree-roundtrip.test.js` — `platform: 'win32'` on the repro's `post.run` call\n- `tests/hooks-post-tool-use-worktree-staleness.test.js` — fallback and session ownership pins\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-10-25T13:49:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4284,
-        "state": "OPEN",
-        "title": "Windows: the core.longpaths breadcrumb lands in a fallback-guessed, unrelated run dir (#2783 shape)",
-        "updatedAt": "2026-10-31T09:58:59Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: #2767 class split — classification of windows-regression run 40169646104 (main 6a41ebe3a)\n\nDefer-reason: genuinely-larger\n\n**Related:** #2767, #4146 (this record takes its G part), #4134 (owns the test-impact tracer half of class G, the NODE_OPTIONS `--require` splice, including #4254), #3517, #3599\n\n## Current State\n\nShipped skill prose splices `${CLAUDE_PLUGIN_ROOT}` into JavaScript source. The shell expands it inside `node -e \"…\"` strings and inside unquoted `node-eval-file.js` heredoc bodies, so it lands in a JS string literal. There, `\\a`, `\\_` and `\\c` are eaten as escapes and `\\u` is a SyntaxError. A Windows root such as `D:\\a\\claude-tweaks\\…` therefore reaches `require` as `D:aclaude-tweaks…`. The failing evidence is `Cannot find module 'D:aclaude-tweaksclaude-tweaksplugin/bin/lib/issues/grant-maturation.js'`.\n\nHow far it reaches: `grep -rhoE \"require\\(['\\\"]\\\\$\\{?CLAUDE_PLUGIN_ROOT\" plugin/skills` finds 244 occurrences across 61 files. There are also non-`require` literals: `const path = '${CLAUDE_PLUGIN_ROOT}/CHANGELOG.md'` (`plugin/skills/init/bootstrap/version-check.md:58`) and `fs.readFileSync('${CLAUDE_PLUGIN_ROOT}…` (`plugin/skills/init/update-mode.md:64`). The failing tests run these sites:\n\n- `plugin/skills/dispatch/grant-maturation-gate.md:32`, `:79`\n- `plugin/skills/wrap-up/auto-merge-short-circuit.md:28`, `:56`, `:86`\n- `plugin/skills/backlog/attention-mode.md:42`, `:58`, `:120`\n\nSome snippets already pass values as data, for example `plugin/skills/wrap-up/auto-merge-short-circuit.md:192` and `plugin/skills/wrap-up/refused-proposals.md:16`, which read `process.argv[1]`. Five suites work around the splice by forward-slashing the root inside the test (`tests/dispatch-mcp-timestamp-alias.test.js:60-62` and four siblings), which hides the production shape.\n\n`tests/comment-trust-conformance.test.js:483` also splices native temp paths for the `$ST_*` variables. Production prints those with `/` on win32 (`plugin/bin/session-tmp-resolve.js:26-27`, `formatPrintedPath`), so that half is test-only.\n\n3 tests in 1 file fail on Windows (line numbers as of 988cc584d). The 18 failing `tests/test-impact-tracer.test.js` tests in the same class come from a different splice, NODE_OPTIONS `--require \"<native path>\"`. They are handed to #4134.\n\n### Failing tests\n\n- `tests/comment-trust-conformance.test.js:283` — grant maturation snippet in dispatch/grant-maturation-gate.md runs: a NONE pending-grant marker is skipped with a note, a MEMBER one counts\n- `tests/comment-trust-conformance.test.js:283` — grant maturation snippet in wrap-up/auto-merge-short-circuit.md runs: a NONE pending-grant marker is skipped with a note, a MEMBER one counts\n- `tests/comment-trust-conformance.test.js:483` — attention-mode.md merge script runs: a forged newer NONE proposal is skipped with a note, the MEMBER one is read\n\n## Deliverables\n\n- Remove every JS-literal splice of `${CLAUDE_PLUGIN_ROOT}` from `plugin/skills/**`. Pass the root as an argument after the script and read it from `process.argv`: `require(require('path').join(process.argv[1], 'bin/lib/x.js'))`. A `node-eval-file.js` heredoc body reads it from its own argv. Paths stay native, and nothing respells the plugin root.\n- Add a conformance suite that scans `plugin/skills/**/*.md` for `${CLAUDE_PLUGIN_ROOT}` inside a quoted JS literal, in a `node -e` body or a `NODE_EVAL_EOF` heredoc. Give it a go-red self-test.\n- `tests/comment-trust-conformance.test.js` passes the root to each snippet as argv. Its `$ST_*` stand-ins use the form `formatPrintedPath` prints.\n- Drop the forward-slash workarounds in the five suites that carry them, so they run with a native root.\n- Plan-review decision (Reading B): the `{plugin-root}` placeholder splices in `plugin/skills/harness-health/judge-procedure.md` (`require('{plugin-root}/bin/lib/session-tmp.js')` and `require('{plugin-root}/bin/lib/skill-audit/bloat.js')`, both inside `node -e`) are in scope and are rewritten the same way as the `${CLAUDE_PLUGIN_ROOT}` sites.\n\n## Acceptance Criteria\n\n1. AC1: `node --test tests/comment-trust-conformance.test.js tests/node-eval-file-heredoc-syntax.test.js` and the new conformance suite pass on Linux. The full `npm test` also passes, because skill prose is pinned by many suites.\n2. AC2: a Linux-runnable proof of the Windows shape. A temp symlink whose name holds backslashes (`x\\a\\_temp`, a legal POSIX file name) points at `plugin/`. With that path as the root, each snippet `tests/comment-trust-conformance.test.js` runs passes.\n3. AC3: go-red for AC2. Running one snippet in its pre-change splice form with the same root fails with `Cannot find module`.\n4. AC4: the conformance scan reports 0 splices, and its self-test flags a doctored `require('${CLAUDE_PLUGIN_ROOT}/bin/x.js')`.\n5. AC5: a `windows-regression.yml` dispatch on the branch shows `tests/comment-trust-conformance.test.js` with 0 failures of this class (its jq-CRLF failures belong to #3995) and no newly failing file.\n- The conformance scan also fails on a `{plugin-root}` JS-literal splice under `plugin/skills/**`, not only on `${CLAUDE_PLUGIN_ROOT}`.\n\n## Release Note\n\nWindows: skill steps that load plugin modules through `node -e` no longer fail with `Cannot find module` when the plugin is installed under a backslash path.\n\n## Gotchas\n\n- ASSUMPTION — verify at build: Claude Code on Windows exposes `${CLAUDE_PLUGIN_ROOT}` to a skill's Bash commands as a native backslash path. If it already uses forward slashes, the prose change is still correct but has no user-visible effect, and the test fixes are needed either way.\n- `node-eval-file.js` (lines 23-28) forbids any `$` in a heredoc body other than `${CLAUDE_PLUGIN_ROOT}`. Once the root moves to argv, the delimiter can be quoted (`<<'NODE_EVAL_EOF'`). Check each body for other expansions before quoting it.\n- Conformance suites extract these snippets by anchored fence text (`snippetBody` in `tests/comment-trust-conformance.test.js`, line 255). Run the full suite.\n- 61 prose files make a large diff. Consider splitting it into sub-issues by skill directory, with the conformance suite landing last.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/**/*.md` (61 files) — the root passed as argv instead of spliced into JS\n- `tests/plugin-root-splice-conformance.test.js` — new scan plus go-red self-test\n- `tests/comment-trust-conformance.test.js` — snippets run with a native or backslash-named root through argv\n- `tests/dispatch-mcp-timestamp-alias.test.js`, `tests/dispatch-near-dup-pairs-script.test.js`, `tests/dispatch-named-target-exclusion-fixture.test.js`, `tests/dispatch-neighbour-in-flight-mcp.test.js`, `tests/release-run-dir-lifecycle-conformance.test.js` — forward-slash workarounds dropped\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-25T13:49:27Z",
         "labels": [
@@ -7169,84 +6899,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n**Related:** #5265, #5321, #5653\n\n## Current State\n\n#6118 (PR #6316) gave `drive.js --budget` a `worker-stop` end. One of its rules is two-in-a-row: when two consecutive driven records' implementer launches both count as launch failures, the run ends. `countsTowardLaunchStreak` (`plugin/bin/lib/driver/worker.js`) decides what counts. It returns true for reason `launch-error` and for every `fail`/`exit` envelope (`worker.js:361-364` on origin/main `f3ec6efcc1`). `classify` (`worker.js`) gives reason `exit` to every result object with a non-zero exit code, `is_error: true` or a subtype other than `success`. That set includes workers that ran and failed their own record (`error_max_turns`, `error_during_execution`, an API error partway through). So two records in a row that each fail on their own work end the run `worker-stop`, and the run then deletes the first record's escalation comment. #6118's own Non-Goal says the opposite: \"a worker that ran and failed its record … keeps today's settle\". A record that always fails this way could therefore stay unescalated across firings. #6118 shipped the spec's literal counting set, and the PR #6316 Review Console ratified it (ruling `sdd-ruling-2`, ledger row 4). This record narrows that set.\n\nThe count crosses three files. `steps.js:875,888` calls `countsTowardLaunchStreak(envelope)` once per record and stores the result as `ctx.implementerLaunch.counts`. `run.js:525` copies it into the record's facts. `budget.js:350-356` reads only `facts.implementerLaunch.counts`, so `budget.js` never sees the envelope, and the narrowing belongs entirely in `worker.js`. The envelope already carries `turns` (`num_turns`) but not `duration_api_ms` (`ENVELOPE_FIELDS`, `worker.js:233`).\n\nA live probe on 2026-11-26 (below, under Decisions) found that a worker which did no work reports `num_turns: 1`, not 0, and `duration_api_ms: 0`. A worker that ran reports `duration_api_ms` above 0.\n\n## Deliverables\n\n- [ ] `worker.js` copies the result object's `duration_api_ms` onto the envelope as a new field `apiDurationMs`, added last to `ENVELOPE_FIELDS`. The value is the number when it is finite and at least 0; otherwise it is null, as it is when no result object exists. No existing field is renamed or reordered.\n- [ ] `countsTowardLaunchStreak(envelope)` returns true for `launch-error`, and for `fail`/`exit` only when `apiDurationMs === 0`. A `fail`/`exit` envelope with `apiDurationMs` above 0 or null does not count, so it resets the streak like any other per-record failure. `sharedCauseOf` and its lists are unchanged.\n- [ ] `worker.js`'s header adds a bullet under \"What the launch rests on\" recording the probe (date 2026-11-26, Claude Code CLI 2.1.325, macOS darwin, subscription login, no TTY, model alias `haiku`): the four cases, their `num_turns` and `duration_api_ms`, and the finding that `num_turns` does not tell the two kinds apart. The header's classification paragraphs gain `apiDurationMs` and the narrowed `countsTowardLaunchStreak` sentence.\n- [ ] An opt-in live probe `AC4.1 (#6321)` in `tests/bin-lib/driver/worker.test.js`, skipped unless `DRIVER_LIVE_SMOKE=1` like `AC7.1`/`AC9.1`. It launches the implementer through `launchWorker` with `defaultRunner`, wrapped only to append `--max-turns 1` in one case and to point `CLAUDE_CONFIG_DIR` at an empty directory in the other. It asserts the first envelope has `apiDurationMs > 0` and does not count, and the second has `apiDurationMs === 0` and counts.\n- [ ] `docs/driver.md`'s two-in-a-row bullet (line 83 on origin/main) names the narrowed set: `launch-error`, or `fail`/`exit` with `apiDurationMs` 0, where the worker made no successful API request. Its \"Cost of the two-in-a-row rule\" paragraph (line 286) changes to match. `docs/journeys/launch-a-rights-limited-headless-worker-5217.md`'s Action line (line 33), which already describes `apiError`, describes `apiDurationMs` beside it.\n\n## Acceptance Criteria\n\n- [ ] AC1.1: A result object `{ type: 'result', subtype: 'error_max_turns', is_error: true, num_turns: 2, duration_api_ms: 958 }` with exit 1 classifies as `fail`/`exit` with `apiDurationMs: 958`, `countsTowardLaunchStreak` false, `sharedCauseOf` false. Verify: a `tests/bin-lib/driver/worker.test.js` case.\n- [ ] AC1.2: The probed no-work shapes, `{ subtype: 'success', is_error: true, terminal_reason: 'api_error', num_turns: 1, duration_api_ms: 0 }` with `api_error_status`/`api_error_type` of 404/`not_found_error`, 400/`invalid_request_error` and both absent, each count (`countsTowardLaunchStreak` true). Verify: worker.test.js cases.\n- [ ] AC1.3: A `fail`/`exit` envelope with no `duration_api_ms` (a result object without it, a non-numeric or negative value, or no result object after a non-zero exit with non-empty stdout) has `apiDurationMs: null` and does not count. Verify: worker.test.js cases.\n- [ ] AC2.1: `driveRecord` on an implementer whose fake returns the AC1.1 result object records `facts.implementerLaunch` `{ status: 'fail', reason: 'exit', counts: false }`. On one returning the AC1.2 404 shape it records `counts: true`. Verify: `tests/bin-lib/driver/run.test.js` cases. The existing assertion at `run.test.js:7404` keeps `counts: true` because its fixture is given `duration_api_ms: 0`.\n- [ ] AC2.2: In a `--budget` run, two consecutive records whose facts are `counts: false` with reason `exit` end neither run nor streak, and the first record keeps its escalation comment (no `deleteRecordComment` call). Verify: a `tests/bin-lib/driver/budget.test.js` case. This pins the budget behavior the narrowed facts produce; budget.js itself does not change.\n- [ ] AC3.1: `Object.keys(envelope)` equals `ENVELOPE_FIELDS`, and that list ends `… sessionId apiError apiDurationMs`. Verify: the existing worker.test.js field-order tests, extended.\n- [ ] AC3.2: Each new AC1.x and AC2.1 test fails when `worker.js`'s `countsTowardLaunchStreak` change is reverted while the field stays in place. Verify: revert that function alone, run `node --test tests/bin-lib/driver/worker.test.js tests/bin-lib/driver/run.test.js`, and quote the failing test names.\n- [ ] AC4.1: `DRIVER_LIVE_SMOKE=1 node --test --test-name-pattern \"6321\" tests/bin-lib/driver/worker.test.js` passes on darwin. Verify: quote its diagnostic lines in the PR.\n\n## Release Note\n\nA budget-driven driver run no longer stops early, or deletes an escalation comment, when two records in a row fail on their own work.\n\n## Technical Approach\n\nIn `classify`'s `envelope` helper, read `obj.duration_api_ms` the way `turns` reads `num_turns`, but guarded (`typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null`), and append `apiDurationMs` to the returned object and to `ENVELOPE_FIELDS`. Change `countsTowardLaunchStreak` to `env.reason === 'launch-error' || (env.status === 'fail' && env.reason === 'exit' && env.apiDurationMs === 0)`. `steps.js`, `run.js` and `budget.js` need no code change: the narrowed boolean flows through the existing `implementerLaunch.counts` fact. The free-text `result` is never read.\n\n### Decisions\n\n- **Decision: the no-work signal is `duration_api_ms === 0`, not `num_turns === 0`.** Probed live on 2026-11-26 with Claude Code CLI 2.1.325 on macOS (darwin), under a subscription login, with no TTY, model alias `haiku`. The implementer was launched through origin/main's `launchWorker` (`f3ec6efcc1`) with the real `defaultRunner`, wrapped only to add each case's one change. Output, verbatim apart from trimmed `otherKeys`:\n\n  ```\n  {\"case\":\"max-turns-1\",\"exit\":1,\"envelope\":{\"status\":\"fail\",\"reason\":\"exit\",\"turns\":2,\"apiError\":null,\"costUsd\":0.0022792000000000003,\"sharedCause\":false,\"countsNow\":true},\"result\":{\"subtype\":\"error_max_turns\",\"is_error\":true,\"terminal_reason\":\"max_turns\",\"num_turns\":2,\"duration_ms\":1063,\"duration_api_ms\":958,\"total_cost_usd\":0.0022792000000000003}}\n  {\"case\":\"not-logged-in\",\"exit\":1,\"envelope\":{\"status\":\"fail\",\"reason\":\"exit\",\"turns\":1,\"apiError\":{\"status\":null,\"type\":null},\"costUsd\":0,\"sharedCause\":true,\"countsNow\":true},\"result\":{\"subtype\":\"success\",\"is_error\":true,\"terminal_reason\":\"api_error\",\"api_error_status\":null,\"num_turns\":1,\"duration_ms\":40,\"duration_api_ms\":0,\"total_cost_usd\":0}}\n  {\"case\":\"unknown-model\",\"exit\":1,\"envelope\":{\"status\":\"fail\",\"reason\":\"exit\",\"turns\":1,\"apiError\":{\"status\":404,\"type\":\"not_found_error\"},\"costUsd\":0,\"sharedCause\":false,\"countsNow\":true},\"result\":{\"subtype\":\"success\",\"is_error\":true,\"terminal_reason\":\"api_error\",\"api_error_status\":404,\"api_error_type\":\"not_found_error\",\"num_turns\":1,\"duration_ms\":669,\"duration_api_ms\":0,\"total_cost_usd\":0}}\n  {\"case\":\"api-400-first-request\",\"exit\":1,\"envelope\":{\"status\":\"fail\",\"reason\":\"exit\",\"turns\":1,\"apiError\":{\"status\":400,\"type\":\"invalid_request_error\"},\"costUsd\":0,\"sharedCause\":false,\"countsNow\":true},\"result\":{\"subtype\":\"success\",\"is_error\":true,\"terminal_reason\":\"api_error\",\"api_error_status\":400,\"api_error_type\":\"invalid_request_error\",\"num_turns\":1,\"duration_ms\":74,\"duration_api_ms\":0,\"total_cost_usd\":0}}\n  ```\n\n  Cases: `--max-turns 1` appended; `CLAUDE_CONFIG_DIR` set to an empty directory; model `claude-nonexistent-0-0`; `ANTHROPIC_BASE_URL` set to a local server that answers every request with HTTP 400 `invalid_request_error`. `num_turns` was 1 on all three no-work launches and 2 on the launch that ran, so `num_turns === 0` matches nothing. `duration_api_ms` was 0 on every no-work launch and 958 on the one that ran. `total_cost_usd` gave the same split, but `duration_api_ms` measures the event directly (no successful API time), so it is the field used.\n- **Decision: the fallback deliverable (when no field separates the two kinds, `fail`/`exit` stops counting at all) does not apply.** The probe found a separating field. The header records the probe as the original record required.\n- **Decision: a missing or invalid `duration_api_ms` means the launch does not count.** This follows #6118's Non-Goal: unless there is evidence that no work happened, the record keeps its ordinary settle and escalation. The cost is that a broken launch with no readable result object no longer reaches `worker-stop` through two-in-a-row. It is still escalated per record, bounded by `--budget`, and caught by `launch-error` or the shared-cause rule where those apply.\n- **Decision: the narrowing lives only in `worker.js`.** The original record listed `budget.js` as the site of `countsTowardLaunchStreak`, but the function is in `worker.js`, and `budget.js` reads only the boolean fact. `budget.js` is dropped from Key Files, and its header text (\"a worker that ran\" resets the streak) stays accurate.\n- **Decision: the \"does not end the run\" acceptance test is a `worker.test.js` plus `run.test.js` pair, with `budget.test.js` pinning only the downstream behavior.** `budget.test.js` builds `counts` directly as a fact (`LAUNCH_FAIL`, `budget.test.js:759`), so a test there cannot go red when `worker.js` is reverted. The original AC asked for exactly that revert check. AC3.2 runs it on the tests that can go red.\n- **Decision: `error_max_turns` is the \"ran and failed\" fixture even though the driver never passes `--max-turns`.** `git grep max-turns plugin/bin/lib/driver` finds nothing, so a driver launch cannot hit that subtype today. It is still the one probed result where the worker ran (turns 2, API time 958 ms), and the rule is keyed on `duration_api_ms`, not the subtype. So it stands in for the reachable ran-and-failed kinds (`error_during_execution`, an API error after successful turns).\n- **Decision: add an opt-in live probe beside `AC7.1`/`AC9.1`.** Every fact in `worker.js`'s \"What the launch rests on\" header has a re-run handle in `worker.test.js`. A CLI that stops reporting `duration_api_ms`, or starts reporting it above 0 on a failed first request, would quietly turn the streak off or widen it. AC4.1 is the re-run.\n- **Decision: a no-work 404 or 400 now counts through two-in-a-row, without joining the shared-cause lists.** An unknown model hits every later record, so two-in-a-row is the right end. Adding 404/400 to `SHARED_CAUSE_API_STATUSES` would end the run on the first record, and the original record's Non-Goals rule out changing the shared-cause classification.\n\n### Key Files\n\n- `plugin/bin/lib/driver/worker.js`: modify (`apiDurationMs` envelope field, `ENVELOPE_FIELDS`, `countsTowardLaunchStreak`, header probe bullet and classification text)\n- `tests/bin-lib/driver/worker.test.js`: modify (AC1.x, AC3.1 field-order extension, opt-in AC4.1 live probe)\n- `tests/bin-lib/driver/run.test.js`: modify (AC2.1; give the `:7404` fixture `duration_api_ms: 0`)\n- `tests/bin-lib/driver/budget.test.js`: modify (AC2.2)\n- `docs/driver.md`: modify (two-in-a-row bullet, cost paragraph)\n- `docs/journeys/launch-a-rights-limited-headless-worker-5217.md`: modify (describe `apiDurationMs` beside `apiError` on line 33)\n\n## Gotchas\n\n- Every existing fixture that builds a `fail`/`exit` result object and expects the launch to count, or expects a `worker-stop`, now needs `duration_api_ms: 0`. Without it the fixture silently stops counting. Grep `tests/bin-lib/driver/` for `reason: 'exit', counts: true` and for result objects in `worker-stop` tests before calling the suite green. `run.test.js:7404` is one known site.\n- The no-work shapes report `subtype: \"success\"` with `is_error: true`. They are not a non-success subtype, as the original request assumed. Do not key anything on the subtype.\n- A per-record no-work 400, such as a prompt too long for one record's body, also counts. Two such records in a row would end the run, and the first loses its escalation. This is accepted: the worker did no work, and the case is rare.\n- The probe covered darwin only. Linux and Windows result objects were not probed, which matches the header's existing scope. Write the header bullet's platform line to say so.\n- An API error after successful turns has `duration_api_ms` above 0, so it does not count. A mid-run 529 overload that repeats on every record therefore reaches no `worker-stop`; the per-record settle and `--budget` bound it.\n- Risk proof required: this record carries kept risk flags, so one plan step must contain, per slug, a line `Proof(<slug>): <text>` with a specific proof of at least 20 characters. Lines: `Proof(auth): …`.\n\n## Original request\n\nCount only no-work fail/exit launches toward drive.js --budget's two-in-a-row worker-stop rule\n\nSurface: backend\n\n## Overview\n\n#6118 (PR #6316) gave `drive.js --budget` a `worker-stop` end, with a two-in-a-row rule: two consecutive driven records whose implementer launches both ended non-`ok` end the run. Two kinds of envelope count toward that rule: reason `launch-error`, and status `fail` with reason `exit`. `worker.js` assigns `reason: exit` to any result object with `is_error` or a non-`success` subtype, and that includes `error_max_turns` and `error_during_execution`. Those are workers that ran and failed their own record. So two records in a row that each exhaust their turns end the run `worker-stop`. The first record's escalation comment is then deleted, which contradicts #6118's own Non-Goal: \"a worker that ran and failed its record … keeps today's settle\". A record that always exhausts its turns can therefore stay unescalated across firings. #6118 shipped the spec's literal counting set, and the PR #6316 Review Console ratified it (ruling `sdd-ruling-2`, ledger row 4). This record narrows the set.\n\n## Non-Goals\n\n- Changing the shared-cause classification (`launch-error`, or the structured `terminal_reason: \"api_error\"` / `api_error_status` / `api_error_type` signal).\n- Changing the repeat cap or the marker-free settle.\n\n## Current State\n\n- `plugin/bin/lib/driver/worker.js`: the envelope `reason` is `exit` for every non-`success` result subtype.\n- `plugin/bin/lib/driver/budget.js`: `countsTowardLaunchStreak` counts every `fail`/`exit` envelope.\n\n## Deliverables\n\n- [ ] A `fail`/`exit` implementer envelope counts toward the two-in-a-row rule only when the worker did no work. The signal is read from structured result fields, found by a live probe at build per `.claude/skills/headless-worker-launch`: candidates are `num_turns: 0` and `duration_api_ms: 0`. The free-text `result` is never parsed. Any other `fail`/`exit` is an ordinary per-record failure and resets the streak.\n- [ ] When the probe finds no field that tells \"did no work\" apart from \"ran and failed\", `fail`/`exit` stops counting at all, and `launch-error` plus the shared-cause signal are the only counting kinds. The `worker.js` header records the probe's date, CLI version and platform either way.\n- [ ] `docs/driver.md`'s two-in-a-row section names the narrowed set.\n\n## Acceptance Criteria\n\n- [ ] Two consecutive records whose implementer envelopes are `fail`/`exit` with subtype `error_max_turns` (turns above 0) do not end the run, and the first keeps its ordinary escalation. Verify: a `tests/bin-lib/driver/budget.test.js` case.\n- [ ] Two consecutive `fail`/`exit` envelopes that carry the no-work signal still end the run `worker-stop`. Verify: a budget test case.\n- [ ] Each new test fails when the change is reverted. Verify: revert each source file in turn and run its test file.\n\n## Release Note\n\nA budget-driven driver run no longer stops early, or drops an escalation, when two records in a row fail on their own work.\n\n## Technical Approach\n\nAdd the narrowing inside `countsTowardLaunchStreak`, reading a field that `worker.js` copies from the result object onto the envelope. Do not re-read the raw result in `budget.js`.\n\n### Key Files\n\n- `plugin/bin/lib/driver/worker.js`: modify (carry the no-work field onto the envelope; header probe record)\n- `plugin/bin/lib/driver/budget.js`: modify (`countsTowardLaunchStreak`)\n- `docs/driver.md`: modify\n- `tests/bin-lib/driver/budget.test.js`: modify\n- `tests/bin-lib/driver/worker.test.js`: modify\n\n## Prerequisites\n\n- #6118 merged (PR #6316).\n\n",
-        "createdAt": "2026-11-26T08:51:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 6321,
-        "state": "OPEN",
-        "title": "Count only no-work fail/exit launches toward drive.js --budget's two-in-a-row worker-stop rule",
-        "updatedAt": "2026-11-26T09:07:26Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": null,
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -8638,12 +8290,6 @@
       "number": 6120,
       "blockedBy": [
         6119
-      ]
-    },
-    {
-      "number": 6010,
-      "blockedBy": [
-        6009
       ]
     },
     {
