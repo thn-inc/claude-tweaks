@@ -132,7 +132,8 @@ async function reconcile(opts = {}) {
   const timings = createTimings();
   phaseOf(timings, 'setup');
   // #4180: what reconcileInner learns that the wrapper needs after ANY return — the resolved root
-  // and the archive check's prune failures (whose entries are already gone from the cache).
+  // and the archive check's prune failures (#4209: a prune failure's entry is gone only when its
+  // resolve landed or the retry bound dropped it; a kept entry's failure also rides on its `lastResidueError`).
   const state = { root: null, archiveResidueErrors: null };
   const result = await withTimings(timings, () => reconcileInner(opts, state));
   // Measurement is best-effort: a summarizer fault reports no timings rather
@@ -143,15 +144,17 @@ async function reconcile(opts = {}) {
     result.timings = null;
   }
   // #4180: every swallowed escalate/resolve failure in one list — the reasons recorded on tracked
-  // entries (`lastResidueError`), then this pass's prune failures. Set here, not in finalize, so a
+  // entries (`lastResidueError`), then this pass's prune failures. #4209: a prune failure whose entry was kept
+  // is already listed from that entry's `lastResidueError` (same bounded text) — skipped, so it reports once. Set here, not in finalize, so a
   // pass that returned early (over-budget after archive, the background pass) still reports them.
   // Best-effort like timings: a fault leaves null; no root (no-repo) leaves it null too.
   try {
     if (state.root) {
-      result.residueErrors = listResidueFailures(state.root)
-        .filter((e) => e.lastResidueError)
+      const listed = listResidueFailures(state.root).filter((e) => e.lastResidueError);
+      const alreadyListed = (e) => listed.some((l) => l.reason === e.reason && l.path === e.path && l.lastResidueError.op === e.op && l.lastResidueError.reason === e.error);
+      result.residueErrors = listed
         .map((e) => ({ reason: e.reason, path: e.path, op: e.lastResidueError.op, error: e.lastResidueError.reason, at: e.lastResidueError.at }))
-        .concat((state.archiveResidueErrors || []).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
+        .concat((state.archiveResidueErrors || []).filter((e) => !alreadyListed(e)).map((e) => ({ reason: e.reason, path: e.path, op: e.op, error: e.error, at: null })));
     }
   } catch {
     result.residueErrors = null;

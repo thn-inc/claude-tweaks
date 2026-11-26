@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const {
   readCache, writeCache, isFresh, CACHE_FILENAME, DEFAULT_TTL_MS, SHARED_HEALTH_TTL_MS,
-  RESIDUE_ESCALATE_THRESHOLD, recordResidueFailure, recordResidueSuccess, listResidueFailures,
+  RESIDUE_ESCALATE_THRESHOLD, RESIDUE_RETRY_LIMIT, recordResidueFailure, recordResidueSuccess, listResidueFailures,
   trackResidue, pruneResidueFailures, clearResidue, beginCacheBatch, commitCacheBatch, recordResidueError, planClear,
   applyOwnerlessNonClean, applyRunDispositions,
 } = require('../../../plugin/bin/lib/reconcile/cache');
@@ -386,7 +386,9 @@ test('trackResidue: omitting `runner` is unaffected — escalate receives runner
 
 // #1892 Deliverable 3 — pruneResidueFailures drops any entry whose live path
 // is gone, regardless of reason (reason-agnostic by design — #1811's
-// structurally-stuck prune shares this same call).
+// structurally-stuck prune shares this same call). #4209: an ESCALATED entry whose
+// resolve fails is kept instead, and dropped only once its resolve lands or on the
+// pass recording the RESIDUE_RETRY_LIMIT-th (5th) failed retry.
 test('pruneResidueFailures: drops a non-escalated entry whose path is absent on disk, without calling resolve', () => {
   const root = tmpRoot();
   const gonePath = path.join(root, 'never-existed');
@@ -411,7 +413,7 @@ test('pruneResidueFailures: keeps an entry whose path still exists on disk', () 
   assert.equal(listResidueFailures(root).length, 1);
 });
 
-test('pruneResidueFailures: an escalated entry whose path is gone triggers exactly one resolve call, naming the reason and path, and is still dropped', () => {
+test('pruneResidueFailures: an escalated entry whose path is gone triggers exactly one resolve call, naming the reason and path, and is dropped once it lands', () => {
   const root = tmpRoot();
   const gonePath = path.join(root, 'gone-escalated');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
@@ -430,15 +432,63 @@ test('pruneResidueFailures: an escalated entry whose path is gone triggers exact
   assert.deepEqual(listResidueFailures(root), []);
 });
 
-test('pruneResidueFailures: a resolve failure (gh absent / network) still drops the cache entry, never throws', () => {
+for (const [label, resolve] of [
+  ['a resolution-failed status', () => ({ status: 'resolution-failed', reason: 'boom' })],
+  ['a throwing resolve', () => { throw new Error('gh not found'); }],
+]) {
+  test(`AC1.1 #4209 pruneResidueFailures: an escalated entry whose path is gone and whose resolve fails is kept, never throws (${label})`, () => {
+    const root = tmpRoot();
+    const gonePath = path.join(root, 'gone-resolve-fails');
+    for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+      recordResidueFailure(root, 'move-failed', gonePath, { now: 200 + i });
+    }
+    let out;
+    assert.doesNotThrow(() => { out = pruneResidueFailures(root, 'o/r', { resolve }); });
+    const listed = listResidueFailures(root);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].residueRetries, 1);
+    assert.equal(listed[0].escalated, true);
+    assert.equal(listed[0].lastResidueError.op, 'resolve');
+    assert.equal(out.failures.length, 1);
+    assert.equal(out.failures[0].reason, 'move-failed');
+    assert.equal(out.failures[0].path, gonePath);
+    assert.equal(out.failures[0].op, 'resolve');
+    assert.equal(typeof out.failures[0].error, 'string');
+  });
+}
+
+test('AC2.1 #4209 pruneResidueFailures: drops the entry on the pass that records the RESIDUE_RETRY_LIMIT-th failed retry, reporting every failed resolve', () => {
+  assert.equal(RESIDUE_RETRY_LIMIT, 5);
   const root = tmpRoot();
-  const gonePath = path.join(root, 'gone-resolve-fails');
+  const gonePath = path.join(root, 'gone-bounded');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
-    recordResidueFailure(root, 'move-failed', gonePath, { now: 200 + i });
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 300 + i });
   }
-  const resolve = () => { throw new Error('gh not found'); };
-  assert.doesNotThrow(() => pruneResidueFailures(root, 'o/r', { resolve }));
+  const resolve = () => ({ status: 'resolution-failed', reason: 'boom' });
+  for (let call = 1; call <= RESIDUE_RETRY_LIMIT; call++) {
+    const out = pruneResidueFailures(root, 'o/r', { resolve });
+    assert.equal(out.failures.length, 1, `call ${call} reports its failed resolve`);
+    const listed = listResidueFailures(root);
+    if (call < RESIDUE_RETRY_LIMIT) {
+      assert.equal(listed.length, 1);
+      assert.equal(listed[0].residueRetries, call);
+    } else {
+      assert.deepEqual(listed, []);
+    }
+  }
+});
+
+test('#4209 pruneResidueFailures: a kept entry is dropped once a later pass\'s resolve lands', () => {
+  const root = tmpRoot();
+  const gonePath = path.join(root, 'gone-later-lands');
+  for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) {
+    recordResidueFailure(root, 'move-failed', gonePath, { now: 400 + i });
+  }
+  pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: 'boom' }) });
+  assert.equal(listResidueFailures(root)[0].residueRetries, 1);
+  const out = pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'closed' }) });
   assert.deepEqual(listResidueFailures(root), []);
+  assert.deepEqual(out.failures, []);
 });
 
 test('pruneResidueFailures: reason-agnostic — a structurally-stuck entry whose path is gone is pruned the same way', () => {
@@ -712,13 +762,17 @@ test('#5393: a prune resolve that throws an exec failure records gh stderr and t
   assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: 'HTTP 403: secondary rate limit (gh issue comment)' }] });
 });
 
-test('#4180 pruneResidueFailures: returns resolve failures for gone escalated paths and still drops the entries', () => {
+test('#4180 pruneResidueFailures: returns resolve failures for gone escalated paths and keeps the entries', () => {
   const root = tmpRoot();
   const gonePath = path.join(root, 'gone');
   for (let i = 0; i < RESIDUE_ESCALATE_THRESHOLD; i++) recordResidueFailure(root, 'move-failed', gonePath, { lastError: 'EBUSY' });
   const out = pruneResidueFailures(root, 'o/r', { resolve: () => ({ status: 'resolution-failed', reason: 'HTTP 500' }) });
   assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: gonePath, op: 'resolve', error: 'HTTP 500' }] });
-  assert.deepEqual(listResidueFailures(root), []);
+  const listed = listResidueFailures(root);
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].residueRetries, 1);
+  assert.equal(typeof listed[0].lastResidueError.at, 'number');
+  assert.deepEqual({ ...listed[0].lastResidueError, at: 0 }, { op: 'resolve', reason: 'HTTP 500', at: 0 });
 });
 
 test('#4180 pruneResidueFailures: a throwing resolve is a failure with the thrown message; a resolved or unescalated gone path is not', () => {
@@ -738,7 +792,7 @@ test('#4180 pruneResidueFailures: a throwing resolve is a failure with the throw
     },
   });
   assert.deepEqual(out, { failures: [{ reason: 'move-failed', path: thrown, op: 'resolve', error: 'gh: down' }] });
-  assert.deepEqual(listResidueFailures(root), []);
+  assert.deepEqual(listResidueFailures(root).map((e) => e.path), [thrown]);
 });
 
 test('#4180 pruneResidueFailures: nothing to prune returns an empty failures list', () => {

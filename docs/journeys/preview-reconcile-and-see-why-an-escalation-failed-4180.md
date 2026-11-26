@@ -51,11 +51,11 @@ files:
 - **Action:** Read each `{ reason, path, op, error, at }`:
   - `op: 'escalate'` means filing, appending or reopening the backlog record failed.
   - `op: 'resolve'` means closing it, or removing the path from it, failed. Examples are an HTTP 502 or a rate limit.
-  - `at: null` marks a failure from this pass's prune of a path that no longer exists. That entry is already dropped from the cache, so this JSON is its only record.
+  - `at: null` marks a prune failure whose entry this pass dropped at the 5th failed prune retry (`RESIDUE_RETRY_LIMIT`), so this JSON is its only record. A kept entry's prune failure is reported once, from its `lastResidueError`, with a numeric `at` (#4209).
 - **Should feel:** Diagnosable. A stuck resolve that retries every pass now names its reason instead of leaving an entry with nothing to show why.
 - **Should understand:**
   - Tracked failures live on the cache entry as `lastResidueError` and survive later failing passes on the same path.
-  - They disappear only when the entry itself is dropped: the path recovered or got archived, or a later resolve succeeded.
+  - They disappear only when the entry itself is dropped: the path recovered or got archived, a later resolve succeeded, or its 5th failed prune retry (`RESIDUE_RETRY_LIMIT`) landed.
   - `residueErrors` is filled on every pass that resolved a repo root, over-budget passes included.
   - A failed `gh` call's `error` leads with what `gh` said, then a short form of the command: `HTTP 403: secondary rate limit (gh issue comment 2724)`. With no stderr it reads `Command failed: gh issue comment 2724`; a timeout or buffer overflow keeps its cause (`warning: … (spawnSync gh ETIMEDOUT)`). It never carries the command's flags or a `--body` text (#5393).
 - **Red flags:**
