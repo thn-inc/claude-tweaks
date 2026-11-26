@@ -1,7 +1,6 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('path');
 
 const prices = require('../../../plugin/bin/lib/pricing/prices.js');
 const spend = require('../../../tools/pipeline-cost-report/spend.js');
@@ -15,7 +14,6 @@ test('AC1.1: the price table lives in the plugin, dated 2026-11-03', () => {
   assert.equal(familyOf('claude-sonnet-5-5'), 'sonnet');
   assert.equal(familyOf('<synthetic>'), 'unpriced');
   assert.equal(spend.PRICES, PRICES);
-  assert.equal(path.basename(require.resolve('../../../plugin/bin/lib/pricing/prices.js')), 'prices.js');
 });
 
 test('priceRequest applies the Haiku long-prompt multiplier; priceAggregate does not', () => {

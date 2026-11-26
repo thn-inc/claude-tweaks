@@ -20,8 +20,8 @@
 // strict: only a Bash tool_use whose command passes isRouteCommand counts — `drive.js --check` mentioned in prose
 // or a file read into the transcript is not.
 //
-// Prices are dollars per million tokens, dated PRICES.date. An unrecognised model id is `unpriced`: counted
-// and returned with zero cost, never priced.
+// The price table and per-request pricer live in plugin/bin/lib/pricing/prices.js. An unrecognised model id is
+// `unpriced`: counted and returned with zero cost.
 
 const fs = require('fs');
 const path = require('path');
