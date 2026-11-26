@@ -184,8 +184,10 @@ function runFromFiles({ exclusionsPath, ...rest }) {
   return entries;
 }
 
-// The fence's entry, with queue-pull.js's postures: a refused append stops the pull (exit 1, the module's
-// stop line); any other throw is a `queue-pull: driver-lane:` step error and the pull goes on (exit 0).
+// The fence's entry, with queue-pull.js's postures: a refused append stops the pull (exit 4, after printing the
+// module's stop line itself, so the fence adds none); any other throw is a `queue-pull: driver-lane:` step
+// error and the pull goes on (exit 0). Any other non-zero exit is a failure outside this function.
+const STOP_EXIT = 4;
 function runFence({ exclusionsPath, stderr = process.stderr, ...rest }) {
   const { appendExclusion } = require('./exclusions');
   let entries;
@@ -199,7 +201,7 @@ function runFence({ exclusionsPath, stderr = process.stderr, ...rest }) {
     for (const e of entries) appendExclusion(exclusionsPath, e);
   } catch (err) {
     stderr.write(`dispatch: queue-pull stopped -- driver-lane exclusion pass hit a corrupt exclusions file: ${errText(err)}\n`);
-    return 1;
+    return STOP_EXIT;
   }
   return 0;
 }

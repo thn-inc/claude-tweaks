@@ -1,7 +1,7 @@
 'use strict';
 // #5227 parity (AC1): the matrix. Split out of queue-pull.test.js (one file per parity describe, each
 // its own process); see queue-pull-helpers.js for the oracle/parity header and the shared machinery.
-// Pool: this file runs its own six MATRIX pairs (POOL wide) and nothing else. The AC4 and AC7.2 files no
+// Pool: this file runs its own seven MATRIX pairs (POOL wide) and nothing else. The AC4 and AC7.2 files no
 // longer reuse these runs through a shared pair memo; each runs the bases it reads itself.
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
