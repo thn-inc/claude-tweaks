@@ -104,6 +104,8 @@ The reviewer on-or-off answer (#5224, `review.js`'s `reviewRequired`) is read by
 
 A step that stops before it has started anything returns `noLine: true` with its non-ok result, as the worker step does for a launch-time model refusal (#5917, `launch.js`'s `MODEL_REFUSED_CODE`). `defineStep` keeps the flag only when `status !== 'ok'`, and run.js's loop then writes no event line for the step while the result still halts and becomes the record's stop. It is a generic result flag, like `skip: true`, so no step name enters run.js (`AC13.1`); `noLine: only a non-ok result can suppress its line` in `run.test.js` pins that an ok result still writes its line.
 
+`defineStep` rebuilds the step result from a fixed key set, so a new result field that run.js must read about a halting step (#6118's `launchFailure`, read by `stopObject` for settle's shared-cause body) is dropped silently until `defineStep` copies it. Add the passthrough in the same change, keep it only on a halting result as `noLine` is, and pin it with a test that drives the real step table, not a hand-built result.
+
 A value resolved at launch that an event line must name travels on the thrown error as well as on the result: `launchTracked` resolves `{ envelope, model }`, and a launcher throw after the model resolved carries `err.model`. Every catch of a launch keeps it on the stop it returns (`steps.js`'s `runImplementer` and `workerStep`, `review.js`'s reviewer launch, `judgment-io.js`'s `launchJudge`). #5917's first reviewer and judgment catches dropped it, so those lines lost `model` on a throw, and only the whole-branch review caught it. A refusal thrown before the value resolved carries none.
 
 ### A second line under an existing step name
