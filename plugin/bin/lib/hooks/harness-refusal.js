@@ -17,8 +17,9 @@
 // session-guard and `${noun}` worktree-gone `error` begin with the noun (the agent
 // guard was measured 2026-10-28). The session-noun and fixed worktree-gone
 // templates were unreachable headless but are noun-first literals behind the same
-// shell-error wrapper. A re-probe must confirm `error` still starts with the noun
-// before this anchor is trusted on a new major release.
+// shell-error wrapper. Re-probe that `error` still starts with the noun,
+// per the repo-local `upstream-repin` skill, whenever the `claude-code` floor in
+// tools/upstream-drift/manifest.yml is raised.
 //
 // Requires nothing, by contract: bash-prefilter.js loads it on every failed Bash
 // call, so any require here moves cost onto each of them.
