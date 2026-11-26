@@ -335,7 +335,7 @@ test('earlyGate governs user-prompt-submit by a raw substring test', () => {
 // #2783 M3: every failing Bash call fires PostToolUseFailure, but the handler
 // only ever acts on the harness worktree-isolation refusal text.
 const REFUSAL = 'This session is isolated in the worktree /w, but this command cannot be shown not to be git. Refusing to run it — a worktree-isolated session\'s git operations must target its own worktree.';
-test('#2783: earlyGate skips a post-tool-use-failure payload unless it carries the harness refusal text', () => {
+test('#2783/#4523: earlyGate skips a post-tool-use-failure payload unless its parsed error begins with a noun and carries the harness refusal signature', () => {
   const failed = JSON.stringify({ ...bash('git status'), error: 'Command failed with exit code 1' });
   assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => failed), { raw: failed, skip: true });
   const refused = JSON.stringify({ ...bash('echo hi'), error: REFUSAL });
@@ -343,6 +343,8 @@ test('#2783: earlyGate skips a post-tool-use-failure payload unless it carries t
   const escaped = refused.replace('Refusing', '\\u0052efusing');
   assert.strictEqual(earlyGate('post-tool-use-failure', () => escaped).skip, false, 'a JSON-escaped spelling still reaches the handler');
   assert.deepStrictEqual(earlyGate('post-tool-use-failure', () => 'not json'), { raw: 'not json', skip: true });
+  // The raw-payload branch is gone (#4523): unparseable input skips even when it carries a full refusal.
+  assert.strictEqual(earlyGate('post-tool-use-failure', () => 'not json ' + REFUSAL).skip, true, 'unparseable input never reaches the handler');
 });
 
 // ── e2e: bin/hooks.js's early exit (#3074) ───────────────────────────────────
