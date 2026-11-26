@@ -125,13 +125,13 @@ Then, on entry from the top only, record the pass start (`date +%s > "{gate-star
 gh pr view {pr-number} --repo {owner}/{repo} --json state,mergeStateStatus,mergeable,headRefOid,statusCheckRollup
 ```
 
-Then read the workflow runs for the PR head. The rollup lists only the checks GitHub has registered so far, so a partial rollup — some workflows reported, others not yet registered — reads green while a sibling workflow is still pending. Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
+Then read the workflow runs for the PR head. (why: appendix "Rationale notes".) Pass the full 40-char sha (an abbreviated `--commit` returns `[]`):
 
 ```bash
-gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url
+gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt
 ```
 
-A failed or unparseable runs read is the `state-read-failed` report, same as the first bullet. An empty runs list adds nothing. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`), which applies the same order.
+A failed or unparseable runs read is `state-read-failed`. The code twin is `bin/lib/pr-checks/classify.js`'s `classifyRollup` (with `headRuns`).
 
 Then the ready-run read (#5153: the last `ReadyForReviewEvent`'s `createdAt`, the head's runs with `createdAt`, `event` and workflow `path`, and the head's workflow triggers):
 
@@ -141,7 +141,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid
 
 A non-zero exit or output with no `state` is the `state-read-failed` report.
 
-**`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green — completed, never pending. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
+**`StatusContext` entries are normalized first.** A legacy commit-status entry (`StatusContext` — `context`/`state`/`targetUrl`, no `status` or `conclusion`) is read by its `state` before the rules below apply: `FAILURE` or `ERROR` → red, `PENDING` or `EXPECTED` → pending (as is any other unfinished state), `SUCCESS` → green. The code twin is `bin/lib/pr-checks/classify.js`'s `normalizeEntry`.
 
 Classify from the three reads, in this order:
 
@@ -165,6 +165,7 @@ Classify from the three reads, in this order:
   `awaiting` and `draft-skip-without-ready-trigger` take the **Conflict path** first.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**.
+- A check whose newest entry (rollup entries and head runs by name; newest by start time, then id; an unbreakable tie holds) completed with `conclusion` in `CANCELLED`, `ACTION_REQUIRED`, or `STALE` → **pending** (held; code twin `HELD_CONCLUSIONS`).
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
   → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
   watch. A branch that conflicts with its base gets no `pull_request` workflow runs, so its rollup

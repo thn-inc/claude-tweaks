@@ -137,7 +137,7 @@ The summary's outcome slot reads `failed`, not `PARTIAL`: `PARTIAL` asserts a re
 MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "{run-dir}" --values merge-verification)
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification
 gh pr view {releasePr.value.number} --repo {owner}/{repo} --json state,mergeStateStatus,headRefOid,statusCheckRollup,title
-gh run list --repo {owner}/{repo} --commit {headRefOid from the read above} --limit 100 --json name,workflowName,status,conclusion,url
+gh run list --repo {owner}/{repo} --commit {headRefOid from the read above} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt
 ```
 
 An unreadable state is Step 2.5's own first row, unchanged in substance: never merge on a state this gate could not read — a read failure is not "no CI" — reported here as `failed`, reason `state-read-failed`. The five deltas, each a deliberate narrowing, substitution or addition for the release path:

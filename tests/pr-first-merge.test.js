@@ -587,7 +587,7 @@ test('AC2.1 AC2.2: a derived off with an empty rollup still proceeds green', () 
 // #5153: Step 2.5 reads the ready run (`bin/ready-run.js`) after the head runs, classifies its
 // `state`, and parks a draft-skip workflow with no `ready_for_review` trigger on its own reason.
 const collapse = (s) => s.replace(/\s+/g, ' ');
-const HEAD_RUNS_LINE = 'gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json name,workflowName,status,conclusion,url';
+const HEAD_RUNS_LINE = 'gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json databaseId,name,workflowName,status,conclusion,url,startedAt';
 const READY_RUN_LINE = 'node "${CLAUDE_PLUGIN_ROOT}/bin/ready-run.js" --pr {pr-number} --sha {headRefOid}';
 const RED_ANCHOR = '- Any `statusCheckRollup[]` entry';
 const READY_ANCHOR = "- The ready-run read's `state`";

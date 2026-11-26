@@ -6,7 +6,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
-const { FAILING_CONCLUSIONS, classifyRollup } = require('../plugin/bin/lib/pr-checks/classify');
+const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS, HEAD_RUN_FIELDS, classifyRollup } = require('../plugin/bin/lib/pr-checks/classify');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -79,6 +79,32 @@ test('FAILING_CONCLUSIONS equals the merge gate prose list (code twin)', () => {
   const tail = line.slice(line.indexOf('`conclusion` in') + '`conclusion` in'.length);
   const prose = [...tail.matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
   assert.deepEqual(prose, [...FAILING_CONCLUSIONS]);
+});
+
+const heldLine = (text) => text.split('\n').find((l) => l.startsWith('- A check whose newest entry'));
+const heldTokens = (line) => {
+  const from = line.indexOf('`conclusion` in') + '`conclusion` in'.length;
+  return [...line.slice(from, line.indexOf('→')).matchAll(/`([A-Z_]+)`/g)].map((m) => m[1]);
+};
+
+test('AC2.1: HELD_CONCLUSIONS equals the merge gate held-bullet prose list (code twin)', () => {
+  const line = heldLine(MERGE);
+  assert.ok(line, 'pr-first-merge.md held bullet found');
+  assert.deepEqual(heldTokens(line), [...HELD_CONCLUSIONS]);
+  // go-red control: a prose list missing STALE no longer matches
+  assert.notDeepEqual(heldTokens(line.replace('`STALE`', '')), [...HELD_CONCLUSIONS]);
+});
+
+test('AC2.1: FAILING_CONCLUSIONS and HELD_CONCLUSIONS are disjoint', () => {
+  assert.deepEqual(FAILING_CONCLUSIONS.filter((c) => HELD_CONCLUSIONS.includes(c)), []);
+});
+
+test('the Step 2.5 head-run read requests HEAD_RUN_FIELDS', () => {
+  const line = MERGE.split('\n').find((l) => l.startsWith('gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json'));
+  assert.ok(line, 'Step 2.5 head-run read found');
+  assert.ok(line.endsWith(`--json ${HEAD_RUN_FIELDS}`), 'Step 2.5 read ends with HEAD_RUN_FIELDS');
+  const exec = read('plugin/skills/release/execute.md');
+  assert.ok(exec.split('\n').some((l) => l.includes(`--limit 100 --json ${HEAD_RUN_FIELDS}`)), 'release/execute.md carries the same field list');
 });
 
 const PR_CHECKS = read('plugin/bin/pr-checks.js');
