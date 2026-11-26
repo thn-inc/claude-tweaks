@@ -67,13 +67,14 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
      const { execFileSync } = require('child_process');
      const PR_CHECKS = require('path').join(process.env.PLUGIN_ROOT, 'bin', 'pr-checks.js');
      const NON_BLOCKING = new Set(['SUCCESS', 'SKIPPED', 'NEUTRAL']);
-     const FAILURE = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
+     const FAILURE = new Set(['FAILURE', 'TIMED_OUT', 'ERROR', 'STARTUP_FAILURE']);
+     const HELD = new Set(['CANCELLED', 'ACTION_REQUIRED', 'STALE']);
      const STATUS_BY_STATE = new Map([['green', 'passing'], ['no-ci', 'passing'], ['pending', 'pending'], ['red', 'failing'], ['inherited-red', 'failing']]);
      require('$PR_SCAN_OPEN').forEach((pr) => {
        const checks = pr.statusCheckRollup || [];
        const verdict = (c) => c.conclusion || c.state;
        let status;
-       if (checks.every((c) => NON_BLOCKING.has(verdict(c)))) {
+       if (checks.every((c) => NON_BLOCKING.has(verdict(c)) || HELD.has(verdict(c)))) { // held: pr-checks.js judges newest per check
          let state;
          try { state = JSON.parse(execFileSync('node', [PR_CHECKS, '--pr', String(pr.number)], { encoding: 'utf8' })).state; } catch (e) { state = 'read-failed'; }
          status = STATUS_BY_STATE.get(state) || 'unavailable';

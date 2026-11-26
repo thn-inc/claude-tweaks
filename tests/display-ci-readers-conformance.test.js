@@ -191,7 +191,7 @@ test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pe
       'const n = a[3];',
       "fs.appendFileSync(process.env.PR_CHECKS_LOG, n + '\\n');",
       "if (n === '5') process.exit(1);",
-      "const state = { 1: 'pending', 2: 'green', 3: 'no-ci', 4: 'red' }[n];",
+      "const state = { 1: 'pending', 2: 'green', 3: 'no-ci', 4: 'red', 8: 'pending', 9: 'green' }[n];",
       'console.log(JSON.stringify({ state }));',
     ].join('\n'));
     const callLog = path.join(tmp, 'pr-checks-calls.txt');
@@ -205,6 +205,9 @@ test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pe
       { number: 5, title: 'e', statusCheckRollup: green },
       { number: 6, title: 'f', statusCheckRollup: [{ conclusion: '', state: 'IN_PROGRESS' }] },
       { number: 7, title: 'g', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }] },
+      { number: 8, title: 'h', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'CANCELLED' }] },
+      { number: 9, title: 'i', statusCheckRollup: [{ conclusion: 'SUCCESS' }, { conclusion: 'ACTION_REQUIRED' }] },
+      { number: 10, title: 'j', statusCheckRollup: [{ conclusion: 'CANCELLED' }, { conclusion: 'FAILURE' }] },
     ]));
     const script = substitutePath(scripts[0], 'PR_SCAN_OPEN', prsFile);
     assert.ok(!script.includes('CLAUDE_PLUGIN_ROOT'), 'the CI script body does not interpolate CLAUDE_PLUGIN_ROOT into JS');
@@ -220,12 +223,31 @@ test('AC1.1: item 1 CI script maps a pending head run under a green rollup to pe
       '#5 CI unavailable',
       '#6 CI pending',
       '#7 CI failing',
+      '#8 CI pending',
+      '#9 CI passing',
+      '#10 CI failing',
     ]);
     const calls = fs.existsSync(callLog) ? fs.readFileSync(callLog, 'utf8').trim().split('\n') : [];
-    assert.deepStrictEqual(calls, ['1', '2', '3', '4', '5'], 'pr-checks.js is called only for rollup-green PRs');
+    assert.deepStrictEqual(calls, ['1', '2', '3', '4', '5', '8', '9'], 'pr-checks.js is called only for rollups of OK and held conclusions');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+const setTokens = (slice, name) => {
+  const m = slice.match(new RegExp('const ' + name + " = new Set\\(\\[([^\\]]*)\\]\\)"));
+  assert.ok(m, name + ' literal found in item 1');
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+};
+
+test('the item 1 FAILURE set equals FAILING_CONCLUSIONS and HELD equals HELD_CONCLUSIONS (code twins)', () => {
+  const { FAILING_CONCLUSIONS, HELD_CONCLUSIONS } = require('../plugin/bin/lib/pr-checks/classify');
+  const slice = repoWideItem1Slice();
+  assert.deepStrictEqual(setTokens(slice, 'FAILURE'), [...FAILING_CONCLUSIONS]);
+  assert.deepStrictEqual(setTokens(slice, 'HELD'), [...HELD_CONCLUSIONS]);
+  const spliced = slice.replace("'TIMED_OUT'", "'CANCELLED', 'TIMED_OUT'");
+  assert.notStrictEqual(spliced, slice, 'the control changed the literal');
+  assert.notDeepStrictEqual(setTokens(spliced, 'FAILURE'), [...FAILING_CONCLUSIONS], 'go-red: CANCELLED back in FAILURE is caught');
 });
 
 test('#3699 AC1.1: the CI filter splices a win32 temp path with forward slashes', () => {
