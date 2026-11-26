@@ -59,7 +59,9 @@ The `admission` event line carries `authority` (`label`, `typed` or `none`). Whe
 
 ## Running it as a script job
 
-A Dispatch script job is a job with a shell `command` and no model: it runs outside any Claude session, so nothing sets `CLAUDE_PLUGIN_ROOT` and `drive.js` has no plugin root to be found by. The job's `command` is therefore a launch line that finds the root itself, then runs the drain. `{main checkout}` and `{n}` are the two placeholders; everything else is literal.
+A Dispatch script job is a job with a `command` and no model: it runs outside any Claude session, so nothing sets `CLAUDE_PLUGIN_ROOT` and the launcher has no plugin root to run `drive.js` from. The job's `command` is therefore a launch line that finds the root itself, then runs the drain. `{main checkout}` and `{n}` are the two placeholders; everything else is literal.
+
+This pairs with `express-driver-runner: script`: a repository whose script job drives these records sets that key in `.claude-tweaks/policy.yml`, so the session drain leaves driver-routable records to the job (see `plugin/skills/_shared/policy-schema-express-driver.md`).
 
 ```sh
 cd "{main checkout}" && ROOT="$(node -e '
@@ -69,15 +71,16 @@ const list = JSON.parse(fs.readFileSync(file, "utf8")).plugins["claude-tweaks@cl
 const lib = (e) => e && typeof e.installPath === "string" && path.join(e.installPath, "bin", "lib", "installed-plugins.js");
 const boot = list.map(lib).find((p) => p && fs.existsSync(p));
 const entry = boot && require(boot).selectEntry(list, process.cwd(), { realpath: fs.realpathSync.native, readFile: fs.readFileSync });
-if (!entry) { console.error("claude-tweaks is not installed for " + process.cwd() + " in " + file); process.exit(1); }
+if (!entry) { console.error("no usable claude-tweaks build for " + process.cwd() + " in " + file); process.exit(1); }
 process.stdout.write(entry.installPath);
-')" && true | CC_HUB_RUN=1 node "$ROOT/bin/drive.js" --budget {n}
+')" && true | CC_HUB_RUN=1 CLAUDE_PLUGIN_ROOT="$ROOT" node "$ROOT/bin/drive.js" --budget {n}
 ```
 
 Each part has one reason:
 
 - `cd "{main checkout}"`: a job runner's working directory is arbitrary and may be outside the repository. From there `mainCheckoutRoot` fails (`main checkout root unresolvable`), `selectEntry(…, process.cwd())` cannot match a project-scope entry, and the policy read uses the cwd's project.
 - `true |` and `CC_HUB_RUN=1`: `drive.js` must not read as a person at a terminal. A job runner that gives it a terminal on stdin and sets none of the session variables reads as a person (see "Build authority", the launcher paragraph), so the line leaves stdin a pipe and sets `CC_HUB_RUN`. Under `--budget` no record is named, so each one still needs `auto:build`.
+- `CLAUDE_PLUGIN_ROOT="$ROOT"`: the variable is set so the run records which build drove it (the run manifest's `pluginVersion`, read from that variable); without it the field is null for these runs.
 - The `node -e` block: it picks the installed build's root with `selectEntry` from `plugin/bin/lib/installed-plugins.js`, the first-applicable-entry rule Claude Code applies to `installed_plugins.json` (under `CLAUDE_CONFIG_DIR`, default `~/.claude`). The block first loads that module from the first listed entry that has it, so the rule used is the first listed build's copy of it. No entry for this checkout exits 1 with the error on stderr; a missing `installed_plugins.json` (a raw `node:fs` stack trace), malformed JSON in it (a `SyntaxError`) or one with no `plugins` key (a `TypeError`) also exits non-zero. In each case `&&` then runs nothing.
 
 The line needs a POSIX shell: it uses `&&`, `$(…)`, a pipe and nested quotes. When the job runner passes its `command` to a shell, the line is the command. When it does not, save the line to a file on the job host and make the command `sh {file}`.
@@ -86,7 +89,7 @@ The job host needs:
 
 - Node 18 or later, `git` and `gh` on `PATH`, with `gh` authenticated, and the `claude` CLI on `PATH`.
 - The claude-tweaks plugin installed, so that `installed_plugins.json` under the config directory has an entry that applies to the main checkout.
-- A subscription login for the `claude` CLI that is reachable through `CLAUDE_CONFIG_DIR` (or `HOME`). Workers get only `ENV_ALLOW` (`PATH`, `HOME`, `USER`, `TMPDIR`, `LANG`, `CLAUDE_CONFIG_DIR`; POSIX, see `worker.js` for win32) from the job's environment (#5259, open), so a host that authenticates through other environment variables, such as an API key, launches every worker unauthenticated. The first launch usually fails as a shared cause and the run ends `worker-stop`; a failure not reported as an API error counts toward the two-in-a-row rule only when it fails with zero API time, and that rule ends the run after one record is escalated, whose escalation comment the worker stop then deletes (see "Picking records: `--budget`").
+- A subscription login for the `claude` CLI that is reachable through `CLAUDE_CONFIG_DIR` (or `HOME`). Workers get only `ENV_ALLOW` (`PATH`, `HOME`, `USER`, `TMPDIR`, `LANG`, `CLAUDE_CONFIG_DIR`; POSIX, see `worker.js` for win32) from the job's environment (#5259, open), so a host that authenticates through other environment variables, such as an API key, launches every worker unauthenticated. The first launch usually fails as a shared cause and the run ends `worker-stop`. A failure not reported as an API error counts toward the two-in-a-row rule only when it fails with zero API time. That rule ends the run after one record is escalated, and the worker stop then deletes that record's escalation comment (see "Picking records: `--budget`").
 
 ## Picking records: `--budget`
 
