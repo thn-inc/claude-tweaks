@@ -588,6 +588,10 @@ test('classifyPr: a held newest run is pending, a newer success over a cancelled
     { workflowName: 'w', status: 'completed', conclusion: 'cancelled', startedAt: T1, databaseId: 1 },
     { workflowName: 'w', status: 'completed', conclusion: 'success', startedAt: T2, databaseId: 2 },
   ], { state: 'met' }), 'green');
+  assert.equal(classifyPr(view(), [{ workflowName: 'w', status: 'completed', conclusion: 'stale', startedAt: T1, databaseId: 1 }], { state: 'met' }), 'pending');
+  const nameless = view({ statusCheckRollup: [{ name: 'ok', status: 'COMPLETED', conclusion: 'SUCCESS' }, { status: 'COMPLETED', conclusion: 'CANCELLED' }] });
+  assert.equal(classifyPr(nameless, [], { state: 'met' }), 'pending');
+  assert.equal(classifyPr(view(), [{ status: 'completed', conclusion: 'cancelled' }], { state: 'met' }), 'pending');
   const weird = view({ statusCheckRollup: [{ name: 'x', status: 'COMPLETED', conclusion: 'WEIRD' }] });
   assert.equal(classifyPr(weird, [], { state: 'met' }), 'red');
 });

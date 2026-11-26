@@ -215,6 +215,19 @@ test('HELD_CONCLUSIONS is the unverified set minus SKIPPED', () => {
   assert.equal(Object.isFrozen(HELD_CONCLUSIONS), true);
 });
 
+test('a nameless held row is held (fail closed), a nameless non-held row is skipped', () => {
+  const rollup = [...GREEN_ROLLUP, { status: 'COMPLETED', conclusion: 'CANCELLED' }];
+  const r = classifyRollup({ rollup, headRefOid: HEAD, localHead: HEAD, hasPrCi: true });
+  assert.equal(r.state, 'pending');
+  assert.equal(r.held[0].name, null);
+  assert.equal(r.held[0].conclusion, 'CANCELLED');
+  const h = classifyRollup({ rollup: GREEN_ROLLUP, headRefOid: HEAD, localHead: HEAD, hasPrCi: true, headRuns: [{ status: 'completed', conclusion: 'cancelled' }] });
+  assert.equal(h.state, 'pending');
+  assert.equal(h.held[0].name, null);
+  const ok = classifyRollup({ rollup: [...GREEN_ROLLUP, { status: 'COMPLETED', conclusion: 'SUCCESS' }], headRefOid: HEAD, localHead: HEAD, hasPrCi: true });
+  assert.equal(ok.state, 'green');
+});
+
 test('heldChecks is exported and reads head runs alone', () => {
   assert.deepEqual(heldChecks([], [hr('test', 'completed', 'cancelled')]), [{ name: 'test', url: 'https://ci.example/runs/test', conclusion: 'CANCELLED' }]);
 });

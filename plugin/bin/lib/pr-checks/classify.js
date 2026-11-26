@@ -82,11 +82,16 @@ function heldChecks(rollup, headRuns) {
     [Array.isArray(headRuns) ? headRuns : [], normalizeHeadRun],
   ];
   const groups = new Map();
+  const namelessHeld = [];
   for (const [rows, normalize] of sources) {
     for (const raw of rows) {
       if (!raw || typeof raw !== 'object') continue;
       const row = normalize(raw);
-      if (!row.name) continue;
+      if (!row.name) {
+        // A nameless row cannot be grouped or ordered: a held one is its own check (fail closed); any other is skipped.
+        if (row.status === 'COMPLETED' && HELD_CONCLUSIONS.includes(row.conclusion)) namelessHeld.push({ name: null, url: row.url, conclusion: row.conclusion });
+        continue;
+      }
       const startedAt = [raw.startedAt, raw.run_started_at, raw.createdAt, raw.created_at].find((v) => v !== undefined && v !== null && v !== '');
       const at = Date.parse(startedAt);
       const rawId = raw.databaseId ?? raw.id;
@@ -102,7 +107,7 @@ function heldChecks(rollup, headRuns) {
     const hit = top.find((e) => e.row.status === 'COMPLETED' && HELD_CONCLUSIONS.includes(e.row.conclusion));
     if (hit) held.push({ name: hit.row.name, url: hit.row.url, conclusion: hit.row.conclusion });
   }
-  return held;
+  return [...held, ...namelessHeld];
 }
 
 // #5153 — the CI run `gh pr ready` starts. Only a REST `actions/runs` row (it
